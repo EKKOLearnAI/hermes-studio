@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  العربية. نفس مفاتيح res/values/strings.xml بالضبط — اختبار
+  TranslationsTest يرفض أي مفتاح ناقص أو زائد.
+-->
+<resources>
+    <string name="app_name">Hermes Studio</string>
+
+    <!-- إجراءات وتسميات مشتركة -->
+    <string name="action_back">رجوع</string>
+    <string name="action_refresh">تحديث</string>
+    <string name="action_dismiss">تجاهل</string>
+    <string name="action_cancel">إلغاء</string>
+    <string name="action_ok">حسنًا</string>
+    <string name="action_skip">تخطٍّ</string>
+    <string name="action_next">التالي</string>
+    <string name="action_new_chat">محادثة جديدة</string>
+    <string name="action_settings">الإعدادات</string>
+    <string name="action_profiles">البروفايلات</string>
+    <string name="action_sign_out">تسجيل الخروج</string>
+    <string name="action_remove">إزالة</string>
+    <string name="action_selected">محدد</string>
+    <string name="action_retry">إعادة المحاولة</string>
+
+    <!-- أول تشغيل: شاشة الإقلاع وجولة التعريف -->
+    <string name="intro_restoring">جارٍ استعادة جلستك…</string>
+    <string name="intro_chat_title">وكلاؤك في جوالك</string>
+    <string name="intro_chat_body">تطبيق أصلي لهرمز استديو. اقرأ محادثاتك، وأكمل الحديث مع وكلائك، وأرفق الصور والملفات، وأملِ رسائلك بصوتك.</string>
+    <string name="intro_server_title">السيرفر منك أنت</string>
+    <string name="intro_server_body">هذا التطبيق واجهة فقط. يحتاج سيرفر هرمز استديو تشغّله أنت وتتحكم فيه — ولا توجد خدمة مستضافة خلفه.</string>
+    <string name="intro_server_step_install">ثبّت هرمز استديو على جهاز أو خادم افتراضي تملكه</string>
+    <string name="intro_server_step_https">اجعله متاحًا عبر HTTPS، مثل https://hermes.example.com</string>
+    <string name="intro_server_step_return">ارجع هنا بذلك العنوان وبيانات دخولك</string>
+    <string name="intro_privacy_title">لا شيء يغادر سيرفرك</string>
+    <string name="intro_privacy_body">عنوانك ورمزك ورسائلك تذهب إلى السيرفر الذي تُدخله وحده. الرمز يُحفظ مشفرًا على هذا الجهاز، والتطبيق خالٍ من أي تتبع.</string>
+    <string name="intro_cta">اربط سيرفري</string>
+
+    <!-- تسجيل الدخول -->
+    <string name="login_title">اتصل بسيرفرك</string>
+    <string name="login_server_label">عنوان السيرفر</string>
+    <string name="login_server_hint">https://hermes.example.com</string>
+    <string name="login_username">اسم المستخدم</string>
+    <string name="login_password">كلمة المرور</string>
+    <string name="login_submit">تسجيل الدخول</string>
+    <string name="login_submitting">جارٍ الاتصال…</string>
+    <string name="login_use_different_account">استخدام حساب آخر</string>
+    <string name="login_note">بيانات الدخول تُحفظ مشفرة على هذا الجهاز، ولا تُرسل إلا إلى العنوان أعلاه.</string>
+
+    <!-- قائمة المحادثات -->
+    <string name="chats_title">المحادثات</string>
+    <string name="chats_tab">المحادثات</string>
+    <string name="chats_all_profiles">كل البروفايلات</string>
+    <string name="chats_empty">لا توجد محادثات بعد</string>
+    <string name="chats_section">المحادثات</string>
+
+    <!-- المحادثة الجماعية -->
+    <string name="groups_title">المحادثة الجماعية</string>
+    <string name="groups_tab">القروبات</string>
+    <string name="groups_empty">لا توجد غرف بعد</string>
+    <string name="groups_section">الغرف</string>
+    <string name="groups_counts">%1$d وكلاء · %2$d أعضاء</string>
+    <string name="room_title">غرفة</string>
+    <string name="room_empty">لا توجد رسائل في هذه الغرفة بعد</string>
+
+    <!-- المحادثة -->
+    <string name="conversation_empty">أرسل رسالة إلى %1$s</string>
+    <string name="run_requires_approval">هذا التشغيل ينتظر موافقة. افتح الاستديو للرد.</string>
+    <string name="run_requires_clarification">هذا التشغيل يحتاج إجابة قبل أن يكمل. افتح الاستديو للرد.</string>
+    <string name="conversation_your_agent">وكيلك</string>
+    <string name="conversation_thinking">يفكر…</string>
+    <string name="conversation_tool">ينفّذ %1$s…</string>
+    <string name="conversation_stop">إيقاف</string>
+    <string name="reasoning_show">التفكير</string>
+
+    <!-- صندوق الكتابة -->
+    <string name="composer_hint">اكتب رسالة…</string>
+    <string name="composer_recording">جارٍ التسجيل…</string>
+    <string name="composer_transcribing">جارٍ التفريغ…</string>
+    <string name="composer_send_audio">أرسل الصوت</string>
+    <string name="composer_uploading">جارٍ الرفع…</string>
+    <string name="composer_send">إرسال</string>
+    <string name="composer_record">تسجيل صوتي</string>
+    <string name="composer_stop">أوقف وفرّغ النص</string>
+    <string name="composer_more">خيارات إضافية</string>
+
+    <!-- قائمة زر + -->
+    <string name="sheet_add">إضافة</string>
+    <string name="sheet_camera">الكاميرا</string>
+    <string name="sheet_gallery">المعرض</string>
+    <string name="sheet_file">ملف</string>
+    <string name="sheet_conversation">المحادثة</string>
+    <string name="sheet_model">الموديل</string>
+    <string name="sheet_reasoning">قوة التفكير</string>
+    <string name="sheet_profile_default">افتراضي البروفايل</string>
+    <string name="sheet_empty">لا يوجد شيء متاح</string>
+    <string name="reasoning_default">افتراضي</string>
+    <string name="reasoning_low">منخفض</string>
+    <string name="reasoning_medium">متوسط</string>
+    <string name="reasoning_high">مرتفع</string>
+    <string name="reasoning_use_profile">استخدم افتراضي البروفايل</string>
+
+    <!-- البروفايلات -->
+    <string name="profiles_title">البروفايلات</string>
+    <string name="profiles_signed_in">مسجّل الدخول باسم %1$s</string>
+    <string name="profiles_no_model">لا يوجد موديل معدّ</string>
+    <string name="profiles_active">نشط</string>
+
+    <!-- الإعدادات -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_section_server">السيرفر</string>
+    <string name="settings_section_profile">البروفايل النشط</string>
+    <string name="settings_section_appearance">المظهر</string>
+    <string name="settings_section_device">هذا الجهاز</string>
+    <string name="settings_section_account">الحساب</string>
+    <string name="settings_section_about">عن التطبيق</string>
+    <string name="settings_address">العنوان</string>
+    <string name="settings_address_missing">غير محدد</string>
+    <string name="settings_account">الحساب</string>
+    <string name="settings_account_unknown">غير معروف</string>
+    <string name="settings_profile">البروفايل</string>
+    <string name="settings_default_model">الموديل الافتراضي</string>
+    <string name="settings_default_model_server">افتراضي السيرفر</string>
+    <string name="settings_default_model_title">الموديل الافتراضي لـ%1$s</string>
+    <string name="settings_restart_gateway">إعادة تشغيل البوابة</string>
+    <string name="settings_restart_gateway_note">يطبّق تغييرات القنوات والموديلات</string>
+    <string name="settings_logo">شعار التطبيق</string>
+    <string name="settings_logo_custom">صورة من هذا الجهاز</string>
+    <string name="settings_logo_server">الشعار الذي يقدّمه سيرفر الاستديو</string>
+    <string name="settings_logo_missing">لم يُحمَّل بعد — اضغط لاختيار صورة</string>
+    <string name="settings_logo_reset">استخدم شعار الاستديو</string>
+    <string name="settings_logo_reset_note">يحذف الصورة المحفوظة على هذا الجهاز</string>
+    <string name="settings_logo_note">الشعار الظاهر في شاشة الإقلاع وترويسة المحادثات. يُجلب من سيرفرك أنت، فتغيير logo.png هناك يغيّره هنا أيضًا.</string>
+    <string name="settings_language">اللغة</string>
+    <string name="settings_language_system">تبعًا للنظام</string>
+    <string name="settings_reasoning">قوة التفكير</string>
+    <string name="settings_reasoning_note">تُختار قوة التفكير لكل محادثة من زر + في صندوق الكتابة.</string>
+    <string name="settings_sign_out_note">يحذف الرمز المحفوظ من هذا الجهاز</string>
+    <string name="settings_version">الإصدار</string>
+    <string name="settings_about_note">تطبيق مجتمعي غير رسمي لهرمز استديو. الصور الرمزية المولّدة من Multiavatar.com.</string>
+
+    <string name="action_rename">إعادة تسمية</string>
+    <string name="action_delete">حذف</string>
+    <string name="action_create">إنشاء</string>
+    <string name="action_save">حفظ</string>
+    <string name="action_edit">تعديل</string>
+    <string name="chats_rename_title">إعادة تسمية المحادثة</string>
+    <string name="chats_delete_title">حذف هذه المحادثة؟</string>
+    <string name="chats_delete_body">ستُحذف من السيرفر نهائيًا، ولن يبقى منها شيء عند الوكيل.</string>
+    <string name="profiles_new">بروفايل جديد</string>
+    <string name="profiles_new_hint">اسم قصير، مثل research</string>
+    <string name="profiles_rename_title">إعادة تسمية البروفايل</string>
+    <string name="profiles_delete_title">حذف البروفايل %1$s؟</string>
+    <string name="profiles_delete_body">ستُحذف محادثاته وإعداداته وقنواته من السيرفر.</string>
+    <string name="notice_profile_deleted">حُذف البروفايل %1$s</string>
+    <string name="groups_new">غرفة جديدة</string>
+    <string name="groups_new_hint">ما موضوع هذه الغرفة</string>
+    <string name="groups_pick_agents">الوكلاء في الغرفة</string>
+    <string name="groups_delete_title">حذف هذه الغرفة؟</string>
+    <string name="groups_delete_body">ستُحذف الغرفة وكل ما قيل فيها من السيرفر.</string>
+    <string name="notice_room_created">أُنشئت الغرفة %1$s</string>
+    <string name="room_live">متصل</string>
+    <string name="room_offline">يعيد الاتصال…</string>
+    <string name="room_hint">راسل الغرفة…</string>
+    <string name="error_room_offline">لم يتم الاتصال بالغرفة بعد</string>
+    <string name="settings_section_channels">القنوات</string>
+    <string name="settings_auto_start">تشغيل البوابة مع السيرفر</string>
+    <string name="settings_auto_start_on">مفعّل</string>
+    <string name="settings_auto_start_off">معطّل</string>
+    <string name="notice_saved">تم الحفظ</string>
+
+    <string name="settings_channels">القنوات</string>
+    <string name="settings_channels_summary">%1$d من %2$d مُعدّة</string>
+    <string name="channels_title">القنوات</string>
+    <string name="channel_configured">مُعدّة</string>
+    <string name="channel_missing">غير مُعدّة</string>
+    <string name="channel_off">موقوفة</string>
+    <string name="channel_enabled">مفعّلة</string>
+    <string name="channel_enabled_note">يرد هرمز على هذه القناة</string>
+    <string name="channel_paired_elsewhere">واتساب يُقترن بمسح رمز على السيرفر، لا من هنا.</string>
+    <string name="channel_secret_set">محفوظة على السيرفر — اكتب قيمة جديدة لتبديلها</string>
+    <string name="channel_save">حفظ وإعادة تشغيل البوابة</string>
+    <string name="channel_clear">حذف بيانات الاعتماد</string>
+    <string name="channel_clear_title">حذف بيانات %1$s؟</string>
+    <string name="channel_clear_body">ستُحذف القيم المحفوظة من السيرفر وتتوقف القناة عن الرد.</string>
+    <string name="channel_note">الحفظ يكتب القيم على سيرفرك ويعيد تشغيل البوابة حتى تلتقطها القناة.</string>
+    <string name="notice_channel_saved">حُفظت %1$s — البوابة تُعاد الآن</string>
+    <string name="notice_channel_cleared">حُذفت بيانات %1$s</string>
+    <string name="settings_auto_start_note">عند تفعيله يشغّل سيرفرك بوابة كل بروفايل عند الإقلاع، فترد القنوات دون أن يفتح أحد الاستديو.</string>
+
+    <string name="settings_group_server">السيرفر والحساب</string>
+    <string name="settings_group_server_note">العنوان والمستخدم وتسجيل الخروج</string>
+    <string name="settings_group_profile">البروفايل النشط</string>
+    <string name="settings_group_profile_note">الوكيل الذي تتحدث معه المحادثات الجديدة وموديله الافتراضي</string>
+    <string name="settings_group_agent">الوكيل</string>
+    <string name="settings_group_agent_note">حدود الجولات والمهل واستخدام الأدوات وتشغيل البوابة</string>
+    <string name="settings_group_channels_note">تيليقرام وديسكورد وسلاك وغيرها</string>
+    <string name="settings_group_device">هذا الجهاز</string>
+    <string name="settings_group_device_note">اللغة وشعار التطبيق وقوة التفكير</string>
+    <string name="settings_group_about_note">الإصدار والاعتمادات</string>
+    <string name="agent_max_turns">أقصى عدد جولات</string>
+    <string name="agent_max_turns_note">جولات التفاعل في المحادثة الواحدة</string>
+    <string name="agent_gateway_timeout">مهلة البوابة</string>
+    <string name="agent_gateway_timeout_note">مهلة الخمول بالثواني، و0 تعني بلا حد</string>
+    <string name="agent_drain_timeout">مهلة الإنهاء قبل إعادة التشغيل</string>
+    <string name="agent_drain_timeout_note">ثوانٍ تُمنح للعمل الجاري قبل إعادة التشغيل</string>
+    <string name="agent_tool_enforcement">إلزام استخدام الأدوات</string>
+    <string name="agent_tool_auto">تلقائي</string>
+    <string name="agent_tool_always">دائمًا</string>
+    <string name="agent_tool_never">أبدًا</string>
+    <string name="agent_autostart_title">تشغيل البوابات مع السيرفر</string>
+    <string name="agent_autostart_note">أي بوابات البروفايلات يشغّلها سيرفرك عند إقلاعه. بدونها تبقى القناة صامتة بعد إعادة التشغيل حتى يشغّلها أحد.</string>
+    <string name="agent_policy">سياسة البروفايلات</string>
+    <string name="agent_policy_all">كل البروفايلات المكتشفة</string>
+    <string name="agent_policy_include">البروفايلات التي أختارها فقط</string>
+    <string name="agent_policy_profiles">البروفايلات التي تُشغَّل</string>
+    <string name="agent_unset">افتراضي السيرفر</string>
+
+    <!-- المهام المجدولة / Cron Jobs -->
+    <string name="settings_group_cron_note">إنشاء مهام البروفايل النشط وجدولتها وإيقافها ومراجعتها</string>
+    <string name="cron_title">المهام المجدولة (Cron Jobs)</string>
+    <string name="cron_create">إنشاء مهمة</string>
+    <string name="cron_edit">تعديل المهمة</string>
+    <string name="cron_empty">لا توجد مهام مجدولة لهذا البروفايل بعد.</string>
+    <string name="cron_form_note">تُحفظ هذه المهمة وتعمل على سيرفر هرمز استديو ضمن البروفايل النشط.</string>
+    <string name="cron_name">الاسم</string>
+    <string name="cron_name_hint">ملخص البريد اليومي</string>
+    <string name="cron_schedule">الجدولة (تعبير Cron)</string>
+    <string name="cron_quick_presets">جداول جاهزة</string>
+    <string name="cron_preset_every_minute">كل دقيقة</string>
+    <string name="cron_preset_every_five_minutes">كل 5 دقائق</string>
+    <string name="cron_preset_hourly">كل ساعة</string>
+    <string name="cron_preset_daily_midnight">يوميًا 00:00</string>
+    <string name="cron_preset_daily_nine">يوميًا 09:00</string>
+    <string name="cron_preset_monday">الاثنين 09:00</string>
+    <string name="cron_preset_monthly">أول الشهر 09:00</string>
+    <string name="cron_prompt">الموجّه</string>
+    <string name="cron_prompt_hint">ماذا يفعل الوكيل عند تشغيل هذه المهمة؟</string>
+    <string name="cron_model">الموديل</string>
+    <string name="cron_server_default">افتراضي البروفايل</string>
+    <string name="cron_skills">المهارات</string>
+    <string name="cron_skills_none">لم تُختر مهارات</string>
+    <string name="cron_skills_empty">لا توجد مهارات مفعّلة لهذا البروفايل.</string>
+    <string name="cron_delivery">التسليم</string>
+    <string name="cron_delivery_local">محلي فقط</string>
+    <string name="cron_delivery_origin">القناة الأصلية</string>
+    <string name="cron_repeat">التكرار</string>
+    <string name="cron_repeat_count">عدد مرات التشغيل (اختياري)</string>
+    <string name="cron_repeat_hint">اتركه فارغًا لتشغيل غير محدود</string>
+    <string name="cron_repeat_progress">%1$d / %2$d تشغيلات</string>
+    <string name="cron_repeat_unlimited">غير محدود</string>
+    <string name="cron_next_run">التشغيل القادم</string>
+    <string name="cron_last_run">آخر تشغيل</string>
+    <string name="cron_never">لم تُشغّل</string>
+    <string name="cron_not_available">غير مجدولة</string>
+    <string name="cron_status_running">قيد التشغيل</string>
+    <string name="cron_status_paused">موقوفة مؤقتًا</string>
+    <string name="cron_status_scheduled">مجدولة</string>
+    <string name="cron_pause">إيقاف مؤقت</string>
+    <string name="cron_resume">استئناف</string>
+    <string name="cron_run_now">تشغيل الآن</string>
+    <string name="cron_history">سجل التشغيل</string>
+    <string name="cron_history_empty">لا يوجد سجل تشغيل لهذه المهمة.</string>
+    <string name="cron_run_count">التشغيل %1$d</string>
+    <string name="cron_run_metadata_only">بيانات المجدول فقط</string>
+    <string name="cron_run_output">ناتج التشغيل</string>
+    <string name="cron_run_no_output">لم ينتج عن هذا التشغيل محتوى.</string>
+    <string name="cron_delete_title">حذف %1$s؟</string>
+    <string name="cron_delete_body">ستُحذف المهمة وجدولها القادم من السيرفر، وقد يبقى ناتج التشغيل السابق في السجل.</string>
+    <string name="cron_name_required">اسم المهمة مطلوب</string>
+    <string name="cron_schedule_required">الجدولة مطلوبة</string>
+    <string name="cron_prompt_required">الموجّه مطلوب</string>
+    <string name="cron_repeat_invalid">يجب ألا يقل عدد التشغيلات عن 1</string>
+    <string name="cron_notice_created">أُنشئت المهمة المجدولة</string>
+    <string name="cron_notice_updated">حُدّثت المهمة المجدولة</string>
+    <string name="cron_notice_paused">أُوقفت المهمة مؤقتًا</string>
+    <string name="cron_notice_resumed">استُؤنفت المهمة المجدولة</string>
+    <string name="cron_notice_triggered">بدأت المهمة في الخلفية</string>
+    <string name="cron_notice_deleted">حُذفت المهمة المجدولة</string>
+
+    <!-- تأكيدات قبل ما لا يمكن التراجع عنه -->
+    <string name="confirm_sign_out_title">تسجيل الخروج؟</string>
+    <string name="confirm_sign_out_body">سيُحذف الرمز المحفوظ على هذا الجهاز وستحتاج إلى تسجيل الدخول من جديد. لا يتغيّر شيء على سيرفرك.</string>
+    <string name="confirm_restart_title">إعادة تشغيل البوابة؟</string>
+    <string name="confirm_restart_body">سيتوقف %1$s عن الرد أثناء إعادة التشغيل، وسيُقطع أي عمل يقوم به الآن.</string>
+
+    <!-- رسائل يصدرها التطبيق نفسه -->
+    <string name="error_server_address">أدخل عنوان سيرفر مثل https://hermes.example.com</string>
+    <string name="error_credentials_required">اسم المستخدم وكلمة المرور مطلوبان</string>
+    <string name="error_session_expired">انتهت الجلسة: %1$s</string>
+    <string name="error_session_restore">تعذّرت استعادة الجلسة المحفوظة: %1$s</string>
+    <string name="error_microphone">تعذّر تشغيل المايكروفون</string>
+    <string name="error_recording_short">التسجيل قصير جدًا</string>
+    <string name="error_image_unreadable">تعذّرت قراءة هذه الصورة</string>
+    <string name="error_no_server_logo">هذا السيرفر لم يُرجع شعارًا</string>
+    <string name="error_request_failed">فشل الطلب</string>
+    <string name="error_unreachable">تعذّر الوصول إلى عنوان السيرفر</string>
+    <string name="error_timeout">تأخر السيرفر في الرد</string>
+    <string name="error_tls">فشل تبادل شهادات TLS مع هذا العنوان</string>
+    <string name="notice_logo_updated">تم تحديث شعار التطبيق</string>
+    <string name="notice_logo_from_server">يُستخدم الآن شعار سيرفر الاستديو</string>
+    <string name="notice_default_model">الموديل الافتراضي لـ%1$s صار %2$s</string>
+    <string name="notice_gateway_restarting">جارٍ إعادة تشغيل البوابة لـ%1$s</string>
+    <!-- إعدادات هرمز استديو الكاملة -->
+    <string name="settings_category_account">الحساب</string>
+    <string name="settings_category_profile">البروفايل النشط</string>
+    <string name="settings_category_integrations">الربط والأتمتة</string>
+    <string name="settings_category_app">الواجهة والتطبيق</string>
+    <string name="settings_group_users">إدارة الحسابات</string>
+    <string name="settings_group_users_note">إنشاء المستخدمين وتحديد أدوارهم وحالتهم والبروفايلات المتاحة</string>
+    <string name="settings_group_models">مزوّدو الموديلات</string>
+    <string name="settings_group_models_note">مفاتيح API للمزوّدين المدمجين والمخصصين</string>
+    <string name="settings_group_memory">الذاكرة</string>
+    <string name="settings_group_memory_note">ذاكرة الوكيل وملف المستخدم وحدود الحجم</string>
+    <string name="settings_group_compression">ضغط السياق</string>
+    <string name="settings_group_compression_note">متى وكيف يُضغط سياق المحادثة</string>
+    <string name="settings_group_sessions">الجلسات والموافقات</string>
+    <string name="settings_group_sessions_note">الموافقات والكتابة وإعادة ضبط الجلسة تلقائيًا</string>
+    <string name="settings_group_privacy">الخصوصية</string>
+    <string name="settings_group_privacy_note">حجب المعلومات الشخصية قبل طلبات الموديل</string>
+    <string name="settings_group_proxy">البروكسي</string>
+    <string name="settings_group_proxy_note">عناوين HTTP وHTTPS وSOCKS والاستثناءات</string>
+    <string name="settings_group_display">عرض الاستديو</string>
+    <string name="settings_group_display_note">البث والتفكير والتكلفة والفروقات وتنبيهات الاكتمال</string>
+
+    <string name="account_security_title">الأمان</string>
+    <string name="account_change_username">تغيير اسم المستخدم</string>
+    <string name="account_change_username_note">يتطلب كلمة مرورك الحالية</string>
+    <string name="account_change_password">تغيير كلمة المرور</string>
+    <string name="account_change_password_note">استخدم 6 أحرف على الأقل</string>
+    <string name="account_current_password">كلمة المرور الحالية</string>
+    <string name="account_new_password">كلمة المرور الجديدة</string>
+    <string name="account_confirm_password">تأكيد كلمة المرور الجديدة</string>
+    <string name="account_new_username">اسم المستخدم الجديد</string>
+    <string name="account_password_mismatch">كلمتا المرور غير متطابقتين</string>
+    <string name="account_avatar_title">صورة الحساب</string>
+    <string name="account_avatar_upload">اختيار صورة الحساب</string>
+    <string name="account_avatar_note">PNG أو JPG أو WebP بحجم لا يتجاوز 1 م.ب</string>
+    <string name="account_avatar_reset">إعادة ضبط صورة الحساب</string>
+    <string name="account_avatar_reset_note">العودة إلى الصورة الافتراضية المولّدة</string>
+    <string name="account_avatar_random">توليد صورة جديدة</string>
+    <string name="account_avatar_random_note">إنشاء صورة Multiavatar عشوائية وخاصة على هذا الجهاز</string>
+    <string name="account_avatar_too_large">يجب ألا يتجاوز حجم الصورة 1 م.ب</string>
+    <string name="account_avatar_invalid_type">اختر صورة PNG أو JPG أو WebP</string>
+    <string name="account_locked_ips">عناوين IP المقفلة</string>
+    <string name="account_lock_password">كلمة المرور</string>
+    <string name="account_lock_token">الرمز</string>
+    <string name="account_lock_pairing">الاقتران</string>
+    <string name="account_no_locked_ips">لا توجد عناوين مقفلة</string>
+    <string name="account_no_locked_ips_note">لا يوجد عميل محجوب حاليًا بواسطة حماية تسجيل الدخول</string>
+    <string name="account_locked_ip_detail">%1$s · %2$d محاولات · متبقي %3$d دقيقة — اضغط لفك القفل</string>
+    <string name="account_unlock_all">فك قفل كل العناوين</string>
+    <string name="account_unlock_all_note">مسح %1$d حالات قفل نشطة</string>
+    <string name="account_unlock_all_confirm">سيؤدي هذا إلى مسح كل حالات قفل كلمة المرور والرمز والاقتران الحالية.</string>
+
+    <string name="users_description">يستطيع المشرف الأعلى إنشاء الحسابات والتحكم في البروفايلات التي يستخدمها كل مشرف.</string>
+    <string name="users_create">إنشاء حساب</string>
+    <string name="users_edit">تعديل الحساب</string>
+    <string name="users_admin">مشرف</string>
+    <string name="users_super_admin">مشرف أعلى</string>
+    <string name="users_active">نشط</string>
+    <string name="users_disabled">معطّل</string>
+    <string name="users_profiles">البروفايلات المسموحة</string>
+    <string name="users_all_profiles">كل البروفايلات</string>
+    <string name="users_no_profiles">لم تُسند بروفايلات</string>
+    <string name="users_last_login">آخر تسجيل دخول: %1$s</string>
+    <string name="users_never_logged_in">لم يسجّل الدخول بعد</string>
+    <string name="users_optional_password">كلمة مرور جديدة (اختياري)</string>
+    <string name="users_delete_title">حذف %1$s؟</string>
+    <string name="users_delete_note">لن يتمكن هذا الحساب من تسجيل الدخول بعد ذلك.</string>
+
+    <string name="models_keys_description">أدر بيانات اعتماد المزوّدين التي يستخدمها البروفايل النشط. لا تُعرض الأسرار المحفوظة؛ إدخال قيمة يستبدل المفتاح الحالي.</string>
+    <string name="models_no_providers">لم يُعثر على مزوّدين</string>
+    <string name="models_no_providers_note">أضف مزوّدًا في الاستديو ثم ارجع هنا.</string>
+    <string name="models_key_configured">المفتاح معدّ</string>
+    <string name="models_builtin">مدمج</string>
+    <string name="models_custom">مخصص</string>
+    <string name="models_count">الموديلات: %1$d</string>
+    <string name="models_api_key">مفتاح API</string>
+    <string name="models_replace_key">أدخل مفتاحًا جديدًا لاستبدال المحفوظ</string>
+    <string name="models_clear_key">أدخل مفتاحًا جديدًا، أو اتركه فارغًا لمسحه</string>
+    <string name="models_enter_key">أدخل مفتاح API للمزوّد</string>
+
+    <string name="display_studio_note">تتحكم هذه القيم في واجهة الاستديو على الويب. يحتفظ تطبيق أندرويد بتخطيطه المناسب للجوال.</string>
+    <string name="display_streaming">بث الردود</string>
+    <string name="display_streaming_note">إظهار الكلمات أثناء وصولها في الاستديو</string>
+    <string name="display_compact">الوضع المضغوط</string>
+    <string name="display_compact_note">تقليل المسافات في واجهة الاستديو</string>
+    <string name="display_reasoning">إظهار التفكير</string>
+    <string name="display_reasoning_note">عرض أجزاء التفكير عندما تكون متاحة</string>
+    <string name="display_cost">إظهار التكلفة</string>
+    <string name="display_cost_note">عرض تفاصيل التوكنات وتكلفة الطلبات</string>
+    <string name="display_inline_diffs">الفروقات داخل الرسائل</string>
+    <string name="display_inline_diffs_note">إظهار تغييرات الملفات داخل الرسائل</string>
+    <string name="display_bell">جرس الاكتمال</string>
+    <string name="display_bell_note">تشغيل صوت عند انتهاء المهمة</string>
+    <string name="display_notify">إشعار الاكتمال</string>
+    <string name="display_notify_note">السماح للاستديو بإظهار إشعار سطح مكتب</string>
+    <string name="display_input_height">ارتفاع صندوق الكتابة</string>
+    <string name="display_input_height_note">الارتفاع بالبكسل داخل الاستديو</string>
+
+    <string name="memory_enabled">ذاكرة الوكيل</string>
+    <string name="memory_enabled_note">السماح للوكيل بحفظ ذكريات دائمة</string>
+    <string name="memory_profile">ذاكرة ملف المستخدم</string>
+    <string name="memory_profile_note">الاحتفاظ بملف دائم عن المستخدم</string>
+    <string name="memory_limit">حد أحرف الذاكرة</string>
+    <string name="memory_limit_note">أقصى عدد أحرف في ذاكرة الوكيل</string>
+    <string name="memory_user_limit">حد أحرف ملف المستخدم</string>
+    <string name="memory_user_limit_note">أقصى عدد أحرف في ملف المستخدم</string>
+
+    <string name="compression_enabled">ضغط السياق</string>
+    <string name="compression_enabled_note">تلخيص السياق القديم عند امتلاء النافذة</string>
+    <string name="compression_threshold">حد بدء الضغط</string>
+    <string name="compression_threshold_note">نسبة امتلاء النافذة التي تبدأ الضغط</string>
+    <string name="compression_target">النسبة المستهدفة</string>
+    <string name="compression_target_note">نسبة النافذة المتبقية بعد الضغط</string>
+    <string name="compression_last">حماية أحدث الرسائل</string>
+    <string name="compression_last_note">الرسائل الحديثة التي تبقى بنصها الكامل</string>
+    <string name="compression_first">حماية أول الرسائل</string>
+    <string name="compression_first_note">الرسائل الافتتاحية التي تبقى بنصها الكامل</string>
+
+    <string name="session_require_approval">طلب موافقة الأدوات</string>
+    <string name="session_require_approval_note">السؤال قبل تنفيذ الإجراءات المحمية</string>
+    <string name="session_memory_approval">الموافقة على كتابة الذاكرة</string>
+    <string name="session_memory_approval_note">السؤال قبل تغيير الذاكرة الدائمة</string>
+    <string name="session_skills_approval">الموافقة على كتابة المهارات</string>
+    <string name="session_skills_approval_note">السؤال قبل تغيير المهارات المثبتة</string>
+    <string name="session_reset_mode">إعادة ضبط الجلسة تلقائيًا</string>
+    <string name="session_reset_mode_note">متى يبدأ البروفايل جلسة جديدة</string>
+    <string name="session_mode_both">عند الخمول أو يوميًا</string>
+    <string name="session_mode_idle">بعد الخمول</string>
+    <string name="session_mode_daily">كل يوم</string>
+    <string name="session_mode_none">أبدًا</string>
+    <string name="session_idle_minutes">دقائق الخمول</string>
+    <string name="session_idle_minutes_note">مدة الخمول قبل جلسة جديدة</string>
+    <string name="session_at_hour">ساعة إعادة الضبط اليومية</string>
+    <string name="session_at_hour_note">توقيت السيرفر المحلي، من 0 إلى 23</string>
+
+    <string name="privacy_description">تعمل تصفية الخصوصية على سيرفر هرمز قبل إرسال المحتوى إلى مزوّد الموديل.</string>
+    <string name="privacy_redact">حجب المعلومات الشخصية</string>
+    <string name="privacy_redact_note">إخفاء معلومات PII المكتشفة في طلبات الموديل الصادرة</string>
+
+    <string name="proxy_description">اضبط بروكسي الاتصالات الصادرة للبروفايل النشط. اترك الحقل فارغًا لمسحه.</string>
+    <string name="proxy_https">HTTPS_PROXY</string>
+    <string name="proxy_http">HTTP_PROXY</string>
+    <string name="proxy_all">ALL_PROXY</string>
+    <string name="proxy_none">NO_PROXY</string>
+    <string name="proxy_save">حفظ إعدادات البروكسي</string>
+    <string name="number_range">النطاق المسموح: %1$s – %2$s</string>
+
+    <string name="agent_management">إدارة موحّدة للبوابات</string>
+    <string name="agent_management_note">السماح للبروفايل الافتراضي بإدارة بوابات كل البروفايلات</string>
+    <string name="agent_excluded_profiles">البروفايلات المستثناة من التشغيل التلقائي</string>
+</resources>

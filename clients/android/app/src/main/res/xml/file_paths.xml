@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Camera captures are written here, handed to the camera app through the
+         provider, then read back and deleted. -->
+    <cache-path name="captures" path="captures/" />
+</paths>

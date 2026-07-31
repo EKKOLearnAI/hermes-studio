@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.HermesStudio" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF101014</item>
+        <item name="android:navigationBarColor">#FF101014</item>
+        <item name="android:windowBackground">#FF101014</item>
+    </style>
+</resources>

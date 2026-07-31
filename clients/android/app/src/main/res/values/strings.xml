@@ -1,0 +1,454 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The source of truth for every string in the app. A translation is one copy of
+  this file under res/values-<language>/ carrying the same keys.
+  See docs/adding-a-language.md.
+-->
+<resources>
+    <string name="app_name">Hermes Studio</string>
+
+    <!-- Shared actions and labels -->
+    <string name="action_back">Back</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="action_skip">Skip</string>
+    <string name="action_next">Next</string>
+    <string name="action_new_chat">New chat</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_profiles">Profiles</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_selected">Selected</string>
+    <string name="action_retry">Retry</string>
+
+    <!-- First run: launch screen and walkthrough -->
+    <string name="intro_restoring">Restoring your session…</string>
+    <string name="intro_chat_title">Your agents, on your phone</string>
+    <string name="intro_chat_body">A native client for Hermes Studio. Read your conversations, keep talking to your agents, attach photos and files, and dictate with your voice.</string>
+    <string name="intro_server_title">You bring the server</string>
+    <string name="intro_server_body">This app is only the front end. It needs a Hermes Studio server that you run and control — there is no hosted service behind it.</string>
+    <string name="intro_server_step_install">Install Hermes Studio on a machine or VPS you own</string>
+    <string name="intro_server_step_https">Make it reachable over HTTPS, for example https://hermes.example.com</string>
+    <string name="intro_server_step_return">Come back here with that address and your login</string>
+    <string name="intro_privacy_title">Nothing leaves your server</string>
+    <string name="intro_privacy_body">Your address, token and messages go only to the server you enter. The token is stored encrypted on this device, and the app carries no analytics.</string>
+    <string name="intro_cta">Connect my server</string>
+
+    <!-- Sign in -->
+    <string name="login_title">Connect to your server</string>
+    <string name="login_server_label">Server address</string>
+    <string name="login_server_hint">https://hermes.example.com</string>
+    <string name="login_username">Username</string>
+    <string name="login_password">Password</string>
+    <string name="login_submit">Sign in</string>
+    <string name="login_submitting">Connecting…</string>
+    <string name="login_use_different_account">Use a different account</string>
+    <string name="login_note">Credentials are stored encrypted on this device and sent only to the address above.</string>
+
+    <!-- Conversation list -->
+    <string name="chats_title">Chats</string>
+    <string name="chats_tab">Chats</string>
+    <string name="chats_all_profiles">All profiles</string>
+    <string name="chats_empty">No conversations yet</string>
+    <string name="chats_section">CONVERSATIONS</string>
+
+    <!-- Group chat -->
+    <string name="groups_title">Group chat</string>
+    <string name="groups_tab">Groups</string>
+    <string name="groups_empty">No rooms yet</string>
+    <string name="groups_section">ROOMS</string>
+    <string name="groups_counts">%1$d agents · %2$d members</string>
+    <string name="room_title">Room</string>
+    <string name="room_empty">No messages in this room yet</string>
+
+    <!-- Conversation -->
+    <string name="conversation_empty">Send a message to %1$s</string>
+    <string name="run_requires_approval">This run is waiting for approval. Open Studio to respond.</string>
+    <string name="run_requires_clarification">This run needs an answer before it can continue. Open Studio to respond.</string>
+    <string name="conversation_your_agent">your agent</string>
+    <string name="conversation_thinking">Thinking…</string>
+    <string name="conversation_tool">Running %1$s…</string>
+    <string name="conversation_stop">Stop</string>
+    <string name="reasoning_show">Reasoning</string>
+
+    <!-- Composer -->
+    <string name="composer_hint">Type a message…</string>
+    <string name="composer_recording">Recording…</string>
+    <string name="composer_transcribing">Transcribing…</string>
+    <string name="composer_send_audio">Send audio</string>
+    <string name="composer_uploading">Uploading…</string>
+    <string name="composer_send">Send</string>
+    <string name="composer_record">Record voice</string>
+    <string name="composer_stop">Stop and transcribe</string>
+    <string name="composer_more">More options</string>
+
+    <!-- The + sheet -->
+    <string name="sheet_add">Add</string>
+    <string name="sheet_camera">Camera</string>
+    <string name="sheet_gallery">Gallery</string>
+    <string name="sheet_file">File</string>
+    <string name="sheet_conversation">Conversation</string>
+    <string name="sheet_model">Model</string>
+    <string name="sheet_reasoning">Reasoning effort</string>
+    <string name="sheet_profile_default">profile default</string>
+    <string name="sheet_empty">Nothing available</string>
+    <string name="reasoning_default">Default</string>
+    <string name="reasoning_low">Low</string>
+    <string name="reasoning_medium">Medium</string>
+    <string name="reasoning_high">High</string>
+    <string name="reasoning_use_profile">Use the profile default</string>
+
+    <!-- Profiles -->
+    <string name="profiles_title">Profiles</string>
+    <string name="profiles_signed_in">Signed in as %1$s</string>
+    <string name="profiles_no_model">no model configured</string>
+    <string name="profiles_active">active</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_server">Server</string>
+    <string name="settings_section_profile">Active profile</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_device">This device</string>
+    <string name="settings_section_account">Account</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_address">Address</string>
+    <string name="settings_address_missing">not set</string>
+    <string name="settings_account">Account</string>
+    <string name="settings_account_unknown">unknown</string>
+    <string name="settings_profile">Profile</string>
+    <string name="settings_default_model">Default model</string>
+    <string name="settings_default_model_server">server default</string>
+    <string name="settings_default_model_title">Default model for %1$s</string>
+    <string name="settings_restart_gateway">Restart gateway</string>
+    <string name="settings_restart_gateway_note">Applies channel and model changes</string>
+    <string name="settings_logo">App logo</string>
+    <string name="settings_logo_custom">A picture from this device</string>
+    <string name="settings_logo_server">The logo your Studio server serves</string>
+    <string name="settings_logo_missing">Not loaded yet — tap to choose one</string>
+    <string name="settings_logo_reset">Use the Studio logo</string>
+    <string name="settings_logo_reset_note">Drops the picture stored on this device</string>
+    <string name="settings_logo_note">The mark on the launch screen and in the chat header. It is fetched from your own server, so replacing logo.png there changes it here too.</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">Follow the system</string>
+    <string name="settings_reasoning">Reasoning effort</string>
+    <string name="settings_reasoning_note">Reasoning effort is chosen per conversation from the + menu in the composer.</string>
+    <string name="settings_sign_out_note">Removes the stored token from this device</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_about_note">Unofficial community client for Hermes Studio. Generated profile pictures: avatars by Multiavatar.com.</string>
+
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_create">Create</string>
+    <string name="action_save">Save</string>
+    <string name="action_edit">Edit</string>
+    <string name="chats_rename_title">Rename conversation</string>
+    <string name="chats_delete_title">Delete this conversation?</string>
+    <string name="chats_delete_body">It is removed from the server for good. The agent keeps nothing of it.</string>
+    <string name="profiles_new">New profile</string>
+    <string name="profiles_new_hint">A short name, such as research</string>
+    <string name="profiles_rename_title">Rename profile</string>
+    <string name="profiles_delete_title">Delete profile %1$s?</string>
+    <string name="profiles_delete_body">Its conversations, settings and channels are removed from the server.</string>
+    <string name="notice_profile_deleted">Profile %1$s deleted</string>
+    <string name="groups_new">New room</string>
+    <string name="groups_new_hint">What is this room for</string>
+    <string name="groups_pick_agents">Agents in the room</string>
+    <string name="groups_delete_title">Delete this room?</string>
+    <string name="groups_delete_body">The room and everything said in it are removed from the server.</string>
+    <string name="notice_room_created">Room %1$s created</string>
+    <string name="room_live">live</string>
+    <string name="room_offline">reconnecting…</string>
+    <string name="room_hint">Message the room…</string>
+    <string name="error_room_offline">Not connected to the room yet</string>
+    <string name="settings_section_channels">Channels</string>
+    <string name="settings_auto_start">Start the gateway with the server</string>
+    <string name="settings_auto_start_on">on</string>
+    <string name="settings_auto_start_off">off</string>
+    <string name="notice_saved">Saved</string>
+
+    <string name="settings_channels">Channels</string>
+    <string name="settings_channels_summary">%1$d of %2$d set up</string>
+    <string name="channels_title">Channels</string>
+    <string name="channel_configured">set up</string>
+    <string name="channel_missing">not set up</string>
+    <string name="channel_off">turned off</string>
+    <string name="channel_enabled">Enabled</string>
+    <string name="channel_enabled_note">Hermes answers on this channel</string>
+    <string name="channel_paired_elsewhere">WhatsApp is paired by scanning a code on the server, not from here.</string>
+    <string name="channel_secret_set">stored on the server — type a new value to replace it</string>
+    <string name="channel_save">Save and restart the gateway</string>
+    <string name="channel_clear">Remove credentials</string>
+    <string name="channel_clear_title">Remove %1$s credentials?</string>
+    <string name="channel_clear_body">The stored values are deleted from the server and the channel stops answering.</string>
+    <string name="channel_note">Saving writes the values into your server and restarts the gateway so the channel picks them up.</string>
+    <string name="notice_channel_saved">%1$s saved — the gateway is restarting</string>
+    <string name="notice_channel_cleared">%1$s credentials removed</string>
+    <string name="settings_auto_start_note">When this is on, your server starts each profile’s gateway on boot, so channels answer without anyone opening Studio.</string>
+
+    <string name="settings_group_server">Server and account</string>
+    <string name="settings_group_server_note">Address, signed-in user, sign out</string>
+    <string name="settings_group_profile">Active profile</string>
+    <string name="settings_group_profile_note">Which agent new chats talk to, and its default model</string>
+    <string name="settings_group_agent">Agent</string>
+    <string name="settings_group_agent_note">Turn limits, timeouts, tool use, gateway auto-start</string>
+    <string name="settings_group_channels_note">Telegram, Discord, Slack and the rest</string>
+    <string name="settings_group_device">This device</string>
+    <string name="settings_group_device_note">Language, app logo, reasoning effort</string>
+    <string name="settings_group_about_note">Version and credits</string>
+    <string name="agent_max_turns">Max turns</string>
+    <string name="agent_max_turns_note">Interaction rounds per conversation</string>
+    <string name="agent_gateway_timeout">Gateway timeout</string>
+    <string name="agent_gateway_timeout_note">Request inactivity timeout in seconds; 0 means unlimited</string>
+    <string name="agent_drain_timeout">Restart drain timeout</string>
+    <string name="agent_drain_timeout_note">Seconds to let work finish before a restart</string>
+    <string name="agent_tool_enforcement">Tool enforcement</string>
+    <string name="agent_tool_auto">Auto</string>
+    <string name="agent_tool_always">Always</string>
+    <string name="agent_tool_never">Never</string>
+    <string name="agent_autostart_title">Gateway auto-start</string>
+    <string name="agent_autostart_note">Which profile gateways your server starts when it boots. Without it, a channel stays silent after a reboot until someone starts it.</string>
+    <string name="agent_policy">Profile policy</string>
+    <string name="agent_policy_all">All discovered profiles</string>
+    <string name="agent_policy_include">Only the profiles I choose</string>
+    <string name="agent_policy_profiles">Profiles to start</string>
+    <string name="agent_unset">server default</string>
+
+    <!-- Scheduled jobs / Cron Jobs -->
+    <string name="settings_group_cron_note">Create, schedule, pause and inspect jobs for the active profile</string>
+    <string name="cron_title">Scheduled jobs</string>
+    <string name="cron_create">Create job</string>
+    <string name="cron_edit">Edit job</string>
+    <string name="cron_empty">No scheduled jobs yet for this profile.</string>
+    <string name="cron_form_note">This job is stored and run by your Hermes Studio server under the active profile.</string>
+    <string name="cron_name">Name</string>
+    <string name="cron_name_hint">Daily inbox summary</string>
+    <string name="cron_schedule">Schedule (Cron expression)</string>
+    <string name="cron_quick_presets">Quick presets</string>
+    <string name="cron_preset_every_minute">Every minute</string>
+    <string name="cron_preset_every_five_minutes">Every 5 minutes</string>
+    <string name="cron_preset_hourly">Every hour</string>
+    <string name="cron_preset_daily_midnight">Daily at 00:00</string>
+    <string name="cron_preset_daily_nine">Daily at 09:00</string>
+    <string name="cron_preset_monday">Monday at 09:00</string>
+    <string name="cron_preset_monthly">First of month at 09:00</string>
+    <string name="cron_prompt">Prompt</string>
+    <string name="cron_prompt_hint">What should the agent do when this job runs?</string>
+    <string name="cron_model">Model</string>
+    <string name="cron_server_default">Profile default</string>
+    <string name="cron_skills">Skills</string>
+    <string name="cron_skills_none">No skills selected</string>
+    <string name="cron_skills_empty">No enabled skills were found for this profile.</string>
+    <string name="cron_delivery">Delivery</string>
+    <string name="cron_delivery_local">Local only</string>
+    <string name="cron_delivery_origin">Original channel</string>
+    <string name="cron_repeat">Repeat</string>
+    <string name="cron_repeat_count">Repeat count (optional)</string>
+    <string name="cron_repeat_hint">Leave empty for unlimited runs</string>
+    <string name="cron_repeat_progress">%1$d of %2$d runs</string>
+    <string name="cron_repeat_unlimited">Unlimited</string>
+    <string name="cron_next_run">Next run</string>
+    <string name="cron_last_run">Last run</string>
+    <string name="cron_never">Never</string>
+    <string name="cron_not_available">Not scheduled</string>
+    <string name="cron_status_running">Running</string>
+    <string name="cron_status_paused">Paused</string>
+    <string name="cron_status_scheduled">Scheduled</string>
+    <string name="cron_pause">Pause</string>
+    <string name="cron_resume">Resume</string>
+    <string name="cron_run_now">Run now</string>
+    <string name="cron_history">Run history</string>
+    <string name="cron_history_empty">No run history was found for this job.</string>
+    <string name="cron_run_count">Run %1$d</string>
+    <string name="cron_run_metadata_only">Scheduler metadata only</string>
+    <string name="cron_run_output">Run output</string>
+    <string name="cron_run_no_output">This run produced no output.</string>
+    <string name="cron_delete_title">Delete %1$s?</string>
+    <string name="cron_delete_body">The job and its future schedule are removed from the server. Existing run output may remain in history.</string>
+    <string name="cron_name_required">Job name is required</string>
+    <string name="cron_schedule_required">A schedule is required</string>
+    <string name="cron_prompt_required">A prompt is required</string>
+    <string name="cron_repeat_invalid">Repeat count must be at least 1</string>
+    <string name="cron_notice_created">Scheduled job created</string>
+    <string name="cron_notice_updated">Scheduled job updated</string>
+    <string name="cron_notice_paused">Scheduled job paused</string>
+    <string name="cron_notice_resumed">Scheduled job resumed</string>
+    <string name="cron_notice_triggered">Job started in the background</string>
+    <string name="cron_notice_deleted">Scheduled job deleted</string>
+
+    <!-- Confirmations before something you cannot take back -->
+    <string name="confirm_sign_out_title">Sign out?</string>
+    <string name="confirm_sign_out_body">The token stored on this device is removed and you will have to sign in again. Nothing on your server changes.</string>
+    <string name="confirm_restart_title">Restart the gateway?</string>
+    <string name="confirm_restart_body">%1$s stops answering while it restarts, and anything it is working on right now is interrupted.</string>
+
+    <!-- Messages the app raises itself -->
+    <string name="error_server_address">Enter a server address such as https://hermes.example.com</string>
+    <string name="error_credentials_required">Username and password are required</string>
+    <string name="error_session_expired">Session expired: %1$s</string>
+    <string name="error_session_restore">Could not restore the saved session: %1$s</string>
+    <string name="error_microphone">Could not start the microphone</string>
+    <string name="error_recording_short">That recording was too short</string>
+    <string name="error_image_unreadable">That image could not be read</string>
+    <string name="error_no_server_logo">That server did not return a logo</string>
+    <string name="error_request_failed">Request failed</string>
+    <string name="error_unreachable">Cannot reach that server address</string>
+    <string name="error_timeout">The server took too long to answer</string>
+    <string name="error_tls">TLS handshake failed for that address</string>
+    <string name="notice_logo_updated">App logo updated</string>
+    <string name="notice_logo_from_server">Using the logo from your Studio server</string>
+    <string name="notice_default_model">Default model for %1$s is now %2$s</string>
+    <string name="notice_gateway_restarting">Gateway restarting for %1$s</string>
+    <!-- Full Hermes Studio settings -->
+    <string name="settings_category_account">Account</string>
+    <string name="settings_category_profile">Active profile</string>
+    <string name="settings_category_integrations">Integrations and automation</string>
+    <string name="settings_category_app">Interface and app</string>
+    <string name="settings_group_users">Account management</string>
+    <string name="settings_group_users_note">Create users, roles, status, and profile access</string>
+    <string name="settings_group_models">Model providers</string>
+    <string name="settings_group_models_note">API keys for built-in and custom providers</string>
+    <string name="settings_group_memory">Memory</string>
+    <string name="settings_group_memory_note">Agent memory, user profile, and size limits</string>
+    <string name="settings_group_compression">Context compression</string>
+    <string name="settings_group_compression_note">When and how the conversation context is compressed</string>
+    <string name="settings_group_sessions">Sessions and approvals</string>
+    <string name="settings_group_sessions_note">Approvals, writes, and automatic session reset</string>
+    <string name="settings_group_privacy">Privacy</string>
+    <string name="settings_group_privacy_note">Redact personal information before model requests</string>
+    <string name="settings_group_proxy">Proxy</string>
+    <string name="settings_group_proxy_note">HTTP, HTTPS, SOCKS, and bypass addresses</string>
+    <string name="settings_group_display">Studio display</string>
+    <string name="settings_group_display_note">Streaming, reasoning, costs, diffs, and completion alerts</string>
+
+    <string name="account_security_title">Security</string>
+    <string name="account_change_username">Change username</string>
+    <string name="account_change_username_note">Requires your current password</string>
+    <string name="account_change_password">Change password</string>
+    <string name="account_change_password_note">Use at least 6 characters</string>
+    <string name="account_current_password">Current password</string>
+    <string name="account_new_password">New password</string>
+    <string name="account_confirm_password">Confirm new password</string>
+    <string name="account_new_username">New username</string>
+    <string name="account_password_mismatch">The passwords do not match</string>
+    <string name="account_avatar_title">Account picture</string>
+    <string name="account_avatar_upload">Choose account picture</string>
+    <string name="account_avatar_note">PNG, JPG, or WebP up to 1 MB</string>
+    <string name="account_avatar_reset">Reset account picture</string>
+    <string name="account_avatar_reset_note">Return to the generated default picture</string>
+    <string name="account_avatar_random">Generate a new picture</string>
+    <string name="account_avatar_random_note">Create a private random Multiavatar on this device</string>
+    <string name="account_avatar_too_large">The picture must be 1 MB or smaller</string>
+    <string name="account_avatar_invalid_type">Choose a PNG, JPG, or WebP picture</string>
+    <string name="account_locked_ips">Locked IP addresses</string>
+    <string name="account_lock_password">password</string>
+    <string name="account_lock_token">token</string>
+    <string name="account_lock_pairing">pairing</string>
+    <string name="account_no_locked_ips">No locked addresses</string>
+    <string name="account_no_locked_ips_note">No client is currently blocked by sign-in protection</string>
+    <string name="account_locked_ip_detail">%1$s · %2$d failures · %3$d minutes remaining — tap to unlock</string>
+    <string name="account_unlock_all">Unlock all addresses</string>
+    <string name="account_unlock_all_note">Clear %1$d active locks</string>
+    <string name="account_unlock_all_confirm">This clears all current password, token, and pairing lockouts.</string>
+
+    <string name="users_description">Super administrators can create accounts and control which profiles each administrator can use.</string>
+    <string name="users_create">Create account</string>
+    <string name="users_edit">Edit account</string>
+    <string name="users_admin">Administrator</string>
+    <string name="users_super_admin">Super administrator</string>
+    <string name="users_active">Active</string>
+    <string name="users_disabled">Disabled</string>
+    <string name="users_profiles">Allowed profiles</string>
+    <string name="users_all_profiles">All profiles</string>
+    <string name="users_no_profiles">No profiles assigned</string>
+    <string name="users_last_login">Last sign-in: %1$s</string>
+    <string name="users_never_logged_in">Never signed in</string>
+    <string name="users_optional_password">New password (optional)</string>
+    <string name="users_delete_title">Delete %1$s?</string>
+    <string name="users_delete_note">This account will no longer be able to sign in.</string>
+
+    <string name="models_keys_description">Manage the provider credentials used by the active profile. Existing secrets are never displayed; entering a value replaces the saved key.</string>
+    <string name="models_no_providers">No providers found</string>
+    <string name="models_no_providers_note">Add a provider in Studio, then return here.</string>
+    <string name="models_key_configured">Key configured</string>
+    <string name="models_builtin">Built in</string>
+    <string name="models_custom">Custom</string>
+    <string name="models_count">Models: %1$d</string>
+    <string name="models_api_key">API key</string>
+    <string name="models_replace_key">Enter a new key to replace the saved key</string>
+    <string name="models_clear_key">Enter a new key, or leave blank to clear it</string>
+    <string name="models_enter_key">Enter the provider API key</string>
+
+    <string name="display_studio_note">These values control the connected Studio web interface. This Android app keeps its own mobile layout.</string>
+    <string name="display_streaming">Stream responses</string>
+    <string name="display_streaming_note">Show tokens as they arrive in Studio</string>
+    <string name="display_compact">Compact mode</string>
+    <string name="display_compact_note">Use tighter spacing in Studio</string>
+    <string name="display_reasoning">Show reasoning</string>
+    <string name="display_reasoning_note">Display reasoning blocks when available</string>
+    <string name="display_cost">Show cost</string>
+    <string name="display_cost_note">Display token and request cost details</string>
+    <string name="display_inline_diffs">Inline diffs</string>
+    <string name="display_inline_diffs_note">Show file changes inside messages</string>
+    <string name="display_bell">Completion bell</string>
+    <string name="display_bell_note">Play a sound when a run finishes</string>
+    <string name="display_notify">Completion notification</string>
+    <string name="display_notify_note">Let Studio show a desktop notification</string>
+    <string name="display_input_height">Chat input height</string>
+    <string name="display_input_height_note">Height in pixels in Studio</string>
+
+    <string name="memory_enabled">Agent memory</string>
+    <string name="memory_enabled_note">Let the agent keep durable memories</string>
+    <string name="memory_profile">User profile memory</string>
+    <string name="memory_profile_note">Maintain a persistent profile about the user</string>
+    <string name="memory_limit">Memory character limit</string>
+    <string name="memory_limit_note">Maximum characters in agent memory</string>
+    <string name="memory_user_limit">User profile character limit</string>
+    <string name="memory_user_limit_note">Maximum characters in the user profile</string>
+
+    <string name="compression_enabled">Context compression</string>
+    <string name="compression_enabled_note">Summarize older context as the window fills</string>
+    <string name="compression_threshold">Compression threshold</string>
+    <string name="compression_threshold_note">Window fraction that triggers compression</string>
+    <string name="compression_target">Target ratio</string>
+    <string name="compression_target_note">Window fraction kept after compression</string>
+    <string name="compression_last">Protect latest messages</string>
+    <string name="compression_last_note">Recent messages kept verbatim</string>
+    <string name="compression_first">Protect first messages</string>
+    <string name="compression_first_note">Opening messages kept verbatim</string>
+
+    <string name="session_require_approval">Require tool approval</string>
+    <string name="session_require_approval_note">Ask before executing protected actions</string>
+    <string name="session_memory_approval">Approve memory writes</string>
+    <string name="session_memory_approval_note">Ask before changing durable memory</string>
+    <string name="session_skills_approval">Approve skill writes</string>
+    <string name="session_skills_approval_note">Ask before changing installed skills</string>
+    <string name="session_reset_mode">Automatic session reset</string>
+    <string name="session_reset_mode_note">When a profile starts a fresh session</string>
+    <string name="session_mode_both">Idle or daily</string>
+    <string name="session_mode_idle">After inactivity</string>
+    <string name="session_mode_daily">Every day</string>
+    <string name="session_mode_none">Never</string>
+    <string name="session_idle_minutes">Idle minutes</string>
+    <string name="session_idle_minutes_note">Inactivity before a new session</string>
+    <string name="session_at_hour">Daily reset hour</string>
+    <string name="session_at_hour_note">Server local time, from 0 to 23</string>
+
+    <string name="privacy_description">Privacy filtering runs on your Hermes server before content is sent to a model provider.</string>
+    <string name="privacy_redact">Redact personal information</string>
+    <string name="privacy_redact_note">Mask detected PII in outbound model requests</string>
+
+    <string name="proxy_description">Configure outbound proxies used by the active profile. Leave a field empty to clear it.</string>
+    <string name="proxy_https">HTTPS_PROXY</string>
+    <string name="proxy_http">HTTP_PROXY</string>
+    <string name="proxy_all">ALL_PROXY</string>
+    <string name="proxy_none">NO_PROXY</string>
+    <string name="proxy_save">Save proxy settings</string>
+    <string name="number_range">Allowed range: %1$s – %2$s</string>
+
+    <string name="agent_management">Unified gateway management</string>
+    <string name="agent_management_note">Let the default profile manage every profile gateway</string>
+    <string name="agent_excluded_profiles">Profiles excluded from automatic start</string>
+</resources>
