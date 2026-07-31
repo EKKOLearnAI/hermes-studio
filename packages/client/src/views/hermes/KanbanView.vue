@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NButton, NSelect, NSpin, NCollapse, NCollapseItem, NModal, NInput, useMessage } from 'naive-ui'
+import { NButton, NSelect, NSpin, NCollapse, NCollapseItem, NModal, NInput, NTooltip, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
@@ -16,6 +16,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const kanbanStore = useKanbanStore()
 const profilesStore = useProfilesStore()
 
@@ -202,19 +203,28 @@ async function handleCreateBoard() {
   }
 }
 
-async function handleArchiveSelectedBoard() {
+function handleArchiveSelectedBoard() {
   if (kanbanStore.selectedBoard === DEFAULT_KANBAN_BOARD) return
-  if (!window.confirm(t('kanban.board.archiveConfirm'))) return
-  boardActionLoading.value = true
-  try {
-    await kanbanStore.archiveSelectedBoard()
-    await replaceRouteBoard(DEFAULT_KANBAN_BOARD)
-    message.success(t('kanban.board.archived'))
-  } catch (err: any) {
-    message.error(err.message)
-  } finally {
-    boardActionLoading.value = false
-  }
+  const board = kanbanStore.selectedBoard
+  dialog.warning({
+    title: t('kanban.board.archive'),
+    content: t('kanban.board.archiveConfirm'),
+    positiveText: t('kanban.board.archive'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      if (kanbanStore.selectedBoard !== board) return
+      boardActionLoading.value = true
+      try {
+        await kanbanStore.archiveSelectedBoard()
+        await replaceRouteBoard(DEFAULT_KANBAN_BOARD)
+        message.success(t('kanban.board.archived'))
+      } catch (err: any) {
+        message.error(err.message)
+      } finally {
+        boardActionLoading.value = false
+      }
+    },
+  })
 }
 
 async function handleDispatch() {
@@ -246,15 +256,22 @@ async function handleDispatch() {
         <NButton size="small" :loading="boardActionLoading" @click="showCreateBoardForm = true">
           {{ t('common.add') }}
         </NButton>
-        <NButton
-          size="small"
-          secondary
-          :disabled="kanbanStore.selectedBoard === DEFAULT_KANBAN_BOARD"
-          :loading="boardActionLoading"
-          @click="handleArchiveSelectedBoard"
-        >
-          {{ t('kanban.board.archive') }}
-        </NButton>
+        <NTooltip trigger="hover" :disabled="kanbanStore.selectedBoard !== DEFAULT_KANBAN_BOARD">
+          <template #trigger>
+            <span class="archive-board-trigger">
+              <NButton
+                size="small"
+                secondary
+                :disabled="kanbanStore.selectedBoard === DEFAULT_KANBAN_BOARD"
+                :loading="boardActionLoading"
+                @click="handleArchiveSelectedBoard"
+              >
+                {{ t('kanban.board.archive') }}
+              </NButton>
+            </span>
+          </template>
+          {{ t('kanban.board.defaultArchiveUnavailable') }}
+        </NTooltip>
         <NButton size="small" secondary :loading="boardActionLoading" @click="handleDispatch">
           {{ t('kanban.action.dispatch') }}
         </NButton>
@@ -380,6 +397,10 @@ async function handleDispatch() {
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
+}
+
+.archive-board-trigger {
+  display: inline-flex;
 }
 
 .header-actions {

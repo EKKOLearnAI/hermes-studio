@@ -400,6 +400,15 @@ export const useKanbanStore = defineStore('kanban', () => {
     return result
   }
 
+  async function archiveTasks(taskIds: string[]) {
+    const result = await bulkUpdateTasks({ ids: taskIds, archive: true })
+    const failure = result.results.find(item => !item.ok)
+    if (failure) {
+      throw new Error(failure.error || `Failed to archive kanban task ${failure.id}`)
+    }
+    return result
+  }
+
   async function getTaskLog(taskId: string, tail?: number) {
     assertCapability('taskLog')
     return kanbanApi.getTaskLog(taskId, { board: selectedBoard.value, tail })
@@ -485,6 +494,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     linkTasks,
     unlinkTasks,
     bulkUpdateTasks,
+    archiveTasks,
     getTaskLog,
     getDiagnostics,
     reclaimTask,

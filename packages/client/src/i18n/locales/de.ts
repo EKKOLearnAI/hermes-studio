@@ -9,6 +9,18 @@ export default {
     profileSwitchTitle: 'Browserprofil wechseln?', profileSwitchWarning: '{agents} Agent-Aktion(en), {downloads} Download(s) und {annotations} Annotation(en) könnten unterbrochen werden.',
     deleteProfileTitle: 'Browserprofil löschen?', deleteProfileWarning: 'Verwaltete Daten werden in den Papierkorb verschoben. Benutzerdefinierte Ordner bleiben erhalten.', clearCache: 'Cache leeren', clearPermissionAudit: 'Berechtigungsprotokoll leeren', clearSiteData: 'Websitedaten löschen', clearSiteDataWarning: 'Löscht Anmeldungen, Cookies und lokalen Speicher des gewählten Profils.', dataCleared: 'Browserdaten gelöscht', loadFailed: 'Der eingebettete Browser konnte nicht gestartet werden',
   },
+  kanban: {
+    board: {
+      defaultArchiveUnavailable: 'Das Standard-Kanban kann nicht archiviert werden',
+    },
+    action: {
+      archive: 'Aufgabe archivieren',
+      archiveConfirm: 'Diese abgeschlossene Aufgabe archivieren?',
+    },
+    message: {
+      taskArchived: 'Aufgabe archiviert',
+    },
+  },
   // Login
   login: {
     title: 'Hermes Studio',

@@ -9,6 +9,18 @@ export default {
     profileSwitchTitle: 'Changer de profil ?', profileSwitchWarning: '{agents} opération(s) Agent, {downloads} téléchargement(s) et {annotations} annotation(s) peuvent être interrompus.',
     deleteProfileTitle: 'Supprimer le profil ?', deleteProfileWarning: 'Les données gérées seront placées dans la corbeille. Les dossiers personnalisés sont conservés.', clearCache: 'Vider le cache', clearPermissionAudit: 'Effacer le journal des autorisations', clearSiteData: 'Effacer les données des sites', clearSiteDataWarning: 'Efface les connexions, cookies et le stockage local du profil sélectionné.', dataCleared: 'Données du navigateur effacées', loadFailed: 'Impossible de démarrer le navigateur intégré',
   },
+  kanban: {
+    board: {
+      defaultArchiveUnavailable: 'Le tableau par défaut ne peut pas être archivé',
+    },
+    action: {
+      archive: 'Archiver la tâche',
+      archiveConfirm: 'Archiver cette tâche terminée ?',
+    },
+    message: {
+      taskArchived: 'Tâche archivée',
+    },
+  },
   // Login
   login: {
     title: 'Hermes Studio',

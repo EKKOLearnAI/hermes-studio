@@ -9,6 +9,18 @@ export default {
     profileSwitchTitle: 'プロファイルを切り替えますか？', profileSwitchWarning: '{agents} 件の Agent 操作、{downloads} 件のダウンロード、{annotations} 件の注釈が中断される可能性があります。',
     deleteProfileTitle: 'プロファイルを削除しますか？', deleteProfileWarning: '管理対象データはゴミ箱へ移動します。カスタムディレクトリは残ります。', clearCache: 'キャッシュを消去', clearPermissionAudit: '権限ログを消去', clearSiteData: 'サイトデータを消去', clearSiteDataWarning: '選択したプロファイルのログイン、Cookie、ローカルストレージを消去します。', dataCleared: 'ブラウザーデータを消去しました', loadFailed: '内蔵ブラウザーを起動できませんでした',
   },
+  kanban: {
+    board: {
+      defaultArchiveUnavailable: 'デフォルトのカンバンはアーカイブできません',
+    },
+    action: {
+      archive: 'タスクをアーカイブ',
+      archiveConfirm: 'この完了済みタスクをアーカイブしますか？',
+    },
+    message: {
+      taskArchived: 'タスクをアーカイブしました',
+    },
+  },
   // ログイン
   login: {
     title: 'Hermes Studio',

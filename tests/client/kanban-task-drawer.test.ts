@@ -11,6 +11,7 @@ const mockRequest = vi.hoisted(() => vi.fn())
 const mockCompleteTasks = vi.hoisted(() => vi.fn())
 const mockBlockTask = vi.hoisted(() => vi.fn())
 const mockUnblockTasks = vi.hoisted(() => vi.fn())
+const mockArchiveTasks = vi.hoisted(() => vi.fn())
 const mockAssignTask = vi.hoisted(() => vi.fn())
 const mockAddComment = vi.hoisted(() => vi.fn())
 const mockGetTaskLog = vi.hoisted(() => vi.fn())
@@ -19,6 +20,7 @@ const mockReclaimTask = vi.hoisted(() => vi.fn())
 const mockReassignTask = vi.hoisted(() => vi.fn())
 const mockSpecifyTask = vi.hoisted(() => vi.fn())
 const mockRouterPush = vi.hoisted(() => vi.fn())
+const mockDialogWarning = vi.hoisted(() => vi.fn())
 const mockUseMessage = vi.hoisted(() => vi.fn(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -73,6 +75,7 @@ vi.mock('@/stores/hermes/kanban', () => ({
     completeTasks: mockCompleteTasks,
     blockTask: mockBlockTask,
     unblockTasks: mockUnblockTasks,
+    archiveTasks: mockArchiveTasks,
     assignTask: mockAssignTask,
     addComment: mockAddComment,
     getTaskLog: mockGetTaskLog,
@@ -130,6 +133,9 @@ vi.mock('naive-ui', () => ({
     emits: ['close'],
     template: '<div v-if="show" class="n-modal-stub" :data-title="title"><slot /></div>',
   }),
+  useDialog: () => ({
+    warning: mockDialogWarning,
+  }),
   useMessage: mockUseMessage,
 }))
 
@@ -144,6 +150,7 @@ describe('KanbanTaskDrawer', () => {
     mockCompleteTasks.mockResolvedValue(undefined)
     mockBlockTask.mockResolvedValue(undefined)
     mockUnblockTasks.mockResolvedValue(undefined)
+    mockArchiveTasks.mockResolvedValue(undefined)
     mockAssignTask.mockResolvedValue(undefined)
     mockAddComment.mockResolvedValue({ ok: true })
     mockGetTaskLog.mockResolvedValue({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
@@ -208,6 +215,33 @@ describe('KanbanTaskDrawer', () => {
       { id: 'm1', role: 'user', content: 'hello', timestamp: 111 },
       { id: 'm2', role: 'assistant', content: 'world', timestamp: 112 },
     ])
+  })
+
+  it('archives completed tasks from the task drawer', async () => {
+    const wrapper = mount(KanbanTaskDrawer, {
+      props: { taskId: 'task-1' },
+    })
+    await flushPromises()
+
+    const archiveButton = wrapper.findAll('.n-button-stub')
+      .find(node => node.text() === 'kanban.action.archive')
+    expect(archiveButton?.exists()).toBe(true)
+
+    await archiveButton?.trigger('click')
+    await flushPromises()
+
+    expect(mockDialogWarning).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'kanban.action.archive',
+      content: 'kanban.action.archiveConfirm',
+      positiveText: 'kanban.action.archive',
+      negativeText: 'common.cancel',
+    }))
+    await mockDialogWarning.mock.calls[0][0].onPositiveClick()
+    await flushPromises()
+
+    expect(mockArchiveTasks).toHaveBeenCalledWith(['task-1'])
+    expect(wrapper.emitted('updated')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
   it('uses the latest run profile when searching related sessions', async () => {
@@ -360,6 +394,7 @@ describe('KanbanTaskDrawer', () => {
 
     expect(wrapper.text()).not.toContain('kanban.action.complete')
     expect(wrapper.text()).not.toContain('kanban.action.block')
+    expect(wrapper.text()).not.toContain('kanban.action.archive')
     expect(wrapper.text()).not.toContain('kanban.action.assign')
   })
 

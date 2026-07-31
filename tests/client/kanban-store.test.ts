@@ -186,6 +186,44 @@ describe('Kanban store', () => {
     expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined, includeArchived: true })
   })
 
+  it('archives tasks from the default board through the bulk bridge and surfaces per-task failures', async () => {
+    mockKanbanApi.getCapabilities.mockResolvedValue({
+      source: 'hermes-cli',
+      supports: { bulk: false },
+      missing: ['bulk'],
+      capabilities: [{ key: 'bulk', status: 'partial', requiresBoard: true }],
+    })
+    mockKanbanApi.bulkUpdateTasks.mockResolvedValueOnce({
+      results: [{ id: 'task-done', ok: true }],
+    })
+    mockKanbanApi.listTasks.mockResolvedValue([])
+    mockKanbanApi.getStats.mockResolvedValue({ total: 0, by_status: { archived: 1 }, by_assignee: {} })
+    mockKanbanApi.getAssignees.mockResolvedValue([])
+
+    const store = useKanbanStore()
+    store.setSelectedBoard('default')
+    await store.fetchCapabilities()
+
+    await expect(store.archiveTasks(['task-done'])).resolves.toEqual({
+      results: [{ id: 'task-done', ok: true }],
+    })
+    expect(mockKanbanApi.bulkUpdateTasks).toHaveBeenCalledWith(
+      { ids: ['task-done'], archive: true },
+      { board: 'default' },
+    )
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({
+      board: 'default',
+      status: undefined,
+      assignee: undefined,
+      includeArchived: true,
+    })
+
+    mockKanbanApi.bulkUpdateTasks.mockResolvedValueOnce({
+      results: [{ id: 'task-done', ok: false, error: 'cannot archive task' }],
+    })
+    await expect(store.archiveTasks(['task-done'])).rejects.toThrow('cannot archive task')
+  })
+
   it('opens board-scoped event streams, refreshes on events, and reconnects on board switch', async () => {
     vi.useFakeTimers()
     const socketA = { close: vi.fn(), onmessage: null as ((event: { data: string }) => void) | null, onclose: null, onerror: null }

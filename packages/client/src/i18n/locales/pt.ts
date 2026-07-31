@@ -9,6 +9,18 @@ export default {
     profileSwitchTitle: 'Trocar perfil?', profileSwitchWarning: '{agents} operação(ões) Agent, {downloads} download(s) e {annotations} anotação(ões) podem ser interrompidos.',
     deleteProfileTitle: 'Excluir perfil?', deleteProfileWarning: 'Dados gerenciados irão para a Lixeira. Diretórios personalizados serão mantidos.', clearCache: 'Limpar cache', clearPermissionAudit: 'Limpar registro de permissões', clearSiteData: 'Limpar dados de sites', clearSiteDataWarning: 'Remove logins, cookies e armazenamento local do perfil selecionado.', dataCleared: 'Dados do navegador limpos', loadFailed: 'Não foi possível iniciar o navegador integrado',
   },
+  kanban: {
+    board: {
+      defaultArchiveUnavailable: 'O quadro padrão não pode ser arquivado',
+    },
+    action: {
+      archive: 'Arquivar tarefa',
+      archiveConfirm: 'Arquivar esta tarefa concluída?',
+    },
+    message: {
+      taskArchived: 'Tarefa arquivada',
+    },
+  },
   // Login
   login: {
     title: 'Hermes Studio',

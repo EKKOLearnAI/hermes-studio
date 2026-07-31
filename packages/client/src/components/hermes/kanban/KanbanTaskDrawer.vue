@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { NDrawer, NDrawerContent, NButton, NSelect, NInput, NSpin, NModal, useMessage } from 'naive-ui'
+import { NDrawer, NDrawerContent, NButton, NSelect, NInput, NSpin, NModal, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { request } from '@/api/client'
@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const kanbanStore = useKanbanStore()
 const filesStore = useFilesStore()
 
@@ -67,6 +68,7 @@ const canMutateTask = computed(() => {
 const canCompleteTask = computed(() => ['running', 'ready', 'blocked'].includes(detail.value?.task.status || ''))
 const canBlockTask = computed(() => ['running', 'ready'].includes(detail.value?.task.status || ''))
 const canUnblockTask = computed(() => ['blocked', 'scheduled'].includes(detail.value?.task.status || ''))
+const canArchiveTask = computed(() => detail.value?.task.status === 'done')
 const canAssignTask = computed(() => canMutateTask.value && detail.value?.task.status !== 'running')
 const canReclaimTask = computed(() => detail.value?.task.status === 'running')
 const canReassignTask = computed(() => canMutateTask.value)
@@ -292,6 +294,30 @@ async function handleUnblock() {
   }
 }
 
+function handleArchive() {
+  if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
+  dialog.warning({
+    title: t('kanban.action.archive'),
+    content: t('kanban.action.archiveConfirm'),
+    positiveText: t('kanban.action.archive'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      if (!isActiveTask(taskId, board)) return
+      try {
+        await kanbanStore.archiveTasks([taskId])
+        if (!isActiveTask(taskId, board)) return
+        message.success(t('kanban.message.taskArchived'))
+        emit('updated')
+        emit('close')
+      } catch (err: any) {
+        if (isActiveTask(taskId, board)) message.error(err.message)
+      }
+    },
+  })
+}
+
 async function handleAssign() {
   if (!props.taskId || !assignProfile.value) return
   const taskId = props.taskId
@@ -479,10 +505,13 @@ function handleNavigateTask(taskId: string) {
             <div class="result-summary" @click="openResultDetail">{{ completionSummary }}</div>
           </div>
 
-          <!-- Actions (only for active, mutable tasks) -->
-          <div v-if="canMutateTask" class="detail-section">
+          <!-- Actions for active tasks and the terminal done-to-archived transition -->
+          <div v-if="canMutateTask || canArchiveTask" class="detail-section">
             <div class="section-title">{{ t('kanban.action.title') }}</div>
             <div class="action-group">
+              <NButton v-if="canArchiveTask" size="small" secondary type="warning" @click="handleArchive">
+                {{ t('kanban.action.archive') }}
+              </NButton>
               <template v-if="canCompleteTask && !showCompleteInput">
                 <NButton size="small" @click="showCompleteInput = true">
                   {{ t('kanban.action.complete') }}

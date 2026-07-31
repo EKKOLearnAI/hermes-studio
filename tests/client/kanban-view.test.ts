@@ -33,6 +33,7 @@ const mockRecoverSelectedBoard = vi.hoisted(() => vi.fn())
 const mockCreateBoard = vi.hoisted(() => vi.fn())
 const mockArchiveSelectedBoard = vi.hoisted(() => vi.fn())
 const mockDispatch = vi.hoisted(() => vi.fn())
+const mockDialogWarning = vi.hoisted(() => vi.fn())
 const mockStartEventStream = vi.hoisted(() => vi.fn())
 const mockStopEventStream = vi.hoisted(() => vi.fn())
 const mockFetchProfiles = vi.hoisted(() => vi.fn())
@@ -102,11 +103,18 @@ vi.mock('@/components/hermes/kanban/KanbanCreateForm.vue', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
+  useDialog: () => ({ warning: mockDialogWarning }),
   useMessage: () => ({ warning: vi.fn(), error: vi.fn(), success: vi.fn() }),
   NButton: defineComponent({
     name: 'NButton',
+    props: { disabled: Boolean },
     emits: ['click'],
-    template: '<button class="n-button-stub" @click="$emit(\'click\')"><slot /><slot name="icon" /></button>',
+    template: '<button class="n-button-stub" :disabled="disabled" @click="$emit(\'click\')"><slot /><slot name="icon" /></button>',
+  }),
+  NTooltip: defineComponent({
+    name: 'NTooltip',
+    props: { disabled: Boolean },
+    template: '<span class="n-tooltip-stub"><slot name="trigger" /><span v-if="!disabled" class="n-tooltip-content"><slot /></span></span>',
   }),
   NSelect: defineComponent({
     name: 'NSelect',
@@ -286,12 +294,31 @@ describe('KanbanView', () => {
     expect(mockCreateBoard).toHaveBeenCalledWith({ slug: 'new-board', name: 'New Board' })
     expect(routerReplace).toHaveBeenCalledWith({ query: { board: 'new-board' } })
 
-    vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockDialogWarning).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'kanban.board.archive',
+      content: 'kanban.board.archiveConfirm',
+      positiveText: 'kanban.board.archive',
+      negativeText: 'common.cancel',
+    }))
+    await mockDialogWarning.mock.calls[0][0].onPositiveClick()
     await flushPromises()
 
     expect(mockArchiveSelectedBoard).toHaveBeenCalled()
     expect(routerReplace).toHaveBeenCalledWith({ query: { board: 'default' } })
+  })
+
+  it('explains why the default board cannot be archived', async () => {
+    storeState.selectedBoard = 'default'
+    const wrapper = mount(KanbanView)
+    await flushPromises()
+
+    expect(wrapper.find('.n-tooltip-content').text()).toBe('kanban.board.defaultArchiveUnavailable')
+    const archiveButton = wrapper.findAll('.n-button-stub')
+      .find(node => node.text() === 'kanban.board.archive')
+    expect(archiveButton?.attributes('disabled')).toBeDefined()
   })
 
   it('makes default board explicit when route query is absent', async () => {

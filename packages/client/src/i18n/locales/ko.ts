@@ -9,6 +9,18 @@ export default {
     profileSwitchTitle: '프로필을 전환할까요?', profileSwitchWarning: 'Agent 작업 {agents}개, 다운로드 {downloads}개, 주석 {annotations}개가 중단될 수 있습니다.',
     deleteProfileTitle: '프로필을 삭제할까요?', deleteProfileWarning: '관리 데이터는 휴지통으로 이동하며 사용자 지정 경로는 유지됩니다.', clearCache: '캐시 지우기', clearPermissionAudit: '권한 기록 지우기', clearSiteData: '사이트 데이터 지우기', clearSiteDataWarning: '선택한 프로필의 로그인, 쿠키 및 로컬 저장소를 지웁니다.', dataCleared: '브라우저 데이터를 지웠습니다', loadFailed: '내장 브라우저를 시작하지 못했습니다',
   },
+  kanban: {
+    board: {
+      defaultArchiveUnavailable: '기본 칸반은 보관할 수 없습니다',
+    },
+    action: {
+      archive: '작업 보관',
+      archiveConfirm: '완료된 이 작업을 보관하시겠습니까?',
+    },
+    message: {
+      taskArchived: '작업이 보관되었습니다',
+    },
+  },
   // 로그인
   login: {
     title: 'Hermes Studio',

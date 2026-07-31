@@ -140,6 +140,13 @@ const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
   'settings.session.skillsWriteApproval',
 ]
 
+const KANBAN_ARCHIVE_LOCALIZED_KEYS = [
+  'kanban.board.defaultArchiveUnavailable',
+  'kanban.action.archive',
+  'kanban.action.archiveConfirm',
+  'kanban.message.taskArchived',
+]
+
 const JOURNEY_DISTINCT_LOCALIZED_KEYS = [
   'journey.nodeKinds',
 ]
@@ -312,6 +319,20 @@ describe('i18n locale coverage', () => {
         const localeValue = getPath(localeMessages, key)
         if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
         return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
+
+  it('localizes Kanban archive copy in every raw non-English locale', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return KANBAN_ARCHIVE_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(en, key) ? [`${locale}: ${key}`] : []
       })
     })
 
