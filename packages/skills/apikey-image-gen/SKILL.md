@@ -95,7 +95,10 @@ Use when there is no input image.
 {
   "mode": "text",
   "prompt": "A high quality product image of a matte black mechanical keyboard on a clean desk",
-  "size": "1024x1024",
+  "model": "codex-gpt-image-2",
+  "quality": "high",
+  "resolution": "4k",
+  "aspect": "16:9",
   "output_path": "/absolute/path/to/output.png"
 }
 ```
@@ -112,13 +115,40 @@ Use when the user provides a reference image and wants a new image based on it.
   "mode": "image",
   "prompt": "Use this reference composition and generate a refined technology brand poster",
   "image_path": "/absolute/path/to/reference.png",
-  "size": "1024x1024",
+  "quality": "high",
+  "resolution": "4k",
   "output_path": "/absolute/path/to/output.png"
 }
 ```
 
 The server calls `POST /v1/responses` against the `fun-codex` base URL.
 If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
+
+For multiple references, use `references`. Do not combine it with the legacy single-reference fields. Every item must contain exactly one image source, a `role`, and either `priority` (`0`–`100`) or `weight` (`0`–`1`):
+
+```json
+{
+  "mode": "image",
+  "prompt": "Use the first image for composition and the second for visual style",
+  "references": [
+    {
+      "image_path": "/allowed/workspace/layout.png",
+      "role": "composition",
+      "priority": 1
+    },
+    {
+      "image_base64": "<base64>",
+      "mime_type": "image/png",
+      "role": "style",
+      "weight": 0.8
+    }
+  ],
+  "model": "codex-gpt-image-2",
+  "quality": "high",
+  "resolution": "4k",
+  "aspect": "16:9"
+}
+```
 
 ### Image Edit
 
@@ -129,7 +159,8 @@ Use when the user wants to modify an existing image while preserving parts of it
   "mode": "edit",
   "prompt": "Change the background to blue and keep the subject unchanged",
   "image_path": "/absolute/path/to/source.png",
-  "size": "1024x1024",
+  "quality": "high",
+  "resolution": "4k",
   "output_path": "/absolute/path/to/edited.png"
 }
 ```
@@ -147,13 +178,26 @@ If `provider`, `provider_name`, or `custom_provider` is present, the server call
 - `image_path`: local png, jpeg, or webp path. Required for `image` and `edit` unless using `image_url` or `image_base64`.
 - `image_url`: optional alternative image input.
 - `image_base64`: optional alternative image input. If it is not a data URI, include `mime_type`.
+- `references`: optional structured array for `image` and `edit` modes. Maximum 8 items. Each item accepts exactly one of `image_path`, `image_url`, or `image_base64`, plus `role` and either `priority` or `weight`.
 - `n`: number of images. Defaults to `1`.
-- `size`: defaults to `1024x1024`. Common values: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`, `2160x3840`, `auto`.
-- `quality`: defaults to `auto`.
-- `model`: optional override. If omitted, text/edit modes use `gpt-image-2`; image mode uses the selected provider's `model` when configured, then falls back to `gpt-5.4-mini`.
-- `image_model`: optional image tool model for image mode. Defaults to `gpt-image-2`.
-- `output_path`: optional absolute output file path. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/*.png`.
+- `size`: optional legacy provider size parameter. It is forwarded only; Hermes Studio never locally resizes an image to satisfy it.
+- `quality`: defaults to `high`.
+- `resolution`: defaults to `4k` and is passed to the provider. Hermes Studio does not upscale a smaller provider result.
+- `aspect` / `aspect_ratio`: provider aspect-ratio parameter. Defaults to `auto`.
+- `model`: optional override. Text/edit modes default to `codex-gpt-image-2`; in image mode it continues to select the Responses orchestration model.
+- `image_model`: optional image tool model for image mode. Defaults to `codex-gpt-image-2`.
+- `output_format`: `png`, `jpeg`, or `webp`. Defaults to `png`.
+- `output_path`: optional output file path under an allowed Web UI, upload, workspace/user, or temporary root. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/*`.
 - `timeout_ms`: defaults to `600000`.
+
+Validation limits:
+
+- Only PNG, JPEG, and WebP are accepted. The declared MIME must match the image signature.
+- Structured references are limited to 10 MiB each and 12 MiB decoded in total.
+- Generated images are limited to 50 MiB each and 100 MiB per provider response.
+- The JSON request is limited to 18 MiB. The server's global JSON parser remains capped at 20 MiB.
+- Public HTTP(S) reference URLs must not resolve to loopback, private, link-local, or credential-bearing targets; redirects are revalidated.
+- Local reference and output paths must remain under the allowed roots. Set `WORKSPACE_BASE` when a deployment needs a narrower workspace root.
 
 ## Curl Template
 
@@ -186,7 +230,10 @@ curl -sS -X POST "$BASE_URL/api/hermes/media/apikey-image-generate" \
     "mode": "text",
     "provider": "fun-codex",
     "prompt": "A cinematic 4K photo of a silver robot hand holding a small glowing cube",
-    "size": "3840x2160",
+    "model": "codex-gpt-image-2",
+    "quality": "high",
+    "resolution": "4k",
+    "aspect": "16:9",
     "output_path": "/absolute/path/to/output.png"
   }'
 ```
@@ -199,9 +246,33 @@ Successful responses include:
   "mode": "text",
   "output_paths": ["/absolute/path/to/output.png"],
   "provider": "fun-codex",
-  "base_url": "https://api.apikey.fun/v1"
+  "base_url": "https://api.apikey.fun/v1",
+  "request_id": "6ca4b37c-8e06-4bd9-a4ee-6f77b8106fbf",
+  "model": "codex-gpt-image-2",
+  "actual_model": "codex-gpt-image-2",
+  "actual_provider": "fun-codex",
+  "quality": "high",
+  "resolution": "4k",
+  "aspect": "16:9",
+  "dimensions": {
+    "width": 3840,
+    "height": 2160
+  },
+  "format": "png",
+  "images": [
+    {
+      "output_path": "/absolute/path/to/output.png",
+      "dimensions": {
+        "width": 3840,
+        "height": 2160
+      },
+      "format": "png"
+    }
+  ]
 }
 ```
 
 If the response code is `missing_fun_codex_provider`, tell the user to configure `fun-codex` in the selected/requested profile's `config.yaml`.
 If the response code is `missing_apikey_image_provider`, tell the user to configure the requested provider in the selected/requested profile's `config.yaml`, or omit `provider` to use the default `fun-codex` provider.
+Validation failures use stable codes such as `too_many_references`, `reference_too_large`, `references_total_too_large`, `unsupported_reference_mime`, `reference_mime_mismatch`, `unsafe_reference_path`, and `unsafe_reference_url`.
+Provider failures use `upstream_auth_failed`, `upstream_rejected_request`, `upstream_rate_limited`, `upstream_timeout`, `upstream_invalid_response`, or `upstream_unavailable`. Error bodies never include upstream response text, credentials, Authorization headers, private paths, or image data.

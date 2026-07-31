@@ -7508,8 +7508,8 @@
         "tags": [
           "Media"
         ],
-        "summary": "Create apikey-image-generate",
-        "description": "POST /api/hermes/media/apikey-image-generate",
+        "summary": "Generate an image with optional multiple references",
+        "description": "Generates native provider output without local resizing. Legacy image_path, image_url, and image_base64 inputs remain supported for one reference; use references for role-aware multi-reference requests.",
         "operationId": "apiKeyImageGenerate",
         "security": [
           {
@@ -7518,13 +7518,153 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Generated image metadata. Existing ok, mode, output_paths, provider, base_url, and profile fields are preserved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "mode",
+                    "output_paths",
+                    "provider",
+                    "request_id",
+                    "model",
+                    "images"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "image",
+                        "edit"
+                      ]
+                    },
+                    "output_paths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "base_url": {
+                      "type": "string"
+                    },
+                    "profile": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "actual_model": {
+                      "type": "string"
+                    },
+                    "actual_provider": {
+                      "type": "string"
+                    },
+                    "quality": {
+                      "type": "string"
+                    },
+                    "resolution": {
+                      "type": "string"
+                    },
+                    "aspect": {
+                      "type": "string"
+                    },
+                    "dimensions": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "integer"
+                        },
+                        "height": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "format": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "png",
+                        "jpeg",
+                        "webp"
+                      ]
+                    },
+                    "images": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "output_path",
+                          "format"
+                        ],
+                        "properties": {
+                          "output_path": {
+                            "type": "string"
+                          },
+                          "dimensions": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "width": {
+                                "type": "integer"
+                              },
+                              "height": {
+                                "type": "integer"
+                              }
+                            }
+                          },
+                          "format": {
+                            "type": "string",
+                            "enum": [
+                              "png",
+                              "jpeg",
+                              "webp"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Reference or output path is outside allowed roots."
+          },
+          "413": {
+            "description": "Request, reference count, per-image bytes, or total reference bytes exceeded a limit."
+          },
+          "415": {
+            "description": "Reference MIME is unsupported or does not match image content."
+          },
+          "502": {
+            "description": "Provider rejected the request or returned an invalid/error response."
+          },
+          "503": {
+            "description": "Provider rate limited the request."
+          },
+          "504": {
+            "description": "Provider request timed out."
           }
         },
         "requestBody": {
@@ -7533,14 +7673,160 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "prompt"
+                ],
                 "properties": {
                   "mode": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "image",
+                      "edit"
+                    ],
+                    "default": "text"
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "maxLength": 32000
+                  },
+                  "provider": {
+                    "type": "string",
+                    "description": "Configured custom provider name. Defaults to fun-codex."
+                  },
+                  "provider_name": {
+                    "type": "string",
+                    "description": "Compatibility alias for provider."
+                  },
+                  "custom_provider": {
+                    "type": "string",
+                    "description": "Compatibility alias for provider."
+                  },
+                  "profile": {
+                    "type": "string",
+                    "description": "Compatibility body field for profile selection; X-Hermes-Profile is preferred."
+                  },
+                  "model": {
+                    "type": "string",
+                    "default": "codex-gpt-image-2"
+                  },
+                  "image_model": {
+                    "type": "string",
+                    "description": "Image tool model override for image mode."
+                  },
+                  "quality": {
+                    "type": "string",
+                    "default": "high"
+                  },
+                  "resolution": {
+                    "type": "string",
+                    "default": "4k"
+                  },
+                  "aspect": {
+                    "type": "string",
+                    "default": "auto"
+                  },
+                  "aspect_ratio": {
+                    "type": "string",
+                    "description": "Compatibility alias for aspect."
+                  },
+                  "size": {
+                    "type": "string",
+                    "description": "Legacy provider size parameter. It is forwarded and is never implemented by local resizing."
+                  },
+                  "output_format": {
+                    "type": "string",
+                    "enum": [
+                      "png",
+                      "jpeg",
+                      "webp"
+                    ],
+                    "default": "png"
+                  },
+                  "n": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4,
+                    "default": 1
+                  },
+                  "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 600000
                   },
                   "output_path": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Optional path under an allowed media, workspace, user, or temporary root."
+                  },
+                  "image_path": {
+                    "type": "string",
+                    "description": "Legacy single-reference local path."
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Legacy single-reference public HTTP(S) URL."
+                  },
+                  "image_base64": {
+                    "type": "string",
+                    "description": "Legacy single-reference base64 or data URI."
+                  },
+                  "mime_type": {
+                    "type": "string",
+                    "enum": [
+                      "image/png",
+                      "image/jpeg",
+                      "image/webp"
+                    ]
+                  },
+                  "references": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "description": "Role-aware references. Each item must provide exactly one image source plus role and priority or weight.",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "role"
+                      ],
+                      "properties": {
+                        "image_path": {
+                          "type": "string"
+                        },
+                        "image_url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "image_base64": {
+                          "type": "string"
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "enum": [
+                            "image/png",
+                            "image/jpeg",
+                            "image/webp"
+                          ]
+                        },
+                        "role": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "priority": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "weight": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    }
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
