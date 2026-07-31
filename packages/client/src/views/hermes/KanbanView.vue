@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NButton, NSelect, NSpin, NCollapse, NCollapseItem, NModal, NInput, NTooltip, useDialog, useMessage } from 'naive-ui'
+import { NButton, NSelect, NSpin, NModal, NInput, NTooltip, useDialog, useMessage } from 'naive-ui'
+import { VueFlow, type Node } from '@vue-flow/core'
+import { Background } from '@vue-flow/background'
+import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
@@ -9,8 +13,13 @@ import KanbanCreateForm from '@/components/hermes/kanban/KanbanCreateForm.vue'
 import { DEFAULT_KANBAN_BOARD, useKanbanStore } from '@/stores/hermes/kanban'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
-import type { KanbanTaskStatus } from '@/api/hermes/kanban'
+import type { KanbanTask, KanbanTaskStatus } from '@/api/hermes/kanban'
 import type { ProfileAvatar } from '@/api/hermes/profiles'
+
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
+import '@vue-flow/controls/dist/style.css'
+import '@vue-flow/minimap/dist/style.css'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -30,7 +39,15 @@ const refreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const routeReady = ref(false)
 
 const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review', 'done', 'archived']
-const expandedStatusNames = ref<string[]>([...boardStatuses])
+const kanbanCanvasViewport = { x: 24, y: 24, zoom: 0.92 }
+const kanbanColumnWidth = 320
+const kanbanColumnGap = 24
+
+interface KanbanCanvasNodeData {
+  status: KanbanTaskStatus
+  title: string
+  tasks: KanbanTask[]
+}
 
 function firstQueryString(value: unknown): string | null {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null
@@ -93,6 +110,28 @@ const visibleBoardStatuses = computed(() => {
   return status && boardStatuses.includes(status) ? [status] : boardStatuses
 })
 
+const kanbanCanvasNodes = computed<Node<KanbanCanvasNodeData>[]>(() => {
+  return visibleBoardStatuses.value.map((status, index) => ({
+    id: `kanban-status-${status}`,
+    type: 'status',
+    position: { x: index * (kanbanColumnWidth + kanbanColumnGap), y: 0 },
+    width: kanbanColumnWidth,
+    height: 'max(360px, calc(100cqh - 48px))',
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    focusable: false,
+    style: { pointerEvents: 'all' },
+    data: {
+      status,
+      title: t(`kanban.columns.${status}`, status),
+      tasks: tasksByStatus.value[status],
+    },
+  }))
+})
+
+const kanbanCanvasKey = computed(() => `${kanbanStore.selectedBoard}:${kanbanStore.filterStatus || 'all'}`)
+
 const visibleAssignees = computed(() => withDefaultAssignee(kanbanStore.assignees, kanbanStore.stats?.by_assignee || {}))
 
 const profileAvatarByName = computed<Record<string, ProfileAvatar | null>>(() => {
@@ -119,14 +158,25 @@ const filterAssigneeValue = computed({
   set: (v: string) => kanbanStore.setFilter('assignee', v || null),
 })
 
+function kanbanNodeColor(node: { data: KanbanCanvasNodeData }): string {
+  const colors: Record<KanbanTaskStatus, string> = {
+    triage: '#8b8f95',
+    todo: '#6f7782',
+    scheduled: '#667681',
+    ready: '#a66d23',
+    running: '#5b7f95',
+    blocked: '#b95d5d',
+    review: '#7b6f8b',
+    done: '#5f8b70',
+    archived: '#777b81',
+  }
+  return colors[node.data.status]
+}
+
 watch(() => route.query.board, async () => {
   if (!routeReady.value) return
   await applyBoardSelection(routeBoard(), false)
 })
-
-watch(visibleBoardStatuses, statuses => {
-  expandedStatusNames.value = [...statuses]
-}, { immediate: true })
 
 onMounted(async () => {
   await Promise.all([
@@ -171,7 +221,6 @@ async function handleApplyFilter() {
 
 async function handleStatusChipClick(status: KanbanTaskStatus | null) {
   kanbanStore.setFilter('status', status)
-  expandedStatusNames.value = status ? [status] : [...boardStatuses]
   await kanbanStore.fetchTasks()
 }
 
@@ -301,18 +350,6 @@ async function handleDispatch() {
     <!-- Stats bar -->
     <div v-if="kanbanStore.stats" class="stats-bar">
       <button
-        v-for="status in boardStatuses"
-        :key="status"
-        type="button"
-        class="stat-chip"
-        :class="[status, { active: kanbanStore.filterStatus === status }]"
-        :aria-pressed="kanbanStore.filterStatus === status"
-        @click="handleStatusChipClick(status)"
-      >
-        <span class="stat-count">{{ kanbanStore.stats.by_status[status] || 0 }}</span>
-        <span class="stat-label">{{ t(`kanban.columns.${status}`, status) }}</span>
-      </button>
-      <button
         type="button"
         class="stat-chip total"
         :class="{ active: !kanbanStore.filterStatus }"
@@ -322,6 +359,19 @@ async function handleDispatch() {
         <span class="stat-count">{{ kanbanStore.stats.total }}</span>
         <span class="stat-label">{{ t('kanban.stats.total') }}</span>
       </button>
+      <button
+        v-for="status in boardStatuses"
+        :key="status"
+        type="button"
+        class="stat-chip"
+        :class="[status, { active: kanbanStore.filterStatus === status }]"
+        :aria-pressed="kanbanStore.filterStatus === status"
+        @click="handleStatusChipClick(status)"
+      >
+        <span class="stat-indicator" aria-hidden="true" />
+        <span class="stat-count">{{ kanbanStore.stats.by_status[status] || 0 }}</span>
+        <span class="stat-label">{{ t(`kanban.columns.${status}`, status) }}</span>
+      </button>
     </div>
 
     <!-- Board -->
@@ -329,35 +379,50 @@ async function handleDispatch() {
       class="kanban-board-spin"
       :show="kanbanStore.loading && kanbanStore.tasks.length === 0"
     >
-      <div class="kanban-board">
-        <NCollapse v-model:expanded-names="expandedStatusNames">
-          <NCollapseItem
-            v-for="status in visibleBoardStatuses"
-            :key="status"
-            :title="`${t(`kanban.columns.${status}`, status)} (${tasksByStatus[status].length})`"
-            :name="status"
-            :class="['kanban-column', `status-${status}`]"
-          >
-            <template #header>
-              <span class="column-header" :class="`status-${status}`">
+      <div class="kanban-canvas">
+        <VueFlow
+          :key="kanbanCanvasKey"
+          id="hermes-kanban"
+          :nodes="kanbanCanvasNodes"
+          :default-viewport="kanbanCanvasViewport"
+          :min-zoom="0.35"
+          :max-zoom="1.25"
+          :nodes-draggable="false"
+          :nodes-connectable="false"
+          :elements-selectable="false"
+          :zoom-on-double-click="false"
+          class="kanban-flow"
+          :class="{ filtered: visibleBoardStatuses.length === 1 }"
+        >
+          <template #node-status="{ data }">
+            <section
+              :class="['kanban-column', `status-${data.status}`]"
+              :data-status="data.status"
+            >
+              <header class="column-header">
                 <span class="status-dot" aria-hidden="true" />
-                <span>{{ t(`kanban.columns.${status}`, status) }} ({{ tasksByStatus[status].length }})</span>
-              </span>
-            </template>
-            <div class="task-list" :class="`status-${status}`">
-              <KanbanTaskCard
-                v-for="task in tasksByStatus[status]"
-                :key="task.id"
-                :task="task"
-                :assignee-avatar="task.assignee ? profileAvatarByName[task.assignee] || null : null"
-                @click="handleTaskClick(task.id)"
-              />
-              <div v-if="tasksByStatus[status].length === 0" class="column-empty">
-                {{ t('kanban.noTasks') }}
+                <span class="column-title">{{ data.title }}</span>
+                <span class="column-count">{{ data.tasks.length }}</span>
+              </header>
+              <div class="task-list nodrag nopan nowheel">
+                <KanbanTaskCard
+                  v-for="task in data.tasks"
+                  :key="task.id"
+                  :task="task"
+                  :assignee-avatar="task.assignee ? profileAvatarByName[task.assignee] || null : null"
+                  @click="handleTaskClick(task.id)"
+                />
+                <div v-if="data.tasks.length === 0" class="column-empty">
+                  {{ t('kanban.noTasks') }}
+                </div>
               </div>
-            </div>
-          </NCollapseItem>
-        </NCollapse>
+            </section>
+          </template>
+
+          <Background :gap="24" :size="1.2" color="var(--border-color)" />
+          <MiniMap pannable zoomable :node-color="kanbanNodeColor" />
+          <Controls />
+        </VueFlow>
       </div>
     </NSpin>
 
@@ -411,68 +476,80 @@ async function handleDispatch() {
 
 .stats-bar {
   display: flex;
-  gap: 8px;
-  padding: 12px 20px;
+  gap: 4px;
+  padding: 8px 20px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border-bottom: 1px solid $border-light;
   flex-shrink: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .stat-chip,
-.column-header,
-.task-list {
-  --kanban-status-color: #64748b;
+.kanban-column {
+  --kanban-status-color: #7f858d;
 
   &.triage,
-  &.status-triage { --kanban-status-color: #94a3b8; }
+  &.status-triage { --kanban-status-color: #8b8f95; }
   &.todo,
-  &.status-todo { --kanban-status-color: #38bdf8; }
+  &.status-todo { --kanban-status-color: #6f7782; }
   &.scheduled,
-  &.status-scheduled { --kanban-status-color: #06b6d4; }
+  &.status-scheduled { --kanban-status-color: #667681; }
   &.ready,
-  &.status-ready { --kanban-status-color: #f59e0b; }
+  &.status-ready { --kanban-status-color: #a66d23; }
   &.running,
-  &.status-running { --kanban-status-color: #8b5cf6; }
+  &.status-running { --kanban-status-color: var(--accent-info); }
   &.blocked,
-  &.status-blocked { --kanban-status-color: #ef4444; }
+  &.status-blocked { --kanban-status-color: var(--error); }
   &.review,
-  &.status-review { --kanban-status-color: #ec4899; }
+  &.status-review { --kanban-status-color: #7b6f8b; }
   &.done,
-  &.status-done { --kanban-status-color: #22c55e; }
+  &.status-done { --kanban-status-color: var(--success); }
   &.archived,
-  &.status-archived { --kanban-status-color: #64748b; }
-  &.total { --kanban-status-color: #e2e8f0; }
+  &.status-archived { --kanban-status-color: #777b81; }
+  &.total { --kanban-status-color: $text-muted; }
 }
 
 .stat-chip {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border-radius: 16px;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: $radius-sm;
   font-size: 12px;
-  border: 1px solid $border-light;
-  border-inline-start: 3px solid var(--kanban-status-color);
+  border: 1px solid transparent;
   background: transparent;
   color: inherit;
   cursor: pointer;
   font: inherit;
   line-height: inherit;
+  white-space: nowrap;
 
   &:hover,
   &.active {
-    border-color: var(--kanban-status-color);
-    background-color: rgba(var(--accent-primary-rgb), 0.08);
-  }
-
-  &.active .stat-label,
-  &.active .stat-count {
-    color: var(--kanban-status-color);
+    border-color: $border-color;
+    background-color: $bg-secondary;
   }
 
   &:focus-visible {
-    outline: 2px solid var(--kanban-status-color);
+    outline: 2px solid $accent-primary;
     outline-offset: 2px;
   }
+}
+
+.stat-indicator {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--kanban-status-color);
 }
 
 .stat-count {
@@ -484,11 +561,13 @@ async function handleDispatch() {
   color: $text-muted;
 }
 
-.kanban-board {
-  padding: 14px 20px 20px;
+.kanban-canvas {
+  container-type: size;
+  position: relative;
   flex: 1;
+  height: 100%;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .kanban-board-spin {
@@ -509,35 +588,116 @@ async function handleDispatch() {
 }
 
 .column-header {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--kanban-status-color);
+  gap: 7px;
+  min-height: 43px;
+  padding: 10px 11px;
+  border-bottom: 1px solid $border-light;
+  color: $text-primary;
   font-weight: 600;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--kanban-status-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kanban-status-color) 18%, transparent);
   flex-shrink: 0;
+}
+
+.column-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-count {
+  min-width: 22px;
+  margin-inline-start: auto;
+  padding: 2px 6px;
+  border: 1px solid $border-light;
+  border-radius: 999px;
+  color: $text-muted;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.kanban-flow {
+  width: 100%;
+  height: 100%;
+  background: $bg-primary;
+
+  :deep(.vue-flow__node-status) {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    cursor: grab;
+  }
+
+  :deep(.vue-flow__node-status:active) {
+    cursor: grabbing;
+  }
+
+  :deep(.vue-flow__minimap) {
+    border: 1px solid $border-color;
+    border-radius: $radius-md;
+    background: $bg-card;
+  }
+
+  :deep(.vue-flow__controls) {
+    overflow: hidden;
+    border: 1px solid $border-color;
+    border-radius: $radius-md;
+    box-shadow: none;
+  }
+
+  :deep(.vue-flow__controls-button) {
+    border-bottom-color: $border-light;
+    background: $bg-card;
+    color: $text-primary;
+  }
+}
+
+.kanban-column {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid $border-light;
+  border-radius: $radius-md;
+  background: color-mix(in srgb, $bg-secondary 66%, $bg-card);
 }
 
 .task-list {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 8px;
-  border-inline-start: 2px solid var(--kanban-status-color);
-  padding-inline-start: 10px;
+  min-height: 0;
+  padding: 9px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
 }
 
 .column-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
+  flex: 1;
+  min-height: 72px;
+  border: 1px dashed $border-light;
+  border-radius: $radius-sm;
   font-size: 12px;
   color: $text-muted;
 }
@@ -563,6 +723,18 @@ async function handleDispatch() {
   .header-actions {
     flex-wrap: wrap;
     width: 100%;
+  }
+
+  .stats-bar {
+    gap: 6px;
+    padding-inline: 12px;
+  }
+
+  .kanban-flow {
+    :deep(.vue-flow__minimap) {
+      width: 112px;
+      height: 76px;
+    }
   }
 }
 </style>

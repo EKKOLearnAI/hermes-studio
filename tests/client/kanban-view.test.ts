@@ -82,15 +82,17 @@ vi.mock('@/components/hermes/kanban/KanbanTaskCard.vue', () => ({
   default: defineComponent({
     name: 'KanbanTaskCard',
     props: { task: { type: Object, required: true }, assigneeAvatar: { type: Object, required: false } },
-    template: '<div class="kanban-task-card-stub" :data-avatar-seed="assigneeAvatar?.seed || null">{{ task.title }}</div>',
+    emits: ['click'],
+    template: '<button class="kanban-task-card-stub" :data-avatar-seed="assigneeAvatar?.seed || null" @click="$emit(\'click\', task.id)">{{ task.title }}</button>',
   }),
 }))
 
 vi.mock('@/components/hermes/kanban/KanbanTaskDrawer.vue', () => ({
   default: defineComponent({
     name: 'KanbanTaskDrawer',
+    props: { taskId: { type: String, required: false } },
     emits: ['updated', 'close'],
-    template: '<button class="drawer-updated" @click="$emit(\'updated\')">drawer</button>',
+    template: '<button class="drawer-updated" :data-task-id="taskId || null" @click="$emit(\'updated\')">drawer</button>',
   }),
 }))
 
@@ -99,6 +101,51 @@ vi.mock('@/components/hermes/kanban/KanbanCreateForm.vue', () => ({
     name: 'KanbanCreateForm',
     emits: ['created', 'close'],
     template: '<button class="form-created" @click="$emit(\'created\')">form</button>',
+  }),
+}))
+
+vi.mock('@vue-flow/core', () => ({
+  VueFlow: defineComponent({
+    name: 'VueFlow',
+    props: {
+      nodes: { type: Array, default: () => [] },
+      defaultViewport: { type: Object, required: false },
+    },
+    template: `
+      <div class="vue-flow-stub" :data-zoom="defaultViewport?.zoom">
+        <div
+          v-for="node in nodes"
+          :key="node.id"
+          class="vue-flow-node-stub"
+          :data-position-x="node.position.x"
+          :data-pointer-events="node.style?.pointerEvents"
+        >
+          <slot name="node-status" :data="node.data" />
+        </div>
+        <slot />
+      </div>
+    `,
+  }),
+}))
+
+vi.mock('@vue-flow/background', () => ({
+  Background: defineComponent({
+    name: 'Background',
+    template: '<div class="vue-flow-background-stub" />',
+  }),
+}))
+
+vi.mock('@vue-flow/controls', () => ({
+  Controls: defineComponent({
+    name: 'Controls',
+    template: '<div class="vue-flow-controls-stub" />',
+  }),
+}))
+
+vi.mock('@vue-flow/minimap', () => ({
+  MiniMap: defineComponent({
+    name: 'MiniMap',
+    template: '<div class="vue-flow-minimap-stub" />',
   }),
 }))
 
@@ -137,17 +184,6 @@ vi.mock('naive-ui', () => ({
   NSpin: defineComponent({
     name: 'NSpin',
     template: '<div class="n-spin-stub"><slot /></div>',
-  }),
-  NCollapse: defineComponent({
-    name: 'NCollapse',
-    props: { expandedNames: { type: Array, required: false }, defaultExpandedNames: { type: Array, required: false } },
-    emits: ['update:expandedNames'],
-    template: '<div class="n-collapse-stub" :data-expanded="JSON.stringify(expandedNames ?? null)" :data-default-expanded="JSON.stringify(defaultExpandedNames ?? null)"><slot /></div>',
-  }),
-  NCollapseItem: defineComponent({
-    name: 'NCollapseItem',
-    props: { title: { type: String, required: false }, name: { type: String, required: false } },
-    template: '<section class="n-collapse-item-stub" :data-name="name"><slot /></section>',
   }),
 }))
 
@@ -214,7 +250,31 @@ describe('KanbanView', () => {
     expect(mockRecoverSelectedBoard).toHaveBeenCalledWith('project-a')
     expect(mockRefreshAll).toHaveBeenCalledOnce()
     expect(routerReplace).not.toHaveBeenCalled()
-    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["triage","todo","scheduled","ready","running","blocked","review","done","archived"]')
+    expect(wrapper.findAll('.kanban-column')).toHaveLength(9)
+    expect(wrapper.findAll('.kanban-column').map(column => column.attributes('data-status'))).toEqual([
+      'triage',
+      'todo',
+      'scheduled',
+      'ready',
+      'running',
+      'blocked',
+      'review',
+      'done',
+      'archived',
+    ])
+    expect(wrapper.find('.vue-flow-stub').attributes('data-zoom')).toBe('0.92')
+    expect(wrapper.findAll('.vue-flow-node-stub').map(node => node.attributes('data-position-x'))).toEqual([
+      '0',
+      '344',
+      '688',
+      '1032',
+      '1376',
+      '1720',
+      '2064',
+      '2408',
+      '2752',
+    ])
+    expect(wrapper.findAll('.vue-flow-node-stub').every(node => node.attributes('data-pointer-events') === 'all')).toBe(true)
 
     await wrapper.find('.drawer-updated').trigger('click')
     expect(mockFetchTasks).toHaveBeenCalledTimes(1)
@@ -252,16 +312,27 @@ describe('KanbanView', () => {
     expect(wrapper.find('.kanban-task-card-stub').attributes('data-avatar-seed')).toBe('alice-seed')
   })
 
+  it('keeps task cards clickable and task lists independently scrollable inside the canvas', async () => {
+    const wrapper = mount(KanbanView)
+    await flushPromises()
+
+    const taskList = wrapper.find('.task-list')
+    expect(taskList.classes()).toEqual(expect.arrayContaining(['nodrag', 'nopan', 'nowheel']))
+
+    await wrapper.find('.kanban-task-card-stub').trigger('click')
+    expect(wrapper.find('.drawer-updated').attributes('data-task-id')).toBe('task-1')
+  })
+
   it('filters the visible board columns from stats chips', async () => {
     storeState.filterStatus = 'done'
 
     const wrapper = mount(KanbanView)
     await flushPromises()
 
-    const columns = wrapper.findAll('.n-collapse-item-stub')
-    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["done"]')
+    const columns = wrapper.findAll('.kanban-column')
+    expect(wrapper.find('.kanban-flow').classes()).toContain('filtered')
     expect(columns).toHaveLength(1)
-    expect(columns[0].attributes('data-name')).toBe('done')
+    expect(columns[0].attributes('data-status')).toBe('done')
     expect(wrapper.text()).toContain('Task two')
     expect(wrapper.text()).not.toContain('Task one')
 

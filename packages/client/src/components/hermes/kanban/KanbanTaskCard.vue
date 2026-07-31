@@ -37,12 +37,26 @@ const priorityText = computed(() => {
 </script>
 
 <template>
-  <div class="kanban-task-card" :class="`status-${task.status}`" @click="emit('click', task.id)">
+  <button
+    type="button"
+    class="kanban-task-card"
+    :class="`status-${task.status}`"
+    :aria-label="task.title"
+    @click="emit('click', task.id)"
+  >
+    <div class="card-heading">
+      <span class="status-marker" aria-hidden="true" />
+      <span class="task-id">{{ task.id }}</span>
+      <span v-if="task.priority >= 2" class="priority" :class="priorityLabel">
+        <span class="priority-dot" aria-hidden="true" />
+        {{ priorityText }}
+      </span>
+    </div>
     <div class="card-title">{{ task.title }}</div>
-    <div class="card-meta">
+    <div class="card-footer">
       <NTooltip v-if="task.assignee" trigger="hover">
         <template #trigger>
-          <span class="meta-tag assignee-tag">
+          <span class="assignee">
             <ProfileAvatar
               class="assignee-profile-avatar"
               :name="task.assignee"
@@ -50,110 +64,165 @@ const priorityText = computed(() => {
               :size="18"
               aria-hidden="true"
             />
-            <span>{{ task.assignee }}</span>
+            <span class="assignee-name">{{ task.assignee }}</span>
           </span>
         </template>
         {{ t('kanban.card.assigneeTooltip') }}
       </NTooltip>
-      <span v-if="task.priority >= 2" class="meta-tag priority-tag" :class="priorityLabel">{{ priorityText }}</span>
-      <span class="meta-time">{{ timeAgo }}</span>
+      <span class="card-time">{{ timeAgo }}</span>
     </div>
-    <div v-if="task.body" class="card-body-preview">{{ task.body.slice(0, 80) }}{{ task.body.length > 80 ? '...' : '' }}</div>
-  </div>
+  </button>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
 
 .kanban-task-card {
-  --kanban-card-status-color: #64748b;
+  --kanban-card-status-color: #7f858d;
+  appearance: none;
+  width: 100%;
+  display: block;
   background-color: $bg-card;
   border: 1px solid $border-color;
-  border-inline-start: 3px solid var(--kanban-card-status-color);
   border-radius: $radius-md;
-  padding: 12px;
+  padding: 12px 13px;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   cursor: pointer;
-  transition: border-color $transition-fast, box-shadow $transition-fast;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.035);
+  transition:
+    background-color $transition-fast,
+    border-color $transition-fast,
+    box-shadow $transition-fast,
+    transform $transition-fast;
 
-  &.status-triage { --kanban-card-status-color: #94a3b8; }
-  &.status-todo { --kanban-card-status-color: #38bdf8; }
-  &.status-scheduled { --kanban-card-status-color: #06b6d4; }
-  &.status-ready { --kanban-card-status-color: #f59e0b; }
-  &.status-running { --kanban-card-status-color: #8b5cf6; }
-  &.status-blocked { --kanban-card-status-color: #ef4444; }
-  &.status-review { --kanban-card-status-color: #ec4899; }
-  &.status-done { --kanban-card-status-color: #22c55e; }
-  &.status-archived { --kanban-card-status-color: #64748b; }
+  &.status-triage { --kanban-card-status-color: #8b8f95; }
+  &.status-todo { --kanban-card-status-color: #6f7782; }
+  &.status-scheduled { --kanban-card-status-color: #667681; }
+  &.status-ready { --kanban-card-status-color: #a66d23; }
+  &.status-running { --kanban-card-status-color: var(--accent-info); }
+  &.status-blocked { --kanban-card-status-color: var(--error); }
+  &.status-review { --kanban-card-status-color: #7b6f8b; }
+  &.status-done { --kanban-card-status-color: var(--success); }
+  &.status-archived { --kanban-card-status-color: #777b81; }
 
   &:hover {
-    border-color: var(--kanban-card-status-color);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    background-color: $bg-card-hover;
+    border-color: color-mix(in srgb, var(--kanban-card-status-color) 52%, $border-color);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.07);
+    transform: translateY(-1px);
   }
+
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--kanban-card-status-color) 72%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+.card-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  min-height: 16px;
+}
+
+.status-marker {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--kanban-card-status-color);
+}
+
+.task-id {
+  min-width: 0;
+  overflow: hidden;
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 10.5px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-title {
-  font-size: 13px;
+  margin-top: 8px;
+  font-size: 14px;
   font-weight: 600;
   color: $text-primary;
-  line-height: 1.4;
+  line-height: 1.45;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
-.card-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-
-.meta-tag {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 500;
-}
-
-.assignee-tag {
+.priority {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: rgba(var(--accent-primary-rgb), 0.1);
-  color: $accent-primary;
-  padding-inline-start: 2px;
+  margin-inline-start: auto;
+  color: $text-secondary;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+
+  &.high .priority-dot {
+    background: $error;
+  }
+
+  &.medium .priority-dot {
+    background: $warning;
+  }
+}
+
+.priority-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: $text-muted;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+  margin-top: 12px;
+}
+
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: calc(100% - 64px);
+  gap: 6px;
+  color: $text-secondary;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.assignee-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .assignee-profile-avatar {
-  box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.28);
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px $border-light;
 }
 
-.priority-tag {
-  &.high {
-    background: rgba(var(--error-rgb), 0.12);
-    color: $error;
-  }
-
-  &.medium {
-    background: rgba(var(--warning-rgb), 0.12);
-    color: $warning;
-  }
-
-  &.low {
-    background: rgba(var(--success-rgb), 0.12);
-    color: $success;
-  }
-}
-
-.meta-time {
+.card-time {
+  flex: 0 0 auto;
   font-size: 11px;
   color: $text-muted;
   margin-inline-start: auto;
-}
-
-.card-body-preview {
-  font-size: 12px;
-  color: $text-muted;
-  margin-top: 6px;
-  line-height: 1.4;
+  white-space: nowrap;
 }
 </style>
