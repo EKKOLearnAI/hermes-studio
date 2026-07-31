@@ -168,6 +168,7 @@ export interface JoinResult {
 // ─── Socket.IO Client ──────────────────────────────────────
 
 let socket: ReturnType<typeof io> | null = null
+const GROUP_CHAT_MENTION_PROTOCOL_VERSION = 1
 
 export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
     if (socket?.connected) return socket
@@ -185,6 +186,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
             description: opts?.description || localStorage.getItem('gc_user_description') || undefined,
             authUserId: opts?.authUserId,
             localCredential,
+            mentionProtocolVersion: GROUP_CHAT_MENTION_PROTOCOL_VERSION,
         },
         transports: ['websocket', 'polling'],
         reconnection: true,

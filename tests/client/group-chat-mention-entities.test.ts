@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyMentionSelection,
+  mentionsForSubmission,
   reconcileMentionEdit,
   type DraftMention,
 } from '@/components/hermes/group-chat/mention-entities'
@@ -40,5 +41,13 @@ describe('group chat structured mention entities', () => {
 
   it('does not invent entities for mention-shaped text typed or pasted by hand', () => {
     expect(reconcileMentionEdit('', [], '@Worker continue')).toEqual([])
+  })
+
+  it('omits structured metadata when a submission has no picker-backed entities', () => {
+    expect(mentionsForSubmission([])).toBeUndefined()
+  })
+
+  it('preserves picker-backed entities when preparing a submission', () => {
+    expect(mentionsForSubmission([worker])).toEqual([worker])
   })
 })

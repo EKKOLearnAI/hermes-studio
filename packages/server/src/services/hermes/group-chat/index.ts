@@ -62,6 +62,7 @@ export type GroupChatMention =
     | { type: 'all'; displayName?: string; start?: number; length?: number }
 
 const MAX_STRUCTURED_MENTIONS = 100
+const GROUP_CHAT_MENTION_PROTOCOL_VERSION = 1
 
 function normalizeStructuredMentionShape(value: unknown): GroupChatMention[] | undefined {
     if (value === undefined) return undefined
@@ -4702,6 +4703,15 @@ export class GroupChatServer {
         try {
             if (member?.source === 'agent' && data.mentions !== undefined) {
                 throw new Error('Structured mentions are only accepted from human clients')
+            }
+            if (member?.source !== 'agent'
+                && data.mentions !== undefined
+                && Number(socket.handshake.auth?.mentionProtocolVersion) !== GROUP_CHAT_MENTION_PROTOCOL_VERSION) {
+                ack?.({
+                    error: 'Group Chat was updated. Refresh this page before sending structured mentions.',
+                    code: 'GROUP_CHAT_CLIENT_REFRESH_REQUIRED',
+                })
+                return
             }
             mentions = normalizeStructuredMentions(data.mentions, roomAgents, userId, mentionText)
         } catch (err: any) {

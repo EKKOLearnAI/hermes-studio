@@ -6,6 +6,10 @@ export type MentionSelection =
     | { type: 'agent'; participantId: string; name: string }
     | { type: 'all'; name: string }
 
+export function mentionsForSubmission(mentions: readonly DraftMention[]): DraftMention[] | undefined {
+    return mentions.length > 0 ? [...mentions] : undefined
+}
+
 function renderedMention(mention: DraftMention): string {
     return `@${mention.displayName}`
 }

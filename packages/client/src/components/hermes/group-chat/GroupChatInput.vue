@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import { buildMentionOptions, type MentionOption } from './mention-options'
-import { applyMentionSelection, reconcileMentionEdit, type DraftMention } from './mention-entities'
+import { applyMentionSelection, mentionsForSubmission, reconcileMentionEdit, type DraftMention } from './mention-entities'
 import type { GroupChatMention } from '@/api/hermes/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
@@ -331,7 +331,7 @@ function handleSend() {
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
 
-    const mentions = reconcileMentionEdit(inputText.value, draftMentions.value, content)
+    const mentions = mentionsForSubmission(reconcileMentionEdit(inputText.value, draftMentions.value, content))
     emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions)
     inputText.value = ''
     previousInputText.value = ''

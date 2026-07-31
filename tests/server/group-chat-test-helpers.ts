@@ -89,7 +89,7 @@ export async function connectGroupChatClient(
     transports: ['websocket'],
     forceNew: true,
     reconnection: false,
-    auth: { userId, name, ...auth },
+    auth: { userId, name, mentionProtocolVersion: 1, ...auth },
     autoConnect: false,
   })
   const bufferedSocket = socket as BufferedClientSocket

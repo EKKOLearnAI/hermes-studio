@@ -45,6 +45,58 @@ describe('group chat baseline behavior', () => {
     expect(joined.members.map((m: any) => m.name)).toContain('Alice')
   })
 
+  it('rejects stale clients that send structured mention metadata after a server upgrade', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'ROOM1')
+    const staleClient = await connectGroupChatClient(port, 'user-stale', 'Stale Client', {
+      mentionProtocolVersion: undefined,
+    })
+    harness.sockets.push(staleClient)
+    await emitAck(staleClient, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const ack = await emitAck<any>(staleClient, 'message', {
+      roomId: 'room-1',
+      id: 'stale-structured-message',
+      content: '@Worker continue',
+      mentions: [],
+    })
+
+    expect(ack).toEqual({
+      error: expect.stringMatching(/refresh/i),
+      code: 'GROUP_CHAT_CLIENT_REFRESH_REQUIRED',
+    })
+    expect(storage.getMessage('stale-structured-message')).toBeNull()
+
+    const legacyTextAck = await emitAck<any>(staleClient, 'message', {
+      roomId: 'room-1',
+      id: 'legacy-text-message',
+      content: 'plain legacy text',
+    })
+    expect(legacyTextAck).toEqual({ id: 'legacy-text-message' })
+    expect(storage.getMessage('legacy-text-message')).toMatchObject({
+      content: 'plain legacy text',
+    })
+  })
+
+  it('preserves explicit-empty fail-closed semantics for a current structured client', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'ROOM1')
+    const currentClient = await connectGroupChatClient(port, 'user-current', 'Current Client')
+    harness.sockets.push(currentClient)
+    await emitAck(currentClient, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const ack = await emitAck<any>(currentClient, 'message', {
+      roomId: 'room-1',
+      id: 'current-empty-structured-message',
+      content: '@Worker do not route this text fallback',
+      mentions: [],
+    })
+
+    expect(ack).toEqual({ id: 'current-empty-structured-message' })
+    expect(storage.getMessage('current-empty-structured-message')).toMatchObject({ mentions: [] })
+    expect(storage.listHandoffJobs('room-1')).toEqual([])
+  })
+
   it('persists a sent message and broadcasts it to other room members', async () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1', 'ROOM1')
