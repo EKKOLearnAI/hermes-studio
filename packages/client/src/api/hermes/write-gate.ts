@@ -36,6 +36,11 @@ export interface PendingWriteReview {
   notes: PendingWriteReviewNote[]
 }
 
+export interface PendingWriteActionResult {
+  success: boolean
+  output: string
+}
+
 export async function fetchPendingWrites(): Promise<PendingWritesResponse> {
   return request<PendingWritesResponse>('/api/hermes/write-gate/pending')
 }
@@ -60,15 +65,15 @@ export async function fetchPendingWriteReview(subsystem: WriteGateSubsystem, id:
   }
 }
 
-export async function approvePendingWrite(subsystem: WriteGateSubsystem, id: string): Promise<{ output: string }> {
-  return request<{ success: boolean; output: string }>(
+export async function approvePendingWrite(subsystem: WriteGateSubsystem, id: string): Promise<PendingWriteActionResult> {
+  return request<PendingWriteActionResult>(
     `/api/hermes/write-gate/pending/${encodeURIComponent(subsystem)}/${encodeURIComponent(id)}/approve`,
     { method: 'POST' },
   )
 }
 
-export async function rejectPendingWrite(subsystem: WriteGateSubsystem, id: string): Promise<{ output: string }> {
-  return request<{ success: boolean; output: string }>(
+export async function rejectPendingWrite(subsystem: WriteGateSubsystem, id: string): Promise<PendingWriteActionResult> {
+  return request<PendingWriteActionResult>(
     `/api/hermes/write-gate/pending/${encodeURIComponent(subsystem)}/${encodeURIComponent(id)}/reject`,
     { method: 'POST' },
   )

@@ -15,6 +15,20 @@ async function loadService() {
   return import('../../packages/server/src/services/hermes/write-gate')
 }
 
+async function configureFakeApprovalRuntime(lines: string[]) {
+  const agentRoot = join(hermesHome, 'agent')
+  await mkdir(join(agentRoot, 'tools'), { recursive: true })
+  await mkdir(join(agentRoot, 'hermes_cli'), { recursive: true })
+  await writeFile(join(agentRoot, 'tools', 'write_approval.py'), '', 'utf-8')
+  await writeFile(join(agentRoot, 'hermes_cli', 'write_approval_commands.py'), '', 'utf-8')
+
+  const fakePython = join(hermesHome, 'fake-python')
+  await writeFile(fakePython, [...lines, ''].join('\n'), 'utf-8')
+  await chmod(fakePython, 0o755)
+  process.env.HERMES_AGENT_ROOT = agentRoot
+  process.env.HERMES_AGENT_CLI_PYTHON = fakePython
+}
+
 beforeEach(async () => {
   hermesHome = await mkdtemp(join(tmpdir(), 'hermes-write-gate-'))
 })
@@ -135,5 +149,56 @@ describe('write gate service', () => {
     const { isWriteGateSupported } = await loadService()
 
     expect(isWriteGateSupported()).toBe(true)
+  })
+
+  it('uses the structured Python result and treats empty output as failure', async () => {
+    await configureFakeApprovalRuntime([
+      '#!/bin/sh',
+      'case "$6" in',
+      '  approved) printf \'%s\\n\' \'{"success":true,"output":"Approved 1 skills write(s)."}\' ;;',
+      '  missing) printf \'%s\\n\' \'{"success":false,"output":"No pending skills writes."}\' ;;',
+      '  empty) printf \'%s\\n\' \'{"success":true,"output":""}\' ;;',
+      'esac',
+    ])
+
+    const { approvePendingWrite } = await loadService()
+
+    await expect(approvePendingWrite('default', 'skills', 'approved')).resolves.toEqual({
+      success: true,
+      output: 'Approved 1 skills write(s).',
+    })
+    await expect(approvePendingWrite('default', 'skills', 'missing')).resolves.toEqual({
+      success: false,
+      output: 'No pending skills writes.',
+    })
+    await expect(approvePendingWrite('default', 'skills', 'empty')).resolves.toEqual({
+      success: false,
+      output: '',
+    })
+  })
+
+  it('serializes approval actions within the same profile', async () => {
+    await configureFakeApprovalRuntime([
+      '#!/bin/sh',
+      'guard="$HERMES_HOME/.write-gate-action-running"',
+      'if ! mkdir "$guard" 2>/dev/null; then',
+      '  printf \'%s\\n\' \'{"success":false,"output":"overlapping approval"}\'',
+      '  exit 0',
+      'fi',
+      'sleep 0.05',
+      'rmdir "$guard"',
+      'printf \'%s\\n\' \'{"success":true,"output":"resolved"}\'',
+    ])
+
+    const { approvePendingWrite, rejectPendingWrite } = await loadService()
+    const results = await Promise.all([
+      approvePendingWrite('default', 'skills', 'first'),
+      rejectPendingWrite('default', 'memory', 'second'),
+    ])
+
+    expect(results).toEqual([
+      { success: true, output: 'resolved' },
+      { success: true, output: 'resolved' },
+    ])
   })
 })

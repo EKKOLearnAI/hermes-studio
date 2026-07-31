@@ -52,6 +52,18 @@ export interface PendingWriteReview {
   notes: PendingWriteReviewNote[]
 }
 
+export interface PendingWriteActionResult {
+  success: boolean
+  output: string
+}
+
+interface PythonActionResult {
+  output: string
+  success?: boolean
+}
+
+const pendingWriteActionQueues = new Map<string, Promise<unknown>>()
+
 const PYTHON_HELPER = String.raw`
 import json
 import os
@@ -185,6 +197,7 @@ if action == "diff":
             "notes": [],
         }, ensure_ascii=False)
 elif action in {"approve", "reject"}:
+    pending_before = wa.get_pending(wa_subsystem, pending_id)
     memory_store = None
     if subsystem == "memory" and action == "approve":
         from tools.memory_tool import MemoryStore
@@ -195,10 +208,14 @@ elif action in {"approve", "reject"}:
         [action, pending_id],
         memory_store=memory_store,
     )
+    success = pending_before is not None and wa.get_pending(wa_subsystem, pending_id) is None
 else:
     raise SystemExit(f"invalid action: {action}")
 
-print(json.dumps({"output": output}, ensure_ascii=False))
+result = {"output": output}
+if action in {"approve", "reject"}:
+    result["success"] = success
+print(json.dumps(result, ensure_ascii=False))
 `
 
 function assertSubsystem(value: string): asserts value is WriteGateSubsystem {
@@ -410,7 +427,7 @@ async function runPythonAction(
   subsystem: WriteGateSubsystem,
   action: 'approve' | 'reject' | 'diff',
   pendingId: string,
-): Promise<string> {
+): Promise<PythonActionResult> {
   assertSubsystem(subsystem)
   assertPendingId(pendingId)
   if (!isWriteGateSupported()) {
@@ -435,7 +452,10 @@ async function runPythonAction(
     },
   )
   const parsed = JSON.parse(String(stdout || '{}'))
-  return typeof parsed.output === 'string' ? parsed.output : ''
+  return {
+    output: typeof parsed.output === 'string' ? parsed.output : '',
+    success: typeof parsed.success === 'boolean' ? parsed.success : undefined,
+  }
 }
 
 export async function getPendingWriteDiff(profile: string, subsystem: string, pendingId: string): Promise<string> {
@@ -444,7 +464,7 @@ export async function getPendingWriteDiff(profile: string, subsystem: string, pe
 
 export async function getPendingWriteReview(profile: string, subsystem: string, pendingId: string): Promise<PendingWriteReview> {
   assertSubsystem(subsystem)
-  const output = await runPythonAction(profile, subsystem, 'diff', pendingId)
+  const { output } = await runPythonAction(profile, subsystem, 'diff', pendingId)
   try {
     const parsed = JSON.parse(output)
     return normalizePendingWriteReview(parsed, subsystem)
@@ -462,14 +482,51 @@ export async function getPendingWriteReview(profile: string, subsystem: string, 
   }
 }
 
-export async function approvePendingWrite(profile: string, subsystem: string, pendingId: string): Promise<string> {
-  assertSubsystem(subsystem)
-  return runPythonAction(profile, subsystem, 'approve', pendingId)
+function serializePendingWriteAction<T>(profile: string, action: () => Promise<T>): Promise<T> {
+  // Serialize by the resolved state directory so aliases that fall back to
+  // the same profile cannot launch competing Python writers.
+  const key = getProfileDir(profile || 'default')
+  const previous = pendingWriteActionQueues.get(key) || Promise.resolve()
+  const current = previous.catch(() => undefined).then(action)
+  pendingWriteActionQueues.set(key, current)
+  return current.finally(() => {
+    if (pendingWriteActionQueues.get(key) === current) {
+      pendingWriteActionQueues.delete(key)
+    }
+  })
 }
 
-export async function rejectPendingWrite(profile: string, subsystem: string, pendingId: string): Promise<string> {
+async function resolvePendingWrite(
+  profile: string,
+  subsystem: string,
+  action: 'approve' | 'reject',
+  pendingId: string,
+): Promise<PendingWriteActionResult> {
   assertSubsystem(subsystem)
-  return runPythonAction(profile, subsystem, 'reject', pendingId)
+  assertPendingId(pendingId)
+  return serializePendingWriteAction(profile, async () => {
+    const result = await runPythonAction(profile, subsystem, action, pendingId)
+    return {
+      success: result.success === true && result.output.trim().length > 0,
+      output: result.output,
+    }
+  })
+}
+
+export async function approvePendingWrite(
+  profile: string,
+  subsystem: string,
+  pendingId: string,
+): Promise<PendingWriteActionResult> {
+  return resolvePendingWrite(profile, subsystem, 'approve', pendingId)
+}
+
+export async function rejectPendingWrite(
+  profile: string,
+  subsystem: string,
+  pendingId: string,
+): Promise<PendingWriteActionResult> {
+  return resolvePendingWrite(profile, subsystem, 'reject', pendingId)
 }
 
 function normalizePendingWriteReview(raw: any, subsystem: WriteGateSubsystem): PendingWriteReview {

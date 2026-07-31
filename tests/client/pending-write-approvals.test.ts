@@ -6,6 +6,8 @@ const mockFetchPendingWrites = vi.hoisted(() => vi.fn())
 const mockFetchPendingWriteReview = vi.hoisted(() => vi.fn())
 const mockApprovePendingWrite = vi.hoisted(() => vi.fn())
 const mockRejectPendingWrite = vi.hoisted(() => vi.fn())
+const mockMessageSuccess = vi.hoisted(() => vi.fn())
+const mockMessageError = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/write-gate', () => ({
   fetchPendingWrites: mockFetchPendingWrites,
@@ -25,8 +27,8 @@ vi.mock('naive-ui', async () => {
   return {
     ...actual,
     useMessage: () => ({
-      success: vi.fn(),
-      error: vi.fn(),
+      success: mockMessageSuccess,
+      error: mockMessageError,
     }),
   }
 })
@@ -39,8 +41,8 @@ function mountComponent() {
       stubs: {
         NTag: { template: '<span><slot /></span>' },
         NButton: {
-          props: ['loading'],
-          template: '<button class="n-button" @click="$emit(\'click\')"><slot /></button>',
+          props: ['loading', 'disabled'],
+          template: '<button class="n-button" :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
         },
         MarkdownRenderer: {
           props: ['content'],
@@ -64,8 +66,8 @@ describe('PendingWriteApprovals', () => {
       diff: '-old\n+new',
       notes: [],
     })
-    mockApprovePendingWrite.mockResolvedValue({ output: 'approved' })
-    mockRejectPendingWrite.mockResolvedValue({ output: 'rejected' })
+    mockApprovePendingWrite.mockResolvedValue({ success: true, output: 'approved' })
+    mockRejectPendingWrite.mockResolvedValue({ success: true, output: 'rejected' })
   })
 
   it('shows an unsupported state for older Hermes Agent versions', async () => {
@@ -159,5 +161,96 @@ describe('PendingWriteApprovals', () => {
     expect(mockFetchPendingWriteReview).toHaveBeenCalledWith('skills', 'skill123')
     expect(wrapper.find('.markdown-renderer-stub').text()).toContain('skills.writeApprovalCurrentFile')
     expect(wrapper.find('.markdown-renderer-stub').text()).toContain('skills.writeApprovalPatchOldStringMissing')
+  })
+
+  it('shows a localized failure and keeps a write when approval fails', async () => {
+    mockFetchPendingWrites.mockResolvedValue({
+      records: [
+        {
+          id: 'skill123',
+          subsystem: 'skills',
+          action: 'patch',
+          summary: 'patch demo skill',
+          origin: 'foreground',
+          created_at: 1765440060,
+          payload: {},
+        },
+      ],
+      counts: { memory: 0, skills: 1 },
+      supported: true,
+    })
+    mockApprovePendingWrite.mockResolvedValue({
+      success: false,
+      output: 'No pending skills writes.',
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const approveButton = wrapper.findAll('.n-button')
+      .find(button => button.text() === 'skills.writeApprovalApprove')
+    await approveButton?.trigger('click')
+    await flushPromises()
+
+    expect(mockMessageError).toHaveBeenCalledWith(
+      'skills.writeApprovalActionFailed: No pending skills writes.',
+    )
+    expect(mockMessageSuccess).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('patch demo skill')
+  })
+
+  it('blocks additional approvals while a write is being resolved', async () => {
+    mockFetchPendingWrites.mockResolvedValue({
+      records: [
+        {
+          id: 'skill-one',
+          subsystem: 'skills',
+          action: 'patch',
+          summary: 'first skill patch',
+          origin: 'foreground',
+          created_at: 1765440060,
+          payload: {},
+        },
+        {
+          id: 'skill-two',
+          subsystem: 'skills',
+          action: 'patch',
+          summary: 'second skill patch',
+          origin: 'foreground',
+          created_at: 1765440120,
+          payload: {},
+        },
+      ],
+      counts: { memory: 0, skills: 2 },
+      supported: true,
+    })
+
+    let finishApproval!: (result: { success: boolean; output: string }) => void
+    mockApprovePendingWrite.mockImplementation(() => new Promise((resolve) => {
+      finishApproval = resolve
+    }))
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const approveButtons = wrapper.findAll('.n-button')
+      .filter(button => button.text() === 'skills.writeApprovalApprove')
+    const rejectButtons = wrapper.findAll('.n-button')
+      .filter(button => button.text() === 'skills.writeApprovalReject')
+
+    await approveButtons[0].trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(mockApprovePendingWrite).toHaveBeenCalledTimes(1)
+    expect(approveButtons.every(button => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(rejectButtons.every(button => button.attributes('disabled') !== undefined)).toBe(true)
+
+    await approveButtons[1].trigger('click')
+    await rejectButtons[1].trigger('click')
+    expect(mockApprovePendingWrite).toHaveBeenCalledTimes(1)
+    expect(mockRejectPendingWrite).not.toHaveBeenCalled()
+
+    finishApproval({ success: true, output: 'Approved 1 skills write(s).' })
+    await flushPromises()
   })
 })
