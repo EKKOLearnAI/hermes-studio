@@ -135,9 +135,12 @@ const pageSidebarExpanded = computed(
   () => !props.standalone && currentMode.value === "chat" && showSessions.value,
 );
 let mobileQuery: MediaQueryList | null = null;
-const isMobile = ref(false);
+const isMobile = ref(
+  typeof window !== "undefined" &&
+  window.matchMedia("(max-width: 768px)").matches,
+);
 const toolPanelStyle = computed(() => ({
-  width: isMobile.value ? "100%" : `${toolPanelWidth.value}px`,
+  width: isMobile.value ? "100%" : `min(${toolPanelWidth.value}px, 100%)`,
 }));
 
 function openRealtimeVoice() {
@@ -3535,6 +3538,8 @@ async function handleSessionModelCustomSubmit() {
   flex: 0 0 auto;
   min-width: 320px;
   max-width: 100%;
+  max-inline-size: 100%;
+  box-sizing: border-box;
   background: $bg-card;
   border-inline-start: 1px solid $border-color;
   display: flex;
@@ -3696,7 +3701,10 @@ async function handleSessionModelCustomSubmit() {
     z-index: 70;
     left: 0;
     width: 100% !important;
+    max-width: 100vw !important;
+    max-inline-size: 100vw;
     min-width: 0;
+    box-sizing: border-box;
     border-inline-start: none;
     box-shadow: none;
   }

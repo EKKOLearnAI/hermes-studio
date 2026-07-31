@@ -100,6 +100,8 @@ export interface SubagentStreamEntry {
   kind: 'text' | 'thinking' | 'tool' | 'status'
   timestamp: number
   text?: string
+  reasoning?: string
+  reasoningEntryId?: string
   toolName?: string
   toolArgs?: unknown
   status?: SubagentStreamStatus | 'started'
@@ -183,6 +185,19 @@ function appendSubagentText(
   return trimSubagentEntries(entries)
 }
 
+function subagentReasoningSinceLastTool(
+  entries: SubagentStreamEntry[],
+): { id: string; text: string } | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.kind === 'tool') return null
+    if (entry.kind === 'thinking' && entry.text?.trim()) {
+      return { id: entry.id, text: entry.text }
+    }
+  }
+  return null
+}
+
 export function reduceSubagentStream(
   current: SubagentStream | undefined,
   sessionId: string,
@@ -229,15 +244,41 @@ export function reduceSubagentStream(
       entries.push({ id: entryId, kind: 'status', status: 'started', timestamp, text: goal || undefined })
     }
   } else if (eventName === 'subagent.text' && rawText) {
-    appendSubagentText(entries, { id: entryId, kind: 'text', timestamp, text: rawText })
+    const reasoning = subagentReasoningSinceLastTool(entries)
+    appendSubagentText(entries, {
+      id: entryId,
+      kind: 'text',
+      timestamp,
+      text: rawText,
+      reasoning: reasoning?.text,
+      reasoningEntryId: reasoning?.id,
+    })
   } else if (eventName === 'subagent.thinking' && rawText) {
     appendSubagentText(entries, { id: entryId, kind: 'thinking', timestamp, text: rawText })
   } else if (eventName === 'subagent.tool') {
+    const reasoning = subagentReasoningSinceLastTool(entries)
+    if (reasoning) {
+      // A tool boundary is the final owner for this reasoning segment. Text
+      // deltas can arrive before the tool call is announced, so revoke their
+      // provisional ownership to avoid rendering the same reasoning twice.
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i]
+        if (entry.kind !== 'text' || entry.reasoningEntryId !== reasoning.id) continue
+        const {
+          reasoning: _reasoning,
+          reasoningEntryId: _reasoningEntryId,
+          ...textEntry
+        } = entry
+        entries[i] = textEntry
+      }
+    }
     entries.push({
       id: entryId,
       kind: 'tool',
       timestamp,
       text: text || undefined,
+      reasoning: reasoning?.text,
+      reasoningEntryId: reasoning?.id,
       toolName: toolName || undefined,
       toolArgs: (evt as any).arguments,
     })
@@ -256,9 +297,21 @@ export function reduceSubagentStream(
 
   if (isTerminal) {
     const finalText = summary || text
-    const previousText = [...entries].reverse().find(entry => entry.kind === 'text')?.text?.trim()
+    const previousTextEntry = [...entries].reverse().find(entry => entry.kind === 'text')
+    const previousText = previousTextEntry?.text?.trim()
     if (finalText && previousText !== finalText) {
-      entries.push({ id: `${entryId}:summary`, kind: 'text', timestamp, text: finalText })
+      const activeReasoning = subagentReasoningSinceLastTool(entries)
+      const reasoning = activeReasoning?.id === previousTextEntry?.reasoningEntryId
+        ? null
+        : activeReasoning
+      entries.push({
+        id: `${entryId}:summary`,
+        kind: 'text',
+        timestamp,
+        text: finalText,
+        reasoning: reasoning?.text,
+        reasoningEntryId: reasoning?.id,
+      })
     }
     const previous = entries[entries.length - 1]
     const terminalEntry: SubagentStreamEntry = {

@@ -1097,7 +1097,22 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
     }
 
     const result: ChatMessage[] = []
-    for (const msg of msgs) {
+    for (const [index, msg] of msgs.entries()) {
+        if (
+            msg.role === 'assistant' &&
+            !msg.isStreaming &&
+            !msg.tool_calls?.length &&
+            !runtimePayloadText((msg as any).content).trim() &&
+            msg.reasoning?.trim()
+        ) {
+            const matchingToolCall = msgs.slice(index + 1).find(candidate =>
+                candidate.role === 'assistant' &&
+                candidate.tool_calls?.length &&
+                String(candidate.id).startsWith(`${String(msg.id)}_toolcall_`),
+            )
+            if (matchingToolCall?.reasoning?.trim() === msg.reasoning.trim()) continue
+        }
+
         if (
             msg.role !== 'tool' &&
             !msg.tool_calls?.length &&

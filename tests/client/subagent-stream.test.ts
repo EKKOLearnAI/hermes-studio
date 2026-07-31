@@ -64,6 +64,115 @@ describe('background subagent streams', () => {
     expect(stream.entries.find(entry => entry.kind === 'tool')).toMatchObject({
       toolName: 'read_file',
       toolArgs: { path: 'shutdown.ts' },
+      reasoning: 'Checking shutdown ordering',
+      reasoningEntryId: 'subagent.thinking:4',
+    })
+  })
+
+  it('associates each thinking segment with the text or tool at its boundary', () => {
+    let stream = reduceSubagentStream(undefined, 'session-1', {
+      event: 'subagent.thinking',
+      subagent_id: 'child-1',
+      text: 'Inspect first.',
+      background_seq: 1,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.tool',
+      subagent_id: 'child-1',
+      tool: 'read_file',
+      background_seq: 2,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.thinking',
+      subagent_id: 'child-1',
+      text: 'Summarize next.',
+      background_seq: 3,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.text',
+      subagent_id: 'child-1',
+      text: 'Final answer.',
+      background_seq: 4,
+    })
+
+    expect(stream.entries.find(entry => entry.kind === 'tool')).toMatchObject({
+      reasoning: 'Inspect first.',
+      reasoningEntryId: 'subagent.thinking:1',
+    })
+    expect(stream.entries.find(entry => entry.kind === 'text')).toMatchObject({
+      reasoning: 'Summarize next.',
+      reasoningEntryId: 'subagent.thinking:3',
+    })
+  })
+
+  it('moves provisional text reasoning to a later tool boundary', () => {
+    let stream = reduceSubagentStream(undefined, 'session-1', {
+      event: 'subagent.thinking',
+      subagent_id: 'child-1',
+      text: 'Inspect before acting.',
+      background_seq: 1,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.text',
+      subagent_id: 'child-1',
+      text: 'I will inspect it.',
+      background_seq: 2,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.tool',
+      subagent_id: 'child-1',
+      tool: 'read_file',
+      background_seq: 3,
+    })
+
+    expect(stream.entries.find(entry => entry.kind === 'text')).not.toHaveProperty('reasoning')
+    expect(stream.entries.find(entry => entry.kind === 'text')).not.toHaveProperty('reasoningEntryId')
+    expect(stream.entries.find(entry => entry.kind === 'tool')).toMatchObject({
+      reasoning: 'Inspect before acting.',
+      reasoningEntryId: 'subagent.thinking:1',
+    })
+  })
+
+  it('attaches newer terminal reasoning even when an older text already owns another segment', () => {
+    let stream = reduceSubagentStream(undefined, 'session-1', {
+      event: 'subagent.thinking',
+      subagent_id: 'child-1',
+      text: 'Draft the first update.',
+      background_seq: 1,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.text',
+      subagent_id: 'child-1',
+      text: 'First update.',
+      background_seq: 2,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.tool',
+      subagent_id: 'child-1',
+      tool: 'read_file',
+      background_seq: 3,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.thinking',
+      subagent_id: 'child-1',
+      text: 'Prepare the final summary.',
+      background_seq: 4,
+    })
+    stream = reduceSubagentStream(stream, 'session-1', {
+      event: 'subagent.complete',
+      subagent_id: 'child-1',
+      status: 'completed',
+      summary: 'Final summary.',
+      background_seq: 5,
+    })
+
+    expect(stream.entries.find(entry => entry.kind === 'tool')).toMatchObject({
+      reasoning: 'Draft the first update.',
+      reasoningEntryId: 'subagent.thinking:1',
+    })
+    expect(stream.entries.find(entry => entry.kind === 'text' && entry.text === 'Final summary.')).toMatchObject({
+      reasoning: 'Prepare the final summary.',
+      reasoningEntryId: 'subagent.thinking:4',
     })
   })
 

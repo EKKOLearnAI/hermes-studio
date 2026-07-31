@@ -15,8 +15,8 @@ import { useI18n } from "vue-i18n";
 import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
+import LiveReasoningStatus from "./LiveReasoningStatus.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
-import thinkingImage from "@/assets/thinking.gif";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
@@ -107,6 +107,48 @@ const visibleToolCalls = computed(() =>
   currentToolCalls.value.filter((tool) => !!tool.toolName),
 );
 
+const liveReasoningDetail = computed<{
+  messageId: Message["id"]
+  reasoning: string
+} | null>(() => {
+  if (!isRunIndicatorActive.value) return null;
+
+  const messages = chatStore.messages;
+  let lastInputIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user" || messages[i].role === "command") {
+      lastInputIdx = i;
+      break;
+    }
+  }
+
+  // Keep the newest assistant reasoning segment visible after it seals at a
+  // tool boundary. A later reasoning segment replaces it only when its first
+  // delta creates/updates a newer assistant message.
+  for (let i = messages.length - 1; i > lastInputIdx; i--) {
+    const message = messages[i];
+    if (message.role === "assistant" && message.reasoning?.trim()) {
+      return {
+        messageId: message.id,
+        reasoning: message.reasoning.trim(),
+      };
+    }
+  }
+
+  // Reattached runs can briefly expose the tool row before its assistant
+  // source is hydrated. Keep the persisted tool reasoning visible meanwhile.
+  for (let i = messages.length - 1; i > lastInputIdx; i--) {
+    const message = messages[i];
+    if (message.role === "tool" && message.reasoning?.trim()) {
+      return {
+        messageId: message.id,
+        reasoning: message.reasoning.trim(),
+      };
+    }
+  }
+  return null;
+});
+
 const emptyState = computed(() => {
   const session = chatStore.activeSession;
   const codingAgentId = session?.codingAgentId || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
@@ -139,21 +181,47 @@ const emptyState = computed(() => {
 });
 
 const displayMessages = computed(() => {
+  const messages = chatStore.messages;
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return chatStore.messages.filter((m) => {
-    if (m.role === "tool") {
-      return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
-    }
-    if (
-      m.role === "assistant" &&
-      !m.isStreaming &&
-      !m.content?.trim() &&
-      !!m.reasoning?.trim()
-    ) {
-      return false;
-    }
-    return true;
-  });
+  return messages
+    .filter((m, index) => {
+      if (m.role === "tool") {
+        return toolTraceVisible.value && !!m.toolName && !(isRunIndicatorActive.value && currentToolIds.has(m.id));
+      }
+      if (
+        m.role === "assistant" &&
+        m.id === liveReasoningDetail.value?.messageId &&
+        !m.content?.trim()
+      ) {
+        return false;
+      }
+      if (
+        m.role === "assistant" &&
+        !m.isStreaming &&
+        !m.content?.trim() &&
+        !!m.reasoning?.trim()
+      ) {
+        const next = messages[index + 1];
+        const reasoningMovedToTool =
+          toolTraceVisible.value &&
+          next?.role === "tool" &&
+          !!next.toolName &&
+          next.reasoning?.trim() === m.reasoning.trim();
+        return !reasoningMovedToTool;
+      }
+      return true;
+    })
+    .map((message) => {
+      if (
+        message.role === "assistant" &&
+        message.id === liveReasoningDetail.value?.messageId &&
+        message.content?.trim() &&
+        message.reasoning?.trim()
+      ) {
+        return { ...message, reasoning: undefined };
+      }
+      return message;
+    });
 });
 
 function forkDividerId(sessionId: string): string {
@@ -561,18 +629,11 @@ defineExpose({
       <template #after>
         <Transition name="fade">
         <div v-if="isRunIndicatorActive" class="streaming-indicator">
-          <div class="thinking-status">
-            <img
-              :src="thinkingImage"
-              alt=""
-              aria-hidden="true"
-              class="thinking-avatar"
-            >
-            <div class="thinking-status-copy">
-              <span class="thinking-status-label">{{ t("chat.thinkingInProgress") }}</span>
-              <span class="thinking-status-time">{{ formattedThinkingElapsed }}</span>
-            </div>
-          </div>
+          <LiveReasoningStatus
+            :reasoning="liveReasoningDetail?.reasoning"
+            :reasoning-id="liveReasoningDetail?.messageId"
+            :elapsed="formattedThinkingElapsed"
+          />
           <div v-if="visibleToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
             <!-- Abort indicator -->
             <div v-if="chatStore.abortState" class="tool-call-item compression-item">
@@ -1490,87 +1551,6 @@ defineExpose({
   min-width: 0;
   padding: 4px;
   box-sizing: border-box;
-}
-
-.thinking-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-}
-
-.thinking-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: $radius-md;
-  object-fit: cover;
-  flex-shrink: 0;
-
-  .dark & {
-    filter: brightness(1.18) contrast(1.08) saturate(1.08);
-  }
-}
-
-.thinking-status-copy {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  column-gap: 8px;
-  row-gap: 2px;
-  min-width: 0;
-  min-height: 20px;
-}
-
-.thinking-status-label {
-  display: inline-flex;
-  align-items: center;
-  color: transparent;
-  background: linear-gradient(105deg, $text-secondary 0%, $text-secondary 39%, #ffffff 48%, #ffffff 52%, $text-secondary 61%, $text-secondary 100%);
-  background-size: 300% 100%;
-  background-position: 0% 0;
-  -webkit-background-clip: text;
-  background-clip: text;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 20px;
-  animation: thinking-label-shimmer 2.2s linear infinite;
-  backface-visibility: hidden;
-  contain: paint;
-  transform: translateZ(0);
-  will-change: background-position;
-
-  .dark & {
-    background: linear-gradient(105deg, #f0f0f0 0%, #f0f0f0 37%, #2f3540 47%, #2f3540 53%, #f0f0f0 63%, #f0f0f0 100%);
-    background-size: 300% 100%;
-    background-position: 0% 0;
-    -webkit-background-clip: text;
-    background-clip: text;
-    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.16));
-  }
-}
-
-.thinking-status-time {
-  display: inline-flex;
-  align-items: center;
-  margin-top: 2px;
-  color: $text-muted;
-  font-family: $font-code;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  line-height: 20px;
-  min-width: 44px;
-}
-
-@keyframes thinking-label-shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-
-  100% {
-    background-position: 0% 0;
-  }
 }
 
 .tool-calls-panel {

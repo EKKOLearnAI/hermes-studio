@@ -46,6 +46,14 @@ const MessageItemStub = defineComponent({
   template: '<div class="message-item-stub" :data-id="message.id">{{ message.reasoning || message.content }}</div>',
 })
 
+const MarkdownRendererStub = defineComponent({
+  name: 'MarkdownRenderer',
+  props: {
+    content: { type: String, default: '' },
+  },
+  template: '<div class="markdown-renderer-stub">{{ content }}</div>',
+})
+
 import MessageList from '@/components/hermes/chat/MessageList.vue'
 import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
 
@@ -59,16 +67,17 @@ function makeSession(messages: Message[]): Session {
   }
 }
 
-function mountMessageList(messages: Message[]) {
+function mountMessageList(messages: Message[], runActive = true) {
   const chatStore = useChatStore()
   chatStore.activeSessionId = 'session-1'
   chatStore.activeSession = makeSession(messages)
-  chatStore.abortState = { aborting: true, synced: false }
+  chatStore.abortState = runActive ? { aborting: true, synced: false } : null
 
   return mount(MessageList, {
     global: {
       stubs: {
         MessageItem: MessageItemStub,
+        MarkdownRenderer: MarkdownRendererStub,
       },
     },
   })
@@ -80,7 +89,7 @@ describe('MessageList live reasoning', () => {
     vi.clearAllMocks()
   })
 
-  it('renders reasoning-only streaming output through the normal message item while the run indicator stays visible', () => {
+  it('renders live reasoning between the thinking animation and tool area instead of flashing a message bubble', () => {
     const wrapper = mountMessageList([
       { id: 'user-1', role: 'user', content: 'Think about this', timestamp: 1 },
       {
@@ -93,8 +102,13 @@ describe('MessageList live reasoning', () => {
       },
     ])
 
-    expect(wrapper.get('[data-id="assistant-1"]').text()).toBe('Working through the answer')
+    expect(wrapper.find('[data-id="assistant-1"].message-item-stub').exists()).toBe(false)
     expect(wrapper.get('.thinking-status').text()).toContain('chat.thinkingInProgress')
+    expect(wrapper.get('.live-reasoning-detail').text()).toContain('Working through the answer')
+
+    const status = wrapper.get('.thinking-status').element
+    const reasoning = wrapper.get('.live-reasoning-detail').element
+    expect(status.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('keeps the standalone thinking status before assistant output starts', () => {
@@ -105,7 +119,7 @@ describe('MessageList live reasoning', () => {
     expect(wrapper.get('.thinking-status').text()).toContain('chat.thinkingInProgress')
   })
 
-  it('keeps sealed tool-call reasoning in state without leaving a standalone bubble', () => {
+  it('freezes a sealed reasoning segment above its tool until the next reasoning starts', async () => {
     const wrapper = mountMessageList([
       { id: 'user-1', role: 'user', content: 'Use a tool', timestamp: 1 },
       {
@@ -121,15 +135,53 @@ describe('MessageList live reasoning', () => {
         role: 'tool',
         content: '',
         toolName: 'read_file',
+        reasoning: 'Need inspect the file.',
         toolStatus: 'done',
         timestamp: 3,
       },
     ])
 
     expect(wrapper.find('[data-id="assistant-1"]').exists()).toBe(false)
+    expect(wrapper.get('.live-reasoning-detail').text()).toContain('Need inspect the file.')
+    const reasoning = wrapper.get('.live-reasoning-detail').element
+    const tool = wrapper.get('.tool-calls-panel .tool-call-item:not(.compression-item)').element
+    expect(reasoning.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(useChatStore().messages.find(message => message.id === 'assistant-1')).toEqual(
       expect.objectContaining({ reasoning: 'Need inspect the file.' }),
     )
+
+    useChatStore().messages.push({
+      id: 'assistant-2',
+      role: 'assistant',
+      content: '',
+      reasoning: 'Now summarize the tool result.',
+      timestamp: 4,
+      isStreaming: true,
+    })
+    await nextTick()
+
+    expect(wrapper.get('.live-reasoning-detail').text()).toContain('Now summarize the tool result.')
+    expect(wrapper.get('.live-reasoning-detail').text()).not.toContain('Need inspect the file.')
+    expect(useChatStore().messages.find(message => message.id === 'tool-1')).toEqual(
+      expect.objectContaining({ reasoning: 'Need inspect the file.' }),
+    )
+  })
+
+  it('keeps a completed reasoning-only response visible when no tool owns it', () => {
+    const wrapper = mountMessageList([
+      { id: 'user-1', role: 'user', content: 'Think about this', timestamp: 1 },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        reasoning: 'The model returned reasoning without a final body.',
+        timestamp: 2,
+        isStreaming: false,
+      },
+    ], false)
+
+    expect(wrapper.get('[data-id="assistant-1"]').text())
+      .toBe('The model returned reasoning without a final body.')
   })
 
   it('keeps the thinking animation through tool execution and removes the run panel when the lifecycle finishes', async () => {

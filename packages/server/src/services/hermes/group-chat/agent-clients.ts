@@ -784,30 +784,40 @@ class AgentClient {
                     return
                 }
                 lastChunk = chunk
-                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, replyInterruptVersion, instructions, modelContext, chunk, () => streamMessageId, async () => {
-                    const toolBaseId = streamMessageId
-                    if (currentContent.trim()) {
-                        if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
-                            await stopStaleStartedRun?.()
+                reasoningContent = await this.recordBridgeEvents(
+                    roomId,
+                    sessionId,
+                    replyInterruptVersion,
+                    instructions,
+                    modelContext,
+                    chunk,
+                    reasoningContent,
+                    () => streamMessageId,
+                    async (toolReasoning) => {
+                        const toolBaseId = streamMessageId
+                        if (currentContent.trim()) {
+                            if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
+                                await stopStaleStartedRun?.()
+                                currentContent = ''
+                                return toolBaseId
+                            }
+                            await this.sendMessage(roomId, currentContent, streamMessageId, {
+                                role: 'assistant',
+                                mentionDepth: nextMentionDepth(msg),
+                                reasoning: toolReasoning || null,
+                                reasoning_content: toolReasoning || null,
+                            }, sessionId)
+                            flushedAssistantParts.add(streamMessageId)
                             currentContent = ''
-                            return toolBaseId
                         }
-                        await this.sendMessage(roomId, currentContent, streamMessageId, {
-                            role: 'assistant',
-                            mentionDepth: nextMentionDepth(msg),
-                            reasoning: reasoningContent || null,
-                            reasoning_content: reasoningContent || null,
-                        }, sessionId)
-                        flushedAssistantParts.add(streamMessageId)
-                        currentContent = ''
-                    }
-                    this.emitMessageStreamEnd(roomId, toolBaseId, sessionId)
-                    partIndex += 1
-                    streamMessageId = groupMessagePartId(runMessageId, partIndex)
-                    this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
-                    streamStarted = true
-                    return toolBaseId
-                })
+                        this.emitMessageStreamEnd(roomId, toolBaseId, sessionId)
+                        partIndex += 1
+                        streamMessageId = groupMessagePartId(runMessageId, partIndex)
+                        this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
+                        streamStarted = true
+                        return toolBaseId
+                    },
+                )
                 if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
                     await stopStaleStartedRun?.()
                     return
@@ -966,19 +976,22 @@ class AgentClient {
         instructions: string | undefined,
         modelContext: GroupModelContext,
         chunk: AgentBridgeOutput,
+        initialReasoning: string,
         getCurrentMessageId: () => string,
-        beforeToolStarted: () => Promise<string>,
+        beforeToolStarted: (reasoning: string) => Promise<string>,
     ): Promise<string> {
-        let reasoning = ''
+        let reasoning = initialReasoning
         for (const ev of chunk.events || []) {
             if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
             const eventType = String((ev as any)?.event || '')
             if (eventType === 'bridge.context.ready') {
                 this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions, modelContext)
             } else if (eventType === 'tool.started') {
-                const toolBaseId = await beforeToolStarted()
+                const toolReasoning = reasoning
+                const toolBaseId = await beforeToolStarted(toolReasoning)
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId)
+                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, toolReasoning)
+                reasoning = ''
             } else if (eventType === 'tool.completed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
@@ -1010,7 +1023,13 @@ class AgentClient {
         return reasoning
     }
 
-    private recordToolStarted(roomId: string, sessionId: string, ev: Record<string, unknown>, runMessageId: string): void {
+    private recordToolStarted(
+        roomId: string,
+        sessionId: string,
+        ev: Record<string, unknown>,
+        runMessageId: string,
+        reasoning = '',
+    ): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
         this.trackPendingToolCall(roomId, toolName, toolCallId)
@@ -1036,11 +1055,15 @@ class AgentClient {
             role: 'assistant',
             tool_calls: [toolCall],
             finish_reason: 'tool_calls',
+            reasoning: reasoning || null,
+            reasoning_content: reasoning || null,
         }
         this.sendMessage(roomId, '', msg.id, {
             role: 'assistant',
             tool_calls: msg.tool_calls,
             finish_reason: 'tool_calls',
+            reasoning: reasoning || null,
+            reasoning_content: reasoning || null,
             timestamp,
         }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
     }

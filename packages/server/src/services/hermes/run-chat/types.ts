@@ -114,6 +114,8 @@ export interface ResponseRunState {
   responseId?: string
   reasoningMessageId?: number | string
   pendingReasoning?: string
+  toolBoundaryReasoning?: string
+  toolReasoning?: Map<string, string>
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
 }

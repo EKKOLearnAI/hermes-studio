@@ -58,6 +58,31 @@ function appendReasoningToMessage(run: ResponseRunState, message: any, text: str
   run.reasoningMessageId = message.id
 }
 
+function captureToolBoundaryReasoning(
+  state: SessionState,
+  run: ResponseRunState,
+  callId: string,
+): string {
+  run.toolReasoning = run.toolReasoning || new Map<string, string>()
+  const existing = run.toolReasoning.get(callId) || ''
+  const target = run.reasoningMessageId != null
+    ? state.messages.find(message => message.id === run.reasoningMessageId && message.role === 'assistant')
+    : null
+  const targetReasoning = String(target?.reasoning || target?.reasoning_content || '')
+  const pendingReasoning = run.pendingReasoning || ''
+  let reasoning = existing || targetReasoning || pendingReasoning || run.toolBoundaryReasoning || ''
+  if (existing && pendingReasoning) {
+    reasoning += appendedTextDelta(existing, pendingReasoning)
+  }
+  if (reasoning) {
+    run.toolReasoning.set(callId, reasoning)
+    run.toolBoundaryReasoning = reasoning
+  }
+  run.reasoningMessageId = undefined
+  run.pendingReasoning = undefined
+  return reasoning
+}
+
 function stringifyToolOutput(output: unknown): string {
   if (typeof output === 'string') return output
   try {
@@ -177,11 +202,13 @@ export function applyResponseStreamEvent(
     const existingTarget = run.reasoningMessageId != null
       ? state.messages.find(m => m.id === run.reasoningMessageId)
       : null
-    const fallbackTarget = [...state.messages].reverse().find(m =>
-      m.runMarker === runMarker &&
-      m.role === 'assistant' &&
-      !m.tool_calls?.length,
-    )
+    const lastMessage = state.messages[state.messages.length - 1]
+    const fallbackTarget =
+      lastMessage?.runMarker === runMarker &&
+      lastMessage.role === 'assistant' &&
+      !lastMessage.tool_calls?.length
+        ? lastMessage
+        : null
     const target = existingTarget?.role === 'assistant' ? existingTarget : fallbackTarget
     if (target) {
       appendReasoningToMessage(run, target, deltaText)
@@ -206,6 +233,7 @@ export function applyResponseStreamEvent(
     if (item.type !== 'function_call') return null
     const callId = item.call_id || item.id
     if (!callId) return null
+    captureToolBoundaryReasoning(state, run, callId)
     const toolCall = responseFunctionCallToToolCall(item)
     run.toolCalls.set(callId, { ...toolCall, startedAt: Date.now() })
     return {
@@ -263,6 +291,7 @@ export function applyResponseStreamEvent(
       const toolCall = responseFunctionCallToToolCall(item)
       const existing = run.toolCalls.get(callId)
       run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt || Date.now() })
+      const toolReasoning = captureToolBoundaryReasoning(state, run, callId)
 
       const key = `assistant:${callId}`
       if (!run.insertedKeys.has(key)) {
@@ -275,8 +304,19 @@ export function applyResponseStreamEvent(
           content: '',
           tool_calls: [toolCall],
           finish_reason: 'tool_calls',
+          reasoning: toolReasoning || null,
+          reasoning_content: toolReasoning || null,
           timestamp: now(),
         })
+      } else if (toolReasoning) {
+        const toolCallMessage = state.messages.find(message =>
+          message.role === 'assistant' &&
+          message.tool_calls?.some(tool => tool.id === callId),
+        )
+        if (toolCallMessage) {
+          toolCallMessage.reasoning = toolReasoning
+          toolCallMessage.reasoning_content = toolReasoning
+        }
       }
       return null
     }
@@ -306,6 +346,7 @@ export function applyResponseStreamEvent(
           timestamp: now(),
         })
       }
+      run.toolBoundaryReasoning = undefined
       return {
         event: eventName,
         payload: {
@@ -377,6 +418,7 @@ export function getResponseRunState(state: SessionState, runMarker?: string): Re
       runMarker,
       insertedKeys: new Set<string>(),
       toolCalls: new Map<string, any>(),
+      toolReasoning: new Map<string, string>(),
     }
   }
   return state.responseRun

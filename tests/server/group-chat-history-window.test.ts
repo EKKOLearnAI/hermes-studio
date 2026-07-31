@@ -241,4 +241,46 @@ describe('group chat history windows', () => {
 
     client.disconnect()
   })
+
+  it('includes the active reasoning segment in persisted group tool-call messages', async () => {
+    mockSocket.emit.mockImplementation((event: string, payload?: any, ack?: Function) => {
+      if (typeof ack === 'function') ack({ id: payload?.id })
+      return mockSocket
+    })
+    const clients = new AgentClients()
+    const client = await clients.createAgent({
+      agentId: 'agent-1',
+      profile: 'default',
+      name: 'Worker',
+      description: '',
+      invited: 0,
+    } as any)
+
+    ;(client as any).recordToolStarted(
+      'room-1',
+      'session-1',
+      {
+        tool_name: 'lookup',
+        tool_call_id: 'call-1',
+        args: { room: 'room-1' },
+      },
+      'run-1_part_0',
+      'Inspect the room before calling lookup.',
+    )
+
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        id: 'run-1_part_0_toolcall_call-1',
+        role: 'assistant',
+        reasoning: 'Inspect the room before calling lookup.',
+        reasoning_content: 'Inspect the room before calling lookup.',
+        tool_calls: [expect.objectContaining({ id: 'call-1' })],
+      }),
+      expect.any(Function),
+    )
+
+    client.disconnect()
+  })
 })

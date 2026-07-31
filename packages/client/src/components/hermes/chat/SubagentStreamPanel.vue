@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message, SubagentStream, SubagentStreamEntry, SubagentStreamStatus } from '@/stores/hermes/chat'
+import LiveReasoningStatus from './LiveReasoningStatus.vue'
 import MessageItem from './MessageItem.vue'
 import VirtualMessageList from './VirtualMessageList.vue'
 
@@ -15,6 +16,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const streamListRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
+const now = ref(Date.now())
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 const streamRevision = computed(() => {
   const stream = props.stream
@@ -28,11 +31,50 @@ const taskPosition = computed(() => {
   return `${stream.taskIndex + 1}/${Math.max(1, stream.taskCount)}`
 })
 
+const isRunning = computed(() => props.stream?.status === 'running')
+
+const currentReasoningEntry = computed(() => {
+  if (!isRunning.value) return null
+  const entries = props.stream?.entries || []
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]
+    if (entry.kind === 'thinking' && entry.text?.trim()) return entry
+  }
+  return null
+})
+
 const streamMessages = computed(() =>
   (props.stream?.entries || [])
-    .filter(entry => entry.kind !== 'status')
-    .map((entry, index) => entryMessage(entry, index)),
+    .filter(entry => {
+      if (entry.kind === 'status') return false
+      if (isRunning.value && entry.kind === 'tool') return false
+      // Thinking events are presentation state, never standalone transcript
+      // messages. Their final owner is the associated text or tool entry.
+      return entry.kind !== 'thinking'
+    })
+    // Keep every reasoning segment out of message bubbles until the subagent
+    // finishes. The live status below is the single reasoning surface.
+    .map((entry, index) => entryMessage(entry, index, isRunning.value)),
 )
+
+const liveToolMessages = computed(() => {
+  if (!isRunning.value) return []
+  return (props.stream?.entries || [])
+    .filter(entry => entry.kind === 'tool')
+    .map((entry, index) => entryMessage(entry, index))
+    .reverse()
+})
+
+const formattedElapsed = computed(() => {
+  const startedAt = props.stream?.startedAt || now.value
+  const totalSeconds = Math.max(0, Math.floor((now.value - startedAt) / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h${minutes}m${seconds}s`
+  if (minutes > 0) return `${minutes}m${seconds}s`
+  return `${seconds}s`
+})
 
 const metrics = computed(() => {
   const stream = props.stream
@@ -78,7 +120,7 @@ function statusText(entry?: SubagentStreamEntry): string {
   return t(`subagent.${statusKey(status)}`)
 }
 
-function entryMessage(entry: SubagentStreamEntry, index: number): Message {
+function entryMessage(entry: SubagentStreamEntry, index: number, suppressReasoning = false): Message {
   const common = {
     id: `subagent-stream:${props.stream?.subagentId || 'unknown'}:${entry.id}:${index}`,
     timestamp: entry.timestamp,
@@ -92,6 +134,7 @@ function entryMessage(entry: SubagentStreamEntry, index: number): Message {
       toolCallId: `subagent-stream-tool:${entry.id}`,
       toolPreview: entry.text,
       toolArgs: entry.toolArgs,
+      reasoning: suppressReasoning ? undefined : entry.reasoning,
       toolStatus: 'done',
     }
   }
@@ -109,8 +152,29 @@ function entryMessage(entry: SubagentStreamEntry, index: number): Message {
     ...common,
     role: 'assistant',
     content: entry.text || '',
+    reasoning: suppressReasoning ? undefined : entry.reasoning,
   }
 }
+
+function stopElapsedTimer() {
+  if (!elapsedTimer) return
+  clearInterval(elapsedTimer)
+  elapsedTimer = null
+}
+
+watch(
+  isRunning,
+  (running) => {
+    stopElapsedTimer()
+    now.value = Date.now()
+    if (running) {
+      elapsedTimer = setInterval(() => {
+        now.value = Date.now()
+      }, 1000)
+    }
+  },
+  { immediate: true },
+)
 
 watch(streamRevision, () => {
   if (streamListRef.value?.shouldAutoFollowBottom(96) !== false) {
@@ -121,6 +185,8 @@ watch(streamRevision, () => {
 onMounted(() => {
   streamListRef.value?.scrollToBottom({ frames: 2, keepAliveMs: 250 })
 })
+
+onBeforeUnmount(stopElapsedTimer)
 </script>
 
 <template>
@@ -167,12 +233,31 @@ onMounted(() => {
           <MessageItem :message="message" />
         </template>
         <template #empty>
-          <div class="subagent-empty">
-            <span v-if="stream?.status === 'running'" class="subagent-empty-spinner" aria-hidden="true"></span>
-            <span>{{ stream?.status === 'running' ? t('subagent.waiting') : statusText() }}</span>
+          <div v-if="!isRunning" class="subagent-empty">
+            <span>{{ statusText() }}</span>
           </div>
         </template>
       </VirtualMessageList>
+      <div v-if="isRunning" class="subagent-run-indicator">
+        <LiveReasoningStatus
+          :reasoning="currentReasoningEntry?.text"
+          :reasoning-id="currentReasoningEntry?.id"
+          :elapsed="formattedElapsed"
+        />
+        <div v-if="liveToolMessages.length" class="subagent-live-tools">
+          <div v-for="tool in liveToolMessages" :key="tool.id" class="subagent-live-tool">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+            </svg>
+            <span class="subagent-live-tool-name">{{ tool.toolName }}</span>
+            <span v-if="tool.toolPreview" class="subagent-live-tool-preview">{{ tool.toolPreview }}</span>
+            <svg class="subagent-live-tool-done" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="m8 12 3 3 5-6" />
+            </svg>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -182,7 +267,12 @@ onMounted(() => {
 
 .subagent-stream-panel {
   height: 100%;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: $bg-main-surface;
@@ -194,11 +284,16 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 8px 16px;
   border-bottom: 1px solid $border-color;
 }
 
 .subagent-stream-heading {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -260,14 +355,19 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .subagent-status {
+  max-width: min(160px, 28vw);
   padding: 3px 8px;
   border-radius: 999px;
   color: $text-secondary;
   background: rgba(var(--accent-primary-rgb), 0.08);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 
   &.status-running {
     color: var(--accent-primary);
@@ -314,7 +414,12 @@ onMounted(() => {
 .subagent-stream-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
   display: flex;
+  flex-direction: column;
   background: $bg-main-surface;
 }
 
@@ -329,17 +434,91 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.subagent-empty-spinner {
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid $text-muted;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: subagent-spin 0.7s linear infinite;
+.subagent-run-indicator {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(48%, 420px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 4px 20px 18px;
+  background: $bg-main-surface;
 }
 
-@keyframes subagent-spin {
-  to { transform: rotate(360deg); }
+.subagent-live-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 520px;
+  min-width: 0;
+}
+
+.subagent-live-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border-radius: $radius-sm;
+  background: rgba(0, 0, 0, 0.03);
+  color: $text-secondary;
+  font-size: 11px;
+
+  .dark & {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  > svg {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+  }
+}
+
+.subagent-live-tool-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-live-tool-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: $text-muted;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-live-tool-done {
+  margin-inline-start: auto;
+  color: $success;
+
+  circle {
+    fill: currentColor;
+    fill-opacity: 0.15;
+    stroke: none;
+  }
+
+  path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 }
 
 @keyframes subagent-pulse {
@@ -358,6 +537,11 @@ onMounted(() => {
 
   .subagent-stream-body :deep(.virtual-message-list) {
     --virtual-list-padding: 16px 12px 24px !important;
+  }
+
+  .subagent-run-indicator {
+    padding-inline: 12px;
+    max-height: 55%;
   }
 }
 </style>

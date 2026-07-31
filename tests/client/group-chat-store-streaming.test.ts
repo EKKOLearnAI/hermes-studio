@@ -265,6 +265,44 @@ describe('group chat store streaming merge', () => {
     })
   })
 
+  it('moves a sealed reasoning-only segment into the matching live tool row', async () => {
+    const store = await createJoinedStore()
+    const reasoning = 'Check the room data before calling lookup.'
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'run-1_part_0' }))
+    emitSocket('message_reasoning_delta', {
+      roomId: 'room-1',
+      id: 'run-1_part_0',
+      delta: reasoning,
+    })
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'run-1_part_0' })
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-1',
+      content: '',
+      reasoning,
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'lookup', arguments: '{"room":"room-1"}' },
+      }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-1',
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: '{"ok":true}',
+    }))
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'call-1',
+        reasoning,
+        toolResult: '{"ok":true}',
+      }),
+    ])
+  })
+
   it('maps non-string and falsy tool payloads from room history', async () => {
     const store = await createJoinedStore([
       assistantMessage({
