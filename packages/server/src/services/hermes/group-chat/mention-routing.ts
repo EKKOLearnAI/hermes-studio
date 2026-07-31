@@ -79,30 +79,66 @@ function isSenderAgent(agent: MentionableAgent, senderId: string): boolean {
     return Boolean(senderId && (agent.id === senderId || agent.agentId === senderId))
 }
 
+export type MentionResolution<T extends MentionableAgent> = {
+    targets: T[]
+    isBroadcast: boolean
+}
+
+export function resolveMentionRoute<T extends MentionableAgent>(
+    agents: T[],
+    content: string,
+    senderId: string,
+): MentionResolution<T> {
+    const rangesByAgent = agents.map(agent => ({
+        agent,
+        ranges: findMentionRanges(content, agent.name),
+    }))
+    const allRanges = findMentionRanges(content, ALL_AGENTS_MENTION)
+    const longestEndByStart = new Map<number, number>()
+    for (const ranges of [allRanges, ...rangesByAgent.map(({ ranges }) => ranges)]) {
+        for (const range of ranges) {
+            longestEndByStart.set(range.start, Math.max(longestEndByStart.get(range.start) || 0, range.end))
+        }
+    }
+
+    const isBroadcast = allRanges.some(range => longestEndByStart.get(range.start) === range.end)
+    if (isBroadcast) {
+        return {
+            targets: agents.filter(agent => !isSenderAgent(agent, senderId)),
+            isBroadcast: true,
+        }
+    }
+
+    return {
+        targets: rangesByAgent
+            .filter(({ agent, ranges }) => !isSenderAgent(agent, senderId)
+                && ranges.some(range => longestEndByStart.get(range.start) === range.end))
+            .map(({ agent }) => agent),
+        isBroadcast: false,
+    }
+}
+
 export function resolveMentionTargets<T extends MentionableAgent>(
     agents: T[],
     content: string,
     senderId: string,
 ): T[] {
-    const candidates = agents.filter((agent) => !isSenderAgent(agent, senderId))
-
-    if (isAllAgentsMentioned(content)) {
-        return candidates
-    }
-
-    return candidates.filter((agent) => isAgentMentioned(content, agent.name))
+    return resolveMentionRoute(agents, content, senderId).targets
 }
 
 export function stripMentionRoutingTokens(content: string, ownAgentName: string): string {
-    const rangesByKey = new Map<string, MentionRange>()
+    const longestRangeByStart = new Map<number, MentionRange>()
     for (const range of [
         ...findMentionRanges(content, ALL_AGENTS_MENTION),
         ...findMentionRanges(content, ownAgentName),
     ]) {
-        rangesByKey.set(`${range.start}:${range.end}`, range)
+        const current = longestRangeByStart.get(range.start)
+        if (!current || range.end > current.end) {
+            longestRangeByStart.set(range.start, range)
+        }
     }
 
-    const ranges = [...rangesByKey.values()].sort((a, b) => b.start - a.start)
+    const ranges = [...longestRangeByStart.values()].sort((a, b) => b.start - a.start)
 
     let result = content
     for (const range of ranges) {

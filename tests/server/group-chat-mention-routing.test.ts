@@ -95,6 +95,39 @@ describe('group chat mention routing', () => {
     expect(resolveMentionTargets(specialAgents, '@C++: inspect', 'human-1').map(a => a.name)).toEqual(['C++'])
   })
 
+  it('prefers the longest participant name when punctuation creates overlapping mention prefixes', () => {
+    const overlappingAgents: TestAgent[] = [
+      { name: 'Hermes', id: 'socket-hermes', agentId: 'agent-hermes' },
+      { name: 'Hermes-B', id: 'socket-hermes-b', agentId: 'agent-hermes-b' },
+    ]
+
+    expect(resolveMentionTargets(overlappingAgents, '@Hermes-B inspect', 'human-1').map(a => a.name)).toEqual(['Hermes-B'])
+    expect(resolveMentionTargets(overlappingAgents, '@Hermes-B inspect', 'agent-hermes-b').map(a => a.name)).toEqual([])
+    expect(resolveMentionTargets(overlappingAgents, '@Hermes-B inspect', 'agent-hermes').map(a => a.name)).toEqual(['Hermes-B'])
+    expect(resolveMentionTargets(overlappingAgents, '@Hermes inspect and @Hermes-B verify', 'human-1').map(a => a.name)).toEqual([
+      'Hermes',
+      'Hermes-B',
+    ])
+  })
+
+  it('disambiguates participant names that extend the reserved @all token', () => {
+    const overlappingBroadcastAgents: TestAgent[] = [
+      { name: 'Hermes', id: 'socket-hermes', agentId: 'agent-hermes' },
+      { name: 'all-B', id: 'socket-all-b', agentId: 'agent-all-b' },
+      { name: 'Codex', id: 'socket-codex', agentId: 'agent-codex' },
+    ]
+
+    expect(resolveMentionTargets(overlappingBroadcastAgents, '@all-B inspect', 'human-1').map(a => a.name)).toEqual(['all-B'])
+    expect(resolveMentionTargets(overlappingBroadcastAgents, '@all-B inspect', 'agent-all-b').map(a => a.name)).toEqual([])
+    expect(resolveMentionTargets(overlappingBroadcastAgents, '@all-B inspect', 'agent-hermes').map(a => a.name)).toEqual(['all-B'])
+    expect(stripMentionRoutingTokens('@all-B inspect', 'all-B')).toBe('inspect')
+    expect(resolveMentionTargets(overlappingBroadcastAgents, '@all compare and @all-B inspect', 'human-1').map(a => a.name)).toEqual([
+      'Hermes',
+      'all-B',
+      'Codex',
+    ])
+  })
+
   it('ignores mentions inside a quoted message while preserving them as context', () => {
     const content = [
       '<quoted_message sender="Alice">',

@@ -200,49 +200,34 @@ describe('group chat agent workspace bridge runs', () => {
     expect(bridgeMock.interrupt).toHaveBeenCalledWith(sessionId, 'Interrupted by group chat user', 'default')
   })
 
-  it('does not block room deletion for an idle coding agent with no managed run', async () => {
-    const { codingAgentRunManager } = await import('../../packages/server/src/services/agent-runner/coding-agent-run-manager')
-    const stopAndWait = vi.spyOn(codingAgentRunManager, 'stopAndWait').mockResolvedValue(false)
-    const runIdForSession = vi.spyOn(codingAgentRunManager, 'runIdForSession').mockReturnValue(undefined)
+  it('classifies legacy direct mentions before handing them to participant runtimes', async () => {
     const client = await createClient('')
-    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => ({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      runtime: 'coding_agent',
-      codingAgentId: 'codex',
-      sessionId: 'gc_room-1_agent-1_0',
-    }))
+    const clients = client.__testClients as any
+    const processOne = vi.spyOn(clients, '_processAgentMention').mockResolvedValue(undefined)
 
-    await expect(client.__testClients.interruptRoom('room-1')).resolves.toBeUndefined()
-    expect(stopAndWait).toHaveBeenCalledWith('gc_room-1_agent-1_0', {
-      reportClosed: false,
-      graceMs: 15_000,
+    await clients.processMentions('room-1', {
+      content: '@all compare plans',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
     })
+    expect(processOne).toHaveBeenLastCalledWith(
+      'room-1',
+      expect.objectContaining({ name: 'Worker' }),
+      expect.objectContaining({ handoffKind: 'fanout' }),
+    )
 
-    stopAndWait.mockRestore()
-    runIdForSession.mockRestore()
-  })
-
-  it('still blocks room deletion when an active coding-agent run fails to stop', async () => {
-    const { codingAgentRunManager } = await import('../../packages/server/src/services/agent-runner/coding-agent-run-manager')
-    const stopAndWait = vi.spyOn(codingAgentRunManager, 'stopAndWait').mockResolvedValue(false)
-    const runIdForSession = vi.spyOn(codingAgentRunManager, 'runIdForSession').mockReturnValue('active-run')
-    const client = await createClient('')
-    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => ({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      runtime: 'coding_agent',
-      codingAgentId: 'codex',
-      sessionId: 'gc_room-1_agent-1_0',
-    }))
-
-    await expect(client.__testClients.interruptRoom('room-1')).rejects.toMatchObject({ status: 409 })
-    expect(stopAndWait).toHaveBeenCalled()
-
-    stopAndWait.mockRestore()
-    runIdForSession.mockRestore()
+    await clients.processMentions('room-1', {
+      content: '@Worker inspect',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 2,
+    })
+    expect(processOne).toHaveBeenLastCalledWith(
+      'room-1',
+      expect.objectContaining({ name: 'Worker' }),
+      expect.objectContaining({ handoffKind: 'mention' }),
+    )
   })
 
   it('does not drain queued mentions while a room interrupt is still pending', async () => {

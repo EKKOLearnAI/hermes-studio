@@ -27,7 +27,7 @@ import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { getGroupChatLocalIdentitySecret } from '../../auth'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, sliceGroupMessagesForSnapshotTail, type GroupMessageCursorCutoff } from './group-message-ordering'
-import { isAllAgentsMentioned, resolveMentionTargets } from './mention-routing'
+import { resolveMentionRoute } from './mention-routing'
 import {
     createAgentGroupChatSubject,
     createAuthenticatedGroupChatSubject,
@@ -675,13 +675,19 @@ export function planGroupHandoffs(args: {
                 return agent
             }).filter((agent): agent is RoomAgent => Boolean(agent))
     }
-    const allMentioned = hasStructuredMentions
-        ? structuredAll
-        : isAllAgentsMentioned(String(args.source.content || ''))
+    const textRoute = hasStructuredMentions
+        ? null
+        : resolveMentionRoute(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
+    const allMentioned = hasStructuredMentions ? structuredAll : Boolean(textRoute?.isBroadcast)
     if (role === 'user' && allMentioned) {
-        return args.agents
-            .filter(agent => agent.agentId !== args.source.senderId)
-            .map(agent => ({ chainId, targetAgentId: agent.agentId, targetSessionId: agent.sessionId, depth: 0, kind: 'fanout' }))
+        const targets = structuredTargets ?? textRoute?.targets ?? []
+        return targets.map(agent => ({
+            chainId,
+            targetAgentId: agent.agentId,
+            targetSessionId: agent.sessionId,
+            depth: 0,
+            kind: 'fanout',
+        }))
     }
     if (role === 'assistant' && args.sourceJobKind === 'fanout') return []
     if (role === 'assistant' && args.source.finish_reason === 'error') return []
@@ -689,8 +695,7 @@ export function planGroupHandoffs(args: {
 
     if (args.room.handoffMode === 'fixed') {
         if (role === 'user') {
-            const mentioned = structuredTargets
-                ?? resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
+            const mentioned = structuredTargets ?? textRoute?.targets ?? []
             const kind: GroupHandoffKind = mentioned.length === 1 ? 'fixed' : 'fanout'
             return mentioned.map(agent => ({
                 chainId, targetAgentId: agent.agentId, targetSessionId: agent.sessionId, depth: 0, kind,
@@ -704,8 +709,7 @@ export function planGroupHandoffs(args: {
         return [{ chainId, targetAgentId: target.agentId, targetSessionId: target.sessionId, depth, kind: 'fixed' }]
     }
 
-    return (structuredTargets
-        ?? resolveMentionTargets(args.agents, String(args.source.content || ''), String(args.source.senderId || '')))
+    return (structuredTargets ?? textRoute?.targets ?? [])
         .map(agent => ({ chainId, targetAgentId: agent.agentId, targetSessionId: agent.sessionId, depth, kind: 'mention' as const }))
 }
 

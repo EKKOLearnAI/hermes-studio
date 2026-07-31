@@ -1839,4 +1839,38 @@ describe('fixed-order group-chat handoff planning', () => {
     expect(plans.every(plan => plan.kind === 'fanout' && plan.chainId === 'gcchain_human-1')).toBe(true)
     expect(plans.map(plan => plan.depth)).toEqual([0, 0, 0])
   })
+
+  it.each(['mentions', 'fixed'] as const)('does not broadcast an overlapping @all-B participant in %s mode', handoffMode => {
+    const overlappingAgents = [
+      { ...agents[0], agentId: 'hermes', id: 'row-hermes', sessionId: 'session-hermes', name: 'Hermes' },
+      { ...agents[1], agentId: 'all-b', id: 'row-all-b', sessionId: 'session-all-b', name: 'all-B' },
+      { ...agents[2], agentId: 'codex', id: 'row-codex', sessionId: 'session-codex', name: 'Codex' },
+    ] as any[]
+
+    expect(planGroupHandoffs({
+      room: { handoffMode, handoffOrderJson: '["hermes","all-b","codex"]', maxAgentMentionDepth: 4 },
+      agents: overlappingAgents,
+      source: { id: `human-${handoffMode}-overlap`, senderId: 'human', content: '@all-B inspect', role: 'user', handoffDepth: 0 },
+    })).toEqual([expect.objectContaining({
+      targetAgentId: 'all-b',
+      targetSessionId: 'session-all-b',
+      kind: handoffMode === 'fixed' ? 'fixed' : 'mention',
+    })])
+  })
+
+  it.each(['mentions', 'fixed'] as const)('preserves an independent @all broadcast beside @all-B in %s mode', handoffMode => {
+    const overlappingAgents = [
+      { ...agents[0], agentId: 'hermes', id: 'row-hermes', sessionId: 'session-hermes', name: 'Hermes' },
+      { ...agents[1], agentId: 'all-b', id: 'row-all-b', sessionId: 'session-all-b', name: 'all-B' },
+      { ...agents[2], agentId: 'codex', id: 'row-codex', sessionId: 'session-codex', name: 'Codex' },
+    ] as any[]
+
+    const plans = planGroupHandoffs({
+      room: { handoffMode, handoffOrderJson: '["hermes","all-b","codex"]', maxAgentMentionDepth: 4 },
+      agents: overlappingAgents,
+      source: { id: `human-${handoffMode}-broadcast`, senderId: 'human', content: '@all compare and @all-B inspect', role: 'user', handoffDepth: 0 },
+    })
+    expect(plans.map(plan => plan.targetAgentId)).toEqual(['hermes', 'all-b', 'codex'])
+    expect(plans.every(plan => plan.kind === 'fanout')).toBe(true)
+  })
 })

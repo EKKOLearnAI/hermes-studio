@@ -26,7 +26,7 @@ import { buildProjectedGroupChatHistory, isWorkspaceDiffToolMessage, projectGrou
 import { sliceGroupMessagesForSnapshotTail } from './group-message-ordering'
 import type { GroupActorRevisions } from './identity/types'
 import {
-    isAllAgentsMentioned,
+    resolveMentionRoute,
     resolveMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
@@ -1012,7 +1012,7 @@ class AgentClient {
                 model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
                 provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
             }
-            const routedPrefix = isAllAgentsMentioned(msg.content)
+            const routedPrefix = msg.handoffKind === 'fanout'
                 ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
                 : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
             const rawInput = msg.input || msg.content
@@ -1595,7 +1595,7 @@ class AgentClient {
                 targetDescription: this.description,
                 senderName: msg.senderName,
                 senderRole: msg.role === 'assistant' ? 'assistant' : 'user',
-                handoffKind: msg.handoffKind || (isAllAgentsMentioned(msg.content) ? 'fanout' : 'mention'),
+                handoffKind: msg.handoffKind || 'mention',
                 chainRequest: msg.chainRequest,
                 content: routedContent,
             })
@@ -2378,13 +2378,17 @@ export class AgentClients {
      */
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
         const agents = this.getAgents(roomId)
-        const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0) return
+        const route = resolveMentionRoute(agents, msg.content, msg.senderId)
+        if (route.targets.length === 0) return
+        const routedMessage: MentionMessage = {
+            ...msg,
+            handoffKind: route.isBroadcast ? 'fanout' : 'mention',
+        }
 
-        logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
+        logger.debug(`[AgentClients] ${route.targets.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
 
-        for (const agent of mentioned) {
-            this._processAgentMention(roomId, agent, msg).catch((err) => {
+        for (const agent of route.targets) {
+            this._processAgentMention(roomId, agent, routedMessage).catch((err) => {
                 logger.error(`[AgentClients] error processing mention for ${agent.name}: ${err.message}`)
             })
         }
