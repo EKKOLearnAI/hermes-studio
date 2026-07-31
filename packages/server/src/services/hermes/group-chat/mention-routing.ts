@@ -126,19 +126,24 @@ export function resolveMentionTargets<T extends MentionableAgent>(
     return resolveMentionRoute(agents, content, senderId).targets
 }
 
-export function stripMentionRoutingTokens(content: string, ownAgentName: string): string {
-    const longestRangeByStart = new Map<number, MentionRange>()
-    for (const range of [
-        ...findMentionRanges(content, ALL_AGENTS_MENTION),
-        ...findMentionRanges(content, ownAgentName),
-    ]) {
-        const current = longestRangeByStart.get(range.start)
-        if (!current || range.end > current.end) {
-            longestRangeByStart.set(range.start, range)
+export function stripMentionRoutingTokens(
+    content: string,
+    ownAgentName: string,
+    roomAgentNames: string[] = [ownAgentName],
+): string {
+    const allRanges = findMentionRanges(content, ALL_AGENTS_MENTION)
+    const ownRanges = findMentionRanges(content, ownAgentName)
+    const longestEndByStart = new Map<number, number>()
+    for (const mentionName of [ALL_AGENTS_MENTION, ...roomAgentNames]) {
+        for (const range of findMentionRanges(content, mentionName)) {
+            longestEndByStart.set(range.start, Math.max(longestEndByStart.get(range.start) || 0, range.end))
         }
     }
 
-    const ranges = [...longestRangeByStart.values()].sort((a, b) => b.start - a.start)
+    const ranges = [...allRanges, ...ownRanges]
+        .filter(range => longestEndByStart.get(range.start) === range.end)
+        .filter((range, index, all) => all.findIndex(candidate => candidate.start === range.start && candidate.end === range.end) === index)
+        .sort((a, b) => b.start - a.start)
 
     let result = content
     for (const range of ranges) {

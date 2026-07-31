@@ -126,6 +126,16 @@ describe('group chat mention routing', () => {
       'all-B',
       'Codex',
     ])
+    expect(stripMentionRoutingTokens(
+      '@all compare and @all-B inspect',
+      'Hermes',
+      overlappingBroadcastAgents.map(agent => agent.name),
+    )).toBe('compare and @all-B inspect')
+    expect(stripMentionRoutingTokens(
+      '@all compare and @all-B inspect',
+      'all-B',
+      overlappingBroadcastAgents.map(agent => agent.name),
+    )).toBe('compare and inspect')
   })
 
   it('ignores mentions inside a quoted message while preserving them as context', () => {

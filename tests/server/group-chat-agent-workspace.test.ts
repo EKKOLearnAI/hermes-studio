@@ -405,6 +405,16 @@ describe('group chat agent workspace bridge runs', () => {
     })
 
     expect(events).toEqual(['workspace', 'final'])
+    expect(client.__testStorage.saveWorkspaceDiffMessageForRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'participant-session-1',
+        sourceHandoffJobId: 'job-workspace-final',
+        sourceHandoffLeaseToken: 'lease-workspace-final',
+      }),
+    )
+    expect(trackerMock.completeWorkspaceRunCheckpointDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: await workerSessionId() }),
+    )
   })
 
   it('durably registers the Bridge session before starting the external run', async () => {

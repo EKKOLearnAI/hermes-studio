@@ -127,6 +127,80 @@ describe('group chat durable handoff routing baseline', () => {
     })
   })
 
+  it('persists durable workspace evidence under the participant session while preserving runtime checkpoint provenance', async () => {
+    const { human } = await joinHumanAndAgent()
+    const runtimeSessionId = currentAgentSessionId()
+    expect(runtimeSessionId).toMatch(/^gc_h_[0-9a-f]{32}$/)
+    const runId = 'durable-runtime-workspace-run'
+    await emitAck(human, 'message', { roomId: 'room-1', id: 'durable-workspace-trigger', content: '@Worker update files' })
+    const running = groupServer.getStorage().claimHandoffJobs('test-dispatcher', Date.now(), 1, 60_000)[0]
+    const participantSessionId = running.targetSessionId
+    expect(participantSessionId).toMatch(/^gc_room-1_agent-worker_0$/)
+    expect(running).toMatchObject({
+      targetAgentId: 'agent-worker',
+      targetSessionId: participantSessionId,
+      status: 'running',
+    })
+    expect(groupServer.getStorage().isHandoffExecutionCurrent(
+      running.id,
+      running.leaseToken,
+      'agent-worker',
+      participantSessionId,
+    )).toBe(true)
+
+    const saved = groupServer.getStorage().saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1',
+      senderId: 'agent-worker',
+      senderName: 'Worker',
+      sessionId: participantSessionId,
+      runId,
+      status: 'completed',
+      workspace: '/workspace/project',
+      sourceHandoffJobId: running.id,
+      sourceHandoffLeaseToken: running.leaseToken,
+      draft: {
+        change_id: 'durable-runtime-workspace-change',
+        session_id: runtimeSessionId,
+        run_id: runId,
+        source: 'run',
+        workspace: '/workspace/project',
+        started_at: 1,
+        finished_at: 2,
+        files_changed: 1,
+        additions: 1,
+        deletions: 0,
+        total_patch_bytes: 4,
+        files: [{
+          path: 'file.txt',
+          change_type: 'modified',
+          additions: 1,
+          deletions: 0,
+          size_before: 3,
+          size_after: 4,
+          patch: '+new',
+          patch_bytes: 4,
+          binary: false,
+          truncated: false,
+        }],
+      },
+    })
+
+    expect(saved?.message).toMatchObject({ senderId: 'agent-worker', role: 'tool' })
+    expect(JSON.parse(saved!.message.content)).toMatchObject({
+      session_id: participantSessionId,
+      run_id: runId,
+      change_id: 'durable-runtime-workspace-change',
+    })
+    expect(harness.db.prepare('SELECT session_id, run_id FROM workspace_run_changes WHERE change_id = ?')
+      .get('durable-runtime-workspace-change')).toEqual({
+      session_id: runtimeSessionId,
+      run_id: runId,
+    })
+    expect(groupServer.getStorage().getHandoffJob(running.id)).toMatchObject({
+      status: 'running', leaseToken: running.leaseToken, targetSessionId: participantSessionId,
+    })
+  })
+
   it('rejects replay of an existing workspace message id when durable provenance is omitted', async () => {
     const { human, agent } = await joinHumanAndAgent()
     const agentSessionId = currentAgentSessionId()

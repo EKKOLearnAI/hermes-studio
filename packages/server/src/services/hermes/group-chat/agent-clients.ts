@@ -83,8 +83,14 @@ type MentionMessage = {
     targetSessionId?: string
 }
 
-export function groupMentionTextInput(content: string, chainRequest: string | undefined, agentName: string, routedPrefix: string): string {
-    const predecessor = stripMentionRoutingTokens(content, agentName) || content
+export function groupMentionTextInput(
+    content: string,
+    chainRequest: string | undefined,
+    agentName: string,
+    routedPrefix: string,
+    roomAgentNames?: string[],
+): string {
+    const predecessor = stripMentionRoutingTokens(content, agentName, roomAgentNames) || content
     if (!chainRequest) return `${routedPrefix}\n\n原始消息：${predecessor}`
     return `GROUP_CHAT_HERMES_HANDOFF_V1 ${JSON.stringify({
         version: 1,
@@ -139,6 +145,7 @@ function isUnknownBridgeSessionError(err: unknown): boolean {
 interface WorkspaceDiffRunState {
     roomId: string
     sessionId: string
+    persistenceSessionId: string
     runId: string
     workspace: string
     sourceHandoffJobId?: string
@@ -771,6 +778,7 @@ class AgentClient {
     private beginWorkspaceDiffIfNeeded(args: {
         roomId: string
         sessionId: string
+        persistenceSessionId?: string
         runId: string
         workspace: string
         sourceHandoffJobId?: string
@@ -784,7 +792,12 @@ class AgentClient {
             runId: args.runId,
             workspace: args.workspace,
         })
-        const state: WorkspaceDiffRunState = { ...args, abortRequested: false, finalized: false }
+        const state: WorkspaceDiffRunState = {
+            ...args,
+            persistenceSessionId: args.persistenceSessionId || args.sessionId,
+            abortRequested: false,
+            finalized: false,
+        }
         this.workspaceDiffRuns.set(this.workspaceDiffKey(args.roomId, args.sessionId, args.runId), state)
         return state
     }
@@ -909,7 +922,7 @@ class AgentClient {
                 roomId: current.roomId,
                 senderId: this.agentId,
                 senderName: this.name,
-                sessionId: current.sessionId,
+                sessionId: current.persistenceSessionId,
                 runId: current.runId,
                 status: finalStatus,
                 workspace: current.workspace,
@@ -1016,12 +1029,17 @@ class AgentClient {
                 ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
                 : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
             const rawInput = msg.input || msg.content
+            const roomAgentNames = [
+                this.name,
+                ...(this.storage?.getRoomAgents?.(roomId) || [])
+                    .map((agent: PersistedParticipantBinding) => String(agent.name || '').trim()),
+            ].filter(Boolean)
             const input = isContentBlockArray(rawInput)
                 ? rawInput.map((block) => {
                     if (block.type !== 'text') return block
-                    return { ...block, text: groupMentionTextInput(String(block.text || msg.content), msg.chainRequest, this.name, routedPrefix) }
+                    return { ...block, text: groupMentionTextInput(String(block.text || msg.content), msg.chainRequest, this.name, routedPrefix, roomAgentNames) }
                 })
-                : groupMentionTextInput(msg.content, msg.chainRequest, this.name, routedPrefix)
+                : groupMentionTextInput(msg.content, msg.chainRequest, this.name, routedPrefix, roomAgentNames)
             const directInputTokenEstimate = countTokens(isContentBlockArray(input)
                 ? input.map(block => block.type === 'text' ? String(block.text || '') : `[${block.type}]`).join('\n')
                 : input)
@@ -1171,6 +1189,7 @@ class AgentClient {
                 workspaceRunState = this.beginWorkspaceDiffIfNeeded({
                     roomId,
                     sessionId,
+                    persistenceSessionId: msg.targetSessionId || sessionId,
                     runId: started.run_id,
                     workspace: roomWorkspace,
                     sourceHandoffJobId: msg.handoffJobId || '',
@@ -1388,6 +1407,11 @@ class AgentClient {
             }
             const triggerMessage = storedTriggerMessage || mentionMessageToStoredContextMessage(roomId, msg)
             const triggerRoomSeq = Math.max(0, Math.floor(Number(triggerMessage.roomSeq || 0)))
+            const roomAgentNames = [
+                this.name,
+                ...(this.storage?.getRoomAgents?.(roomId) || [])
+                    .map((agent: PersistedParticipantBinding) => String(agent.name || '').trim()),
+            ].filter(Boolean)
             if (canResolveStoredTrigger && triggerRoomSeq <= 0) {
                 throw new Error('The triggering Room message has no persisted sequence; refusing to advance Coding Agent continuity')
             }
@@ -1426,7 +1450,7 @@ class AgentClient {
                     apiKey: null,
                     currentMessage: triggerMessage,
                     excludeCurrentMessageFromHistory: true,
-                    directInputTokenEstimate: countTokens(stripMentionRoutingTokens(msg.content, this.name) || msg.content),
+                    directInputTokenEstimate: countTokens(stripMentionRoutingTokens(msg.content, this.name, roomAgentNames) || msg.content),
                     authorizationGuard: () => executionIsCurrent(),
                     summarySessionRegistrar: () => this.createSummarySessionLease(roomId),
                     compression,
@@ -1587,7 +1611,7 @@ class AgentClient {
                 return
             }
             const room = this.storage?.getRoom?.(roomId)
-            const routedContent = stripMentionRoutingTokens(msg.content, this.name) || msg.content
+            const routedContent = stripMentionRoutingTokens(msg.content, this.name, roomAgentNames) || msg.content
             const routedInput = buildCodingAgentGroupHandoffEnvelope({
                 roomId,
                 roomName: String(room?.name || roomId),
