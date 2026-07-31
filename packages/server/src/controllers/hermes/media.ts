@@ -5,6 +5,7 @@ import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '.
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
+import { parseDotenvValue } from '../../services/dotenv'
 import {
   imageRequestId,
   publicImageError,
@@ -86,11 +87,18 @@ function requestedApiKeyImageProviderName(body: any): string {
   return normalizeCustomProviderName(body?.provider || body?.provider_name || body?.custom_provider) || APIKEY_IMAGE_PROVIDER
 }
 
-function apiKeyFromCustomProvider(provider: any): string {
+function apiKeyFromCustomProvider(provider: any, profile: string): string {
   const direct = String(provider?.api_key || '').trim()
   if (direct) return direct
   const envName = String(provider?.api_key_env || provider?.key_env || '').trim()
-  return envName ? String(process.env[envName] || '').trim() : ''
+  if (!envName) return ''
+  const processValue = String(process.env[envName] || '').trim()
+  if (processValue) return processValue
+  try {
+    return parseDotenvValue(readFileSync(join(getProfileDir(profile), '.env'), 'utf-8'), envName)
+  } catch {
+    return ''
+  }
 }
 
 async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY_IMAGE_PROVIDER): Promise<ApiKeyImageProvider | null> {
@@ -98,7 +106,7 @@ async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY
   const hermesConfig = await readConfigYamlForProfile(profile)
   const customProviders = getCompatibleCustomProviders(hermesConfig)
   const provider = customProviders.find(entry => normalizeCustomProviderName(entry?.name) === requestedName)
-  const apiKey = apiKeyFromCustomProvider(provider)
+  const apiKey = apiKeyFromCustomProvider(provider, profile)
   const baseUrl = String(provider?.base_url || '').trim()
   if (!provider || !apiKey || !baseUrl) return null
   return {

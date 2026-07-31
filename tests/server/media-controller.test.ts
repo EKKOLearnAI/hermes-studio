@@ -81,6 +81,119 @@ describe('media controller', () => {
     expect(defaultImageOutputPath('img_123', 0, 'jpeg')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'img_123.jpg'))
   })
 
+  it('resolves a key_env credential from the requested profile .env', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'hermes-media-xiaoyan-profile-'))
+    const outputDir = await mkdtemp(join(tmpdir(), 'hermes-media-axon-output-'))
+    const envName = 'AXONHUB_XIAOYAN_API_KEY'
+    const previousProcessValue = process.env[envName]
+    delete process.env[envName]
+    await writeFile(join(profileDir, '.env'), [
+      '',
+      '# profile-scoped custom provider credential',
+      `export ${envName}='axon-profile-secret' # ignored comment`,
+      '',
+    ].join('\n'))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: (profile: string) => profile === 'xiaoyan' ? profileDir : '/tmp/hermes-default-profile',
+      listProfileNamesFromDisk: () => ['default', 'xiaoyan'],
+    }))
+    const readConfigYamlForProfile = vi.fn(async () => ({
+      custom_providers: [{
+        name: 'axon',
+        base_url: 'https://axon.example/v1',
+        key_env: envName,
+        model: 'axon-image-1',
+      }],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({ readConfigYamlForProfile }))
+    const fetchMock = vi.fn(async () => imageResponse())
+    globalThis.fetch = fetchMock as any
+
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx = mediaContext({
+        profile: 'xiaoyan',
+        provider: 'axon',
+        mode: 'text',
+        prompt: 'use the profile provider',
+        output_path: join(outputDir, 'result.png'),
+      })
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({
+        ok: true,
+        provider: 'axon',
+        actual_provider: 'axon',
+        profile: 'xiaoyan',
+      })
+      expect(JSON.stringify(ctx.body)).not.toContain('axon-profile-secret')
+      expect(readConfigYamlForProfile).toHaveBeenCalledWith('xiaoyan')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://axon.example/v1/images/generations',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer axon-profile-secret' }),
+        }),
+      )
+    } finally {
+      if (previousProcessValue === undefined) delete process.env[envName]
+      else process.env[envName] = previousProcessValue
+      await rm(profileDir, { recursive: true, force: true })
+      await rm(outputDir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns the public missing-provider error when key_env is absent from process and profile .env', async () => {
+    const profileDir = await mkdtemp(join(tmpdir(), 'hermes-media-xiaoyan-missing-key-'))
+    const envName = 'AXONHUB_XIAOYAN_API_KEY'
+    const previousProcessValue = process.env[envName]
+    delete process.env[envName]
+    await writeFile(join(profileDir, '.env'), '# no axon credential\nOTHER_KEY=other-value\n')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: (profile: string) => profile === 'xiaoyan' ? profileDir : '/tmp/hermes-default-profile',
+      listProfileNamesFromDisk: () => ['default', 'xiaoyan'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'axon',
+          base_url: 'https://axon.example/v1',
+          key_env: envName,
+          model: 'axon-image-1',
+        }],
+      })),
+    }))
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as any
+
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx = mediaContext({
+        profile: 'xiaoyan',
+        provider: 'axon',
+        mode: 'text',
+        prompt: 'missing credential',
+      })
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(401)
+      expect(ctx.body).toMatchObject({
+        error: 'The requested image provider is not configured',
+        code: 'missing_apikey_image_provider',
+      })
+      expect(JSON.stringify(ctx.body)).not.toContain(envName)
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      if (previousProcessValue === undefined) delete process.env[envName]
+      else process.env[envName] = previousProcessValue
+      await rm(profileDir, { recursive: true, force: true })
+    }
+  })
+
   it('passes native 4K generation options and returns actual provider, model, dimensions, format, and request id', async () => {
     mockImageProvider()
     const outputDir = await mkdtemp(join(tmpdir(), 'hermes-media-4k-'))

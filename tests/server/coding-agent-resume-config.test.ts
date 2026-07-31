@@ -370,7 +370,7 @@ describe('coding agent resumed session config', () => {
         model: 'deepseek-v4-flash',
       }],
     })
-    safeReadFileMock.mockResolvedValue('SENSENOVA_API_KEY=sk-from-env\n')
+    safeReadFileMock.mockResolvedValue("\n# profile credential\nexport SENSENOVA_API_KEY='sk-from-env' # ignored comment\n")
 
     const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
     await expect(startCodingAgentRun('claude-code', { sessionId: 'session-1' })).resolves.toEqual(

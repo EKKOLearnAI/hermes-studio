@@ -19,6 +19,7 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
 import type { SessionState } from './hermes/run-chat/types'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from './windows-command'
+import { parseDotenvValue } from './dotenv'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -413,27 +414,6 @@ function providerLookupCandidates(provider: string): string[] {
   ].filter(Boolean))]
 }
 
-function parseEnvValue(envContent: string, key: string): string {
-  if (!key) return ''
-  const lines = envContent.split(/\r?\n/)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eqIndex = trimmed.indexOf('=')
-    if (eqIndex === -1) continue
-    if (trimmed.slice(0, eqIndex).trim() !== key) continue
-    const raw = trimmed.slice(eqIndex + 1).trim()
-    if (
-      (raw.startsWith('"') && raw.endsWith('"')) ||
-      (raw.startsWith("'") && raw.endsWith("'"))
-    ) {
-      return raw.slice(1, -1)
-    }
-    return raw
-  }
-  return ''
-}
-
 function inferLaunchApiMode(provider: string, baseUrl: string, fallback: ApiMode = 'chat_completions'): ApiMode {
   const providerKey = String(provider || '').toLowerCase()
   const normalizedBaseUrl = String(baseUrl || '').toLowerCase()
@@ -543,7 +523,7 @@ async function resolveStoredProviderLaunchInput(
     if (!apiKey) apiKey = String(customEntry.api_key || '').trim()
     if (!apiKey) {
       const keyEnv = String(customEntry.key_env || '').trim()
-      if (keyEnv) apiKey = parseEnvValue(envContent, keyEnv)
+      if (keyEnv) apiKey = parseDotenvValue(envContent, keyEnv)
     }
     if (!apiMode) {
       apiMode = normalizeLaunchApiMode(
@@ -558,11 +538,11 @@ async function resolveStoredProviderLaunchInput(
   const envMapping = PROVIDER_ENV_MAP[canonicalProviderKey]
   if (!baseUrl) {
     baseUrl = envMapping?.base_url_env
-      ? parseEnvValue(envContent, envMapping.base_url_env) || canonicalPreset?.base_url || ''
+      ? parseDotenvValue(envContent, envMapping.base_url_env) || canonicalPreset?.base_url || ''
       : canonicalPreset?.base_url || ''
   }
   if (!apiKey && envMapping?.api_key_env) {
-    apiKey = parseEnvValue(envContent, envMapping.api_key_env)
+    apiKey = parseDotenvValue(envContent, envMapping.api_key_env)
   }
   if (!apiMode) {
     apiMode = normalizeLaunchApiMode(
