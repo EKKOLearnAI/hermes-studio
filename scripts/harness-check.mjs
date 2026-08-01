@@ -433,6 +433,7 @@ for (const phrase of [
   'Hermes source commit mismatch',
   "git', ['status', '--porcelain']",
   "resolve(SOURCE_DIR, '.git', 'info', 'exclude')",
+  "'/base/'",
 ]) {
   if (!desktopFetchHermes.includes(phrase)) {
     fail(`fetch-hermes.mjs must retain a clean, updateable source checkout: ${phrase}`)

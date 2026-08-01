@@ -114,7 +114,7 @@ if (sourceVersion !== source.version) {
 // autostash.
 const excludePath = resolve(SOURCE_DIR, '.git', 'info', 'exclude')
 const exclude = existsSync(excludePath) ? readFileSync(excludePath, 'utf-8') : ''
-const runtimeExcludes = ['/node/', '/ms-playwright/']
+const runtimeExcludes = ['/base/', '/node/', '/ms-playwright/']
 const missingExcludes = runtimeExcludes.filter(pattern => !exclude.split(/\r?\n/).includes(pattern))
 if (missingExcludes.length > 0) {
   appendFileSync(excludePath, `${exclude.endsWith('\n') || !exclude ? '' : '\n'}${missingExcludes.join('\n')}\n`)
