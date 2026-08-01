@@ -380,6 +380,107 @@ describe('ekko-agent model requests', () => {
     expect(payload.previous_response_id).toBeUndefined()
   })
 
+  it('omits tool choice from every provider payload when no tools are present', async () => {
+    const request = {
+      messages: [{ role: 'user' as const, content: 'Compress this context.' }],
+      toolChoice: 'none' as const,
+      stream: false,
+    }
+    const responsesPayload = toOpenAIResponsesPayload({
+      id: 'xai-oauth',
+      type: 'openai-compatible',
+      requestStyle: 'openai-responses',
+      defaultModel: 'grok-4.5',
+    }, request)
+    const chatPayload = toOpenAIChatPayload(providerConfig, request)
+    const anthropicPayload = toAnthropicMessagesPayload({
+      id: 'anthropic',
+      type: 'anthropic',
+      defaultModel: 'claude-sonnet',
+    }, request)
+
+    for (const payload of [responsesPayload, chatPayload, anthropicPayload]) {
+      expect(payload).not.toHaveProperty('tools')
+      expect(payload).not.toHaveProperty('tool_choice')
+    }
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: 'OK' })))
+    const customClient = createModelClient({
+      id: 'runtime',
+      type: 'custom',
+      requestStyle: 'custom-runtime',
+      baseUrl: 'http://127.0.0.1:11434',
+      defaultModel: 'runtime-agent',
+    }, { fetch: fetchMock })
+    await customClient.create(request)
+
+    const customPayload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(customPayload).not.toHaveProperty('tools')
+    expect(customPayload).not.toHaveProperty('toolChoice')
+  })
+
+  it('preserves tool choice when provider payloads include tools', () => {
+    const request = {
+      messages: [{ role: 'user' as const, content: 'Use the tool.' }],
+      tools: [{ name: 'lookup', parameters: { type: 'object' } }],
+      toolChoice: 'required' as const,
+    }
+
+    expect(toOpenAIResponsesPayload({
+      id: 'xai-oauth',
+      type: 'openai-compatible',
+      requestStyle: 'openai-responses',
+      defaultModel: 'grok-4.5',
+    }, request)).toMatchObject({
+      tools: [expect.objectContaining({ name: 'lookup' })],
+      tool_choice: 'required',
+    })
+    expect(toOpenAIChatPayload(providerConfig, request)).toMatchObject({
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: 'lookup' }) })],
+      tool_choice: 'required',
+    })
+    expect(toAnthropicMessagesPayload({
+      id: 'anthropic',
+      type: 'anthropic',
+      defaultModel: 'claude-sonnet',
+    }, request)).toMatchObject({
+      tools: [expect.objectContaining({ name: 'lookup' })],
+      tool_choice: { type: 'any' },
+    })
+  })
+
+  it('strips tool choice inside AgentRuntime when its tool registry is empty', async () => {
+    const create = vi.fn(async () => ({ content: 'done' }))
+    const runtime = new AgentRuntime({
+      modelClient: {
+        provider: 'test',
+        requestStyle: 'custom-runtime',
+        capabilities: {
+          streaming: false,
+          tools: true,
+          vision: false,
+          jsonMode: false,
+          systemPrompt: true,
+        },
+        create,
+        stream: vi.fn(),
+      },
+      toolsEnabled: false,
+      modelDefaults: {
+        model: 'test-model',
+        toolChoice: 'none',
+      },
+    })
+
+    await runtime.run({ messages: ['Hello'] })
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'test-model',
+      tools: undefined,
+      toolChoice: undefined,
+    }))
+  })
+
   it('sends Qwen OAuth identity headers to the Portal Chat Completions endpoint', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: 'Qwen' }, finish_reason: 'stop' }],

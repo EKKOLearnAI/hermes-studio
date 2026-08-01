@@ -1,9 +1,11 @@
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   EKKO_LOG_FILE_NAME,
+  EkkoFileLogReader,
   EkkoFileLogger,
 } from '../../packages/ekko-agent/src'
 
@@ -82,5 +84,13 @@ describe('EkkoFileLogger', () => {
     expect(raw).toContain('log.size_limit_reset')
     expect(raw).toContain('current-session')
     expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(700)
+  })
+
+  it('does not create files or directories when opened for reading', () => {
+    const missingDirectory = join(root, 'missing')
+    const reader = new EkkoFileLogReader({ directory: missingDirectory })
+
+    expect(reader.query()).toEqual([])
+    expect(existsSync(missingDirectory)).toBe(false)
   })
 })

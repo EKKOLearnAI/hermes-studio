@@ -80,6 +80,10 @@ export class AnthropicMessagesModelClient implements ModelClient {
     this.capabilities = { ...capabilities, ...config.capabilities }
   }
 
+  requestTarget(): string {
+    return anthropicUrl(this.config)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     const response = await postJson<AnthropicResponse>(
       this.config,
@@ -158,14 +162,21 @@ export class AnthropicMessagesModelClient implements ModelClient {
 }
 
 export function toAnthropicMessagesPayload(config: ModelProviderConfig, request: ModelRequest): AnthropicPayload {
+  const tools = request.tools?.length ? request.tools.map(toAnthropicTool) : undefined
   return {
     model: request.model ?? config.defaultModel,
     system: request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n') || undefined,
     messages: request.messages.filter(message => message.role !== 'system').map(toAnthropicMessage),
     max_tokens: request.maxTokens ?? 4096,
     temperature: request.temperature,
-    tools: request.tools?.map(toAnthropicTool),
-    tool_choice: request.toolChoice ? { type: request.toolChoice === 'required' ? 'any' : request.toolChoice } : undefined,
+    ...(tools
+      ? {
+          tools,
+          ...(request.toolChoice
+            ? { tool_choice: { type: request.toolChoice === 'required' ? 'any' : request.toolChoice } }
+            : {}),
+        }
+      : {}),
     stream: request.stream,
   }
 }

@@ -7,6 +7,8 @@ import type { AgentRuntimeEvent } from './events'
 import type { MemoryContext } from '../memory/types'
 import type { MemoryService } from '../memory/service'
 import type { SkillReviewUsageEvent } from '../skills/review'
+import type { EkkoLogWriter } from '../logging/file-logger'
+import type { EkkoRuntimeLogContext } from '../logging/runtime-logger'
 
 export interface AgentRuntimeContextEstimate {
   contextTokens: number
@@ -41,6 +43,9 @@ export interface AgentRuntimeOptions {
   modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>
   contextKey?: string
   memory?: MemoryService
+  /** Internal structured log sink owned by the Ekko runtime. */
+  logWriter?: EkkoLogWriter
+  logProfile?: string
 }
 
 export interface AgentRuntimeRunInput {
@@ -64,6 +69,8 @@ export interface AgentRuntimeRunInput {
   contextKey?: string
   context?: unknown
   memoryEnabled?: boolean
+  /** Correlation fields only; log events and payloads remain runtime-owned. */
+  logContext?: EkkoRuntimeLogContext
   onMemoryUsage?: (input: {
     purpose: 'ekko-memory-summary'
     usage: ModelUsage

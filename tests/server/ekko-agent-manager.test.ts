@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGlobalEkkoAgent, GlobalEkkoAgent } from '../../packages/server/src/services/ekko-agent/manager'
+import { EkkoFileLogReader } from '../../packages/ekko-agent/src'
 import type { ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
 
 const getHermesBaseDirMock = vi.hoisted(() => vi.fn())
@@ -197,23 +198,87 @@ describe('GlobalEkkoAgent', () => {
     }
   })
 
-  it('writes and queries the shared profile log file', () => {
+  it('lets the runtime own compact model request logs', async () => {
     const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
     try {
-      expect(agent.writeLog({
-        category: 'tool',
-        event: 'tool.failed',
-        sessionId: 'session-1',
-        runId: 'run-1',
-        data: { error: 'timeout' },
-      })).toBe(true)
-      expect(agent.queryLogs({ sessionId: 'session-1' })).toMatchObject([
-        {
-          category: 'tool',
-          event: 'tool.failed',
+      await agent.run({
+        messages: ['diagnose this'],
+        model: 'test-model',
+        modelClient: modelClient('done'),
+        logContext: {
           profile: 'work',
           sessionId: 'session-1',
-          runId: 'run-1',
+          turnId: 'turn-1',
+        },
+      })
+
+      const reader = new EkkoFileLogReader({
+        directory: join(baseDirectory, '.ekko', 'logs', 'work'),
+      })
+      expect(reader.query({ sessionId: 'session-1' })).toMatchObject([
+        {
+          category: 'model',
+          event: 'model.request',
+          profile: 'work',
+          level: 'info',
+          sessionId: 'session-1',
+          turnId: 'turn-1',
+          data: expect.objectContaining({
+            status: 'completed',
+            provider: 'test',
+            model: 'test-model',
+            messageCount: 2,
+          }),
+        },
+      ])
+      expect('writeLog' in agent).toBe(false)
+    } finally {
+      agent.close()
+    }
+  })
+
+  it('injects compact request logging into isolated runtimes', async () => {
+    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
+    try {
+      await agent.runIsolated(
+        {
+          modelClient: modelClient('compressed'),
+          toolsEnabled: false,
+          skillsEnabled: false,
+          maxSteps: 1,
+          modelDefaults: {
+            model: 'summary-model',
+          },
+        },
+        {
+          messages: ['compress this history'],
+          memoryEnabled: false,
+          metadata: {
+            purpose: 'context-compression',
+            session_id: 'session-1',
+          },
+          logContext: {
+            profile: 'work',
+            sessionId: 'session-1',
+          },
+        },
+      )
+
+      const reader = new EkkoFileLogReader({
+        directory: join(baseDirectory, '.ekko', 'logs', 'work'),
+      })
+      expect(reader.query({ sessionId: 'session-1' })).toMatchObject([
+        {
+          category: 'model',
+          event: 'model.request',
+          profile: 'work',
+          sessionId: 'session-1',
+          data: expect.objectContaining({
+            status: 'completed',
+            purpose: 'context-compression',
+            provider: 'test',
+            model: 'summary-model',
+          }),
         },
       ])
     } finally {

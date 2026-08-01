@@ -479,6 +479,7 @@ describe('run chat compression trigger', () => {
       expect.objectContaining({
         model: 'session-model',
         provider: 'session-provider',
+        sessionId: 'session-1',
         allowHermesFallback: false,
       }),
     )

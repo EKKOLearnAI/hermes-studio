@@ -8,9 +8,7 @@ import {
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
   type AgentRuntimeContextEstimate,
-  type EkkoLogEntry,
-  type EkkoLogQuery,
-  type EkkoLogRecord,
+  type AgentRuntimeOptions,
 } from '../../../../ekko-agent/src'
 import { config } from '../../config'
 import { getHermesBaseDir } from '../hermes/hermes-profile'
@@ -44,22 +42,11 @@ export class GlobalEkkoAgent {
     this.logDirectory = this.directories.profileLogsDirectory(options.profile)
     this.workspaceDirectory = this.directories.profileWorkspaceDirectory(options.profile)
     this.fileLogger = new EkkoFileLogger({ directory: this.logDirectory })
-    this.writeLog({
-      category: 'system',
-      event: 'agent.initialized',
-      data: {
-        dataDirectory: this.directories.rootDirectory,
-        skillDirectory: this.skillDirectory,
-        logDirectory: this.logDirectory,
-        workspaceDirectory: this.workspaceDirectory,
-      },
-    })
     if (this.directories.lastSkillImport) {
-      this.writeLog({
-        category: 'skill',
-        event: 'skill.hermes_profiles_imported',
-        data: this.directories.lastSkillImport,
-      })
+      logger.info(
+        { import: this.directories.lastSkillImport },
+        '[ekko-agent] imported Hermes profile skills',
+      )
     }
   }
 
@@ -67,6 +54,18 @@ export class GlobalEkkoAgent {
     this.lastUsedAt = Date.now()
     this.runCount += 1
     return this.runtimeInstance().run(this.withDefaultWorkspace(input))
+  }
+
+  async runIsolated(
+    options: Omit<AgentRuntimeOptions, 'logWriter' | 'logProfile'>,
+    input: AgentRuntimeRunInput,
+  ): Promise<AgentRuntimeRunResult> {
+    const runtime = new AgentRuntime({
+      ...options,
+      logWriter: this.fileLogger,
+      logProfile: this.options.profile || 'default',
+    })
+    return runtime.run(input)
   }
 
   async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
@@ -85,23 +84,7 @@ export class GlobalEkkoAgent {
     return this.runtime?.abortBackgroundTasks(sessionId) ?? 0
   }
 
-  writeLog(entry: Omit<EkkoLogEntry, 'profile'>): boolean {
-    return this.fileLogger.write({
-      ...entry,
-      profile: this.options.profile || 'default',
-    })
-  }
-
-  queryLogs(query: EkkoLogQuery = {}): EkkoLogRecord[] {
-    return this.fileLogger.query(query)
-  }
-
   close(): void {
-    this.writeLog({
-      category: 'system',
-      event: 'agent.closed',
-      data: { runCount: this.runCount },
-    })
     void this.runtime?.abortBackgroundTasks()
     this.memory?.close()
     this.memory = undefined
@@ -127,24 +110,15 @@ export class GlobalEkkoAgent {
   private runtimeInstance(): AgentRuntime {
     if (this.runtime) return this.runtime
     if (this.options.memory === false) {
-      this.runtime = new AgentRuntime({ skillDirectory: this.skillDirectory })
-      this.writeLog({
-        category: 'memory',
-        event: 'memory.disabled',
-      })
-      this.writeLog({
-        category: 'system',
-        event: 'runtime.initialized',
-        data: { memoryEnabled: false },
+      this.runtime = new AgentRuntime({
+        skillDirectory: this.skillDirectory,
+        logWriter: this.fileLogger,
+        logProfile: this.options.profile || 'default',
       })
       return this.runtime
     }
     if (this.options.memory) {
       this.memory = this.options.memory
-      this.writeLog({
-        category: 'memory',
-        event: 'memory.attached',
-      })
     } else {
       try {
         const database = new EkkoDatabaseManager({ databasePath: this.directories.databasePath })
@@ -152,31 +126,17 @@ export class GlobalEkkoAgent {
         const store = new SqliteMemoryStore(database)
         this.memoryDatabasePath = store.databasePath
         this.memory = new MemoryService({ store })
-        this.writeLog({
-          category: 'memory',
-          event: 'memory.initialized',
-          data: { databasePath: this.memoryDatabasePath },
-        })
       } catch (error) {
         const warning = error instanceof Error ? error.message : String(error)
         logger.warn({ err: error }, '[ekko-agent] memory database initialization failed; memory is disabled')
         this.memory = new MemoryService({ enabled: false, warning })
-        this.writeLog({
-          category: 'memory',
-          event: 'memory.initialization_failed',
-          level: 'error',
-          data: { error },
-        })
       }
     }
     this.runtime = new AgentRuntime({
       memory: this.memory,
       skillDirectory: this.skillDirectory,
-    })
-    this.writeLog({
-      category: 'system',
-      event: 'runtime.initialized',
-      data: { memoryEnabled: this.memory?.isEnabled ?? false },
+      logWriter: this.fileLogger,
+      logProfile: this.options.profile || 'default',
     })
     return this.runtime
   }

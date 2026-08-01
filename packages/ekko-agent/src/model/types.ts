@@ -124,6 +124,8 @@ export interface ModelClient {
   provider: string
   requestStyle: ModelRequestStyle
   capabilities: ModelCapabilities
+  /** Resolve the credential-free request target used for diagnostics. */
+  requestTarget?(request: ModelRequest): string
   create(request: ModelRequest): Promise<ModelResponse>
   stream(request: ModelRequest): AsyncIterable<ModelEvent>
 }

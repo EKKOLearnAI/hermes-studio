@@ -7,6 +7,7 @@ const bridgeRequestMock = vi.fn()
 const bridgeDestroyMock = vi.fn()
 const ekkoRuntimeOptionsMock = vi.fn()
 const ekkoRuntimeRunMock = vi.fn()
+const getGlobalEkkoAgentMock = vi.fn()
 const createModelClientMock = vi.fn()
 const resolveModelProviderConfigsMock = vi.fn()
 const resolveEkkoProviderRuntimeConfigMock = vi.fn()
@@ -37,14 +38,11 @@ vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => 
   resolveEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
 }))
 
-vi.mock('../../packages/ekko-agent/src', () => ({
-  AgentRuntime: class {
-    constructor(options: unknown) {
-      ekkoRuntimeOptionsMock(options)
-    }
+vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
+  getGlobalEkkoAgent: getGlobalEkkoAgentMock,
+}))
 
-    run = ekkoRuntimeRunMock
-  },
+vi.mock('../../packages/ekko-agent/src', () => ({
   createModelClient: createModelClientMock,
   resolveModelProviderConfigs: resolveModelProviderConfigsMock,
 }))
@@ -61,12 +59,19 @@ describe('ChatContextCompressor', () => {
     bridgeDestroyMock.mockReset()
     ekkoRuntimeOptionsMock.mockReset()
     ekkoRuntimeRunMock.mockReset()
+    getGlobalEkkoAgentMock.mockReset()
     createModelClientMock.mockReset()
     resolveModelProviderConfigsMock.mockReset()
     resolveEkkoProviderRuntimeConfigMock.mockReset()
     bridgeRequestMock.mockRejectedValue(new Error('summarizer failed'))
     bridgeDestroyMock.mockResolvedValue(undefined)
     ekkoRuntimeRunMock.mockRejectedValue(new Error('ekko summarizer failed'))
+    getGlobalEkkoAgentMock.mockImplementation(() => ({
+      runIsolated: (options: unknown, input: unknown) => {
+        ekkoRuntimeOptionsMock(options)
+        return ekkoRuntimeRunMock(input)
+      },
+    }))
     resolveEkkoProviderRuntimeConfigMock.mockResolvedValue({
       provider: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1',
@@ -108,7 +113,12 @@ describe('ChatContextCompressor', () => {
       [],
       12_000,
       undefined,
-      { profile: 'work', model: 'summary-model', provider: 'openrouter' },
+      {
+        profile: 'work',
+        model: 'summary-model',
+        provider: 'openrouter',
+        sessionId: 'session-1',
+      },
     )
 
     expect(result).toBe('ekko summary')
@@ -123,15 +133,24 @@ describe('ChatContextCompressor', () => {
       toolDelayMs: 0,
       modelDefaults: expect.objectContaining({
         model: 'summary-model',
-        toolChoice: 'none',
       }),
     }))
+    expect(ekkoRuntimeOptionsMock.mock.calls[0]?.[0]?.modelDefaults).not.toHaveProperty('toolChoice')
     expect(ekkoRuntimeRunMock).toHaveBeenCalledWith(expect.objectContaining({
       memoryEnabled: false,
       messages: [
         { role: 'user', content: 'Summarize these turns.' },
         { role: 'user', content: 'Generate the context checkpoint summary now.' },
       ],
+      metadata: {
+        purpose: 'context-compression',
+        profile: 'work',
+        session_id: 'session-1',
+      },
+      logContext: {
+        profile: 'work',
+        sessionId: 'session-1',
+      },
     }))
     expect(bridgeRequestMock).not.toHaveBeenCalled()
     expect(bridgeDestroyMock).not.toHaveBeenCalled()

@@ -8,6 +8,7 @@ import {
 import type { AgentMessage, ModelClient, ModelRequest, ModelResponse, ModelUsage } from '../model/types'
 import { AgentToolRegistry } from '../tools/registry'
 import { createSkillTools } from '../tools/skills'
+import type { EkkoRuntimeLogContext, EkkoRuntimeLogger } from '../logging/runtime-logger'
 
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 
@@ -22,6 +23,9 @@ export interface SkillReviewScheduleInput {
   modelClient: ModelClient
   model?: string
   messages: AgentMessage[]
+  requestLogger?: EkkoRuntimeLogger
+  requestLogContext?: EkkoRuntimeLogContext
+  requestRunId?: string
   onUsage?: (event: SkillReviewUsageEvent) => void
   onStarted?: (reviewId: string) => void
   onCompleted?: (reviewId: string, mutations: number) => void
@@ -82,7 +86,7 @@ export class SkillReviewService {
         toolChoice: 'auto',
         stream: false,
         metadata: { purpose: 'ekko-skill-review', review_id: reviewId },
-      }, input.modelClient)
+      }, input.modelClient, input, reviewId, step + 1)
       callIndex += 1
       if (response.usage) {
         safelyInvoke(() => input.onUsage?.({
@@ -109,13 +113,34 @@ export class SkillReviewService {
     throw new Error('Skill reviewer exceeded its tool step limit.')
   }
 
-  private async createWithRetries(request: ModelRequest, modelClient: ModelClient): Promise<ModelResponse> {
+  private async createWithRetries(
+    request: ModelRequest,
+    modelClient: ModelClient,
+    input: SkillReviewScheduleInput,
+    reviewId: string,
+    step: number,
+  ): Promise<ModelResponse> {
     const maxRetries = Math.max(0, this.options.maxModelRetries ?? 3)
     let lastError: unknown
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const span = input.requestLogger?.startModelRequest({
+        client: modelClient,
+        request,
+        runId: input.requestRunId || reviewId,
+        step,
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        transport: 'create',
+        purpose: 'ekko-skill-review',
+        operationId: reviewId,
+        context: input.requestLogContext,
+      })
       try {
-        return await modelClient.create(request)
+        const response = await modelClient.create(request)
+        span?.complete(response)
+        return response
       } catch (error) {
+        span?.fail(error)
         lastError = error
       }
     }

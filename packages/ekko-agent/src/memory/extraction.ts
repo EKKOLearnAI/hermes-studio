@@ -5,6 +5,7 @@ import type { AgentToolContext } from '../tools/types'
 import type { MemoryService } from './service'
 import { createMemoryTools } from './tools'
 import type { MemoryExtraction, MemoryExtractionInput, MemoryExtractor, MemoryMessage, MemoryNode } from './types'
+import type { EkkoRuntimeLogContext, EkkoRuntimeLogger } from '../logging/runtime-logger'
 
 export interface ModelMemoryExtractorOptions {
   modelClient: ModelClient
@@ -17,6 +18,9 @@ export interface ModelMemoryExtractorOptions {
   maxTokens?: number
   maxTranscriptChars?: number
   fallback?: MemoryExtractor
+  requestLogger?: EkkoRuntimeLogger
+  requestLogContext?: EkkoRuntimeLogContext
+  requestRunId?: string
   onUsage?: (input: {
     purpose: 'ekko-memory-summary'
     usage: ModelUsage
@@ -73,7 +77,7 @@ export class ModelMemoryExtractor implements MemoryExtractor {
         toolChoice: 'auto',
         stream: false,
         metadata: { purpose: 'ekko-memory-summary' },
-      })
+      }, `memory-step-${step + 1}`)
       modelCallIndex += 1
       if (response.usage && this.options.onUsage) {
         try {
@@ -99,10 +103,9 @@ export class ModelMemoryExtractor implements MemoryExtractor {
             signal: this.options.signal,
             temperature: 0.1,
             maxTokens: this.options.maxTokens ?? 1_200,
-            toolChoice: 'none',
             stream: false,
             metadata: { purpose: 'ekko-memory-summary' },
-          })
+          }, `memory-repair-${repairAttempt + 1}`)
           modelCallIndex += 1
           if (repairResponse.usage && this.options.onUsage) {
             try {
@@ -143,14 +146,30 @@ export class ModelMemoryExtractor implements MemoryExtractor {
     throw new Error('Memory summarizer exceeded its tool step limit.')
   }
 
-  private async createWithRetries(request: ModelRequest): Promise<ModelResponse> {
+  private async createWithRetries(request: ModelRequest, operationId: string): Promise<ModelResponse> {
     const maxRetries = Math.max(0, this.options.maxModelRetries ?? 3)
     let lastError: unknown
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      if (request.signal?.aborted) {
+        throw request.signal.reason ?? new Error('Memory summarization aborted.')
+      }
+      const span = this.options.requestLogger?.startModelRequest({
+        client: this.options.modelClient,
+        request,
+        runId: this.options.requestRunId || 'memory',
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        transport: 'create',
+        purpose: 'ekko-memory-summary',
+        operationId,
+        context: this.options.requestLogContext,
+      })
       try {
-        if (request.signal?.aborted) throw request.signal.reason ?? new Error('Memory summarization aborted.')
-        return await this.options.modelClient.create(request)
+        const response = await this.options.modelClient.create(request)
+        span?.complete(response)
+        return response
       } catch (error) {
+        span?.fail(error)
         if (request.signal?.aborted) throw error
         lastError = error
       }

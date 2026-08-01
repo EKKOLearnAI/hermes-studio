@@ -56,6 +56,10 @@ export class PromptCompletionModelClient implements ModelClient {
     this.capabilities = { ...capabilities, ...config.capabilities }
   }
 
+  requestTarget(): string {
+    return completionsUrl(this.config)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     const response = await postJson<PromptCompletionResponse>(
       this.config,

@@ -80,6 +80,10 @@ export class GeminiContentsModelClient implements ModelClient {
     this.capabilities = { ...capabilities, ...config.capabilities }
   }
 
+  requestTarget(request: ModelRequest): string {
+    return geminiUrl({ ...this.config, apiKey: undefined }, request.model, request.stream === true)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     const response = await postJson<GeminiResponse>(
       this.config,

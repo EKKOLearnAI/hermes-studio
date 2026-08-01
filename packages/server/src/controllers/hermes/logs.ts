@@ -6,7 +6,7 @@ import { config } from '../../config'
 import {
   EKKO_LOG_FILE_NAME,
   EkkoDirectoryManager,
-  EkkoFileLogger,
+  EkkoFileLogReader,
   type EkkoLogLevel,
   type EkkoLogRecord,
 } from '../../../../ekko-agent/src'
@@ -61,12 +61,12 @@ function requestedProfile(ctx: any): string {
   return String(ctx.state?.profile?.name || ctx.query?.profile || 'default').trim() || 'default'
 }
 
-function ekkoLoggerForProfile(profile: string): EkkoFileLogger | null {
+function ekkoLogReaderForProfile(profile: string): EkkoFileLogReader | null {
   try {
     const directories = new EkkoDirectoryManager(config.appHome)
     const directory = directories.profileLogsPath(profile)
     const filePath = join(directory, EKKO_LOG_FILE_NAME)
-    return existsSync(filePath) ? new EkkoFileLogger({ directory }) : null
+    return existsSync(filePath) ? new EkkoFileLogReader({ directory }) : null
   } catch {
     return null
   }
@@ -113,10 +113,10 @@ export async function list(ctx: any) {
       files.push({ name: 'bridge', size, modified })
     } catch { }
   }
-  const ekkoLogger = ekkoLoggerForProfile(requestedProfile(ctx))
-  if (ekkoLogger && existsSync(ekkoLogger.filePath)) {
+  const ekkoReader = ekkoLogReaderForProfile(requestedProfile(ctx))
+  if (ekkoReader && existsSync(ekkoReader.filePath)) {
     try {
-      const stat = statSync(ekkoLogger.filePath)
+      const stat = statSync(ekkoReader.filePath)
       files.push({ name: 'ekko-agent', size: displaySize(stat.size), modified: stat.mtime.toLocaleString() })
     } catch { }
   }
@@ -132,10 +132,10 @@ export async function read(ctx: any) {
 
   if (logName === 'ekko-agent') {
     try {
-      const ekkoLogger = ekkoLoggerForProfile(requestedProfile(ctx))
-      if (!ekkoLogger) { ctx.body = { entries: [] }; return }
+      const ekkoReader = ekkoLogReaderForProfile(requestedProfile(ctx))
+      if (!ekkoReader) { ctx.body = { entries: [] }; return }
       const normalizedLevel = String(level || '').toLowerCase()
-      const records = ekkoLogger.query({
+      const records = ekkoReader.query({
         sessionId: session,
         runId: (ctx.query.run as string) || undefined,
         category: (ctx.query.category as any) || undefined,

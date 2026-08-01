@@ -676,8 +676,8 @@ describe('MemoryService', () => {
 
     expect(client.create).toHaveBeenCalledTimes(2)
     const repairRequest = vi.mocked(client.create).mock.calls[1][0] as ModelRequest
-    expect(repairRequest.toolChoice).toBe('none')
     expect(repairRequest.tools).toBeUndefined()
+    expect(repairRequest.toolChoice).toBeUndefined()
     expect(repairRequest.messages.some(message => message.content.includes('not valid JSON'))).toBe(true)
     expect(result.fallbackReason).toBeUndefined()
   })

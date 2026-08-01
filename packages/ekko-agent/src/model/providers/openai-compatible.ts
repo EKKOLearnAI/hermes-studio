@@ -138,6 +138,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
   }
 
+  requestTarget(): string {
+    return chatCompletionsUrl(this.config)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     const payload = toOpenAIChatPayload(this.config, { ...request, stream: false })
     const response = await this.postJson(payload, request.signal)
@@ -249,13 +253,18 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
 export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelRequest): OpenAIChatPayload {
   const isQwenOAuth = config.id === 'qwen-oauth'
+  const tools = request.tools?.length ? request.tools.map(toOpenAIToolDefinition) : undefined
   return {
     model: request.model ?? config.defaultModel,
     messages: request.messages.flatMap(message => toOpenAIChatMessages(message, isQwenOAuth)),
     temperature: request.temperature,
     max_tokens: request.maxTokens,
-    tools: request.tools?.map(toOpenAIToolDefinition),
-    tool_choice: request.toolChoice,
+    ...(tools
+      ? {
+          tools,
+          ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
+        }
+      : {}),
     stream: request.stream,
     stream_options: request.stream ? { include_usage: true } : undefined,
     vl_high_resolution_images: isQwenOAuth ? true : undefined,

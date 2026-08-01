@@ -14,14 +14,12 @@ const resolveEkkoProviderRuntimeConfigMock = vi.hoisted(() => vi.fn())
 const resolveModelProviderConfigsMock = vi.hoisted(() => vi.fn())
 const agentRunMock = vi.hoisted(() => vi.fn())
 const agentEstimateContextMock = vi.hoisted(() => vi.fn(async () => ({ contextTokens: 5_000 })))
-const agentWriteLogMock = vi.hoisted(() => vi.fn(() => true))
 const agentSessionWorkspaceDirectoryMock = vi.hoisted(() => (
   vi.fn((sessionId: string) => `/tmp/ekko-workspace/default/${sessionId}`)
 ))
 const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
   run: agentRunMock,
   estimateContext: agentEstimateContextMock,
-  writeLog: agentWriteLogMock,
   sessionWorkspaceDirectory: agentSessionWorkspaceDirectoryMock,
 })))
 const buildCompressedHistoryMock = vi.hoisted(() => vi.fn())
@@ -1125,7 +1123,7 @@ describe('ekko-agent context usage events', () => {
     )
   })
 
-  it('writes structured model, tool, and run lifecycle events to the profile log', async () => {
+  it('passes only log correlation context into the internally logged runtime', async () => {
     agentRunMock.mockImplementationOnce(async (input: any) => {
       input.onEvent({ type: 'run.started', runId: 'run-log', maxSteps: 3 })
       input.onEvent({ type: 'model.started', runId: 'run-log', step: 1 })
@@ -1185,25 +1183,13 @@ describe('ekko-agent context usage events', () => {
       coding_agent_id: 'ekko-agent',
     }, 'default', sessionMap, vi.fn(() => false))
 
-    const records = agentWriteLogMock.mock.calls.map(call => call[0])
-    expect(records).toEqual(expect.arrayContaining([
-      expect.objectContaining({ category: 'run', event: 'run.requested', sessionId: 'session-1' }),
-      expect.objectContaining({ category: 'model', event: 'model.started', runId: 'run-log' }),
-      expect.objectContaining({ category: 'model', event: 'model.retry', level: 'warn', runId: 'run-log' }),
-      expect.objectContaining({
-        category: 'tool',
-        event: 'tool.started',
-        data: expect.objectContaining({ toolName: 'terminal_exec', arguments: { command: '/bin/sh', timeoutMs: 650_000 } }),
-      }),
-      expect.objectContaining({
-        category: 'tool',
-        event: 'tool.failed',
-        level: 'warn',
-        data: expect.objectContaining({ durationMs: 120_000, error: 'timed out' }),
-      }),
-      expect.objectContaining({ category: 'run', event: 'run.persisted', runId: 'run-log' }),
-    ]))
-    expect(records.some(record => record.event === 'model.delta')).toBe(false)
+    expect(agentRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      logContext: {
+        profile: 'default',
+        sessionId: 'session-1',
+        turnId: expect.any(String),
+      },
+    }))
   })
 
   it('incrementally persists a completed tool group before an aborted run exits', async () => {

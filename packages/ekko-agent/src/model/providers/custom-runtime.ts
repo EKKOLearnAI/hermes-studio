@@ -33,12 +33,16 @@ export class CustomRuntimeModelClient implements ModelClient {
     this.capabilities = { ...capabilities, ...config.capabilities }
   }
 
+  requestTarget(): string {
+    return customRuntimeUrl(this.config)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     return postJson<ModelResponse>(
       this.config,
       this.fetchImpl,
       customRuntimeUrl(this.config),
-      { ...request, metadata: undefined, model: request.model ?? this.config.defaultModel, stream: false },
+      toCustomRuntimePayload(this.config, request, false),
       undefined,
       request.signal,
     )
@@ -49,7 +53,7 @@ export class CustomRuntimeModelClient implements ModelClient {
       this.config,
       this.fetchImpl,
       customRuntimeUrl(this.config),
-      { ...request, metadata: undefined, model: request.model ?? this.config.defaultModel, stream: true },
+      toCustomRuntimePayload(this.config, request, true),
       undefined,
       request.signal,
     )
@@ -62,6 +66,25 @@ export class CustomRuntimeModelClient implements ModelClient {
       const chunk = parseJson<ModelEvent>(event)
       if (chunk) yield chunk
     }
+  }
+}
+
+function toCustomRuntimePayload(
+  config: ModelProviderConfig,
+  request: ModelRequest,
+  stream: boolean,
+): Record<string, unknown> {
+  const { metadata: _metadata, tools, toolChoice, ...rest } = request
+  return {
+    ...rest,
+    ...(tools?.length
+      ? {
+          tools,
+          ...(toolChoice ? { toolChoice } : {}),
+        }
+      : {}),
+    model: request.model ?? config.defaultModel,
+    stream,
   }
 }
 

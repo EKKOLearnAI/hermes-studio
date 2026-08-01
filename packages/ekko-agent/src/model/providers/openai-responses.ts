@@ -109,6 +109,10 @@ export class OpenAIResponsesModelClient implements ModelClient {
     this.capabilities = { ...capabilities, ...config.capabilities }
   }
 
+  requestTarget(): string {
+    return responsesUrl(this.config)
+  }
+
   async create(request: ModelRequest): Promise<ModelResponse> {
     if (this.config.id === 'openai-codex') {
       const output = await collectModelEvents(this.stream({ ...request, stream: true }))
@@ -217,6 +221,7 @@ export class OpenAIResponsesModelClient implements ModelClient {
 
 export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: ModelRequest): OpenAIResponsesPayload {
   const systemMessages = request.messages.filter(message => message.role === 'system')
+  const tools = request.tools?.length ? request.tools.map(toOpenAIResponseTool) : undefined
   const replayableToolCallIds = new Set(
     request.messages.flatMap(message => message.role === 'assistant'
       ? (message.toolCalls ?? [])
@@ -241,8 +246,12 @@ export function toOpenAIResponsesPayload(config: ModelProviderConfig, request: M
           },
         }
       : {}),
-    tools: request.tools?.map(toOpenAIResponseTool),
-    tool_choice: request.toolChoice,
+    ...(tools
+      ? {
+          tools,
+          ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
+        }
+      : {}),
     stream: request.stream,
     store: false,
   }

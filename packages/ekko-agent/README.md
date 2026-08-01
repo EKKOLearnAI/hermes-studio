@@ -170,15 +170,18 @@ next event would exceed that cap, the existing content is discarded and
 logging continues in the same file; no rotated or per-session files are
 created.
 
-Entries use the `run`, `model`, `tool`, `context`, `skill`, `memory`, and
-`system` categories. Large strings are truncated, base64 payloads are omitted,
-and common credential fields and bearer tokens are redacted. Streaming text
-and reasoning deltas are not logged.
+The persistent log is intentionally request-only. Every model-client request
+attempt writes one terminal `model.request` record after it completes or fails.
+That single record combines safe request metadata, status, duration, usage, and
+response sizes. Runtime events, streaming deltas, tool events, prompts, and
+response bodies are not written, so log volume tracks model calls instead of
+the much larger runtime event stream.
 
-`EkkoFileLogger.query()` and `GlobalEkkoAgent.queryLogs()` can filter the
-current file by session, run, turn, category, level, event, time, or text. The
-Hermes Web UI Logs page exposes the same file as the `ekko-agent` source for the
-selected profile.
+Endpoints and common credential shapes are redacted, large strings are
+truncated, and base64 payloads are omitted. `EkkoFileLogReader.query()` can
+filter the current file by session, run, turn, category, level, event, time, or
+text without acquiring write ownership. The Hermes Web UI Logs page exposes the
+same file as the `ekko-agent` source for the selected profile.
 
 ## Commands
 

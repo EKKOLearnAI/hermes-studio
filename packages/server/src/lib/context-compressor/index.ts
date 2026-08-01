@@ -20,10 +20,10 @@ import { mkdir, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import { logger } from '../../services/logger'
 import { AgentBridgeClient, type AgentBridgeRunResult } from '../../services/hermes/agent-bridge'
+import { getGlobalEkkoAgent } from '../../services/ekko-agent/manager'
 import { resolveEkkoProviderRuntimeConfig } from '../../services/ekko-agent/provider-runtime'
 import { truncateToolResultForContext } from '../tool-result-context'
 import {
-  AgentRuntime,
   createModelClient,
   resolveModelProviderConfigs,
 } from '../../../../ekko-agent/src'
@@ -94,6 +94,7 @@ export interface SummarizerOptions {
   model?: string | null
   provider?: string | null
   apiMode?: string | null
+  sessionId?: string
   historyRevision?: number
   workerKey?: string
   allowHermesFallback?: boolean
@@ -579,22 +580,7 @@ async function callEkkoSummarizer(
     timeoutMs,
   })
   const providerClient = createModelClient(providerConfig)
-  const runtime = new AgentRuntime({
-    // Preserve the provider's streaming capability. Long summary requests can
-    // otherwise sit idle until the complete response is ready and be severed
-    // by an upstream gateway before our own timeout is reached.
-    modelClient: providerClient,
-    toolsEnabled: false,
-    skillsEnabled: false,
-    systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,
-    maxSteps: 1,
-    maxModelRetries: 0,
-    toolDelayMs: 0,
-    modelDefaults: {
-      model,
-      toolChoice: 'none',
-    },
-  })
+  const agent = getGlobalEkkoAgent(options.profile)
 
   await writeSummarizerDebugDump({
     writtenAt: new Date().toISOString(),
@@ -606,13 +592,39 @@ async function callEkkoSummarizer(
     convHistory,
   })
 
-  const result = await runtime.run({
-    messages: [
-      ...convHistory,
-      { role: 'user', content: SUMMARIZER_TRIGGER_MESSAGE },
-    ],
-    memoryEnabled: false,
-  })
+  const result = await agent.runIsolated(
+    {
+      // Preserve the provider's streaming capability. Long summary requests can
+      // otherwise sit idle until the complete response is ready and be severed
+      // by an upstream gateway before our own timeout is reached.
+      modelClient: providerClient,
+      toolsEnabled: false,
+      skillsEnabled: false,
+      systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,
+      maxSteps: 1,
+      maxModelRetries: 0,
+      toolDelayMs: 0,
+      modelDefaults: {
+        model,
+      },
+    },
+    {
+      messages: [
+        ...convHistory,
+        { role: 'user', content: SUMMARIZER_TRIGGER_MESSAGE },
+      ],
+      memoryEnabled: false,
+      metadata: {
+        purpose: 'context-compression',
+        profile: options.profile,
+        session_id: options.sessionId,
+      },
+      logContext: {
+        profile: options.profile,
+        sessionId: options.sessionId,
+      },
+    },
+  )
   const output = String(result.output.content || '').trim()
   if (result.output.toolCalls?.length || result.output.finishReason === 'max_steps') {
     throw new Error('Clean Ekko summarizer did not complete in one model step')

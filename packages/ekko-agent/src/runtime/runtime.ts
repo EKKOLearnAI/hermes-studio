@@ -24,6 +24,7 @@ import {
   DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL,
   SkillReviewService,
 } from '../skills/review'
+import { EkkoRuntimeLogger } from '../logging/runtime-logger'
 
 export const DEFAULT_AGENT_MAX_STEPS = 90
 export const DEFAULT_AGENT_MODEL_MAX_RETRIES = 3
@@ -66,6 +67,7 @@ export class AgentRuntime {
   private readonly skillToolCallCounts = new Map<string, number>()
   private readonly modelContexts = new Map<string, unknown>()
   private readonly backgroundTasks = new Map<string, BackgroundTask>()
+  private readonly runtimeLogger?: EkkoRuntimeLogger
 
   constructor(options: AgentRuntimeOptions) {
     this.modelClient = options.modelClient
@@ -85,6 +87,9 @@ export class AgentRuntime {
     this.toolDelayMs = options.toolDelayMs ?? DEFAULT_AGENT_TOOL_DELAY_MS
     this.defaultContextKey = options.contextKey
     this.memory = options.memory
+    this.runtimeLogger = options.logWriter
+      ? new EkkoRuntimeLogger(options.logWriter, { profile: options.logProfile })
+      : undefined
     this.skillReviewEveryToolCalls = Math.max(
       0,
       Math.floor(options.skillReviewEveryToolCalls ?? DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL),
@@ -208,6 +213,7 @@ export class AgentRuntime {
           step,
           maxModelRetries,
           emit,
+          input.logContext,
         )
         const response = modelResult.response
         const assistantMessage = modelResponseToAgentMessage(response)
@@ -227,7 +233,7 @@ export class AgentRuntime {
         if (toolCalls.length === 0) {
           const context = contextKey ? this.modelContexts.get(contextKey) : assistantMessage.context
           emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-          this.completeMemory(memoryIdentity, messages, input)
+          this.completeMemory(runId, memoryIdentity, messages, input)
           this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
           return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
         }
@@ -256,7 +262,7 @@ export class AgentRuntime {
             }
             const context = contextKey ? this.modelContexts.get(contextKey) : undefined
             emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-            this.completeMemory(memoryIdentity, messages, input)
+            this.completeMemory(runId, memoryIdentity, messages, input)
             this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
             return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
           }
@@ -272,7 +278,7 @@ export class AgentRuntime {
       }
       const context = contextKey ? this.modelContexts.get(contextKey) : undefined
       emit({ type: 'run.completed', runId, output, steps: maxSteps, context, contextEstimate })
-      this.completeMemory(memoryIdentity, messages, input)
+      this.completeMemory(runId, memoryIdentity, messages, input)
       this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
       return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
     } catch (error) {
@@ -289,14 +295,41 @@ export class AgentRuntime {
     step: number,
     maxRetries: number,
     emit: (event: AgentRuntimeEvent) => void,
+    logContext?: AgentRuntimeRunInput['logContext'],
   ): Promise<ModelResponseResult> {
     for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
       try {
         throwIfAborted(request.signal)
         if (request.stream && modelClient.capabilities.streaming) {
-          return await this.streamModelResponse(request, modelClient, runId, step, emit)
+          return await this.streamModelResponse(
+            request,
+            modelClient,
+            runId,
+            step,
+            attempt,
+            maxRetries + 1,
+            emit,
+            logContext,
+          )
         }
-        const response = await modelClient.create(request)
+        const span = this.runtimeLogger?.startModelRequest({
+          client: modelClient,
+          request,
+          runId,
+          step,
+          attempt,
+          maxAttempts: maxRetries + 1,
+          transport: 'create',
+          context: logContext,
+        })
+        let response: ModelResponse
+        try {
+          response = await modelClient.create(request)
+          span?.complete(response)
+        } catch (error) {
+          span?.fail(error)
+          throw error
+        }
         if (response.usage) emit({ type: 'model.usage', runId, step, usage: response.usage })
         return {
           response,
@@ -323,30 +356,70 @@ export class AgentRuntime {
     modelClient: NonNullable<AgentRuntimeOptions['modelClient']>,
     runId: string,
     step: number,
+    attempt: number,
+    maxAttempts: number,
     emit: (event: AgentRuntimeEvent) => void,
+    logContext?: AgentRuntimeRunInput['logContext'],
   ): Promise<ModelResponseResult> {
     let emittedReasoning = false
-    const events = modelClient.stream({ ...request, stream: true })
-    const output = await collectModelEvents((async function *streamAndEmit() {
-      for await (const event of events) {
-        if (event.type === 'text-delta') {
-          emit({ type: 'model.delta', runId, step, text: event.text })
-        } else if (event.type === 'reasoning-delta') {
-          emittedReasoning = true
-          emit({ type: 'model.reasoning', runId, step, text: event.text })
-        } else if (event.type === 'tool-call') {
-          emit({ type: 'model.tool_call', runId, step, toolCall: event.toolCall })
-        } else if (event.type === 'error') {
-          throw new Error(event.error)
+    const streamRequest = { ...request, stream: true }
+    const streamSpan = this.runtimeLogger?.startModelRequest({
+      client: modelClient,
+      request: streamRequest,
+      runId,
+      step,
+      attempt,
+      maxAttempts,
+      transport: 'stream',
+      context: logContext,
+    })
+    let output: Awaited<ReturnType<typeof collectModelEvents>>
+    try {
+      const events = modelClient.stream(streamRequest)
+      output = await collectModelEvents((async function *streamAndEmit() {
+        for await (const event of events) {
+          if (event.type === 'text-delta') {
+            emit({ type: 'model.delta', runId, step, text: event.text })
+          } else if (event.type === 'reasoning-delta') {
+            emittedReasoning = true
+            emit({ type: 'model.reasoning', runId, step, text: event.text })
+          } else if (event.type === 'tool-call') {
+            emit({ type: 'model.tool_call', runId, step, toolCall: event.toolCall })
+          } else if (event.type === 'error') {
+            throw new Error(event.error)
+          }
+          yield event
         }
-        yield event
-      }
-    })())
+      })())
+      streamSpan?.complete(output.message, { emptyResponse: isEmptyModelResponse(output.message) })
+    } catch (error) {
+      streamSpan?.fail(error)
+      throw error
+    }
     if (output.message.usage) {
       emit({ type: 'model.usage', runId, step, usage: output.message.usage })
     }
     if (isEmptyModelResponse(output.message)) {
-      const response = await modelClient.create({ ...request, stream: false })
+      const fallbackRequest = { ...request, stream: false }
+      const fallbackSpan = this.runtimeLogger?.startModelRequest({
+        client: modelClient,
+        request: fallbackRequest,
+        runId,
+        step,
+        attempt,
+        maxAttempts,
+        transport: 'create',
+        fallback: true,
+        context: logContext,
+      })
+      let response: ModelResponse
+      try {
+        response = await modelClient.create(fallbackRequest)
+        fallbackSpan?.complete(response)
+      } catch (error) {
+        fallbackSpan?.fail(error)
+        throw error
+      }
       if (response.usage) emit({ type: 'model.usage', runId, step, usage: response.usage })
       return {
         response,
@@ -426,6 +499,7 @@ export class AgentRuntime {
   }
 
   private completeMemory(
+    runId: string,
     identity: MemoryRuntimeIdentity | undefined,
     messages: AgentMessage[],
     input: AgentRuntimeRunInput,
@@ -441,6 +515,9 @@ export class AgentRuntime {
         model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
         signal: input.signal,
         onUsage: input.onMemoryUsage,
+        requestLogger: this.runtimeLogger,
+        requestLogContext: input.logContext,
+        requestRunId: runId,
       }),
     )
   }
@@ -484,6 +561,9 @@ export class AgentRuntime {
       modelClient,
       model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
       messages: messages.map(message => ({ ...message })),
+      requestLogger: this.runtimeLogger,
+      requestLogContext: input.logContext,
+      requestRunId: runId,
       onUsage: input.onSkillReviewUsage,
       onStarted: reviewId => emit?.({ type: 'skill.review.started', runId, reviewId }),
       onCompleted: (reviewId, mutations) => emit?.({
@@ -503,6 +583,13 @@ export class AgentRuntime {
     contextKey: string | undefined,
   ): ModelRequest {
     const modelDefaults = input.modelDefaults ?? this.modelDefaults
+    const toolDefinitions = this.toolsEnabled
+      ? this.tools.definitions().filter(definition => (
+          (input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0) === 0 ||
+          definition.name !== 'delegate_task'
+        ))
+      : []
+    const tools = toolDefinitions.length > 0 ? toolDefinitions : undefined
     return {
       ...modelDefaults,
       model: input.model ?? modelDefaults?.model,
@@ -513,12 +600,8 @@ export class AgentRuntime {
       metadata: input.metadata ?? modelDefaults?.metadata,
       messages,
       signal: input.signal,
-      tools: this.toolsEnabled
-        ? this.tools.definitions().filter(definition => (
-            (input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0) === 0 ||
-            definition.name !== 'delegate_task'
-          ))
-        : undefined,
+      tools,
+      toolChoice: tools ? modelDefaults?.toolChoice : undefined,
       stream: modelClient.capabilities.streaming,
       context: input.context ?? (contextKey ? this.modelContexts.get(contextKey) : modelDefaults?.context),
     }
@@ -680,6 +763,7 @@ export class AgentRuntime {
           modelDefaults: parentInput.modelDefaults,
           contextKey: childContextKey,
           memoryEnabled: false,
+          logContext: parentInput.logContext,
           onEvent: (event) => {
             if ('runId' in event) childRunId = event.runId
             if (event.type === 'model.delta') {

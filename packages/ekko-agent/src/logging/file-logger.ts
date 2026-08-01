@@ -36,6 +36,14 @@ export interface EkkoFileLoggerOptions {
   now?: () => Date
 }
 
+export interface EkkoFileLogReaderOptions {
+  directory: string
+}
+
+export interface EkkoLogWriter {
+  write(entry: EkkoLogEntry): boolean
+}
+
 export interface EkkoLogRecord {
   timestamp: string
   level: EkkoLogLevel
@@ -74,7 +82,7 @@ const MAX_LOG_DEPTH = 8
  * It intentionally owns one file only. When the file would exceed maxBytes,
  * the old content is discarded and logging continues from the current event.
  */
-export class EkkoFileLogger {
+export class EkkoFileLogger implements EkkoLogWriter {
   readonly filePath: string
   readonly maxBytes: number
   private readonly now: () => Date
@@ -134,41 +142,7 @@ export class EkkoFileLogger {
   }
 
   query(query: EkkoLogQuery = {}): EkkoLogRecord[] {
-    let raw: string
-    try {
-      raw = readFileSync(this.filePath, 'utf8')
-    } catch {
-      return []
-    }
-
-    const after = timestampValue(query.after)
-    const before = timestampValue(query.before)
-    const textQuery = String(query.text || '').trim().toLowerCase()
-    const records: EkkoLogRecord[] = []
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line.trim()) continue
-      let record: EkkoLogRecord
-      try {
-        record = JSON.parse(line) as EkkoLogRecord
-      } catch {
-        continue
-      }
-      if (!isLogRecord(record)) continue
-      if (query.sessionId && record.sessionId !== query.sessionId) continue
-      if (query.runId && record.runId !== query.runId) continue
-      if (query.turnId && record.turnId !== query.turnId) continue
-      if (query.category && record.category !== query.category) continue
-      if (query.level && record.level !== query.level) continue
-      if (query.event && record.event !== query.event) continue
-      const timestamp = Date.parse(record.timestamp)
-      if (after != null && (!Number.isFinite(timestamp) || timestamp < after)) continue
-      if (before != null && (!Number.isFinite(timestamp) || timestamp > before)) continue
-      if (textQuery && !line.toLowerCase().includes(textQuery)) continue
-      records.push(record)
-    }
-
-    const limit = positiveInteger(query.limit, 0)
-    return limit > 0 && records.length > limit ? records.slice(-limit) : records
+    return queryEkkoLogFile(this.filePath, query)
   }
 
   private line(entry: EkkoLogEntry): string {
@@ -185,6 +159,62 @@ export class EkkoFileLogger {
     }
     return `${JSON.stringify(record)}\n`
   }
+}
+
+/**
+ * Read-only view over one Ekko profile log.
+ *
+ * Unlike EkkoFileLogger, constructing a reader never creates directories or
+ * files. Hosts can expose log queries without acquiring write ownership.
+ */
+export class EkkoFileLogReader {
+  readonly filePath: string
+
+  constructor(options: EkkoFileLogReaderOptions) {
+    this.filePath = join(options.directory, EKKO_LOG_FILE_NAME)
+  }
+
+  query(query: EkkoLogQuery = {}): EkkoLogRecord[] {
+    return queryEkkoLogFile(this.filePath, query)
+  }
+}
+
+export function queryEkkoLogFile(filePath: string, query: EkkoLogQuery = {}): EkkoLogRecord[] {
+  let raw: string
+  try {
+    raw = readFileSync(filePath, 'utf8')
+  } catch {
+    return []
+  }
+
+  const after = timestampValue(query.after)
+  const before = timestampValue(query.before)
+  const textQuery = String(query.text || '').trim().toLowerCase()
+  const records: EkkoLogRecord[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    let record: EkkoLogRecord
+    try {
+      record = JSON.parse(line) as EkkoLogRecord
+    } catch {
+      continue
+    }
+    if (!isLogRecord(record)) continue
+    if (query.sessionId && record.sessionId !== query.sessionId) continue
+    if (query.runId && record.runId !== query.runId) continue
+    if (query.turnId && record.turnId !== query.turnId) continue
+    if (query.category && record.category !== query.category) continue
+    if (query.level && record.level !== query.level) continue
+    if (query.event && record.event !== query.event) continue
+    const timestamp = Date.parse(record.timestamp)
+    if (after != null && (!Number.isFinite(timestamp) || timestamp < after)) continue
+    if (before != null && (!Number.isFinite(timestamp) || timestamp > before)) continue
+    if (textQuery && !line.toLowerCase().includes(textQuery)) continue
+    records.push(record)
+  }
+
+  const limit = positiveInteger(query.limit, 0)
+  return limit > 0 && records.length > limit ? records.slice(-limit) : records
 }
 
 export function sanitizeLogValue(value: unknown): unknown {
@@ -239,7 +269,7 @@ function sanitizeString(value: string): string {
   let sanitized = value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'sk-[REDACTED]')
-    .replace(/([?&](?:api[_-]?key|token|access_token)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:api[_-]?key|key|token|access_token)=)[^&\s]+/gi, '$1[REDACTED]')
     .replace(/\b((?:API_?KEY|AUTH_TOKEN|ACCESS_TOKEN|REFRESH_TOKEN|PASSWORD|SECRET)\s*=\s*)("[^"]*"|'[^']*'|[^\s;]+)/gi, '$1[REDACTED]')
   if (sanitized.length > MAX_LOG_STRING_CHARS) {
     sanitized = `${sanitized.slice(0, MAX_LOG_STRING_CHARS)}…[truncated ${sanitized.length - MAX_LOG_STRING_CHARS} chars]`
