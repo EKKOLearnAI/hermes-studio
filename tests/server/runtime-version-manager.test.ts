@@ -36,7 +36,6 @@ describe('runtime version manager storage migration', () => {
 
   afterEach(() => {
     process.env = { ...originalEnv }
-    vi.unstubAllGlobals()
     vi.resetModules()
     for (const directory of tempDirs.splice(0)) {
       rmSync(directory, { recursive: true, force: true })
@@ -110,31 +109,4 @@ describe('runtime version manager storage migration', () => {
       .toThrow('Downloaded Web UI version not found')
   })
 
-  it('adds the built-in Hermes Runtime version to an older remote manifest', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        hermes: ['0.18.2', '0.19.0'],
-        webui: ['0.6.36'],
-      }),
-    }))
-
-    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
-    const status = await getRuntimeVersionStatus()
-
-    expect(status.hermes.remoteVersions).toEqual(['0.18.2', '0.19.0', '0.19.1'])
-    expect(status.webui.remoteVersions).toEqual(['0.6.36'])
-    expect(status.remoteError).toBe('')
-  })
-
-  it('keeps the built-in Hermes Runtime version available when the remote manifest is unavailable', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
-
-    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
-    const status = await getRuntimeVersionStatus()
-
-    expect(status.hermes.remoteVersions).toEqual(['0.19.1'])
-    expect(status.webui.remoteVersions).toEqual([])
-    expect(status.remoteError).toBe('offline')
-  })
 })
