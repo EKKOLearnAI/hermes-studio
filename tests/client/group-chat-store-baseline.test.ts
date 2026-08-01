@@ -232,6 +232,67 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.agents).toEqual([roomTwoAgent])
   })
 
+  it('ignores an old participant PATCH response after leaving and re-entering the same Room', async () => {
+    const store = await loadStore()
+    const original = { ...agent, roomId: 'room-1', agentId: 'agent-1', model: 'old-model' } as RoomAgent
+    const reloaded = { ...agent, roomId: 'room-1', agentId: 'agent-1', model: 'server-newer-model' } as RoomAgent
+    let resolveUpdate!: (value: { agent: RoomAgent }) => void
+    groupChatApiMock.updateAgent.mockReturnValue(new Promise(resolve => { resolveUpdate = resolve }))
+    store.currentRoomId = 'room-1'
+    store.agents = [original]
+
+    const pending = store.updateAgentInRoom('room-1', 'agent-1', { model: 'stale-response-model' })
+    store.currentRoomId = 'room-2'
+    store.agents = []
+    store.currentRoomId = 'room-1'
+    store.agents = [reloaded]
+    resolveUpdate({ agent: { ...original, model: 'stale-response-model' } })
+    await pending
+
+    expect(store.currentRoomId).toBe('room-1')
+    expect(store.agents).toEqual([reloaded])
+  })
+
+  it('keeps a new participant intent after re-entering a Room when the old response arrives last', async () => {
+    const store = await loadStore()
+    const original = { ...agent, roomId: 'room-1', agentId: 'agent-1', model: 'old-model' } as RoomAgent
+    let resolveOld!: (value: { agent: RoomAgent }) => void
+    let resolveNew!: (value: { agent: RoomAgent }) => void
+    groupChatApiMock.updateAgent
+      .mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveNew = resolve }))
+    store.currentRoomId = 'room-1'
+    store.agents = [original]
+
+    const oldPending = store.updateAgentInRoom('room-1', 'agent-1', { model: 'stale-model' })
+    store.currentRoomId = 'room-2'
+    store.agents = []
+    store.currentRoomId = 'room-1'
+    store.agents = [{ ...original, model: 'reloaded-model' }]
+    const newPending = store.updateAgentInRoom('room-1', 'agent-1', { model: 'latest-model' })
+    resolveNew({ agent: { ...original, model: 'latest-model' } })
+    await newPending
+    resolveOld({ agent: { ...original, model: 'stale-model' } })
+    await oldPending
+
+    expect(store.agents[0]?.model).toBe('latest-model')
+  })
+
+  it('does not publish an old participant PATCH failure after leaving and re-entering the same Room', async () => {
+    const store = await loadStore()
+    let rejectUpdate!: (error: Error) => void
+    groupChatApiMock.updateAgent.mockReturnValue(new Promise((_, reject) => { rejectUpdate = reject }))
+    store.currentRoomId = 'room-1'
+
+    const pending = store.updateAgentInRoom('room-1', 'agent-1', { model: 'stale-model' })
+    store.currentRoomId = 'room-2'
+    store.currentRoomId = 'room-1'
+    rejectUpdate(new Error('stale failure'))
+    await expect(pending).rejects.toThrow('stale failure')
+
+    expect(store.error).toBeNull()
+  })
+
   it('connects with stored user data and registers realtime handlers', async () => {
     const store = await loadStore()
 

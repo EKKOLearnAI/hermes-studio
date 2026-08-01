@@ -764,8 +764,14 @@ function participantRuntimeLabel(agent: RoomAgent): string {
     return agent.codingAgentId === 'claude-code' ? 'Claude Code' : 'Codex'
 }
 
-function participantQuickKey(roomId: string, agentId: string): string {
-    return `${roomId}\u0000${agentId}`
+let participantQuickLifecycleGeneration = 0
+
+function participantQuickAuthorityGeneration(): string {
+    return `${store.roomAuthorityGeneration}:${participantQuickLifecycleGeneration}`
+}
+
+function participantQuickKey(roomId: string, agentId: string, authorityGeneration: string): string {
+    return `${roomId}\u0000${agentId}\u0000${authorityGeneration}`
 }
 
 const participantQuickSaveQueues = new Map<string, Promise<void>>()
@@ -840,8 +846,13 @@ function participantRuntimeSnapshot(agent: RoomAgent): ParticipantRuntimeSnapsho
     }
 }
 
-function applyParticipantQuickState(roomId: string, agentId: string, state: Partial<RoomAgent>) {
-    if (store.currentRoomId !== roomId) return
+function participantQuickAuthorityIsCurrent(roomId: string, authorityGeneration: string): boolean {
+    return store.currentRoomId === roomId
+        && participantQuickAuthorityGeneration() === authorityGeneration
+}
+
+function applyParticipantQuickState(roomId: string, agentId: string, authorityGeneration: string, state: Partial<RoomAgent>) {
+    if (!participantQuickAuthorityIsCurrent(roomId, authorityGeneration)) return
     const current = store.agents.find(candidate => candidate.agentId === agentId)
     if (current) Object.assign(current, state)
 }
@@ -849,7 +860,8 @@ function applyParticipantQuickState(roomId: string, agentId: string, state: Part
 async function saveParticipantQuickSetting(agent: RoomAgent, updates: Partial<ParticipantRuntimeSnapshot>, rollbackOverride?: ParticipantRuntimeSnapshot) {
     if (!store.currentRoomId || !currentRoomCanManage.value) return
     const roomId = store.currentRoomId
-    const queueKey = participantQuickKey(roomId, agent.agentId)
+    const authorityGeneration = participantQuickAuthorityGeneration()
+    const queueKey = participantQuickKey(roomId, agent.agentId, authorityGeneration)
     const previous = rollbackOverride || participantRuntimeSnapshot(agent)
     const base = participantQuickDesired.get(queueKey) || previous
     const optimistic = { ...base, ...updates }
@@ -874,6 +886,7 @@ async function saveParticipantQuickSetting(agent: RoomAgent, updates: Partial<Pa
                     apiMode: String(requested.apiMode || ''),
                     reasoningEffort: requested.reasoningEffort,
                 })
+                if (!participantQuickAuthorityIsCurrent(roomId, authorityGeneration)) break
                 rollback = {
                     provider: saved.provider || '',
                     model: saved.model || '',
@@ -883,20 +896,21 @@ async function saveParticipantQuickSetting(agent: RoomAgent, updates: Partial<Pa
                 const desired = participantQuickDesired.get(queueKey)
                 if (desired === requested) {
                     participantQuickDesired.delete(queueKey)
-                    applyParticipantQuickState(roomId, agent.agentId, saved)
+                    applyParticipantQuickState(roomId, agent.agentId, authorityGeneration, saved)
                     message.success(t('groupChat.participantSettingsSaved'))
                     break
                 }
-                if (desired) applyParticipantQuickState(roomId, agent.agentId, desired)
+                if (desired) applyParticipantQuickState(roomId, agent.agentId, authorityGeneration, desired)
             } catch (error) {
+                if (!participantQuickAuthorityIsCurrent(roomId, authorityGeneration)) break
                 const desired = participantQuickDesired.get(queueKey)
                 if (desired && desired !== requested) {
-                    applyParticipantQuickState(roomId, agent.agentId, desired)
+                    applyParticipantQuickState(roomId, agent.agentId, authorityGeneration, desired)
                     message.error(extractApiErrorMessage(error))
                     continue
                 }
                 participantQuickDesired.delete(queueKey)
-                applyParticipantQuickState(roomId, agent.agentId, rollback)
+                applyParticipantQuickState(roomId, agent.agentId, authorityGeneration, rollback)
                 message.error(extractApiErrorMessage(error))
                 break
             }
@@ -1009,6 +1023,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    participantQuickLifecycleGeneration += 1
+    participantQuickDesired.clear()
+    participantQuickSaveQueues.clear()
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
@@ -1024,6 +1041,8 @@ onUnmounted(() => {
 
 watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     if (roomId !== previousRoomId) {
+        participantQuickDesired.clear()
+        participantQuickSaveQueues.clear()
         for (const pending of participantReasoningCommits.values()) clearTimeout(pending.timer)
         participantReasoningCommits.clear()
         expandedParticipantId.value = ''

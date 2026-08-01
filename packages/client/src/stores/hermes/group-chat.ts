@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { getActiveProfileName, getApiKey, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -143,6 +143,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     // ─── State ─────────────────────────────────────────────
     const connected = ref(false)
     const currentRoomId = ref<string | null>(null)
+    const roomAuthorityGeneration = ref(0)
+    watch(currentRoomId, (roomId, previousRoomId) => {
+        if (roomId !== previousRoomId) roomAuthorityGeneration.value += 1
+    }, { flush: 'sync' })
     const rooms = ref<RoomInfo[]>([])
     const messages = ref<ChatMessage[]>([])
     const messageReferences = ref<Map<string, MessageReference>>(new Map())
@@ -1181,16 +1185,21 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentUpdateInput) {
+        const authorityGeneration = roomAuthorityGeneration.value
         try {
             const res = await updateAgent(roomId, agentId, data)
-            if (currentRoomId.value !== roomId || res.agent.roomId !== roomId) return res.agent
+            if (
+                currentRoomId.value !== roomId
+                || roomAuthorityGeneration.value !== authorityGeneration
+                || res.agent.roomId !== roomId
+            ) return res.agent
             const index = agents.value.findIndex(agent => agent.agentId === agentId)
             if (index >= 0) agents.value[index] = res.agent
             else agents.value.push(res.agent)
             agents.value = [...agents.value]
             return res.agent
         } catch (err: any) {
-            error.value = err.message
+            if (roomAuthorityGeneration.value === authorityGeneration) error.value = err.message
             throw err
         }
     }
@@ -1258,6 +1267,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         // State
         connected,
         currentRoomId,
+        roomAuthorityGeneration,
         rooms,
         messages,
         members,
