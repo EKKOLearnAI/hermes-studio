@@ -237,9 +237,12 @@ class AgentPool:
         model: str | None = None,
         provider: str | None = None,
         background_delegation_enabled: bool | None = None,
+        api_mode: str | None = None,
     ) -> AgentSession:
         requested_model = str(model or "").strip()
         requested_provider = str(provider or "").strip()
+        api_mode_specified = api_mode is not None
+        requested_api_mode = str(api_mode or "").strip()
         with self._lock:
             existing = self._sessions.get(session_id)
             if existing is not None:
@@ -248,6 +251,7 @@ class AgentPool:
                 runtime_changed = bool(
                     (requested_model and existing.config.get("model") != requested_model)
                     or (requested_provider and existing.config.get("provider") != requested_provider)
+                    or (api_mode_specified and existing.config.get("api_mode") != requested_api_mode)
                 )
                 config_changed = profile_changed or runtime_changed
                 if config_changed:
@@ -263,6 +267,7 @@ class AgentPool:
                                 requested_model or str(existing.config.get("model") or ""),
                                 requested_provider or str(existing.config.get("provider") or ""),
                                 profile or str(existing.config.get("profile") or "default"),
+                                requested_api_mode if api_mode_specified else str(existing.config.get("api_mode") or ""),
                                 add_note=False,
                             )
                             existing.last_used_at = time.time()
@@ -281,6 +286,7 @@ class AgentPool:
                             requested_model or str(existing.config.get("model") or ""),
                             requested_provider or str(existing.config.get("provider") or ""),
                             profile or str(existing.config.get("profile") or "default"),
+                            requested_api_mode if api_mode_specified else str(existing.config.get("api_mode") or ""),
                         )
                         existing.last_used_at = time.time()
                         return existing
@@ -299,6 +305,8 @@ class AgentPool:
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
                 runtime = _resolve_runtime(resolved_model, requested_provider or None)
+                if requested_api_mode:
+                    runtime["api_mode"] = requested_api_mode
                 agent_cfg = cfg.get("agent") or {}
                 prompt = str(agent_cfg.get("system_prompt", "") or "").strip() or None
 
@@ -377,6 +385,7 @@ class AgentPool:
         model: str,
         provider: str,
         profile: str | None,
+        api_mode: str | None = None,
     ) -> None:
         requested_model = str(model or "").strip()
         requested_provider = str(provider or "").strip()
@@ -387,6 +396,7 @@ class AgentPool:
             "model": requested_model,
             "provider": requested_provider,
             "profile": profile or session.config.get("profile") or "default",
+            "api_mode": str(api_mode if api_mode is not None else session.config.get("api_mode") or "").strip(),
         }
         session.config["pending_model_switch_note"] = self._model_switch_note(
             old_model,
@@ -400,6 +410,7 @@ class AgentPool:
         model: str,
         provider: str,
         profile: str | None,
+        api_mode: str | None = None,
         *,
         add_note: bool,
     ) -> dict[str, Any]:
@@ -414,6 +425,9 @@ class AgentPool:
         with _profile_env(target_profile):
             _refresh_worker_profile_env()
             runtime = _resolve_runtime(requested_model, requested_provider or None)
+            requested_api_mode = str(api_mode or "").strip()
+            if requested_api_mode:
+                runtime["api_mode"] = requested_api_mode
 
         resolved_provider = str(runtime.get("provider") or requested_provider or "")
         effective_provider = requested_provider or resolved_provider
@@ -546,6 +560,11 @@ class AgentPool:
                 str(pending.get("model") or ""),
                 str(pending.get("provider") or ""),
                 str(pending.get("profile") or session.config.get("profile") or "default"),
+                str(
+                    pending["api_mode"]
+                    if "api_mode" in pending
+                    else session.config.get("api_mode") or ""
+                ),
                 add_note=False,
             )
         except Exception as exc:
@@ -1456,6 +1475,7 @@ class AgentPool:
         source: str | None = None,
         reasoning_effort: str | None = None,
         background_delegation_enabled: bool | None = None,
+        api_mode: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(
             session_id,
@@ -1463,6 +1483,7 @@ class AgentPool:
             model=model,
             provider=provider,
             background_delegation_enabled=background_delegation_enabled,
+            api_mode=api_mode,
         )
         # Install after agent construction so any runtime plugin initialization
         # has completed. Rechecking on every run also recovers from a forced

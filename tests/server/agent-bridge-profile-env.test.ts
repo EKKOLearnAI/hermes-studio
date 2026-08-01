@@ -519,6 +519,64 @@ print(json.dumps({
     })
   })
 
+  it('overrides the resolved provider API mode when creating a participant-scoped bridge agent', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+captured = {}
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        captured.update(kwargs)
+        self.tools = []
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {
+    "provider": "fake", "base_url": "https://example.invalid", "api_key": "test", "api_mode": "chat_completions",
+}
+bridge._load_enabled_toolsets = lambda: []
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+session = pool.get_or_create(
+    "session-api-mode",
+    profile="default",
+    model="fake-model",
+    provider="fake-provider",
+    api_mode="anthropic_messages",
+)
+print(json.dumps({"agent_api_mode": captured.get("api_mode"), "session_api_mode": session.config.get("api_mode")}))
+`)
+
+    expect(result).toEqual({ agent_api_mode: 'anthropic_messages', session_api_mode: 'anthropic_messages' })
+  })
+
   it('forwards agent turn-boundary callbacks without duplicating streamed text', async () => {
     await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
 

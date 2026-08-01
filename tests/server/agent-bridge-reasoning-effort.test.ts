@@ -76,17 +76,17 @@ describe('AgentBridgeClient.chat reasoning_effort forwarding', () => {
     }
   })
 
-  it('does not expose a caller-controlled api mode through Agent Bridge', () => {
+  it('keeps single-chat request data from selecting API mode while allowing an explicit internal Bridge option', () => {
     const client = readFileSync('packages/server/src/services/hermes/agent-bridge/client.ts', 'utf8')
     const bridgeRun = readFileSync('packages/server/src/services/hermes/run-chat/handle-bridge-run.ts', 'utf8')
     const server = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_server.py', 'utf8')
     const pool = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py', 'utf8')
-    expect(client).not.toContain('options.apiMode')
+    expect(client).toContain('api_mode?: string')
     expect(bridgeRun).not.toContain('data.apiMode')
     expect(bridgeRun).not.toContain('data.api_mode')
-    expect(server).not.toContain('req.get("api_mode")')
-    expect(pool).not.toContain('requested_api_mode')
-    expect(pool).not.toContain('api_mode: str | None')
+    expect(server).toContain('req.get("api_mode")')
+    expect(pool).toContain('requested_api_mode')
+    expect(pool).toContain('api_mode: str | None')
   })
 
   it('forwards workspace to chat and context estimate requests', async () => {

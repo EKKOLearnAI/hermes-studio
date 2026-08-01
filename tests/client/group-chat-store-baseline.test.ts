@@ -168,6 +168,7 @@ describe('group chat store baseline lifecycle', () => {
 
   it('adds and updates full participant bindings while preserving stable identity', async () => {
     const store = await loadStore()
+    store.currentRoomId = 'room-1'
     const codexParticipant = {
       ...agent,
       runtime: 'coding_agent',
@@ -210,6 +211,25 @@ describe('group chat store baseline lifecycle', () => {
       sessionGeneration: 0,
       reasoningEffort: 'high',
     })
+  })
+
+  it('ignores a participant PATCH response after the active Room changes', async () => {
+    const store = await loadStore()
+    const roomOneAgent = { ...agent, roomId: 'room-1', agentId: 'agent-1', model: 'old-model' } as RoomAgent
+    const roomTwoAgent = { ...agent, roomId: 'room-2', agentId: 'agent-1', model: 'room-two-model' } as RoomAgent
+    let resolveUpdate!: (value: { agent: RoomAgent }) => void
+    groupChatApiMock.updateAgent.mockReturnValue(new Promise(resolve => { resolveUpdate = resolve }))
+    store.currentRoomId = 'room-1'
+    store.agents = [roomOneAgent]
+
+    const pending = store.updateAgentInRoom('room-1', 'agent-1', { model: 'new-model' })
+    store.currentRoomId = 'room-2'
+    store.agents = [roomTwoAgent]
+    resolveUpdate({ agent: { ...roomOneAgent, model: 'new-model' } })
+    await pending
+
+    expect(store.currentRoomId).toBe('room-2')
+    expect(store.agents).toEqual([roomTwoAgent])
   })
 
   it('connects with stored user data and registers realtime handlers', async () => {

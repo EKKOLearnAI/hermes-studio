@@ -377,6 +377,7 @@ disabled = server.handle({
     "action": "chat",
     "session_id": "session-disabled",
     "message": "hello",
+    "api_mode": "anthropic_messages",
     "background_delegation_enabled": False,
 })
 enabled = server.handle({
@@ -392,8 +393,10 @@ estimated = server.handle({
 
 assert disabled["status"] == "running"
 assert enabled["status"] == "running"
-assert captured[0][-1] is False
+assert captured[0][-2] is False
+assert captured[0][-1] == "anthropic_messages"
 assert captured[1][-1] is None
+assert captured[1][-2] is None
 assert estimated["session_id"] == "session-estimate-disabled"
 assert captured[2]["background_delegation_enabled"] is False
 `)
@@ -739,6 +742,87 @@ assert "pending_model_switch_note" in session.config
 `)
   })
 
+  it('distinguishes an explicit empty api mode from an omitted legacy api mode on cached sessions', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": "https://provider.example/v1",
+        "api_key": "same-key",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+
+class SwitchableAgent:
+    def __init__(self):
+        self.model = "same-model"
+        self.provider = "openai"
+        self.base_url = "https://provider.example/v1"
+        self.api_key = "same-key"
+        self.api_mode = "anthropic_messages"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+        self.base_url = kwargs["base_url"]
+        self.api_key = kwargs["api_key"]
+        self.api_mode = kwargs["api_mode"]
+
+clear_agent = SwitchableAgent()
+clear_session = bridge.AgentSession(
+    session_id="session-clear-api-mode",
+    agent=clear_agent,
+    config={
+        "profile": "default",
+        "model": "same-model",
+        "provider": "openai",
+        "api_mode": "anthropic_messages",
+    },
+)
+pool._sessions[clear_session.session_id] = clear_session
+
+cleared = pool.get_or_create(
+    clear_session.session_id,
+    profile="default",
+    model="same-model",
+    provider="openai",
+    api_mode="",
+)
+assert cleared is clear_session
+assert clear_agent.switch_calls[-1]["api_mode"] == "chat_completions"
+assert clear_session.config["api_mode"] == "chat_completions"
+
+legacy_agent = SwitchableAgent()
+legacy_session = bridge.AgentSession(
+    session_id="session-legacy-api-mode",
+    agent=legacy_agent,
+    config={
+        "profile": "default",
+        "model": "same-model",
+        "provider": "openai",
+        "api_mode": "anthropic_messages",
+    },
+)
+pool._sessions[legacy_session.session_id] = legacy_session
+
+unchanged = pool.get_or_create(
+    legacy_session.session_id,
+    profile="default",
+    model="same-model",
+    provider="openai",
+)
+assert unchanged is legacy_session
+assert legacy_agent.switch_calls == []
+assert legacy_session.config["api_mode"] == "anthropic_messages"
+`)
+  })
+
   it('does not rebuild an idle agent when only the requested custom-provider alias differs', () => {
     runPython(String.raw`
 ${harness}
@@ -888,6 +972,108 @@ assert agent.switch_calls == [{
 assert session.config["model"] == "new-model"
 assert session.config["provider"] == "anthropic"
 assert "pending_model_switch" not in session.config
+`)
+  })
+
+  it('preserves explicit-clear, explicit-override, and legacy-omitted API modes through deferred switches', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": "https://provider.example/v1",
+        "api_key": "same-key",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+
+class RunningAgent:
+    def __init__(self, api_mode):
+        self.model = "same-model"
+        self.provider = "openai"
+        self.base_url = "https://provider.example/v1"
+        self.api_key = "same-key"
+        self.api_mode = api_mode
+        self.switch_calls = []
+        self.release = threading.Event()
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+        self.base_url = kwargs["base_url"]
+        self.api_key = kwargs["api_key"]
+        self.api_mode = kwargs["api_mode"]
+
+    def run_conversation(self, message, **kwargs):
+        self.release.wait(timeout=5)
+        return {"messages": [{"role": "assistant", "content": "done"}]}
+
+def running_session(session_id, api_mode):
+    agent = RunningAgent(api_mode)
+    session, record, thread = start_manual_run(pool, session_id, agent)
+    session.config.update({
+        "profile": "default",
+        "model": "same-model",
+        "provider": "openai",
+        "api_mode": api_mode,
+    })
+    assert wait_for(lambda: session.running)
+    return agent, session, record, thread
+
+clear_agent, clear_session, clear_record, clear_thread = running_session(
+    "deferred-clear-api-mode", "anthropic_messages",
+)
+pool.get_or_create(
+    clear_session.session_id,
+    profile="default",
+    model="same-model",
+    provider="openai",
+    api_mode="",
+)
+assert clear_session.config["pending_model_switch"]["api_mode"] == ""
+clear_agent.release.set()
+clear_thread.join(timeout=5)
+assert clear_record.status == "complete"
+assert clear_agent.switch_calls[-1]["api_mode"] == "chat_completions"
+assert clear_session.config["api_mode"] == "chat_completions"
+
+override_agent, override_session, override_record, override_thread = running_session(
+    "deferred-override-api-mode", "chat_completions",
+)
+pool.get_or_create(
+    override_session.session_id,
+    profile="default",
+    model="same-model",
+    provider="openai",
+    api_mode="anthropic_messages",
+)
+assert override_session.config["pending_model_switch"]["api_mode"] == "anthropic_messages"
+override_agent.release.set()
+override_thread.join(timeout=5)
+assert override_record.status == "complete"
+assert override_agent.switch_calls[-1]["api_mode"] == "anthropic_messages"
+assert override_session.config["api_mode"] == "anthropic_messages"
+
+legacy_agent, legacy_session, legacy_record, legacy_thread = running_session(
+    "deferred-legacy-api-mode", "anthropic_messages",
+)
+unchanged = pool.get_or_create(
+    legacy_session.session_id,
+    profile="default",
+    model="same-model",
+    provider="openai",
+)
+assert unchanged is legacy_session
+assert "pending_model_switch" not in legacy_session.config
+legacy_agent.release.set()
+legacy_thread.join(timeout=5)
+assert legacy_record.status == "complete"
+assert legacy_agent.switch_calls == []
+assert legacy_session.config["api_mode"] == "anthropic_messages"
 `)
   })
 

@@ -292,7 +292,7 @@ function groupChatParticipantRequestBody(path, method) {
     mode: { type: 'string', enum: ['scoped'] },
     provider: { type: 'string' },
     model: { type: 'string' },
-    apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
+    apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server'] },
     reasoningEffort: { type: 'string', enum: ['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
   }
   if (path === roomCollectionPath && method === 'post') {

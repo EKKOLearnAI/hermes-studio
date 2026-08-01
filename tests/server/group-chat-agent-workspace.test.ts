@@ -305,6 +305,8 @@ describe('group chat agent workspace bridge runs', () => {
       getRoomAgentByAgentId: vi.fn(() => ({
         id: 'row-agent-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker',
         runtime: 'hermes', sessionId: 'participant-session-1', sessionGeneration: 0,
+        mode: 'scoped', provider: 'participant-provider', model: 'participant-model',
+        apiMode: 'anthropic_messages', reasoningEffort: 'high',
       })),
       isHandoffExecutionCurrent: vi.fn(() => true),
       registerSessionProfileForActiveAgent: vi.fn(() => {
@@ -348,6 +350,51 @@ describe('group chat agent workspace bridge runs', () => {
       targetAgentId: 'agent-1', targetSessionId: 'participant-session-1',
     })
     expect(client.__testStorage.updateRoomTotalTokens).not.toHaveBeenCalled()
+  })
+
+  it('forwards participant model, API mode, and reasoning effort to the Hermes Bridge run', async () => {
+    const client = await createClient('')
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+
+    expect(bridgeMock.chat).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.any(Array),
+      expect.any(String),
+      'default',
+      expect.objectContaining({
+        model: 'participant-model',
+        provider: 'participant-provider',
+        api_mode: 'anthropic_messages',
+        reasoning_effort: 'high',
+      }),
+    )
+  })
+
+  it('forwards an explicit empty participant API mode so cached Hermes sessions clear old overrides', async () => {
+    const client = await createClient('')
+    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => ({
+      id: 'row-agent-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker',
+      runtime: 'hermes', sessionId: 'participant-session-1', sessionGeneration: 0,
+      mode: 'scoped', provider: 'participant-provider', model: 'participant-model',
+      apiMode: '', reasoningEffort: '',
+    }))
+
+    await client.replyToMention('room-1', {
+      content: '@Worker clear mode', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+
+    expect(bridgeMock.chat).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.any(Array),
+      expect.any(String),
+      'default',
+      expect.objectContaining({ api_mode: '' }),
+    )
   })
 
   it('delivers fixed Hermes handoffs as typed data with trusted sink instructions', async () => {

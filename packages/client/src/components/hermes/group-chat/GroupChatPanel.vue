@@ -2,7 +2,7 @@
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NCheckbox, NDropdown, NModal, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NSlider, NPopover, NPopconfirm, NInputNumber, NCheckbox, NDropdown, NModal, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -72,6 +72,7 @@ const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
 const agentDescription = ref('')
 const editingAgentId = ref('')
+const expandedParticipantId = ref('')
 const participantRuntime = ref<'hermes' | 'coding_agent'>('hermes')
 const participantCodingAgentId = ref<'' | 'claude-code' | 'codex'>('')
 const participantMode = ref<'scoped' | 'global'>('scoped')
@@ -89,7 +90,10 @@ const contextRoomId = ref<string | null>(null)
 const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
-const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
+const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
+    addFiles?: (files: File[]) => void
+    insertParticipantMention?: (participantId: string, displayName: string) => void
+}) | null>(null)
 const chatDropCounter = ref(0)
 const isChatDropActive = ref(false)
 const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
@@ -115,13 +119,30 @@ const participantRuntimeOptions = computed(() => [
     { label: 'Codex', value: 'codex' },
     { label: 'Claude Code', value: 'claude-code' },
 ])
+const participantApiModeValues = ['chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server'] as const
+
+function normalizeParticipantApiMode(value: unknown, fallback = 'chat_completions'): string {
+    const normalized = String(value || '').trim()
+    return (participantApiModeValues as readonly string[]).includes(normalized) ? normalized : fallback
+}
+
 const participantApiModeOptions = computed(() => [
-    { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
-    { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
-    { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+    { label: 'Chat Completions', value: 'chat_completions' },
+    { label: 'Responses API', value: 'codex_responses' },
+    { label: 'Anthropic Messages', value: 'anthropic_messages' },
+    { label: 'Bedrock Converse', value: 'bedrock_converse' },
+    { label: 'Codex App Server', value: 'codex_app_server' },
 ])
-const participantReasoningOptions = computed(() => ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-    .map(value => ({ label: t(`chat.reasoningEffort.options.${value}`), value })))
+const participantReasoningOptions = computed(() => [
+    { label: t('chat.reasoningEffort.options.default'), value: '' },
+    { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+    { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+    { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+    { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+    { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+    { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+    { label: t('chat.reasoningEffort.options.max'), value: 'max' },
+])
 const participantModelGroups = computed(() => {
     const groups = appStore.profileModelGroups.find(entry => entry.profile === selectedProfile.value)?.groups || appStore.modelGroups
     const codingAgentId = participantCodingAgentId.value
@@ -739,8 +760,204 @@ function handleEditAgent(agent: RoomAgent) {
 }
 
 function participantRuntimeLabel(agent: RoomAgent): string {
-    if (agent.runtime !== 'coding_agent') return 'Hermes'
+    if ((agent.runtime || 'hermes') !== 'coding_agent') return 'Hermes'
     return agent.codingAgentId === 'claude-code' ? 'Claude Code' : 'Codex'
+}
+
+function participantQuickKey(roomId: string, agentId: string): string {
+    return `${roomId}\u0000${agentId}`
+}
+
+const participantQuickSaveQueues = new Map<string, Promise<void>>()
+const participantQuickDesired = new Map<string, Pick<RoomAgent, 'provider' | 'model' | 'apiMode' | 'reasoningEffort'>>()
+type ParticipantRuntimeSnapshot = Pick<RoomAgent, 'provider' | 'model' | 'apiMode' | 'reasoningEffort'>
+const participantReasoningCommits = new Map<string, {
+    timer: ReturnType<typeof setTimeout>
+    previous: ParticipantRuntimeSnapshot
+    value: ParticipantRuntimeSnapshot['reasoningEffort']
+}>()
+
+function participantModelGroupsFor(agent: RoomAgent) {
+    const groups = appStore.profileModelGroups.find(entry => entry.profile === agent.profile)?.groups || appStore.modelGroups
+    const codingAgentId = agent.codingAgentId
+    if ((agent.runtime || 'hermes') !== 'coding_agent' || !codingAgentId) return groups
+    return groups.filter(group => canScopedCodingAgentUseProvider(codingAgentId, group.provider))
+}
+
+function participantModelOptions(agent: RoomAgent): DropdownOption[] {
+    return participantModelGroupsFor(agent).map(group => ({
+        type: 'group',
+        label: group.label || group.provider,
+        key: group.provider,
+        children: [
+            ...group.models,
+            ...(appStore.customModels[group.provider] || []).filter(model => !group.models.includes(model)),
+        ].map(model => ({
+            label: appStore.displayModelName(model, group.provider),
+            value: `${group.provider}\u0000${model}`,
+            disabled: !!group.model_meta?.[model]?.disabled,
+        })),
+    })) as DropdownOption[]
+}
+
+function participantApiModeOptionsFor(agent: RoomAgent) {
+    const runtime = agent.runtime || 'hermes'
+    return participantApiModeOptions.value.filter(option => (
+        runtime === 'hermes'
+        || option.value === 'chat_completions'
+        || option.value === 'codex_responses'
+        || option.value === 'anthropic_messages'
+    ))
+}
+
+function participantReasoningSliderValue(agent: RoomAgent): number {
+    const value = agent.reasoningEffort || ''
+    const index = participantReasoningOptions.value.findIndex(option => option.value === value)
+    return index >= 0 ? index : 0
+}
+
+function participantReasoningSliderLabel(value: number): string {
+    return participantReasoningOptions.value[Math.round(value)]?.label || t('chat.reasoningEffort.defaultLabel')
+}
+
+function participantReasoningLabel(agent: RoomAgent): string {
+    return participantReasoningSliderLabel(participantReasoningSliderValue(agent))
+}
+
+function participantApiModeFor(agent: RoomAgent): string {
+    if (agent.apiMode) return agent.apiMode
+    const group = participantModelGroupsFor(agent).find(candidate => candidate.provider === agent.provider)
+    const fallback = inferCodingAgentApiMode(group?.provider || agent.provider, group?.base_url)
+    return normalizeParticipantApiMode(group?.api_mode, fallback)
+}
+
+function participantRuntimeSnapshot(agent: RoomAgent): ParticipantRuntimeSnapshot {
+    return {
+        provider: agent.provider || '',
+        model: agent.model || '',
+        apiMode: agent.apiMode || '',
+        reasoningEffort: agent.reasoningEffort || '',
+    }
+}
+
+function applyParticipantQuickState(roomId: string, agentId: string, state: Partial<RoomAgent>) {
+    if (store.currentRoomId !== roomId) return
+    const current = store.agents.find(candidate => candidate.agentId === agentId)
+    if (current) Object.assign(current, state)
+}
+
+async function saveParticipantQuickSetting(agent: RoomAgent, updates: Partial<ParticipantRuntimeSnapshot>, rollbackOverride?: ParticipantRuntimeSnapshot) {
+    if (!store.currentRoomId || !currentRoomCanManage.value) return
+    const roomId = store.currentRoomId
+    const queueKey = participantQuickKey(roomId, agent.agentId)
+    const previous = rollbackOverride || participantRuntimeSnapshot(agent)
+    const base = participantQuickDesired.get(queueKey) || previous
+    const optimistic = { ...base, ...updates }
+    participantQuickDesired.set(queueKey, optimistic)
+    Object.assign(agent, optimistic)
+
+    const activeQueue = participantQuickSaveQueues.get(queueKey)
+    if (activeQueue) {
+        await activeQueue
+        return
+    }
+
+    const queue = (async () => {
+        let rollback = previous
+        while (true) {
+            const requested = participantQuickDesired.get(queueKey)
+            if (!requested) break
+            try {
+                const saved = await store.updateAgentInRoom(roomId, agent.agentId, {
+                    provider: requested.provider,
+                    model: requested.model,
+                    apiMode: String(requested.apiMode || ''),
+                    reasoningEffort: requested.reasoningEffort,
+                })
+                rollback = {
+                    provider: saved.provider || '',
+                    model: saved.model || '',
+                    apiMode: saved.apiMode || '',
+                    reasoningEffort: saved.reasoningEffort || '',
+                }
+                const desired = participantQuickDesired.get(queueKey)
+                if (desired === requested) {
+                    participantQuickDesired.delete(queueKey)
+                    applyParticipantQuickState(roomId, agent.agentId, saved)
+                    message.success(t('groupChat.participantSettingsSaved'))
+                    break
+                }
+                if (desired) applyParticipantQuickState(roomId, agent.agentId, desired)
+            } catch (error) {
+                const desired = participantQuickDesired.get(queueKey)
+                if (desired && desired !== requested) {
+                    applyParticipantQuickState(roomId, agent.agentId, desired)
+                    message.error(extractApiErrorMessage(error))
+                    continue
+                }
+                participantQuickDesired.delete(queueKey)
+                applyParticipantQuickState(roomId, agent.agentId, rollback)
+                message.error(extractApiErrorMessage(error))
+                break
+            }
+        }
+    })().finally(() => {
+        if (participantQuickSaveQueues.get(queueKey) === queue) {
+            participantQuickSaveQueues.delete(queueKey)
+        }
+    })
+    participantQuickSaveQueues.set(queueKey, queue)
+    await queue
+}
+
+function handleQuickModelChange(agent: RoomAgent, value: string | null) {
+    if (!value) return
+    const separator = value.indexOf('\u0000')
+    if (separator < 1) return
+    const provider = value.slice(0, separator)
+    const model = value.slice(separator + 1)
+    const group = participantModelGroupsFor(agent).find(candidate => candidate.provider === provider)
+    const fallback = inferCodingAgentApiMode(group?.provider || provider, group?.base_url)
+    const apiMode = normalizeParticipantApiMode(group?.api_mode, fallback)
+    void saveParticipantQuickSetting(agent, { provider, model, apiMode })
+}
+
+function handleQuickApiModeChange(agent: RoomAgent, apiMode: string | null) {
+    if (!apiMode) return
+    void saveParticipantQuickSetting(agent, { apiMode })
+}
+
+function commitParticipantReasoning(agent: RoomAgent) {
+    const pending = participantReasoningCommits.get(agent.agentId)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    participantReasoningCommits.delete(agent.agentId)
+    void saveParticipantQuickSetting(agent, { reasoningEffort: pending.value || '' }, pending.previous)
+}
+
+function handleQuickReasoningChange(agent: RoomAgent, value: number | [number, number]) {
+    const numericValue = Array.isArray(value) ? value[0] : value
+    const reasoningEffort = participantReasoningOptions.value[Math.round(numericValue)]?.value
+    if (reasoningEffort === undefined || reasoningEffort === (agent.reasoningEffort || '')) return
+    const existing = participantReasoningCommits.get(agent.agentId)
+    const previous = existing?.previous || participantRuntimeSnapshot(agent)
+    if (existing) clearTimeout(existing.timer)
+    agent.reasoningEffort = reasoningEffort
+    const timer = setTimeout(() => commitParticipantReasoning(agent), 180)
+    participantReasoningCommits.set(agent.agentId, { timer, previous, value: reasoningEffort })
+}
+
+function mentionParticipant(agent: RoomAgent) {
+    expandedParticipantId.value = ''
+    groupChatInputRef.value?.insertParticipantMention(agent.agentId, agent.name)
+}
+
+function toggleParticipantQuickSettings(agentId: string) {
+    expandedParticipantId.value = expandedParticipantId.value === agentId ? '' : agentId
+}
+
+function participantModelValue(agent: RoomAgent): string | null {
+    return agent.provider && agent.model ? `${agent.provider}\u0000${agent.model}` : null
 }
 
 async function refreshHandoffs() {
@@ -797,6 +1014,8 @@ onUnmounted(() => {
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
     if (handoffPollTimer.value) clearInterval(handoffPollTimer.value)
+    for (const pending of participantReasoningCommits.values()) clearTimeout(pending.timer)
+    participantReasoningCommits.clear()
     handoffPollTimer.value = null
     stopWorkspaceResize()
     if (showWorkspacePanel.value) closeWorkspacePanel()
@@ -804,6 +1023,11 @@ onUnmounted(() => {
 })
 
 watch(() => store.currentRoomId, (roomId, previousRoomId) => {
+    if (roomId !== previousRoomId) {
+        for (const pending of participantReasoningCommits.values()) clearTimeout(pending.timer)
+        participantReasoningCommits.clear()
+        expandedParticipantId.value = ''
+    }
     if (roomId !== previousRoomId && (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value)) closeWorkspacePanel()
     handoffJobs.value = []
     void refreshHandoffs()
@@ -1183,7 +1407,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
                 <div class="header-info">
                     <!-- Stacked avatars (user + agents) -->
-                    <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="220">
+                    <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="360">
                         <template #trigger>
                             <button
                                 type="button"
@@ -1214,18 +1438,70 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 </div>
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.agentId" class="agent-popover-item">
-                                <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="28" />
-                                <div class="agent-popover-info">
-                                    <span class="agent-popover-name">{{ agent.name }}</span>
-                                    <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }}</span>
+                            <div v-for="agent in store.agents" :key="agent.agentId" class="participant-quick-settings-row">
+                                <div class="agent-popover-item">
+                                    <button
+                                        type="button"
+                                        class="participant-avatar-trigger"
+                                        :aria-label="`${t('groupChat.participantQuickSettings')}: ${agent.name}`"
+                                        :aria-expanded="expandedParticipantId === agent.agentId"
+                                        @click="toggleParticipantQuickSettings(agent.agentId)"
+                                    >
+                                        <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="28" />
+                                    </button>
+                                    <div class="agent-popover-info">
+                                        <span class="agent-popover-name">{{ agent.name }}</span>
+                                        <span class="agent-popover-profile">{{ participantRuntimeLabel(agent) }} · {{ agent.profile }}</span>
+                                    </div>
+                                    <button v-if="currentRoomCanManage" class="agent-popover-remove" :title="t('common.edit')" @click="handleEditAgent(agent)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+                                    </button>
+                                    <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.agentId)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
                                 </div>
-                                <button v-if="currentRoomCanManage" class="agent-popover-remove" :title="t('common.edit')" @click="handleEditAgent(agent)">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
-                                </button>
-                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.agentId)">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                </button>
+                                <div v-if="expandedParticipantId === agent.agentId" class="participant-quick-settings" @click.stop>
+                                    <p class="participant-quick-settings-hint">{{ t('groupChat.participantSettingsNextRun') }}</p>
+                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control">
+                                        <label>{{ t('groupChat.participantModel') }}</label>
+                                        <NSelect
+                                            :value="participantModelValue(agent)"
+                                            :options="participantModelOptions(agent)"
+                                            filterable
+                                            size="small"
+                                            @update:value="value => handleQuickModelChange(agent, value as string | null)"
+                                        />
+                                    </div>
+                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control">
+                                        <label>{{ t('groupChat.participantApiMode') }}</label>
+                                        <NSelect
+                                            :value="participantApiModeFor(agent)"
+                                            :options="participantApiModeOptionsFor(agent)"
+                                            size="small"
+                                            @update:value="value => handleQuickApiModeChange(agent, value as string | null)"
+                                        />
+                                    </div>
+                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control participant-reasoning-control">
+                                        <label>{{ t('groupChat.participantReasoningEffort') }} · {{ participantReasoningLabel(agent) }}</label>
+                                        <NSlider
+                                            class="participant-reasoning-slider"
+                                            :value="participantReasoningSliderValue(agent)"
+                                            :min="0"
+                                            :max="participantReasoningOptions.length - 1"
+                                            :step="1"
+                                            :format-tooltip="participantReasoningSliderLabel"
+                                            @update:value="value => handleQuickReasoningChange(agent, value)"
+                                            @dragend="commitParticipantReasoning(agent)"
+                                        />
+                                        <div class="participant-reasoning-range" aria-hidden="true">
+                                            <span>{{ participantReasoningOptions[0].label }}</span>
+                                            <span>{{ participantReasoningOptions[participantReasoningOptions.length - 1].label }}</span>
+                                        </div>
+                                    </div>
+                                    <NButton type="primary" size="small" block class="participant-mention-button" :title="t('groupChat.mentionParticipant')" @click="mentionParticipant(agent)">
+                                        @ {{ agent.name }}
+                                    </NButton>
+                                </div>
                             </div>
                         </div>
                     </NPopover>
@@ -2755,11 +3031,102 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+// ─── Participant quick settings ───────────────────────
+
+.participant-quick-settings-row {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(var(--accent-primary-rgb), 0.08);
+
+    &:last-child {
+        border-bottom: 0;
+    }
+}
+
+.participant-avatar-trigger {
+    width: 32px;
+    height: 32px;
+    padding: 2px;
+    border: 0;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+        outline: 2px solid rgba(var(--accent-primary-rgb), 0.45);
+        outline-offset: 1px;
+    }
+}
+
+.participant-quick-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    margin: 0 4px 10px 44px;
+    padding: 8px 6px 10px 12px;
+    border-inline-start: 2px solid rgba(var(--accent-primary-rgb), 0.48);
+    background: transparent;
+}
+
+.participant-mention-button {
+    margin-top: 2px;
+    font-weight: 600;
+}
+
+.participant-quick-settings-hint {
+    margin: -2px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: $text-secondary;
+}
+
+.participant-quick-control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    > label {
+        font-size: 12px;
+        font-weight: 500;
+        color: $text-secondary;
+    }
+}
+
+.participant-reasoning-control {
+    padding: 2px 4px 0;
+}
+
+.participant-reasoning-slider {
+    margin: 2px 2px 0;
+
+    :deep(.n-slider-rail__fill) {
+        background-color: $accent-primary;
+    }
+
+    :deep(.n-slider-handle) {
+        border: 2px solid $accent-primary;
+        box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.16);
+    }
+}
+
+.participant-reasoning-range {
+    display: flex;
+    justify-content: space-between;
+    color: $text-secondary;
+    font-size: 10px;
+}
+
 // ─── Agent Popover ─────────────────────────────────────
 
 .agent-popover {
-    max-height: 300px;
+    max-height: min(620px, calc(100vh - 96px));
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .agent-popover-title {

@@ -1171,6 +1171,7 @@ class AgentClient {
                 {
                     ...(modelContext.model ? { model: modelContext.model } : {}),
                     ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+                    api_mode: String(participantSnapshot.apiMode || ''),
                     ...(participantSnapshot.reasoningEffort && participantSnapshot.reasoningEffort !== 'default'
                         ? { reasoning_effort: String(participantSnapshot.reasoningEffort) }
                         : {}),

@@ -49,6 +49,8 @@ export interface AgentBridgeChatOptions {
   storage_message?: AgentBridgeMessage
   model?: string
   provider?: string
+  /** Provider/API transport override. Empty/undefined = use provider config. */
+  api_mode?: string
   workspace?: string
   source?: string
   wait?: boolean
@@ -484,6 +486,7 @@ export class AgentBridgeClient {
       ...(profile ? { profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.api_mode !== undefined ? { api_mode: options.api_mode } : {}),
       ...(options.workspace ? { workspace: options.workspace } : {}),
       ...(options.source ? { source: options.source } : {}),
       ...(options.wait ? { wait: true } : {}),

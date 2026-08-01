@@ -30,6 +30,38 @@ describe('AgentBridgeClient background delegation requests', () => {
     }))
   })
 
+  it('forwards API mode overrides without breaking the legacy no-override request shape', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
+    const request = vi.spyOn(client, 'request').mockResolvedValue({
+      ok: true,
+      run_id: 'run-api-mode',
+      session_id: 'session-api-mode',
+      status: 'running',
+    })
+
+    await client.chat('session-api-mode', 'hello', undefined, undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+      api_mode: 'anthropic_messages',
+    })
+    await client.chat('session-clear-api-mode', 'hello', undefined, undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+      api_mode: '',
+    })
+    await client.chat('session-legacy', 'hello', undefined, undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+    })
+
+    expect(request.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      api_mode: 'anthropic_messages',
+    }))
+    expect(request.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ api_mode: '' }))
+    expect(request.mock.calls[2]?.[0]).not.toHaveProperty('api_mode')
+  })
+
   it('forwards recovery routes and delivery acknowledgements', async () => {
     const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })

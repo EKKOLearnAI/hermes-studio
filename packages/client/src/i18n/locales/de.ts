@@ -2351,6 +2351,10 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   groupChat: {
+    participantQuickSettings: 'Teilnehmereinstellungen',
+    mentionParticipant: 'Teilnehmer erwähnen',
+    participantSettingsNextRun: 'Änderungen gelten ab dem nächsten Lauf dieses Teilnehmers.',
+    participantSettingsSaved: 'Teilnehmereinstellungen gespeichert',
     participantRuntime: 'Laufzeit',
     participantMode: 'Modus',
     participantModel: 'Modell',

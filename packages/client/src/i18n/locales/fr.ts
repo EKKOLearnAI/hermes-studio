@@ -2351,6 +2351,10 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   groupChat: {
+    participantQuickSettings: 'Paramètres du participant',
+    mentionParticipant: 'Mentionner le participant',
+    participantSettingsNextRun: 'Les modifications s’appliquent à la prochaine exécution de ce participant.',
+    participantSettingsSaved: 'Paramètres du participant enregistrés',
     participantRuntime: 'Environnement d’exécution',
     participantMode: 'Mode',
     participantModel: 'Modèle',

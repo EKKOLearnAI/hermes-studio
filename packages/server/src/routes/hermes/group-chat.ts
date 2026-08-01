@@ -74,7 +74,7 @@ type AgentInput = {
 }
 
 const PARTICIPANT_REASONING_EFFORTS = new Set(['', 'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-const PARTICIPANT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
+const PARTICIPANT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server'])
 const PARTICIPANT_AVATAR_ASSETS = new Set([
     '/coding-agents/hermes.png',
     '/coding-agents/codex-openai.png',
@@ -126,6 +126,9 @@ function normalizeAgentInput(input: AgentInput): AgentInput {
     if (runtime === 'coding_agent' && mode !== 'scoped') throw Object.assign(new Error('Group Chat coding-agent participants require scoped mode'), { status: 400 })
     const apiMode = String(input.apiMode || '').trim()
     if (!PARTICIPANT_API_MODES.has(apiMode)) throw Object.assign(new Error('apiMode is invalid'), { status: 400 })
+    if (runtime === 'coding_agent' && apiMode && !['chat_completions', 'codex_responses', 'anthropic_messages'].includes(apiMode)) {
+        throw Object.assign(new Error('apiMode is not supported for coding_agent participants'), { status: 400 })
+    }
     const provider = String(input.provider || '').trim()
     const model = String(input.model || '').trim()
     if (runtime === 'coding_agent' && (!provider || !model || !apiMode)) throw Object.assign(new Error('provider, model, and apiMode are required for coding_agent participants'), { status: 400 })
@@ -1094,6 +1097,10 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
         return
     }
     const requested = ctx.request.body as Partial<AgentInput>
+    const requestedKeys = Object.keys(requested as Record<string, unknown>)
+    const configOnlyUpdate = requestedKeys.length > 0 && requestedKeys.every(key => (
+        key === 'provider' || key === 'model' || key === 'apiMode' || key === 'reasoningEffort'
+    ))
     const name = requested.name === undefined ? existing.name : String(requested.name || '').trim()
     if (!name) {
         ctx.status = 400
@@ -1118,9 +1125,9 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
             profile: existing.profile,
             name,
             description: requested.description === undefined ? existing.description : requested.description,
-            runtime: existing.runtime,
-            codingAgentId: existing.codingAgentId,
-            mode: requested.mode === undefined ? existing.mode : requested.mode,
+            runtime: existing.runtime || 'hermes',
+            codingAgentId: existing.codingAgentId || '',
+            mode: requested.mode === undefined ? (existing.mode || 'scoped') : requested.mode,
             provider: requested.provider === undefined ? existing.provider : requested.provider,
             model: requested.model === undefined ? existing.model : requested.model,
             apiMode: requested.apiMode === undefined ? existing.apiMode : requested.apiMode,
@@ -1137,7 +1144,7 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
             reasoningEffort: normalized.reasoningEffort || '',
             avatar: normalized.avatar as string,
         })
-        await chatServer.agentClients.interruptRoom(roomId)
+        if (!configOnlyUpdate) await chatServer.agentClients.interruptRoom(roomId)
         if (agent) chatServer.agentClients.updateAgentIdentity(roomId, agent.agentId, agent.name, agent.description)
         ctx.body = { agent: serializeRoomAgent(agent) }
     } catch (err: any) {

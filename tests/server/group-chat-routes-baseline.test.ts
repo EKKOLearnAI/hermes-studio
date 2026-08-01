@@ -131,6 +131,13 @@ describe('group chat REST route baseline', () => {
         return row
       }),
       getRoomAgent: vi.fn((roomId, ref) => (storage.agents.get(roomId) || []).find((a: any) => a.id === ref || a.agentId === ref) || null),
+      updateRoomAgent: vi.fn((roomId, ref, updates) => {
+        const rows = storage.agents.get(roomId) || []
+        const row = rows.find((candidate: any) => candidate.id === ref || candidate.agentId === ref)
+        if (!row) return null
+        Object.assign(row, updates)
+        return row
+      }),
       removeAgentActorWithRetention: vi.fn((roomId, ref, guard) => {
         const agent = (storage.agents.get(roomId) || []).find((candidate: any) => candidate.id === ref || candidate.agentId === ref) || null
         if (!agent) return null
@@ -166,6 +173,7 @@ describe('group chat REST route baseline', () => {
       }),
       addAgentToRoom: vi.fn(async () => ({})),
       interruptRoom: vi.fn(async () => true),
+      updateAgentIdentity: vi.fn(),
       pauseRoom: vi.fn(() => vi.fn()),
       interruptAgent: vi.fn(async () => true),
       interruptHandoffTarget: vi.fn(async (roomId, agentId) => agentClients.interruptAgent(roomId, agentId)),
@@ -231,6 +239,55 @@ describe('group chat REST route baseline', () => {
     const body = await res.json() as any
     expect(body.room.inviteCode).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/)
     expect(body.room).not.toHaveProperty('sessionSeed')
+  })
+
+  it('updates next-run participant controls while preserving a legacy Room identity', async () => {
+    storage.rooms.set('room-legacy', { id: 'room-legacy', name: 'Legacy', inviteCode: 'LEGACY1', ownerAuthUserId: 1 })
+    storage.agents.set('room-legacy', [{
+      id: 'row-legacy', roomId: 'room-legacy', agentId: 'agent-legacy', profile: 'default',
+      name: 'Legacy Hermes', description: '', invited: 0,
+      // Legacy rows may not have the newer participant fields materialized in fixtures/imports.
+      runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+      provider: '', model: '', apiMode: '', reasoningEffort: '',
+      avatar: undefined,
+    }])
+
+    const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-legacy/agents/agent-legacy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'custom:legacy', model: 'legacy-model', apiMode: 'anthropic_messages', reasoningEffort: 'high',
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(agentClients.interruptRoom).not.toHaveBeenCalled()
+    await expect(response.json()).resolves.toEqual({
+      agent: expect.objectContaining({
+        roomId: 'room-legacy', agentId: 'agent-legacy', profile: 'default', name: 'Legacy Hermes',
+        runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+        provider: 'custom:legacy', model: 'legacy-model', apiMode: 'anthropic_messages', reasoningEffort: 'high',
+      }),
+    })
+  })
+
+  it('interrupts the Room when participant identity fields change', async () => {
+    storage.rooms.set('room-identity-change', { id: 'room-identity-change', name: 'Identity', inviteCode: 'IDENTITY1', ownerAuthUserId: 1 })
+    storage.agents.set('room-identity-change', [{
+      id: 'row-identity', roomId: 'room-identity-change', agentId: 'agent-identity', profile: 'default',
+      name: 'Before', description: '', invited: 1,
+      runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+      provider: '', model: '', apiMode: '', reasoningEffort: '', avatar: '',
+    }])
+
+    const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-identity-change/agents/agent-identity`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'After' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(agentClients.interruptRoom).toHaveBeenCalledWith('room-identity-change')
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {

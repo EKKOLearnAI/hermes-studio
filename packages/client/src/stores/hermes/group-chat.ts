@@ -1183,6 +1183,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentUpdateInput) {
         try {
             const res = await updateAgent(roomId, agentId, data)
+            if (currentRoomId.value !== roomId || res.agent.roomId !== roomId) return res.agent
             const index = agents.value.findIndex(agent => agent.agentId === agentId)
             if (index >= 0) agents.value[index] = res.agent
             else agents.value.push(res.agent)

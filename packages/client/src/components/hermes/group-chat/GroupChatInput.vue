@@ -435,6 +435,35 @@ function addFile(file: File) {
     })
 }
 
+function insertParticipantMention(participantId: string, displayName: string) {
+    const normalizedParticipantId = String(participantId || '').trim()
+    const normalizedDisplayName = String(displayName || '').trim()
+    if (!normalizedParticipantId || !normalizedDisplayName) return
+    const el = textareaRef.value
+    let start = el?.selectionStart ?? inputText.value.length
+    let end = el?.selectionEnd ?? start
+    if (start > 0 && !/\s/u.test(inputText.value[start - 1] || '')) {
+        inputText.value = `${inputText.value.slice(0, start)} ${inputText.value.slice(start)}`
+        previousInputText.value = inputText.value
+        start += 1
+        end += 1
+    }
+    const applied = applyMentionSelection(inputText.value, draftMentions.value, start, end, {
+        type: 'agent', participantId: normalizedParticipantId, name: normalizedDisplayName,
+    })
+    inputText.value = applied.text
+    previousInputText.value = applied.text
+    draftMentions.value = applied.mentions
+    mentionActive.value = false
+    nextTick(() => {
+        const textarea = textareaRef.value
+        if (!textarea) return
+        textarea.setSelectionRange(applied.cursor, applied.cursor)
+        textarea.focus()
+        autoSizeTextarea(textarea)
+    })
+}
+
 function addFiles(files: File[]) {
     for (const file of files) addFile(file)
     if (files.length > 0) textareaRef.value?.focus()
@@ -485,7 +514,7 @@ function handleDrop(e: DragEvent) {
     addFiles(Array.from(e.dataTransfer?.files || []))
 }
 
-defineExpose({ addFiles })
+defineExpose({ addFiles, insertParticipantMention })
 
 function removeAttachment(id: string) {
     const idx = attachments.value.findIndex(a => a.id === id)

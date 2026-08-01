@@ -43,7 +43,7 @@ const messagesByRoom: Record<string, unknown[]> = {
   ],
 }
 
-const agentsByRoom: Record<string, unknown[]> = {
+const baseAgentsByRoom: Record<string, any[]> = {
   'room-alpha': [
     {
       id: 'agent-row-1',
@@ -53,8 +53,42 @@ const agentsByRoom: Record<string, unknown[]> = {
       name: 'Worker',
       description: 'Group agent',
       invited: 1,
+      runtime: 'hermes',
+      codingAgentId: '',
+      mode: 'scoped',
+      provider: 'test-provider',
+      model: 'test-model',
+      apiMode: 'chat_completions',
+      reasoningEffort: '',
+      avatar: null,
     },
   ],
+  'room-readonly': [
+    {
+      id: 'agent-row-readonly',
+      roomId: 'room-readonly',
+      agentId: 'agent-readonly',
+      profile: 'default',
+      name: 'Observer',
+      description: 'Read-only room agent',
+      invited: 1,
+      runtime: 'hermes',
+      codingAgentId: '',
+      mode: 'scoped',
+      provider: 'test-provider',
+      model: 'test-model',
+      apiMode: 'chat_completions',
+      reasoningEffort: '',
+      avatar: null,
+    },
+  ],
+}
+
+const agentsByRoom: Record<string, any[]> = structuredClone(baseAgentsByRoom)
+
+function resetAgentsByRoom() {
+  for (const key of Object.keys(agentsByRoom)) delete agentsByRoom[key]
+  Object.assign(agentsByRoom, structuredClone(baseAgentsByRoom))
 }
 
 async function mockGroupChatApi(page: Page) {
@@ -84,16 +118,29 @@ async function mockGroupChatApi(page: Page) {
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/available-models') {
+      const group = { ...TEST_MODEL_GROUP, models: ['test-model', 'test-model-2'], available_models: ['test-model', 'test-model-2'] }
       return json({
         default: 'test-model',
         default_provider: 'test-provider',
-        groups: [TEST_MODEL_GROUP],
-        allProviders: [TEST_MODEL_GROUP],
+        groups: [group],
+        allProviders: [group],
+        profiles: [{ profile: 'default', default: 'test-model', default_provider: 'test-provider', groups: [group] }],
         model_aliases: {},
         model_visibility: {},
       })
     }
     if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
+
+    const participantMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/agents\/([^/]+)$/)
+    if (participantMatch && request.method() === 'PATCH') {
+      const roomId = decodeURIComponent(participantMatch[1])
+      const agentId = decodeURIComponent(participantMatch[2])
+      const body = JSON.parse(request.postData() || '{}')
+      const agent = (agentsByRoom[roomId] || []).find(candidate => candidate.agentId === agentId)
+      if (!agent) return json({ error: 'Agent not found' }, 404)
+      Object.assign(agent, body)
+      return json({ agent })
+    }
 
     const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
     if (inviteCodeMatch && request.method() === 'PUT') {
@@ -246,6 +293,7 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
 }
 
 async function setup(page: Page, path: string, platform?: DesktopPlatform) {
+  resetAgentsByRoom()
   if (platform) await installDesktopBridge(page, platform)
   await authenticate(page)
   await mockGroupChatSocket(page)
@@ -362,6 +410,63 @@ test.describe('group chat room deep links', () => {
       await expect(popover.locator('.agent-popover-name', { hasText: 'Worker' })).toBeVisible()
     })
   }
+
+  test('participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.getByRole('button', { name: 'Agents (1)' }).click()
+
+    const avatar = page.getByRole('button', { name: 'Participant settings: Worker' })
+    await expect(avatar).toBeVisible()
+    await avatar.click()
+
+    const quick = page.locator('.agent-popover .participant-quick-settings')
+    await expect(quick).toBeVisible()
+    await expect(quick.locator('.participant-reasoning-slider')).toBeVisible()
+    await expect(quick.getByText('Changes apply to this participant\'s next run.')).toBeVisible()
+    await page.screenshot({ path: '/home/agent/.hermes/workspace/tmp/pr2226-avatar-controls-ui.png', fullPage: true })
+
+    const selects = quick.locator('.n-select')
+    await expect(selects).toHaveCount(2)
+    await selects.nth(0).click()
+    await page.getByText('test-model-2').click()
+    await expect.poll(async () => agentsByRoom['room-alpha'][0].model).toBe('test-model-2')
+
+    await selects.nth(1).click()
+    await page.getByText('Anthropic Messages').click()
+    await expect.poll(async () => agentsByRoom['room-alpha'][0].apiMode).toBe('anthropic_messages')
+
+    const thumb = quick.locator('.participant-reasoning-slider [role="slider"]')
+    await expect(thumb).toBeVisible()
+    await thumb.focus()
+    await thumb.press('Home')
+    for (let index = 0; index < 5; index += 1) await thumb.press('ArrowRight')
+    await expect.poll(async () => agentsByRoom['room-alpha'][0].reasoningEffort).toBe('high')
+
+    const mentionButton = quick.getByRole('button', { name: '@ Worker' })
+    await mentionButton.click()
+    const composer = page.locator('.input-textarea')
+    await expect(composer).toHaveValue('@Worker ')
+    await composer.type('inspect this')
+    const sent = page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted?.some((entry: any) => (
+      entry.event === 'message'
+      && entry.payload?.content === '@Worker inspect this'
+      && entry.payload?.mentions?.[0]?.participantId === 'agent-1'
+    )))
+    await composer.press('Enter')
+    await sent
+  })
+
+  test('read-only members can mention a participant without seeing runtime configuration controls', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-readonly')
+    await page.getByRole('button', { name: 'Agents (1)' }).click()
+    await page.getByRole('button', { name: 'Participant settings: Observer' }).click()
+
+    const quick = page.locator('.agent-popover .participant-quick-settings')
+    await expect(quick).toBeVisible()
+    await expect(quick.locator('.n-select')).toHaveCount(0)
+    await expect(quick.locator('.participant-reasoning-slider')).toHaveCount(0)
+    await expect(quick.getByRole('button', { name: '@ Observer' })).toBeVisible()
+  })
 
   test('room settings rotate invite codes only after the update API succeeds', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')

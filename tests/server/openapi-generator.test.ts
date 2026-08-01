@@ -47,6 +47,10 @@ describe('OpenAPI generator', () => {
         triggerTokens: { type: 'number' },
       },
     })
+    const participantSchema = openapi.paths['/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}'].patch.requestBody.content['application/json'].schema
+    expect(participantSchema.properties.apiMode.enum).toEqual([
+      '', 'chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server',
+    ])
     expect(firstGeneration).toEqual(committed)
 
     execFileSync(process.execPath, [join(root, 'scripts/generate-openapi.mjs')], { cwd: root })

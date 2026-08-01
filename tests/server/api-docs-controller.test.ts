@@ -39,7 +39,7 @@ describe('api docs controller', () => {
       runtime: { type: 'string', enum: ['hermes', 'coding_agent'] },
       codingAgentId: { type: 'string', enum: ['', 'claude-code', 'codex'] },
       mode: { type: 'string', enum: ['scoped'] },
-      apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages'] },
+      apiMode: { type: 'string', enum: ['', 'chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server'] },
     })
     const roomCreateSchema = ctx.body.paths['/api/hermes/group-chat/rooms']
       .post.requestBody.content['application/json'].schema

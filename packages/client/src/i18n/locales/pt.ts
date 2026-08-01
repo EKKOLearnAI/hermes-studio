@@ -2351,6 +2351,10 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   groupChat: {
+    participantQuickSettings: 'Configurações do participante',
+    mentionParticipant: 'Mencionar participante',
+    participantSettingsNextRun: 'As alterações serão aplicadas na próxima execução deste participante.',
+    participantSettingsSaved: 'Configurações do participante salvas',
     participantRuntime: 'Ambiente de execução',
     participantMode: 'Modo',
     participantModel: 'Modelo',

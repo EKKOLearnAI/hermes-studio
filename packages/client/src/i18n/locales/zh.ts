@@ -2631,6 +2631,10 @@ export default {
 
   // 群聊
   groupChat: {
+    participantQuickSettings: '参与者设置',
+    mentionParticipant: '@ 参与者',
+    participantSettingsNextRun: '更改从该参与者的下一次运行开始生效。',
+    participantSettingsSaved: '参与者设置已保存',
     participantRuntime: '运行时',
     participantMode: '模式',
     participantModel: '模型',

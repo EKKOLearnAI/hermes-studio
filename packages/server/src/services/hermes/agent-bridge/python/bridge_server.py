@@ -65,6 +65,7 @@ class BridgeServer:
             profile = req.get("profile")
             model = req.get("model")
             provider = req.get("provider")
+            api_mode = req.get("api_mode")
             workspace = req.get("workspace")
             source = req.get("source")
             raw_background_delegation_enabled = req.get("background_delegation_enabled")
@@ -89,6 +90,7 @@ class BridgeServer:
                 source,
                 reasoning_effort,
                 background_delegation_enabled,
+                api_mode,
             )
             if req.get("wait"):
                 timeout = float(req.get("timeout", 0) or 0)
