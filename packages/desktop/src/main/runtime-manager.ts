@@ -74,6 +74,7 @@ type PackagedRuntimeRelease = {
 
 type ActiveRuntimeVersion = {
   schema?: number
+  desktopAppVersion?: string
   hermesRuntimeVersion?: string
   webUiVersion?: string
   runtimeDirectory?: string
@@ -513,6 +514,13 @@ export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): vo
   const hermesRuntimeVersion = manifest?.hermesAgentVersion || desktopRuntimeVersion()
   const selectedWebUiDirectory = webuiDir()
   const active = readActiveRuntimeVersion()
+  const desktopAppVersion = app.getVersion().trim()
+  const previousDesktopAppVersion = active?.desktopAppVersion?.trim() || ''
+  const desktopAppVersionChanged = Boolean(
+    active
+    && desktopAppVersion
+    && previousDesktopAppVersion !== desktopAppVersion,
+  )
   const activeWebUiVersion = active?.webUiVersion?.trim().replace(/^v/, '') || ''
   const expectedWebUiDirectory = activeWebUiVersion
     ? join(runtimeStorageRoot(), 'webui', activeWebUiVersion)
@@ -523,12 +531,21 @@ export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): vo
   const next: ActiveRuntimeVersion = {
     ...(active || {}),
     schema: 1,
+    desktopAppVersion,
     hermesRuntimeVersion,
     runtimeDirectory: runtimeRoot,
     platform: runtimePlatformKey(),
     updatedAt: new Date().toISOString(),
   }
-  if (hasWebUiOverride) {
+  if (desktopAppVersionChanged) {
+    delete next.webUiVersion
+    if (activeWebUiVersion) {
+      console.log(
+        `[runtime] desktop updated from ${previousDesktopAppVersion || 'a legacy version'} `
+        + `to ${desktopAppVersion}; using bundled Web UI`,
+      )
+    }
+  } else if (hasWebUiOverride) {
     // Development overrides are temporary and must not replace the persisted downloaded version.
   } else if (usingDownloadedWebUi) {
     next.webUiVersion = webUiVersion()

@@ -86,6 +86,7 @@ describe('runtime version manager storage migration', () => {
     writeFileSync(join(legacyWebUiDirectory, 'package.json'), JSON.stringify({ version: '0.6.30' }))
     writeFileSync(activeVersionPath, JSON.stringify({
       schema: 1,
+      desktopAppVersion: '0.6.30',
       runtimeRootDirectory: storageRoot,
       platform: 'test-platform',
     }))
@@ -101,6 +102,7 @@ describe('runtime version manager storage migration', () => {
       active: false,
     }])
     const activated = activateDownloadedWebUiVersion('0.6.31')
+    expect(activated.desktopAppVersion).toBe('0.6.30')
     expect(activated.webUiVersion).toBe('0.6.31')
     expect(activated.webUiDirectory).toBeUndefined()
     expect(() => activateDownloadedWebUiVersion('0.6.30'))

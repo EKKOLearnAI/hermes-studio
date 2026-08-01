@@ -32,6 +32,7 @@ type RuntimeReleaseMetadata = {
 }
 
 type ActiveRuntimeVersion = {
+  desktopAppVersion?: unknown
   platform?: unknown
   webUiVersion?: unknown
   runtimeDirectory?: unknown

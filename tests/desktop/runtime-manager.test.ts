@@ -96,6 +96,7 @@ describe('desktop runtime manager', () => {
     process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG = 'hermes-0.17.0-runtime'
     mockElectronApp.isPackaged = false
     mockElectronApp.getAppPath = () => process.cwd()
+    mockElectronApp.getVersion = () => '0.6.21'
   })
 
   afterEach(async () => {
@@ -168,6 +169,7 @@ describe('desktop runtime manager', () => {
     mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
     writeFileSync(activeVersionPath, JSON.stringify({
       schema: 1,
+      desktopAppVersion: '0.6.21',
       webUiVersion: '0.6.31',
       webUiDirectory: developmentWebUi,
       platform: runtimePlatformKey(),
@@ -179,6 +181,61 @@ describe('desktop runtime manager', () => {
 
     expect(active.webUiVersion).toBe('0.6.31')
     expect(active.webUiDirectory).toBeUndefined()
+  })
+
+  it.each([
+    ['an older desktop version', '0.6.20'],
+    ['a legacy manifest without a recorded desktop version', undefined],
+  ])('uses the bundled Web UI after upgrading from %s', async (_label, previousVersion) => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const downloadedWebUi = join(home, 'desktop-runtime', 'webui', '0.6.31')
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(runtimeRoot)
+    createWebUiFiles(downloadedWebUi)
+    mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      desktopAppVersion: previousVersion,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: runtimeRoot,
+      webUiVersion: '0.6.31',
+      platform: runtimePlatformKey(),
+    }))
+
+    const { writeActiveRuntimeVersion } = await import('../../packages/desktop/src/main/runtime-manager')
+    writeActiveRuntimeVersion(runtimeRoot)
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(active.desktopAppVersion).toBe('0.6.21')
+    expect(active.webUiVersion).toBeUndefined()
+  })
+
+  it('keeps the selected Web UI during an ordinary restart of the same desktop version', async () => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const downloadedWebUi = join(home, 'desktop-runtime', 'webui', '0.6.31')
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(runtimeRoot)
+    createWebUiFiles(downloadedWebUi)
+    mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      desktopAppVersion: '0.6.21',
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: runtimeRoot,
+      webUiVersion: '0.6.31',
+      platform: runtimePlatformKey(),
+    }))
+
+    const { writeActiveRuntimeVersion } = await import('../../packages/desktop/src/main/runtime-manager')
+    writeActiveRuntimeVersion(runtimeRoot)
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(active.desktopAppVersion).toBe('0.6.21')
+    expect(active.webUiVersion).toBe('0.6.31')
   })
 
   it('copies a pending Runtime migration before switching the active directory', async () => {

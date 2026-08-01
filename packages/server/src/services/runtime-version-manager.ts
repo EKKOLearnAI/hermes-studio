@@ -14,6 +14,7 @@ const DEFAULT_GITHUB_REPO = 'EKKOLearnAI/hermes-studio'
 
 export interface ActiveVersionManifest {
   schema: number
+  desktopAppVersion?: string
   hermesRuntimeVersion?: string
   webUiVersion?: string
   runtimeDirectory?: string
@@ -495,6 +496,7 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
 
   const next: ActiveVersionManifest = {
     schema: 1,
+    desktopAppVersion: active?.desktopAppVersion || undefined,
     hermesRuntimeVersion: target.manifestHermesRuntimeVersion || target.version,
     webUiVersion: active?.webUiVersion || undefined,
     runtimeDirectory: target.directory,
@@ -580,6 +582,7 @@ export function activateDownloadedWebUiVersion(version: string): ActiveVersionMa
   if (!existsSync(join(directory, 'package.json'))) throw new Error(`Downloaded Web UI version not found: ${cleanVersion}`)
   const next: ActiveVersionManifest = {
     schema: 1,
+    desktopAppVersion: active?.desktopAppVersion || undefined,
     hermesRuntimeVersion: active?.hermesRuntimeVersion || '',
     webUiVersion: cleanVersion,
     runtimeDirectory: active?.runtimeDirectory || '',
