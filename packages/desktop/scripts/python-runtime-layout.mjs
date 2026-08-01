@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export function venvPythonPath(venvDir, targetOs) {
   return targetOs === 'win32'
@@ -6,20 +6,29 @@ export function venvPythonPath(venvDir, targetOs) {
     : join(venvDir, 'bin', 'python3')
 }
 
-export function embeddedBasePythonPath(venvDir, targetOs) {
+export function bundledBasePythonPath(pythonRoot, targetOs) {
   return targetOs === 'win32'
-    ? join(venvDir, '.base', 'python.exe')
-    : join(venvDir, '.base', 'bin', 'python3')
+    ? join(pythonRoot, 'base', 'python.exe')
+    : join(pythonRoot, 'base', 'bin', 'python3')
 }
 
-export function makeEmbeddedBaseConfigRelocatable(config, targetOs) {
-  const home = targetOs === 'win32' ? '.base' : '.base/bin'
+export function bundledBaseHomePath(pythonRoot, targetOs) {
+  return dirname(bundledBasePythonPath(pythonRoot, targetOs))
+}
+
+export function configWithPythonHome(config, home) {
+  const normalizedHome = String(home)
   const lines = String(config).split(/\r?\n/)
   const homeIndex = lines.findIndex(line => /^\s*home\s*=/.test(line))
   if (homeIndex >= 0) {
-    lines[homeIndex] = `home = ${home}`
+    lines[homeIndex] = `home = ${normalizedHome}`
   } else {
-    lines.unshift(`home = ${home}`)
+    lines.unshift(`home = ${normalizedHome}`)
   }
   return lines.join('\n').replace(/\n*$/, '\n')
+}
+
+export function makeBundledBaseConfigPortable(config, targetOs) {
+  const home = targetOs === 'win32' ? '../base' : '../base/bin'
+  return configWithPythonHome(config, home)
 }

@@ -95,8 +95,8 @@ The published runtime keeps this updateable layout:
 ```text
 python/                 Hermes Agent Git checkout and source root
   .git/
+  base/                 Windows python-build-standalone base runtime
   venv/                 bundled Python environment
-    .base/              Windows python-build-standalone base runtime
     Scripts/python.exe  Windows PEP 405 venv interpreter
   agent-browser/
   node/                  browser CLI npm prefix
@@ -108,12 +108,14 @@ runtime-manifest.json
 
 `prepare:runtime` fetches the exact source commit and installs its locked
 dependencies into `python/venv`. On Windows, the standalone base interpreter is
-embedded below `python/venv/.base` and a relocatable PEP 405 venv wraps it, so
-upstream `hermes update` can safely target the environment through
-`VIRTUAL_ENV`. The build also creates the upstream TUI/dashboard and verifies
-that the retained checkout is clean. `package:runtime` includes the source and
-Git metadata in the GitHub/CF archive and records them in schema 2 of the
-runtime manifest. Do not patch tracked Hermes source during this build:
+embedded at `python/base` and a sibling PEP 405 venv wraps it. Windows requires
+an absolute `pyvenv.cfg` home, so the build, package validation, extraction, and
+runtime migration paths rebase that value before launching Python. This lets
+upstream `hermes update` safely target the environment through `VIRTUAL_ENV`.
+The build also creates the upstream TUI/dashboard and verifies that the retained
+checkout is clean. `package:runtime` includes the source and Git metadata in the
+GitHub/CF archive and records them in schema 2 of the runtime manifest. Do not
+patch tracked Hermes source during this build:
 Studio-specific integration belongs in Studio, and the clean checkout is what
 allows users to run the upstream `hermes update` command directly.
 

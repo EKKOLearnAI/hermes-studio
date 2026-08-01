@@ -680,6 +680,7 @@ async function extractRuntimeArchive(archive: string, targetRoot: string): Promi
 
   try {
     await extractTarGzipArchive(archive, tempRoot)
+    repairMovedHermesRuntime(tempRoot, tempRoot, targetRoot)
     validateRuntimeDirectory(tempRoot, 'Runtime archive')
     rmSync(targetRoot, { recursive: true, force: true })
     mkdirSync(parent, { recursive: true })

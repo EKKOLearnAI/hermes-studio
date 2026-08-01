@@ -2,8 +2,9 @@
 // Download python-build-standalone for the current (or target) platform/arch.
 // Windows wraps the standalone interpreter in a real PEP 405 venv so upstream
 // `hermes update` can target it through VIRTUAL_ENV without Studio-only flags.
-// The base interpreter stays embedded at venv/.base and pyvenv.cfg points to it
-// relatively, keeping the complete environment relocatable.
+// The base interpreter stays embedded at python/base. Windows requires an
+// absolute pyvenv.cfg home, so packaging and extraction rebase it whenever the
+// complete environment moves.
 import {
   existsSync,
   mkdirSync,
@@ -18,8 +19,9 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { tmpdir, platform as osPlatform, arch as osArch } from 'node:os'
 import {
-  embeddedBasePythonPath,
-  makeEmbeddedBaseConfigRelocatable,
+  bundledBaseHomePath,
+  bundledBasePythonPath,
+  configWithPythonHome,
   venvPythonPath,
 } from './python-runtime-layout.mjs'
 
@@ -59,7 +61,8 @@ const PBS_BASE_URL = (process.env.PBS_BASE_URL || 'https://github.com/astral-sh/
 const URL = `${PBS_BASE_URL}/${PBS_TAG}/${FILE}`
 
 const preparedPython = venvPythonPath(VENV_DIR, TARGET_OS)
-if (existsSync(preparedPython)) {
+const preparedBasePython = bundledBasePythonPath(OUT_DIR, TARGET_OS)
+if (existsSync(preparedPython) && (TARGET_OS !== 'win32' || existsSync(preparedBasePython))) {
   console.log(`✓ Python already present at ${VENV_DIR}, skipping`)
   process.exit(0)
 }
@@ -87,17 +90,21 @@ function createRelocatableWindowsVenv(baseStagingDir) {
     '--no-project',
   ])
 
-  const embeddedBaseDir = resolve(VENV_DIR, '.base')
-  renameSync(baseStagingDir, embeddedBaseDir)
+  const bundledBaseDir = resolve(OUT_DIR, 'base')
+  rmSync(bundledBaseDir, { recursive: true, force: true })
+  renameSync(baseStagingDir, bundledBaseDir)
 
   const pyvenvConfig = resolve(VENV_DIR, 'pyvenv.cfg')
   writeFileSync(
     pyvenvConfig,
-    makeEmbeddedBaseConfigRelocatable(readFileSync(pyvenvConfig, 'utf-8'), TARGET_OS),
+    configWithPythonHome(
+      readFileSync(pyvenvConfig, 'utf-8'),
+      bundledBaseHomePath(OUT_DIR, TARGET_OS),
+    ),
   )
 
   const python = venvPythonPath(VENV_DIR, TARGET_OS)
-  const expectedBase = embeddedBasePythonPath(VENV_DIR, TARGET_OS)
+  const expectedBase = bundledBasePythonPath(OUT_DIR, TARGET_OS)
   run(python, [
     '-c',
     [
@@ -123,7 +130,7 @@ if (existsSync(resolve(OUT_DIR, 'python.exe')) || existsSync(resolve(OUT_DIR, 'b
   console.log(`→ Migrating legacy Python layout into ${migrationTarget}`)
   rmSync(migrationTarget, { recursive: true, force: true })
   mkdirSync(migrationTarget, { recursive: true })
-  const keepAtSourceRoot = new Set(['venv', '.git', 'agent-browser', 'node', 'ms-playwright'])
+  const keepAtSourceRoot = new Set(['base', 'venv', '.git', 'agent-browser', 'node', 'ms-playwright'])
   for (const entry of readdirSync(OUT_DIR, { withFileTypes: true })) {
     if (keepAtSourceRoot.has(entry.name) || entry.name === '.python-base-staging') continue
     renameSync(join(OUT_DIR, entry.name), join(migrationTarget, entry.name))

@@ -1,24 +1,30 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  embeddedBasePythonPath,
-  makeEmbeddedBaseConfigRelocatable,
+  bundledBaseHomePath,
+  bundledBasePythonPath,
+  configWithPythonHome,
+  makeBundledBaseConfigPortable,
   venvPythonPath,
 } from '../../packages/desktop/scripts/python-runtime-layout.mjs'
 
 describe('desktop Python runtime layout', () => {
-  it('uses a standard Windows venv around an embedded base interpreter', () => {
-    const venv = join('C:\\runtime', 'python', 'venv')
+  it('uses sibling base and venv directories for Windows Python', () => {
+    const pythonRoot = join('C:\\runtime', 'python')
+    const venv = join(pythonRoot, 'venv')
 
     expect(venvPythonPath(venv, 'win32')).toBe(
       join(venv, 'Scripts', 'python.exe'),
     )
-    expect(embeddedBasePythonPath(venv, 'win32')).toBe(
-      join(venv, '.base', 'python.exe'),
+    expect(bundledBasePythonPath(pythonRoot, 'win32')).toBe(
+      join(pythonRoot, 'base', 'python.exe'),
+    )
+    expect(bundledBaseHomePath(pythonRoot, 'win32')).toBe(
+      join(pythonRoot, 'base'),
     )
   })
 
-  it('rewrites the build-machine Python home to the embedded relative base', () => {
+  it('writes the absolute embedded Python home required by Windows', () => {
     const original = [
       'home = C:\\actions\\temp\\python',
       'implementation = CPython',
@@ -28,8 +34,9 @@ describe('desktop Python runtime layout', () => {
       '',
     ].join('\r\n')
 
-    expect(makeEmbeddedBaseConfigRelocatable(original, 'win32')).toBe([
-      'home = .base',
+    const home = join('C:\\runtime', 'python', 'base')
+    expect(configWithPythonHome(original, home)).toBe([
+      `home = ${home}`,
       'implementation = CPython',
       'version_info = 3.12.13',
       'include-system-site-packages = false',
@@ -38,10 +45,10 @@ describe('desktop Python runtime layout', () => {
     ].join('\n'))
   })
 
-  it('adds a relative home when uv omits one', () => {
-    expect(makeEmbeddedBaseConfigRelocatable(
+  it('uses a portable sibling base home in the release archive', () => {
+    expect(makeBundledBaseConfigPortable(
       'implementation = CPython\n',
       'win32',
-    )).toBe('home = .base\nimplementation = CPython\n')
+    )).toBe('home = ../base\nimplementation = CPython\n')
   })
 })

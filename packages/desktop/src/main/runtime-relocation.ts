@@ -68,8 +68,25 @@ function rewriteEditableReferences(
   let rewritten = 0
 
   const pyvenvConfig = join(stagedSourceRoot, 'venv', 'pyvenv.cfg')
-  if (existsSync(pyvenvConfig) && rewriteTextFile(pyvenvConfig, replacements)) {
-    rewritten += 1
+  if (existsSync(pyvenvConfig)) {
+    if (platform === 'win32') {
+      const original = readFileSync(pyvenvConfig, 'utf-8')
+      const home = join(finalSourceRoot, 'base')
+      const lines = original.split(/\r?\n/)
+      const homeIndex = lines.findIndex(line => /^\s*home\s*=/.test(line))
+      if (homeIndex >= 0) {
+        lines[homeIndex] = `home = ${home}`
+      } else {
+        lines.unshift(`home = ${home}`)
+      }
+      const updated = lines.join('\r\n').replace(/(?:\r?\n)*$/, '\r\n')
+      if (updated !== original) {
+        writeFileSync(pyvenvConfig, updated)
+        rewritten += 1
+      }
+    } else if (rewriteTextFile(pyvenvConfig, replacements)) {
+      rewritten += 1
+    }
   }
 
   for (const sitePackages of sitePackagesDirectories(stagedSourceRoot, platform)) {

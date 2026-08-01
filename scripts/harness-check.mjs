@@ -446,8 +446,9 @@ if (desktopPackageJson.includes('"patch:hermes"')) {
 for (const phrase of [
   "resolve(OUT_DIR, '.python-base-staging')",
   "'--relocatable'",
-  'makeEmbeddedBaseConfigRelocatable',
-  "resolve(VENV_DIR, '.base')",
+  'configWithPythonHome',
+  'bundledBaseHomePath',
+  "resolve(OUT_DIR, 'base')",
 ]) {
   if (!desktopFetchPython.includes(phrase)) {
     fail(`fetch-python.mjs must build a relocatable Windows PEP 405 venv: ${phrase}`)

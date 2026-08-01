@@ -104,7 +104,7 @@ describe('Hermes source runtime relocation', () => {
     expect(readFileSync(
       join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
       'utf-8',
-    )).toContain(join(finalRuntime, 'python', '.hermes-runtime'))
+    )).toContain(`home = ${join(finalRuntime, 'python', 'base')}`)
     expect(existsSync(join(scriptsDir, 'hermes.exe'))).toBe(false)
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       '"%PY%" -m hermes_cli.main %*',

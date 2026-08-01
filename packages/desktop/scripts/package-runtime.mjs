@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -16,7 +17,12 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { hermesSource } from './runtime-config.mjs'
-import { venvPythonPath } from './python-runtime-layout.mjs'
+import {
+  bundledBaseHomePath,
+  configWithPythonHome,
+  makeBundledBaseConfigPortable,
+  venvPythonPath,
+} from './python-runtime-layout.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -122,6 +128,16 @@ try {
   const stagedSource = join(stage, 'python')
   const stagedVenv = join(stagedSource, 'venv')
   const stagedPython = venvPythonPath(stagedVenv, TARGET_OS)
+  const stagedPyvenvConfig = join(stagedVenv, 'pyvenv.cfg')
+  if (TARGET_OS === 'win32') {
+    writeFileSync(
+      stagedPyvenvConfig,
+      configWithPythonHome(
+        readFileSync(stagedPyvenvConfig, 'utf-8'),
+        bundledBaseHomePath(stagedSource, TARGET_OS),
+      ),
+    )
+  }
   const stagedVersion = output(stagedPython, [
     '-c',
     [
@@ -145,6 +161,17 @@ try {
       `Staged Hermes checkout verification failed: commit=${stagedCommit}, status=${stagedDirtySource || 'clean'}`,
     )
     process.exit(1)
+  }
+  if (TARGET_OS === 'win32') {
+    // The desktop rewrites this portable archive value to the final absolute
+    // runtime path before the venv interpreter is launched.
+    writeFileSync(
+      stagedPyvenvConfig,
+      makeBundledBaseConfigPortable(
+        readFileSync(stagedPyvenvConfig, 'utf-8'),
+        TARGET_OS,
+      ),
+    )
   }
 
   const runtimeManifest = {
