@@ -2365,6 +2365,8 @@ export default {
     handoffModeFixed: '固定参加者順序',
     fixedHandoffOrder: '固定ハンドオフ順序',
     invalidFixedHandoffOrder: '固定順序には重複しない参加者が2人以上必要です',
+    invalidParticipantChain: 'Invalid participant chain. Use “@participant → @participant” with existing Room participants.',
+    participantChainPreview: 'Fixed participant chain:',
     moveHandoffUp: '上へ',
     moveHandoffDown: '下へ',
     handoffPending: 'ハンドオフ待機中',

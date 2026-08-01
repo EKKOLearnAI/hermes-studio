@@ -17,6 +17,7 @@ import {
     type RoomAgentUpdateInput,
     type ChatMessage,
     type GroupChatMention,
+    type StructuredChainRequest,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
     createRoom,
@@ -154,6 +155,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const roomName = ref('')
     const isJoining = ref(false)
     const error = ref<string | null>(null)
+    const serverMentionProtocolVersion = ref(0)
     const typingUsers = ref<Map<string, { name: string; timer: ReturnType<typeof setTimeout> }>>(new Map())
     const contextStatuses = ref<Map<string, { agentId: string; agentName: string; status: string }>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
@@ -345,6 +347,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
+        serverMentionProtocolVersion.value = Number.isInteger(Number(res.mentionProtocolVersion))
+            ? Number(res.mentionProtocolVersion)
+            : 0
         acceptServerUserId(res.currentUserId)
         members.value = res.members || []
         if (res.agents) agents.value = res.agents
@@ -452,6 +457,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
+        if (currentRoomId.value === roomId) serverMentionProtocolVersion.value = 0
         const socket = await ensureRealtimeSocket()
         // Browser storage is only a first-join default. Once the member row
         // exists, the server keeps the room-specific profile authoritative.
@@ -910,9 +916,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
-    async function sendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
+    async function sendMessage(
+        content: string,
+        attachments?: Attachment[],
+        mentions?: GroupChatMention[],
+        chainRequest?: StructuredChainRequest,
+    ) {
         const socket = getSocket()
         if (!socket || !currentRoomId.value) return
+        if (chainRequest !== undefined && serverMentionProtocolVersion.value < 2) {
+            throw new Error('Group Chat was updated. Refresh this page before sending a participant chain.')
+        }
         const roomId = currentRoomId.value
         emitStopTyping()
         const messageId = uid()
@@ -929,6 +943,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 ...mention,
                 start: mention.start + Math.max(0, mentionOffset),
             }))
+        const submittedChainRequest = chainRequest === undefined
+            ? undefined
+            : {
+                ...chainRequest,
+                participants: chainRequest.participants.map(participant => ({
+                    ...participant,
+                    start: participant.start + Math.max(0, mentionOffset),
+                })),
+            }
         clearMessageReference(roomId)
         let finalContent: string | ContentBlock[] = submittedContent
         if (attachments?.length) {
@@ -957,6 +980,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 id: messageId,
                 content: finalContent,
                 ...(submittedMentions === undefined ? {} : { mentions: submittedMentions }),
+                ...(submittedChainRequest === undefined ? {} : { chainRequest: submittedChainRequest }),
             }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)

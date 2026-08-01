@@ -7,13 +7,16 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import { buildMentionOptions, type MentionOption } from './mention-options'
-import { applyMentionSelection, mentionsForSubmission, reconcileMentionEdit, type DraftMention } from './mention-entities'
-import type { GroupChatMention } from '@/api/hermes/group-chat'
+import { applyMentionSelection, mentionsForSubmission, reconcileMentionEdit, structuredChainForSubmission, type DraftMention } from './mention-entities'
+import type { GroupChatMention, StructuredChainRequest } from '@/api/hermes/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 
 const { t } = useI18n()
-const emit = defineEmits<{ send: [content: string, attachments?: Attachment[], mentions?: GroupChatMention[]] }>()
+const emit = defineEmits<{
+    send: [content: string, attachments?: Attachment[], mentions?: GroupChatMention[], chainRequest?: StructuredChainRequest]
+    sendError: [message: string]
+}>()
 const store = useGroupChatStore()
 const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
@@ -32,6 +35,22 @@ const activeMessageReference = computed(() => store.activeMessageReference)
 const messageReferencePreview = computed(() =>
     activeMessageReference.value?.content.replace(/\s+/g, ' ').trim() || '',
 )
+const participantChainState = computed(() => {
+    const content = inputText.value.trim()
+    if (!content) return { participants: null as string[] | null, invalid: false }
+    try {
+        const reconciledMentions = reconcileMentionEdit(inputText.value, draftMentions.value, content)
+        const chain = structuredChainForSubmission(content, reconciledMentions, store.agents)
+        return {
+            participants: chain?.participants.map(participant => participant.displayName) ?? null,
+            invalid: false,
+        }
+    } catch {
+        return { participants: null as string[] | null, invalid: true }
+    }
+})
+const participantChainPreview = computed(() => participantChainState.value.participants)
+const participantChainInvalid = computed(() => participantChainState.value.invalid)
 const autoPlaySpeech = ref(false)
 const inputSettingsOptions = computed<DropdownOption[]>(() => [
     {
@@ -331,8 +350,18 @@ function handleSend() {
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
 
-    const mentions = mentionsForSubmission(reconcileMentionEdit(inputText.value, draftMentions.value, content))
-    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions)
+    const reconciledMentions = reconcileMentionEdit(inputText.value, draftMentions.value, content)
+    let chainRequest: StructuredChainRequest | undefined
+    try {
+        chainRequest = structuredChainForSubmission(content, reconciledMentions, store.agents)
+    } catch {
+        emit('sendError', t('groupChat.invalidParticipantChain'))
+        return
+    }
+    const mentions = chainRequest
+        ? [chainRequest.participants[0]]
+        : mentionsForSubmission(reconciledMentions)
+    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions, chainRequest)
     inputText.value = ''
     previousInputText.value = ''
     draftMentions.value = []
@@ -506,6 +535,13 @@ function isImage(type: string): boolean {
                 </svg>
             </button>
         </div>
+        <div v-if="participantChainPreview" class="participant-chain-preview" role="status">
+            <span class="participant-chain-preview-label">{{ t('groupChat.participantChainPreview') }}</span>
+            <span class="participant-chain-preview-order">{{ participantChainPreview.join(' → ') }}</span>
+        </div>
+        <div v-else-if="participantChainInvalid" class="participant-chain-error" role="alert">
+            {{ t('groupChat.invalidParticipantChain') }}
+        </div>
         <div
             class="input-wrapper"
             :class="{ 'drag-over': isDragging }"
@@ -571,7 +607,7 @@ function isImage(type: string): boolean {
                         type="primary"
                         circle
                         class="send-button"
-                        :disabled="!canSend"
+                        :disabled="!canSend || participantChainInvalid"
                         :aria-label="t('chat.send')"
                         @click="handleSend"
                     >
@@ -619,6 +655,42 @@ function isImage(type: string): boolean {
     border-top: 0;
     background-color: $bg-main-surface;
     flex-shrink: 0;
+}
+
+.participant-chain-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 7px;
+    padding: 7px 10px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 8px;
+    background: rgba(99, 102, 241, 0.08);
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 1.35;
+
+    &-label {
+        color: $text-muted;
+        white-space: nowrap;
+    }
+
+    &-order {
+        color: $text-primary;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+}
+
+.participant-chain-error {
+    margin: 0 0 7px;
+    padding: 7px 10px;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #dc2626;
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 .input-top-bar {

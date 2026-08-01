@@ -3,7 +3,6 @@ import type { Server as HttpServer } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { basename } from 'path'
-import { createHash, randomBytes } from 'crypto'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import {
@@ -63,6 +62,7 @@ export type GroupChatMention =
 
 const MAX_STRUCTURED_MENTIONS = 100
 const GROUP_CHAT_MENTION_PROTOCOL_VERSION = 1
+const GROUP_CHAT_CHAIN_PROTOCOL_VERSION = 2
 
 function normalizeStructuredMentionShape(value: unknown): GroupChatMention[] | undefined {
     if (value === undefined) return undefined
@@ -132,6 +132,11 @@ function normalizeStructuredMentions(
     return normalized
 }
 
+interface StructuredChainRequest {
+    version: 1
+    participants: Array<Extract<GroupChatMention, { type: 'participant' }>>
+}
+
 interface ChatMessage {
     id: string
     roomId: string
@@ -156,6 +161,7 @@ interface ChatMessage {
     sourceHandoffLeaseToken?: string
     handoffFinal?: boolean
     mentions?: GroupChatMention[]
+    chainRequest?: StructuredChainRequest
 }
 
 function contentToStorageString(content: unknown): string {
@@ -570,6 +576,7 @@ export interface GroupHandoffPlan {
     targetSessionId: string
     depth: number
     kind: GroupHandoffKind
+    chainOrderJson?: string
 }
 
 export interface GroupHandoffJob extends GroupHandoffPlan {
@@ -700,6 +707,7 @@ export function planGroupHandoffs(args: {
     agents: RoomAgent[]
     source: Partial<ChatMessage> & Pick<ChatMessage, 'senderId' | 'content'>
     sourceJobKind?: GroupHandoffKind
+    sourceJobChainOrderJson?: string
 }): GroupHandoffPlan[] {
     const sourceId = String(args.source.id || '')
     const chainId = String(args.source.handoffChainId || '') || (sourceId ? `gcchain_${sourceId}` : '')
@@ -800,9 +808,6 @@ export function planGroupHandoffs(args: {
             kind: 'fanout',
         }))
     }
-    if (role === 'assistant' && args.sourceJobKind === 'fanout') return []
-    if (role === 'assistant' && args.source.finish_reason === 'error') return []
-    if (role === 'assistant' && !allowsAgentMentionRelay(depth, args.room.maxAgentMentionDepth)) return []
 
     if (args.room.handoffMode === 'fixed') {
         if (role === 'user') {
@@ -1481,6 +1486,7 @@ export class ChatStorage {
             targetSessionGeneration: Math.max(0, Math.floor(Number(row.targetSessionGeneration) || 0)),
             depth: normalizeMentionDepth(row.depth),
             kind: String(row.kind || 'mention') as GroupHandoffKind,
+            chainOrderJson: String(row.chainOrderJson || ''),
             status: String(row.status || 'pending') as GroupHandoffJob['status'],
             attemptCount: Math.max(0, Math.floor(Number(row.attemptCount) || 0)),
             availableAt: Math.max(0, Math.floor(Number(row.availableAt) || 0)),
@@ -1698,9 +1704,9 @@ export class ChatStorage {
                targetActorId, targetActorAuthorizationRevision, targetActorContextRevision,
                roomAuthorizationRevision, authorizationReaderEpoch,
                targetAgentId, targetSessionId, targetSessionGeneration,
-               depth, kind, status, attemptCount, availableAt, leaseOwner, leaseToken,
+               depth, kind, chainOrderJson, status, attemptCount, availableAt, leaseOwner, leaseToken,
                leaseExpiresAt, lastError, createdAt, updatedAt, completedAt
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', '', 0, '', ?, ?, 0)
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', '', 0, '', ?, ?, 0)
              ON CONFLICT(sourceMessageId, targetAgentId) DO NOTHING`,
         )
         const getTarget = db.prepare(
@@ -1728,7 +1734,7 @@ export class ChatStorage {
                 targetActor.id, targetActor.authorizationRevision, targetActor.contextRevision,
                 Number(room.authorizationRevision || 0), GROUP_CHAT_IDENTITY_READER_EPOCH,
                 plan.targetAgentId, plan.targetSessionId, Math.max(0, Math.floor(Number(target.sessionGeneration) || 0)),
-                normalizeMentionDepth(plan.depth), plan.kind, now, now, now,
+                normalizeMentionDepth(plan.depth), plan.kind, String(plan.chainOrderJson || ''), now, now, now,
             )
         }
         return (db.prepare(
@@ -2334,7 +2340,30 @@ export class ChatStorage {
                 ).get(existing.id, existing.sourceHandoffJobId || '') as { total?: number } | undefined)?.total || 0)
                 const protectedByHandoff = linkedHandoffCount > 0 || Boolean(existing.sourceHandoffJobId)
                 if (protectedByHandoff) {
-                    if (!sameRoutedMessage) throw new Error(`Group message id conflict for ${msg.id}`)
+                    const persistedPlans = this.listHandoffJobs(existing.roomId, 500)
+                        .filter(job => job.sourceMessageId === existing.id)
+                        .map(job => ({
+                            chainId: job.chainId,
+                            targetAgentId: job.targetAgentId,
+                            targetSessionId: job.targetSessionId,
+                            depth: normalizeMentionDepth(job.depth),
+                            kind: job.kind,
+                            chainOrderJson: String(job.chainOrderJson || ''),
+                        }))
+                        .sort((left, right) => left.targetAgentId.localeCompare(right.targetAgentId))
+                    const requestedPlans = (options.handoffs || [])
+                        .map(plan => ({
+                            chainId: String(plan.chainId || ''),
+                            targetAgentId: String(plan.targetAgentId || ''),
+                            targetSessionId: String(plan.targetSessionId || ''),
+                            depth: normalizeMentionDepth(plan.depth),
+                            kind: plan.kind,
+                            chainOrderJson: String(plan.chainOrderJson || ''),
+                        }))
+                        .sort((left, right) => left.targetAgentId.localeCompare(right.targetAgentId))
+                    if (!sameRoutedMessage || JSON.stringify(persistedPlans) !== JSON.stringify(requestedPlans)) {
+                        throw new Error(`Group message id conflict for ${msg.id}`)
+                    }
                     const messages = this.getMessagesForContext(existing.roomId)
                     const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
                     const handoffJobs = this.listHandoffJobs(existing.roomId, 500).filter(job => job.sourceMessageId === existing.id)
@@ -3106,15 +3135,22 @@ export class ChatStorage {
                     return { status: 'not_found' } satisfies HumanRoomAdmissionResult
                 }
                 if (authUserId !== null) {
+                    const existingActor = this.findActiveActorByAuthUserId(args.roomId, authUserId)
+                    const mayRepairLegacyAdmission = !existingActor
+                        || existingActor.authorizationRevision === 0
+                    const capabilities = !policy?.canRead && (inviteMatches || existingMember)
+                        ? [...(policy?.capabilities ?? []), 'room.read']
+                        : mayRepairLegacyAdmission && policy?.canRead
+                            ? policy.capabilities
+                            : undefined
                     persistAuthenticatedHumanActor(db, {
                         roomId: args.roomId,
                         authUserId,
                         userName: admitted.userName,
                         description: admitted.description,
                         avatar: admitted.avatar,
-                        capabilities: !policy?.canRead && (inviteMatches || existingMember)
-                            ? [...(policy?.capabilities ?? []), 'room.read']
-                            : undefined,
+                        capabilities,
+                        preserveAuthorizationRevisionOnLegacyRepair: mayRepairLegacyAdmission && capabilities !== undefined,
                     })
                 }
                 this.addRoomMember(
@@ -3367,6 +3403,79 @@ export class ChatStorage {
             }
         })
         return removed
+    }
+
+    reprojectAuthenticatedUserRole(
+        authUserId: number,
+        nextRole: string,
+        mutateUser?: () => void,
+    ): {
+        changedRooms: string[]
+        runningTargets: Array<{ roomId: string; targetAgentId: string; targetSessionId: string }>
+    } {
+        const db = this.db()
+        if (!db || !Number.isInteger(authUserId) || authUserId <= 0) {
+            return { changedRooms: [], runningTargets: [] }
+        }
+        return this.withImmediateTransaction(db, () => {
+            mutateUser?.()
+            const changedRooms: string[] = []
+            const runningTargets: Array<{ roomId: string; targetAgentId: string; targetSessionId: string }> = []
+            const fullCapabilities = ['room.read', 'room.write', 'room.type', 'room.manage', 'agent.invoke', 'approval.respond']
+            for (const room of this.getAllRooms()) {
+                const actor = this.findActiveActorByAuthUserId(room.id, authUserId)
+                if (!actor) continue
+                const isOwner = Number(room.ownerAuthUserId || 0) === authUserId
+                const isMember = Boolean(this.getMemberByAuthUserId(room.id, authUserId))
+                const persistedCapabilities = this.getActorCapabilities(actor.id)
+                const capabilities = nextRole === 'super_admin' || isOwner
+                    ? fullCapabilities
+                    : actor.authorizationRevision > 0
+                        ? [...persistedCapabilities, ...(isMember ? ['room.read'] : [])]
+                        : isMember ? ['room.read'] : []
+                const beforeRevision = actor.authorizationRevision
+                const updated = persistAuthenticatedHumanActor(db, {
+                    roomId: room.id,
+                    authUserId,
+                    userName: actor.name,
+                    description: actor.description,
+                    avatar: actor.avatar,
+                    capabilities,
+                })
+                const capabilitiesChanged = updated.authorizationRevision !== beforeRevision
+                const projectedSet = new Set(capabilities)
+                const roleAuthorityChanged = nextRole !== 'super_admin'
+                    && !isOwner
+                    && fullCapabilities.some(capability => !projectedSet.has(capability))
+                if (!capabilitiesChanged && !roleAuthorityChanged) continue
+                if (!capabilitiesChanged) {
+                    db.prepare(
+                        `UPDATE gc_room_actors
+                         SET authorizationRevision = authorizationRevision + 1, updatedAt = ?
+                         WHERE id = ? AND active = 1`,
+                    ).run(Date.now(), actor.id)
+                }
+                const runningRows = db.prepare(
+                    `SELECT DISTINCT targetAgentId, targetSessionId FROM gc_handoff_jobs
+                     WHERE roomId = ? AND status = 'running'`,
+                ).all(room.id) as Array<{ targetAgentId: string; targetSessionId: string }>
+                this.fenceRoomHandoffsForAuthorityChange(db, room.id, 'Authenticated user role authority changed')
+                db.prepare(
+                    'UPDATE gc_rooms SET authorizationRevision = authorizationRevision + 1 WHERE id = ?',
+                ).run(room.id)
+                changedRooms.push(room.id)
+                for (const row of runningRows) {
+                    if (row.targetAgentId && row.targetSessionId) {
+                        runningTargets.push({
+                            roomId: room.id,
+                            targetAgentId: row.targetAgentId,
+                            targetSessionId: row.targetSessionId,
+                        })
+                    }
+                }
+            }
+            return { changedRooms, runningTargets }
+        })
     }
 
     deactivateAuthenticatedHumanActorWithRetention(roomId: string, authUserId: number): GroupActor | null {
@@ -3638,6 +3747,37 @@ export class GroupChatServer {
 
     getStorage(): ChatStorage {
         return this.storage
+    }
+
+    async reprojectAuthenticatedUserRole(
+        authUserId: number,
+        nextRole: string,
+        mutateUser?: () => void,
+    ): Promise<string[]> {
+        const { changedRooms, runningTargets } = this.storage.reprojectAuthenticatedUserRole(authUserId, nextRole, mutateUser)
+        const interruptResults = await Promise.allSettled(runningTargets.map(target =>
+            this.agentClients.interruptHandoffTarget(
+                target.roomId,
+                target.targetAgentId,
+                target.targetSessionId,
+            ),
+        ))
+        let interruptFailure: unknown = null
+        for (let index = 0; index < interruptResults.length; index += 1) {
+            const result = interruptResults[index]
+            if (result.status !== 'rejected') continue
+            const target = runningTargets[index]
+            interruptFailure ??= result.reason
+            logger.warn({
+                authUserId,
+                roomId: target.roomId,
+                targetAgentId: target.targetAgentId,
+                targetSessionId: target.targetSessionId,
+                err: result.reason?.message || String(result.reason),
+            }, '[GroupChat] role authority fence committed but runtime interrupt failed')
+        }
+        if (interruptFailure) throw interruptFailure
+        return changedRooms
     }
 
     revokeAuthenticatedUser(authUserId: number): void {
@@ -4714,6 +4854,7 @@ export class GroupChatServer {
             rooms: this.getDiscoverableRoomIds(socket),
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            mentionProtocolVersion: GROUP_CHAT_CHAIN_PROTOCOL_VERSION,
         })
 
         logger.debug(`[GroupChat] ${userName} (user=${userId}) joined room: ${roomId}`)
@@ -4811,14 +4952,24 @@ export class GroupChatServer {
         const roomAgents = this.storage.getRoomAgents(roomId)
         let mentions: GroupChatMention[] | undefined
         try {
-            if (member?.source === 'agent' && data.mentions !== undefined) {
-                throw new Error('Structured mentions are only accepted from human clients')
+            if (member?.source === 'agent' && (data.mentions !== undefined || data.chainRequest !== undefined)) {
+                throw new Error('Structured routing metadata is only accepted from human clients')
             }
+            const mentionProtocolVersion = Number(socket.handshake?.auth?.mentionProtocolVersion)
             if (member?.source !== 'agent'
                 && data.mentions !== undefined
-                && Number(socket.handshake.auth?.mentionProtocolVersion) !== GROUP_CHAT_MENTION_PROTOCOL_VERSION) {
+                && (!Number.isInteger(mentionProtocolVersion) || mentionProtocolVersion < GROUP_CHAT_MENTION_PROTOCOL_VERSION)) {
                 ack?.({
                     error: 'Group Chat was updated. Refresh this page before sending structured mentions.',
+                    code: 'GROUP_CHAT_CLIENT_REFRESH_REQUIRED',
+                })
+                return
+            }
+            if (member?.source !== 'agent'
+                && data.chainRequest !== undefined
+                && (!Number.isInteger(mentionProtocolVersion) || mentionProtocolVersion < GROUP_CHAT_CHAIN_PROTOCOL_VERSION)) {
+                ack?.({
+                    error: 'Group Chat was updated. Refresh this page before sending a participant chain.',
                     code: 'GROUP_CHAT_CLIENT_REFRESH_REQUIRED',
                 })
                 return
@@ -4868,19 +5019,29 @@ export class GroupChatServer {
                 ? String(this.storage.getRoomAgentByAgentId(roomId, userId)?.sessionId || '')
                 : '',
             ...(mentions === undefined ? {} : { mentions }),
+            ...(!isAgentMessage && data.chainRequest !== undefined
+                ? { chainRequest: data.chainRequest as StructuredChainRequest }
+                : {}),
         }
 
         const roomInfo = this.storage.getRoom(roomId)
         const sourceHandoffJob = msg.sourceHandoffJobId ? this.storage.getHandoffJob(msg.sourceHandoffJobId) : null
         const shouldPlanHandoffs = shouldPlanGroupHandoffs(msg, Boolean(sourceHandoffJob))
-        const handoffs = shouldPlanHandoffs && roomInfo
-            ? planGroupHandoffs({
-                room: roomInfo,
-                agents: roomAgents,
-                source: { ...msg, content: mentionText },
-                sourceJobKind: sourceHandoffJob?.kind,
-            })
-            : []
+        let handoffs: GroupHandoffPlan[] = []
+        try {
+            handoffs = shouldPlanHandoffs && roomInfo
+                ? planGroupHandoffs({
+                    room: roomInfo,
+                    agents: roomAgents,
+                    source: { ...msg, content: mentionText },
+                    sourceJobKind: sourceHandoffJob?.kind,
+                    sourceJobChainOrderJson: sourceHandoffJob?.chainOrderJson,
+                })
+                : []
+        } catch (err: any) {
+            ack?.({ error: err?.message || 'Invalid structured routing metadata' })
+            return
+        }
         let handoffAuthority: GroupHandoffAuthorityInput | undefined
         if (handoffs.length > 0) {
             if (msg.role === 'user') {

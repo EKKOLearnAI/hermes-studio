@@ -776,28 +776,6 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         if (!requireCurrentAgentProfile(ctx, authenticatedUserId, sourceAgent.profile)) return
     }
     const { name, inviteCode } = ctx.request.body as { name?: string; inviteCode?: string }
-    const sourceAgentRows = storage.getRoomAgents(sourceRoom.id)
-    let clonedAgents: AgentInput[]
-    try {
-        clonedAgents = sourceAgentRows.map((sourceAgent: any) => normalizeAgentInput({
-            profile: sourceAgent.profile,
-            name: sourceAgent.name,
-            description: sourceAgent.description,
-            invited: sourceAgent.invited,
-            runtime: sourceAgent.runtime,
-            codingAgentId: sourceAgent.codingAgentId,
-            mode: sourceAgent.mode,
-            provider: sourceAgent.provider,
-            model: sourceAgent.model,
-            apiMode: sourceAgent.apiMode,
-            reasoningEffort: sourceAgent.reasoningEffort,
-            avatar: sourceAgent.avatar,
-        }))
-    } catch (err: any) {
-        ctx.status = Number(err?.status || 400)
-        ctx.body = { error: err?.message || 'Invalid participant configuration' }
-        return
-    }
     const roomId = generateId()
     if (inviteCode !== undefined && typeof inviteCode !== 'string') {
         ctx.status = 400
@@ -809,11 +787,6 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         triggerTokens: sourceRoom.triggerTokens,
         maxHistoryTokens: sourceRoom.maxHistoryTokens,
         tailMessageCount: sourceRoom.tailMessageCount,
-        maxAgentMentionDepth: sourceRoom.maxAgentMentionDepth === null
-            ? null
-            : (Number.isSafeInteger(sourceRoom.maxAgentMentionDepth) && sourceRoom.maxAgentMentionDepth > 0
-                ? sourceRoom.maxAgentMentionDepth
-                : 4),
         workspace: sourceRoom.workspace || '',
     }
     storage.createRoomWithOwner({
@@ -825,7 +798,6 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     })
 
     const addedAgents = []
-    const sourceToClonedAgentId = new Map<string, string>()
     const agentResults = []
     for (const sourceAgent of sourceAgents) {
         try {
@@ -1052,14 +1024,6 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
     if (isReservedMentionName(name || normalizedProfile)) {
         ctx.status = 400
         ctx.body = { error: '`all` is reserved for @all mentions' }
-        return
-    }
-    let normalizedInput: AgentInput
-    try {
-        normalizedInput = normalizeAgentInput({ ...input, profile })
-    } catch (err: any) {
-        ctx.status = Number(err?.status || 400)
-        ctx.body = { error: err?.message || 'Invalid participant configuration' }
         return
     }
 

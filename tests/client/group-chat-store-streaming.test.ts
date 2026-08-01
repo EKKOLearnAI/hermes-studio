@@ -23,7 +23,7 @@ const groupChatApiMock = vi.hoisted(() => {
     }),
     off: vi.fn(() => socket),
     emit: vi.fn((event: string, _data?: unknown, ack?: Function) => {
-      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [], mentionProtocolVersion: 2 })
       return socket
     }),
     connect: vi.fn(() => socket),
@@ -126,7 +126,7 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.socket.on.mockClear()
     groupChatApiMock.socket.emit.mockReset()
     groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
-      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [], mentionProtocolVersion: 2 })
       return groupChatApiMock.socket
     })
     groupChatApiMock.socket.disconnect.mockClear()
@@ -528,6 +528,59 @@ describe('group chat store streaming merge', () => {
     )
   })
 
+  it('refuses a participant chain when the joined server does not advertise protocol v2', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'message' && ack) ack({ id: 'old-server-accepted-root-only' })
+      return groupChatApiMock.socket
+    })
+    const store = await createJoinedStore()
+    groupChatApiMock.socket.emit.mockClear()
+    const chainRequest = {
+      version: 1 as const,
+      participants: [
+        { type: 'participant' as const, participantId: 'hermes', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant' as const, participantId: 'codex', displayName: 'Codex', start: 10, length: 6 },
+      ],
+    }
+
+    await expect(store.sendMessage(
+      '@Hermes → @Codex compare', undefined, [chainRequest.participants[0]], chainRequest,
+    )).rejects.toThrow(/refresh|update|protocol/i)
+
+    expect(groupChatApiMock.socket.emit.mock.calls.some((call: unknown[]) => call[0] === 'message')).toBe(false)
+  })
+
+  it('sends a structured participant chain while routing the root only to its first participant', async () => {
+    const store = await createJoinedStore()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockClear()
+    const chainRequest = {
+      version: 1 as const,
+      participants: [
+        { type: 'participant' as const, participantId: 'hermes', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant' as const, participantId: 'codex', displayName: 'Codex', start: 10, length: 6 },
+        { type: 'participant' as const, participantId: 'claude', displayName: 'Claude Code', start: 19, length: 12 },
+      ],
+    }
+
+    await store.sendMessage(
+      '@Hermes → @Codex → @Claude Code compare',
+      undefined,
+      [chainRequest.participants[0]],
+      chainRequest,
+    )
+
+    const call = groupChatApiMock.socket.emit.mock.calls.find((call: unknown[]) => call[0] === 'message')!
+    expect(call[1]).toMatchObject({
+      mentions: [chainRequest.participants[0]],
+      chainRequest,
+    })
+  })
+
   it('preserves explicit empty structured metadata so routing remains fail-closed', async () => {
     const store = await createJoinedStore()
     groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
@@ -538,8 +591,38 @@ describe('group chat store streaming merge', () => {
 
     await store.sendMessage('@Worker continue', undefined, [])
 
-    const call = groupChatApiMock.socket.emit.mock.calls.find(call => call[0] === 'message')!
+    const call = groupChatApiMock.socket.emit.mock.calls.find((call: unknown[]) => call[0] === 'message')!
     expect(call[1]).toMatchObject({ content: '@Worker continue', mentions: [] })
+  })
+
+  it('offsets every participant range in a structured chain after a quoted Room reference', async () => {
+    const store = await createJoinedStore()
+    store.setMessageReference('room-1', {
+      id: 'quoted-chain-1', role: 'assistant', sender: 'Reviewer', content: 'Review this chain',
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+    groupChatApiMock.socket.emit.mockClear()
+    const chainRequest = {
+      version: 1 as const,
+      participants: [
+        { type: 'participant' as const, participantId: 'hermes', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant' as const, participantId: 'codex', displayName: 'Codex', start: 10, length: 6 },
+      ],
+    }
+
+    await store.sendMessage(
+      '@Hermes → @Codex continue', undefined, [chainRequest.participants[0]], chainRequest,
+    )
+
+    const call = groupChatApiMock.socket.emit.mock.calls.find((call: unknown[]) => call[0] === 'message')!
+    const payload = call[1]
+    expect(payload.chainRequest.participants.map((participant: any) => participant.start)).toEqual([
+      payload.content.indexOf('@Hermes'), payload.content.indexOf('@Codex'),
+    ])
+    expect(payload.mentions[0].start).toBe(payload.content.indexOf('@Hermes'))
   })
 
   it('offsets structured mention ranges after a quoted Room reference', async () => {
@@ -557,7 +640,7 @@ describe('group chat store streaming merge', () => {
       type: 'participant', participantId: 'participant-worker', displayName: 'Worker', start: 0, length: 7,
     }])
 
-    const call = groupChatApiMock.socket.emit.mock.calls.find(call => call[0] === 'message')!
+    const call = groupChatApiMock.socket.emit.mock.calls.find((call: unknown[]) => call[0] === 'message')!
     const payload = call[1]
     expect(payload.mentions[0].start).toBe(payload.content.lastIndexOf('@Worker'))
   })
@@ -570,7 +653,7 @@ describe('group chat store streaming merge', () => {
       json: () => Promise.resolve({ files: [{ name: 'note.txt', path: '/tmp/note.txt' }] }),
     })
     groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
-      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [], mentionProtocolVersion: 2 })
       if (event === 'message' && ack) ack({ id: 'msg-server' })
       return groupChatApiMock.socket
     })

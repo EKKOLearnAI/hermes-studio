@@ -59,6 +59,7 @@ type EnsureActorSeed = {
   metadata: GroupActorMetadata
   capabilities: readonly string[]
   replaceExistingCapabilities?: boolean
+  preserveAuthorizationRevisionOnLegacyRepair?: boolean
   findExisting: () => GroupActor | null
   insertSeed: Omit<ActorInsertSeed, 'metadata'>
 }
@@ -217,13 +218,15 @@ function ensureActor(db: DatabaseSync, seed: EnsureActorSeed): GroupActor {
       ? replaceActorCapabilities(db, seed.roomId, actor.id, seed.capabilities)
       : { capabilities: getActorCapabilities(db, actor.id), changed: false }
     if (!createdActor && (metadataChanged || capabilityReplacement.changed)) {
+      const preserveLegacyAuthorizationRevision = seed.preserveAuthorizationRevisionOnLegacyRepair
+        && actor.authorizationRevision === 0
       db.prepare(
         `UPDATE ${ACTOR_TABLE}
          SET authorizationRevision = authorizationRevision + ?,
              contextRevision = contextRevision + ?,
              updatedAt = ?
          WHERE id = ?`
-      ).run(capabilityReplacement.changed ? 1 : 0, metadataChanged ? 1 : 0, updatedAt, actor.id)
+      ).run(capabilityReplacement.changed && !preserveLegacyAuthorizationRevision ? 1 : 0, metadataChanged ? 1 : 0, updatedAt, actor.id)
     }
     const refreshed = findActorById(db, actor.id)
     if (!refreshed) {
@@ -429,6 +432,7 @@ export function ensureAuthenticatedHumanActor(
     },
     capabilities: verified.capabilities ?? [],
     replaceExistingCapabilities: input.capabilities !== undefined,
+    preserveAuthorizationRevisionOnLegacyRepair: input.preserveAuthorizationRevisionOnLegacyRepair === true,
     findExisting: () => findActiveActorByAuthUserId(db, verified.roomId, verified.authUserId),
     insertSeed: {
       roomId: verified.roomId,

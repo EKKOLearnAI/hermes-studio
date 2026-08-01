@@ -3,7 +3,11 @@ import { DatabaseSync } from 'node:sqlite'
 
 const dbMock = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => dbMock.current }))
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: () => dbMock.current,
+  getStoragePath: () => ':memory:',
+  isSqliteAvailable: () => true,
+}))
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   isAuthEnabled: vi.fn(async () => false),
   authenticateUserToken: vi.fn(),
@@ -47,9 +51,10 @@ function authorizedHandoffs(storage: ChatStorage, roomId: string, handoffs: any[
 }
 
 describe('durable group-chat handoff outbox', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     dbMock.current?.close()
     dbMock.current = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(dbMock.current)
     initAllHermesTables()
   })
 
@@ -867,6 +872,13 @@ describe('durable group-chat handoff outbox', () => {
       content: '@A original', timestamp: 100, role: 'user',
       mentions: [{ type: 'participant', participantId: b.agentId, displayName: 'A', start: 0, length: 2 }],
     }, authorizedHandoffs(storage, 'room-1', plan))).toThrow(/message id conflict/i)
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'human-message-1', roomId: 'room-1', senderId: 'human-1', senderName: 'Human',
+      content: '@A original', timestamp: 100, role: 'user',
+      mentions: [{ type: 'participant', participantId: a.agentId, displayName: 'A', start: 0, length: 2 }],
+    }, authorizedHandoffs(storage, 'room-1', [{
+      ...plan[0], kind: 'fixed', chainOrderJson: JSON.stringify([a.agentId, b.agentId]),
+    }]))).toThrow(/message id conflict/i)
     expect(storage.getMessage('human-message-1')).toMatchObject({
       content: '@A original',
       mentions: [{ type: 'participant', participantId: a.agentId }],

@@ -285,8 +285,7 @@ export function replaceUserProfiles(userId: UserId, profiles: string[], defaultP
   const defaultName = defaultProfile && uniqueProfiles.includes(defaultProfile) ? defaultProfile : uniqueProfiles[0] || null
   const now = Date.now()
 
-  db.exec('BEGIN')
-  try {
+  const replace = () => {
     db.prepare(`DELETE FROM ${USER_PROFILES_TABLE} WHERE user_id = ?`).run(id)
     const stmt = db.prepare(
       `INSERT INTO ${USER_PROFILES_TABLE} (user_id, profile_name, is_default, created_at) VALUES (?, ?, ?, ?)`
@@ -294,6 +293,15 @@ export function replaceUserProfiles(userId: UserId, profiles: string[], defaultP
     uniqueProfiles.forEach(profile => {
       stmt.run(id, profile, profile === defaultName ? 1 : 0, now)
     })
+  }
+  if ((db as typeof db & { inTransaction?: boolean; isTransaction?: boolean }).inTransaction
+    || (db as typeof db & { inTransaction?: boolean; isTransaction?: boolean }).isTransaction) {
+    replace()
+    return
+  }
+  db.exec('BEGIN')
+  try {
+    replace()
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')

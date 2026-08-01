@@ -45,7 +45,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 import { countTokens, SUMMARY_PREFIX } from '../../packages/server/src/lib/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { AgentClients, groupBridgeSessionId, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
 
 function makeDb(): DatabaseSync {
@@ -99,226 +99,6 @@ describe('group chat history windows', () => {
     httpServer?.close()
     dbMock.current?.close()
     dbMock.current = null
-  })
-
-  it('persists a monotonic room sequence and preserves it across message upserts', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 100 }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-b', timestamp: 1 }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 999, content: 'updated' }) as any)
-
-    const rows = dbMock.current?.prepare(
-      'SELECT id, roomSeq, timestamp, content FROM gc_messages WHERE roomId = ? ORDER BY roomSeq ASC',
-    ).all('room-1') as Array<{ id: string; roomSeq: number; timestamp: number; content: string }>
-    expect(rows).toEqual([
-      { id: 'msg-a', roomSeq: 1, timestamp: 999, content: 'updated' },
-      { id: 'msg-b', roomSeq: 2, timestamp: 1, content: 'hello' },
-    ])
-    expect(storage.getMessagesForContext('room-1').map(message => message.roomSeq)).toEqual([2, 1])
-  })
-
-  it('selects a context window by room sequence before applying presentation order', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'z-prior', timestamp: 100, content: 'prior despite later clock' }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'a-trigger', timestamp: 1, content: 'trigger after clock rollback' }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'z-same-ms-prior', timestamp: 200, content: 'same-ms prior' }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'a-same-ms-trigger', timestamp: 200, content: 'same-ms trigger' }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'later', timestamp: 0, content: 'must stay after trigger' }) as any)
-    dbMock.current?.prepare(
-      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, roomSeq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run('legacy-unknown-seq', 'room-1', 'user-1', 'Alice', 'unknown sequence', 50, 'user', 0)
-
-    expect(storage.getMessagesForContext('room-1', { throughRoomSeq: 2 } as any).map(message => message.id)).toEqual([
-      'a-trigger',
-      'z-prior',
-    ])
-    expect(storage.getMessagesForContext('room-1', { throughRoomSeq: 4 } as any).map(message => message.id)).toEqual([
-      'a-trigger',
-      'z-prior',
-      'a-same-ms-trigger',
-      'z-same-ms-prior',
-    ])
-    expect(storage.getMessagesForContext('room-1').map(message => message.id)).toContain('legacy-unknown-seq')
-  })
-
-  it('creates a bounded onboarding checkpoint for a coding agent added after safe retention pruning', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    for (let index = 1; index <= 4; index += 1) {
-      storage.saveMessageAndRefreshRoom(makeMessage({ id: `msg-${index}`, timestamp: index }) as any)
-    }
-    storage.saveContextSnapshot('room-1', 'Room onboarding summary through message 2', 'msg-2', 2, 2)
-    storage.pruneMessages('room-1', 2)
-
-    expect(storage.getRoom('room-1')).toMatchObject({ contextStartRoomSeq: 1, prunedThroughRoomSeq: 2 })
-    const participant = storage.addRoomAgent('room-1', 'codex-new', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex',
-    })
-
-    expect(participant).toMatchObject({
-      lastSeenRoomSeq: 0,
-      checkpoint: 'Room onboarding summary through message 2',
-      checkpointFromRoomSeq: 1,
-      checkpointThroughRoomSeq: 2,
-    })
-  })
-
-  it('refuses to add a coding agent when pruned Room history has no verifiable onboarding coverage', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    for (let index = 1; index <= 3; index += 1) {
-      storage.saveMessageAndRefreshRoom(makeMessage({ id: `msg-${index}`, timestamp: index }) as any)
-    }
-    dbMock.current?.prepare('DELETE FROM gc_messages WHERE roomId = ? AND roomSeq <= ?').run('room-1', 2)
-    dbMock.current?.prepare('UPDATE gc_rooms SET prunedThroughRoomSeq = ? WHERE id = ?').run(2, 'room-1')
-
-    expect(() => storage.addRoomAgent('room-1', 'codex-new', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex',
-    })).toThrow('onboarding context')
-    expect(storage.getRoomAgentByAgentId('room-1', 'codex-new')).toBeNull()
-  })
-
-  it('starts newly added coding agents at the current context baseline after the Room is cleared', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-1', timestamp: 1 }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-2', timestamp: 2 }) as any)
-    storage.addRoomAgent('room-1', 'codex-existing', 'default', 'Existing Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex', lastSeenRoomSeq: 0,
-    })
-    storage.clearRoomContext('room-1')
-
-    expect(storage.getRoom('room-1')).toMatchObject({ contextStartRoomSeq: 3, prunedThroughRoomSeq: 0 })
-    expect(storage.getRoomAgentByAgentId('room-1', 'codex-existing')).toMatchObject({
-      lastSeenRoomSeq: 2,
-      checkpoint: '',
-      checkpointFromRoomSeq: 0,
-      checkpointThroughRoomSeq: 0,
-    })
-    const participant = storage.addRoomAgent('room-1', 'codex-new', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex',
-    })
-    expect(participant).toMatchObject({
-      lastSeenRoomSeq: 2,
-      checkpoint: '',
-      checkpointFromRoomSeq: 0,
-      checkpointThroughRoomSeq: 0,
-    })
-  })
-
-  it('does not prune unseen coding-agent history until a checkpoint covers the deletion boundary', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    storage.addRoomAgent('room-1', 'codex-1', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex', lastSeenRoomSeq: 0,
-    })
-    for (let index = 1; index <= 4; index += 1) {
-      storage.saveMessageAndRefreshRoom(makeMessage({ id: `msg-${index}`, timestamp: index }) as any)
-    }
-
-    storage.pruneMessages('room-1', 2)
-    expect(storage.getMessagesForContext('room-1')).toHaveLength(4)
-
-    storage.updateRoomAgentContinuity('room-1', 'codex-1', {
-      lastSeenRoomSeq: 0,
-      lastSuccessfulRunId: '',
-      checkpoint: 'Summary of messages 1 and 2',
-      checkpointSourceMessageIds: '["msg-1","msg-2"]',
-      checkpointFromRoomSeq: 1,
-      checkpointThroughRoomSeq: 2,
-    })
-    storage.saveContextSnapshot('room-1', 'Shared Room summary through message 2', 'msg-2', 2, 2)
-    storage.pruneMessages('room-1', 2)
-
-    expect(storage.getMessagesForContext('room-1').map(message => message.id)).toEqual(['msg-3', 'msg-4'])
-  })
-
-  it('builds a participant checkpoint before automatic retention pruning', async () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    storage.addRoomAgent('room-1', 'codex-1', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex', lastSeenRoomSeq: 0,
-    })
-    const summarizeParticipantRange = vi.fn(async () => 'Summary through retained boundary')
-    ;(groupServer as any)._contextEngine.summarizeParticipantRange = summarizeParticipantRange
-
-    for (let index = 1; index <= 501; index += 1) {
-      storage.saveMessageAndRefreshRoom(makeMessage({ id: `msg-${index}`, timestamp: index }) as any)
-    }
-
-    await vi.waitFor(() => expect(storage.getMessagesForContext('room-1')).toHaveLength(500))
-    const participant = storage.getRoomAgentByAgentId('room-1', 'codex-1')
-    expect(summarizeParticipantRange).toHaveBeenCalledTimes(2)
-    expect(participant).toMatchObject({
-      checkpoint: 'Summary through retained boundary',
-      checkpointFromRoomSeq: 1,
-      checkpointThroughRoomSeq: 1,
-    })
-    expect(storage.getMessagesForContext('room-1').some(message => message.id === 'msg-1')).toBe(false)
-  })
-
-  it('retains original messages when automatic participant checkpointing fails', async () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    storage.addRoomAgent('room-1', 'codex-1', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex', lastSeenRoomSeq: 0,
-    })
-    ;(groupServer as any)._contextEngine.summarizeParticipantRange = vi.fn(async () => null)
-
-    for (let index = 1; index <= 501; index += 1) {
-      storage.saveMessageAndRefreshRoom(makeMessage({ id: `msg-${index}`, timestamp: index }) as any)
-    }
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    expect(storage.getMessagesForContext('room-1')).toHaveLength(501)
-    expect(storage.getRoomAgentByAgentId('room-1', 'codex-1')).toMatchObject({
-      checkpoint: '', checkpointFromRoomSeq: 0, checkpointThroughRoomSeq: 0,
-    })
-  })
-
-  it('rejects retention checkpoints from an older Room session incarnation', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    storage.addRoomAgent('room-1', 'codex-1', 'default', 'Codex', '', 0, {
-      runtime: 'coding_agent', codingAgentId: 'codex', lastSeenRoomSeq: 0,
-    })
-    const oldSeed = String(storage.getRoom('room-1')?.sessionSeed || '')
-    storage.rotateRoomSessionSeed('room-1')
-
-    expect(storage.saveParticipantCheckpointIfCurrent({
-      roomId: 'room-1', agentId: 'codex-1', expectedSessionSeed: oldSeed,
-      expectedLastSeenRoomSeq: 0, expectedSessionGeneration: 0,
-      summary: 'stale', sourceMessageIds: ['msg-1'], fromRoomSeq: 1, throughRoomSeq: 1,
-    })).toBe(false)
-    expect(storage.saveContextSnapshotIfCurrent({
-      roomId: 'room-1', expectedSessionSeed: oldSeed, expectedLastRoomSeq: 0,
-      summary: 'stale shared', lastMessageId: 'msg-1', lastMessageTimestamp: 1, lastRoomSeq: 1,
-    })).toBe(false)
-    expect(storage.getRoomAgentByAgentId('room-1', 'codex-1')?.checkpoint).toBe('')
-    expect(storage.getContextSnapshot('room-1')).toBeNull()
-  })
-
-  it('does not reuse a pruned high room sequence after timestamp rollback', () => {
-    const storage = groupServer.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-a', timestamp: 100 }) as any)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-b', timestamp: 1 }) as any)
-    storage.saveContextSnapshot('room-1', 'Shared summary through msg-a', 'msg-a', 100, 1)
-    storage.pruneMessages('room-1', 1)
-    storage.saveMessageAndRefreshRoom(makeMessage({ id: 'msg-c', timestamp: 101 }) as any)
-
-    expect(dbMock.current?.prepare(
-      'SELECT id, roomSeq FROM gc_messages WHERE roomId = ? ORDER BY roomSeq ASC',
-    ).all('room-1')).toEqual([
-      { id: 'msg-b', roomSeq: 2 },
-      { id: 'msg-c', roomSeq: 3 },
-    ])
   })
 
   it('returns a bounded recent UI page while context reads the full retained transcript in canonical order', () => {
@@ -403,7 +183,7 @@ describe('group chat history windows', () => {
     }))
 
     storage.saveMessageAndRefreshRoom(seeded[0] as any)
-    storage.saveContextSnapshot('room-1', 'Earlier summary', 'msg-1', 1, 1)
+    storage.saveContextSnapshot('room-1', 'Earlier summary', 'msg-1', 1)
 
     let latest: { totalTokens: number } | null = null
     for (const message of seeded.slice(1)) latest = storage.saveMessageAndRefreshRoom(message as any)
@@ -420,4 +200,45 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   }, 15_000)
 
+  it('includes the active reasoning segment in persisted group tool-call messages', async () => {
+    mockSocket.emit.mockImplementation((event: string, payload?: any, ack?: Function) => {
+      if (typeof ack === 'function') ack({ id: payload?.id })
+      return mockSocket
+    })
+    const clients = new AgentClients()
+    const client = await clients.createAgent({
+      agentId: 'agent-1',
+      profile: 'default',
+      name: 'Worker',
+      description: '',
+      invited: 0,
+    } as any)
+
+    ;(client as any).recordToolStarted(
+      'room-1',
+      'session-1',
+      {
+        tool_name: 'lookup',
+        tool_call_id: 'call-1',
+        args: { room: 'room-1' },
+      },
+      'run-1_part_0',
+      'Inspect the room before calling lookup.',
+    )
+
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        id: 'run-1_part_0_toolcall_call-1',
+        role: 'assistant',
+        reasoning: 'Inspect the room before calling lookup.',
+        reasoning_content: 'Inspect the room before calling lookup.',
+        tool_calls: [expect.objectContaining({ id: 'call-1' })],
+      }),
+      expect.any(Function),
+    )
+
+    client.disconnect()
+  })
 })

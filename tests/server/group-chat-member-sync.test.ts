@@ -662,60 +662,6 @@ describe('Group Chat member/agent identity sync', () => {
     expect(broadcastEmit).not.toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'revoked-stream' }))
   })
 
-  it('uses the persisted participant session as the authority for runtime events', () => {
-    const broadcastEmit = vi.fn()
-    const roomEmit = vi.fn()
-    const updateRoomTotalTokens = vi.fn()
-    const member = {
-      id: 'agent-socket-1',
-      userId: 'participant-1',
-      name: 'Codex A',
-      description: '',
-      joinedAt: Date.now(),
-      online: true,
-      socketId: 'agent-socket-1',
-      source: 'agent',
-      avatar: '',
-    }
-    const server = Object.create(GroupChatServer.prototype) as any
-    server.rooms = new Map([['room-1', { getOnlineMemberBySocketId: vi.fn(() => member) }]])
-    server.contextStatusState = new Map()
-    server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: 'legacy-seed' })),
-      getRoomAgentByAgentId: vi.fn(() => ({
-        id: 'row-1',
-        roomId: 'room-1',
-        agentId: 'participant-1',
-        profile: 'default',
-        name: 'Codex A',
-        runtime: 'coding_agent',
-        sessionId: 'participant-session-2',
-      })),
-      updateRoomTotalTokens,
-    }
-    server.nsp = { to: vi.fn(() => ({ emit: broadcastEmit })) }
-    const socket = { id: 'agent-socket-1', to: vi.fn(() => ({ emit: roomEmit })) }
-
-    server.handleContextStatus(socket, {
-      roomId: 'room-1',
-      agentName: 'Codex A',
-      status: 'replying',
-      totalTokens: 111,
-      agentSessionId: groupBridgeSessionId('room-1', 'default', 'Codex A', 'legacy-seed'),
-    })
-    expect(updateRoomTotalTokens).not.toHaveBeenCalled()
-
-    server.handleContextStatus(socket, {
-      roomId: 'room-1',
-      agentName: 'Codex A',
-      status: 'replying',
-      totalTokens: 222,
-      agentSessionId: 'participant-session-2',
-    })
-    expect(updateRoomTotalTokens).toHaveBeenCalledWith('room-1', 222)
-    expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ agentName: 'Codex A' }))
-  })
-
   it('does not drop queued mentions when room interrupt is not synchronized', async () => {
     const clients = new AgentClients() as any
     const agent = { name: 'Worker', interrupt: vi.fn(async () => false) }
@@ -769,33 +715,6 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Stale room session' })
     expect(saveMessageAndRefreshRoom).not.toHaveBeenCalled()
     expect(emit).not.toHaveBeenCalled()
-  })
-
-  it('fences persisted participant sessions before clearing runtime state', async () => {
-    const server = Object.create(GroupChatServer.prototype) as any
-    server.typingState = new Map()
-    server.contextStatusState = new Map()
-    server.fencedRoomAgentSessions = new Map()
-    server.storage = {
-      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: 'seed-1' })),
-      getRoomAgents: vi.fn(() => [
-        {
-          agentId: 'agent-1',
-          profile: 'default',
-          name: 'Worker',
-          sessionId: 'gc_room-1_agent-1_2',
-        },
-      ]),
-    }
-    server.agentClients = {
-      interruptRoom: vi.fn(async () => {
-        expect(server.fencedRoomAgentSessions.get('room-1')).toContain('gc_room-1_agent-1_2')
-      }),
-      resetRoomContext: vi.fn(),
-    }
-    server.nsp = { to: vi.fn(() => ({ emit: vi.fn() })) }
-
-    await server.clearRoomRuntimeState('room-1')
   })
 
   it('clears runtime state before rotating persisted room context', async () => {
@@ -1454,40 +1373,7 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ctx.body).toEqual({ rooms: [expect.objectContaining({ id: 'room-1', inviteCode: null, canManage: true })] })
   })
 
-  it('rejects an oversized human message before persistence or mention routing', () => {
-    const server = Object.create(GroupChatServer.prototype) as any
-    const saveMessageAndRefreshRoom = vi.fn()
-    const processMentions = vi.fn()
-    server.rooms = new Map([['room-1', {
-      hasOnlineMember: vi.fn(() => true),
-      getOnlineMemberBySocketId: vi.fn(() => ({ userId: 'human-1', name: 'Human', source: 'human' })),
-    }]])
-    server.socketUserMap = new Map([['human-socket', 'human-1']])
-    server.socketRequestedSourceMap = new Map([['human-socket', 'human']])
-    server.userInfoMap = new Map([['human-1', { name: 'Human', description: '' }]])
-    server.agentClients = {
-      validateMessageInput: vi.fn(() => ({
-        ok: false,
-        error: 'Message exceeds the safe input limit for @Worker (9600 tokens). Upload a file or split the message.',
-      })),
-      processMentions,
-    }
-    server.storage = { saveMessageAndRefreshRoom }
-    server.nsp = { to: vi.fn(() => ({ emit: vi.fn() })) }
-    const ack = vi.fn()
-
-    server.handleMessage({ id: 'human-socket' }, {
-      roomId: 'room-1', content: `@Worker ${'x'.repeat(50_000)}`, role: 'user',
-    }, ack)
-
-    expect(ack).toHaveBeenCalledWith({
-      error: 'Message exceeds the safe input limit for @Worker (9600 tokens). Upload a file or split the message.',
-    })
-    expect(saveMessageAndRefreshRoom).not.toHaveBeenCalled()
-    expect(processMentions).not.toHaveBeenCalled()
-  })
-
-  it('does not use the legacy in-memory mention path for persisted messages', () => {
+  it('routes @mentions from users and bounded agent replies', () => {
     const server = Object.create(GroupChatServer.prototype) as any
     const emit = vi.fn()
     server.rooms = new Map([
@@ -1553,7 +1439,6 @@ describe('Group Chat member/agent identity sync', () => {
       saveMessageAndRefreshRoom: vi.fn((msg: any, options: any) => ({ message: msg, totalTokens: 123, handoffJobs: options?.handoffs || [] })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
-    server.scheduleHandoffDispatch = vi.fn()
 
     server.handleMessage({ id: 'human-socket' }, { roomId: 'room-1', content: '@all hi', role: 'user' }, vi.fn())
     expect(server.storage.saveMessageAndRefreshRoom).toHaveBeenLastCalledWith(

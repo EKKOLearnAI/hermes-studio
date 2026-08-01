@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { claimTestHermesDbOwnership } from './db-test-helpers'
 
 describe('user theme storage', () => {
   let db: any = null
@@ -10,6 +11,7 @@ describe('user theme storage', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
+    await claimTestHermesDbOwnership(db)
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',

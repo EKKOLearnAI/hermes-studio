@@ -19,7 +19,7 @@ import type { ProfileAvatar as ParticipantAvatar } from '@/api/hermes/profiles'
 import { copyToClipboard } from '@/utils/clipboard'
 import { generateGroupChatInviteCode, groupChatInviteCodeForClone } from '@/utils/group-chat-invite'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent, RoomInfo, GroupHandoffJob, GroupChatMention } from '@/api/hermes/group-chat'
+import type { RoomAgent, RoomInfo, GroupHandoffJob, GroupChatMention, StructuredChainRequest } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -699,9 +699,14 @@ async function handleSelectRoom(roomId: string) {
     }
 }
 
-async function handleSendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
+async function handleSendMessage(
+    content: string,
+    attachments?: Attachment[],
+    mentions?: GroupChatMention[],
+    chainRequest?: StructuredChainRequest,
+) {
     try {
-        await store.sendMessage(content, attachments, mentions)
+        await store.sendMessage(content, attachments, mentions, chainRequest)
     } catch (err: any) {
         message.error(err.message)
     }
@@ -1358,7 +1363,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             {{ store.typingText }}
                         </div>
                     </div>
-                    <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
+                    <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" @send-error="message.error" />
                 </div>
                 <aside
                     v-if="showWorkspacePanel && (activeWorkspacePanel === 'browser' ? desktopBrowserAvailable : (toolPanelStore.workspaceDiff || currentRoom?.workspace || filesStore.previewFile?.workspaceRoomId === store.currentRoomId))"

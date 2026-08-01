@@ -38,7 +38,7 @@ describe('group chat client protocol handshake', () => {
       auth: expect.objectContaining({
         userId: 'user-1',
         name: 'Alice',
-        mentionProtocolVersion: 1,
+        mentionProtocolVersion: 2,
       }),
     }))
   })

@@ -40,7 +40,7 @@ describe('group chat baseline behavior', () => {
     harness.sockets.push(alice)
     const joined = await emitAck<any>(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
-    expect(joined).toMatchObject({ roomId: 'room-1' })
+    expect(joined).toMatchObject({ roomId: 'room-1', mentionProtocolVersion: 2 })
     expect(joined.messages.map((m: any) => m.id)).toEqual(['msg-1'])
     expect(joined.members.map((m: any) => m.name)).toContain('Alice')
   })

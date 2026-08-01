@@ -259,8 +259,29 @@ function isInternalProxyRoute(path) {
 
 function groupChatParticipantRequestBody(path, method) {
   const roomCollectionPath = '/api/hermes/group-chat/rooms'
+  const roomConfigPath = '/api/hermes/group-chat/rooms/:roomId/config'
   const collectionPath = '/api/hermes/group-chat/rooms/:roomId/agents'
   const itemPath = '/api/hermes/group-chat/rooms/:roomId/agents/:agentId'
+  if (path === roomConfigPath && method === 'put') {
+    return {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              handoffMode: { type: 'string' },
+              handoffOrder: { type: 'array', items: { type: 'string' } },
+              maxAgentMentionDepth: { nullable: true, type: 'number' },
+              maxHistoryTokens: { type: 'number' },
+              tailMessageCount: { type: 'number' },
+              triggerTokens: { type: 'number' },
+            },
+          },
+        },
+      },
+    }
+  }
   const participantProperties = {
     profile: { type: 'string' },
     name: { type: 'string' },

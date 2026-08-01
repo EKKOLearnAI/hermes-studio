@@ -2709,6 +2709,8 @@ export default {
     handoffModeFixed: 'Fixed participant order',
     fixedHandoffOrder: 'Fixed handoff order',
     invalidFixedHandoffOrder: 'Select at least two unique participants for fixed handoff order',
+    invalidParticipantChain: 'Invalid participant chain. Use “@participant → @participant” with existing Room participants.',
+    participantChainPreview: 'Fixed participant chain:',
     moveHandoffUp: 'Move up',
     moveHandoffDown: 'Move down',
     handoffPending: 'Handoff pending',

@@ -2358,6 +2358,8 @@ export default {
     handoffModeFixed: 'Фиксированный порядок участников',
     fixedHandoffOrder: 'Фиксированный порядок передачи',
     invalidFixedHandoffOrder: 'Для фиксированного порядка нужны как минимум два уникальных участника',
+    invalidParticipantChain: 'Invalid participant chain. Use “@participant → @participant” with existing Room participants.',
+    participantChainPreview: 'Fixed participant chain:',
     moveHandoffUp: 'Переместить вверх',
     moveHandoffDown: 'Переместить вниз',
     handoffPending: 'Передача ожидает',

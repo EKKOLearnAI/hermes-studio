@@ -520,6 +520,181 @@ describe('user auth tables and middleware', () => {
     expect(users.listUserProfiles(created!.id).map(profile => profile.profile_name)).toEqual(['research'])
   })
 
+  it('reprojects Group Chat authority when a managed super admin is demoted', async () => {
+    const { users } = await initUsers()
+    users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const target = users.createUser({
+      username: 'secondary-super', password: 'secret1', role: 'super_admin', status: 'active',
+    })!
+    const reprojectAuthenticatedUserRole = vi.fn(async (_userId: number, _role: string, mutate: () => void) => {
+      mutate()
+    })
+    const revokeAuthenticatedUser = vi.fn()
+    vi.doMock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+      getGroupChatRuntimeServer: () => ({ reprojectAuthenticatedUserRole, revokeAuthenticatedUser }),
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      params: { id: String(target.id) },
+      request: { body: { role: 'admin', profiles: ['default'] } },
+      status: 200,
+      body: null,
+    } as any
+
+    await ctrl.updateManagedUser(ctx)
+
+    expect(users.findUserById(target.id)?.role).toBe('admin')
+    expect(reprojectAuthenticatedUserRole).toHaveBeenCalledWith(target.id, 'admin', expect.any(Function))
+    expect(revokeAuthenticatedUser).not.toHaveBeenCalled()
+  })
+
+  it('updates user profile bindings inside an existing authority transaction', async () => {
+    const { users } = await initUsers()
+    const target = users.createUser({
+      username: 'transactional-user', password: 'secret1', role: 'super_admin', status: 'active',
+    })!
+
+    db.exec('BEGIN IMMEDIATE')
+    expect(() => users.updateUser({
+      userId: target.id,
+      role: 'admin',
+      profiles: ['default'],
+      defaultProfile: 'default',
+    })).not.toThrow()
+    db.exec('ROLLBACK')
+
+    expect(users.findUserById(target.id)?.role).toBe('super_admin')
+    expect(users.listUserProfiles(target.id)).toEqual([])
+  })
+
+  it('fails closed when Group Chat reconciliation returns without applying the user mutation', async () => {
+    const { users } = await initUsers()
+    users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const target = users.createUser({
+      username: 'secondary-super', password: 'secret1', role: 'super_admin', status: 'active',
+    })!
+    vi.doMock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+      getGroupChatRuntimeServer: () => ({
+        reprojectAuthenticatedUserRole: vi.fn(async () => []),
+        revokeAuthenticatedUser: vi.fn(),
+      }),
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      params: { id: String(target.id) },
+      request: { body: { role: 'admin', profiles: ['default'] } },
+      status: 200,
+      body: null,
+    } as any
+
+    await ctrl.updateManagedUser(ctx)
+
+    expect(ctx.status).toBe(503)
+    expect(users.findUserById(target.id)?.role).toBe('super_admin')
+  })
+
+  it('fails closed without changing the user when Group Chat demotion reconciliation is unavailable', async () => {
+    const { users } = await initUsers()
+    users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const target = users.createUser({
+      username: 'secondary-super', password: 'secret1', role: 'super_admin', status: 'active',
+    })!
+    vi.doMock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+      getGroupChatRuntimeServer: () => null,
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      params: { id: String(target.id) },
+      request: { body: { role: 'admin', profiles: ['default'] } },
+      status: 200,
+      body: null,
+    } as any
+
+    await ctrl.updateManagedUser(ctx)
+
+    expect(ctx.status).toBe(503)
+    expect(users.findUserById(target.id)?.role).toBe('super_admin')
+  })
+
+  it('rolls back the user role when Group Chat demotion reconciliation fails', async () => {
+    const { users } = await initUsers()
+    users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const target = users.createUser({
+      username: 'secondary-super', password: 'secret1', role: 'super_admin', status: 'active',
+    })!
+    vi.doMock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+      getGroupChatRuntimeServer: () => ({
+        reprojectAuthenticatedUserRole: async (_userId: number, _role: string, mutate: () => void) => {
+          db.exec('BEGIN IMMEDIATE')
+          try {
+            mutate()
+            throw new Error('projection failed')
+          } catch (error) {
+            db.exec('ROLLBACK')
+            throw error
+          }
+        },
+        revokeAuthenticatedUser: vi.fn(),
+      }),
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      params: { id: String(target.id) },
+      request: { body: { role: 'admin', profiles: ['default'] } },
+      status: 200,
+      body: null,
+    } as any
+
+    await ctrl.updateManagedUser(ctx)
+
+    expect(ctx.status).toBe(503)
+    expect(users.findUserById(target.id)?.role).toBe('super_admin')
+  })
+
+  it('does not reproject Group Chat grants when promoting a managed admin', async () => {
+    const { users } = await initUsers()
+    users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const target = users.createUser({
+      username: 'secondary-admin', password: 'secret1', role: 'admin', status: 'active', profiles: ['default'],
+    })!
+    const reprojectAuthenticatedUserRole = vi.fn()
+    vi.doMock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+      getGroupChatRuntimeServer: () => ({ reprojectAuthenticatedUserRole, revokeAuthenticatedUser: vi.fn() }),
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      params: { id: String(target.id) },
+      request: { body: { role: 'super_admin' } },
+      status: 200,
+      body: null,
+    } as any
+
+    await ctrl.updateManagedUser(ctx)
+
+    expect(users.findUserById(target.id)?.role).toBe('super_admin')
+    expect(reprojectAuthenticatedUserRole).not.toHaveBeenCalled()
+  })
+
   it('does not allow disabling the last active super admin', async () => {
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!

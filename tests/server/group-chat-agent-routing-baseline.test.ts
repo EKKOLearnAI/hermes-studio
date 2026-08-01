@@ -10,7 +10,7 @@ import { GROUP_CHAT_AGENT_SOCKET_SECRET } from '../../packages/server/src/servic
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
-describe('group chat durable handoff routing baseline', () => {
+describe('group chat agent routing baseline', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
   let groupServer: GroupChatServer
   let port: number
@@ -33,7 +33,8 @@ describe('group chat durable handoff routing baseline', () => {
   async function joinHumanAndAgent() {
     const human = await connectGroupChatClient(port, 'human-1', 'Human')
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
-      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
     harness.sockets.push(human, agent)
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
@@ -61,7 +62,152 @@ describe('group chat durable handoff routing baseline', () => {
     }))
   })
 
-  it('does not create a durable handoff for read-only invite member messages', async () => {
+  it('persists and completes a structured finite chain when the first participant appears again at the end', async () => {
+    const storage = groupServer.getStorage()
+    const codex = storage.addRoomAgent('room-1', 'agent-codex', 'default', 'Codex', '', 1)
+    const claude = storage.addRoomAgent('room-1', 'agent-claude', 'default', 'Claude Code', '', 2)
+    const worker = storage.getRoomAgentByAgentId('room-1', 'agent-worker')!
+    const human = await connectGroupChatClient(port, 'human-chain', 'Human', { mentionProtocolVersion: 2 })
+    harness.sockets.push(human)
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    const content = '@Worker → @Codex → @Claude Code → @Worker compare'
+    const participants = [
+      { type: 'participant', participantId: worker.agentId, displayName: 'Worker', start: 0, length: 7 },
+      { type: 'participant', participantId: codex.agentId, displayName: 'Codex', start: 10, length: 6 },
+      { type: 'participant', participantId: claude.agentId, displayName: 'Claude Code', start: 19, length: 12 },
+      { type: 'participant', participantId: worker.agentId, displayName: 'Worker', start: 34, length: 7 },
+    ]
+
+    const ack = await emitAck<any>(human, 'message', {
+      roomId: 'room-1', id: 'structured-chain-root', content,
+      mentions: [participants[0]],
+      chainRequest: { version: 1, participants },
+    })
+
+    expect(ack).toEqual({ id: 'structured-chain-root' })
+    expect(storage.getMessage('structured-chain-root')).toMatchObject({
+      id: 'structured-chain-root', mentions: [participants[0]],
+    })
+    expect(storage.listHandoffJobs('room-1')).toEqual([
+      expect.objectContaining({
+        sourceMessageId: 'structured-chain-root', targetAgentId: worker.agentId,
+        kind: 'fixed', chainOrderJson: JSON.stringify([worker.agentId, codex.agentId, claude.agentId, worker.agentId]),
+      }),
+    ])
+
+    const workerSocket = await connectGroupChatClient(port, worker.agentId, 'Worker', {
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const codexSocket = await connectGroupChatClient(port, codex.agentId, 'Codex', {
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const claudeSocket = await connectGroupChatClient(port, claude.agentId, 'Claude Code', {
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(workerSocket, codexSocket, claudeSocket)
+    await emitAck(workerSocket, 'join', { roomId: 'room-1' })
+    await emitAck(codexSocket, 'join', { roomId: 'room-1' })
+    await emitAck(claudeSocket, 'join', { roomId: 'room-1' })
+
+    const first = storage.claimHandoffJobs('chain-worker', Date.now(), 1, 60_000)[0]
+    expect(first).toMatchObject({ targetAgentId: worker.agentId, depth: 0 })
+    expect(await emitAck<any>(workerSocket, 'message', {
+      roomId: 'room-1', id: 'structured-chain-worker-final', content: 'Worker result', role: 'assistant',
+      handoffChainId: first.chainId, handoffDepth: 1, sourceHandoffJobId: first.id,
+      sourceHandoffLeaseToken: first.leaseToken, handoffFinal: true,
+      agentSessionId: currentRoomAgentSessionId(groupServer, 'room-1', worker.agentId, 'default', 'Worker'),
+    })).toEqual({ id: 'structured-chain-worker-final' })
+
+    const second = storage.claimHandoffJobs('chain-codex', Date.now(), 1, 60_000)[0]
+    expect(second).toMatchObject({ targetAgentId: codex.agentId, depth: 1 })
+    expect(await emitAck<any>(codexSocket, 'message', {
+      roomId: 'room-1', id: 'structured-chain-codex-final', content: 'Codex result', role: 'assistant',
+      handoffChainId: second.chainId, handoffDepth: 2, sourceHandoffJobId: second.id,
+      sourceHandoffLeaseToken: second.leaseToken, handoffFinal: true,
+      agentSessionId: currentRoomAgentSessionId(groupServer, 'room-1', codex.agentId, 'default', 'Codex'),
+    })).toEqual({ id: 'structured-chain-codex-final' })
+
+    const third = storage.claimHandoffJobs('chain-claude', Date.now(), 1, 60_000)[0]
+    expect(third).toMatchObject({ targetAgentId: claude.agentId, depth: 2 })
+    expect(await emitAck<any>(claudeSocket, 'message', {
+      roomId: 'room-1', id: 'structured-chain-claude-final', content: 'Claude result', role: 'assistant',
+      handoffChainId: third.chainId, handoffDepth: 3, sourceHandoffJobId: third.id,
+      sourceHandoffLeaseToken: third.leaseToken, handoffFinal: true,
+      agentSessionId: currentRoomAgentSessionId(groupServer, 'room-1', claude.agentId, 'default', 'Claude Code'),
+    })).toEqual({ id: 'structured-chain-claude-final' })
+
+    const fourth = storage.claimHandoffJobs('chain-worker-final', Date.now(), 1, 60_000)[0]
+    expect(fourth).toMatchObject({ targetAgentId: worker.agentId, depth: 3 })
+    expect(await emitAck<any>(workerSocket, 'message', {
+      roomId: 'room-1', id: 'structured-chain-worker-return-final', content: 'Worker return result', role: 'assistant',
+      handoffChainId: fourth.chainId, handoffDepth: 4, sourceHandoffJobId: fourth.id,
+      sourceHandoffLeaseToken: fourth.leaseToken, handoffFinal: true,
+      agentSessionId: currentRoomAgentSessionId(groupServer, 'room-1', worker.agentId, 'default', 'Worker'),
+    })).toEqual({ id: 'structured-chain-worker-return-final' })
+
+    expect(storage.listHandoffJobs('room-1')).toHaveLength(4)
+    expect(storage.listHandoffJobs('room-1').every(job => job.status === 'completed')).toBe(true)
+    expect(storage.claimHandoffJobs('after-chain', Date.now(), 10, 60_000)).toEqual([])
+  })
+
+  it('atomically rejects structured chains from old clients', async () => {
+    const storage = groupServer.getStorage()
+    const codex = storage.addRoomAgent('room-1', 'agent-codex', 'default', 'Codex', '', 1)
+    const worker = storage.getRoomAgentByAgentId('room-1', 'agent-worker')!
+    const content = '@Worker → @Codex compare'
+    const participants = [
+      { type: 'participant', participantId: worker.agentId, displayName: 'Worker', start: 0, length: 7 },
+      { type: 'participant', participantId: codex.agentId, displayName: 'Codex', start: 10, length: 6 },
+    ]
+    const oldClient = await connectGroupChatClient(port, 'old-human', 'Old Human', { mentionProtocolVersion: 1 })
+    harness.sockets.push(oldClient)
+    await emitAck(oldClient, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const oldAck = await emitAck<any>(oldClient, 'message', {
+      roomId: 'room-1', id: 'old-chain-root', content,
+      mentions: [participants[0]], chainRequest: { version: 1, participants },
+    })
+
+    expect(oldAck).toMatchObject({ code: 'GROUP_CHAT_CLIENT_REFRESH_REQUIRED' })
+    expect(storage.getMessage('old-chain-root')).toBeNull()
+    expect(storage.listHandoffJobs('room-1')).toEqual([])
+  })
+
+  it('atomically rejects malformed chain versions and agent-forged chain metadata', async () => {
+    const storage = groupServer.getStorage()
+    const codex = storage.addRoomAgent('room-1', 'agent-codex', 'default', 'Codex', '', 1)
+    const worker = storage.getRoomAgentByAgentId('room-1', 'agent-worker')!
+    const content = '@Worker → @Codex compare'
+    const participants = [
+      { type: 'participant', participantId: worker.agentId, displayName: 'Worker', start: 0, length: 7 },
+      { type: 'participant', participantId: codex.agentId, displayName: 'Codex', start: 10, length: 6 },
+    ]
+    const human = await connectGroupChatClient(port, 'human-invalid-chain', 'Human', { mentionProtocolVersion: 2 })
+    const agent = await connectGroupChatClient(port, worker.agentId, 'Worker', {
+      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(human, agent)
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+
+    const malformedAck = await emitAck<any>(human, 'message', {
+      roomId: 'room-1', id: 'malformed-chain-version', content,
+      mentions: [participants[0]], chainRequest: { version: 2, participants },
+    })
+    const forgedAck = await emitAck<any>(agent, 'message', {
+      roomId: 'room-1', id: 'agent-forged-chain', content, role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+      chainRequest: { version: 1, participants },
+    })
+
+    expect(malformedAck).toEqual({ error: 'Invalid structured chain request' })
+    expect(forgedAck).toEqual({ error: 'Structured routing metadata is only accepted from human clients' })
+    expect(storage.getMessage('malformed-chain-version')).toBeNull()
+    expect(storage.getMessage('agent-forged-chain')).toBeNull()
+    expect(storage.listHandoffJobs('room-1')).toEqual([])
+  })
+
+  it('does not route read-only invite member messages through agents', async () => {
     vi.mocked(isAuthEnabled).mockResolvedValue(true)
     vi.mocked(authenticateUserToken).mockImplementation(async (token: string) => {
       if (token === 'read-only-token') return { id: 2, username: 'bob', role: 'admin', profiles: [] } as any
@@ -70,7 +216,8 @@ describe('group chat durable handoff routing baseline', () => {
     seedAuthenticatedUser(harness.db, { id: 2, username: 'bob' })
     const human = await connectGroupChatClient(port, 'ignored-user', 'Bob', { token: 'read-only-token' })
     const agent = await connectGroupChatClient(port, 'agent-worker', 'Worker', {
-      source: 'agent', agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
     harness.sockets.push(human, agent)
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
@@ -398,8 +545,12 @@ describe('group chat durable handoff routing baseline', () => {
     const { agent } = await joinHumanAndAgent()
 
     await emitAck(agent, 'message', {
-      roomId: 'room-1', id: 'agent-msg-1', content: '@Worker chain handoff',
-      role: 'assistant', mentionDepth: 1, agentSessionId: sessionId,
+      roomId: 'room-1',
+      id: 'agent-msg-1',
+      content: '@Worker chain handoff',
+      role: 'assistant',
+      mentionDepth: 3,
+      agentSessionId: currentAgentSessionId(),
     })
 
     expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])
@@ -408,12 +559,13 @@ describe('group chat durable handoff routing baseline', () => {
   it('does not route agent replies at the default mention-depth guard', async () => {
     const { agent } = await joinHumanAndAgent()
 
-  it('strips forged assistant and handoff metadata from human messages', async () => {
-    const { human } = await joinHumanAndAgent()
-    await emitAck(human, 'message', {
-      roomId: 'room-1', id: 'human-forged', content: '@Worker hello', role: 'assistant',
-      handoffChainId: 'forged-chain', handoffDepth: 99, sourceHandoffJobId: 'forged-job',
-      sourceHandoffLeaseToken: 'forged-lease', handoffFinal: true, tool_name: 'workspace_diff',
+    await emitAck(agent, 'message', {
+      roomId: 'room-1',
+      id: 'agent-msg-2',
+      content: '@Worker stop looping',
+      role: 'assistant',
+      mentionDepth: 4,
+      agentSessionId: currentAgentSessionId(),
     })
 
     expect(groupServer.getStorage().listHandoffJobs('room-1')).toEqual([])

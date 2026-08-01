@@ -2662,6 +2662,8 @@ export default {
     handoffModeFixed: '固定參與者順序',
     fixedHandoffOrder: '固定接力順序',
     invalidFixedHandoffOrder: '固定接力順序至少需要兩位不重複的參與者',
+    invalidParticipantChain: '參與者接力鏈無效。請使用「@參與者 → @參與者」並確保參與者存在於目前 Room。',
+    participantChainPreview: '固定接力鏈：',
     moveHandoffUp: '上移',
     moveHandoffDown: '下移',
     handoffPending: '接力待處理',

@@ -1207,34 +1207,46 @@ class AgentClient {
                     return
                 }
                 lastChunk = chunk
-                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, replyInterruptVersion, instructions, modelContext, chunk, () => streamMessageId, async () => {
-                    const toolBaseId = streamMessageId
-                    if (currentContent.trim()) {
-                        if (!executionIsCurrent()) {
-                            await stopStaleStartedRun?.()
+                reasoningContent = await this.recordBridgeEvents(
+                    roomId,
+                    sessionId,
+                    replyInterruptVersion,
+                    instructions,
+                    modelContext,
+                    chunk,
+                    reasoningContent,
+                    () => streamMessageId,
+                    async (toolReasoning) => {
+                        const toolBaseId = streamMessageId
+                        if (currentContent.trim()) {
+                            if (!executionIsCurrent()) {
+                                await stopStaleStartedRun?.()
+                                currentContent = ''
+                                return toolBaseId
+                            }
+                            await this.sendMessage(roomId, currentContent, streamMessageId, {
+                                role: 'assistant',
+                                mentionDepth: nextMentionDepth(msg),
+                                handoffChainId: msg.handoffChainId || '',
+                                handoffDepth: nextMentionDepth(msg),
+                                sourceHandoffJobId: msg.handoffJobId || '',
+                                sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
+                                handoffFinal: false,
+                                reasoning: toolReasoning || null,
+                                reasoning_content: toolReasoning || null,
+                            }, sessionId)
+                            flushedAssistantParts.add(streamMessageId)
                             currentContent = ''
                         }
-                        await this.sendMessage(roomId, currentContent, streamMessageId, {
-                            role: 'assistant',
-                            mentionDepth: nextMentionDepth(msg),
-                            handoffChainId: msg.handoffChainId || '',
-                            handoffDepth: nextMentionDepth(msg),
-                            sourceHandoffJobId: msg.handoffJobId || '',
-                            sourceHandoffLeaseToken: msg.handoffLeaseToken || '',
-                            handoffFinal: false,
-                            reasoning: reasoningContent || null,
-                            reasoning_content: reasoningContent || null,
-                        }, sessionId)
-                        flushedAssistantParts.add(streamMessageId)
-                        currentContent = ''
-                    }
-                    this.emitMessageStreamEnd(roomId, toolBaseId, sessionId, msg)
-                    partIndex += 1
-                    streamMessageId = groupMessagePartId(runMessageId, partIndex)
-                    this.emitMessageStreamStart(roomId, streamMessageId, sessionId, msg)
-                    streamStarted = true
-                    return toolBaseId
-                }, msg)
+                        this.emitMessageStreamEnd(roomId, toolBaseId, sessionId, msg)
+                        partIndex += 1
+                        streamMessageId = groupMessagePartId(runMessageId, partIndex)
+                        this.emitMessageStreamStart(roomId, streamMessageId, sessionId, msg)
+                        streamStarted = true
+                        return toolBaseId
+                    },
+                    msg,
+                )
                 if (!executionIsCurrent()) {
                     await stopStaleStartedRun?.()
                     return
@@ -1497,7 +1509,8 @@ class AgentClient {
                     return
                 }
                 if (event === 'tool.started') {
-                    this.recordToolStarted(roomId, sessionId, payload || {}, messageId, msg)
+                    this.recordToolStarted(roomId, sessionId, payload || {}, messageId, reasoning, msg)
+                    reasoning = ''
                     return
                 }
                 if (event === 'tool.completed' || event === 'tool.failed') {
@@ -1740,7 +1753,7 @@ class AgentClient {
         chunk: AgentBridgeOutput,
         initialReasoning: string,
         getCurrentMessageId: () => string,
-        beforeToolStarted: () => Promise<string>,
+        beforeToolStarted: (reasoning: string) => Promise<string>,
         execution?: MentionMessage,
     ): Promise<string> {
         let reasoning = initialReasoning
@@ -1753,7 +1766,15 @@ class AgentClient {
                 const toolReasoning = reasoning
                 const toolBaseId = await beforeToolStarted(toolReasoning)
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, execution)
+                this.recordToolStarted(
+                    roomId,
+                    sessionId,
+                    ev as Record<string, unknown>,
+                    toolBaseId,
+                    toolReasoning,
+                    execution,
+                )
+                reasoning = ''
             } else if (eventType === 'tool.completed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>, execution)
@@ -1789,7 +1810,14 @@ class AgentClient {
         return reasoning
     }
 
-    private recordToolStarted(roomId: string, sessionId: string, ev: Record<string, unknown>, runMessageId: string, execution?: MentionMessage): void {
+    private recordToolStarted(
+        roomId: string,
+        sessionId: string,
+        ev: Record<string, unknown>,
+        runMessageId: string,
+        reasoning = '',
+        execution?: MentionMessage,
+    ): void {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
         this.trackPendingToolCall(roomId, toolName, toolCallId)

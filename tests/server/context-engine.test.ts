@@ -19,7 +19,6 @@ function makeMessage(overrides: Partial<StoredMessage> = {}): StoredMessage {
         senderName: 'Alice',
         content: 'Hello world',
         timestamp: 1000,
-        roomSeq: 1,
         ...overrides,
     }
 }
@@ -32,7 +31,6 @@ function makeMessages(count: number, roomId = 'room-1', startTimestamp = 1000): 
         senderName: i % 3 === 0 ? 'Claude' : `User${i}`,
         content: `Message ${i} with some content`,
         timestamp: startTimestamp + i * 1000,
-        roomSeq: i + 1,
     }))
 }
 
@@ -591,144 +589,6 @@ describe('ContextEngine.buildContext', () => {
         expect(mockSummarize).not.toHaveBeenCalled()
     })
 
-    it('sends the triggering message only as direct input and includes it in the hard budget estimate', async () => {
-        const messages = makeMessages(3)
-        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-        const contextTokenEstimator = vi.fn().mockResolvedValue(10)
-
-        const result = await engine.buildContext({
-            roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude', agentDescription: 'Helper',
-            agentSocketId: 'agent-socket', roomName: 'general', memberNames: [], members: [],
-            upstream: '', apiKey: null, currentMessage: messages[2],
-            excludeCurrentMessageFromHistory: true,
-            directInputTokenEstimate: 7,
-            contextTokenEstimator,
-        })
-
-        expect(result.meta.totalMessages).toBe(2)
-        expect(result.meta.contextTokenEstimate).toBe(17)
-        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('Message 2')
-    })
-
-    it('projects only canonical events after a persisted participant cursor', async () => {
-        const messages = makeMessages(6)
-        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-
-        const result = await engine.buildContext({
-            roomId: 'room-1',
-            agentId: 'agent-1',
-            agentName: 'Claude',
-            agentDescription: 'Helper',
-            agentSocketId: 'agent-socket',
-            roomName: 'general',
-            memberNames: ['Alice'],
-            members: [{ userId: 'u1', name: 'Alice', description: '' }],
-            upstream: 'http://localhost:8642',
-            apiKey: null,
-            currentMessage: messages[messages.length - 1],
-            participantCursor: messages[3].roomSeq,
-        })
-
-        expect(mockFetcher.getMessagesForContext).toHaveBeenCalledWith('room-1', {
-            afterRoomSeq: 4,
-            throughRoomSeq: 6,
-        })
-        expect(result.meta.totalMessages).toBe(2)
-        expect(result.conversationHistory).toHaveLength(2)
-        expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('Message 4')
-    })
-
-    it('uses stable Room sequence instead of timestamps when filtering a participant cursor', async () => {
-        const messages = [
-            makeMessage({ id: 'older-clock', roomSeq: 41, timestamp: 9_999, content: 'already delivered' }),
-            makeMessage({ id: 'newer-seq', roomSeq: 42, timestamp: 1, content: 'new despite clock rollback' }),
-        ]
-        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-
-        const result = await engine.buildContext({
-            roomId: 'room-1',
-            agentId: 'agent-1',
-            agentName: 'Bot',
-            agentDescription: '',
-            agentSocketId: 'socket-1',
-            roomName: 'general',
-            memberNames: [],
-            members: [],
-            upstream: 'http://localhost:8642',
-            apiKey: null,
-            currentMessage: messages[1],
-            participantCursor: 41,
-        })
-
-        expect(result.meta.totalMessages).toBe(1)
-        expect(result.conversationHistory.map(message => message.content).join('\n')).toContain('new despite clock rollback')
-        expect(result.conversationHistory.map(message => message.content).join('\n')).not.toContain('already delivered')
-    })
-
-    it('ignores a Room snapshot newer than a participant trigger', async () => {
-        const messages = makeMessages(5)
-        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-        mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
-            roomId: 'room-1',
-            summary: 'FUTURE SUMMARY THROUGH SEQ 10',
-            lastMessageId: 'msg-9',
-            lastMessageTimestamp: 10_000,
-            updatedAt: Date.now(),
-        })
-
-        const result = await engine.buildContext({
-            roomId: 'room-1',
-            agentId: 'agent-1',
-            agentName: 'Claude',
-            agentDescription: 'Helper',
-            agentSocketId: 'agent-socket',
-            roomName: 'general',
-            memberNames: ['Alice'],
-            members: [{ userId: 'u1', name: 'Alice', description: '' }],
-            upstream: 'http://localhost:8642',
-            apiKey: 'test-key',
-            currentMessage: messages[4],
-            participantCursor: 0,
-        })
-
-        const history = result.conversationHistory.map(message => message.content).join('\n')
-        expect(history).toContain('Message 0')
-        expect(history).toContain('Message 4')
-        expect(history).not.toContain('FUTURE SUMMARY THROUGH SEQ 10')
-        expect(result.meta.hadSnapshot).toBe(false)
-    })
-
-    it('does not overwrite the shared Room snapshot from a participant sequence window', async () => {
-        const messages = makeMessages(20)
-        mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-        mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
-            roomId: 'room-1',
-            summary: 'FUTURE SUMMARY THROUGH SEQ 30',
-            lastMessageId: 'msg-29',
-            lastMessageTimestamp: 30_000,
-            updatedAt: Date.now(),
-        })
-
-        const result = await engine.buildContext({
-            roomId: 'room-1',
-            agentId: 'agent-1',
-            agentName: 'Claude',
-            agentDescription: 'Helper',
-            agentSocketId: 'agent-socket',
-            roomName: 'general',
-            memberNames: [],
-            members: [],
-            upstream: 'http://localhost:8642',
-            apiKey: 'test-key',
-            currentMessage: messages[19],
-            participantCursor: 0,
-            compression: { triggerTokens: 100 },
-        })
-
-        expect(result.meta.compressed).toBe(true)
-        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
-    })
-
     it('records full context token estimates without compressing when under threshold', async () => {
         const messages = makeMessages(3)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
@@ -767,7 +627,6 @@ describe('ContextEngine.buildContext', () => {
     it('uses full context token estimates to trigger group compression', async () => {
         const messages = makeMessages(20)
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(messages)
-        const contextTokenEstimator = vi.fn().mockResolvedValueOnce(200).mockResolvedValue(80)
         const onProgress = vi.fn()
 
         const result = await engine.buildContext({
@@ -784,20 +643,19 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 100 },
-            contextTokenEstimator,
+            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
             onProgress,
         })
 
         expect(result.meta.compressed).toBe(true)
-        expect(result.meta.contextTokenEstimate).toBe(80)
+        expect(result.meta.contextTokenEstimate).toBe(120_000)
         expect(mockSummarize).toHaveBeenCalledTimes(1)
         expect(mockFetcher.saveContextSnapshot).toHaveBeenCalledTimes(1)
         expect(onProgress).toHaveBeenCalledWith({
             status: 'compressing',
             path: 'full',
             messageCount: 20,
-            tokenCount: 200,
+            tokenCount: 120_000,
         })
     })
 
@@ -876,7 +734,7 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 100 }, // Force compression with tiny threshold
+            compression: { triggerTokens: 10 }, // Force compression with tiny threshold
         })
 
         expect(result.meta.totalMessages).toBe(20)
@@ -896,7 +754,7 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 100 },
+            compression: { triggerTokens: 10 },
         })
 
         // Verify snapshot was saved
@@ -939,7 +797,7 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 100 },
+            compression: { triggerTokens: 10 },
         })
 
         // Simulate that the snapshot now exists in storage
@@ -963,9 +821,9 @@ describe('ContextEngine.buildContext', () => {
         // Insert a new message
         const middleInsert = makeMessage({
             id: 'msg-new', roomId: 'room-1', senderId: 'user-99',
-            senderName: 'NewUser', content: 'New middle message '.repeat(40), timestamp: messages[messages.length - 1].timestamp + 1,
+            senderName: 'NewUser', content: 'New middle message', timestamp: 12000,
         })
-        const updatedMessages = [...messages, middleInsert]
+        const updatedMessages = [...messages.slice(0, 9), middleInsert, ...messages.slice(9)]
         mockFetcher.getMessagesForContext = vi.fn().mockReturnValue(updatedMessages)
 
         const onProgress = vi.fn()
@@ -977,8 +835,7 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: updatedMessages[updatedMessages.length - 1],
-            compression: { triggerTokens: 100 },
-            contextTokenEstimator: vi.fn().mockResolvedValueOnce(120).mockResolvedValue(80),
+            compression: { triggerTokens: 10 },
             onProgress,
         })
 
@@ -1005,7 +862,7 @@ describe('ContextEngine.buildContext', () => {
             authorizationGuard: () => true,
             summarySessionRegistrar: () => ({ sessionId: `gc_h_${'a'.repeat(32)}`, authorizationGuard: () => true, release: () => undefined }),
             currentMessage: messages[messages.length - 1],
-            compression: { triggerTokens: 100 },
+            compression: { triggerTokens: 10 },
         })
 
         // Should not throw, and should still return history

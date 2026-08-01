@@ -2365,6 +2365,8 @@ export default {
     handoffModeFixed: '고정 참여자 순서',
     fixedHandoffOrder: '고정 핸드오프 순서',
     invalidFixedHandoffOrder: '고정 순서에는 중복되지 않은 참여자가 2명 이상 필요합니다',
+    invalidParticipantChain: 'Invalid participant chain. Use “@participant → @participant” with existing Room participants.',
+    participantChainPreview: 'Fixed participant chain:',
     moveHandoffUp: '위로',
     moveHandoffDown: '아래로',
     handoffPending: '핸드오프 대기 중',

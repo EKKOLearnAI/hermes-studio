@@ -618,7 +618,7 @@ export async function updateManagedUser(ctx: Context) {
     }
   }
 
-  const updated = updateUser({
+  const updateManagedUserRecord = () => updateUser({
     userId: user.id,
     username,
     password: password || undefined,
@@ -627,6 +627,34 @@ export async function updateManagedUser(ctx: Context) {
     profiles: nextRole === 'super_admin' ? [] : profiles,
     defaultProfile: body.defaultProfile,
   })
+
+  let updated
+  const isActiveSuperAdminDemotion = user.role === 'super_admin'
+    && nextRole !== 'super_admin'
+    && nextStatus === 'active'
+  if (isActiveSuperAdminDemotion) {
+    const groupChatRuntime = getGroupChatRuntimeServer()
+    if (!groupChatRuntime) {
+      ctx.status = 503
+      ctx.body = { error: 'Group Chat authority reconciliation is unavailable' }
+      return
+    }
+    try {
+      let mutationApplied = false
+      await groupChatRuntime.reprojectAuthenticatedUserRole(user.id, nextRole, () => {
+        updated = updateManagedUserRecord()
+        if (!updated) throw new Error('User update failed')
+        mutationApplied = true
+      })
+      if (!mutationApplied || !updated) throw new Error('User update was not applied')
+    } catch {
+      ctx.status = 503
+      ctx.body = { error: 'Group Chat authority reconciliation failed' }
+      return
+    }
+  } else {
+    updated = updateManagedUserRecord()
+  }
   if (updated?.status === 'disabled') {
     getGroupChatRuntimeServer()?.revokeAuthenticatedUser(user.id)
   }
@@ -658,6 +686,7 @@ export async function deleteManagedUser(ctx: Context) {
   }
 
   getGroupChatRuntimeServer()?.revokeAuthenticatedUser(user.id)
+  await removeAllUserThemeAssets(user.id)
   deleteUser(user.id)
   ctx.body = { success: true, users: listUsers() }
 }

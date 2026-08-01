@@ -624,6 +624,7 @@ export const GC_HANDOFF_JOBS_SCHEMA: Record<string, string> = {
   targetSessionGeneration: 'INTEGER NOT NULL DEFAULT 0',
   depth: 'INTEGER NOT NULL DEFAULT 0',
   kind: "TEXT NOT NULL DEFAULT 'mention'",
+  chainOrderJson: "TEXT NOT NULL DEFAULT ''",
   status: "TEXT NOT NULL DEFAULT 'pending'",
   attemptCount: 'INTEGER NOT NULL DEFAULT 0',
   availableAt: 'INTEGER NOT NULL DEFAULT 0',

@@ -119,34 +119,8 @@ export class ContextEngine {
     private async _buildContextImpl(input: BuildContextInput): Promise<CompressedContext> {
         this.assertAuthorization(input)
         const config = { ...this.config, ...input.compression }
-        const cursor = Math.max(0, Math.floor(Number(input.participantCursor || 0)))
-        const usesParticipantSequence = input.participantCursor != null
-        const triggerRoomSeq = usesParticipantSequence
-            ? Math.max(0, Math.floor(Number(input.currentMessage.roomSeq || 0)))
-            : 0
-        const participantCheckpoint = usesParticipantSequence && input.participantCheckpoint &&
-            Math.max(0, Math.floor(Number(input.participantCheckpoint.fromRoomSeq || 0))) === cursor + 1 &&
-            Math.max(0, Math.floor(Number(input.participantCheckpoint.throughRoomSeq || 0))) >= Math.max(0, Math.floor(Number(input.participantCheckpoint.fromRoomSeq || 0))) &&
-            Math.max(0, Math.floor(Number(input.participantCheckpoint.throughRoomSeq || 0))) < triggerRoomSeq
-            ? {
-                summary: String(input.participantCheckpoint.summary || '').trim(),
-                fromRoomSeq: Math.max(0, Math.floor(Number(input.participantCheckpoint.fromRoomSeq || 0))),
-                throughRoomSeq: Math.max(0, Math.floor(Number(input.participantCheckpoint.throughRoomSeq || 0))),
-            }
-            : null
-        const effectiveCursor = participantCheckpoint?.summary ? participantCheckpoint.throughRoomSeq : cursor
-        const allMessages = this.messageFetcher.getMessagesForContext(input.roomId, triggerRoomSeq > 0
-            ? {
-                throughRoomSeq: triggerRoomSeq,
-                ...(effectiveCursor > 0 ? { afterRoomSeq: effectiveCursor } : {}),
-            }
-            : { throughMessageId: input.currentMessage.id })
-        const messages = allMessages.filter((message) => {
-            if (input.excludeCurrentMessageFromHistory && message.id === input.currentMessage.id) return false
-            const roomSeq = Number(message.roomSeq || 0)
-            if (effectiveCursor > 0 && roomSeq > 0 && roomSeq <= effectiveCursor) return false
-            if (triggerRoomSeq > 0 && roomSeq > 0 && roomSeq > triggerRoomSeq) return false
-            return true
+        const messages = this.messageFetcher.getMessagesForContext(input.roomId, {
+            throughMessageId: input.currentMessage.id,
         })
         const total = messages.length
 
@@ -174,21 +148,7 @@ export class ContextEngine {
             summaryTokenEstimate: 0,
         }
 
-        // Participant delivery is a bounded sequence window. A shared Room snapshot may
-        // summarize messages beyond that window (for example when an older queued trigger
-        // runs after a newer Room compression), and legacy snapshots do not carry a
-        // verifiable roomSeq anchor. Fail closed: participant windows build from their
-        // explicit sequence range and never consume the shared Room snapshot.
-        const snapshot = usesParticipantSequence
-            ? (participantCheckpoint?.summary ? {
-                roomId: input.roomId,
-                summary: participantCheckpoint.summary,
-                lastMessageId: `participant-checkpoint:${participantCheckpoint.throughRoomSeq}`,
-                lastMessageTimestamp: 0,
-                lastRoomSeq: participantCheckpoint.throughRoomSeq,
-                updatedAt: Date.now(),
-            } : null)
-            : this.messageFetcher.getContextSnapshot(input.roomId)
+        const snapshot = this.messageFetcher.getContextSnapshot(input.roomId)
         logger.debug({
             roomId: input.roomId,
             agentName: input.agentName,
@@ -203,12 +163,11 @@ export class ContextEngine {
             history: Array<{ role: 'user' | 'assistant'; content: string }>,
             messageTokenEstimate: number,
         ): Promise<number> => {
-            const directInputTokens = Math.max(0, Math.floor(Number(input.directInputTokenEstimate) || 0))
             try {
                 const estimate = await input.contextTokenEstimator?.(history, instructions)
                 this.assertAuthorization(input)
                 if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate > 0) {
-                    return Math.floor(estimate) + directInputTokens
+                    return Math.floor(estimate)
                 }
             } catch (err: unknown) {
                 this.assertAuthorization(input)
@@ -239,12 +198,7 @@ export class ContextEngine {
         if (snapshot) {
             meta.hadSnapshot = true
 
-            const snapshotTail = Number(snapshot.lastRoomSeq || 0) > 0
-                ? {
-                    messages: messages.filter(message => Number(message.roomSeq || 0) > Number(snapshot.lastRoomSeq || 0)),
-                    snapshotCursorFound: true,
-                }
-                : sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId)
+            const snapshotTail = sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId)
             const newMessages = snapshotTail.messages
 
             if (!snapshotTail.snapshotCursorFound) {
@@ -303,10 +257,9 @@ export class ContextEngine {
             }
 
             // Over threshold — incremental compress
-            const fixedContextTokens = Math.max(0, totalTokens - messageOnlyTokens)
-            if (messageOnlyTokens < config.triggerTokens && fixedContextTokens >= config.triggerTokens) {
+            if (totalTokens > messageOnlyTokens && newMessages.length <= config.tailMessageCount) {
                 throw new Error(
-                    `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead uses ~${fixedContextTokens} tokens, exceeding trigger ${config.triggerTokens}, so message compression cannot make the request fit.`,
+                    `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${newMessages.length} new messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
                 )
             }
             logger.info({
@@ -361,8 +314,8 @@ export class ContextEngine {
                     messageCount: newMessages.length,
                     summaryTokenEstimate: meta.summaryTokenEstimate,
                     fullContextTokens: meta.contextTokenEstimate,
-                    preservedTailCount: fitted.retainedTail.length,
-                    savedLastMessageId: summaryAnchor.id,
+                    preservedTailCount: newMessages.length,
+                    savedLastMessageId: lastMsg.id,
                     elapsedMs: elapsed,
                 }, '[ContextEngine] compression completed')
                 this.logHistory('Path A (after incremental compress)', history)
@@ -425,10 +378,9 @@ export class ContextEngine {
         }
 
         // Over threshold — full compress
-        const fixedContextTokens = Math.max(0, totalTokens - messageOnlyTokens)
-        if (messageOnlyTokens < config.triggerTokens && fixedContextTokens >= config.triggerTokens) {
+        if (totalTokens > messageOnlyTokens && messages.length <= config.tailMessageCount) {
             throw new Error(
-                `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead uses ~${fixedContextTokens} tokens, exceeding trigger ${config.triggerTokens}, so message compression cannot make the request fit.`,
+                `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${messages.length} messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
             )
         }
         logger.info({
@@ -484,11 +436,11 @@ export class ContextEngine {
                 agentName: input.agentName,
                 path: 'full',
                 messageCount: total,
-                compressedMessageCount: messages.length,
-                preservedTailCount: fitted.retainedTail.length,
+                compressedMessageCount: toCompress.length,
+                preservedTailCount: tail.length,
                 summaryTokenEstimate: meta.summaryTokenEstimate,
                 fullContextTokens: meta.contextTokenEstimate,
-                savedLastMessageId: summaryAnchor.id,
+                savedLastMessageId: lastCompressedMsg.id,
                 elapsedMs: elapsed,
             }, '[ContextEngine] compression completed')
             this.logHistory('Path B (after full compress)', history)
@@ -512,46 +464,6 @@ export class ContextEngine {
             elapsedMs: elapsed,
         }, '[ContextEngine] degraded to trimmed verbatim history')
         return { conversationHistory: history, instructions, meta }
-    }
-
-    async summarizeParticipantRange(
-        roomId: string,
-        profile: string,
-        messages: StoredMessage[],
-        previousSummary?: string,
-    ): Promise<string | null> {
-        if (messages.length === 0) return previousSummary || null
-        const chunks: StoredMessage[][] = []
-        let chunk: StoredMessage[] = []
-        let chunkTokens = 0
-        const maxChunkTokens = Math.max(1, this.config.maxHistoryTokens)
-        for (const message of messages) {
-            const messageTokens = Math.max(1, this.estimateTokensFromMessages([message]))
-            if (chunk.length > 0 && chunkTokens + messageTokens > maxChunkTokens) {
-                chunks.push(chunk)
-                chunk = []
-                chunkTokens = 0
-            }
-            chunk.push(message)
-            chunkTokens += messageTokens
-        }
-        if (chunk.length > 0) chunks.push(chunk)
-
-        let summary = previousSummary || undefined
-        for (const messageChunk of chunks) {
-            const result = await this.summarize(
-                roomId,
-                messageChunk,
-                this._upstream,
-                this._apiKey,
-                profile,
-                summary,
-            )
-            if (result.sessionId) this.sessionCleaner?.(result.sessionId)
-            if (!result.summary) return null
-            summary = result.summary
-        }
-        return summary || null
     }
 
     invalidateRoom(roomId: string): void {
@@ -711,30 +623,6 @@ export class ContextEngine {
     }
 
     // ─── Private ─────────────────────────────────────────────
-
-    private latestSequenceTail(messages: StoredMessage[], count: number): StoredMessage[] {
-        const limit = Math.max(1, Math.floor(Number(count) || 0))
-        const sequenced = messages.filter(message => Number(message.roomSeq || 0) > 0)
-        if (sequenced.length === 0) return messages.slice(-limit)
-        const selectedIds = new Set(
-            [...sequenced]
-                .sort((left, right) => Number(right.roomSeq || 0) - Number(left.roomSeq || 0))
-                .slice(0, limit)
-                .map(message => message.id),
-        )
-        return messages.filter(message => selectedIds.has(message.id))
-    }
-
-    private latestSequenceMessage(messages: StoredMessage[]): StoredMessage {
-        if (messages.length === 0) throw new Error('Cannot anchor an empty Group Chat summary')
-        return messages.reduce((latest, message) => {
-            const latestSeq = Math.max(0, Math.floor(Number(latest.roomSeq || 0)))
-            const messageSeq = Math.max(0, Math.floor(Number(message.roomSeq || 0)))
-            if (messageSeq > latestSeq) return message
-            if (messageSeq === latestSeq && message.timestamp > latest.timestamp) return message
-            return latest
-        })
-    }
 
     /**
      * Build history array: optional summary prefix + verbatim messages.

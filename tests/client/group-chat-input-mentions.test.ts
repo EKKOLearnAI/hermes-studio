@@ -12,7 +12,7 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
-  NButton: { template: '<button type="button" v-bind="$attrs"><slot /><slot name="icon" /></button>' },
+  NButton: { template: '<button type="button" v-bind="$attrs" @click="$attrs.onClick?.($event)"><slot /><slot name="icon" /></button>' },
   NTooltip: { template: '<div><slot name="trigger" /><slot /></div>' },
   NSwitch: { template: '<button type="button"></button>' },
   NDropdown: { template: '<div><slot /></div>' },
@@ -145,6 +145,49 @@ describe('GroupChatInput mentions', () => {
 
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).toBe('216px')
     expect((wrapper.get('.input-wrapper').element as HTMLElement).style.minHeight).toBe('279px')
+  })
+
+  it('previews a valid message-scoped participant chain before sending', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.agents = [
+      { id: 'hermes', agentId: 'hermes', profile: 'default', name: 'Hermes', roomId: 'room-1', description: '', invited: 1 },
+      { id: 'codex', agentId: 'codex', profile: 'codex', name: 'Codex', roomId: 'room-1', description: '', invited: 1 },
+    ]
+    store.emitTyping = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    await wrapper.get('textarea').setValue('@Hermes → @Codex → @Hermes review')
+    await nextTick()
+
+    expect(wrapper.get('.participant-chain-preview').text()).toContain('groupChat.participantChainPreview')
+    expect(wrapper.get('.participant-chain-preview').text()).toContain('Hermes → Codex → Hermes')
+  })
+
+  it('keeps an invalid participant chain draft and disables sending with a visible error', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.agents = [
+      { id: 'hermes', agentId: 'hermes', profile: 'default', name: 'Hermes', roomId: 'room-1', description: '', invited: 1 },
+    ]
+    store.emitTyping = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const textarea = wrapper.get('textarea')
+    await textarea.setValue('@Hermes → @Missing review')
+    await nextTick()
+
+    expect(wrapper.get('.participant-chain-error').text()).toBe('groupChat.invalidParticipantChain')
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('@Hermes → @Missing review')
   })
 
   it('preserves mobile auto height when a desktop preference is configured', async () => {

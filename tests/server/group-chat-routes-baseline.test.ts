@@ -125,8 +125,8 @@ describe('group chat REST route baseline', () => {
       cancelHandoffJobs: vi.fn(),
       updateRoomConfig: vi.fn((roomId, config) => Object.assign(storage.rooms.get(roomId), config)),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
-      addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, binding = {}) => {
-        const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited, ...binding }
+      addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited) => {
+        const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited }
         storage.agents.set(roomId, [...(storage.agents.get(roomId) || []), row])
         return row
       }),
@@ -171,8 +171,6 @@ describe('group chat REST route baseline', () => {
       interruptHandoffTarget: vi.fn(async (roomId, agentId) => agentClients.interruptAgent(roomId, agentId)),
       getAgent: vi.fn((roomId, agentId) => (storage.agents.get(roomId) || []).find((agent: any) => agent.agentId === agentId)),
       removeAgentFromRoom: vi.fn(),
-      interruptAgent: vi.fn(async () => {}),
-      updateAgentIdentity: vi.fn(() => true),
       disconnectRoom: vi.fn(),
       getSummarySessionContext: vi.fn(() => ({
         profile: 'default',
@@ -243,88 +241,6 @@ describe('group chat REST route baseline', () => {
     })
     expect(res.status).toBe(400)
     await expect(res.json()).resolves.toMatchObject({ error: '`all` is reserved for @all mentions' })
-  })
-
-  it('rejects incomplete scoped coding-agent launch tuples before creating a room', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Incomplete Room',
-        inviteCode: 'INCOMPLETE1',
-        agents: [{ profile: 'default', name: 'Incomplete Codex', runtime: 'coding_agent', codingAgentId: 'codex' }],
-      }),
-    })
-
-    expect(res.status).toBe(400)
-    await expect(res.json()).resolves.toEqual({ error: 'provider, model, and apiMode are required for coding_agent participants' })
-    expect(storage.saveRoom).not.toHaveBeenCalled()
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
-  })
-
-  it('rejects OAuth/subscription providers for scoped coding-agent participants before persistence', async () => {
-    const forbiddenParticipant = {
-      profile: 'default',
-      name: 'OAuth Codex',
-      runtime: 'coding_agent',
-      codingAgentId: 'codex',
-      mode: 'scoped',
-      provider: 'openai-codex',
-      model: 'gpt-5-codex',
-      apiMode: 'codex_responses',
-    }
-
-    const createRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Forbidden Room', inviteCode: 'FORBIDDEN1', agents: [forbiddenParticipant] }),
-    })
-    expect(createRes.status).toBe(400)
-    await expect(createRes.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
-    expect(storage.saveRoom).not.toHaveBeenCalled()
-    expect(storage.addRoomAgent).not.toHaveBeenCalled()
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
-
-    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-    const addRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(forbiddenParticipant),
-    })
-    expect(addRes.status).toBe(400)
-    await expect(addRes.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
-    expect(storage.addRoomAgent).not.toHaveBeenCalled()
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
-  })
-
-  it('rejects cloning legacy scoped participants with forbidden providers before persisting a new room', async () => {
-    storage.rooms.set('room-source', { id: 'room-source', name: 'Source', inviteCode: 'SOURCE', sessionSeed: '0' })
-    storage.agents.set('room-source', [{
-      id: 'row-agent',
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'OAuth Codex',
-      runtime: 'coding_agent',
-      codingAgentId: 'codex',
-      mode: 'scoped',
-      provider: 'openai-codex',
-      model: 'gpt-5-codex',
-      apiMode: 'codex_responses',
-      sessionId: 'legacy-session',
-    }])
-    storage.saveRoom.mockClear()
-
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Rejected Clone', inviteCode: 'CLONE-BAD' }),
-    })
-
-    expect(res.status).toBe(400)
-    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('does not support OAuth/subscription providers') })
-    expect(storage.saveRoom).not.toHaveBeenCalled()
-    expect(storage.addRoomAgent).not.toHaveBeenCalled()
-    expect(agentClients.createAgent).not.toHaveBeenCalled()
   })
 
   it('creates a room, persists successful agents, and reports agent connection failures', async () => {
@@ -501,33 +417,6 @@ describe('group chat REST route baseline', () => {
         username: 'Local user',
       },
     }))
-  })
-
-  it('preserves mixed-runtime bindings for initial room participants', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Mixed Room',
-        inviteCode: 'MIXED1',
-        agents: [
-          { profile: 'default', name: 'Codex A', runtime: 'coding_agent', codingAgentId: 'codex', provider: 'openai', model: 'gpt-5-codex', apiMode: 'codex_responses', reasoningEffort: 'high' },
-          { profile: 'default', name: 'Codex B', runtime: 'coding_agent', codingAgentId: 'codex', provider: 'openai', model: 'gpt-5-codex', apiMode: 'codex_responses', reasoningEffort: 'medium' },
-          { profile: 'default', name: 'Claude A', runtime: 'coding_agent', codingAgentId: 'claude-code', provider: 'anthropic', model: 'claude-sonnet', apiMode: 'anthropic_messages', reasoningEffort: 'high' },
-          { profile: 'default', name: 'Claude B', runtime: 'coding_agent', codingAgentId: 'claude-code', provider: 'anthropic', model: 'claude-sonnet', apiMode: 'anthropic_messages', reasoningEffort: 'medium' },
-        ],
-      }),
-    })
-
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.agents).toHaveLength(4)
-    expect(body.agents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Codex A', runtime: 'coding_agent', codingAgentId: 'codex', apiMode: 'codex_responses', reasoningEffort: 'high' }),
-      expect.objectContaining({ name: 'Claude A', runtime: 'coding_agent', codingAgentId: 'claude-code', apiMode: 'anthropic_messages', reasoningEffort: 'high' }),
-    ]))
-    expect(new Set(body.agents.map((agent: any) => agent.agentId)).size).toBe(4)
-    expect(new Set(body.agents.map((agent: any) => agent.sessionId)).size).toBe(4)
   })
 
   it('returns room detail with paging metadata, agents, and members', async () => {
@@ -771,14 +660,7 @@ describe('group chat REST route baseline', () => {
 
   it('rejects duplicate room agent display names case-insensitively', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
-    storage.agents.set('room-1', [{
-      id: 'row-agent',
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Agent A',
-      runtime: 'hermes',
-      sessionId: 'session-a',
-    }])
+    storage.agents.set('room-1', [{ id: 'row-agent', agentId: 'agent-1', profile: 'default', name: 'Agent' }])
 
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',

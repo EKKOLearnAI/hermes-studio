@@ -65,6 +65,11 @@ export type GroupChatMention =
     | { type: 'participant'; participantId: string; displayName: string; start: number; length: number }
     | { type: 'all'; displayName: string; start: number; length: number }
 
+export interface StructuredChainRequest {
+    version: 1
+    participants: Array<Extract<GroupChatMention, { type: 'participant' }>>
+}
+
 export interface AgentAddResult {
     profile: string
     ok: boolean
@@ -110,6 +115,7 @@ export interface GroupHandoffJob {
     targetAgentId: string
     depth: number
     kind: 'mention' | 'fixed' | 'fanout'
+    chainOrderJson: string
     status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'authorization_revoked'
     attemptCount: number
     lastError: string
@@ -168,7 +174,7 @@ export interface JoinResult {
 // ─── Socket.IO Client ──────────────────────────────────────
 
 let socket: ReturnType<typeof io> | null = null
-const GROUP_CHAT_MENTION_PROTOCOL_VERSION = 1
+const GROUP_CHAT_MENTION_PROTOCOL_VERSION = 2
 
 export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
     if (socket?.connected) return socket

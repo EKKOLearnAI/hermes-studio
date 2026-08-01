@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const order = vi.hoisted(() => [] as string[])
-const getModelContextLengthMock = vi.hoisted(() => vi.fn(() => 256_000))
 
 const mockSocket = vi.hoisted(() => ({
   id: 'agent-socket-1',
@@ -55,9 +54,6 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
 }))
 vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({ updateUsage: vi.fn() }))
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
-  getModelContextLength: getModelContextLengthMock,
-}))
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
@@ -89,7 +85,6 @@ describe('group chat agent workspace bridge runs', () => {
       }
     })
     bridgeMock.interrupt.mockResolvedValue(undefined)
-    getModelContextLengthMock.mockReturnValue(256_000)
   })
 
   function workspaceDraft(runId: string, sessionId = 'session-1') {
@@ -679,7 +674,6 @@ describe('group chat agent workspace bridge runs', () => {
       'default',
       expect.objectContaining({
         background_delegation_enabled: false,
-        source: 'group_chat',
       }),
     )
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')

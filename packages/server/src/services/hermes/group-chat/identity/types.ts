@@ -35,6 +35,7 @@ export interface EnsureAuthenticatedHumanActorInput {
   description: string
   avatar: string
   capabilities?: readonly string[]
+  preserveAuthorizationRevisionOnLegacyRepair?: boolean
 }
 
 export interface EnsureLocalActorInput {

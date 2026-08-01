@@ -65,7 +65,6 @@ export interface ContextSnapshot {
     summary: string
     lastMessageId: string
     lastMessageTimestamp: number
-    lastRoomSeq?: number
     updatedAt: number
 }
 
@@ -83,7 +82,7 @@ export interface SummaryCacheEntry {
 export interface MessageFetcher {
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): StoredMessage[]
     getContextSnapshot(roomId: string): ContextSnapshot | null
-    saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number, lastRoomSeq?: number): void
+    saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number): void
     deleteContextSnapshot(roomId: string): void
 }
 
@@ -141,14 +140,6 @@ export interface BuildContextInput {
     summarySessionRegistrar: () => GatewaySessionLease
     compression?: Partial<CompressionConfig>
     profile?: string
-    /** Stable canonical Room event sequence already delivered to this participant's native session. */
-    participantCursor?: number
-    /** Sequence-bounded summary retained for an inactive participant before older Room rows are pruned. */
-    participantCheckpoint?: {
-        summary: string
-        fromRoomSeq: number
-        throughRoomSeq: number
-    }
     contextTokenEstimator?: (
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         instructions: string,

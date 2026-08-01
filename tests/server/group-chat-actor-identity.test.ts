@@ -10,6 +10,7 @@ import {
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
 import { groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import { setGroupChatRuntimeServer } from '../../packages/server/src/services/hermes/group-chat/runtime'
 
 describe('group chat actor identity', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
@@ -24,6 +25,7 @@ describe('group chat actor identity', () => {
   })
 
   afterEach(() => {
+    setGroupChatRuntimeServer(null)
     vi.mocked(isAuthEnabled).mockResolvedValue(false)
     vi.mocked(authenticateUserToken).mockResolvedValue(null as any)
     harness?.cleanup()
@@ -125,6 +127,544 @@ describe('group chat actor identity', () => {
       inviteCode: 'ROOM1',
     })).resolves.toEqual(expect.objectContaining({ roomId: 'room-profile' }))
     expect(storage.getMemberByAuthUserId('room-profile', 42)).not.toBeNull()
+  })
+
+  it('persists effective authority when a legacy room owner first reconnects', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-legacy-owner', 'Legacy Owner Room', 'LEGACY', { ownerAuthUserId: 42 })
+    const target = storage.addRoomAgent(
+      'room-legacy-owner', 'agent-1', 'default', 'Worker', '', 0,
+      { sessionId: 'session-agent-1' },
+    )
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-legacy-owner',
+      userId: 'auth:42',
+      requestedName: 'Legacy Owner',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'owner', role: 'admin', profiles: [] },
+    })
+    expect(admission.status).toBe('admitted')
+
+    const owner = storage.findActiveActorByAuthUserId('room-legacy-owner', 42)!
+    expect(storage.getActorCapabilities(owner.id)).toEqual([
+      'room.read',
+      'room.write',
+      'room.type',
+      'room.manage',
+      'agent.invoke',
+      'approval.respond',
+    ])
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'legacy-owner-message',
+      roomId: 'room-legacy-owner',
+      senderId: 'auth:42',
+      senderName: 'Legacy Owner',
+      content: '@Worker inspect',
+      timestamp: 1,
+      role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'legacy-owner-chain',
+        targetAgentId: target.agentId,
+        targetSessionId: target.sessionId,
+        depth: 0,
+        kind: 'mention',
+      }],
+      authority: { initiatorActorId: owner.id, sourceActorId: owner.id },
+    })).not.toThrow()
+  })
+
+  it('persists effective authority when a super admin first reconnects', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-super-admin', 'Super Admin Room', 'LEGACY')
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-super-admin',
+      userId: 'auth:42',
+      requestedName: 'Super Admin',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'super-admin', role: 'super_admin', profiles: [] },
+    })
+
+    expect(admission.status).toBe('admitted')
+    const actor = storage.findActiveActorByAuthUserId('room-super-admin', 42)!
+    expect(storage.getActorCapabilities(actor.id)).toEqual([
+      'room.read',
+      'room.write',
+      'room.type',
+      'room.manage',
+      'agent.invoke',
+      'approval.respond',
+    ])
+  })
+
+  it('removes full role-derived grants after a legacy zero-capability super-admin repair', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-legacy-super-repair', 'Legacy Super Repair', 'LEGACY', { ownerAuthUserId: 7 })
+    storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-legacy-super-repair', authUserId: 42, userId: 'auth:42',
+      userName: 'Former Super Admin', description: '', avatar: '',
+    })
+    storage.admitHumanMember({
+      roomId: 'room-legacy-super-repair', userId: 'auth:42', requestedName: 'Former Super Admin',
+      requestedDescription: '', avatar: '',
+      authUser: { id: 42, username: 'former-super-admin', role: 'super_admin', profiles: [] },
+    })
+    const repaired = storage.findActiveActorByAuthUserId('room-legacy-super-repair', 42)!
+    expect(storage.getActorCapabilities(repaired.id)).toEqual([
+      'room.read', 'room.write', 'room.type', 'room.manage', 'agent.invoke', 'approval.respond',
+    ])
+
+    await groupServer.reprojectAuthenticatedUserRole(42, 'admin')
+
+    const demoted = storage.findActiveActorByAuthUserId('room-legacy-super-repair', 42)!
+    expect(storage.getActorCapabilities(demoted.id)).toEqual(['room.read'])
+  })
+
+  it('preserves revision-positive explicit grants while removing role-derived super-admin authority', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-explicit-member', 'Explicit Member Room', 'EXPLICIT', { ownerAuthUserId: 7 })
+    storage.admitHumanMember({
+      roomId: 'room-explicit-member', userId: 'auth:42', requestedName: 'Former Super Admin',
+      requestedDescription: '', avatar: '',
+      authUser: { id: 42, username: 'former-super-admin', role: 'super_admin', profiles: [] },
+    })
+    const roleActor = storage.findActiveActorByAuthUserId('room-explicit-member', 42)!
+    expect(roleActor.authorizationRevision).toBe(0)
+
+    const explicitActor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-explicit-member', authUserId: 42, userId: 'auth:42', userName: 'Former Super Admin',
+      description: '', avatar: '', capabilities: ['room.write', 'agent.invoke'],
+    })
+    expect(explicitActor.authorizationRevision).toBeGreaterThan(0)
+
+    await groupServer.reprojectAuthenticatedUserRole(42, 'admin')
+
+    const after = storage.findActiveActorByAuthUserId('room-explicit-member', 42)!
+    expect(storage.getActorCapabilities(after.id)).toEqual(['room.read', 'room.write', 'agent.invoke'])
+    expect(storage.getActorCapabilities(after.id)).not.toContain('room.manage')
+    expect(storage.getActorCapabilities(after.id)).not.toContain('approval.respond')
+  })
+
+  it('fences role-derived authority even when explicit persisted grants do not change', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-explicit-fence', 'Explicit Fence Room', 'FENCE', { ownerAuthUserId: 7 })
+    const target = storage.addRoomAgent(
+      'room-explicit-fence', 'agent-worker', 'default', 'Worker', '', 0,
+      { sessionId: 'session-agent-worker' },
+    )
+    storage.admitHumanMember({
+      roomId: 'room-explicit-fence', userId: 'auth:42', requestedName: 'Former Super Admin',
+      requestedDescription: '', avatar: '',
+      authUser: { id: 42, username: 'former-super-admin', role: 'super_admin', profiles: [] },
+    })
+    const fullActor = storage.findActiveActorByAuthUserId('room-explicit-fence', 42)!
+    const saved = storage.saveMessageAndRefreshRoom({
+      id: 'explicit-fence-message', roomId: 'room-explicit-fence', senderId: 'auth:42',
+      senderName: 'Former Super Admin', content: '@Worker inspect', timestamp: 1, role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'explicit-fence-chain', targetAgentId: target.agentId,
+        targetSessionId: target.sessionId, depth: 0, kind: 'mention',
+      }],
+      authority: { initiatorActorId: fullActor.id, sourceActorId: fullActor.id },
+    })
+    const explicitActor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-explicit-fence', authUserId: 42, userId: 'auth:42', userName: 'Former Super Admin',
+      description: '', avatar: '', capabilities: ['room.read', 'room.write', 'agent.invoke'],
+    })
+    const roomRevisionBefore = storage.getRoom('room-explicit-fence')!.authorizationRevision
+    expect(storage.getHandoffJob(saved.handoffJobs[0].id)?.status).toBe('pending')
+
+    await groupServer.reprojectAuthenticatedUserRole(42, 'admin')
+
+    const after = storage.findActiveActorByAuthUserId('room-explicit-fence', 42)!
+    expect(storage.getActorCapabilities(after.id)).toEqual(['room.read', 'room.write', 'agent.invoke'])
+    expect(after.authorizationRevision).toBeGreaterThan(explicitActor.authorizationRevision)
+    expect(storage.getRoom('room-explicit-fence')!.authorizationRevision).toBeGreaterThan(roomRevisionBefore)
+    expect(storage.getHandoffJob(saved.handoffJobs[0].id)).toMatchObject({ status: 'authorization_revoked' })
+  })
+
+  it('reprojects super-admin authority on role demotion while preserving owner authority and fencing handoffs', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-owned', 'Owned Room', 'OWNED', { ownerAuthUserId: 42 })
+    storage.saveRoom('room-member', 'Member Room', 'MEMBER', { ownerAuthUserId: 7 })
+    const ownedTarget = storage.addRoomAgent(
+      'room-owned', 'owned-agent', 'default', 'Owned Worker', '', 0,
+      { sessionId: 'session-owned-agent' },
+    )
+    const memberTarget = storage.addRoomAgent(
+      'room-member', 'member-agent', 'default', 'Member Worker', '', 0,
+      { sessionId: 'session-member-agent' },
+    )
+
+    for (const roomId of ['room-owned', 'room-member']) {
+      const admission = storage.admitHumanMember({
+        roomId,
+        userId: 'auth:42',
+        requestedName: 'Former Super Admin',
+        requestedDescription: '',
+        avatar: '',
+        authUser: { id: 42, username: 'former-super-admin', role: 'super_admin', profiles: [] },
+      })
+      expect(admission.status).toBe('admitted')
+    }
+
+    const ownedActorBefore = storage.findActiveActorByAuthUserId('room-owned', 42)!
+    const memberActorBefore = storage.findActiveActorByAuthUserId('room-member', 42)!
+    const fullCapabilities = [
+      'room.read',
+      'room.write',
+      'room.type',
+      'room.manage',
+      'agent.invoke',
+      'approval.respond',
+    ]
+    expect(storage.getActorCapabilities(ownedActorBefore.id)).toEqual(fullCapabilities)
+    expect(storage.getActorCapabilities(memberActorBefore.id)).toEqual(fullCapabilities)
+
+    const ownedMessage = storage.saveMessageAndRefreshRoom({
+      id: 'owned-before-demotion', roomId: 'room-owned', senderId: 'auth:42', senderName: 'Former Super Admin',
+      content: '@Owned Worker inspect', timestamp: 1, role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'owned-demotion-chain', targetAgentId: ownedTarget.agentId,
+        targetSessionId: ownedTarget.sessionId, depth: 0, kind: 'mention',
+      }],
+      authority: { initiatorActorId: ownedActorBefore.id, sourceActorId: ownedActorBefore.id },
+    })
+    const memberMessage = storage.saveMessageAndRefreshRoom({
+      id: 'member-before-demotion', roomId: 'room-member', senderId: 'auth:42', senderName: 'Former Super Admin',
+      content: '@Member Worker inspect', timestamp: 2, role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'member-demotion-chain', targetAgentId: memberTarget.agentId,
+        targetSessionId: memberTarget.sessionId, depth: 0, kind: 'mention',
+      }],
+      authority: { initiatorActorId: memberActorBefore.id, sourceActorId: memberActorBefore.id },
+    })
+    const runningOwned = storage.claimHandoffJobs('demotion-worker', Date.now(), 1, 60_000)[0]
+    const runningMember = storage.claimHandoffJobs('demotion-worker', Date.now(), 1, 60_000)[0]
+    expect(runningOwned.id).toBe(ownedMessage.handoffJobs[0].id)
+    expect(runningMember.id).toBe(memberMessage.handoffJobs[0].id)
+    expect(storage.getHandoffJob(runningMember.id)?.status).toBe('running')
+
+    const ownedRoomRevisionBefore = storage.getRoom('room-owned')!.authorizationRevision
+    const memberRoomRevisionBefore = storage.getRoom('room-member')!.authorizationRevision
+    const interruptHandoffTarget = vi.spyOn(groupServer.agentClients, 'interruptHandoffTarget').mockResolvedValue(undefined)
+    await groupServer.reprojectAuthenticatedUserRole(42, 'admin')
+
+    const ownedActorAfter = storage.findActiveActorByAuthUserId('room-owned', 42)!
+    const memberActorAfter = storage.findActiveActorByAuthUserId('room-member', 42)!
+    expect(storage.getActorCapabilities(ownedActorAfter.id)).toEqual(fullCapabilities)
+    expect(storage.getActorCapabilities(memberActorAfter.id)).toEqual(['room.read'])
+    expect(ownedActorAfter.authorizationRevision).toBe(ownedActorBefore.authorizationRevision)
+    expect(memberActorAfter.authorizationRevision).toBeGreaterThan(memberActorBefore.authorizationRevision)
+    expect(storage.getRoom('room-owned')!.authorizationRevision).toBe(ownedRoomRevisionBefore)
+    expect(storage.getRoom('room-member')!.authorizationRevision).toBeGreaterThan(memberRoomRevisionBefore)
+    expect(storage.getHandoffJob(runningOwned.id)).toMatchObject({ status: 'running' })
+    expect(storage.getHandoffJob(runningMember.id)).toMatchObject({
+      status: 'authorization_revoked', leaseOwner: '', leaseToken: '',
+    })
+    expect(interruptHandoffTarget).toHaveBeenCalledWith(
+      'room-member', memberTarget.agentId, memberTarget.sessionId,
+    )
+    expect(interruptHandoffTarget).not.toHaveBeenCalledWith(
+      'room-owned', ownedTarget.agentId, ownedTarget.sessionId,
+    )
+  })
+
+  it('atomically demotes the user row, reprojects real grants, fences the real job, and interrupts its runtime', async () => {
+    seedAuthenticatedUser(harness.db, { id: 1, username: 'primary-super', role: 'super_admin' })
+    seedAuthenticatedUser(harness.db, { id: 42, username: 'secondary-super', role: 'super_admin' })
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-controller-demotion', 'Controller Demotion', 'DEMOTE', { ownerAuthUserId: 1 })
+    const target = storage.addRoomAgent(
+      'room-controller-demotion', 'agent-worker', 'default', 'Worker', '', 0,
+      { sessionId: 'session-agent-worker' },
+    )
+    storage.admitHumanMember({
+      roomId: 'room-controller-demotion', userId: 'auth:42', requestedName: 'Secondary Super',
+      requestedDescription: '', avatar: '',
+      authUser: { id: 42, username: 'secondary-super', role: 'super_admin', profiles: [] },
+    })
+    const actorBefore = storage.findActiveActorByAuthUserId('room-controller-demotion', 42)!
+    const saved = storage.saveMessageAndRefreshRoom({
+      id: 'controller-demotion-message', roomId: 'room-controller-demotion', senderId: 'auth:42',
+      senderName: 'Secondary Super', content: '@Worker inspect', timestamp: 1, role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'controller-demotion-chain', targetAgentId: target.agentId,
+        targetSessionId: target.sessionId, depth: 0, kind: 'mention',
+      }],
+      authority: { initiatorActorId: actorBefore.id, sourceActorId: actorBefore.id },
+    })
+    const running = storage.claimHandoffJobs('controller-demotion-worker', Date.now(), 1, 60_000)[0]
+    expect(running.id).toBe(saved.handoffJobs[0].id)
+    const roomRevisionBefore = storage.getRoom('room-controller-demotion')!.authorizationRevision
+    const interruptHandoffTarget = vi.spyOn(groupServer.agentClients, 'interruptHandoffTarget').mockResolvedValue(undefined)
+    setGroupChatRuntimeServer(groupServer)
+    const controller = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'primary-super', role: 'super_admin' } },
+      params: { id: '42' }, request: { body: { role: 'admin' } }, status: 200, body: null,
+    } as any
+
+    await controller.updateManagedUser(ctx)
+
+    expect(harness.db.prepare('SELECT role FROM users WHERE id = 42').get()).toEqual({ role: 'admin' })
+    const actorAfter = storage.findActiveActorByAuthUserId('room-controller-demotion', 42)!
+    expect(storage.getActorCapabilities(actorAfter.id)).toEqual(['room.read'])
+    expect(actorAfter.authorizationRevision).toBeGreaterThan(actorBefore.authorizationRevision)
+    expect(storage.getRoom('room-controller-demotion')!.authorizationRevision).toBeGreaterThan(roomRevisionBefore)
+    expect(storage.getHandoffJob(running.id)).toMatchObject({
+      status: 'authorization_revoked', leaseOwner: '', leaseToken: '',
+    })
+    expect(interruptHandoffTarget).toHaveBeenCalledWith(
+      'room-controller-demotion', target.agentId, target.sessionId,
+    )
+  })
+
+  it('returns 503 after committing the durable demotion fence when the persisted runtime cannot be interrupted', async () => {
+    seedAuthenticatedUser(harness.db, { id: 1, username: 'primary-super', role: 'super_admin' })
+    seedAuthenticatedUser(harness.db, { id: 42, username: 'secondary-super', role: 'super_admin' })
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-controller-unsynced', 'Controller Unsynced', 'UNSYNCED', { ownerAuthUserId: 1 })
+    const target = storage.addRoomAgent(
+      'room-controller-unsynced', 'agent-worker', 'default', 'Worker', '', 0,
+      { sessionId: 'session-agent-worker' },
+    )
+    storage.admitHumanMember({
+      roomId: 'room-controller-unsynced', userId: 'auth:42', requestedName: 'Secondary Super',
+      requestedDescription: '', avatar: '',
+      authUser: { id: 42, username: 'secondary-super', role: 'super_admin', profiles: [] },
+    })
+    const actorBefore = storage.findActiveActorByAuthUserId('room-controller-unsynced', 42)!
+    const saved = storage.saveMessageAndRefreshRoom({
+      id: 'controller-unsynced-message', roomId: 'room-controller-unsynced', senderId: 'auth:42',
+      senderName: 'Secondary Super', content: '@Worker inspect', timestamp: 1, role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'controller-unsynced-chain', targetAgentId: target.agentId,
+        targetSessionId: target.sessionId, depth: 0, kind: 'mention',
+      }],
+      authority: { initiatorActorId: actorBefore.id, sourceActorId: actorBefore.id },
+    })
+    const running = storage.claimHandoffJobs('controller-unsynced-worker', Date.now(), 1, 60_000)[0]
+    expect(running.id).toBe(saved.handoffJobs[0].id)
+    const interruptHandoffTarget = vi.spyOn(groupServer.agentClients, 'interruptHandoffTarget')
+      .mockRejectedValue(new Error('runtime interrupt is not synchronized'))
+    setGroupChatRuntimeServer(groupServer)
+    const controller = await import('../../packages/server/src/controllers/auth')
+    const ctx = {
+      state: { user: { id: 1, username: 'primary-super', role: 'super_admin' } },
+      params: { id: '42' }, request: { body: { role: 'admin' } }, status: 200, body: null,
+    } as any
+
+    await controller.updateManagedUser(ctx)
+
+    expect(interruptHandoffTarget).toHaveBeenCalledWith(
+      'room-controller-unsynced', target.agentId, target.sessionId,
+    )
+    expect(ctx.status).toBe(503)
+    expect(harness.db.prepare('SELECT role FROM users WHERE id = 42').get()).toEqual({ role: 'admin' })
+    expect(storage.getHandoffJob(running.id)).toMatchObject({
+      status: 'authorization_revoked', leaseOwner: '', leaseToken: '',
+    })
+  })
+
+  it('persists read authority without elevating an authenticated legacy member on first reconnect', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-legacy-member', 'Legacy Member Room', 'LEGACY')
+    const target = storage.addRoomAgent(
+      'room-legacy-member', 'agent-1', 'default', 'Worker', '', 0,
+      { sessionId: 'session-agent-1' },
+    )
+    const now = Date.now()
+    harness.db.prepare(
+      `INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar, authUserId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('legacy-member-42', 'room-legacy-member', 'auth:42', 'Legacy Member', '', now, now, '', 42)
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-legacy-member',
+      userId: 'auth:42',
+      requestedName: 'Legacy Member',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'member', role: 'admin', profiles: [] },
+    })
+    expect(admission.status).toBe('admitted')
+
+    const member = storage.findActiveActorByAuthUserId('room-legacy-member', 42)!
+    expect(storage.getActorCapabilities(member.id)).toEqual(['room.read'])
+    expect(() => storage.saveMessageAndRefreshRoom({
+      id: 'legacy-member-message',
+      roomId: 'room-legacy-member',
+      senderId: 'auth:42',
+      senderName: 'Legacy Member',
+      content: '@Worker inspect',
+      timestamp: 1,
+      role: 'user',
+    }, {
+      handoffs: [{
+        chainId: 'legacy-member-chain',
+        targetAgentId: target.agentId,
+        targetSessionId: target.sessionId,
+        depth: 0,
+        kind: 'mention',
+      }],
+      authority: { initiatorActorId: member.id, sourceActorId: member.id },
+    })).toThrow(`Handoff authorization denied: actor ${member.id} lacks room.write, agent.invoke`)
+  })
+
+  it('repairs a zero-capability actor created by the legacy admission bug', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-legacy-zero', 'Legacy Zero Room', 'LEGACY', { ownerAuthUserId: 42 })
+    const actor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-legacy-zero',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Legacy Owner',
+      description: '',
+      avatar: '',
+    })
+    expect(storage.getActorCapabilities(actor.id)).toEqual([])
+    expect(actor.authorizationRevision).toBe(0)
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-legacy-zero',
+      userId: 'auth:42',
+      requestedName: 'Legacy Owner',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'owner', role: 'admin', profiles: [] },
+    })
+
+    expect(admission.status).toBe('admitted')
+    expect(storage.getActorCapabilities(actor.id)).toEqual([
+      'room.read',
+      'room.write',
+      'room.type',
+      'room.manage',
+      'agent.invoke',
+      'approval.respond',
+    ])
+  })
+
+  it('repairs an incomplete zero-revision owner authority projection', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-partial-owner', 'Partial Owner Room', 'LEGACY', { ownerAuthUserId: 42 })
+    const actor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-partial-owner',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Legacy Owner',
+      description: '',
+      avatar: '',
+      capabilities: ['room.read'],
+    })
+    expect(actor.authorizationRevision).toBe(0)
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-partial-owner',
+      userId: 'auth:42',
+      requestedName: 'Legacy Owner',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'owner', role: 'admin', profiles: [] },
+    })
+
+    expect(admission.status).toBe('admitted')
+    expect(storage.getActorCapabilities(actor.id)).toEqual([
+      'room.read',
+      'room.write',
+      'room.type',
+      'room.manage',
+      'agent.invoke',
+      'approval.respond',
+    ])
+  })
+
+  it('does not restore explicitly revoked authenticated grants on ordinary reconnect', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-revoked-member', 'Revoked Member Room', 'ROOM1')
+    const actor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-revoked-member',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Revoked Member',
+      description: '',
+      avatar: '',
+      capabilities: ['room.read'],
+    })
+    storage.addRoomMember('room-revoked-member', 'auth:42', 'Revoked Member', '', '', 42)
+    const revoked = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-revoked-member',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Revoked Member',
+      description: '',
+      avatar: '',
+      capabilities: [],
+    })
+    expect(revoked.authorizationRevision).toBeGreaterThan(actor.authorizationRevision)
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-revoked-member',
+      userId: 'auth:42',
+      requestedName: 'Revoked Member',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'revoked', role: 'admin', profiles: [] },
+    })
+
+    expect(admission.status).toBe('admitted')
+    expect(storage.getActorCapabilities(actor.id)).toEqual([])
+    expect(storage.findActiveActorByAuthUserId('room-revoked-member', 42)?.authorizationRevision)
+      .toBe(revoked.authorizationRevision)
+  })
+
+  it('does not restore explicitly revoked owner grants on ordinary reconnect', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-revoked-owner', 'Revoked Owner Room', 'ROOM1', { ownerAuthUserId: 42 })
+    const actor = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-revoked-owner',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Revoked Owner',
+      description: '',
+      avatar: '',
+      capabilities: ['room.read', 'room.write', 'agent.invoke'],
+    })
+    storage.addRoomMember('room-revoked-owner', 'auth:42', 'Revoked Owner', '', '', 42)
+    const revoked = storage.ensureAuthenticatedHumanActor({
+      roomId: 'room-revoked-owner',
+      authUserId: 42,
+      userId: 'auth:42',
+      userName: 'Revoked Owner',
+      description: '',
+      avatar: '',
+      capabilities: [],
+    })
+    expect(revoked.authorizationRevision).toBeGreaterThan(actor.authorizationRevision)
+
+    const admission = storage.admitHumanMember({
+      roomId: 'room-revoked-owner',
+      userId: 'auth:42',
+      requestedName: 'Revoked Owner',
+      requestedDescription: '',
+      avatar: '',
+      authUser: { id: 42, username: 'owner', role: 'admin', profiles: [] },
+    })
+
+    expect(admission.status).toBe('admitted')
+    expect(storage.getActorCapabilities(actor.id)).toEqual([])
+    expect(storage.findActiveActorByAuthUserId('room-revoked-owner', 42)?.authorizationRevision)
+      .toBe(revoked.authorizationRevision)
   })
 
   it('preserves authoritative authenticated grants during an ordinary authorized reconnect', () => {

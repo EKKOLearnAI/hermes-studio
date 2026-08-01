@@ -296,6 +296,7 @@ describe('group chat approval and context baseline', () => {
     })
     await requested
     const resolved = once<any>(human, 'approval.resolved')
+
     agent.emit('approval.resolved', { roomId: 'room-1', agentName: 'Agent', agentSessionId, approval_id: 'approval-1', choice: 'deny' })
 
     expect(await resolved).toEqual({

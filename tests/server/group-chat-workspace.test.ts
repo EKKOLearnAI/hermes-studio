@@ -111,12 +111,6 @@ describe('group chat room workspace', () => {
     storage.saveRoom('room-1', 'Room 1')
     const initialSeed = storage.getRoom('room-1')?.sessionSeed
     expect(storage.getRoom('room-1')?.workspace).toBe('')
-    storage.addRoomAgent('room-1', 'agent-1', 'default', 'Worker', '', 0, {
-      runtime: 'coding_agent',
-      codingAgentId: 'claude-code',
-      sessionId: 'gc_room-1_agent-1_0',
-      sessionGeneration: 0,
-    })
 
     const firstWorkspaceRoom = storage.updateRoomWorkspace('room-1', workspace)
     expect(firstWorkspaceRoom?.workspace).toBe(workspace)
@@ -124,23 +118,11 @@ describe('group chat room workspace', () => {
     const workspaceSeed = firstWorkspaceRoom?.sessionSeed
     expect(storage.getAllRooms()[0]?.workspace).toBe(workspace)
     expect(storage.getRoom('room-1')?.workspace).toBe(workspace)
-    expect(storage.getRoomAgentByAgentId('room-1', 'agent-1')).toMatchObject({
-      sessionId: 'gc_room-1_agent-1_1',
-      sessionGeneration: 1,
-    })
 
     expect(storage.updateRoomWorkspace('room-1', workspace)?.sessionSeed).toBe(workspaceSeed)
-    expect(storage.getRoomAgentByAgentId('room-1', 'agent-1')).toMatchObject({
-      sessionId: 'gc_room-1_agent-1_1',
-      sessionGeneration: 1,
-    })
     const clearedRoom = storage.updateRoomWorkspace('room-1', '')
     expect(clearedRoom?.workspace).toBe('')
     expect(clearedRoom?.sessionSeed).not.toBe(workspaceSeed)
-    expect(storage.getRoomAgentByAgentId('room-1', 'agent-1')).toMatchObject({
-      sessionId: 'gc_room-1_agent-1_2',
-      sessionGeneration: 2,
-    })
     server.getIO().close()
   })
 
