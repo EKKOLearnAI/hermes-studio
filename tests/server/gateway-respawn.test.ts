@@ -18,12 +18,15 @@ class FakeChild extends EventEmitter {
 }
 
 let fakeChildren: FakeChild[] = []
+let fakeSpawnOptions: any[] = []
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
   resolveHermesInvocation: (bin: string) => ({ command: bin, argsPrefix: [] }),
   execHermesWithBin: vi.fn(),
   execHermes: vi.fn(),
-  spawnHermesWithBin: vi.fn(() => {
+  spawnHermesWithBin: vi.fn((_bin: string, _args: string[], options: any) => {
+    fakeSpawnOptions.push(options)
     const pid = 10000 + fakeChildren.length
     const child = new FakeChild(pid)
     fakeChildren.push(child)
@@ -39,9 +42,27 @@ afterEach(() => {
   vi.resetModules()
   process.env = { ...originalEnv }
   fakeChildren = []
+  fakeSpawnOptions = []
+  if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
 })
 
 describe('gateway-runner supervision', () => {
+  it('keeps the managed gateway attached and hidden on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    vi.resetModules()
+    const { startGatewayRunManaged } = await import(
+      '../../packages/server/src/services/hermes/gateway-runner'
+    )
+
+    startGatewayRunManaged('C:\\runtime\\hermes.exe', { profileDir: 'C:\\runtime\\profile' })
+
+    expect(fakeSpawnOptions[0]).toMatchObject({
+      detached: false,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  })
+
   it('respawns the gateway when the spawned child dies unexpectedly', async () => {
     vi.useFakeTimers()
     vi.resetModules()

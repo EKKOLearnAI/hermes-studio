@@ -239,7 +239,11 @@ function startGatewayRunManagedInternal(
   }
 
   const child = spawnHermesWithBin(hermesBin, ['gateway', 'run', '--replace'], {
-    detached: true,
+    // On Windows, detached:true uses DETACHED_PROCESS. That makes
+    // CREATE_NO_WINDOW/windowsHide ineffective and exposes the venv
+    // Scripts\python.exe console. The server already supervises this child,
+    // so keep it attached there; POSIX still needs a detached process group.
+    detached: process.platform !== 'win32',
     stdio: 'ignore',
     windowsHide: true,
     env: {
