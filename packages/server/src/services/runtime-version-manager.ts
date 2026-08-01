@@ -11,6 +11,7 @@ const ACTIVE_VERSION_FILE = 'active-version.json'
 const DEFAULT_REMOTE_MANIFEST_URL = 'https://hermes-studio.ai/versions.json'
 const DEFAULT_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
 const DEFAULT_GITHUB_REPO = 'EKKOLearnAI/hermes-studio'
+const BUILT_IN_HERMES_RUNTIME_VERSIONS = ['0.19.1']
 
 export interface ActiveVersionManifest {
   schema: number
@@ -184,6 +185,10 @@ function normalizeStringList(value: unknown): string[] {
     : []
 }
 
+function mergeStringLists(...values: unknown[]): string[] {
+  return Array.from(new Set(values.flatMap(normalizeStringList).map(item => item.trim())))
+}
+
 function readRuntimeManifestVersion(runtimeDir: string): string | undefined {
   const manifest = readJsonFile<{ hermesAgentVersion?: unknown; asset?: { name?: unknown } }>(join(runtimeDir, 'runtime-manifest.json'))
   if (typeof manifest?.hermesAgentVersion === 'string' && manifest.hermesAgentVersion.trim()) {
@@ -351,7 +356,7 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
       pendingStorageDirectory: active?.pendingRuntimeRootDirectory || '',
       migrationError: active?.runtimeMigrationError || '',
       installed: listInstalledRuntimeVersions(active),
-      remoteVersions: normalizeStringList(manifest?.hermes),
+      remoteVersions: mergeStringLists(manifest?.hermes, BUILT_IN_HERMES_RUNTIME_VERSIONS),
     },
     webui: {
       currentVersion: webUiVersion,
