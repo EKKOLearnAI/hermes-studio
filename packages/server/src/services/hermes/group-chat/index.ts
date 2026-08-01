@@ -657,8 +657,8 @@ function parseMessageScopedChainOrder(value: unknown, agents: RoomAgent[]): Room
     const allowed = new Map(agents.map(agent => [agent.agentId, agent]))
     const ordered: RoomAgent[] = []
     for (const rawId of ids) {
-        const id = String(rawId || '')
-        const agent = allowed.get(id)
+        if (typeof rawId !== 'string' || !rawId) return []
+        const agent = allowed.get(rawId)
         if (!agent) return []
         ordered.push(agent)
     }

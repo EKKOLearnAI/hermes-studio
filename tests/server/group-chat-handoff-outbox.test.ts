@@ -1887,6 +1887,24 @@ describe('fixed-order group-chat handoff planning', () => {
     } as any)).toEqual([])
   })
 
+  it('fails closed when a persisted message-scoped chain contains a non-string participant id', () => {
+    const agentsWithNumericLookingId = [
+      ...agents,
+      { agentId: '7', id: 'row-7', name: 'Seven', sessionId: 'session-7' },
+    ] as any[]
+
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents: agentsWithNumericLookingId,
+      source: {
+        senderId: 'a', content: 'Hermes result', role: 'assistant',
+        handoffDepth: 1, handoffChainId: 'gcchain-non-string-persisted',
+      },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: JSON.stringify(['a', 7]),
+    } as any)).toEqual([])
+  })
+
   it('plans a finite message-scoped chain by step index when a participant appears more than once', () => {
     const chainRequest = {
       version: 1,
