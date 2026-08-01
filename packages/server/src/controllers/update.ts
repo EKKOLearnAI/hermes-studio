@@ -1036,6 +1036,153 @@ function getGlobalCliScript() {
   return cli
 }
 
+/**
+ * Detect whether the server is running from a git-clone deployment.
+ * In a git-clone deployment, the repo root contains a .git directory
+ * and the server runs from the built dist/ output. This deployment
+ * cannot use `npm install -g` to upgrade — it needs git pull + build.
+ */
+function detectGitCloneDeployment(): boolean {
+  if (isDockerContainer()) return false
+
+  const candidatePaths = [
+    resolve(__dirname, '../../../../.git'),
+    resolve(__dirname, '../../.git'),
+    resolve(process.cwd(), '.git'),
+  ]
+
+  return candidatePaths.some(p => existsSync(p))
+}
+
+let isGitCloneDeploy: boolean | null = null
+function isGitCloneDeployment(): boolean {
+  if (isGitCloneDeploy === null) {
+    isGitCloneDeploy = detectGitCloneDeployment()
+  }
+  return isGitCloneDeploy
+}
+
+/**
+ * Get the repo root for a git-clone deployment.
+ */
+function getGitRepoRoot(): string | null {
+  const candidatePaths = [
+    resolve(__dirname, '../../../..'),
+    resolve(__dirname, '../..'),
+    process.cwd(),
+  ]
+
+  for (const p of candidatePaths) {
+    if (existsSync(resolve(p, '.git')) && existsSync(resolve(p, 'package.json'))) {
+      return p
+    }
+  }
+  return null
+}
+
+/**
+ * Detect the systemd service name managing the Web UI server.
+ */
+function detectSystemServicedName(): string | null {
+  try {
+    // Check if we're running under systemd by examining the cgroup
+    const cgroup = readFileSync('/proc/self/cgroup', 'utf-8')
+    for (const svc of ['hermes-webui', 'hermes-web-ui', 'hermes-webui.service', 'hermes-web-ui.service']) {
+      const serviceName = svc.endsWith('.service') ? svc : `${svc}.service`
+      if (cgroup.includes(serviceName)) {
+        return serviceName.replace('.service', '')
+      }
+    }
+  } catch {
+    // Not running under systemd or /proc not available
+  }
+  return null
+}
+
+/**
+ * Run a git-based upgrade: git pull, npm install, npm run build, then restart.
+ * Returns the output log.
+ */
+function runGitUpdateInstall(): string {
+  const repoRoot = getGitRepoRoot()
+  if (!repoRoot) {
+    throw new Error('Git-clone deployment detected but repo root not found')
+  }
+
+  const output: string[] = []
+
+  // Stash any local changes before pulling
+  try {
+    const diffResult = execFileSync('git', ['diff', '--quiet'], {
+      cwd: repoRoot, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } catch (err: any) {
+    // git diff --quiet exits non-zero if there are changes — stash them
+    if (err.status === 1) {
+      const stashOutput = execFileSync('git', ['stash', 'push', '-m', `auto-stash before web upgrade ${new Date().toISOString()}`], {
+        cwd: repoRoot, encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      output.push(`Stashed local changes: ${stashOutput.trim()}`)
+    }
+  }
+
+  // git fetch and pull
+  output.push('=== Fetching latest code ===')
+  const fetchOutput = execFileSync('git', ['fetch', 'origin', 'main'], {
+    cwd: repoRoot, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  if (fetchOutput.trim()) output.push(fetchOutput.trim())
+
+  output.push('=== Pulling latest code ===')
+  const pullOutput = execFileSync('git', ['pull', 'origin', 'main'], {
+    cwd: repoRoot, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  if (pullOutput.trim()) output.push(pullOutput.trim())
+
+  // npm install
+  output.push('=== Installing dependencies ===')
+  const installEnv = getCurrentNodeEnv()
+  const npmExec = npmExecution(['install', '--include=dev'], installEnv)
+  const installOutput = execFileSync(npmExec.command, npmExec.args, {
+    cwd: repoRoot, encoding: 'utf-8', timeout: 10 * 60 * 1000, stdio: ['pipe', 'pipe', 'pipe'], env: installEnv,
+  })
+  if (installOutput.trim()) output.push(installOutput.trim().split('\n').slice(-5).join('\n'))
+
+  // npm run build
+  output.push('=== Building ===')
+  const buildExec = npmExecution(['run', 'build'], installEnv)
+  const buildOutput = execFileSync(buildExec.command, buildExec.args, {
+    cwd: repoRoot, encoding: 'utf-8', timeout: 10 * 60 * 1000, stdio: ['pipe', 'pipe', 'pipe'], env: installEnv,
+  })
+  if (buildOutput.trim()) output.push(buildOutput.trim().split('\n').slice(-10).join('\n'))
+
+  return output.join('\n')
+}
+
+/**
+ * Restart the server after a git-based upgrade.
+ * If running under systemd, use systemctl restart.
+ * Otherwise, fall back to the spawnRestart mechanism.
+ */
+function spawnGitRestart(): void {
+  const svcName = detectSystemServicedName()
+  if (svcName) {
+    try {
+      execFileSync('systemctl', ['restart', svcName], {
+        encoding: 'utf-8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      return
+    } catch (err) {
+      console.error('[update] systemctl restart failed, falling back to spawn:', err)
+    }
+  }
+
+  // Fallback: use the existing spawn-restart mechanism
+  const port = process.env.PORT || '8648'
+  const restart = spawnRestart(port)
+  restart.unref()
+}
+
 function runUpdateInstall() {
   try {
     runNpmSync(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
@@ -1084,6 +1231,44 @@ export async function handleUpdate(ctx: any) {
   updateInProgress = true
   let keepUpdateLockForRestart = false
 
+  // Git-clone deployment: use git pull + npm install + npm run build
+  if (isGitCloneDeployment()) {
+    try {
+      const output = runGitUpdateInstall()
+
+      ctx.body = {
+        success: true,
+        message: output.trim() || 'hermes-web-ui updated successfully (git-clone deployment)',
+      }
+
+      keepUpdateLockForRestart = true
+      setTimeout(() => {
+        try {
+          spawnGitRestart()
+        } catch (err) {
+          updateInProgress = false
+          console.error('[update] git-clone restart failed:', err)
+          return
+        }
+        // For systemd restart, the current process may be killed immediately,
+        // so we just clear the lock after a short delay
+        setTimeout(() => { updateInProgress = false }, 5000)
+      }, 3000)
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = {
+        success: false,
+        message: err.stderr?.toString() || err.message || String(err),
+      }
+    } finally {
+      if (!keepUpdateLockForRestart) {
+        updateInProgress = false
+      }
+    }
+    return
+  }
+
+  // npm global install path (original behavior)
   try {
     const output = runUpdateInstall()
 

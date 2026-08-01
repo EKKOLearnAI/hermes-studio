@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'fs'
-import { resolve } from 'path'
+import { execFileSync } from 'child_process'
+import { resolve, dirname } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
 import { getAgentBridgeManager } from '../services/hermes/agent-bridge/manager'
 import { redactAgentBridgeError } from '../services/hermes/agent-bridge/redact'
@@ -47,8 +48,92 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   : PACKAGE_INFO?.version || ''
 
 let cachedLatestVersion = ''
+let cachedGitRemoteVersion = ''
 const AGENT_BRIDGE_HEALTH_CACHE_TTL_MS = 250
 const AGENT_BRIDGE_HEALTH_FIRST_WAIT_MS = 75
+
+/**
+ * Detect whether the Web UI is running from a git clone (rather than an npm
+ * global install or Docker image). In a git-clone deployment the repo root
+ * contains a .git directory and the server is started from the built dist/
+ * output. This deployment type cannot use `npm install -g` to upgrade —
+ * it needs `git pull && npm install && npm run build` instead.
+ */
+function detectGitCloneDeployment(): boolean {
+  // Docker containers are never considered git-clone deployments
+  if (isDockerContainer()) return false
+
+  const candidatePaths = [
+    resolve(__dirname, '../../../../.git'),
+    resolve(__dirname, '../../.git'),
+    resolve(process.cwd(), '.git'),
+  ]
+
+  return candidatePaths.some(p => existsSync(p))
+}
+
+let isGitCloneDeploy: boolean | null = null
+function isGitCloneDeployment(): boolean {
+  if (isGitCloneDeploy === null) {
+    isGitCloneDeploy = detectGitCloneDeployment()
+  }
+  return isGitCloneDeploy
+}
+
+/**
+ * Get the repo root for a git-clone deployment.
+ */
+function getGitRepoRoot(): string | null {
+  const candidatePaths = [
+    resolve(__dirname, '../../../..'),
+    resolve(__dirname, '../..'),
+    process.cwd(),
+  ]
+
+  for (const p of candidatePaths) {
+    if (existsSync(resolve(p, '.git')) && existsSync(resolve(p, 'package.json'))) {
+      return p
+    }
+  }
+  return null
+}
+
+/**
+ * Check for updates in a git-clone deployment by fetching from origin and
+ * comparing the local HEAD with origin/main.
+ */
+async function checkGitLatestVersion(): Promise<void> {
+  const repoRoot = getGitRepoRoot()
+  if (!repoRoot) return
+
+  try {
+    // Fetch origin to get latest remote refs
+    execFileSync('git', ['fetch', 'origin', 'main'], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      timeout: 15000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    // Get remote HEAD version by reading package.json from origin/main
+    const remotePackageJson = execFileSync('git', ['show', 'origin/main:package.json'], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      timeout: 10000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    const remotePkg = JSON.parse(remotePackageJson)
+    if (remotePkg?.version) {
+      cachedGitRemoteVersion = String(remotePkg.version)
+      if (LOCAL_VERSION && isNewerVersion(cachedGitRemoteVersion, LOCAL_VERSION)) {
+        console.log(`Git update available: ${LOCAL_VERSION} -> ${cachedGitRemoteVersion}`)
+      }
+    }
+  } catch {
+    // Ignore — git may not be available or repo may not have a remote
+  }
+}
 
 type AgentBridgeHealthPayload = {
   status: string
@@ -105,6 +190,13 @@ function isNewerVersion(candidate: string, current: string): boolean {
 
 export async function checkLatestVersion(): Promise<void> {
   if (isUpdateCheckDisabled()) return
+
+  // For git-clone deployments, check via git fetch instead of npm registry
+  if (isGitCloneDeployment()) {
+    await checkGitLatestVersion()
+    return
+  }
+
   try {
     const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
     const registryName = encodeURIComponent(packageName)
@@ -113,7 +205,7 @@ export async function checkLatestVersion(): Promise<void> {
       const data = await res.json() as { version: string }
       cachedLatestVersion = data.version
       if (LOCAL_VERSION && cachedLatestVersion && isNewerVersion(cachedLatestVersion, LOCAL_VERSION)) {
-        console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
+        console.log(`Update available: ${LOCAL_VERSION} -> ${cachedLatestVersion}`)
       }
     }
   } catch { /* ignore */ }
@@ -192,18 +284,24 @@ export async function healthCheck(ctx: any) {
   const raw = await hermesCli.getVersion()
   const hermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
   const agentBridge = await getAgentBridgeHealth()
+
+  const gitDeploy = isGitCloneDeployment()
+  const latestVersion = gitDeploy ? cachedGitRemoteVersion : (isUpdateCheckDisabled() ? '' : cachedLatestVersion)
+  const updateAvailable = isUpdateCheckDisabled()
+    ? false
+    : Boolean(LOCAL_VERSION && latestVersion && isNewerVersion(latestVersion, LOCAL_VERSION))
+
   ctx.body = {
     status: 'ok',
     platform: 'hermes-agent',
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
-    webui_latest: isUpdateCheckDisabled() ? '' : cachedLatestVersion,
-    webui_update_available: isUpdateCheckDisabled()
-      ? false
-      : Boolean(LOCAL_VERSION && cachedLatestVersion && isNewerVersion(cachedLatestVersion, LOCAL_VERSION)),
+    webui_latest: latestVersion,
+    webui_update_available: updateAvailable,
     node_version: process.versions.node,
     agent_bridge: agentBridge,
     is_docker: isDockerContainer(),
+    is_git_clone: gitDeploy,
   }
 }
