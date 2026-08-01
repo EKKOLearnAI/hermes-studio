@@ -1,5 +1,6 @@
 import Router from '@koa/router'
 import { basename, extname, isAbsolute } from 'path'
+import { existsSync } from 'fs'
 import {
   createFileProvider,
   localProvider,
@@ -7,7 +8,9 @@ import {
   validatePath,
   resolveHermesPath,
 } from '../../services/hermes/file-provider'
-import { getActiveProfileName } from '../../services/hermes/hermes-profile'
+import { getActiveProfileName, getHermesBaseDir } from '../../services/hermes/hermes-profile'
+import { isRealPathWithin } from '../../services/hermes/hermes-path'
+import { getProfileUploadDir } from '../../services/hermes/upload-paths'
 
 export const downloadRoutes = new Router()
 
@@ -67,6 +70,34 @@ function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
 }
 
+interface DownloadPathRoots {
+  profileDir?: string
+  uploadDir?: string
+}
+
+function strictProfileDir(profile: string): string | null {
+  if (!profile) return null
+  const dir = profile === 'default'
+    ? getHermesBaseDir()
+    : `${getHermesBaseDir()}/profiles/${profile}`
+  return existsSync(dir) ? dir : null
+}
+
+export async function canDownloadPath(ctx: any, filePath: string, roots: DownloadPathRoots = {}): Promise<boolean> {
+  if (ctx.state?.user?.role === 'super_admin') return true
+  const profile = ctx.state?.profile?.name
+  if (!profile) return false
+  const profileDir = roots.profileDir ?? strictProfileDir(profile)
+  const uploadDir = roots.uploadDir ?? getProfileUploadDir(profile)
+  if (profileDir && await isDownloadPathWithinProfile(filePath, profileDir)) return true
+  if (existsSync(uploadDir) && await isDownloadPathWithinProfile(filePath, uploadDir)) return true
+  return false
+}
+
+export async function isDownloadPathWithinProfile(filePath: string, profileDir: string): Promise<boolean> {
+  return isRealPathWithin(validatePath(filePath), profileDir)
+}
+
 downloadRoutes.get('/api/hermes/download', async (ctx) => {
   const filePath = ctx.query.path as string | undefined
   const fileName = ctx.query.name as string | undefined
@@ -82,6 +113,11 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
     // Validate the path first
     // Support both absolute and relative paths
     const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath, profile)
+    if (!await canDownloadPath(ctx, validPath)) {
+      ctx.status = 403
+      ctx.body = { error: 'File is outside the authorized profile directory', code: 'permission_denied' }
+      return
+    }
 
     // Choose provider: always use local for upload directory files
     let data: Buffer

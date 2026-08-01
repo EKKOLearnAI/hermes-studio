@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { getToken } from '../services/auth'
 import {
   findUserById,
+  getDefaultProfileForUser,
   listUserProfiles,
   touchUserLogin,
   userCanAccessProfile,
@@ -283,8 +284,24 @@ export async function resolveUserProfile(ctx: Context, next: Next): Promise<void
     return
   }
 
+  const aggregateAvailableModels = ctx.path === '/api/hermes/available-models' &&
+    typeof ctx.query.profile !== 'string'
+  if (aggregateAvailableModels) {
+    await next()
+    return
+  }
+
   const profileName = resolveRequestedProfile(ctx)
   if (!profileName) {
+    if (user.role !== 'super_admin') {
+      const defaultProfile = getDefaultProfileForUser(user.id)
+      if (!userCanAccessProfile(user.id, defaultProfile)) {
+        ctx.status = 403
+        ctx.body = { error: 'No profile is available for this user' }
+        return
+      }
+      ctx.state.profile = { name: defaultProfile }
+    }
     await next()
     return
   }
