@@ -411,7 +411,7 @@ test.describe('group chat room deep links', () => {
     })
   }
 
-  test('participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }) => {
+  test('participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }, testInfo) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
     await page.getByRole('button', { name: 'Agents (1)' }).click()
 
@@ -423,7 +423,7 @@ test.describe('group chat room deep links', () => {
     await expect(quick).toBeVisible()
     await expect(quick.locator('.participant-reasoning-slider')).toBeVisible()
     await expect(quick.getByText('Changes apply to this participant\'s next run.')).toBeVisible()
-    await page.screenshot({ path: '/home/agent/.hermes/workspace/tmp/pr2226-avatar-controls-ui.png', fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('participant-avatar-controls.png'), fullPage: true })
 
     const selects = quick.locator('.n-select')
     await expect(selects).toHaveCount(2)
