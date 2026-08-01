@@ -53,7 +53,7 @@ function createSourceRuntime(root: string, version: string) {
     mkdirSync(join(root, 'python', '.git'), { recursive: true })
     mkdirSync(join(root, 'node'), { recursive: true })
     mkdirSync(join(root, 'git', 'cmd'), { recursive: true })
-    writeFileSync(join(root, 'python', 'venv', 'python.exe'), '')
+    writeFileSync(join(root, 'python', 'venv', 'Scripts', 'python.exe'), '')
     writeFileSync(join(root, 'python', 'venv', 'Scripts', 'hermes.cmd'), '')
     writeFileSync(join(root, 'node', 'node.exe'), '')
     writeFileSync(join(root, 'git', 'cmd', 'git.exe'), '')
@@ -344,7 +344,7 @@ describe('desktop runtime paths', () => {
     expect(pythonDir()).toBe(join(runtimeRoot, 'python'))
     expect(pythonEnvironmentDir()).toBe(join(runtimeRoot, 'python', 'venv'))
     expect(bundledPython()).toBe(process.platform === 'win32'
-      ? join(runtimeRoot, 'python', 'venv', 'python.exe')
+      ? join(runtimeRoot, 'python', 'venv', 'Scripts', 'python.exe')
       : join(runtimeRoot, 'python', 'venv', 'bin', 'python3'))
     expect(hermesBin()).toBe(process.platform === 'win32'
       ? join(runtimeRoot, 'python', 'venv', 'Scripts', 'hermes.cmd')

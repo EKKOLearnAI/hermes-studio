@@ -253,6 +253,7 @@ const electronBuilderConfig = await readText('packages/desktop/electron-builder.
 const desktopMacEntitlements = await readText('packages/desktop/build/entitlements.mac.plist')
 const desktopMacInheritedEntitlements = await readText('packages/desktop/build/entitlements.mac.inherit.plist')
 const desktopPackageJson = await readText('packages/desktop/package.json')
+const desktopFetchPython = await readText('packages/desktop/scripts/fetch-python.mjs')
 const desktopFetchHermes = await readText('packages/desktop/scripts/fetch-hermes.mjs')
 const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
 const desktopPackageRuntime = await readText('packages/desktop/scripts/package-runtime.mjs')
@@ -440,6 +441,17 @@ for (const phrase of [
 
 if (desktopPackageJson.includes('"patch:hermes"')) {
   fail('packages/desktop/package.json must not mutate the retained Hermes source checkout')
+}
+
+for (const phrase of [
+  "resolve(OUT_DIR, '.python-base-staging')",
+  "'--relocatable'",
+  'makeEmbeddedBaseConfigRelocatable',
+  "resolve(VENV_DIR, '.base')",
+]) {
+  if (!desktopFetchPython.includes(phrase)) {
+    fail(`fetch-python.mjs must build a relocatable Windows PEP 405 venv: ${phrase}`)
+  }
 }
 
 for (const phrase of [

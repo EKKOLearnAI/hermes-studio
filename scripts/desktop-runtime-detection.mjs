@@ -47,7 +47,9 @@ export function runtimeReady(runtimeRoot, platformName = platform()) {
     : join(runtimeRoot, 'python')
   const required = isWin
     ? [
-        join(pythonRoot, 'python.exe'),
+        sourceRuntime && existsSync(join(pythonRoot, 'Scripts', 'python.exe'))
+          ? join(pythonRoot, 'Scripts', 'python.exe')
+          : join(pythonRoot, 'python.exe'),
         join(pythonRoot, 'Scripts', 'hermes.cmd'),
         join(runtimeRoot, 'node', 'node.exe'),
         join(runtimeRoot, 'git', 'cmd', 'git.exe'),

@@ -45,7 +45,7 @@ type ActiveRuntimeVersion = {
 function runtimeRequiredFiles(root: string): string[] {
   const sourceRoot = join(root, 'python')
   const environmentRoot = runtimePythonEnvironmentRoot(sourceRoot)
-  const python = isWin ? join(environmentRoot, 'python.exe') : join(environmentRoot, 'bin', 'python3')
+  const python = runtimePythonExecutable(environmentRoot)
   const hermes = isWin ? join(environmentRoot, 'Scripts', 'hermes.cmd') : join(environmentRoot, 'bin', 'hermes')
   const node = isWin ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node')
   const files = [python, hermes, node]
@@ -276,8 +276,18 @@ export function pythonEnvironmentDir(): string {
 
 function runtimePythonEnvironmentRoot(sourceRoot: string): string {
   const venvRoot = join(sourceRoot, 'venv')
-  const venvPython = isWin ? join(venvRoot, 'python.exe') : join(venvRoot, 'bin', 'python3')
-  return existsSync(venvPython) ? venvRoot : sourceRoot
+  const venvPythons = isWin
+    ? [join(venvRoot, 'Scripts', 'python.exe'), join(venvRoot, 'python.exe')]
+    : [join(venvRoot, 'bin', 'python3')]
+  return venvPythons.some(existsSync) ? venvRoot : sourceRoot
+}
+
+function runtimePythonExecutable(environmentRoot: string): string {
+  if (!isWin) return join(environmentRoot, 'bin', 'python3')
+  const standardVenvPython = join(environmentRoot, 'Scripts', 'python.exe')
+  return existsSync(standardVenvPython)
+    ? standardVenvPython
+    : join(environmentRoot, 'python.exe')
 }
 
 export function nodeDir(): string {
@@ -360,7 +370,7 @@ export function pythonBinDir(): string {
 
 export function bundledPython(): string {
   const dir = pythonEnvironmentDir()
-  return isWin ? join(dir, 'python.exe') : join(dir, 'bin', 'python3')
+  return runtimePythonExecutable(dir)
 }
 
 export function hermesBin(): string {

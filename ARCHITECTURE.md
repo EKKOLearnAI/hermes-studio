@@ -96,6 +96,8 @@ The published runtime keeps this updateable layout:
 python/                 Hermes Agent Git checkout and source root
   .git/
   venv/                 bundled Python environment
+    .base/              Windows python-build-standalone base runtime
+    Scripts/python.exe  Windows PEP 405 venv interpreter
   agent-browser/
   node/                  browser CLI npm prefix
   ms-playwright/
@@ -104,8 +106,11 @@ git/                     bundled MinGit on Windows
 runtime-manifest.json
 ```
 
-`prepare:runtime` fetches the exact source commit, installs its locked
-dependencies into `python/venv`, builds the upstream TUI/dashboard, and verifies
+`prepare:runtime` fetches the exact source commit and installs its locked
+dependencies into `python/venv`. On Windows, the standalone base interpreter is
+embedded below `python/venv/.base` and a relocatable PEP 405 venv wraps it, so
+upstream `hermes update` can safely target the environment through
+`VIRTUAL_ENV`. The build also creates the upstream TUI/dashboard and verifies
 that the retained checkout is clean. `package:runtime` includes the source and
 Git metadata in the GitHub/CF archive and records them in schema 2 of the
 runtime manifest. Do not patch tracked Hermes source during this build:

@@ -113,9 +113,7 @@ function runtimeDownloadSource(source?: RuntimeDownloadSource): RuntimeDownloadS
 
 function requiredRuntimeFiles(root: string): string[] {
   const pythonRoot = runtimePythonEnvironmentRoot(root)
-  const pythonBin = process.platform === 'win32'
-    ? join(pythonRoot, 'python.exe')
-    : join(pythonRoot, 'bin', 'python3')
+  const pythonBin = runtimePythonExecutable(pythonRoot)
   const hermesBin = process.platform === 'win32'
     ? join(pythonRoot, 'Scripts', 'hermes.cmd')
     : join(pythonRoot, 'bin', 'hermes')
@@ -130,10 +128,18 @@ function requiredRuntimeFiles(root: string): string[] {
 function runtimePythonEnvironmentRoot(runtimeRoot: string): string {
   const sourceRoot = join(runtimeRoot, 'python')
   const venvRoot = join(sourceRoot, 'venv')
-  const venvPython = process.platform === 'win32'
-    ? join(venvRoot, 'python.exe')
-    : join(venvRoot, 'bin', 'python3')
-  return existsSync(venvPython) ? venvRoot : sourceRoot
+  const venvPythons = process.platform === 'win32'
+    ? [join(venvRoot, 'Scripts', 'python.exe'), join(venvRoot, 'python.exe')]
+    : [join(venvRoot, 'bin', 'python3')]
+  return venvPythons.some(existsSync) ? venvRoot : sourceRoot
+}
+
+function runtimePythonExecutable(environmentRoot: string): string {
+  if (process.platform !== 'win32') return join(environmentRoot, 'bin', 'python3')
+  const standardVenvPython = join(environmentRoot, 'Scripts', 'python.exe')
+  return existsSync(standardVenvPython)
+    ? standardVenvPython
+    : join(environmentRoot, 'python.exe')
 }
 
 function missingRuntimeFiles(root: string): string[] {
@@ -217,7 +223,7 @@ function runtimeReady(): boolean {
 function rootRuntimeReady(root: string): boolean {
   const pythonRoot = runtimePythonEnvironmentRoot(root)
   const gitPath = process.platform === 'win32' ? join(root, 'git', 'cmd', 'git.exe') : null
-  return existsSync(process.platform === 'win32' ? join(pythonRoot, 'python.exe') : join(pythonRoot, 'bin', 'python3'))
+  return existsSync(runtimePythonExecutable(pythonRoot))
     && existsSync(process.platform === 'win32' ? join(pythonRoot, 'Scripts', 'hermes.cmd') : join(pythonRoot, 'bin', 'hermes'))
     && existsSync(process.platform === 'win32' ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node'))
     && (!gitPath || existsSync(gitPath))

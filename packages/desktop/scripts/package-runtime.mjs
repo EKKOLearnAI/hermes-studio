@@ -16,6 +16,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { hermesSource } from './runtime-config.mjs'
+import { venvPythonPath } from './python-runtime-layout.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -29,9 +30,7 @@ const PY_DIR = resolve(ROOT, 'resources', 'python', PLATFORM)
 const VENV_DIR = resolve(PY_DIR, 'venv')
 const NODE_DIR = resolve(ROOT, 'resources', 'node', PLATFORM)
 const GIT_DIR = resolve(ROOT, 'resources', 'git', PLATFORM)
-const pyBin = TARGET_OS === 'win32'
-  ? resolve(VENV_DIR, 'python.exe')
-  : resolve(VENV_DIR, 'bin', 'python3')
+const pyBin = venvPythonPath(VENV_DIR, TARGET_OS)
 const configuredSource = hermesSource()
 
 function run(command, args, options = {}) {
@@ -122,9 +121,7 @@ try {
   // archive can be uploaded by GitHub Actions.
   const stagedSource = join(stage, 'python')
   const stagedVenv = join(stagedSource, 'venv')
-  const stagedPython = TARGET_OS === 'win32'
-    ? join(stagedVenv, 'python.exe')
-    : join(stagedVenv, 'bin', 'python3')
+  const stagedPython = venvPythonPath(stagedVenv, TARGET_OS)
   const stagedVersion = output(stagedPython, [
     '-c',
     [

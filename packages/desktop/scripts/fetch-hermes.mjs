@@ -13,6 +13,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { hermesSource } from './runtime-config.mjs'
+import { venvPythonPath } from './python-runtime-layout.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -21,9 +22,7 @@ const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const SOURCE_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
 const VENV_DIR = resolve(SOURCE_DIR, 'venv')
-const pyBin = TARGET_OS === 'win32'
-  ? resolve(VENV_DIR, 'python.exe')
-  : resolve(VENV_DIR, 'bin', 'python3')
+const pyBin = venvPythonPath(VENV_DIR, TARGET_OS)
 const source = hermesSource()
 
 function run(command, args, options = {}) {

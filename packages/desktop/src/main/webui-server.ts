@@ -402,10 +402,10 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_ROOT: pythonDir(),
     VIRTUAL_ENV: bundledPythonEnvironment,
     UV_PROJECT_ENVIRONMENT: bundledPythonEnvironment,
-    // This is a relocatable python-build-standalone tree rather than a
-    // pyvenv.cfg virtualenv. Make uv package operations target it explicitly.
+    // Keep uv pinned to the bundled interpreter when a terminal subprocess
+    // deliberately strips VIRTUAL_ENV to protect unrelated user projects.
     UV_PYTHON: bundledPythonPath,
-    UV_SYSTEM_PYTHON: '1',
+    ...(isWin ? {} : { UV_SYSTEM_PYTHON: '1' }),
     HERMES_AGENT_NODE: bundledNode(),
     HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
     AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || bundledAgentBrowserHome(),

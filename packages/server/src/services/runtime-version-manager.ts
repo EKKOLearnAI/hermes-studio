@@ -202,12 +202,13 @@ function readRuntimeManifestVersion(runtimeDir: string): string | undefined {
 function requiredRuntimeFiles(root: string): string[] {
   const sourceRoot = join(root, 'python')
   const venvRoot = join(sourceRoot, 'venv')
-  const venvPython = process.platform === 'win32'
-    ? join(venvRoot, 'python.exe')
-    : join(venvRoot, 'bin', 'python3')
-  const pythonRoot = existsSync(venvPython) ? venvRoot : sourceRoot
+  const venvPythons = process.platform === 'win32'
+    ? [join(venvRoot, 'Scripts', 'python.exe'), join(venvRoot, 'python.exe')]
+    : [join(venvRoot, 'bin', 'python3')]
+  const pythonRoot = venvPythons.some(existsSync) ? venvRoot : sourceRoot
+  const standardVenvPython = join(pythonRoot, 'Scripts', 'python.exe')
   const pythonBin = process.platform === 'win32'
-    ? join(pythonRoot, 'python.exe')
+    ? existsSync(standardVenvPython) ? standardVenvPython : join(pythonRoot, 'python.exe')
     : join(pythonRoot, 'bin', 'python3')
   const hermesBin = process.platform === 'win32'
     ? join(pythonRoot, 'Scripts', 'hermes.cmd')

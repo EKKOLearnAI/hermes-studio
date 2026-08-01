@@ -81,22 +81,36 @@ describe('Hermes source runtime relocation', () => {
   })
 
   it('replaces Windows executable launchers with relocatable cmd wrappers', () => {
+    const previousRuntime = tempDir()
     const stagedRuntime = tempDir()
+    const finalRuntime = tempDir()
     const scriptsDir = join(stagedRuntime, 'python', 'venv', 'Scripts')
     mkdirSync(scriptsDir, { recursive: true })
     writeFileSync(join(scriptsDir, 'hermes.exe'), '')
+    writeFileSync(
+      join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
+      `home = ${join(previousRuntime, 'python', '.hermes-runtime', 'python', 'generation')}\n`,
+    )
 
     const repaired = repairMovedHermesRuntime(
       stagedRuntime,
-      'C:\\old\\runtime',
-      'D:\\new\\runtime',
+      previousRuntime,
+      finalRuntime,
       'win32',
     )
 
+    expect(repaired.editableFilesRewritten).toBe(1)
     expect(repaired.launchersRewritten).toBe(1)
+    expect(readFileSync(
+      join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
+      'utf-8',
+    )).toContain(join(finalRuntime, 'python', '.hermes-runtime'))
     expect(existsSync(join(scriptsDir, 'hermes.exe'))).toBe(false)
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       '"%PY%" -m hermes_cli.main %*',
+    )
+    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
+      'set "PY=%~dp0python.exe"',
     )
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       'set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"',
@@ -104,8 +118,8 @@ describe('Hermes source runtime relocation', () => {
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       'set "UV_PYTHON=%PY%"',
     )
-    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
-      'set "UV_SYSTEM_PYTHON=1"',
+    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).not.toContain(
+      'UV_SYSTEM_PYTHON',
     )
   })
 })

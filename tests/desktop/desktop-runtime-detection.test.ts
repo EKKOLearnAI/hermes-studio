@@ -22,7 +22,12 @@ function createRuntime(root: string, version: string, layout: 'legacy' | 'source
     mkdirSync(join(pythonRoot, 'Scripts'), { recursive: true })
     mkdirSync(join(root, 'node'), { recursive: true })
     mkdirSync(join(root, 'git', 'cmd'), { recursive: true })
-    writeFileSync(join(pythonRoot, 'python.exe'), '')
+    writeFileSync(
+      layout === 'source'
+        ? join(pythonRoot, 'Scripts', 'python.exe')
+        : join(pythonRoot, 'python.exe'),
+      '',
+    )
     writeFileSync(join(pythonRoot, 'Scripts', 'hermes.cmd'), '')
     writeFileSync(join(root, 'node', 'node.exe'), '')
     writeFileSync(join(root, 'git', 'cmd', 'git.exe'), '')
@@ -65,6 +70,25 @@ describe('desktop development Runtime detection', () => {
 
     expect(runtimeReady(sourceRuntime)).toBe(true)
     expect(runtimeReady(legacyRuntime)).toBe(false)
+  })
+
+  it('keeps recognizing the earlier standalone Windows source layout', () => {
+    const sourceRuntime = tempDir()
+    const pythonRoot = join(sourceRuntime, 'python', 'venv')
+    mkdirSync(join(pythonRoot, 'Scripts'), { recursive: true })
+    mkdirSync(join(sourceRuntime, 'node'), { recursive: true })
+    mkdirSync(join(sourceRuntime, 'git', 'cmd'), { recursive: true })
+    writeFileSync(join(pythonRoot, 'python.exe'), '')
+    writeFileSync(join(pythonRoot, 'Scripts', 'hermes.cmd'), '')
+    writeFileSync(join(sourceRuntime, 'node', 'node.exe'), '')
+    writeFileSync(join(sourceRuntime, 'git', 'cmd', 'git.exe'), '')
+    writeFileSync(join(sourceRuntime, 'runtime-manifest.json'), JSON.stringify({
+      schema: 2,
+      hermesAgentVersion: '0.19.1',
+      platform: runtimePlatformKey('win32', 'x64'),
+    }))
+
+    expect(runtimeReady(sourceRuntime, 'win32')).toBe(true)
   })
 
   it('keeps the active source Runtime from a custom storage root', () => {

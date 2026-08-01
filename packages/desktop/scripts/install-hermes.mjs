@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { platform as osPlatform, arch as osArch, homedir as osHomedir, tmpdir } from 'node:os'
 import { hermesSource } from './runtime-config.mjs'
+import { venvPythonPath } from './python-runtime-layout.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -59,9 +60,7 @@ const NODE_PREFIX = resolve(PY_DIR, 'node')
 const AGENT_BROWSER_HOME = resolve(PY_DIR, 'agent-browser')
 const PLAYWRIGHT_BROWSERS_PATH = resolve(PY_DIR, 'ms-playwright')
 
-const pyBin = TARGET_OS === 'win32'
-  ? resolve(VENV_DIR, 'python.exe')
-  : resolve(VENV_DIR, 'bin', 'python3')
+const pyBin = venvPythonPath(VENV_DIR, TARGET_OS)
 
 if (!existsSync(pyBin)) {
   console.error(`Python not found at ${pyBin}. Run: npm run fetch:python`)
@@ -563,11 +562,10 @@ if (TARGET_OS === 'win32') {
       cmdPath,
       [
         '@echo off',
-        'set "PY=%~dp0..\\python.exe"',
+        'set "PY=%~dp0python.exe"',
         'set "VIRTUAL_ENV=%~dp0.."',
         'set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"',
         'set "UV_PYTHON=%PY%"',
-        'set "UV_SYSTEM_PYTHON=1"',
         `"%PY%" -m ${mod} %*`,
       ].join('\r\n'),
     )
