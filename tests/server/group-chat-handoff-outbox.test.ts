@@ -1905,6 +1905,68 @@ describe('fixed-order group-chat handoff planning', () => {
     } as any)).toEqual([])
   })
 
+  it.each([
+    ['empty', ''],
+    ['missing', undefined],
+  ])('fails closed when %s durable message-scoped chain metadata would otherwise fall back to text mentions', (_label, chainOrderJson) => {
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        senderId: 'a', content: '@Codex must not become the successor', role: 'assistant',
+        handoffDepth: 1, handoffChainId: 'gcchain-missing-persisted-order',
+      },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: chainOrderJson,
+    } as any)).toEqual([])
+  })
+
+  it('plans an adjacent repeated participant as two finite durable steps', () => {
+    const chainRequest = {
+      version: 1,
+      participants: [
+        { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 10, length: 7 },
+      ],
+    }
+    const root = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        id: 'human-adjacent-repeated-chain', senderId: 'human',
+        content: '@Hermes → @Hermes compare the result', role: 'user',
+        mentions: [chainRequest.participants[0]], chainRequest,
+      },
+    } as any)
+    expect(root).toEqual([{
+      chainId: 'gcchain_human-adjacent-repeated-chain', targetAgentId: 'a', targetSessionId: 'session-a',
+      depth: 0, kind: 'fixed', chainOrderJson: '["a","a"]',
+    }])
+
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        senderId: 'a', content: 'first result', role: 'assistant',
+        handoffDepth: 1, handoffChainId: root[0].chainId,
+      },
+      sourceJobKind: 'fixed', sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)).toEqual([{
+      chainId: root[0].chainId, targetAgentId: 'a', targetSessionId: 'session-a',
+      depth: 1, kind: 'fixed', chainOrderJson: '["a","a"]',
+    }])
+
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        senderId: 'a', content: 'second result', role: 'assistant',
+        handoffDepth: 2, handoffChainId: root[0].chainId,
+      },
+      sourceJobKind: 'fixed', sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)).toEqual([])
+  })
+
   it('plans a finite message-scoped chain by step index when a participant appears more than once', () => {
     const chainRequest = {
       version: 1,

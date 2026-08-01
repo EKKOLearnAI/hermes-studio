@@ -739,6 +739,56 @@ export function planGroupHandoffs(args: {
     const textRoute = hasStructuredMentions
         ? null
         : resolveMentionRoute(args.agents, String(args.source.content || ''), String(args.source.senderId || ''))
+    const structuredChain = role === 'user'
+        ? parseStructuredChainOrder(args.source.chainRequest, args.agents, String(args.source.content || ''))
+        : null
+    if (structuredChain) {
+        const first = structuredChain[0]
+        const rootMention = Array.isArray(structuredMentions) && structuredMentions.length === 1
+            ? structuredMentions[0]
+            : null
+        const firstRequest = args.source.chainRequest?.participants?.[0]
+        if (!rootMention || rootMention.type !== 'participant'
+            || rootMention.participantId !== first.agentId
+            || !firstRequest
+            || rootMention.displayName !== firstRequest.displayName
+            || rootMention.start !== firstRequest.start
+            || rootMention.length !== firstRequest.length) {
+            throw new Error('Structured chain root target must match its first participant')
+        }
+        return [{
+            chainId,
+            targetAgentId: first.agentId,
+            targetSessionId: first.sessionId,
+            depth: 0,
+            kind: 'fixed',
+            chainOrderJson: JSON.stringify(structuredChain.map(agent => agent.agentId)),
+        }]
+    }
+    if (role === 'assistant' && args.sourceJobKind === 'fanout') return []
+    if (role === 'assistant' && args.source.finish_reason === 'error') return []
+    if (role === 'assistant' && !allowsAgentMentionRelay(depth, args.room.maxAgentMentionDepth)) return []
+    const hasMessageScopedOrder = role === 'assistant'
+        && args.sourceJobKind === 'fixed'
+        && args.room.handoffMode === 'mentions'
+    const messageScopedOrder = hasMessageScopedOrder
+        ? parseMessageScopedChainOrder(args.sourceJobChainOrderJson, args.agents)
+        : []
+    if (hasMessageScopedOrder && messageScopedOrder.length === 0) return []
+    if (messageScopedOrder.length > 0) {
+        // Assistant finals carry the next emitted-response depth, so depth - 1 is
+        // the exact durable step that just completed. This remains unambiguous
+        // when the same participant appears multiple times in a finite chain.
+        const completedStepIndex = depth - 1
+        if (completedStepIndex < 0 || completedStepIndex >= messageScopedOrder.length) return []
+        if (messageScopedOrder[completedStepIndex].agentId !== args.source.senderId) return []
+        if (completedStepIndex >= messageScopedOrder.length - 1) return []
+        const target = messageScopedOrder[completedStepIndex + 1]
+        return [{
+            chainId, targetAgentId: target.agentId, targetSessionId: target.sessionId,
+            depth, kind: 'fixed', chainOrderJson: JSON.stringify(messageScopedOrder.map(agent => agent.agentId)),
+        }]
+    }
     const allMentioned = hasStructuredMentions ? structuredAll : Boolean(textRoute?.isBroadcast)
     if (role === 'user' && allMentioned) {
         const targets = structuredTargets ?? textRoute?.targets ?? []
