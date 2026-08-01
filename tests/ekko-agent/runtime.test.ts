@@ -329,7 +329,8 @@ describe('ekko-agent runtime', () => {
     const childPrompt = requests[1].messages.find(message => message.role === 'user')?.content
     expect(childPrompt).toContain('Inspect the implementation')
     expect(childPrompt).toContain('Focus on runtime.ts')
-    expect(requests[1].tools?.map(tool => tool.name)).not.toContain('delegate_task')
+    expect(requests[1].tools).toBeUndefined()
+    expect(requests[1].toolChoice).toBeUndefined()
     expect(result.steps.find(step => step.type === 'tool')).toMatchObject({
       type: 'tool',
       toolName: 'delegate_task',
