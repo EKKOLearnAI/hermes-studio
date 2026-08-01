@@ -22,6 +22,7 @@ import {
   nodeBinDir,
   tokenFile,
   pythonDir,
+  pythonEnvironmentDir,
 } from './paths'
 
 const DEFAULT_PORT = 8748
@@ -362,6 +363,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   // resolves to /bin/sh and the bridge crashes (exit code 2) immediately.
   const isWin = process.platform === 'win32'
   const bundledPythonPath = bundledPython()
+  const bundledPythonEnvironment = pythonEnvironmentDir()
   const bundledAgentBrowserBin = isWin
     ? join(pythonDir(), 'node')
     : join(pythonDir(), 'node', 'bin')
@@ -398,6 +400,12 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_BRIDGE_PYTHON: bundledPythonPath,
     HERMES_AGENT_CLI_PYTHON: bundledPythonPath,
     HERMES_AGENT_ROOT: pythonDir(),
+    VIRTUAL_ENV: bundledPythonEnvironment,
+    UV_PROJECT_ENVIRONMENT: bundledPythonEnvironment,
+    // This is a relocatable python-build-standalone tree rather than a
+    // pyvenv.cfg virtualenv. Make uv package operations target it explicitly.
+    UV_PYTHON: bundledPythonPath,
+    UV_SYSTEM_PYTHON: '1',
     HERMES_AGENT_NODE: bundledNode(),
     HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
     AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || bundledAgentBrowserHome(),

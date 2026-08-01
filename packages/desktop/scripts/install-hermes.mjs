@@ -564,6 +564,10 @@ if (TARGET_OS === 'win32') {
       [
         '@echo off',
         'set "PY=%~dp0..\\python.exe"',
+        'set "VIRTUAL_ENV=%~dp0.."',
+        'set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"',
+        'set "UV_PYTHON=%PY%"',
+        'set "UV_SYSTEM_PYTHON=1"',
         `"%PY%" -m ${mod} %*`,
       ].join('\r\n'),
     )
@@ -573,6 +577,11 @@ if (TARGET_OS === 'win32') {
   const launcher = [
     '#!/bin/sh',
     'DIR="$(cd "$(dirname "$0")" && pwd)"',
+    'VIRTUAL_ENV="$(cd "$DIR/.." && pwd)"',
+    'export VIRTUAL_ENV',
+    'export UV_PROJECT_ENVIRONMENT="$VIRTUAL_ENV"',
+    'export UV_PYTHON="$DIR/python3"',
+    'export UV_SYSTEM_PYTHON=1',
     'exec "$DIR/python3" -m hermes_cli.main "$@"',
     '',
   ].join('\n')

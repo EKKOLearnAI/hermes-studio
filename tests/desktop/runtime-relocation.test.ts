@@ -66,6 +66,15 @@ describe('Hermes source runtime relocation', () => {
     expect(readFileSync(join(binDir, 'hermes'), 'utf-8')).toContain(
       'exec "$DIR/python3" -m hermes_cli.main "$@"',
     )
+    expect(readFileSync(join(binDir, 'hermes'), 'utf-8')).toContain(
+      'export UV_PROJECT_ENVIRONMENT="$VIRTUAL_ENV"',
+    )
+    expect(readFileSync(join(binDir, 'hermes'), 'utf-8')).toContain(
+      'export UV_PYTHON="$DIR/python3"',
+    )
+    expect(readFileSync(join(binDir, 'hermes'), 'utf-8')).toContain(
+      'export UV_SYSTEM_PYTHON=1',
+    )
     expect(readFileSync(join(binDir, 'hermes-agent'), 'utf-8')).toContain(
       'exec "$DIR/python3" -m run_agent "$@"',
     )
@@ -88,6 +97,15 @@ describe('Hermes source runtime relocation', () => {
     expect(existsSync(join(scriptsDir, 'hermes.exe'))).toBe(false)
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       '"%PY%" -m hermes_cli.main %*',
+    )
+    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
+      'set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"',
+    )
+    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
+      'set "UV_PYTHON=%PY%"',
+    )
+    expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
+      'set "UV_SYSTEM_PYTHON=1"',
     )
   })
 })
