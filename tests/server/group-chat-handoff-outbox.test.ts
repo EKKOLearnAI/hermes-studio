@@ -1811,6 +1811,208 @@ describe('fixed-order group-chat handoff planning', () => {
     } as any)).toThrow(/structured mention participant/i)
   })
 
+  it('plans a message-scoped structured chain from only its first participant and stops at the final participant', () => {
+    const chainRequest = {
+      version: 1,
+      participants: [
+        { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant', participantId: 'b', displayName: 'Codex', start: 10, length: 6 },
+        { type: 'participant', participantId: 'c', displayName: 'Claude Code', start: 19, length: 12 },
+      ],
+    }
+    const root = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        id: 'human-chain-request', senderId: 'human',
+        content: '@Hermes → @Codex → @Claude Code compare the result', role: 'user',
+        mentions: [chainRequest.participants[0]], chainRequest,
+      },
+    } as any)
+    expect(root).toEqual([{
+      chainId: 'gcchain_human-chain-request', targetAgentId: 'a', targetSessionId: 'session-a',
+      depth: 0, kind: 'fixed', chainOrderJson: '["a","b","c"]',
+    }])
+
+    const second = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { senderId: 'a', content: 'Hermes result', role: 'assistant', handoffDepth: 1, handoffChainId: 'gcchain_human-chain-request' },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)
+    expect(second).toEqual([{
+      chainId: 'gcchain_human-chain-request', targetAgentId: 'b', targetSessionId: 'session-b',
+      depth: 1, kind: 'fixed', chainOrderJson: '["a","b","c"]',
+    }])
+
+    const stale = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents: agents.filter(agent => agent.agentId !== 'b'),
+      source: { senderId: 'a', content: 'Hermes result', role: 'assistant', handoffDepth: 1, handoffChainId: 'gcchain_human-chain-request' },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)
+    expect(stale).toEqual([])
+
+    const failed = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { senderId: 'a', content: 'failed', role: 'assistant', finish_reason: 'error', handoffDepth: 1, handoffChainId: 'gcchain_human-chain-request' },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)
+    expect(failed).toEqual([])
+
+    const final = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { senderId: 'c', content: 'Claude result', role: 'assistant', handoffDepth: 3, handoffChainId: 'gcchain_human-chain-request' },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)
+    expect(final).toEqual([])
+  })
+
+  it('fails closed when persisted message-scoped chain metadata exceeds the admission step limit', () => {
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        senderId: 'a', content: 'Hermes result', role: 'assistant',
+        handoffDepth: 1, handoffChainId: 'gcchain-hostile-persisted-order',
+      },
+      sourceJobKind: 'fixed',
+      sourceJobChainOrderJson: JSON.stringify(Array.from({ length: 101 }, () => 'a')),
+    } as any)).toEqual([])
+  })
+
+  it('plans a finite message-scoped chain by step index when a participant appears more than once', () => {
+    const chainRequest = {
+      version: 1,
+      participants: [
+        { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+        { type: 'participant', participantId: 'b', displayName: 'Codex', start: 10, length: 6 },
+        { type: 'participant', participantId: 'c', displayName: 'Claude Code', start: 19, length: 12 },
+        { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 34, length: 7 },
+      ],
+    }
+    const root = planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: {
+        id: 'human-repeated-chain', senderId: 'human',
+        content: '@Hermes → @Codex → @Claude Code → @Hermes compare the result', role: 'user',
+        mentions: [chainRequest.participants[0]], chainRequest,
+      },
+    } as any)
+    expect(root).toEqual([{
+      chainId: 'gcchain_human-repeated-chain', targetAgentId: 'a', targetSessionId: 'session-a',
+      depth: 0, kind: 'fixed', chainOrderJson: '["a","b","c","a"]',
+    }])
+
+    const expected = [
+      { senderId: 'a', handoffDepth: 1, targetAgentId: 'b', targetSessionId: 'session-b' },
+      { senderId: 'b', handoffDepth: 2, targetAgentId: 'c', targetSessionId: 'session-c' },
+      { senderId: 'c', handoffDepth: 3, targetAgentId: 'a', targetSessionId: 'session-a' },
+    ]
+    for (const step of expected) {
+      expect(planGroupHandoffs({
+        room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+        agents,
+        source: {
+          senderId: step.senderId, content: 'step result', role: 'assistant',
+          handoffDepth: step.handoffDepth, handoffChainId: root[0].chainId,
+        },
+        sourceJobKind: 'fixed', sourceJobChainOrderJson: root[0].chainOrderJson,
+      } as any)).toEqual([{
+        chainId: root[0].chainId, targetAgentId: step.targetAgentId, targetSessionId: step.targetSessionId,
+        depth: step.handoffDepth, kind: 'fixed', chainOrderJson: '["a","b","c","a"]',
+      }])
+    }
+
+    expect(planGroupHandoffs({
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+      source: { senderId: 'a', content: 'final result', role: 'assistant', handoffDepth: 4, handoffChainId: root[0].chainId },
+      sourceJobKind: 'fixed', sourceJobChainOrderJson: root[0].chainOrderJson,
+    } as any)).toEqual([])
+  })
+
+  it('rejects malformed and cross-Room participants in a structured chain request', () => {
+    const base = {
+      room: { handoffMode: 'mentions', handoffOrderJson: '[]', maxAgentMentionDepth: 4 },
+      agents,
+    }
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'reversed-chain-order', senderId: 'human', content: '@Hermes → @Codex', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'b', displayName: 'Codex', start: 10, length: 6 }],
+        chainRequest: { version: 1, participants: [
+          { type: 'participant', participantId: 'b', displayName: 'Codex', start: 10, length: 6 },
+          { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+        ] },
+      },
+    } as any)).toThrow(/order|separator/i)
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'invalid-chain-separator', senderId: 'human', content: '@Hermes and @Codex', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 }],
+        chainRequest: { version: 1, participants: [
+          { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+          { type: 'participant', participantId: 'b', displayName: 'Codex', start: 12, length: 6 },
+        ] },
+      },
+    } as any)).toThrow(/separator/i)
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'non-integer-chain-range', senderId: 'human', content: '@Hermes → @Codex', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 }],
+        chainRequest: { version: 1, participants: [
+          { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+          { type: 'participant', participantId: 'b', displayName: 'Codex', start: '10', length: 6 },
+        ] },
+      },
+    } as any)).toThrow(/range/i)
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'oversized-chain', senderId: 'human', content: '@Hermes → @Codex', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 }],
+        chainRequest: { version: 1, participants: Array.from({ length: 101 }, (_, index) => ({
+          type: 'participant', participantId: index === 0 ? 'a' : `unknown-${index}`,
+          displayName: index === 0 ? 'Hermes' : `Unknown ${index}`, start: index * 10,
+          length: index === 0 ? 7 : `@Unknown ${index}`.length,
+        })) },
+      },
+    } as any)).toThrow(/invalid structured chain request/i)
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'mismatched-chain-root', senderId: 'human', content: '@Hermes → @Codex', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'c', displayName: 'Claude Code', start: 0, length: 12 }],
+        chainRequest: { version: 1, participants: [
+          { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+          { type: 'participant', participantId: 'b', displayName: 'Codex', start: 10, length: 6 },
+        ] },
+      },
+    } as any)).toThrow(/chain root target/i)
+    expect(() => planGroupHandoffs({
+      ...base,
+      source: {
+        id: 'cross-room-chain', senderId: 'human', content: '@Hermes → @Other', role: 'user',
+        mentions: [{ type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 }],
+        chainRequest: { version: 1, participants: [
+          { type: 'participant', participantId: 'a', displayName: 'Hermes', start: 0, length: 7 },
+          { type: 'participant', participantId: 'other-room', displayName: 'Other', start: 10, length: 6 },
+        ] },
+      },
+    } as any)).toThrow(/structured chain participant is not an eligible Room participant/i)
+  })
+
   it('uses the configured successor even when the model omitted the mention', () => {
     expect(planGroupHandoffs({
       room: { handoffMode: 'fixed', handoffOrderJson: '["a","b","c"]', maxAgentMentionDepth: 4 },

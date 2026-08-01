@@ -605,6 +605,66 @@ interface GroupHandoffAuthorityInput {
     sourceActorId: string
 }
 
+function parseStructuredChainOrder(value: unknown, agents: RoomAgent[], content: string): RoomAgent[] | null {
+    if (value === undefined) return null
+    const request = value as Partial<StructuredChainRequest> | null
+    if (!request || request.version !== 1 || !Array.isArray(request.participants)
+        || request.participants.length < 2 || request.participants.length > MAX_STRUCTURED_MENTIONS) {
+        throw new Error('Invalid structured chain request')
+    }
+    const allowed = new Map(agents.map(agent => [agent.agentId, agent]))
+    const ordered: RoomAgent[] = []
+    let previousEnd: number | null = null
+    for (const participant of request.participants) {
+        if (!participant || participant.type !== 'participant'
+            || typeof participant.participantId !== 'string' || !participant.participantId.trim()) {
+            throw new Error('Invalid structured chain participant')
+        }
+        const participantId = participant.participantId.trim()
+        const agent = allowed.get(participantId)
+        if (!agent) throw new Error('Structured chain participant is not an eligible Room participant')
+        const displayName = participant.displayName
+        const start = participant.start
+        const length = participant.length
+        if (typeof displayName !== 'string' || !displayName
+            || !Number.isInteger(start) || (start as number) < 0
+            || !Number.isInteger(length) || (length as number) <= 0
+            || length !== `@${displayName}`.length
+            || content.slice(start as number, (start as number) + (length as number)) !== `@${displayName}`) {
+            throw new Error('Invalid structured chain participant range')
+        }
+        const rangeStart = start as number
+        const rangeLength = length as number
+        if (previousEnd !== null) {
+            if (rangeStart <= previousEnd) throw new Error('Invalid structured chain participant order')
+            const separator = content.slice(previousEnd, rangeStart).trim()
+            if (separator !== '→' && separator !== '->') {
+                throw new Error('Invalid structured chain participant separator')
+            }
+        }
+        previousEnd = rangeStart + rangeLength
+        ordered.push(agent)
+    }
+    return ordered
+}
+
+function parseMessageScopedChainOrder(value: unknown, agents: RoomAgent[]): RoomAgent[] {
+    let ids: unknown = value
+    if (typeof value === 'string') {
+        try { ids = JSON.parse(value) } catch { return [] }
+    }
+    if (!Array.isArray(ids) || ids.length < 2 || ids.length > MAX_STRUCTURED_MENTIONS) return []
+    const allowed = new Map(agents.map(agent => [agent.agentId, agent]))
+    const ordered: RoomAgent[] = []
+    for (const rawId of ids) {
+        const id = String(rawId || '')
+        const agent = allowed.get(id)
+        if (!agent) return []
+        ordered.push(agent)
+    }
+    return ordered
+}
+
 function parseFixedHandoffOrder(value: unknown, agents: RoomAgent[]): RoomAgent[] {
     const allowed = new Map(agents.map(agent => [agent.agentId, agent]))
     let ids: unknown = value
