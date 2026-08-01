@@ -1,6 +1,6 @@
 ---
 date: 2026-07-19
-pr: pending
+pr: 2135
 feature: Execute-code approval memory
 impact: Legacy Agent Bridge gateway approvals for execute_code can persist Session and Always choices when descriptive guard pattern keys are emitted.
 ---
