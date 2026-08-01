@@ -10,6 +10,7 @@ import {
   bundledAgentBrowserHome,
   bundledGit,
   bundledNode,
+  bundledPython,
   gitPathDirs,
   clearActiveWebUiDirectory,
   defaultWebuiDir,
@@ -360,9 +361,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   // setup is a #!/bin/sh wrapper, not a python interpreter, so detection
   // resolves to /bin/sh and the bridge crashes (exit code 2) immediately.
   const isWin = process.platform === 'win32'
-  const bundledPython = isWin
-    ? join(pythonDir(), 'python.exe')
-    : join(pythonDir(), 'bin', 'python3')
+  const bundledPythonPath = bundledPython()
   const bundledAgentBrowserBin = isWin
     ? join(pythonDir(), 'node')
     : join(pythonDir(), 'node', 'bin')
@@ -396,8 +395,8 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // The bridge and its per-profile workers need working stdout/stderr for
     // ready handshakes. Use python.exe on Windows and hide windows at the
     // process creation layer instead of switching the bridge to pythonw.exe.
-    HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
-    HERMES_AGENT_CLI_PYTHON: bundledPython,
+    HERMES_AGENT_BRIDGE_PYTHON: bundledPythonPath,
+    HERMES_AGENT_CLI_PYTHON: bundledPythonPath,
     HERMES_AGENT_ROOT: pythonDir(),
     HERMES_AGENT_NODE: bundledNode(),
     HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),

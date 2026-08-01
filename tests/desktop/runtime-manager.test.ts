@@ -63,10 +63,24 @@ function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', { value: platform })
 }
 
-async function createRuntimeArchive(): Promise<string> {
+async function createRuntimeArchive(options: { invalidSchema2Source?: boolean } = {}): Promise<string> {
   const source = tempDir('hermes-runtime-source-')
   const archive = join(tempDir('hermes-runtime-archive-'), 'hermes-runtime-test.tar.gz')
   createRuntimeFiles(source)
+  if (options.invalidSchema2Source) {
+    writeFileSync(join(source, 'runtime-manifest.json'), JSON.stringify({
+      schema: 2,
+      platform: `${process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : process.platform}-${process.arch}`,
+      hermesAgentVersion: '0.17.0',
+      hermesSource: {
+        repository: 'https://github.com/NousResearch/hermes-agent.git',
+        ref: 'v2026.7.30',
+        commit: 'cc4cab2f592e60a197e796506de9168f74baf3ea',
+        installMethod: 'git',
+      },
+      asset: { name: 'hermes-runtime-test.tar.gz' },
+    }))
+  }
   await tar.c({ gzip: true, cwd: source, file: archive }, ['.'])
   return archive
 }
@@ -156,6 +170,15 @@ describe('desktop runtime manager', () => {
     )
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.cmd'))).toBe(true)
     expect(existsSync(join(runtimeRoot, 'python', 'Scripts', 'hermes.exe'))).toBe(false)
+  })
+
+  it('rejects schema 2 runtime archives that omit the updateable Git checkout', async () => {
+    const archive = await createRuntimeArchive({ invalidSchema2Source: true })
+    process.env.HERMES_DESKTOP_RUNTIME_URL = await serveFile(archive)
+
+    const { ensureDesktopRuntime } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    await expect(ensureDesktopRuntime()).rejects.toThrow(/updateable Hermes source files/)
   })
 
   it('does not persist a development Web UI override as the active download directory', async () => {

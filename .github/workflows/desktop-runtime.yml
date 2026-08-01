@@ -10,6 +10,14 @@ on:
         description: "Hermes Agent version to package (defaults to repository runtime config)"
         required: false
         type: string
+      hermes_source_ref:
+        description: "Hermes Agent Git tag/ref (required with a version override)"
+        required: false
+        type: string
+      hermes_source_commit:
+        description: "Pinned full Hermes Agent commit (required with a version override)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -107,6 +115,8 @@ jobs:
           TARGET_ARCH: ${{ matrix.target_arch }}
           GH_TOKEN: ${{ github.token }}
           HERMES_VERSION: ${{ github.event.inputs.hermes_version }}
+          HERMES_SOURCE_REF: ${{ github.event.inputs.hermes_source_ref }}
+          HERMES_SOURCE_COMMIT: ${{ github.event.inputs.hermes_source_commit }}
           HERMES_SKIP_BROWSER_RUNTIME: ${{ matrix.skip_browser_runtime || 'false' }}
         run: npm --prefix packages/desktop run prepare:runtime
 
@@ -116,6 +126,8 @@ jobs:
           TARGET_OS: ${{ matrix.target_os }}
           TARGET_ARCH: ${{ matrix.target_arch }}
           HERMES_VERSION: ${{ github.event.inputs.hermes_version }}
+          HERMES_SOURCE_REF: ${{ github.event.inputs.hermes_source_ref }}
+          HERMES_SOURCE_COMMIT: ${{ github.event.inputs.hermes_source_commit }}
         run: npm --prefix packages/desktop run package:runtime
 
       - name: Upload runtime assets to release

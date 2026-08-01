@@ -83,6 +83,35 @@ Do not make a Windows job require macOS `.dmg` files or a Linux job require
 Windows installers. Keep `fail_on_unmatched_files: true` where platform-specific
 artifact lists make the expectation explicit.
 
+### Desktop Hermes Runtime
+
+Hermes runtime assets are built separately by
+`.github/workflows/desktop-runtime.yml`. `packages/desktop/scripts/runtime-config.mjs`
+pins an upstream Hermes version, Git ref, and full commit; version overrides
+must supply the ref and commit together.
+
+The published runtime keeps this updateable layout:
+
+```text
+python/                 Hermes Agent Git checkout and source root
+  .git/
+  venv/                 bundled Python environment
+  agent-browser/
+  node/                  browser CLI npm prefix
+  ms-playwright/
+node/                    bundled Node.js
+git/                     bundled MinGit on Windows
+runtime-manifest.json
+```
+
+`prepare:runtime` fetches the exact source commit, installs its locked
+dependencies into `python/venv`, builds the upstream TUI/dashboard, and verifies
+that the retained checkout is clean. `package:runtime` includes the source and
+Git metadata in the GitHub/CF archive and records them in schema 2 of the
+runtime manifest. Do not patch tracked Hermes source during this build:
+Studio-specific integration belongs in Studio, and the clean checkout is what
+allows users to run the upstream `hermes update` command directly.
+
 ## Validation Surface
 
 The minimum mechanical harness is:

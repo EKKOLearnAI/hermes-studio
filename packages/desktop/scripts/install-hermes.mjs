@@ -1,57 +1,42 @@
 #!/usr/bin/env node
-// Install hermes-agent into the bundled Python at resources/python/<os>-<arch>/.
-// Prefers `uv` (10-100x faster, more deterministic) and falls back to pip.
+// Install the checked-out Hermes Agent source into python/venv and prepare its
+// bundled browser and frontend assets. The Git checkout remains clean and is
+// retained so the upstream `hermes update` command can update it in place.
 import {
   chmodSync,
-  copyFileSync,
   cpSync,
   existsSync,
-  lstatSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
   rmSync,
-  symlinkSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, resolve, dirname, join } from 'node:path'
+import { basename, resolve, dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { platform as osPlatform, arch as osArch, homedir as osHomedir, tmpdir } from 'node:os'
-import { hermesVersion } from './runtime-config.mjs'
+import { hermesSource } from './runtime-config.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 
 const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
-const HERMES_VERSION = hermesVersion()
-// Match the packaged runtime to the channel list exposed at /hermes/channels.
-// Telegram, Discord, and Slack are covered by "messaging". We intentionally
-// install Matrix's plaintext deps below instead of using the "matrix" extra:
-// that extra pulls mautrix[encryption] -> python-olm, which needs a fragile
-// native build on desktop packaging machines. WhatsApp, QQBot, and Weixin do
-// not expose dedicated hermes-agent extras; their deps are covered by base or
-// the channel extras below.
-const HERMES_EXTRAS = [
-  'mcp',
-  'messaging',
-  'slack',
-  'wecom',
-  'dingtalk',
-  'feishu',
-].join(',')
-const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[${HERMES_EXTRAS}]==${HERMES_VERSION}`
-const EXTRA_PYTHON_PACKAGES = splitPackageList(
-  process.env.HERMES_EXTRA_PYTHON_PACKAGES || [
-    'websockets',
-    'mautrix==0.21.0',
-    'Markdown==3.10.2',
-    'aiosqlite==0.22.1',
-    'asyncpg==0.31.0',
-    'aiohttp-socks==0.11.0',
-  ].join(' '),
+const HERMES_VERSION = hermesSource().version
+// Install the upstream-curated desktop set plus every messaging adapter exposed
+// by Studio. Matrix is included from the lockfile, but python-olm is pruned:
+// it has no portable Windows/macOS build and plaintext Matrix works without it.
+const HERMES_EXTRAS = splitPackageList(
+  process.env.HERMES_EXTRAS || [
+    'all',
+    'messaging',
+    'slack',
+    'matrix',
+    'wecom',
+    'dingtalk',
+    'feishu',
+  ].join(','),
 )
 const BROWSER_PACKAGES = splitPackageList(
   process.env.HERMES_BROWSER_PACKAGES || 'agent-browser@^0.26.0 @askjo/camofox-browser@^1.5.2',
@@ -63,20 +48,27 @@ const CHROME_FOR_TESTING_VERSION = (
 ).trim()
 const SKIP_BROWSER_RUNTIME = process.env.HERMES_SKIP_BROWSER_RUNTIME === '1'
   || process.env.HERMES_SKIP_BROWSER_RUNTIME?.toLowerCase() === 'true'
+const SKIP_HERMES_FRONTENDS = process.env.HERMES_SKIP_FRONTEND_BUILD === '1'
+  || process.env.HERMES_SKIP_FRONTEND_BUILD?.toLowerCase() === 'true'
 
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
+const VENV_DIR = resolve(PY_DIR, 'venv')
 const NODE_DIR = resolve(ROOT, 'resources', 'node', `${OS_LABEL}-${TARGET_ARCH}`)
 const NODE_PREFIX = resolve(PY_DIR, 'node')
 const AGENT_BROWSER_HOME = resolve(PY_DIR, 'agent-browser')
 const PLAYWRIGHT_BROWSERS_PATH = resolve(PY_DIR, 'ms-playwright')
 
 const pyBin = TARGET_OS === 'win32'
-  ? resolve(PY_DIR, 'python.exe')
-  : resolve(PY_DIR, 'bin', 'python3')
+  ? resolve(VENV_DIR, 'python.exe')
+  : resolve(VENV_DIR, 'bin', 'python3')
 
 if (!existsSync(pyBin)) {
   console.error(`Python not found at ${pyBin}. Run: npm run fetch:python`)
+  process.exit(1)
+}
+if (!existsSync(resolve(PY_DIR, '.git')) || !existsSync(resolve(PY_DIR, 'pyproject.toml'))) {
+  console.error(`Hermes source checkout not found at ${PY_DIR}. Run: npm run fetch:hermes`)
   process.exit(1)
 }
 
@@ -127,25 +119,54 @@ function pythonBuildEnv() {
   return env
 }
 
-function installPythonPackages(packages, label) {
-  if (packages.length === 0) return
+function installHermesPythonRuntime() {
+  if (!hasUv()) {
+    console.error('uv is required to install the hash-locked Hermes source runtime')
+    process.exit(1)
+  }
+
+  const tempRoot = mkdtempSync(join(tmpdir(), 'hermes-python-lock-'))
+  const requirementsPath = join(tempRoot, 'requirements.txt')
   const env = pythonBuildEnv()
-  if (hasUv()) {
-    console.log(`→ Installing ${label} via uv: ${packages.join(' ')}`)
+
+  try {
+    console.log(`→ Exporting locked Hermes dependencies: ${HERMES_EXTRAS.join(', ')}`)
+    const exportArgs = [
+      'export',
+      '--project', PY_DIR,
+      '--locked',
+      '--no-dev',
+      '--no-emit-project',
+      '--quiet',
+      '--format', 'requirements.txt',
+      '--prune', 'python-olm',
+      '--output-file', requirementsPath,
+    ]
+    for (const extra of HERMES_EXTRAS) exportArgs.push('--extra', extra)
+    run('uv', exportArgs, { cwd: PY_DIR, env })
+
+    console.log('→ Installing hash-verified Hermes dependencies into bundled Python')
     run('uv', [
       'pip', 'install',
       '--python', pyBin,
-      ...packages,
-    ], { env })
-  } else {
-    console.log(`→ Installing ${label} via pip: ${packages.join(' ')}`)
-    run(pyBin, [
-      '-m', 'pip', 'install',
-      ...packages,
-      '--no-warn-script-location',
-      '--disable-pip-version-check',
-    ], { env })
+      '--require-hashes',
+      '--no-deps',
+      '--requirement', requirementsPath,
+    ], { cwd: PY_DIR, env })
+
+    console.log('→ Installing Hermes source as a relocatable editable project')
+    run('uv', [
+      'pip', 'install',
+      '--python', pyBin,
+      '--no-deps',
+      '--editable', PY_DIR,
+      '--config-setting', 'editable_mode=compat',
+    ], { cwd: PY_DIR, env })
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
   }
+
+  makeEditableInstallRelocatable()
 }
 
 function npmCommand() {
@@ -392,32 +413,31 @@ function ensureBundledBrowserExecutable() {
 
 function sitePackagesDir() {
   if (TARGET_OS === 'win32') {
-    return resolve(PY_DIR, 'Lib', 'site-packages')
+    return resolve(VENV_DIR, 'Lib', 'site-packages')
   }
-  const libDir = resolve(PY_DIR, 'lib')
+  const libDir = resolve(VENV_DIR, 'lib')
   const py = readdirSync(libDir).find(n => /^python\d+\.\d+$/.test(n))
   if (!py) throw new Error(`Could not locate pythonX.Y under ${libDir}`)
   return resolve(libDir, py, 'site-packages')
 }
 
-function pythonModuleExists(moduleName) {
-  const result = optionalRun(pyBin, [
-    '-c',
-    `import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(${JSON.stringify(moduleName)}) else 1)`,
-  ], { stdio: 'ignore' })
-  return result.status === 0
-}
+function makeEditableInstallRelocatable() {
+  const sitePkgs = sitePackagesDir()
+  const editablePths = readdirSync(sitePkgs)
+    .filter(name => /^__editable__\.hermes_agent-.*\.pth$/.test(name))
+  if (editablePths.length !== 1) {
+    console.error(`Expected one Hermes compat editable .pth in ${sitePkgs}, found ${editablePths.length}`)
+    process.exit(1)
+  }
 
-function removeBrokenDashboardAuthPlugin() {
-  if (pythonModuleExists('hermes_cli.dashboard_auth')) return
+  const relativeSource = relative(sitePkgs, PY_DIR).split(sep).join('/')
+  writeFileSync(join(sitePkgs, editablePths[0]), `${relativeSource}\n`)
 
-  const pluginDir = resolve(sitePackagesDir(), 'plugins', 'dashboard_auth', 'nous')
-  if (!existsSync(pluginDir)) return
-
-  rmSync(pluginDir, { recursive: true, force: true })
-  console.warn(
-    '! Removed bundled dashboard_auth/nous plugin because hermes_cli.dashboard_auth is missing from the hermes-agent package',
-  )
+  for (const name of readdirSync(sitePkgs)) {
+    if (!/^hermes_agent-.*\.dist-info$/.test(name)) continue
+    rmSync(join(sitePkgs, name, 'direct_url.json'), { force: true })
+  }
+  console.log(`✓ editable Hermes path is relocatable (${relativeSource})`)
 }
 
 function installBrowserRuntime() {
@@ -465,52 +485,65 @@ function installBrowserRuntime() {
   console.log(`✓ bundled Chrome executable available at ${browserExecutable}`)
 }
 
-installPythonPackages([HERMES_PACKAGE], 'hermes-agent')
-installPythonPackages(EXTRA_PYTHON_PACKAGES, 'extra Python runtime packages')
-removeBrokenDashboardAuthPlugin()
+function buildHermesFrontends() {
+  if (SKIP_HERMES_FRONTENDS) {
+    console.warn('! Skipping Hermes TUI/dashboard build because HERMES_SKIP_FRONTEND_BUILD is set')
+    return
+  }
+
+  const npm = npmCommand()
+  if (!npm) {
+    console.error('npm not found; Hermes TUI/dashboard build requires bundled Node.js/npm')
+    process.exit(1)
+  }
+  const env = browserRuntimeEnv(false)
+  console.log('→ Installing Hermes TUI/dashboard workspace dependencies')
+  runInvocation(npm, [
+    'ci',
+    '--no-audit',
+    '--no-fund',
+    '--progress=false',
+    '--workspace', 'ui-tui',
+    '--workspace', 'web',
+  ], { cwd: PY_DIR, env })
+  console.log('→ Building Hermes TUI')
+  runInvocation(npm, ['run', 'build', '--workspace', 'ui-tui'], { cwd: PY_DIR, env })
+  console.log('→ Building Hermes dashboard')
+  runInvocation(npm, ['run', 'build', '--workspace', 'web'], { cwd: PY_DIR, env })
+
+  for (const required of [
+    resolve(PY_DIR, 'ui-tui', 'dist', 'entry.js'),
+    resolve(PY_DIR, 'hermes_cli', 'web_dist', 'index.html'),
+  ]) {
+    if (!existsSync(required)) {
+      console.error(`Hermes frontend build output not found: ${required}`)
+      process.exit(1)
+    }
+  }
+}
+
+installHermesPythonRuntime()
 installBrowserRuntime()
+buildHermesFrontends()
 
 run(pyBin, [
   '-c',
   [
+    'import importlib.metadata as metadata',
     'import importlib.util',
     'import mcp',
     'import tools.mcp_tool as t',
+    `assert metadata.version("hermes-agent") == ${JSON.stringify(HERMES_VERSION)}`,
     'assert t._MCP_AVAILABLE',
     'assert importlib.util.find_spec("websockets") is not None',
   ].join('; '),
 ])
 
 const hermesBin = TARGET_OS === 'win32'
-  ? resolve(PY_DIR, 'Scripts', 'hermes.cmd')
-  : resolve(PY_DIR, 'bin', 'hermes')
+  ? resolve(VENV_DIR, 'Scripts', 'hermes.cmd')
+  : resolve(VENV_DIR, 'bin', 'hermes')
 const hermesCheckCommand = TARGET_OS === 'win32' ? pyBin : hermesBin
 const hermesCheckArgs = TARGET_OS === 'win32' ? ['-m', 'hermes_cli.main', '--version'] : ['--version']
-
-// hermes-web-ui's agent-bridge searches for `run_agent.py` at <python_root>/run_agent.py
-// (and a few neighbouring dirs). pip places it at site-packages/run_agent.py — surface
-// it at the venv root with a *relative* symlink so the venv stays portable when copied
-// into the packaged .app/.exe (an absolute symlink would break the moment the bundle
-// is moved to /Applications/...).
-function siteRunAgentRelative() {
-  if (TARGET_OS === 'win32') {
-    return ['Lib', 'site-packages', 'run_agent.py'].join('\\')
-  }
-  return `${sitePackagesDir().slice(PY_DIR.length + 1)}/run_agent.py`
-}
-{
-  const relSrc = siteRunAgentRelative()
-  const absSrc = resolve(PY_DIR, relSrc)
-  const dst = resolve(PY_DIR, 'run_agent.py')
-  if (existsSync(absSrc)) {
-    try { lstatSync(dst); unlinkSync(dst) } catch {}
-    if (TARGET_OS === 'win32') copyFileSync(absSrc, dst)
-    else symlinkSync(relSrc, dst)
-    console.log(`✓ run_agent.py linked at venv root (relative → ${relSrc})`)
-  } else {
-    console.warn(`! run_agent.py not found at ${absSrc} — agent-bridge may fail`)
-  }
-}
 
 // Relocate: replace the pip-generated launcher (which embeds an absolute
 // shebang to the build-time Python path) with a relative wrapper so the
@@ -525,7 +558,7 @@ if (TARGET_OS === 'win32') {
     ['hermes-acp', 'acp_adapter.entry'],
   ]
   for (const [name, mod] of wrappers) {
-    const cmdPath = resolve(PY_DIR, 'Scripts', `${name}.cmd`)
+    const cmdPath = resolve(VENV_DIR, 'Scripts', `${name}.cmd`)
     writeFileSync(
       cmdPath,
       [
@@ -534,7 +567,7 @@ if (TARGET_OS === 'win32') {
         `"%PY%" -m ${mod} %*`,
       ].join('\r\n'),
     )
-    rmSync(resolve(PY_DIR, 'Scripts', `${name}.exe`), { force: true })
+    rmSync(resolve(VENV_DIR, 'Scripts', `${name}.exe`), { force: true })
   }
 } else {
   const launcher = [
@@ -550,7 +583,7 @@ if (TARGET_OS === 'win32') {
     ['hermes-agent', 'run_agent'],
     ['hermes-acp', 'acp_adapter.entry'],
   ]) {
-    const p = resolve(PY_DIR, 'bin', name)
+    const p = resolve(VENV_DIR, 'bin', name)
     if (existsSync(p)) {
       writeFileSync(p, launcher.replace('hermes_cli.main', mod), { mode: 0o755 })
       chmodSync(p, 0o755)
@@ -566,6 +599,18 @@ if (!existsSync(hermesBin)) {
 }
 
 run(hermesCheckCommand, hermesCheckArgs)
+
+{
+  const status = spawnSync('git', ['status', '--porcelain'], {
+    cwd: PY_DIR,
+    encoding: 'utf-8',
+  })
+  if (status.status !== 0 || status.stdout.trim()) {
+    process.stderr.write(status.stderr || '')
+    console.error(`Hermes source checkout is dirty after runtime preparation:\n${status.stdout.trim()}`)
+    process.exit(status.status || 1)
+  }
+}
 
 if (!SKIP_BROWSER_RUNTIME) {
   run(pyBin, [

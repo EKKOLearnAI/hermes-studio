@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Strip __pycache__, *.pyc, tests, idle, tkinter from bundled Python to shrink the installer.
+// Strip caches/tests from the bundled Python environment without touching the
+// tracked Hermes source checkout that surrounds it.
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readdirSync, statSync, rmSync, existsSync } from 'node:fs'
@@ -12,9 +13,10 @@ const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
+const VENV_DIR = resolve(PY_DIR, 'venv')
 
-if (!existsSync(PY_DIR)) {
-  console.error(`No bundled python at ${PY_DIR}`)
+if (!existsSync(VENV_DIR)) {
+  console.error(`No bundled python environment at ${VENV_DIR}`)
   process.exit(1)
 }
 
@@ -54,5 +56,18 @@ function dirSize(dir) {
   return total
 }
 
-walk(PY_DIR)
-console.log(`✓ Pruned ~${(bytesFreed / 1024 / 1024).toFixed(1)} MB from ${PY_DIR}`)
+walk(VENV_DIR)
+
+// Frontend build dependencies are reproducible from the retained lockfile and
+// are refreshed by `hermes update`; only the built TUI/dashboard outputs ship.
+for (const nodeModules of [
+  join(PY_DIR, 'node_modules'),
+  join(PY_DIR, 'ui-tui', 'node_modules'),
+  join(PY_DIR, 'web', 'node_modules'),
+]) {
+  if (!existsSync(nodeModules)) continue
+  bytesFreed += dirSize(nodeModules)
+  rmSync(nodeModules, { recursive: true, force: true })
+}
+
+console.log(`✓ Pruned ~${(bytesFreed / 1024 / 1024).toFixed(1)} MB from ${VENV_DIR}`)

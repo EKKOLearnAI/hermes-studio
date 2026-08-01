@@ -15,6 +15,7 @@ import { arch as osArch, platform as osPlatform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { hermesSource } from './runtime-config.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -25,11 +26,13 @@ const PLATFORM = `${OS_LABEL}-${TARGET_ARCH}`
 const OUT_DIR = resolve(ROOT, 'release', 'runtime')
 
 const PY_DIR = resolve(ROOT, 'resources', 'python', PLATFORM)
+const VENV_DIR = resolve(PY_DIR, 'venv')
 const NODE_DIR = resolve(ROOT, 'resources', 'node', PLATFORM)
 const GIT_DIR = resolve(ROOT, 'resources', 'git', PLATFORM)
 const pyBin = TARGET_OS === 'win32'
-  ? resolve(PY_DIR, 'python.exe')
-  : resolve(PY_DIR, 'bin', 'python3')
+  ? resolve(VENV_DIR, 'python.exe')
+  : resolve(VENV_DIR, 'bin', 'python3')
+const configuredSource = hermesSource()
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options })
@@ -37,8 +40,8 @@ function run(command, args, options = {}) {
   return result
 }
 
-function output(command, args) {
-  const result = spawnSync(command, args, { encoding: 'utf-8' })
+function output(command, args, options = {}) {
+  const result = spawnSync(command, args, { encoding: 'utf-8', ...options })
   if (result.status !== 0) {
     process.stderr.write(result.stderr || result.stdout || '')
     process.exit(result.status ?? 1)
@@ -68,6 +71,36 @@ const hermesAgentVersion = output(pyBin, [
   '-c',
   'import importlib.metadata as m; print(m.version("hermes-agent"))',
 ])
+if (hermesAgentVersion !== configuredSource.version) {
+  console.error(
+    `Installed Hermes version mismatch: expected ${configuredSource.version}, found ${hermesAgentVersion}`,
+  )
+  process.exit(1)
+}
+if (!existsSync(join(PY_DIR, '.git'))) {
+  console.error(`Hermes Git metadata missing at ${join(PY_DIR, '.git')}`)
+  process.exit(1)
+}
+const sourceCommit = output('git', ['rev-parse', 'HEAD'], { cwd: PY_DIR }).toLowerCase()
+const sourceBranch = output('git', ['branch', '--show-current'], { cwd: PY_DIR })
+const sourceRepository = output('git', ['remote', 'get-url', 'origin'], { cwd: PY_DIR })
+const dirtySource = output('git', ['status', '--porcelain'], { cwd: PY_DIR })
+if (sourceCommit !== configuredSource.commit) {
+  console.error(`Hermes source commit mismatch: expected ${configuredSource.commit}, found ${sourceCommit}`)
+  process.exit(1)
+}
+if (sourceRepository !== configuredSource.repository) {
+  console.error(`Hermes source repository mismatch: expected ${configuredSource.repository}, found ${sourceRepository}`)
+  process.exit(1)
+}
+if (sourceBranch !== 'main') {
+  console.error(`Hermes source must be packaged on the update branch main, found ${sourceBranch || 'detached HEAD'}`)
+  process.exit(1)
+}
+if (dirtySource) {
+  console.error(`Hermes source checkout must be clean before packaging:\n${dirtySource}`)
+  process.exit(1)
+}
 const assetName = `hermes-runtime-hermes-agent-${hermesAgentVersion}-${PLATFORM}.tar.gz`
 const manifestName = `hermes-runtime-${PLATFORM}.json`
 
@@ -84,12 +117,51 @@ try {
     writeFileSync(join(stage, 'git', '.placeholder'), 'Git for Windows is only bundled on Windows.\n')
   }
 
+  // Run Python and import Hermes after moving the checkout into the staging
+  // directory. This catches absolute editable-install paths before a broken
+  // archive can be uploaded by GitHub Actions.
+  const stagedSource = join(stage, 'python')
+  const stagedVenv = join(stagedSource, 'venv')
+  const stagedPython = TARGET_OS === 'win32'
+    ? join(stagedVenv, 'python.exe')
+    : join(stagedVenv, 'bin', 'python3')
+  const stagedVersion = output(stagedPython, [
+    '-c',
+    [
+      'import importlib.metadata as metadata',
+      'from pathlib import Path',
+      'import hermes_cli',
+      `source = Path(${JSON.stringify(stagedSource)}).resolve()`,
+      'module = Path(hermes_cli.__file__).resolve()',
+      'assert module.is_relative_to(source), (module, source)',
+      'print(metadata.version("hermes-agent"))',
+    ].join('; '),
+  ])
+  if (stagedVersion !== hermesAgentVersion) {
+    console.error(`Relocated Hermes version mismatch: expected ${hermesAgentVersion}, found ${stagedVersion}`)
+    process.exit(1)
+  }
+  const stagedCommit = output('git', ['rev-parse', 'HEAD'], { cwd: stagedSource }).toLowerCase()
+  const stagedDirtySource = output('git', ['status', '--porcelain'], { cwd: stagedSource })
+  if (stagedCommit !== sourceCommit || stagedDirtySource) {
+    console.error(
+      `Staged Hermes checkout verification failed: commit=${stagedCommit}, status=${stagedDirtySource || 'clean'}`,
+    )
+    process.exit(1)
+  }
+
   const runtimeManifest = {
-    schema: 1,
+    schema: 2,
     platform: PLATFORM,
     targetOs: TARGET_OS,
     targetArch: TARGET_ARCH,
     hermesAgentVersion,
+    hermesSource: {
+      repository: sourceRepository,
+      ref: configuredSource.ref,
+      commit: sourceCommit,
+      installMethod: 'git',
+    },
     asset: {
       name: assetName,
     },

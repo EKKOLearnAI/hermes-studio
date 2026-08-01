@@ -94,8 +94,15 @@ export interface RuntimeVersionStatus {
 }
 
 interface RuntimePackageManifest {
+  schema?: number
   hermesAgentVersion?: string
   platform?: string
+  hermesSource?: {
+    repository?: string
+    ref?: string
+    commit?: string
+    installMethod?: string
+  }
   asset?: {
     name?: string
     url?: string
@@ -188,12 +195,18 @@ function readRuntimeManifestVersion(runtimeDir: string): string | undefined {
 }
 
 function requiredRuntimeFiles(root: string): string[] {
+  const sourceRoot = join(root, 'python')
+  const venvRoot = join(sourceRoot, 'venv')
+  const venvPython = process.platform === 'win32'
+    ? join(venvRoot, 'python.exe')
+    : join(venvRoot, 'bin', 'python3')
+  const pythonRoot = existsSync(venvPython) ? venvRoot : sourceRoot
   const pythonBin = process.platform === 'win32'
-    ? join(root, 'python', 'python.exe')
-    : join(root, 'python', 'bin', 'python3')
+    ? join(pythonRoot, 'python.exe')
+    : join(pythonRoot, 'bin', 'python3')
   const hermesBin = process.platform === 'win32'
-    ? join(root, 'python', 'Scripts', 'hermes.cmd')
-    : join(root, 'python', 'bin', 'hermes')
+    ? join(pythonRoot, 'Scripts', 'hermes.cmd')
+    : join(pythonRoot, 'bin', 'hermes')
   const nodeBin = process.platform === 'win32'
     ? join(root, 'node', 'node.exe')
     : join(root, 'node', 'bin', 'node')
@@ -204,6 +217,39 @@ function requiredRuntimeFiles(root: string): string[] {
 
 function missingRuntimeFiles(root: string): string[] {
   return requiredRuntimeFiles(root).filter(file => !existsSync(file))
+}
+
+function validateExtractedRuntime(root: string, expectedPlatform: string): void {
+  const missing = missingRuntimeFiles(root)
+  if (missing.length > 0) {
+    throw new Error(
+      `Runtime archive is missing required files: `
+      + missing.map(file => relative(root, file)).join(', '),
+    )
+  }
+  const manifest = readJsonFile<RuntimePackageManifest>(join(root, 'runtime-manifest.json'))
+  if (!manifest) throw new Error('Runtime archive has an invalid runtime-manifest.json')
+  if (manifest.platform && manifest.platform !== expectedPlatform) {
+    throw new Error(`Runtime platform mismatch: expected ${expectedPlatform}, received ${manifest.platform}`)
+  }
+  if ((manifest.schema || 0) >= 2) {
+    const missingSource = [
+      join(root, 'python', '.git', 'HEAD'),
+      join(root, 'python', 'pyproject.toml'),
+    ].filter(file => !existsSync(file))
+    if (missingSource.length > 0) {
+      throw new Error(
+        `Runtime archive is missing updateable Hermes source files: `
+        + missingSource.map(file => relative(root, file)).join(', '),
+      )
+    }
+    if (manifest.hermesSource?.installMethod !== 'git'
+      || !manifest.hermesSource.repository
+      || !manifest.hermesSource.ref
+      || !/^[0-9a-f]{40}$/i.test(manifest.hermesSource.commit || '')) {
+      throw new Error('Runtime archive has invalid Hermes Git source metadata')
+    }
+  }
 }
 
 export function listInstalledRuntimeVersions(active = readActiveVersionManifest()): InstalledRuntimeVersion[] {
@@ -418,10 +464,7 @@ export async function downloadRuntimeVersion(version: string, source: VersionDow
     }
     onProgress?.({ stage: 'extract', message: 'runtimeVersions.jobStage.extractRuntime' })
     await extractTarGzip(archive, tempRoot)
-    const missing = missingRuntimeFiles(tempRoot)
-    if (missing.length > 0) {
-      throw new Error(`Runtime archive is missing required files: ${missing.map(file => relative(tempRoot, file)).join(', ')}`)
-    }
+    validateExtractedRuntime(tempRoot, platform)
     onProgress?.({ stage: 'install', message: 'runtimeVersions.jobStage.installRuntime' })
     rmSync(targetRoot, { recursive: true, force: true })
     mkdirSync(dirname(targetRoot), { recursive: true })
