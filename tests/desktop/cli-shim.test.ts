@@ -90,6 +90,7 @@ describe('Hermes Studio CLI shim', () => {
     expect(content).toContain('call :resolveRuntime')
     expect(content).toContain("if(args[0]&&args[0].toLowerCase()==='cli')args.shift()")
     expect(content).toContain("cp.spawnSync(process.env.PYTHON,['-m','hermes_cli.main',...args]")
+    expect(content).toContain("{stdio:'inherit',windowsHide:true}")
     expect(content).toContain('"%NODE%" -e "const cp=require')
     expect(content).toContain('if /I "%~1"=="web" goto runWeb')
     expect(content).toContain(':runWeb')

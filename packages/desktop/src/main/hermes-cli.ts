@@ -94,7 +94,7 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
     const child = spawn(invocation.command, [...invocation.argsPrefix, ...args], {
       env,
       stdio: 'inherit',
-      windowsHide: false,
+      windowsHide: true,
     })
     child.once('error', (err) => {
       console.error(`Failed to run bundled Hermes CLI: ${err.message}`)
