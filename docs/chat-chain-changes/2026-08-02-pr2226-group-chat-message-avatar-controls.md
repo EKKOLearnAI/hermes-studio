@@ -3,7 +3,7 @@ date: 2026-08-02
 pr: 2226
 commit: pending
 feature: Group Chat message-avatar participant quick settings
-impact: Makes the sender avatar beside agent messages the direct, keyboard-accessible entry point for participant model, API mode, reasoning effort, and structured mention controls. The event carries the stable participant ID through GroupMessageItem and GroupMessageList to the existing Room-scoped save controller in GroupChatPanel; human messages stay non-interactive, exact sender IDs win over legacy assistant/tool name fallback, and current participant Session identity and next-run semantics are unchanged.
+impact: Makes the sender avatar beside agent messages the direct, keyboard-accessible entry point for participant model, API mode, reasoning effort, and structured mention controls. The event carries the stable participant ID through GroupMessageItem and GroupMessageList to the existing Room-scoped save controller in GroupChatPanel; human messages stay non-interactive, exact sender IDs win over legacy assistant/tool name fallback, and current participant Session identity and next-run semantics are unchanged. The reasoning control now shares the single-chat color scale, gradient rail, Max state, and reduced-motion behavior; the selectable API mode list matches single chat while legacy persisted modes remain readable.
 ---
 
 - Agent and legacy agent tool-message avatars render as semantic buttons with accessible names and `aria-expanded` state.

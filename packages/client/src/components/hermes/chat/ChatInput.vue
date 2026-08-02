@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import VoiceDialogueControls from './VoiceDialogueControls.vue'
+import { reasoningEffortAccentColors } from './reasoning-effort-visuals'
 import BundleCreateModal from './BundleCreateModal.vue'
 import { useMicRecorder } from '@/composables/useMicRecorder'
 import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
@@ -65,16 +66,6 @@ const reasoningEffortSliderValue = computed(() => {
   const index = reasoningEffortOptions.value.findIndex(option => option.value === currentReasoningEffort.value)
   return index >= 0 ? index : 0
 })
-const reasoningEffortAccentColors = [
-  '#94a3b8',
-  '#2ac8e9',
-  '#2bd9b4',
-  '#4ed786',
-  '#b9d93a',
-  '#f9c33c',
-  '#f77734',
-  '#ef4444',
-] as const
 const reasoningEffortAccentStyle = computed(() => ({
   '--reasoning-effort-accent-color': reasoningEffortAccentColors[reasoningEffortSliderValue.value]
     || reasoningEffortAccentColors[0],
@@ -1661,6 +1652,7 @@ function isImage(type: string): boolean {
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+@use '@/styles/reasoning-effort' as reasoning-effort;
 
 .chat-input-area {
   position: relative;
@@ -1835,108 +1827,7 @@ function isImage(type: string): boolean {
   }
 }
 
-.reasoning-effort-slider {
-  --n-handle-size: 24px !important;
-  --n-rail-height: 10px !important;
-  --reasoning-effort-gradient-width: min(314px, calc(100vw - 70px));
-  margin: 0 3px;
-
-  :deep(.n-slider-rail) {
-    background: rgba(255, 255, 255, 0.14);
-  }
-
-  :deep(.n-slider-rail__fill) {
-    background: linear-gradient(
-      90deg,
-      #38bdf8 0%,
-      #22d3ee 20%,
-      #34d399 40%,
-      #facc15 62%,
-      #fb923c 82%,
-      #ef4444 100%
-    );
-    background-position: left center;
-    background-repeat: no-repeat;
-    background-size: var(--reasoning-effort-gradient-width) 100%;
-    box-shadow: 0 0 8px rgba(56, 189, 248, 0.24);
-  }
-
-  :deep(.n-slider-handle) {
-    border: 2px solid rgba(255, 255, 255, 0.92);
-    background: #f8fafc;
-    box-shadow: 0 2px 8px rgba(24, 18, 44, 0.38);
-  }
-}
-
-.reasoning-effort-slider--max {
-  :deep(.n-slider-handle) {
-    position: relative;
-    overflow: hidden;
-    isolation: isolate;
-    border-radius: 50%;
-    border-color: rgba(255, 255, 255, 0.96);
-    background:
-      radial-gradient(circle at 24% 24%, #38bdf8 0 14%, transparent 34%),
-      radial-gradient(circle at 78% 22%, #facc15 0 15%, transparent 36%),
-      radial-gradient(circle at 78% 78%, #ef4444 0 16%, transparent 38%),
-      radial-gradient(circle at 22% 76%, #34d399 0 15%, transparent 36%),
-      conic-gradient(from 30deg, #22d3ee, #34d399, #facc15, #fb923c, #ef4444, #a855f7, #38bdf8, #22d3ee);
-    background-size: 150% 150%, 145% 145%, 155% 155%, 145% 145%, 180% 180%;
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.38),
-      0 0 12px rgba(239, 68, 68, 0.46),
-      0 3px 9px rgba(24, 18, 44, 0.44);
-    animation: reasoning-effort-max-liquid 3.6s ease-in-out infinite;
-  }
-
-  :deep(.n-slider-handle::after) {
-    content: '';
-    position: absolute;
-    inset: 2px 5px 11px 5px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.5);
-    filter: blur(1px);
-    animation: reasoning-effort-max-highlight 2.8s ease-in-out infinite;
-  }
-}
-
-@keyframes reasoning-effort-max-liquid {
-  0%, 100% {
-    background-position: 0% 20%, 100% 0%, 100% 100%, 0% 100%, 50% 50%;
-    background-size: 150% 150%, 145% 145%, 155% 155%, 145% 145%, 180% 180%;
-  }
-
-  33% {
-    background-position: 65% 0%, 55% 70%, 30% 100%, 0% 35%, 100% 35%;
-    background-size: 175% 135%, 135% 175%, 165% 140%, 140% 165%, 210% 170%;
-  }
-
-  66% {
-    background-position: 100% 70%, 20% 100%, 0% 35%, 75% 0%, 0% 70%;
-    background-size: 135% 175%, 170% 140%, 140% 170%, 170% 135%, 170% 210%;
-  }
-}
-
-@keyframes reasoning-effort-max-highlight {
-  0%, 100% {
-    opacity: 0.72;
-    transform: translate(-1px, -1px) rotate(0deg);
-  }
-
-  50% {
-    opacity: 0.42;
-    transform: translate(3px, 2px) rotate(180deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .reasoning-effort-slider--max {
-    :deep(.n-slider-handle),
-    :deep(.n-slider-handle::after) {
-      animation: none;
-    }
-  }
-}
+@include reasoning-effort.slider('.reasoning-effort-slider', '.reasoning-effort-slider--max');
 
 .reasoning-effort-slider-range {
   margin-top: 4px;

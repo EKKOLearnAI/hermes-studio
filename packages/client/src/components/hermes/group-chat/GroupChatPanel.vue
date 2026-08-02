@@ -25,6 +25,7 @@ import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
+import { reasoningEffortAccentColors } from '@/components/hermes/chat/reasoning-effort-visuals'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -134,8 +135,6 @@ const participantApiModeOptions = computed(() => [
     { label: 'Chat Completions', value: 'chat_completions' },
     { label: 'Responses API', value: 'codex_responses' },
     { label: 'Anthropic Messages', value: 'anthropic_messages' },
-    { label: 'Bedrock Converse', value: 'bedrock_converse' },
-    { label: 'Codex App Server', value: 'codex_app_server' },
 ])
 const participantReasoningOptions = computed(() => [
     { label: t('chat.reasoningEffort.options.default'), value: '' },
@@ -813,14 +812,8 @@ function participantModelOptions(agent: RoomAgent): DropdownOption[] {
     })) as DropdownOption[]
 }
 
-function participantApiModeOptionsFor(agent: RoomAgent) {
-    const runtime = agent.runtime || 'hermes'
-    return participantApiModeOptions.value.filter(option => (
-        runtime === 'hermes'
-        || option.value === 'chat_completions'
-        || option.value === 'codex_responses'
-        || option.value === 'anthropic_messages'
-    ))
+function participantApiModeOptionsFor(_agent: RoomAgent) {
+    return participantApiModeOptions.value
 }
 
 function participantReasoningSliderValue(agent: RoomAgent): number {
@@ -835,6 +828,13 @@ function participantReasoningSliderLabel(value: number): string {
 
 function participantReasoningLabel(agent: RoomAgent): string {
     return participantReasoningSliderLabel(participantReasoningSliderValue(agent))
+}
+
+function participantReasoningAccentStyle(agent: RoomAgent) {
+    return {
+        '--reasoning-effort-accent-color': reasoningEffortAccentColors[participantReasoningSliderValue(agent)]
+            || reasoningEffortAccentColors[0],
+    }
 }
 
 function participantApiModeFor(agent: RoomAgent): string {
@@ -1799,10 +1799,15 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         @update:value="value => handleQuickApiModeChange(expandedParticipant, value as string | null)"
                     />
                 </div>
-                <div v-if="currentRoomCanManage && (expandedParticipant.mode || 'scoped') === 'scoped'" class="participant-quick-control participant-reasoning-control">
-                    <label>{{ t('groupChat.participantReasoningEffort') }} · {{ participantReasoningLabel(expandedParticipant) }}</label>
+                <div
+                    v-if="currentRoomCanManage && (expandedParticipant.mode || 'scoped') === 'scoped'"
+                    class="participant-quick-control participant-reasoning-control"
+                    :style="participantReasoningAccentStyle(expandedParticipant)"
+                >
+                    <label>{{ t('groupChat.participantReasoningEffort') }} · <strong>{{ participantReasoningLabel(expandedParticipant) }}</strong></label>
                     <NSlider
                         class="participant-reasoning-slider"
+                        :class="{ 'participant-reasoning-slider--max': (expandedParticipant.reasoningEffort || '') === 'max' }"
                         :value="participantReasoningSliderValue(expandedParticipant)"
                         :min="0"
                         :max="participantReasoningOptions.length - 1"
@@ -2173,6 +2178,7 @@ export default defineComponent({ components: { CreateRoomForm } })
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
+@use '@/styles/reasoning-effort' as reasoning-effort;
 
 .group-chat-panel {
     display: flex;
@@ -3202,25 +3208,20 @@ export default defineComponent({ components: { CreateRoomForm } })
 
 .participant-reasoning-control {
     padding: 2px 4px 0;
-}
 
-.participant-reasoning-slider {
-    margin: 2px 2px 0;
-
-    :deep(.n-slider-rail__fill) {
-        background-color: $accent-primary;
-    }
-
-    :deep(.n-slider-handle) {
-        border: 2px solid $accent-primary;
-        box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.16);
+    > label strong {
+        color: var(--reasoning-effort-accent-color);
+        font-weight: 600;
     }
 }
+
+@include reasoning-effort.slider('.participant-reasoning-slider', '.participant-reasoning-slider--max');
 
 .participant-reasoning-range {
     display: flex;
     justify-content: space-between;
-    color: $text-secondary;
+    margin-top: 4px;
+    color: $text-muted;
     font-size: 10px;
 }
 

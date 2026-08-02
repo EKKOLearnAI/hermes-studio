@@ -438,8 +438,21 @@ test.describe('group chat room deep links', () => {
     await expect(avatar).toHaveAttribute('aria-expanded', 'true')
     await expect(quick).toBeVisible()
     await expect(quick.locator('.participant-reasoning-slider')).toBeVisible()
+    const reasoningVisual = await quick.locator('.participant-reasoning-control').evaluate((control) => {
+      const label = control.querySelector('label strong')
+      const railFill = control.querySelector('.n-slider-rail__fill')
+      const labelStyle = label ? getComputedStyle(label) : null
+      const railStyle = railFill ? getComputedStyle(railFill) : null
+      return {
+        accent: (control as HTMLElement).style.getPropertyValue('--reasoning-effort-accent-color'),
+        labelColor: labelStyle?.color || '',
+        railBackground: railStyle?.backgroundImage || '',
+      }
+    })
+    expect(reasoningVisual.accent).toBe('#94a3b8')
+    expect(reasoningVisual.labelColor).toBe('rgb(148, 163, 184)')
+    expect(reasoningVisual.railBackground).toContain('linear-gradient')
     await expect(quick.getByText('Changes apply to this participant\'s next run.')).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('message-participant-avatar-controls.png'), fullPage: true })
 
     const avatarBox = await avatar.boundingBox()
     const quickBox = await quick.boundingBox()
@@ -460,7 +473,12 @@ test.describe('group chat room deep links', () => {
     await expect.poll(async () => agentsByRoom['room-alpha'][0].model).toBe('test-model-2')
 
     await selects.nth(1).click()
-    await page.getByText('Anthropic Messages').click()
+    const apiModeOptions = page.locator('.n-base-select-menu:visible .n-base-select-option .n-base-select-option__content')
+    await expect(apiModeOptions).toHaveCount(3)
+    await expect(apiModeOptions).toHaveText(['Chat Completions', 'Responses API', 'Anthropic Messages'])
+    await expect(page.getByText('Bedrock Converse', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('Codex App Server', { exact: true })).toHaveCount(0)
+    await apiModeOptions.filter({ hasText: 'Anthropic Messages' }).click()
     await expect.poll(async () => agentsByRoom['room-alpha'][0].apiMode).toBe('anthropic_messages')
 
     const thumb = quick.locator('.participant-reasoning-slider [role="slider"]')
@@ -469,6 +487,9 @@ test.describe('group chat room deep links', () => {
     await thumb.press('Home')
     for (let index = 0; index < 5; index += 1) await thumb.press('ArrowRight')
     await expect.poll(async () => agentsByRoom['room-alpha'][0].reasoningEffort).toBe('high')
+    await expect(quick.locator('.participant-reasoning-control label strong')).toHaveText('High')
+    await expect(quick.locator('.participant-reasoning-control label strong')).toHaveCSS('color', 'rgb(249, 195, 60)')
+    await page.screenshot({ path: testInfo.outputPath('message-participant-avatar-controls.png'), fullPage: true })
 
     const mentionButton = quick.getByRole('button', { name: '@ Worker' })
     await mentionButton.click()

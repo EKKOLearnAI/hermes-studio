@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+const chatInputSource = readFileSync('packages/client/src/components/hermes/chat/ChatInput.vue', 'utf8')
+const reasoningVisualsSource = readFileSync('packages/client/src/styles/reasoning-effort.scss', 'utf8')
 const messageListSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
 const messageItemSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
 const inputSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatInput.vue', 'utf8')
@@ -57,12 +59,36 @@ describe('Group Chat participant avatar direct controls', () => {
     expect(panelSource).not.toContain('showParticipantQuickSettingsModal')
   })
 
-  it('reuses the single-chat reasoning scale and keeps default as an empty inherited value', () => {
+  it('reuses the single-chat reasoning scale, visual contract, and empty inherited default', () => {
     for (const value of ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
       expect(panelSource).toContain(`value: '${value === 'default' ? '' : value}'`)
     }
     expect(panelSource).toContain('participantReasoningSliderValue(agent)')
     expect(panelSource).toContain('participantReasoningSliderLabel')
+    expect(panelSource).toContain("import { reasoningEffortAccentColors } from '@/components/hermes/chat/reasoning-effort-visuals'")
+    expect(chatInputSource).toContain("import { reasoningEffortAccentColors } from './reasoning-effort-visuals'")
+    expect(panelSource).toContain("@use '@/styles/reasoning-effort' as reasoning-effort;")
+    expect(chatInputSource).toContain("@use '@/styles/reasoning-effort' as reasoning-effort;")
+    expect(panelSource).toContain("@include reasoning-effort.slider('.participant-reasoning-slider', '.participant-reasoning-slider--max');")
+    expect(chatInputSource).toContain("@include reasoning-effort.slider('.reasoning-effort-slider', '.reasoning-effort-slider--max');")
+    expect(reasoningVisualsSource).toContain('@mixin slider(')
+    expect(panelSource).toContain("'--reasoning-effort-accent-color': reasoningEffortAccentColors[participantReasoningSliderValue(agent)]")
+    expect(panelSource).toContain(':style="participantReasoningAccentStyle(expandedParticipant)"')
+    expect(panelSource).toContain(":class=\"{ 'participant-reasoning-slider--max': (expandedParticipant.reasoningEffort || '') === 'max' }\"")
+    expect(reasoningVisualsSource).toContain('--reasoning-effort-gradient-width')
+    expect(reasoningVisualsSource).toContain('linear-gradient(')
+    expect(reasoningVisualsSource).toContain('@media (prefers-reduced-motion: reduce)')
+  })
+
+  it('keeps the participant API mode list aligned with single-chat coding-agent modes', () => {
+    const optionsBlock = panelSource.match(/const participantApiModeOptions = computed\(\(\) => \[(.*?)\n\]\)/s)?.[1] || ''
+    for (const value of ['chat_completions', 'codex_responses', 'anthropic_messages']) {
+      expect(optionsBlock).toContain(`value: '${value}'`)
+    }
+    expect(optionsBlock).not.toContain("value: 'bedrock_converse'")
+    expect(optionsBlock).not.toContain("value: 'codex_app_server'")
+    expect(panelSource).toContain("const participantApiModeValues = ['chat_completions', 'codex_responses', 'anthropic_messages', 'bedrock_converse', 'codex_app_server']")
+    expect(panelSource).not.toContain("runtime === 'hermes'")
   })
 
   it('inserts an atomic structured participant mention through the composer public API', () => {
@@ -86,12 +112,9 @@ describe('Group Chat participant avatar direct controls', () => {
     }
   })
 
-  it('forwards a Hermes participant API mode through the complete Agent Bridge contract', () => {
+  it('forwards the single-chat API modes through the complete Agent Bridge contract', () => {
     expect(panelSource).toContain("apiMode: String(requested.apiMode || '')")
     expect(panelSource).toContain('participantApiModeOptionsFor(expandedParticipant)')
-    expect(panelSource).toContain("runtime === 'hermes'")
-    expect(panelSource).toContain("'bedrock_converse'")
-    expect(panelSource).toContain("'codex_app_server'")
     expect(bridgeClientSource).toContain('api_mode?: string')
     expect(bridgeClientSource).toContain("...(options.api_mode !== undefined ? { api_mode: options.api_mode } : {})")
     expect(agentClientsSource).toContain("api_mode: String(participantSnapshot.apiMode || '')")
