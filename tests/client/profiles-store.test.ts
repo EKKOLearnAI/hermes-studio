@@ -68,6 +68,24 @@ describe('Profiles Store', () => {
     expect(store.profiles).toHaveLength(2)
   })
 
+  it('refreshes profiles only after a successful import', async () => {
+    mockProfilesApi.importProfile.mockResolvedValue({ success: false, error: 'invalid archive' })
+    mockProfilesApi.fetchProfiles.mockResolvedValue([])
+    const store = useProfilesStore()
+    const file = new File(['archive'], 'profile.tar.gz')
+
+    const failed = await store.importProfile(file)
+
+    expect(failed).toEqual({ success: false, error: 'invalid archive' })
+    expect(mockProfilesApi.fetchProfiles).not.toHaveBeenCalled()
+
+    mockProfilesApi.importProfile.mockResolvedValue({ success: true })
+    const succeeded = await store.importProfile(file)
+
+    expect(succeeded).toEqual({ success: true })
+    expect(mockProfilesApi.fetchProfiles).toHaveBeenCalledTimes(1)
+  })
+
   it('deleteProfile clears detail cache', async () => {
     mockProfilesApi.deleteProfile.mockResolvedValue(true)
     mockProfilesApi.fetchProfiles.mockResolvedValue([

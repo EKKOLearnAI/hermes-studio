@@ -1,3 +1,4 @@
+import { existsSync } from 'fs'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const execMock = vi.hoisted(() => vi.fn())
@@ -22,6 +23,9 @@ describe('profile archive timeout', () => {
     const [, args, options] = execMock.mock.calls[0]
     expect(args).toEqual(['profile', 'export', 'mohamed', '--output', '/tmp/hermes-profile-mohamed.tar.gz'])
     expect(options.timeout).toBe(10 * 60 * 1000)
+    expect(options.env.TMPDIR).toBe(options.env.TMP)
+    expect(options.env.TMPDIR).toBe(options.env.TEMP)
+    expect(existsSync(options.env.TMPDIR)).toBe(false)
   })
 
   it('reports a killed export as a timeout rather than a bare "Command failed"', async () => {
@@ -36,6 +40,8 @@ describe('profile archive timeout', () => {
       code: ARCHIVE_TIMEOUT_CODE,
       message: expect.stringContaining('timed out after 10 minutes'),
     })
+    const tempDirectory = execMock.mock.calls[0][2].env.TMPDIR
+    expect(existsSync(tempDirectory)).toBe(false)
   })
 
   it('gives an import the same ten minutes', async () => {

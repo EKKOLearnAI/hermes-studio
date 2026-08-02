@@ -1,5 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
+import { mkdtemp, rm } from 'fs/promises'
+import { tmpdir } from 'os'
 import { basename, join } from 'path'
 import { promisify } from 'util'
 import YAML from 'js-yaml'
@@ -738,6 +740,35 @@ const PROFILE_ARCHIVE_TIMEOUT_MS = 10 * 60 * 1000
 /** 超时被 SIGTERM 掉的归档会带上这个 code，供上层区分于真正的失败 */
 export const ARCHIVE_TIMEOUT_CODE = 'archive_timeout'
 
+function archiveTempEnvironment(directory: string): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  // Windows environment keys are case-insensitive. Remove every casing before
+  // setting the three names Python's tempfile module checks.
+  for (const key of Object.keys(env)) {
+    if (['tmpdir', 'tmp', 'temp'].includes(key.toLowerCase())) delete env[key]
+  }
+  return {
+    ...env,
+    TMPDIR: directory,
+    TMP: directory,
+    TEMP: directory,
+  }
+}
+
+async function removeArchiveTempDirectory(directory: string): Promise<void> {
+  if (!directory) return
+  try {
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    })
+  } catch (err) {
+    logger.warn(err, 'Failed to remove Hermes profile archive temp directory "%s"', directory)
+  }
+}
+
 function archiveTimeoutError(action: 'Export' | 'Import', name: string): Error {
   const minutes = Math.round(PROFILE_ARCHIVE_TIMEOUT_MS / 60000)
   return Object.assign(
@@ -753,9 +784,12 @@ export async function exportProfile(name: string, outputPath?: string): Promise<
   const args = ['profile', 'export', name]
   if (outputPath) args.push('--output', outputPath)
 
+  let archiveTempDirectory = ''
   try {
+    archiveTempDirectory = await mkdtemp(join(tmpdir(), 'hermes-profile-archive-'))
     const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, args, {
       timeout: PROFILE_ARCHIVE_TIMEOUT_MS,
+      env: archiveTempEnvironment(archiveTempDirectory),
       ...execOpts,
     })
     return stdout || stderr
@@ -763,6 +797,8 @@ export async function exportProfile(name: string, outputPath?: string): Promise<
     logger.error(err, 'Hermes CLI: profile export failed')
     if (err?.killed) throw archiveTimeoutError('Export', name)
     throw new Error(`Failed to export profile: ${err.message}`)
+  } finally {
+    await removeArchiveTempDirectory(archiveTempDirectory)
   }
 }
 
@@ -789,9 +825,12 @@ export async function importProfile(archivePath: string, name?: string): Promise
   const args = ['profile', 'import', archivePath]
   if (name) args.push('--name', name)
 
+  let archiveTempDirectory = ''
   try {
+    archiveTempDirectory = await mkdtemp(join(tmpdir(), 'hermes-profile-archive-'))
     const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, args, {
       timeout: PROFILE_ARCHIVE_TIMEOUT_MS,
+      env: archiveTempEnvironment(archiveTempDirectory),
       ...execOpts,
     })
     return stdout || stderr
@@ -799,6 +838,8 @@ export async function importProfile(archivePath: string, name?: string): Promise
     logger.error(err, 'Hermes CLI: profile import failed')
     if (err?.killed) throw archiveTimeoutError('Import', name || basename(archivePath))
     throw new Error(`Failed to import profile: ${err.message}`)
+  } finally {
+    await removeArchiveTempDirectory(archiveTempDirectory)
   }
 }
 

@@ -1,5 +1,5 @@
-import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { tmpdir } from 'os'
 import { getWebUiHome } from '../../config'
@@ -778,7 +778,14 @@ export async function switchProfile(ctx: any) {
 export async function exportProfile(ctx: any) {
   const { name } = ctx.params
   if (denyProfile(ctx, name)) return
-  const outputPath = join(tmpdir(), `hermes-profile-${name}.tar.gz`)
+  const exportDir = await mkdtemp(join(tmpdir(), 'hermes-profile-export-'))
+  const safeName = String(name || 'profile')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'profile'
+  const filename = `hermes-profile-${safeName}.tar.gz`
+  const outputPath = join(exportDir, filename)
+  let cleanupAfterResponse = false
   try {
     await hermesCli.exportProfile(name, outputPath)
     if (!existsSync(outputPath)) {
@@ -786,17 +793,31 @@ export async function exportProfile(ctx: any) {
       ctx.body = { error: 'Export file not found' }
       return
     }
-    const filename = basename(outputPath)
     ctx.set('Content-Disposition', `attachment; filename="${filename}"`)
     ctx.set('Content-Type', 'application/gzip')
-    ctx.body = createReadStream(outputPath)
-    ctx.res.on('finish', () => { try { unlinkSync(outputPath) } catch { } })
+    const stream = createReadStream(outputPath)
+    let cleanupStarted = false
+    const cleanup = () => {
+      if (cleanupStarted) return
+      cleanupStarted = true
+      void removeProfileArchiveTempDirectory(exportDir)
+    }
+    stream.on('error', cleanup)
+    stream.on('close', cleanup)
+    ctx.res.on('finish', cleanup)
+    ctx.res.on('close', () => {
+      stream.destroy()
+      cleanup()
+    })
+    ctx.body = stream
+    cleanupAfterResponse = true
   } catch (err: any) {
     // 超时和"导出真的失败了"是两回事，前端要能分开提示
     const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
-    if (timedOut) try { unlinkSync(outputPath) } catch { }
     ctx.status = timedOut ? 504 : 500
     ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }
+  } finally {
+    if (!cleanupAfterResponse) await removeProfileArchiveTempDirectory(exportDir)
   }
 }
 
@@ -813,40 +834,54 @@ export async function importProfile(ctx: any) {
     ctx.body = { error: 'Missing boundary' }
     return
   }
-  const tmpDir = join(tmpdir(), 'hermes-import')
-  await mkdir(tmpDir, { recursive: true })
-  const chunks: Buffer[] = []
-  for await (const chunk of ctx.req) chunks.push(chunk)
-  const body = Buffer.concat(chunks).toString('latin1')
-  const parts = body.split(boundary).slice(1, -1)
-  let archivePath = ''
-  for (const part of parts) {
-    const headerEnd = part.indexOf('\r\n\r\n')
-    if (headerEnd === -1) continue
-    const header = part.substring(0, headerEnd)
-    const data = part.substring(headerEnd + 4, part.length - 2)
-    const filenameMatch = header.match(/filename="([^"]+)"/)
-    if (!filenameMatch) continue
-    const filename = filenameMatch[1]
-    const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
-    if (!['.gz', '.tar.gz', '.zip', '.tgz'].includes(ext)) continue
-    archivePath = join(tmpDir, filename)
-    await writeFile(archivePath, Buffer.from(data, 'binary'))
-    break
-  }
-  if (!archivePath) {
-    ctx.status = 400
-    ctx.body = { error: 'No archive file found (.gz, .zip, .tgz)' }
-    return
-  }
+  const importDir = await mkdtemp(join(tmpdir(), 'hermes-profile-import-'))
   try {
-    const result = await hermesCli.importProfile(archivePath)
-    try { unlinkSync(archivePath) } catch { }
-    ctx.body = { success: true, message: result.trim() }
-  } catch (err: any) {
-    try { unlinkSync(archivePath) } catch { }
-    const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
-    ctx.status = timedOut ? 504 : 500
-    ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }
+    const chunks: Buffer[] = []
+    for await (const chunk of ctx.req) chunks.push(chunk)
+    const body = Buffer.concat(chunks).toString('latin1')
+    const parts = body.split(boundary).slice(1, -1)
+    let archivePath = ''
+    for (const part of parts) {
+      const headerEnd = part.indexOf('\r\n\r\n')
+      if (headerEnd === -1) continue
+      const header = part.substring(0, headerEnd)
+      const data = part.substring(headerEnd + 4, part.length - 2)
+      const filenameMatch = header.match(/filename="([^"]+)"/)
+      if (!filenameMatch) continue
+      const filename = basename(filenameMatch[1].replace(/\\/g, '/'))
+      const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
+      if (!filename || !['.gz', '.tar.gz', '.zip', '.tgz'].includes(ext)) continue
+      archivePath = join(importDir, filename)
+      await writeFile(archivePath, Buffer.from(data, 'binary'))
+      break
+    }
+    if (!archivePath) {
+      ctx.status = 400
+      ctx.body = { error: 'No archive file found (.gz, .zip, .tgz)' }
+      return
+    }
+    try {
+      const result = await hermesCli.importProfile(archivePath)
+      ctx.body = { success: true, message: result.trim() }
+    } catch (err: any) {
+      const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
+      ctx.status = timedOut ? 504 : 500
+      ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }
+    }
+  } finally {
+    await removeProfileArchiveTempDirectory(importDir)
+  }
+}
+
+async function removeProfileArchiveTempDirectory(directory: string): Promise<void> {
+  try {
+    await rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    })
+  } catch (err) {
+    logger.warn(err, '[profiles] failed to remove archive temp directory "%s"', directory)
   }
 }

@@ -1785,7 +1785,7 @@ export default {
     exportSuccess: 'Profile exported',
     exportFailed: 'Failed to export profile',
     exportTimeout: 'Export timed out. This profile is too large to archive — caches and virtual environments under its workspace are usually what makes it big.',
-    importTimeout: 'Import timed out. This archive is too large to unpack from the browser — import it on the server instead.',
+    importTimeout: 'Import timed out while the server was unpacking the archive. Try again on faster storage or import it with the Hermes CLI.',
     importSuccess: 'Profile imported',
     importFailed: 'Failed to import profile',
     importSelectFile: 'Select archive file',

@@ -1734,7 +1734,7 @@ export default {
     exportSuccess: '設定檔已匯出',
     exportFailed: '匯出設定檔失敗',
     exportTimeout: '匯出逾時。該設定檔體積過大，無法封存 —— 通常是 workspace 下的快取與虛擬環境造成的。',
-    importTimeout: '匯入逾時。該壓縮檔太大，無法透過瀏覽器解壓 —— 請改在伺服器上匯入。',
+    importTimeout: '伺服器解壓縮封存檔時匯入逾時。請改用更快的儲存裝置重試，或透過 Hermes CLI 匯入。',
     importSuccess: '設定檔已匯入',
     importFailed: '匯入設定檔失敗',
     importSelectFile: '選擇封存檔案',
