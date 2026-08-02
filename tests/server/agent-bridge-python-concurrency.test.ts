@@ -160,6 +160,7 @@ spec = importlib.util.spec_from_file_location("hermes_bridge", path)
 bridge = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = bridge
 spec.loader.exec_module(bridge)
+bridge._load_reasoning_config = lambda *_args, **_kwargs: {}
 
 class FakeDb:
     def __init__(self):
