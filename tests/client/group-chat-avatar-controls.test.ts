@@ -21,8 +21,8 @@ const localeKeys = [
 describe('Group Chat participant avatar direct controls', () => {
   it('opens one shared participant panel from the semantic message-stream avatar', () => {
     expect(messageItemSource).toContain('class="avatar participant-message-avatar-trigger"')
-    expect(messageItemSource).toContain(':aria-expanded="expandedParticipantId === agentInfo.agentId"')
-    expect(messageItemSource).toContain("emit('participantAvatarClick', { participantId: participant.agentId, trigger })")
+    expect(messageItemSource).toContain(':aria-expanded="expandedParticipantMessageId === message.id"')
+    expect(messageItemSource).toContain("emit('participantAvatarClick', { participantId: participant.agentId, messageId: props.message.id, trigger })")
     expect(messageListSource).toContain('@participant-avatar-click="payload => emit(\'participantAvatarClick\', payload)"')
     expect(panelSource).toContain('@participant-avatar-click="handleMessageParticipantAvatar"')
     expect(panelSource).toContain('class="participant-quick-settings message-participant-quick-settings"')

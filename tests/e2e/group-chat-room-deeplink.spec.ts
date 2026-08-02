@@ -37,6 +37,7 @@ const messagesByRoom: Record<string, unknown[]> = {
     { id: 'alpha-msg', roomId: 'room-alpha', senderId: 'user-1', senderName: 'Alice', content: 'Alpha room message', timestamp: 1_790_000_000, role: 'user' },
     { id: 'alpha-same-name-user', roomId: 'room-alpha', senderId: 'user-2', senderName: 'Worker', content: 'Human with duplicate display name', timestamp: 1_790_000_000.5, role: 'user' },
     { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
+    { id: 'alpha-second', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Second Worker response', timestamp: 1_790_000_001.5, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
   ],
   'room-beta': [
@@ -415,14 +416,18 @@ test.describe('group chat room deep links', () => {
   test('message-stream participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }, testInfo) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
-    const avatar = page.getByRole('button', { name: 'Participant settings: Worker' })
-    await expect(avatar).toHaveCount(1)
+    const avatars = page.getByRole('button', { name: 'Participant settings: Worker' })
+    await expect(avatars).toHaveCount(2)
+    const avatar = page.locator('.group-message', { hasText: 'package.json' }).getByRole('button', { name: 'Participant settings: Worker' })
+    const otherAvatar = page.locator('.group-message', { hasText: 'Second Worker response' }).getByRole('button', { name: 'Participant settings: Worker' })
     await expect(avatar).toBeVisible()
     await expect(page.locator('.group-message', { hasText: 'Human with duplicate display name' }).locator('.participant-message-avatar-trigger')).toHaveCount(0)
     await expect(avatar).toHaveAttribute('aria-expanded', 'false')
+    await expect(otherAvatar).toHaveAttribute('aria-expanded', 'false')
     await avatar.focus()
     await avatar.press('Enter')
     await expect(avatar).toHaveAttribute('aria-expanded', 'true')
+    await expect(otherAvatar).toHaveAttribute('aria-expanded', 'false')
 
     const quick = page.locator('.message-participant-quick-settings')
     await expect(quick).toBeVisible()
@@ -441,6 +446,12 @@ test.describe('group chat room deep links', () => {
     expect(avatarBox).not.toBeNull()
     expect(quickBox).not.toBeNull()
     expect(Math.abs((quickBox?.x || 0) - ((avatarBox?.x || 0) + (avatarBox?.width || 0)))).toBeLessThan(80)
+
+    await page.setViewportSize({ width: 1180, height: 760 })
+    await expect(quick).toHaveCount(0)
+    await expect(avatar).toHaveAttribute('aria-expanded', 'false')
+    await avatar.click()
+    await expect(quick).toBeVisible()
 
     const selects = quick.locator('.n-select')
     await expect(selects).toHaveCount(2)

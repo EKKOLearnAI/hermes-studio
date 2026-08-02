@@ -73,6 +73,7 @@ const agentName = ref('')
 const agentDescription = ref('')
 const editingAgentId = ref('')
 const expandedParticipantId = ref('')
+const expandedParticipantMessageId = ref('')
 const participantQuickX = ref<number | undefined>(undefined)
 const participantQuickY = ref<number | undefined>(undefined)
 let participantQuickTrigger: HTMLElement | null = null
@@ -978,13 +979,14 @@ function mentionParticipant(agent: RoomAgent) {
 function closeParticipantQuickSettings(restoreFocus = false) {
     const trigger = participantQuickTrigger
     expandedParticipantId.value = ''
+    expandedParticipantMessageId.value = ''
     participantQuickX.value = undefined
     participantQuickY.value = undefined
     participantQuickTrigger = null
     if (restoreFocus) void nextTick(() => trigger?.focus())
 }
 
-function openParticipantQuickSettings(agentId: string, trigger: HTMLElement) {
+function openParticipantQuickSettings(agentId: string, trigger: HTMLElement, messageId = '') {
     if (expandedParticipantId.value === agentId && participantQuickTrigger === trigger) {
         closeParticipantQuickSettings(true)
         return
@@ -996,6 +998,7 @@ function openParticipantQuickSettings(agentId: string, trigger: HTMLElement) {
     participantQuickY.value = rect.top + Math.min(18, rect.height / 2)
     participantQuickTrigger = trigger
     expandedParticipantId.value = agent.agentId
+    expandedParticipantMessageId.value = messageId
 }
 
 function handleParticipantAvatarTrigger(agentId: string, event: MouseEvent) {
@@ -1003,8 +1006,8 @@ function handleParticipantAvatarTrigger(agentId: string, event: MouseEvent) {
     if (trigger instanceof HTMLElement) openParticipantQuickSettings(agentId, trigger)
 }
 
-function handleMessageParticipantAvatar(payload: { participantId: string, trigger: HTMLElement }) {
-    openParticipantQuickSettings(payload.participantId, payload.trigger)
+function handleMessageParticipantAvatar(payload: { participantId: string, messageId: string, trigger: HTMLElement }) {
+    openParticipantQuickSettings(payload.participantId, payload.trigger, payload.messageId)
 }
 
 function handleParticipantQuickShowUpdate(show: boolean) {
@@ -1604,7 +1607,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </div>
                         </div>
                         <GroupMessageList
-                            :expanded-participant-id="expandedParticipantId"
+                            :expanded-participant-message-id="expandedParticipantMessageId"
                             @participant-avatar-click="handleMessageParticipantAvatar"
                             @participant-quick-close="closeParticipantQuickSettings"
                         />

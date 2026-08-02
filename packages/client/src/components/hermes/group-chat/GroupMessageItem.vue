@@ -41,11 +41,11 @@ const props = defineProps<{
     agents: RoomAgent[]
     members?: MemberInfo[]
     currentUserId?: string
-    expandedParticipantId?: string
+    expandedParticipantMessageId?: string
 }>()
 
 const emit = defineEmits<{
-    participantAvatarClick: [payload: { participantId: string, trigger: HTMLElement }]
+    participantAvatarClick: [payload: { participantId: string, messageId: string, trigger: HTMLElement }]
 }>()
 
 const { t } = useI18n()
@@ -85,7 +85,7 @@ function handleParticipantAvatarClick(event: MouseEvent): void {
     const participant = agentInfo.value
     const trigger = event.currentTarget
     if (!participant || !(trigger instanceof HTMLElement)) return
-    emit('participantAvatarClick', { participantId: participant.agentId, trigger })
+    emit('participantAvatarClick', { participantId: participant.agentId, messageId: props.message.id, trigger })
 }
 
 // 找当前消息发送者在 members 里的记录
@@ -606,7 +606,7 @@ onBeforeUnmount(() => {
             type="button"
             class="avatar participant-message-avatar-trigger"
             :aria-label="`${t('groupChat.participantQuickSettings')}: ${agentInfo.name}`"
-            :aria-expanded="expandedParticipantId === agentInfo.agentId"
+            :aria-expanded="expandedParticipantMessageId === message.id"
             @click="handleParticipantAvatarClick"
         >
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
@@ -668,7 +668,7 @@ onBeforeUnmount(() => {
             type="button"
             class="avatar participant-message-avatar-trigger"
             :aria-label="`${t('groupChat.participantQuickSettings')}: ${agentInfo.name}`"
-            :aria-expanded="expandedParticipantId === agentInfo.agentId"
+            :aria-expanded="expandedParticipantMessageId === message.id"
             @click="handleParticipantAvatarClick"
         >
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />

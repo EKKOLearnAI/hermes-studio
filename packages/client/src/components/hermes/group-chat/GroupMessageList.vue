@@ -10,10 +10,10 @@ const store = useGroupChatStore()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
 const props = defineProps<{
-    expandedParticipantId?: string
+    expandedParticipantMessageId?: string
 }>()
 const emit = defineEmits<{
-    participantAvatarClick: [payload: { participantId: string, trigger: HTMLElement }]
+    participantAvatarClick: [payload: { participantId: string, messageId: string, trigger: HTMLElement }]
     participantQuickClose: []
 }>()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
@@ -135,7 +135,7 @@ defineExpose({ scrollToBottom })
                     :agents="store.agents"
                     :members="store.members"
                     :current-user-id="store.userId"
-                    :expanded-participant-id="props.expandedParticipantId"
+                    :expanded-participant-message-id="props.expandedParticipantMessageId"
                     @participant-avatar-click="payload => emit('participantAvatarClick', payload)"
                 />
             </template>
