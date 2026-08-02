@@ -22,6 +22,22 @@ function buildSpeechUrl(baseUrl: string): string {
   return `${url.origin}${pathname}/audio/speech${search}`
 }
 
+/**
+ * Read the formats an endpoint says it accepts out of its own rejection.
+ *
+ * OpenAI-compatible speech endpoints do not all support mp3: Groq's Orpheus
+ * models answer `response_format must be one of [wav]`. The list is right there
+ * in the error, so honour it instead of making the user guess the format.
+ */
+function supportedFormatsFromError(body: string): string[] {
+  const match = body.match(/response_format must be one of \[([^\]]+)\]/i)
+  if (!match) return []
+  return match[1]
+    .split(',')
+    .map(value => value.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean)
+}
+
 export function createOpenaiCompatibleTtsProvider(
   id: Extract<TtsProviderId, 'openai' | 'custom' | 'deepinfra'>,
   options: { engine?: string; defaultBaseUrl?: string; defaultModel?: string; defaultVoice?: string } = {},
@@ -48,7 +64,7 @@ export function createOpenaiCompatibleTtsProvider(
         headers.Authorization = `Bearer ${opts.apiKey}`
       }
 
-      const res = await fetch(speechUrl, {
+      const speak = (format?: string) => fetch(speechUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -57,14 +73,25 @@ export function createOpenaiCompatibleTtsProvider(
           input: text,
           ...(opts.rate ? { rate: opts.rate } : {}),
           ...(opts.pitch ? { pitch: opts.pitch } : {}),
-          ...(opts.format ? { response_format: opts.format } : {}),
+          ...(format ? { response_format: format } : {}),
         }),
         signal: req.signal,
       })
 
+      let res = await speak(opts.format)
+
       if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`OpenAI TTS returned ${res.status}: ${body || res.statusText}`)
+        let body = await res.text().catch(() => '')
+        // The endpoint just told us which formats it takes — take it at its word,
+        // once, rather than failing with a message only the server understands.
+        const [fallbackFormat] = supportedFormatsFromError(body)
+        if (fallbackFormat && fallbackFormat !== opts.format) {
+          res = await speak(fallbackFormat)
+          if (!res.ok) body = await res.text().catch(() => '')
+        }
+        if (!res.ok) {
+          throw new Error(`OpenAI TTS returned ${res.status}: ${body || res.statusText}`)
+        }
       }
 
       return {

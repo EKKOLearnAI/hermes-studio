@@ -295,4 +295,63 @@ describe('openaiTtsProvider', () => {
       provider: 'openai',
     })
   })
+  it('retries once with a format the endpoint says it accepts', async () => {
+    // Groq's Orpheus models reject mp3 and name the only format they take.
+    mockFetch.mockResolvedValueOnce(textResponse(
+      '{"error":{"message":"response_format must be one of [wav]","type":"invalid_request_error"}}',
+      { status: 400, statusText: 'Bad Request' },
+    ))
+    const audio = Buffer.from('wav-audio')
+    mockFetch.mockResolvedValueOnce(audioResponse(audio, { contentType: 'audio/wav' }))
+
+    const result = await customTtsProvider.synthesize(
+      { text: 'Hello' },
+      { baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'secret', format: 'mp3' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    const [, firstInit] = mockFetch.mock.calls[0] as [string, RequestInit]
+    const [, secondInit] = mockFetch.mock.calls[1] as [string, RequestInit]
+    expect(JSON.parse(firstInit.body as string).response_format).toBe('mp3')
+    expect(JSON.parse(secondInit.body as string).response_format).toBe('wav')
+    expect(result.audio).toEqual(audio)
+    expect(result.contentType).toBe('audio/wav')
+  })
+
+  it('retries when no format was requested at all', async () => {
+    mockFetch.mockResolvedValueOnce(textResponse(
+      '{"error":{"message":"response_format must be one of [wav]"}}',
+      { status: 400 },
+    ))
+    mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('wav-audio'), { contentType: 'audio/wav' }))
+
+    await customTtsProvider.synthesize({ text: 'Hello' }, { baseUrl: 'https://api.groq.com/openai/v1' })
+
+    const [, firstInit] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(firstInit.body as string).response_format).toBeUndefined()
+    const [, secondInit] = mockFetch.mock.calls[1] as [string, RequestInit]
+    expect(JSON.parse(secondInit.body as string).response_format).toBe('wav')
+  })
+
+  it('does not retry a failure that names no format, and reports the original error', async () => {
+    mockFetch.mockResolvedValueOnce(textResponse('bad request body', { status: 401, statusText: 'Unauthorized' }))
+
+    await expect(
+      customTtsProvider.synthesize({ text: 'Hello' }, { baseUrl: 'https://api.example.com' }),
+    ).rejects.toThrow('OpenAI TTS returned 401: bad request body')
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after one retry and keeps the second error', async () => {
+    mockFetch.mockResolvedValueOnce(textResponse(
+      '{"error":{"message":"response_format must be one of [wav]"}}',
+      { status: 400 },
+    ))
+    mockFetch.mockResolvedValueOnce(textResponse('still unhappy', { status: 400, statusText: 'Bad Request' }))
+
+    await expect(
+      customTtsProvider.synthesize({ text: 'Hello' }, { baseUrl: 'https://api.groq.com/openai/v1', format: 'mp3' }),
+    ).rejects.toThrow('OpenAI TTS returned 400: still unhappy')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
 })

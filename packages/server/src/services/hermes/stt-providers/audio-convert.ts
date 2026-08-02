@@ -111,6 +111,43 @@ export async function transcodeToWav(
   }
 }
 
+/**
+ * Transcode synthesized speech to MP3.
+ *
+ * Hermes' command TTS provider writes the response to an `.mp3` path, but not
+ * every OpenAI-compatible speech endpoint can produce MP3 — Groq's Orpheus
+ * models, for instance, only accept `response_format: wav`. Converting here
+ * lets those providers be used without lying about the file's contents.
+ * Without ffmpeg the audio is returned untouched.
+ */
+export async function transcodeToMp3(
+  input: Buffer,
+  mimeType: string,
+): Promise<{ audio: Buffer; mimeType: string }> {
+  const normalized = normalizeMimeType(mimeType)
+  if (normalized.includes('mpeg') || normalized.includes('mp3') || looksLikeMp3(input)) {
+    return { audio: input, mimeType: 'audio/mpeg' }
+  }
+  if (!(await isFfmpegAvailable())) {
+    return { audio: input, mimeType }
+  }
+
+  const mp3Buffer = await runFfmpeg([
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-i', 'pipe:0',
+    '-codec:a', 'libmp3lame',
+    '-q:a', '2',
+    '-f', 'mp3',
+    'pipe:1',
+  ], input, TRANSCODE_TIMEOUT_MS)
+
+  if (mp3Buffer.length === 0) {
+    throw new Error('ffmpeg produced empty output')
+  }
+  return { audio: mp3Buffer, mimeType: 'audio/mpeg' }
+}
+
 export async function transcodeToPcmS16le(
   input: Buffer,
   mimeType: string,

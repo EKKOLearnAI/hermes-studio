@@ -3,6 +3,7 @@ import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { textToSpeech, openaiCompatibleTts, speedToEdgeRate } from '../../services/hermes/tts'
 import { getTtsProvider } from '../../services/hermes/tts-providers'
+import { transcodeToMp3 } from '../../services/hermes/stt-providers/audio-convert'
 import { assertSafeResolvedTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 import { isValidMcuAudioFileName, resolveMcuAudioPath } from '../../services/hermes/mcu-prompts'
 import {
@@ -536,7 +537,9 @@ async function synthesizeVoiceProxyText(ctx: Context, text: string) {
   const options = {
     ...(stored?.settings || {}),
     ...(stored?.secrets || {}),
-    // Hermes' command provider writes to an .mp3 output path.
+    // Hermes' command provider writes to an .mp3 output path. A provider that
+    // cannot produce mp3 answers in whatever format it does support, and the
+    // response is transcoded below.
     format: 'mp3',
   }
   const provider = getTtsProvider(providerName)
@@ -552,10 +555,11 @@ async function synthesizeVoiceProxyText(ctx: Context, text: string) {
       { text: normalizedText, signal: controller.signal },
       options,
     )
-    ctx.set('Content-Type', result.contentType)
-    ctx.set('Content-Length', String(result.audio.length))
+    const mp3 = await transcodeToMp3(result.audio, result.contentType)
+    ctx.set('Content-Type', mp3.mimeType)
+    ctx.set('Content-Length', String(mp3.audio.length))
     ctx.set('X-TTS-Engine', 'hermes-studio')
-    ctx.body = result.audio
+    ctx.body = mp3.audio
   } catch (error) {
     if (isAbortError(error)) {
       ctx.status = 499
