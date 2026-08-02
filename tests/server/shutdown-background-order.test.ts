@@ -82,6 +82,13 @@ describe('graceful shutdown background delivery ordering', () => {
 
   it('force-kills the bridge before the shutdown deadline exits the server', async () => {
     stopPreviewRuntimeMock.mockImplementationOnce(() => new Promise<void>(() => {}))
+    const groupChatServer = {
+      stopHandoffDispatcher: vi.fn(async () => {}),
+      agentClients: { disconnectAll: vi.fn() },
+      getIO: vi.fn(() => ({ close: vi.fn() })),
+    }
+    let finishCodingCleanup!: (result: boolean) => void
+    codingAgentShutdownMock.mockImplementationOnce(() => new Promise<boolean>(resolve => { finishCodingCleanup = resolve }))
     const agentBridgeManager = {
       stop: vi.fn(async () => {}),
       forceStop: vi.fn(),
@@ -90,12 +97,16 @@ describe('graceful shutdown background delivery ordering', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
     const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/services/shutdown')
 
-    void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
+    void createShutdownHandler(httpServer, groupChatServer, undefined, agentBridgeManager)('desktop-request')
     await Promise.resolve()
+    expect(groupChatServer.stopHandoffDispatcher).toHaveBeenCalledOnce()
     expect(codingAgentShutdownMock).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(getShutdownForceExitMs())
 
     expect(agentBridgeManager.forceStop).toHaveBeenCalledOnce()
+    expect(exitSpy).not.toHaveBeenCalled()
+    finishCodingCleanup(true)
+    await Promise.resolve()
     expect(exitSpy).toHaveBeenCalledWith(1)
   })
 

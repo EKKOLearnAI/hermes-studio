@@ -404,6 +404,36 @@ describe('group chat store streaming merge', () => {
     expect(store.contextStatus).toEqual(expect.objectContaining({ agentName: 'Worker', status: 'replying' }))
   })
 
+  it('clears stale status and approval cards on disconnect and reconnect failure', async () => {
+    const store = await createJoinedStore()
+    emitSocket('context_status', { roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', status: 'replying' })
+    emitSocket('approval.requested', { roomId: 'room-1', agentName: 'Worker', approval_id: 'approval-stale', command: 'touch file' })
+    expect(store.contextStatuses.size).toBe(1)
+    expect(store.pendingApprovals.size).toBe(1)
+
+    emitSocket('disconnect', 'transport close')
+    expect(store.contextStatuses.size).toBe(0)
+    expect(store.pendingApprovals.size).toBe(0)
+
+    emitSocket('context_status', { roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', status: 'replying' })
+    emitSocket('approval.requested', { roomId: 'room-1', agentName: 'Worker', approval_id: 'approval-stale-2', command: 'touch file' })
+    emitSocket('connect_error', new Error('reconnect failed'))
+    expect(store.contextStatuses.size).toBe(0)
+    expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('removes a stale approval card after a terminal access-denied response', async () => {
+    const store = await createJoinedStore()
+    emitSocket('approval.requested', { roomId: 'room-1', agentName: 'Worker', approval_id: 'approval-denied', command: 'touch file' })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'approval.respond' && ack) ack({ error: 'Access denied', terminal: true })
+      return groupChatApiMock.socket
+    })
+
+    await expect(store.respondApproval('once')).rejects.toThrow('Access denied')
+    expect(store.pendingApprovals.has('approval-denied')).toBe(false)
+  })
+
   it('loads group history in 150-message pages and stops at the 600-message display cap', async () => {
     const store = await createJoinedStore()
     store.loadedMessageCount = 450

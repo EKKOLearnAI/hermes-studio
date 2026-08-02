@@ -45,6 +45,7 @@ const bridgeMock = vi.hoisted(() => ({
 const trackerMock = vi.hoisted(() => ({
   startWorkspaceRunCheckpoint: vi.fn(() => order.push('checkpoint')),
   completeWorkspaceRunCheckpointDraft: vi.fn(() => null),
+  acknowledgeWorkspaceRunCheckpoint: vi.fn(),
   discardWorkspaceRunCheckpoint: vi.fn(),
 }))
 
@@ -584,6 +585,23 @@ describe('group chat agent workspace bridge runs', () => {
     expect(trackerMock.completeWorkspaceRunCheckpointDraft).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: await workerSessionId() }),
     )
+    expect(trackerMock.acknowledgeWorkspaceRunCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: await workerSessionId(), runId: 'bridge-run-id' }),
+    )
+  })
+
+  it('retains the workspace evidence manifest when durable persistence returns no receipt', async () => {
+    const client = await createClient('/tmp/workspace')
+    trackerMock.completeWorkspaceRunCheckpointDraft.mockReturnValueOnce(workspaceDraft('bridge-run-id', await workerSessionId()) as any)
+    client.__testStorage.saveWorkspaceDiffMessageForRun.mockReturnValue(null)
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+      handoffJobId: 'job-workspace-no-receipt', handoffLeaseToken: 'lease-workspace-no-receipt',
+      targetSessionId: 'participant-session-1',
+    })
+
+    expect(trackerMock.acknowledgeWorkspaceRunCheckpoint).not.toHaveBeenCalled()
   })
 
   it('durably registers the Bridge session before starting the external run', async () => {

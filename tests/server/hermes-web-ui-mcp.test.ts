@@ -101,6 +101,83 @@ describe('hermes-web-ui MCP server', () => {
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
 
+  it('binds managed API requests to the capability Profile and rejects credential overrides before side effects', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-mcp-profile-binding-'))
+    homes.push(home)
+    mkdirSync(join(home, 'profiles', 'work'), { recursive: true })
+    mkdirSync(join(home, 'profiles', 'admin-private'), { recursive: true })
+    writeFileSync(join(home, 'profiles', 'work', '.model-run-token'), 'work-token\n')
+    writeFileSync(join(home, 'profiles', 'admin-private', '.model-run-token'), 'private-superadmin-token\n')
+    let sideEffectHits = 0
+    const observed: Array<{ authorization: string; profile: string }> = []
+    const server = createServer((req, res) => {
+      if (req.url === '/api/internal/managed-mcp/capabilities/authorize') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ authorized: true, profile: 'work' }))
+        return
+      }
+      if (req.url === '/api/openapi.json') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ openapi: '3.0.3', paths: {
+          '/api/test-side-effect': { post: { requestBody: { required: false, content: { 'application/json': { schema: { type: 'object' } } } } } },
+        } }))
+        return
+      }
+      if (req.url === '/api/test-side-effect') {
+        sideEffectHits += 1
+        observed.push({
+          authorization: String(req.headers.authorization || ''),
+          profile: String(req.headers['x-hermes-profile'] || ''),
+        })
+      }
+      res.setHeader('content-type', 'application/json')
+      res.end('{}')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('expected TCP server address')
+    const responses = new Map<number, any>()
+    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'api'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_WEB_UI_HOME: home,
+        HERMES_WEB_UI_MANAGED_MCP: '1',
+        HERMES_STUDIO_MCP_CAPABILITY: 'signed-work-capability',
+        HERMES_WEB_UI_TOKEN: 'process-global-admin-token',
+      },
+    })
+    child.stdout.on('data', chunk => {
+      for (const line of String(chunk).trim().split('\n')) {
+        if (!line) continue
+        const message = JSON.parse(line)
+        responses.set(message.id, message)
+      }
+    })
+
+    writeRpc(child, 1, 'tools/call', {
+      name: 'hermes_studio_api_request',
+      arguments: { method: 'POST', path: '/api/test-side-effect', profile: 'admin-private' },
+    })
+    expect((await waitForRpc(responses, 1)).result.isError).toBe(true)
+    writeRpc(child, 2, 'tools/call', {
+      name: 'hermes_studio_api_request',
+      arguments: { method: 'POST', path: '/api/test-side-effect', token: 'private-superadmin-token' },
+    })
+    expect((await waitForRpc(responses, 2)).result.isError).toBe(true)
+    expect(sideEffectHits).toBe(0)
+
+    writeRpc(child, 3, 'tools/call', {
+      name: 'hermes_studio_api_request',
+      arguments: { method: 'POST', path: '/api/test-side-effect' },
+    })
+    expect((await waitForRpc(responses, 3)).result.isError).not.toBe(true)
+    expect(sideEffectHits).toBe(1)
+    expect(observed).toEqual([{ authorization: 'Bearer work-token', profile: 'work' }])
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
+
   it('exposes a public Web UI API requester tool', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-mcp-'))
     homes.push(home)

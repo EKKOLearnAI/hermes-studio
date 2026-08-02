@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -14,6 +15,7 @@ const TOOLSETS = new Set(['api', 'browser', 'devices', 'use'])
 const MANAGED_MCP = String(process.env.HERMES_WEB_UI_MANAGED_MCP || '').trim() === '1'
 const MANAGED_CAPABILITY = String(process.env.HERMES_STUDIO_MCP_CAPABILITY || '').trim()
 const REQUIRE_MANAGED_CAPABILITY = String(process.env.HERMES_STUDIO_MCP_REQUIRE_CAPABILITY || '').trim() === '1' || Boolean(MANAGED_CAPABILITY)
+const managedAuthorization = new AsyncLocalStorage()
 const ALLOWED_PUBLIC_REQUEST_HEADERS = new Set([
   'accept',
   'accept-language',
@@ -158,7 +160,7 @@ async function request(path, options = {}) {
 }
 
 async function authorizeManagedTool(tool) {
-  if (!MANAGED_MCP || !REQUIRE_MANAGED_CAPABILITY) return
+  if (!MANAGED_MCP || !REQUIRE_MANAGED_CAPABILITY) return null
   if (!MANAGED_CAPABILITY) throw new Error('Managed MCP capability is required')
   const response = await fetch(`${baseUrl()}/api/internal/managed-mcp/capabilities/authorize`, {
     method: 'POST',
@@ -175,6 +177,11 @@ async function authorizeManagedTool(tool) {
     const payload = await response.json().catch(() => null)
     throw new Error(payload?.error || `Managed MCP capability rejected (HTTP ${response.status})`)
   }
+  const payload = await response.json().catch(() => null)
+  if (!payload?.authorized || typeof payload.profile !== 'string' || !payload.profile.trim()) {
+    throw new Error('Managed MCP capability authority returned an invalid Profile binding')
+  }
+  return { profile: payload.profile.trim() }
 }
 
 function appendQuery(path, query) {
@@ -205,10 +212,15 @@ function normalizePublicHeaders(headers) {
 }
 
 async function requestEnvelope(path, options = {}) {
-  const profile = typeof options.profile === 'string' && options.profile.trim()
+  const managed = managedAuthorization.getStore()
+  const profile = managed?.profile || (typeof options.profile === 'string' && options.profile.trim()
     ? options.profile.trim()
-    : defaultProfile()
-  const token = readToken(options.token, options.allowTokenFile !== false, profile)
+    : defaultProfile())
+  // Managed calls authenticate only as the Profile signed into the capability.
+  // Tool arguments and process-global token overrides must not create a confused deputy.
+  const token = managed
+    ? readProfileToken(profile)
+    : readToken(options.token, options.allowTokenFile !== false, profile)
   const method = options.method || 'GET'
   const body = method === 'GET' || method === 'HEAD' ? undefined : options.body
   const headers = {
@@ -564,7 +576,7 @@ function compactOpenApiDocument(openapi, args = {}) {
   }
 }
 
-const authArgumentProperties = {
+const authArgumentProperties = MANAGED_MCP && REQUIRE_MANAGED_CAPABILITY ? {} : {
   token: {
     type: 'string',
     description: 'Optional Hermes Web UI bearer token. Usually omit this and pass profile so the MCP server can read the temporary profile token.',
@@ -585,10 +597,11 @@ function inputSchema(properties = {}, required = []) {
 }
 
 function withAuthArgs(args, options = {}) {
+  const managed = managedAuthorization.getStore()
   return {
     ...options,
-    token: args.token,
-    profile: args.profile,
+    token: managed ? undefined : args.token,
+    profile: managed?.profile || args.profile,
   }
 }
 
@@ -1769,7 +1782,17 @@ async function callTool(name, args = {}) {
   const resolvedName = resolveToolName(name)
   const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
   if (resolvedName === categoryToolset?.name) return await callCategoryToolset(args)
-  await authorizeManagedTool(resolvedName)
+  if (MANAGED_MCP && REQUIRE_MANAGED_CAPABILITY && (args.token !== undefined || args.profile !== undefined)) {
+    return errorText('Managed MCP authentication is fixed by the signed capability; token and profile arguments are forbidden.')
+  }
+  const authorization = await authorizeManagedTool(resolvedName)
+  if (authorization) {
+    return await managedAuthorization.run(authorization, () => callAuthorizedTool(resolvedName, args))
+  }
+  return await callAuthorizedTool(resolvedName, args)
+}
+
+async function callAuthorizedTool(resolvedName, args = {}) {
   switch (resolvedName) {
     case 'hermes_studio_browser_tabs': {
       if (args.action === 'list') return jsonText(await browserRequest('tabs.list'))

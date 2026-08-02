@@ -10,6 +10,7 @@ export type CodingAgentTerminalReason =
   | 'aborted'
   | 'shutdown'
   | 'startup_orphan_recovered'
+  | 'startup_orphan_quarantined'
 
 export interface ProcessIdentity {
   pid: number
@@ -256,7 +257,7 @@ async function waitForExecutionGone(executionId: string, timeoutMs: number): Pro
 }
 
 export async function reconcileOrphanedCodingAgentExecutions(
-  options: { graceMs?: number } = {},
+  options: { graceMs?: number; platform?: NodeJS.Platform } = {},
 ): Promise<{ recovered: number; unresolved: number; skippedCurrent: number }> {
   const db = getDb()
   if (!db) throw new Error('Coding agent runtime ownership database is unavailable')
@@ -274,9 +275,18 @@ export async function reconcileOrphanedCodingAgentExecutions(
       skippedCurrent += 1
       continue
     }
-    if (process.platform !== 'linux') {
-      markCodingAgentExecutionUnresolved(executionId, 'startup_recovery_boundary_unavailable')
-      unresolved += 1
+    if ((options.platform || process.platform) !== 'linux') {
+      // These platforms do not currently provide a durable, restart-verifiable
+      // process boundary. Quarantine the stale ownership receipt so bootstrap
+      // cannot loop forever, while preserving an explicit audit terminal state.
+      // New Coding Agent work remains fail-closed in CodingAgentRunManager.
+      if (!recoverWorkspaceEvidence(row)) {
+        markCodingAgentExecutionUnresolved(executionId, 'startup_quarantine_workspace_evidence_pending')
+        unresolved += 1
+        continue
+      }
+      markCodingAgentExecutionTerminal(executionId, 'startup_orphan_quarantined')
+      recovered += 1
       continue
     }
 

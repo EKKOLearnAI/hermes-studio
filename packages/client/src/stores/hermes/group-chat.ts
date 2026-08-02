@@ -618,6 +618,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             console.error('[GroupChat] connect_error:', err.message)
             error.value = err.message
             connected.value = false
+            for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
+            typingUsers.value.clear()
+            contextStatuses.value = new Map()
+            activeStreamByAgent.clear()
+            pendingApprovals.value = new Map()
         })
 
         socket.on('local_identity', (data: { localCredential?: string; userId?: string }) => {
@@ -1301,18 +1306,26 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         const socket = getSocket()
         const pending = activePendingApproval.value
         if (!socket || !pending) return
-        await new Promise<void>((resolve, reject) => {
-            socket.emit('approval.respond', {
-                roomId: pending.roomId,
-                approval_id: pending.approvalId,
-                choice,
-            }, (res: any) => {
-                if (res?.error) reject(new Error(res.error))
-                else resolve()
+        let terminal = false
+        try {
+            await new Promise<void>((resolve, reject) => {
+                socket.emit('approval.respond', {
+                    roomId: pending.roomId,
+                    approval_id: pending.approvalId,
+                    choice,
+                }, (res: any) => {
+                    terminal = res?.terminal === true || res?.resolved === true || res?.error === 'Access denied'
+                    if (res?.error) reject(new Error(res.error))
+                    else resolve()
+                })
             })
-        })
-        pendingApprovals.value.delete(pending.approvalId)
-        pendingApprovals.value = new Map(pendingApprovals.value)
+            terminal = true
+        } finally {
+            if (terminal) {
+                pendingApprovals.value.delete(pending.approvalId)
+                pendingApprovals.value = new Map(pendingApprovals.value)
+            }
+        }
     }
 
     return {

@@ -55,6 +55,27 @@ async function spawnOwnedTree(executionId: string): Promise<ChildProcess> {
   return child
 }
 
+async function spawnOwnedTreeWithSetsidEscape(executionId: string): Promise<ChildProcess> {
+  const escaped = "process.on('SIGINT',()=>{});setInterval(()=>{},1000)"
+  const leader = [
+    "const {spawn}=require('node:child_process')",
+    `const escaped=spawn('setsid',[process.execPath,'-e',${JSON.stringify(escaped)}],{stdio:'ignore'})`,
+    "escaped.once('spawn',()=>process.stdout.write(String(escaped.pid)+'\\n'))",
+    "process.on('SIGINT',()=>process.exit(0))",
+    'setInterval(()=>{},1000)',
+  ].join(';')
+  const child = spawn(process.execPath, ['-e', leader], {
+    detached: true,
+    env: { ...process.env, HERMES_CODING_EXECUTION_ID: executionId },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  if (!child.pid || !child.stdout) throw new Error('failed to spawn owned setsid tree')
+  groups.add(child.pid)
+  const [chunk] = await once(child.stdout, 'data')
+  groups.add(Number(String(chunk).trim()))
+  return child
+}
+
 afterEach(async () => {
   for (const pgid of groups) {
     try { process.kill(-pgid, 'SIGKILL') } catch {}
@@ -133,5 +154,35 @@ describeLinux('durable coding-agent runtime ownership', () => {
     expect(getDb()!.prepare(
       'SELECT state, terminal_reason FROM coding_agent_runtime_ownership WHERE execution_id = ?',
     ).get(executionId)).toMatchObject({ state: 'terminal', terminal_reason: 'startup_orphan_recovered' })
+  })
+
+  it('quarantines unverifiable non-Linux crash receipts instead of permanently blocking bootstrap', async () => {
+    const executionId = `execution-quarantine-${Date.now()}`
+    reserveCodingAgentExecution({
+      executionId, runId: 'run-quarantine', sessionId: 'session-quarantine', generation: 1,
+      workspace: '/tmp/workspace', ownerInstanceId: 'dead-owner-instance',
+    })
+
+    const result = await reconcileOrphanedCodingAgentExecutions({ platform: 'darwin' })
+    expect(result).toMatchObject({ recovered: 1, unresolved: 0 })
+    expect(getDb()!.prepare(
+      'SELECT state, terminal_reason FROM coding_agent_runtime_ownership WHERE execution_id = ?',
+    ).get(executionId)).toMatchObject({ state: 'terminal', terminal_reason: 'startup_orphan_quarantined' })
+  })
+
+  it('recovers a marker-owned descendant that escaped the initial process group with setsid', async () => {
+    const executionId = `execution-setsid-${Date.now()}`
+    const child = await spawnOwnedTreeWithSetsidEscape(executionId)
+    reserveCodingAgentExecution({
+      executionId, runId: 'run-setsid', sessionId: 'session-setsid', generation: 1,
+      workspace: '/tmp/workspace', ownerInstanceId: 'dead-owner-instance',
+    })
+    activateCodingAgentExecution({
+      executionId, rootPid: child.pid!, processGroupId: child.pid!, ownerInstanceId: 'dead-owner-instance',
+    })
+
+    const result = await reconcileOrphanedCodingAgentExecutions({ graceMs: 100 })
+    expect(result).toMatchObject({ recovered: 1, unresolved: 0 })
+    await waitFor(() => [...groups].every(pgid => !liveGroup(pgid)))
   })
 })

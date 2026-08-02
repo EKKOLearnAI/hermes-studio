@@ -50,8 +50,10 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     isShuttingDown = true
 
     const stopAgentBridge = Boolean(agentBridgeManager && shouldStopAgentBridgeOnShutdown(signal))
-    // Start Coding Agent process-tree cleanup immediately. It must not sit
-    // behind preview/gateway/bridge teardown that can hang until the deadline.
+    // Quiesce new Group Chat work and start Coding Agent process-tree cleanup
+    // immediately. Neither may sit behind preview/gateway/bridge teardown that
+    // can hang until the outer deadline.
+    const groupChatQuiesce = Promise.resolve(groupChatServer?.stopHandoffDispatcher?.())
     const codingAgentShutdown = typeof (codingAgentRunManager as any).shutdownAndWait === 'function'
       ? (codingAgentRunManager as any).shutdownAndWait()
       : Promise.resolve((codingAgentRunManager.shutdown(), true))
@@ -60,14 +62,23 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
     // to stop worker subprocesses, so this cap must be longer than that.
     const forceExitTimer = setTimeout(() => {
-      if (stopAgentBridge) {
-        try {
-          agentBridgeManager?.forceStop?.()
-        } catch (err) {
-          logger.warn(err, 'Failed to force-stop agent bridge during shutdown timeout')
+      void (async () => {
+        if (stopAgentBridge) {
+          try {
+            agentBridgeManager?.forceStop?.()
+          } catch (err) {
+            logger.warn(err, 'Failed to force-stop agent bridge during shutdown timeout')
+          }
         }
-      }
-      process.exit(exitCode || 1)
+        // Never let the outer shutdown deadline outrun Coding Agent cleanup.
+        // The ownership receipt is only safe to abandon after cleanup itself
+        // has completed and verified that every execution marker is gone.
+        let codingAgentsStopped = false
+        try { codingAgentsStopped = await codingAgentShutdown } catch (err) {
+          logger.error(err, 'Coding agent cleanup failed during forced shutdown')
+        }
+        process.exit(codingAgentsStopped ? (exitCode || 1) : 1)
+      })()
     }, getShutdownForceExitMs())
 
     logger.info('Shutting down (%s)...', signal)
@@ -95,7 +106,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
       // Stop accepting/routing chat work before stopping the bridge. This lets
       // ChatRunSocket release any claimed background completion back to Hermes
       // while the broker is still reachable.
-      await groupChatServer?.stopHandoffDispatcher?.()
+      await groupChatQuiesce
       if (chatRunServer) {
         await chatRunServer.close()
         logger.info('ChatRunSocket closed')

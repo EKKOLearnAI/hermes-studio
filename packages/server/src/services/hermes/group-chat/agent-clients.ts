@@ -14,6 +14,7 @@ import {
 } from '../../coding-agents'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import {
+    acknowledgeWorkspaceRunCheckpoint,
     completeWorkspaceRunCheckpointDraft,
     discardWorkspaceRunCheckpoint,
     startWorkspaceRunCheckpoint,
@@ -986,6 +987,7 @@ class AgentClient {
                 sourceHandoffLeaseToken: current.sourceHandoffLeaseToken || '',
             })
             if (saved?.message) {
+                acknowledgeWorkspaceRunCheckpoint({ sessionId: current.sessionId, runId: current.runId })
                 this.workspaceDiffBroadcaster?.(current.roomId, saved.message, saved.totalTokens)
             }
         } catch (err) {
