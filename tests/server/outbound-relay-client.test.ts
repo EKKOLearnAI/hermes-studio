@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/services/global-agent/mcu-voice-instructions'
 
 const { mockIo, mockSocket, sockets, socketHandlers, mockWebSockets, MockWebSocket, resetMockSockets } = vi.hoisted(() => {
   function createMockSocket(id: string, url = '') {
@@ -123,6 +124,12 @@ describe('outbound relay client', () => {
     const runCall = socket.emit.mock.calls
       .filter(([event]: [string]) => event === 'run')
       .at(-1)
+    expect(runCall?.[1]).toMatchObject({
+      source: 'coding_agent',
+      session_source: 'global_agent',
+      coding_agent_id: 'ekko-agent',
+      instructions: MCU_VOICE_SYSTEM_INSTRUCTIONS,
+    })
     const queueId = runCall?.[1]?.queue_id
     expect(queueId).toMatch(/^mcu_/)
     socket.__handlers.get('run.started')?.({ run_id: runId, queue_id: queueId })
@@ -530,12 +537,44 @@ describe('outbound relay client', () => {
     const localSocket = socketForUrl('http://127.0.0.1:8648/chat-run')
     localSocket.__handlers.get('connect')?.()
     startPrimaryMockRun(localSocket)
-    localSocket.__handlers.get('message.delta')?.({ delta: '你好' })
-    localSocket.__handlers.get('run.completed')?.({})
+    localSocket.__handlers.get('message.delta')?.({ delta: '我来查一下。\n' })
+    localSocket.__handlers.get('tool.started')?.({
+      tool: 'weather',
+      preview: 'tool arguments must stay local'.repeat(1_000),
+    })
+    localSocket.__handlers.get('tool.completed')?.({
+      tool: 'weather',
+      preview: 'tool result must stay local'.repeat(1_000),
+    })
+    expect(remoteSocket.emit).toHaveBeenCalledWith('tool.started', {
+      type: 'tool.started',
+      interactionId: 'voice-tts-ok',
+      tool: 'weather',
+    })
+    expect(remoteSocket.emit).toHaveBeenCalledWith('tool.completed', {
+      type: 'tool.completed',
+      interactionId: 'voice-tts-ok',
+      tool: 'weather',
+      error: undefined,
+    })
+    localSocket.__handlers.get('run.completed')?.({ output: '厦门今天晴。' })
 
     await vi.waitFor(() => {
       expect(remoteSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
+        text: '我来查一下。',
         url: 'http://device.local:8787/global-agent/audio/audio-1?token=download-token',
+      }))
+    })
+    emitRemote(remoteSocket, 'audio.done', {
+      type: 'audio.done',
+      interactionId: 'voice-tts-ok',
+      segmentId: 'voice-tts-ok-tts-1',
+    })
+    await vi.waitFor(() => {
+      expect(remoteSocket.emit).toHaveBeenCalledWith('audio.enqueue', expect.objectContaining({
+        interactionId: 'voice-tts-ok',
+        segmentId: 'voice-tts-ok-tts-2',
+        text: '厦门今天晴。',
       }))
     })
     const uploadCall = fetchImpl.mock.calls.find(([url]: [string]) => url === 'http://device.local:8787/global-agent/audio')

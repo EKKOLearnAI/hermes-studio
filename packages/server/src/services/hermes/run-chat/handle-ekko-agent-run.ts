@@ -48,12 +48,14 @@ export interface EkkoAgentRunSocketData {
   provider?: string
   model?: string
   model_groups?: RunModelGroup[]
+  instructions?: string
   coding_agent_id?: ChatCodingAgentId
   agent_id?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
   workspace?: string | null
   category_id?: number | null
   source?: string
+  session_source?: 'global_agent' | 'workflow'
   baseUrl?: string
   base_url?: string
   apiKey?: string
@@ -429,6 +431,15 @@ export async function handleEkkoAgentRun(
   const storageText = data.storage_message !== undefined ? data.storage_message : displayText
   const shouldPersistUserMessage = !skipUserMessage && displayInput !== null
   const now = Math.floor(Date.now() / 1000)
+  const instructions = String(data.instructions || '').trim()
+  const instructionMessages: AgentMessage[] = instructions
+    ? [{ role: 'system', content: instructions }]
+    : []
+  const sessionSource = data.session_source === 'global_agent'
+    ? 'global_agent'
+    : data.session_source === 'workflow' || data.source === 'workflow'
+      ? 'workflow'
+      : 'coding_agent'
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id: sessionId }
     observeRunChatPetEvent(profile, event, tagged)
@@ -446,7 +457,7 @@ export async function handleEkkoAgentRun(
     createSession({
       id: sessionId,
       profile,
-      source: 'coding_agent',
+      source: sessionSource,
       agent: 'ekko-agent',
       agent_mode: 'scoped',
       model: modelConfig.model,
@@ -455,6 +466,20 @@ export async function handleEkkoAgentRun(
       title,
       workspace,
       category_id: data.category_id,
+    })
+  } else if (
+    storedSession.source !== sessionSource ||
+    storedSession.agent !== 'ekko-agent' ||
+    storedSession.agent_mode !== 'scoped' ||
+    storedSession.agent_session_id ||
+    storedSession.agent_native_session_id
+  ) {
+    updateSession(sessionId, {
+      source: sessionSource,
+      agent: 'ekko-agent',
+      agent_mode: 'scoped',
+      agent_session_id: '',
+      agent_native_session_id: '',
     })
   }
   if (storedSession && apiMode && storedSession.api_mode !== apiMode) {
@@ -620,9 +645,11 @@ export async function handleEkkoAgentRun(
       storageMessage: continuationMessage,
       model: modelConfig.model,
       provider: modelConfig.provider,
+      instructions,
       profile,
       workspace,
       source: state.source,
+      sessionSource: data.session_source,
       codingAgentId: 'ekko-agent',
       mode: data.mode,
       baseUrl,
@@ -1124,7 +1151,7 @@ export async function handleEkkoAgentRun(
           modelClient,
           model: modelConfig.model,
           modelDefaults: { model: modelConfig.model },
-          messages: [],
+          messages: instructionMessages,
           signal: abortController.signal,
           memoryEnabled: false,
           toolContext,
@@ -1150,6 +1177,7 @@ export async function handleEkkoAgentRun(
         reasoningSummary: 'auto',
       },
       messages: [
+        ...instructionMessages,
         ...await toAgentMessages(compressedHistory),
         currentMessage,
       ],

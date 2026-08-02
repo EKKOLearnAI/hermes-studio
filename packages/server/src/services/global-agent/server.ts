@@ -12,6 +12,7 @@ import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
 import { decodeMcuImaAdpcm, encodeMcuImaAdpcm } from '../hermes/mcu-adpcm'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
 import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from './mcu-voice-instructions'
 import type {
   RelayHttpRequest,
   RelayHttpResponse,
@@ -710,8 +711,10 @@ export class GlobalAgentServer {
         session_id: sessionId,
         queue_id: primaryQueueId,
         profile: options.profile,
-        source: 'global_agent',
+        source: 'coding_agent',
         session_source: 'global_agent',
+        coding_agent_id: 'ekko-agent',
+        instructions: MCU_VOICE_SYSTEM_INSTRUCTIONS,
       }
       const interruptedAt = this.recentlyInterruptedMcuSessions.get(sessionId) || 0
       if (Date.now() - interruptedAt < 10_000) {
@@ -746,20 +749,15 @@ export class GlobalAgentServer {
     socket.on('tool.started', (event: Record<string, unknown> = {}) => {
       if (!currentRunPrimary) return
       flushCompletedAssistantMessage()
+      output = ''
       const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
-      const preview = typeof event.preview === 'string' ? event.preview : undefined
-      this.emitMcuEvent({ type: 'tool.started', interactionId: options.interactionId, tool, preview }, { clientId: options.clientId })
+      this.emitMcuEvent({ type: 'tool.started', interactionId: options.interactionId, tool }, { clientId: options.clientId })
     })
     const handleToolFinished = (event: Record<string, unknown> = {}, failed = false) => {
       if (!currentRunPrimary) return
       const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
-      const preview = typeof event.preview === 'string' ? event.preview : undefined
-      const error = typeof event.error === 'string'
-        ? event.error
-        : failed
-          ? 'tool.failed'
-          : undefined
-      this.emitMcuEvent({ type: 'tool.completed', interactionId: options.interactionId, tool, preview, error }, { clientId: options.clientId })
+      const error = failed ? 'tool.failed' : undefined
+      this.emitMcuEvent({ type: 'tool.completed', interactionId: options.interactionId, tool, error }, { clientId: options.clientId })
     }
     socket.on('tool.completed', (event: Record<string, unknown> = {}) => handleToolFinished(event))
     socket.on('tool.failed', (event: Record<string, unknown> = {}) => handleToolFinished(event, true))
@@ -875,7 +873,7 @@ export class GlobalAgentServer {
         return
       }
       if (!currentRunAutonomous) {
-        this.emitMcuEvent({ type: 'tool.started', interactionId: options.interactionId, tool: 'approval', preview: choice }, { clientId: options.clientId })
+        this.emitMcuEvent({ type: 'tool.started', interactionId: options.interactionId, tool: 'approval' }, { clientId: options.clientId })
       }
       socket.emit('approval.respond', {
         session_id: sessionId,

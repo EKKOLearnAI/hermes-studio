@@ -3,6 +3,7 @@ import {
   decodeMcuImaAdpcm,
   encodeMcuImaAdpcm,
 } from '../../packages/server/src/services/hermes/mcu-adpcm'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/services/global-agent/mcu-voice-instructions'
 
 const authMocks = vi.hoisted(() => ({
   authenticateUserToken: vi.fn(),
@@ -169,6 +170,12 @@ function startPrimaryMockRun(socket: any, runId = 'run-primary'): string {
   const runCall = socket.emit.mock.calls
     .filter(([event]: [string]) => event === 'run')
     .at(-1)
+  expect(runCall?.[1]).toMatchObject({
+    source: 'coding_agent',
+    session_source: 'global_agent',
+    coding_agent_id: 'ekko-agent',
+    instructions: MCU_VOICE_SYSTEM_INSTRUCTIONS,
+  })
   const queueId = runCall?.[1]?.queue_id
   expect(queueId).toMatch(/^mcu_/)
   socket.__handlers.get('run.started')?.({ run_id: runId, queue_id: queueId })
@@ -981,7 +988,15 @@ describe('GlobalAgentServer', () => {
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
       text: '好嘞，这就去查。',
     })
-    localSocket.__handlers.get('tool.started')?.({ tool: 'weather', preview: '厦门天气' })
+    localSocket.__handlers.get('tool.started')?.({
+      tool: 'weather',
+      preview: '不应转发给 MCU 的工具参数'.repeat(1_000),
+    })
+    expect(agentSocket.emit).toHaveBeenCalledWith('tool.started', {
+      type: 'tool.started',
+      interactionId: 'voice-1',
+      tool: 'weather',
+    })
     await waitForMockCallWith(agentSocket.emit, ([event, payload]) =>
       event === 'audio.enqueue' && (payload as { segmentId?: string })?.segmentId === 'voice-1-tts-1',
     )
@@ -997,10 +1012,19 @@ describe('GlobalAgentServer', () => {
       status: 'speaking',
       text: '好嘞，这就去查。',
     }))
-    localSocket.__handlers.get('tool.completed')?.({ tool: 'weather' })
-    localSocket.__handlers.get('message.delta')?.({ delta: '结果如下：\n| 名称 | 值 |\n' })
-    localSocket.__handlers.get('message.delta')?.({ delta: '| --- | --- |\n| foo | 1 |\n请确认。\n' })
-    localSocket.__handlers.get('run.completed')?.({})
+    localSocket.__handlers.get('tool.completed')?.({
+      tool: 'weather',
+      preview: '不应转发给 MCU 的工具结果'.repeat(1_000),
+    })
+    expect(agentSocket.emit).toHaveBeenCalledWith('tool.completed', {
+      type: 'tool.completed',
+      interactionId: 'voice-1',
+      tool: 'weather',
+      error: undefined,
+    })
+    localSocket.__handlers.get('run.completed')?.({
+      output: '结果如下：\n| 名称 | 值 |\n| --- | --- |\n| foo | 1 |\n请确认。\n',
+    })
 
     await waitForMockCalls(fetchImpl, 2)
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
@@ -1529,7 +1553,6 @@ describe('GlobalAgentServer', () => {
       type: 'tool.started',
       interactionId: 'voice-1',
       tool: 'approval',
-      preview: 'session',
     })
     expect(localSocket.emit).toHaveBeenCalledWith('approval.respond', {
       session_id: 'mcu-device-1-research',
@@ -1544,13 +1567,16 @@ describe('GlobalAgentServer', () => {
       tool: 'approval',
       error: undefined,
     })
-    localSocket.__handlers.get('tool.failed')?.({ tool: 'weather', error: 'permission denied' })
+    localSocket.__handlers.get('tool.failed')?.({
+      tool: 'weather',
+      preview: '不应转发给 MCU 的失败结果'.repeat(1_000),
+      error: '不应转发给 MCU 的错误详情'.repeat(1_000),
+    })
     expect(agentSocket.emit).toHaveBeenCalledWith('tool.completed', {
       type: 'tool.completed',
       interactionId: 'voice-1',
       tool: 'weather',
-      preview: undefined,
-      error: 'permission denied',
+      error: 'tool.failed',
     })
     localSocket.__handlers.get('run.failed')?.({ error: 'done' })
   })

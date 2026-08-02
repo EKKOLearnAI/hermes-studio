@@ -151,7 +151,9 @@ const liveReasoningDetail = computed<{
 
 const emptyState = computed(() => {
   const session = chatStore.activeSession;
-  const codingAgentId = session?.codingAgentId || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
+  const codingAgentId = session?.source === "global_agent"
+    ? "ekko-agent"
+    : session?.codingAgentId || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
   if (codingAgentId === "codex") {
     return {
       logo: "/coding-agents/codex-openai.png",

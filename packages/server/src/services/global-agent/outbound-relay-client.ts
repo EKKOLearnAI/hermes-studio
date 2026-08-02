@@ -10,6 +10,7 @@ import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
 import { encodeMcuImaAdpcm } from '../hermes/mcu-adpcm'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
 import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from './mcu-voice-instructions'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
@@ -1034,8 +1035,10 @@ class McuSocketIoRelayClient {
           session_id: sessionId,
           queue_id: primaryQueueId,
           profile: voice.profile,
-          source: 'global_agent',
+          source: 'coding_agent',
           session_source: 'global_agent',
+          coding_agent_id: 'ekko-agent',
+          instructions: MCU_VOICE_SYSTEM_INSTRUCTIONS,
         }
         const interruptedAt = this.recentlyInterruptedSessions.get(sessionId) || 0
         if (Date.now() - interruptedAt < 10_000) {
@@ -1070,20 +1073,15 @@ class McuSocketIoRelayClient {
       socket.on('tool.started', (event: Record<string, unknown> = {}) => {
         if (!currentRunPrimary) return
         flushCompletedAssistantMessage()
+        output = ''
         const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
-        const preview = typeof event.preview === 'string' ? event.preview : undefined
-        this.sendJson({ type: 'tool.started', interactionId: voice.interactionId, tool, preview })
+        this.sendJson({ type: 'tool.started', interactionId: voice.interactionId, tool })
       })
       const handleToolFinished = (event: Record<string, unknown> = {}, failed = false) => {
         if (!currentRunPrimary) return
         const tool = typeof event.tool === 'string' ? event.tool : typeof event.name === 'string' ? event.name : 'tool'
-        const preview = typeof event.preview === 'string' ? event.preview : undefined
-        const error = typeof event.error === 'string'
-          ? event.error
-          : failed
-            ? 'tool.failed'
-            : undefined
-        this.sendJson({ type: 'tool.completed', interactionId: voice.interactionId, tool, preview, error })
+        const error = failed ? 'tool.failed' : undefined
+        this.sendJson({ type: 'tool.completed', interactionId: voice.interactionId, tool, error })
       }
       socket.on('tool.completed', (event: Record<string, unknown> = {}) => handleToolFinished(event))
       socket.on('tool.failed', (event: Record<string, unknown> = {}) => handleToolFinished(event, true))
@@ -1214,7 +1212,6 @@ class McuSocketIoRelayClient {
             type: 'tool.started',
             interactionId: voice.interactionId,
             tool: 'approval',
-            preview: choice,
           })
         }
         socket.emit('approval.respond', {

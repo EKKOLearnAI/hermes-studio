@@ -46,6 +46,9 @@ const profileModelsMissing = computed(() =>
 )
 const isGlobalAgentSession = computed(() => props.session.source === 'global_agent')
 const sessionAgentLogo = computed(() => {
+  if (isGlobalAgentSession.value) {
+    return { label: 'Ekko Agent', src: '/coding-agents/ekko-agent.png' }
+  }
   if (props.session.source === 'coding_agent') {
     if (props.session.codingAgentId === 'codex' || props.session.agent === 'codex') {
       return { label: 'Codex', src: '/coding-agents/codex-openai.png' }
