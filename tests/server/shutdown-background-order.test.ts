@@ -4,7 +4,7 @@ const closeDbMock = vi.hoisted(() => vi.fn())
 const stopPreviewRuntimeMock = vi.hoisted(() => vi.fn(async () => {}))
 const shutdownManagedGatewaysMock = vi.hoisted(() => vi.fn(async () => ({ stopped: 0 })))
 const stopOutboundRelayClientMock = vi.hoisted(() => vi.fn())
-const codingAgentShutdownMock = vi.hoisted(() => vi.fn())
+const codingAgentShutdownMock = vi.hoisted(() => vi.fn(async () => true))
 
 vi.mock('../../packages/server/src/db', () => ({ closeDb: closeDbMock }))
 vi.mock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: stopPreviewRuntimeMock }))
@@ -15,7 +15,7 @@ vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client',
   stopOutboundRelayClient: stopOutboundRelayClientMock,
 }))
 vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
-  codingAgentRunManager: { shutdown: codingAgentShutdownMock },
+  codingAgentRunManager: { shutdown: codingAgentShutdownMock, shutdownAndWait: codingAgentShutdownMock },
 }))
 vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -51,6 +51,9 @@ describe('graceful shutdown background delivery ordering', () => {
       }),
     }
     const groupChatServer = {
+      stopHandoffDispatcher: vi.fn(async () => {
+        order.push('group-handoff-quiesce')
+      }),
       agentClients: { disconnectAll: vi.fn(() => order.push('agent-clients-close')) },
       getIO: vi.fn(() => ({ close: vi.fn(() => order.push('socket-io-close')) })),
     }
@@ -66,6 +69,7 @@ describe('graceful shutdown background delivery ordering', () => {
     await createShutdownHandler(httpServer, groupChatServer, chatRunServer, agentBridgeManager)('desktop-request')
 
     expect(order).toEqual([
+      'group-handoff-quiesce',
       'chat-run-close',
       'bridge-stop',
       'agent-clients-close',
@@ -88,10 +92,11 @@ describe('graceful shutdown background delivery ordering', () => {
 
     void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
     await Promise.resolve()
+    expect(codingAgentShutdownMock).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(getShutdownForceExitMs())
 
     expect(agentBridgeManager.forceStop).toHaveBeenCalledOnce()
-    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
   it('preserves the configured bridge across the forced shutdown deadline', async () => {
@@ -107,10 +112,11 @@ describe('graceful shutdown background delivery ordering', () => {
 
     void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
     await Promise.resolve()
+    expect(codingAgentShutdownMock).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(getShutdownForceExitMs())
 
     expect(agentBridgeManager.stop).not.toHaveBeenCalled()
     expect(agentBridgeManager.forceStop).not.toHaveBeenCalled()
-    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 })

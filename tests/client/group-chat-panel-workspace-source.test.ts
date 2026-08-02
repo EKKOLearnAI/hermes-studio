@@ -20,7 +20,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('if (!currentRoomCanManage.value) return')
     expect(source).toContain('if (!canManageRoom(room)) return')
     expect(source).toContain("options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })")
-    expect(source).toContain('v-if="currentRoomCanManage" class="context-stop-btn"')
+    expect(source).toContain('v-if="currentRoomCanManage" class="icon-btn compression-settings-button"')
+    expect(source).toContain('<NPopconfirm v-if="currentRoomCanManage" @positive-click="handleClearRoomContext">')
   })
 
   it('renders the active room workspace badge beside the room title like single chat', () => {

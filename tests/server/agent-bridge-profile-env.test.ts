@@ -24,6 +24,7 @@ async function runBridgeProbe(script: string): Promise<any> {
     cwd: resolve('.'),
     env: {
       ...process.env,
+      HERMES_AGENT_BRIDGE_WORKER_PROFILE: '',
       BRIDGE_PATH: bridgePath,
       TEST_HERMES_HOME: tempDir,
     },

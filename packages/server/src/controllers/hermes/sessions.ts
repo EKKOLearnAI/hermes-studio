@@ -1194,7 +1194,14 @@ export async function remove(ctx: any) {
   if (denySessionAccess(ctx, existing)) return
   const hermesProfile = requestedProfile(ctx) || existing?.profile || getActiveProfileName()
   const codingAgentSession = isCodingAgentSession(existing)
-  if (codingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
+  if (codingAgentSession) {
+    const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false })
+    if (!stopped) {
+      ctx.status = 409
+      ctx.body = { error: 'Coding agent process tree did not stop; session was not deleted' }
+      return
+    }
+  }
   const hermes = codingAgentSession
     ? { attempted: false, deleted: false, profile: hermesProfile }
     : await deleteHermesSessionIfPresent(sessionId, hermesProfile)
@@ -1264,7 +1271,14 @@ export async function batchRemove(ctx: any) {
     }
 
     const codingAgentSession = isCodingAgentSession(existing)
-    if (codingAgentSession) codingAgentRunManager.stop(id, { reportClosed: false })
+    if (codingAgentSession) {
+      const stopped = await codingAgentRunManager.stopAndWait(id, { reportClosed: false })
+      if (!stopped) {
+        results.failed++
+        results.errors.push({ id, error: 'Coding agent process tree did not stop; session was not deleted' })
+        continue
+      }
+    }
     const hermes = codingAgentSession
       ? { attempted: false, deleted: false, profile: targetProfile || 'default' }
       : await deleteHermesSessionIfPresent(id, targetProfile)

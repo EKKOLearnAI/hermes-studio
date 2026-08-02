@@ -56,6 +56,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', async () => {
 })
 
 import { CodingAgentRunManager } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -63,8 +64,18 @@ function setPlatform(platform: NodeJS.Platform) {
   Object.defineProperty(process, 'platform', { value: platform })
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error('timed out waiting for expected coding-agent event')
+}
+
 beforeEach(() => {
   testState.spawnCalls.length = 0
+  initAllHermesTables()
   setPlatform('win32')
 })
 
@@ -73,6 +84,32 @@ afterEach(() => {
 })
 
 describe('coding agent Windows process launch', () => {
+  it('fails closed for Group Chat when no verified Windows Job Object boundary is available', () => {
+    const manager = new CodingAgentRunManager()
+    const previousVitest = process.env.VITEST
+    delete process.env.VITEST
+    try {
+      expect(() => manager.start({
+        agentSessionId: 'agent-session-windows-boundary',
+        agentId: 'codex',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'gpt-test',
+        sessionId: 'chat-session-windows-boundary',
+        command: 'codex.cmd',
+        args: [],
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+        runtimeContext: 'group_chat',
+      })).toThrow('requires a verified durable process boundary on this platform')
+      expect(testState.spawnCalls).toHaveLength(0)
+    } finally {
+      if (previousVitest === undefined) delete process.env.VITEST
+      else process.env.VITEST = previousVitest
+    }
+  })
+
   it('runs npm .cmd shims through cmd.exe for hidden Claude Code chat turns', () => {
     const manager = new CodingAgentRunManager()
     ;(manager as any).ensureDbSession = () => {}
@@ -425,8 +462,9 @@ describe('coding agent Windows process launch', () => {
 
     manager.send('chat-session-codex-error-1', 'test')
     testState.spawnCalls[0].child.stderr.emit('data', Buffer.from([0xb2, 0xbb, 0xca, 0xc7]))
+    testState.spawnCalls[0].child.exitCode = 1
     testState.spawnCalls[0].child.emit('exit', 1)
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await waitFor(() => emitted.some(item => item.event === 'run.failed'))
 
     expect(emitted).toContainEqual(expect.objectContaining({
       event: 'run.failed',

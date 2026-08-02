@@ -68,6 +68,7 @@ describe('durable group-chat handoff outbox', () => {
       'targetActorId', 'targetActorAuthorizationRevision', 'targetActorContextRevision',
       'roomAuthorizationRevision', 'authorizationReaderEpoch',
       'targetAgentId', 'targetSessionId', 'targetSessionGeneration',
+      'targetConfigRevision', 'targetRuntimeConfigJson',
       'depth', 'kind', 'status', 'attemptCount', 'availableAt', 'leaseOwner',
       'leaseToken', 'leaseExpiresAt', 'lastError', 'createdAt', 'updatedAt', 'completedAt',
     ]))
@@ -77,6 +78,81 @@ describe('durable group-chat handoff outbox', () => {
     expect(fenceColumns.map(column => column.name)).toEqual([
       'token', 'roomId', 'actorId', 'kind', 'reason', 'createdAt', 'expiresAt',
     ])
+  })
+
+  it('keeps admitted handoffs on an immutable runtime snapshot when next-run settings change', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    const roomId = 'room-next-run-config'
+    storage.saveRoom(roomId, 'Room', 'ROOM1')
+    const targetA = storage.addRoomAgent(roomId, 'agent-a', 'profile-a', 'A', '', 0, {
+      sessionId: 'session-a', runtime: 'hermes', provider: 'provider-old', model: 'model-old',
+      apiMode: 'chat_completions', reasoningEffort: 'low',
+    })
+    const targetB = storage.addRoomAgent(roomId, 'agent-b', 'profile-b', 'B', '', 0, {
+      sessionId: 'session-b', runtime: 'coding_agent', codingAgentId: 'codex', mode: 'scoped',
+      provider: 'provider-b', model: 'model-b', apiMode: 'codex_responses', reasoningEffort: 'medium',
+    })
+    const source = createAuthorizedSource(storage, roomId)
+    const authority = { initiatorActorId: source.id, sourceActorId: source.id }
+    const roomRevisionBefore = Number((storage.getRoom(roomId) as any).authorizationRevision || 0)
+    const actorABefore = storage.findActiveActorByAgentIdentity(roomId, targetA.agentId)!
+    const actorBBefore = storage.findActiveActorByAgentIdentity(roomId, targetB.agentId)!
+
+    storage.saveMessageAndRefreshRoom({
+      id: 'message-old-config', roomId, senderId: 'human-1', senderName: 'Human',
+      content: '@A old @B old', timestamp: 1, role: 'user',
+    }, {
+      handoffs: [
+        { chainId: 'chain-old-a', targetAgentId: targetA.agentId, targetSessionId: targetA.sessionId, depth: 0, kind: 'mention' },
+        { chainId: 'chain-old-b', targetAgentId: targetB.agentId, targetSessionId: targetB.sessionId, depth: 0, kind: 'mention' },
+      ],
+      authority,
+    })
+    const oldJobs = storage.listHandoffJobs(roomId).sort((left, right) => left.targetAgentId.localeCompare(right.targetAgentId))
+    const claimed = storage.claimHandoffJobs('worker-old', 10, 10, 60_000)
+    expect(claimed).toHaveLength(2)
+
+    const updated = storage.updateRoomAgentRuntimeConfig(roomId, targetA.agentId, {
+      provider: 'provider-new', model: 'model-new', apiMode: 'anthropic_messages', reasoningEffort: 'high',
+    })
+
+    expect(updated).toMatchObject({ configRevision: 1, provider: 'provider-new', model: 'model-new' })
+    expect((storage.getRoom(roomId) as any).authorizationRevision).toBe(roomRevisionBefore)
+    expect(storage.findActiveActorByAgentIdentity(roomId, targetA.agentId)).toMatchObject({
+      authorizationRevision: actorABefore.authorizationRevision,
+      contextRevision: actorABefore.contextRevision,
+    })
+    expect(storage.findActiveActorByAgentIdentity(roomId, targetB.agentId)).toMatchObject({
+      authorizationRevision: actorBBefore.authorizationRevision,
+      contextRevision: actorBBefore.contextRevision,
+    })
+    for (const job of claimed) {
+      expect(storage.getHandoffJob(job.id)).toMatchObject({
+        status: 'running', leaseToken: job.leaseToken, targetConfigRevision: 0,
+      })
+      expect(storage.isHandoffExecutionCurrent(job.id, job.leaseToken, job.targetAgentId, job.targetSessionId)).toBe(true)
+    }
+    expect(JSON.parse(oldJobs.find(job => job.targetAgentId === targetA.agentId)!.targetRuntimeConfigJson)).toMatchObject({
+      profile: 'profile-a', runtime: 'hermes', provider: 'provider-old', model: 'model-old',
+      apiMode: 'chat_completions', reasoningEffort: 'low',
+    })
+    expect(JSON.parse(oldJobs.find(job => job.targetAgentId === targetB.agentId)!.targetRuntimeConfigJson)).toMatchObject({
+      profile: 'profile-b', runtime: 'coding_agent', codingAgentId: 'codex', provider: 'provider-b', model: 'model-b',
+    })
+
+    storage.saveMessageAndRefreshRoom({
+      id: 'message-new-config', roomId, senderId: 'human-1', senderName: 'Human',
+      content: '@A new', timestamp: 2, role: 'user',
+    }, {
+      handoffs: [{ chainId: 'chain-new-a', targetAgentId: targetA.agentId, targetSessionId: targetA.sessionId, depth: 0, kind: 'mention' }],
+      authority,
+    })
+    const newJob = storage.listHandoffJobs(roomId).find(job => job.sourceMessageId === 'message-new-config')!
+    expect(newJob.targetConfigRevision).toBe(1)
+    expect(JSON.parse(newJob.targetRuntimeConfigJson)).toMatchObject({
+      provider: 'provider-new', model: 'model-new', apiMode: 'anthropic_messages', reasoningEffort: 'high',
+    })
   })
 
   it('fences participant jobs without revoking participant capabilities before runtime synchronization', () => {
@@ -1493,6 +1569,42 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.listHandoffJobs('room-1').filter(job => job.targetAgentId === a.agentId).map(job => job.status).sort()).toEqual(['pending', 'running'])
   })
 
+  it('does not let a newer job overtake an older same-target job during backoff', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-backoff', 'Room', 'ROOM1')
+    const a = storage.addRoomAgent('room-backoff', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    for (const [id, timestamp] of [['older', 100], ['newer', 200]] as const) {
+      storage.saveMessageAndRefreshRoom({
+        id, roomId: 'room-backoff', senderId: 'human-1', senderName: 'Human', content: '@A', timestamp, role: 'user',
+      }, authorizedHandoffs(storage, 'room-backoff', [{ chainId: `chain-${id}`, targetAgentId: a.agentId, targetSessionId: a.sessionId, depth: 0, kind: 'mention' }]))
+    }
+    const jobs = storage.listHandoffJobs('room-backoff').sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    dbMock.current!.prepare('UPDATE gc_handoff_jobs SET availableAt = ? WHERE id = ?').run(2_000, jobs[0].id)
+    dbMock.current!.prepare('UPDATE gc_handoff_jobs SET availableAt = 0 WHERE id = ?').run(jobs[1].id)
+
+    expect(storage.claimHandoffJobs('worker', 1_000, 1, 5_000)).toEqual([])
+    expect(storage.claimHandoffJobs('worker', 2_000, 1, 5_000)[0]?.id).toBe(jobs[0].id)
+  })
+
+  it('cancels only the selected chain and leaves a concurrent same-target chain intact', () => {
+    const storage = new ChatStorage()
+    storage.init()
+    storage.saveRoom('room-chain-stop', 'Room', 'ROOM1')
+    const a = storage.addRoomAgent('room-chain-stop', 'agent-a', 'default', 'A', '', 0, { sessionId: 'session-a' })
+    for (const [id, timestamp] of [['first', 100], ['second', 200]] as const) {
+      storage.saveMessageAndRefreshRoom({
+        id, roomId: 'room-chain-stop', senderId: 'human-1', senderName: 'Human', content: '@A', timestamp, role: 'user',
+      }, authorizedHandoffs(storage, 'room-chain-stop', [{ chainId: `chain-${id}`, targetAgentId: a.agentId, targetSessionId: a.sessionId, depth: 0, kind: 'mention' }]))
+    }
+    const first = storage.claimHandoffJobs('worker', 1_000, 1, 5_000)[0]
+    expect(first).toBeTruthy()
+    const running = storage.cancelHandoffChain('room-chain-stop', first.chainId)
+    expect(running.map(job => job.id)).toEqual([first.id])
+    expect(storage.getHandoffJob(first.id)?.status).toBe('cancelled')
+    expect(storage.listHandoffJobs('room-chain-stop').find(job => job.chainId !== first.chainId)?.status).toBe('pending')
+  })
+
   it('cancels durable pending and running jobs when the user stops a participant', () => {
     const storage = new ChatStorage()
     storage.init()
@@ -1562,6 +1674,53 @@ describe('durable group-chat handoff outbox', () => {
     expect(storage.recoverInterruptedHandoffJobs('process-new', 7_000)).toBe(1)
     expect(storage.getHandoffJob(claimed.id)).toMatchObject({ status: 'interrupted', leaseOwner: '', leaseToken: '' })
     expect(storage.claimHandoffJobs('process-new', 7_000, 1, 5_000)).toEqual([])
+  })
+
+  it('waits for an in-flight durable handoff before dispatcher shutdown resolves', async () => {
+    let finishRun!: () => void
+    const server = Object.create(GroupChatServer.prototype) as any
+    const job = {
+      id: 'job-shutdown-quiescence', roomId: 'room-1', chainId: 'chain-1', sourceMessageId: 'message-1',
+      targetAgentId: 'agent-a', targetSessionId: 'session-a', depth: 0, kind: 'mention',
+      leaseToken: 'lease-1', attemptCount: 1,
+    }
+    server.handoffDispatcherOwner = 'process-1'
+    server.handoffDispatchRunning = false
+    server.handoffDispatcherReady = true
+    server.handoffDispatchTimer = null
+    server.scheduleHandoffDispatch = vi.fn()
+    server.storage = {
+      recoverInterruptedHandoffJobs: vi.fn(),
+      claimHandoffJobs: vi.fn().mockReturnValueOnce([job]).mockReturnValue([]),
+      getMessage: vi.fn(() => ({
+        id: 'message-1', content: '@A hello', senderName: 'Human', senderId: 'human-1', timestamp: 100, role: 'user',
+      })),
+      isHandoffExecutionCurrent: vi.fn(() => true),
+      renewHandoffLease: vi.fn(() => true),
+      getHandoffJob: vi.fn(() => ({ ...job, status: 'completed' })),
+      fenceHandoffJobAfterLeaseLoss: vi.fn(),
+      markHandoffJobFailed: vi.fn(),
+      rescheduleHandoffJobWithoutAttempt: vi.fn(),
+    }
+    server.agentClients = {
+      processHandoffJob: vi.fn(() => new Promise<void>(resolve => { finishRun = resolve })),
+      interruptAgent: vi.fn(),
+    }
+
+    const drain = server.drainHandoffJobs()
+    await vi.waitFor(() => expect(server.agentClients.processHandoffJob).toHaveBeenCalledOnce())
+    let shutdownResolved = false
+    const shutdown = Promise.resolve(server.stopHandoffDispatcher()).then(() => { shutdownResolved = true })
+    await Promise.resolve()
+
+    expect(shutdownResolved).toBe(false)
+    expect(server.handoffDispatcherReady).toBe(false)
+
+    finishRun()
+    await shutdown
+    await drain
+    expect(shutdownResolved).toBe(true)
+    expect(server.storage.claimHandoffJobs).toHaveBeenCalledOnce()
   })
 
   it('rejects a claimed handoff at prelaunch when a destructive lifecycle fence became active', async () => {

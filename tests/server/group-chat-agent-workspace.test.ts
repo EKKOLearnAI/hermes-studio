@@ -50,6 +50,10 @@ const trackerMock = vi.hoisted(() => ({
 
 vi.mock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }))
 vi.mock('../../packages/server/src/services/auth', () => ({ getToken: vi.fn(async () => 'test-token') }))
+vi.mock('../../packages/server/src/services/hermes/managed-mcp-capability', () => ({
+  GROUP_CHAT_MANAGED_MCP_SERVER_TOOLS: { 'hermes-studio-api': ['hermes_studio_api_request'] },
+  issueManagedMcpCapability: vi.fn(async () => 'test-room-capability'),
+}))
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
 }))
@@ -225,6 +229,39 @@ describe('group chat agent workspace bridge runs', () => {
     )
   })
 
+  it('drains every queued participant mention in FIFO order', async () => {
+    let finishFirst!: () => void
+    const seen: string[] = []
+    const agent = {
+      agentId: 'agent-fifo',
+      name: 'Worker FIFO',
+      emitContextStatus: vi.fn(),
+      replyToMention: vi.fn(async (_roomId: string, msg: { content: string }) => {
+        seen.push(msg.content)
+        if (msg.content === 'first') await new Promise<void>(resolve => { finishFirst = resolve })
+      }),
+    }
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    clients.rooms.set('room-fifo', new Map([[agent.agentId, agent]]))
+
+    const first = clients._processAgentMention('room-fifo', agent, {
+      content: 'first', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+    await vi.waitFor(() => expect(seen).toEqual(['first']))
+    await clients._processAgentMention('room-fifo', agent, {
+      content: 'second', senderName: 'Alice', senderId: 'user-1', timestamp: 2,
+    })
+    await clients._processAgentMention('room-fifo', agent, {
+      content: 'third', senderName: 'Alice', senderId: 'user-1', timestamp: 3,
+    })
+
+    finishFirst()
+    await first
+    await vi.waitFor(() => expect(seen).toEqual(['first', 'second', 'third']))
+    expect(agent.replyToMention).toHaveBeenCalledTimes(3)
+  })
+
   it('does not drain queued mentions while a room interrupt is still pending', async () => {
     let finishStream!: () => void
     let finishInterrupt!: () => void
@@ -308,6 +345,7 @@ describe('group chat agent workspace bridge runs', () => {
         mode: 'scoped', provider: 'participant-provider', model: 'participant-model',
         apiMode: 'anthropic_messages', reasoningEffort: 'high',
       })),
+      getHandoffJob: vi.fn(() => ({ status: 'completed' })),
       isHandoffExecutionCurrent: vi.fn(() => true),
       registerSessionProfileForActiveAgent: vi.fn(() => {
         order.push('mapping')
@@ -352,13 +390,42 @@ describe('group chat agent workspace bridge runs', () => {
     expect(client.__testStorage.updateRoomTotalTokens).not.toHaveBeenCalled()
   })
 
-  it('forwards participant model, API mode, and reasoning effort to the Hermes Bridge run', async () => {
+  it('forwards participant model, API mode, and reasoning effort to Bridge estimation and the Hermes run', async () => {
     const client = await createClient('')
+    client.__testStorage.getRoomMembers = vi.fn(() => [])
+    bridgeMock.contextEstimate.mockResolvedValueOnce({
+      session_id: 'participant-session-1',
+      token_count: 100,
+      fixed_context_tokens: 90,
+      message_count: 0,
+      tool_count: 0,
+      system_prompt_chars: 0,
+      model: 'participant-model',
+      provider: 'participant-provider',
+      api_mode: 'anthropic_messages',
+    })
+    client.setContextEngine({
+      buildContext: vi.fn(async ({ contextTokenEstimator }: { contextTokenEstimator: (history: Array<{ role: 'user' | 'assistant'; content: string }>, instructions: string) => Promise<number | undefined> }) => {
+        await contextTokenEstimator([], 'ctx')
+        return { conversationHistory: [], instructions: 'ctx', meta: {} }
+      }),
+    })
 
     await client.replyToMention('room-1', {
       content: '@Worker hi', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
     })
 
+    expect(bridgeMock.contextEstimate).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      'ctx',
+      'default',
+      expect.objectContaining({
+        model: 'participant-model',
+        provider: 'participant-provider',
+        api_mode: 'anthropic_messages',
+      }),
+    )
     expect(bridgeMock.chat).toHaveBeenCalledWith(
       expect.any(String),
       expect.anything(),
@@ -372,6 +439,66 @@ describe('group chat agent workspace bridge runs', () => {
         reasoning_effort: 'high',
       }),
     )
+  })
+
+  it('uses the admitted durable runtime snapshot after next-run settings change', async () => {
+    const client = await createClient('')
+    client.__testStorage.getRoomMembers = vi.fn(() => [])
+    client.__testStorage.getRoomAgentByAgentId = vi.fn(() => ({
+      id: 'row-agent-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker',
+      runtime: 'hermes', sessionId: 'participant-session-1', sessionGeneration: 0,
+      mode: 'scoped', provider: 'provider-new', model: 'model-new',
+      apiMode: 'responses', reasoningEffort: 'max', configRevision: 1,
+    }))
+    bridgeMock.contextEstimate.mockResolvedValueOnce({
+      session_id: 'participant-session-1', token_count: 100, fixed_context_tokens: 90,
+      message_count: 0, tool_count: 0, system_prompt_chars: 0,
+      model: 'model-old', provider: 'provider-old', api_mode: 'anthropic_messages',
+    })
+    client.setContextEngine({
+      buildContext: vi.fn(async ({ contextTokenEstimator }: { contextTokenEstimator: (history: Array<{ role: 'user' | 'assistant'; content: string }>, instructions: string) => Promise<number | undefined> }) => {
+        await contextTokenEstimator([], 'ctx')
+        return { conversationHistory: [], instructions: 'ctx', meta: {} }
+      }),
+    })
+    client.__testClients.setStorage(client.__testStorage)
+
+    await client.__testClients.processHandoffJob({
+      id: 'job-runtime-snapshot', roomId: 'room-1', chainId: 'chain-runtime-snapshot',
+      targetAgentId: 'agent-1', targetSessionId: 'participant-session-1', depth: 0,
+      kind: 'mention', leaseToken: 'lease-runtime-snapshot', targetConfigRevision: 0,
+      targetRuntimeConfigJson: JSON.stringify({
+        profile: 'default', runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+        provider: 'provider-old', model: 'model-old', apiMode: 'anthropic_messages', reasoningEffort: 'low',
+      }),
+    } as any, {
+      messageId: 'message-runtime-snapshot', content: '@Worker do work',
+      senderName: 'Alice', senderId: 'user-1', timestamp: 1, role: 'user',
+    })
+
+    expect(bridgeMock.contextEstimate.mock.calls[0]?.[4]).toEqual(expect.objectContaining({
+      provider: 'provider-old', model: 'model-old', api_mode: 'anthropic_messages',
+    }))
+    expect(bridgeMock.chat.mock.calls[0]?.[5]).toEqual(expect.objectContaining({
+      provider: 'provider-old', model: 'model-old', api_mode: 'anthropic_messages', reasoning_effort: 'low',
+    }))
+  })
+
+  it('rejects a malformed durable runtime snapshot instead of falling back to current settings', async () => {
+    const client = await createClient('')
+    client.__testClients.setStorage(client.__testStorage)
+
+    await expect(client.__testClients.processHandoffJob({
+      id: 'job-malformed-runtime-snapshot', roomId: 'room-1', chainId: 'chain-malformed-runtime-snapshot',
+      targetAgentId: 'agent-1', targetSessionId: 'participant-session-1', depth: 0,
+      kind: 'mention', leaseToken: 'lease-malformed-runtime-snapshot', targetConfigRevision: 0,
+      targetRuntimeConfigJson: '{',
+    } as any, {
+      messageId: 'message-malformed-runtime-snapshot', content: '@Worker do work',
+      senderName: 'Alice', senderId: 'user-1', timestamp: 1, role: 'user',
+    })).rejects.toThrow('Invalid durable participant runtime snapshot')
+    expect(bridgeMock.contextEstimate).not.toHaveBeenCalled()
+    expect(bridgeMock.chat).not.toHaveBeenCalled()
   })
 
   it('forwards an explicit empty participant API mode so cached Hermes sessions clear old overrides', async () => {

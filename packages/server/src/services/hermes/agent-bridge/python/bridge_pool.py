@@ -778,6 +778,7 @@ class AgentPool:
         profile: str | None = None,
         model: str | None = None,
         provider: str | None = None,
+        api_mode: str | None = None,
         workspace: str | None = None,
         background_delegation_enabled: bool | None = None,
     ) -> dict[str, Any]:
@@ -786,6 +787,7 @@ class AgentPool:
             profile=profile,
             model=model,
             provider=provider,
+            api_mode=api_mode,
             background_delegation_enabled=background_delegation_enabled,
         )
         session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
@@ -809,6 +811,7 @@ class AgentPool:
             "profile": profile or session.config.get("profile") or "default",
             "model": session.config.get("model"),
             "provider": session.config.get("provider"),
+            "api_mode": session.config.get("api_mode"),
             **context_info,
         }
 

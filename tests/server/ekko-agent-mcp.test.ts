@@ -67,6 +67,22 @@ describe('Ekko MCP server context', () => {
     })
   })
 
+  it('binds a managed MCP capability to every injected server when supplied by a durable run', async () => {
+    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
+
+    const servers = buildManagedEkkoMcpServers('work', {
+      token: 'room-capability',
+      workerKey: 'room:participant:session:7',
+    })
+
+    for (const value of Object.values(servers) as any[]) {
+      expect(value.env).toMatchObject({
+        HERMES_STUDIO_MCP_CAPABILITY: 'room-capability',
+        HERMES_AGENT_BRIDGE_WORKER_KEY: 'room:participant:session:7',
+      })
+    }
+  })
+
   it('merges caller-provided MCP servers and lets explicit entries override managed defaults', async () => {
     const { resolveEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
 

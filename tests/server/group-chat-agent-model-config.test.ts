@@ -23,20 +23,24 @@ describe('group chat agent model config', () => {
     expect(result).toEqual({ model: 'research-model', provider: 'research-provider' })
   })
 
-  it('requires cached context metadata to match the active model and provider', async () => {
+  it('requires cached context metadata to match the active model, provider, and API mode', async () => {
     const { isGroupBridgeContextCacheCompatible } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
 
     expect(isGroupBridgeContextCacheCompatible(
-      { model: 'research-model', provider: 'research-provider' },
-      { model: 'research-model', provider: 'research-provider' },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
     )).toBe(true)
     expect(isGroupBridgeContextCacheCompatible(
-      { model: 'other-model', provider: 'research-provider' },
-      { model: 'research-model', provider: 'research-provider' },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'chat_completions' },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
     )).toBe(false)
     expect(isGroupBridgeContextCacheCompatible(
-      { fixedContextTokens: 120 } as { model?: string; provider?: string },
-      { model: 'research-model', provider: 'research-provider' },
+      { model: 'other-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
+    )).toBe(false)
+    expect(isGroupBridgeContextCacheCompatible(
+      { fixedContextTokens: 120 } as { model?: string; provider?: string; apiMode?: string },
+      { model: 'research-model', provider: 'research-provider', apiMode: 'anthropic_messages' },
     )).toBe(false)
   })
 })

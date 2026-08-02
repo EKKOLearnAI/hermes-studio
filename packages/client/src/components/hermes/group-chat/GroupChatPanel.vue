@@ -66,6 +66,9 @@ const handoffMode = ref<'mentions' | 'fixed'>('mentions')
 const handoffOrder = ref<string[]>([])
 const handoffJobs = ref<GroupHandoffJob[]>([])
 const handoffPollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const expandedActivityChains = ref<Set<string>>(new Set())
+const stoppingActivityChains = ref<Set<string>>(new Set())
+const stoppingActivityAgents = ref<Set<string>>(new Set())
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
@@ -301,7 +304,56 @@ const handoffModeOptions = computed(() => [
     { label: t('groupChat.handoffModeFixed'), value: 'fixed' },
 ])
 const handoffAgentOptions = computed(() => store.agents.map(agent => ({ label: agent.name, value: agent.agentId })))
-const visibleHandoffJobs = computed(() => handoffJobs.value.filter(job => ['pending', 'running', 'failed', 'interrupted', 'authorization_revoked'].includes(job.status)).slice(0, 8))
+type ActivityChain = {
+    chainId: string
+    jobs: GroupHandoffJob[]
+    activeJobs: GroupHandoffJob[]
+    activeAgentIds: string[]
+    step: number
+    total: number
+    status: 'pending' | 'running'
+}
+const activityChains = computed<ActivityChain[]>(() => {
+    const jobsByChain = new Map<string, GroupHandoffJob[]>()
+    for (const job of handoffJobs.value) {
+        const jobs = jobsByChain.get(job.chainId) || []
+        jobs.push(job)
+        jobsByChain.set(job.chainId, jobs)
+    }
+    return Array.from(jobsByChain.entries()).flatMap(([chainId, jobs]) => {
+        const activeJobs = jobs
+            .filter(job => job.status === 'pending' || job.status === 'running')
+            .sort((a, b) => a.depth - b.depth || a.createdAt - b.createdAt)
+        if (!activeJobs.length) return []
+        let orderedIds: string[] = []
+        for (const job of activeJobs) {
+            try {
+                const parsed = JSON.parse(job.chainOrderJson || '[]')
+                if (Array.isArray(parsed) && parsed.length > orderedIds.length) orderedIds = parsed.map(String)
+            } catch {
+                // A malformed historical plan still falls back to observed jobs.
+            }
+        }
+        const activeAgentIds = Array.from(new Set(activeJobs.map(job => job.targetAgentId).filter(Boolean)))
+        const running = activeJobs.find(job => job.status === 'running')
+        const current = running || activeJobs[0]
+        const total = Math.max(orderedIds.length, ...jobs.map(job => job.depth + 1), 1)
+        return [{
+            chainId,
+            jobs: [...jobs].sort((a, b) => a.depth - b.depth || a.createdAt - b.createdAt),
+            activeJobs,
+            activeAgentIds,
+            step: Math.min(total, current.depth + 1),
+            total,
+            status: running ? 'running' as const : 'pending' as const,
+        }]
+    }).sort((a, b) => a.activeJobs[0].createdAt - b.activeJobs[0].createdAt)
+})
+const relayActivityAgentIds = computed(() => new Set(activityChains.value.flatMap(chain => chain.activeAgentIds)))
+const replyActivities = computed(() => Array.from(store.contextStatuses.values()).filter(status => (
+    !relayActivityAgentIds.value.has(status.agentId)
+)))
+const hasActivityDock = computed(() => activityChains.value.length > 0 || replyActivities.value.length > 0 || !!store.typingText)
 const visibleApproval = computed(() => currentRoomCanApprove.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
@@ -1038,7 +1090,9 @@ async function refreshHandoffs() {
         const res = await listHandoffs(store.currentRoomId)
         if (store.currentRoomId === roomId) handoffJobs.value = res.jobs
     } catch {
-        // Room permissions or a transient reconnect may make one poll fail.
+        // Fail closed: the server is authoritative. A failed reconciliation
+        // must not preserve a pre-disconnect active relay in the Activity Dock.
+        if (store.currentRoomId === roomId) handoffJobs.value = []
     }
 }
 
@@ -1048,6 +1102,61 @@ function handoffStatusLabel(status: GroupHandoffJob['status']): string {
             : status === 'interrupted' ? 'handoffInterrupted'
                 : 'handoffFailed'
     return t(`groupChat.${key}`)
+}
+
+function isActivityChainExpanded(chainId: string): boolean {
+    return expandedActivityChains.value.has(chainId)
+}
+
+function toggleActivityChain(chainId: string) {
+    const next = new Set(expandedActivityChains.value)
+    if (next.has(chainId)) next.delete(chainId)
+    else next.add(chainId)
+    expandedActivityChains.value = next
+}
+
+function isActivityAgentStopping(agentId: string): boolean {
+    return stoppingActivityAgents.value.has(agentId)
+}
+
+async function stopActivityReply(agentId: string) {
+    if (!currentRoomCanManage.value || isActivityAgentStopping(agentId)) return
+    stoppingActivityAgents.value = new Set([...stoppingActivityAgents.value, agentId])
+    try {
+        await store.interruptAgent(agentId)
+    } catch (err: any) {
+        message.error(err.message || t('common.saveFailed'))
+    } finally {
+        const next = new Set(stoppingActivityAgents.value)
+        next.delete(agentId)
+        stoppingActivityAgents.value = next
+    }
+}
+
+async function stopActivityChain(chain: ActivityChain) {
+    if (!currentRoomCanManage.value || stoppingActivityChains.value.has(chain.chainId)) return
+    stoppingActivityChains.value = new Set([...stoppingActivityChains.value, chain.chainId])
+    try {
+        await store.interruptHandoffChain(chain.chainId)
+        await refreshHandoffs()
+    } catch (err: any) {
+        message.error(err.message || t('common.saveFailed'))
+    } finally {
+        const next = new Set(stoppingActivityChains.value)
+        next.delete(chain.chainId)
+        stoppingActivityChains.value = next
+    }
+}
+
+function activityChainAgentSummary(chain: ActivityChain): string {
+    return chain.activeAgentIds.map(handoffAgentName).join(', ')
+}
+
+function activityChainStepStatus(job: GroupHandoffJob): string {
+    if (job.status === 'completed') return t('groupChat.activityCompleted')
+    if (job.status === 'running') return t('groupChat.activityRunning')
+    if (job.status === 'pending') return t('groupChat.activityPending')
+    return handoffStatusLabel(job.status)
 }
 
 function moveHandoffAgent(agentId: string, direction: -1 | 1) {
@@ -1103,6 +1212,9 @@ watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     }
     if (roomId !== previousRoomId && (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value)) closeWorkspacePanel()
     handoffJobs.value = []
+    expandedActivityChains.value = new Set()
+    stoppingActivityChains.value = new Set()
+    stoppingActivityAgents.value = new Set()
     void refreshHandoffs()
 })
 
@@ -1323,15 +1435,6 @@ async function handleRemoveAgent(agentId: string) {
         await store.removeAgentFromRoom(store.currentRoomId, agentId)
     } catch {
         message.error(t('common.deleteFailed'))
-    }
-}
-
-async function handleInterruptAgent(agentId: string) {
-    if (!currentRoomCanManage.value) return
-    try {
-        await store.interruptAgent(agentId)
-    } catch (err: any) {
-        message.error(err.message || t('common.saveFailed'))
     }
 }
 
@@ -1593,19 +1696,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
             >
                 <div class="group-chat-surface">
                     <div class="group-message-shell">
-                        <div v-if="visibleHandoffJobs.length" class="handoff-status-panel" role="status" aria-live="polite">
-                            <div
-                                v-for="job in visibleHandoffJobs"
-                                :key="job.id"
-                                class="handoff-status-row"
-                                :class="`handoff-status-row--${job.status}`"
-                                :title="job.lastError || handoffStatusLabel(job.status)"
-                            >
-                                <span>{{ handoffStatusLabel(job.status) }}</span>
-                                <span>→ {{ handoffAgentName(job.targetAgentId) }}</span>
-                                <span v-if="job.lastError" class="handoff-status-error">{{ job.lastError }}</span>
-                            </div>
-                        </div>
                         <GroupMessageList
                             :expanded-participant-message-id="expandedParticipantMessageId"
                             @participant-avatar-click="handleMessageParticipantAvatar"
@@ -1647,33 +1737,82 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </div>
                         </Transition>
                     </div>
-                    <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
-                        <div v-if="store.contextStatuses.size > 0" class="context-status-list">
-                            <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
-                                <span class="typing-dots">
-                                    <span /><span /><span />
-                                </span>
-                                <span v-if="status.status === 'compressing'">
-                                    @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
-                                </span>
-                                <span v-else>
-                                    @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
-                                </span>
-                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentId)">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                    </svg>
+                    <section v-if="hasActivityDock" class="activity-dock" :aria-label="t('groupChat.activityDock')">
+                        <div class="activity-dock-live" role="status" aria-live="polite" aria-atomic="true">
+                            <span v-for="chain in activityChains" :key="`live-chain-${chain.chainId}`">
+                                {{ chain.status === 'running' ? t('groupChat.handoffRunning') : t('groupChat.handoffPending') }} ·
+                                {{ t('groupChat.activityStep', { step: chain.step, total: chain.total }) }} ·
+                                {{ activityChainAgentSummary(chain) }}
+                            </span>
+                            <span v-for="status in replyActivities" :key="`live-reply-${status.agentId}`">
+                                @{{ status.agentName }} {{ status.status === 'compressing' ? t('groupChat.agentCompressing') : t('groupChat.agentReplying') }}
+                            </span>
+                            <span v-if="!activityChains.length && !replyActivities.length && store.typingText">{{ store.typingText }}</span>
+                        </div>
+                        <div class="activity-dock-items">
+                            <article v-for="chain in activityChains" :key="chain.chainId" class="activity-dock-item activity-dock-relay">
+                                <div class="activity-dock-main">
+                                    <span class="typing-dots" aria-hidden="true"><span /><span /><span /></span>
+                                    <span class="activity-dock-primary">
+                                        {{ chain.status === 'running' ? t('groupChat.handoffRunning') : t('groupChat.handoffPending') }}
+                                    </span>
+                                    <span class="activity-dock-meta">{{ t('groupChat.activityStep', { step: chain.step, total: chain.total }) }}</span>
+                                    <span class="activity-dock-agents">{{ activityChainAgentSummary(chain) }}</span>
+                                </div>
+                                <div class="activity-dock-actions">
+                                    <button
+                                        class="activity-dock-progress-button"
+                                        type="button"
+                                        :aria-expanded="isActivityChainExpanded(chain.chainId)"
+                                        :aria-controls="`activity-dock-chain-${chain.chainId}`"
+                                        @click="toggleActivityChain(chain.chainId)"
+                                    >
+                                        {{ t('groupChat.viewHandoffProgress') }}
+                                    </button>
+                                    <button
+                                        v-if="currentRoomCanManage"
+                                        class="activity-dock-stop activity-dock-stop-relay"
+                                        type="button"
+                                        :disabled="stoppingActivityChains.has(chain.chainId)"
+                                        @click="stopActivityChain(chain)"
+                                    >
+                                        {{ stoppingActivityChains.has(chain.chainId) ? t('groupChat.stoppingActivity') : t('groupChat.stopHandoff') }}
+                                    </button>
+                                </div>
+                                <ol
+                                    v-if="isActivityChainExpanded(chain.chainId)"
+                                    :id="`activity-dock-chain-${chain.chainId}`"
+                                    class="activity-dock-progress"
+                                >
+                                    <li v-for="job in chain.jobs" :key="job.id">
+                                        <span>{{ handoffAgentName(job.targetAgentId) }}</span>
+                                        <span>{{ activityChainStepStatus(job) }}</span>
+                                    </li>
+                                </ol>
+                            </article>
+                            <article v-for="status in replyActivities" :key="status.agentId" class="activity-dock-item activity-dock-reply">
+                                <div class="activity-dock-main">
+                                    <span class="typing-dots" aria-hidden="true"><span /><span /><span /></span>
+                                    <span class="activity-dock-primary">
+                                        @{{ status.agentName }} {{ status.status === 'compressing' ? t('groupChat.agentCompressing') : t('groupChat.agentReplying') }}
+                                    </span>
+                                </div>
+                                <button
+                                    v-if="currentRoomCanManage"
+                                    class="activity-dock-stop activity-dock-stop-reply"
+                                    type="button"
+                                    :disabled="isActivityAgentStopping(status.agentId)"
+                                    @click="stopActivityReply(status.agentId)"
+                                >
+                                    {{ isActivityAgentStopping(status.agentId) ? t('groupChat.stoppingActivity') : t('groupChat.stopReply', { agent: status.agentName }) }}
                                 </button>
+                            </article>
+                            <div v-if="!activityChains.length && !replyActivities.length && store.typingText" class="activity-dock-item typing-indicator">
+                                <span class="typing-dots" aria-hidden="true"><span /><span /><span /></span>
+                                {{ store.typingText }}
                             </div>
                         </div>
-                        <div v-else-if="store.typingText" class="typing-indicator">
-                            <span class="typing-dots">
-                                <span /><span /><span />
-                            </span>
-                            {{ store.typingText }}
-                        </div>
-                    </div>
+                    </section>
                     <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" @send-error="message.error" />
                 </div>
                 <aside
@@ -2201,44 +2340,179 @@ export default defineComponent({ components: { CreateRoomForm } })
     display: flex;
 }
 
-.handoff-status-panel {
-    position: absolute;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 5;
-    width: min(720px, calc(100% - 32px));
-    display: grid;
-    gap: 6px;
-    pointer-events: none;
-}
-
-.handoff-status-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    padding: 7px 10px;
-    border: 1px solid rgba(245, 158, 11, 0.35);
-    border-radius: 8px;
-    background: rgba(24, 24, 27, 0.94);
+.activity-dock {
+    flex-shrink: 0;
+    margin: 0 16px 8px;
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.18);
+    border-radius: 12px;
+    background: rgba(var(--accent-primary-rgb), 0.035);
     color: $text-secondary;
-    font-size: 12px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
+    overflow: hidden;
 
-    &--failed,
-    &--interrupted {
-        border-color: rgba(239, 68, 68, 0.48);
-        color: #fecaca;
-        pointer-events: auto;
+    .dark & {
+        background: rgba(255, 255, 255, 0.035);
+        border-color: rgba(255, 255, 255, 0.1);
     }
 }
 
-.handoff-status-error {
+.activity-dock-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.activity-dock-items {
+    display: grid;
+}
+
+.activity-dock-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 7px 9px;
+    font-size: 12px;
+
+    & + & {
+        border-top: 1px solid rgba(var(--accent-primary-rgb), 0.1);
+    }
+}
+
+.activity-dock-main {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1;
+}
+
+.activity-dock-primary {
+    flex: 0 0 auto;
+    color: $text-primary;
+    font-weight: 600;
+}
+
+.activity-dock-meta {
+    flex: 0 0 auto;
+    color: var(--accent-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-dock-agents {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #fca5a5;
+}
+
+.activity-dock-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.activity-dock-progress-button,
+.activity-dock-stop {
+    min-height: 28px;
+    border-radius: 7px;
+    padding: 3px 8px;
+    font: inherit;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+
+    &:focus-visible {
+        outline: 2px solid var(--accent-primary);
+        outline-offset: 2px;
+    }
+
+    &:disabled {
+        cursor: wait;
+        opacity: 0.6;
+    }
+}
+
+.activity-dock-progress-button {
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.22);
+    background: transparent;
+    color: $text-secondary;
+
+    &:hover:not(:disabled) {
+        background: rgba(var(--accent-primary-rgb), 0.08);
+        color: $text-primary;
+    }
+}
+
+.activity-dock-stop {
+    border: 1px solid rgba(var(--error-rgb), 0.24);
+    background: rgba(var(--error-rgb), 0.06);
+    color: $error;
+
+    &:hover:not(:disabled) {
+        color: #fff;
+        background: $error;
+        border-color: $error;
+    }
+}
+
+.activity-dock-progress {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin: 0;
+    padding: 5px 8px 3px 28px;
+    color: $text-secondary;
+
+    li {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 3px 0;
+    }
+}
+
+.activity-dock-relay {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: $breakpoint-mobile) {
+    .activity-dock {
+        margin: 0 8px 6px;
+    }
+
+    .activity-dock-item,
+    .activity-dock-relay {
+        align-items: stretch;
+        grid-template-columns: 1fr;
+        flex-direction: column;
+    }
+
+    .activity-dock-actions,
+    .activity-dock-stop-reply {
+        width: 100%;
+    }
+
+    .activity-dock-actions > button,
+    .activity-dock-stop-reply {
+        flex: 1;
+    }
+
+    .activity-dock-agents {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .activity-dock-progress-button,
+    .activity-dock-stop {
+        transition: none;
+    }
 }
 
 .handoff-order-list {
@@ -2273,61 +2547,6 @@ export default defineComponent({ components: { CreateRoomForm } })
             opacity: 1;
             pointer-events: auto;
         }
-    }
-}
-
-// ─── Status Bar ──────────────────────────────────────────
-
-.status-bar {
-    flex-shrink: 0;
-    padding: 6px 20px;
-    overflow: hidden;
-}
-
-.context-status-list {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-
-    &::-webkit-scrollbar {
-        height: 0;
-    }
-}
-
-.context-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
-    color: $text-secondary;
-    background-color: $bg-card-hover;
-    border-radius: $radius-sm;
-
-    .dark & {
-        background-color: rgba(255, 255, 255, 0.06);
-    }
-}
-
-.context-stop-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid rgba(var(--error-rgb), 0.18);
-    border-radius: $radius-sm;
-    background: rgba(var(--error-rgb), 0.06);
-    color: $error;
-    cursor: pointer;
-    padding: 0;
-    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-
-    &:hover {
-        color: #ffffff;
-        background: $error;
-        border-color: $error;
     }
 }
 

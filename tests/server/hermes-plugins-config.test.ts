@@ -12,6 +12,11 @@ describe('Hermes plugin configuration', () => {
     vi.resetModules()
     tempDir = mkdtempSync(join(tmpdir(), 'hermes-plugins-config-'))
     process.env = { ...originalEnv }
+    delete process.env.HERMES_AGENT_ROOT
+    delete process.env.HERMES_AGENT_BRIDGE_PYTHON
+    delete process.env.HERMES_AGENT_BRIDGE_UV
+    delete process.env.HERMES_AGENT_BRIDGE_WORKER_PROFILE
+    delete process.env.HERMES_BIN
     process.env.HERMES_HOME = join(tempDir, 'home')
     installFakeHermes()
   })

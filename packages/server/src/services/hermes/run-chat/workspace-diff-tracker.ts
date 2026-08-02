@@ -1,9 +1,11 @@
 import { execFileSync } from 'child_process'
-import { randomUUID } from 'crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createHash, randomUUID } from 'crypto'
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { deserialize, serialize } from 'node:v8'
 import { tmpdir } from 'os'
 import { basename, extname, join, relative, resolve, sep } from 'path'
 import { logger } from '../../logger'
+import { config } from '../../../config'
 import { saveWorkspaceRunChange, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 
 const MAX_TRACKED_STATUS_PATHS = 20_000
@@ -191,6 +193,46 @@ interface SnapshotComparison {
 }
 
 const checkpoints = new Map<string, WorkspaceRunCheckpoint>()
+
+export function clearWorkspaceRunCheckpointMemoryForTest(): void {
+  if (process.env.VITEST !== 'true') throw new Error('Checkpoint memory reset is test-only')
+  checkpoints.clear()
+}
+
+const checkpointDirectory = resolve(
+  String(process.env.HERMES_WEB_UI_TEST_DB_DIR || '').trim() || config.appHome,
+  'runtime-checkpoints',
+)
+
+function checkpointManifestPath(key: string): string {
+  return join(checkpointDirectory, `${createHash('sha256').update(key).digest('hex')}.v8`)
+}
+
+function persistCheckpoint(key: string, checkpoint: WorkspaceRunCheckpoint): string {
+  mkdirSync(checkpointDirectory, { recursive: true })
+  const target = checkpointManifestPath(key)
+  const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`
+  writeFileSync(temporary, serialize(checkpoint), { mode: 0o600 })
+  renameSync(temporary, target)
+  return target
+}
+
+function loadCheckpoint(key: string): WorkspaceRunCheckpoint | undefined {
+  const target = checkpointManifestPath(key)
+  if (!existsSync(target)) return undefined
+  try {
+    const checkpoint = deserialize(readFileSync(target)) as WorkspaceRunCheckpoint
+    if (!checkpoint || !(checkpoint.files instanceof Map)) return undefined
+    return checkpoint
+  } catch (err) {
+    logger.warn({ err, target }, '[workspace-diff] failed to restore durable checkpoint manifest')
+    return undefined
+  }
+}
+
+function removeCheckpointManifest(key: string): void {
+  try { unlinkSync(checkpointManifestPath(key)) } catch {}
+}
 
 function createRunChangeId(runId: string): string {
   return `run:${runId || 'unknown'}:${Date.now().toString(36)}:${randomUUID()}`
@@ -570,12 +612,12 @@ export function startWorkspaceRunCheckpoint(args: {
   sessionId: string
   runId?: string | null
   workspace?: string | null
-}): void {
+}): string | null {
   const workspace = args.workspace ? resolve(args.workspace) : ''
   const runId = args.runId || ''
-  if (!workspace || !runId) return
+  if (!workspace || !runId) return null
   const key = checkpointKey(args.sessionId, runId)
-  if (checkpoints.has(key)) return
+  if (checkpoints.has(key)) return checkpointManifestPath(key)
   const changeId = createRunChangeId(runId)
   const gitRoot = resolveGitRoot(workspace)
   if (gitRoot) {
@@ -584,7 +626,7 @@ export function startWorkspaceRunCheckpoint(args: {
     for (const relPath of status.paths) {
       files.set(relPath, snapshotPath(gitRoot, relPath))
     }
-    checkpoints.set(key, {
+    const checkpoint: WorkspaceRunCheckpoint = {
       sessionId: args.sessionId,
       runId,
       changeId,
@@ -594,15 +636,16 @@ export function startWorkspaceRunCheckpoint(args: {
       startedAt: nowSeconds(),
       files,
       truncated: status.truncated,
-    })
-    return
+    }
+    checkpoints.set(key, checkpoint)
+    return persistCheckpoint(key, checkpoint)
   }
 
   const filesystemRoot = resolveFilesystemRoot(workspace)
-  if (!filesystemRoot) return
+  if (!filesystemRoot) return null
   const scan = scanFilesystemPaths(filesystemRoot)
   const snapshot = snapshotPaths(filesystemRoot, scan.paths, MAX_TOTAL_SNAPSHOT_BYTES)
-  checkpoints.set(key, {
+  const checkpoint: WorkspaceRunCheckpoint = {
     sessionId: args.sessionId,
     runId,
     changeId,
@@ -612,7 +655,9 @@ export function startWorkspaceRunCheckpoint(args: {
     startedAt: nowSeconds(),
     files: snapshot.files,
     truncated: scan.truncated || snapshot.truncated,
-  })
+  }
+  checkpoints.set(key, checkpoint)
+  return persistCheckpoint(key, checkpoint)
 }
 
 export function discardWorkspaceRunCheckpoint(args: {
@@ -623,6 +668,7 @@ export function discardWorkspaceRunCheckpoint(args: {
   if (!runId) return
   const key = checkpointKey(args.sessionId, runId)
   checkpoints.delete(key)
+  removeCheckpointManifest(key)
 }
 
 export function completeWorkspaceRunCheckpointDraft(args: {
@@ -634,9 +680,9 @@ export function completeWorkspaceRunCheckpointDraft(args: {
   const runId = args.runId || ''
   if (!runId) return null
   const key = checkpointKey(args.sessionId, runId)
-  const checkpoint = checkpoints.get(key)
-  checkpoints.delete(key)
+  const checkpoint = checkpoints.get(key) || loadCheckpoint(key)
   if (!checkpoint) return null
+  checkpoints.set(key, checkpoint)
 
   const status = checkpoint.kind === 'git'
     ? getGitStatusPaths(checkpoint.root)
@@ -691,8 +737,12 @@ export function completeWorkspaceRunCheckpointDraft(args: {
     })
   }
 
-  if (files.length === 0) return null
-  return {
+  if (files.length === 0) {
+    checkpoints.delete(key)
+    removeCheckpointManifest(key)
+    return null
+  }
+  const result: SaveWorkspaceRunChangeInput = {
     change_id: checkpoint.changeId,
     session_id: checkpoint.sessionId,
     run_id: runId || checkpoint.runId,
@@ -709,6 +759,18 @@ export function completeWorkspaceRunCheckpointDraft(args: {
     total_patch_bytes: totalPatchBytes,
     files,
   }
+  return result
+}
+
+export function acknowledgeWorkspaceRunCheckpoint(args: {
+  sessionId: string
+  runId?: string | null
+}): void {
+  const runId = args.runId || ''
+  if (!runId) return
+  const key = checkpointKey(args.sessionId, runId)
+  checkpoints.delete(key)
+  removeCheckpointManifest(key)
 }
 
 export function completeWorkspaceRunCheckpoint(args: {
@@ -718,5 +780,9 @@ export function completeWorkspaceRunCheckpoint(args: {
   assistantMessageId?: string | null
 }): WorkspaceRunChangeSummary | null {
   const draft = completeWorkspaceRunCheckpointDraft(args)
-  return draft ? saveWorkspaceRunChange(draft) : null
+  if (!draft) return null
+  const saved = saveWorkspaceRunChange(draft)
+  if (!saved) return null
+  acknowledgeWorkspaceRunCheckpoint(args)
+  return saved
 }

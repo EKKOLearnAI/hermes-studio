@@ -169,6 +169,23 @@ describe('coding agent launch preparation', () => {
       allowUnsandboxedCommands: false,
       autoAllowBashIfSandboxed: true,
     })
+    const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    for (const server of Object.values(mcp.mcpServers) as Array<{ env: Record<string, string> }>) {
+      expect(server.env.HERMES_STUDIO_MCP_REQUIRE_CAPABILITY).toBe('1')
+      expect(server.env.HERMES_STUDIO_MCP_CAPABILITY).toBe('__group_chat_capability_required__')
+    }
+  })
+
+  it('injects the exact signed Room capability into every Codex managed MCP subprocess', async () => {
+    const home = makeHome()
+    const result = await prepareCodingAgentLaunch('codex', {
+      mode: 'scoped', profile: 'default', provider: 'openai', model: 'gpt-test',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'test-key', runtimeContext: 'group_chat',
+      managedMcpCapability: 'signed-room-capability', runtimeAuthorityId: 'job-1:lease-1',
+    })
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config.match(/HERMES_STUDIO_MCP_REQUIRE_CAPABILITY = "1"/g)).toHaveLength(4)
+    expect(config.match(/HERMES_STUDIO_MCP_CAPABILITY = "signed-room-capability"/g)).toHaveLength(4)
   })
 
   it('omits the UI default reasoning sentinel from scoped Codex configuration', async () => {

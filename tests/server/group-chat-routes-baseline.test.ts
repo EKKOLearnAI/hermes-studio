@@ -131,6 +131,13 @@ describe('group chat REST route baseline', () => {
         return row
       }),
       getRoomAgent: vi.fn((roomId, ref) => (storage.agents.get(roomId) || []).find((a: any) => a.id === ref || a.agentId === ref) || null),
+      updateRoomAgentRuntimeConfig: vi.fn((roomId, ref, updates) => {
+        const rows = storage.agents.get(roomId) || []
+        const row = rows.find((candidate: any) => candidate.id === ref || candidate.agentId === ref)
+        if (!row) return null
+        Object.assign(row, updates, { configRevision: Number(row.configRevision || 0) + 1 })
+        return row
+      }),
       updateRoomAgent: vi.fn((roomId, ref, updates) => {
         const rows = storage.agents.get(roomId) || []
         const row = rows.find((candidate: any) => candidate.id === ref || candidate.agentId === ref)
@@ -261,6 +268,10 @@ describe('group chat REST route baseline', () => {
     })
 
     expect(response.status).toBe(200)
+    expect(storage.updateRoomAgentRuntimeConfig).toHaveBeenCalledWith('room-legacy', 'agent-legacy', {
+      provider: 'custom:legacy', model: 'legacy-model', apiMode: 'anthropic_messages', reasoningEffort: 'high',
+    })
+    expect(storage.updateRoomAgent).not.toHaveBeenCalled()
     expect(agentClients.interruptRoom).not.toHaveBeenCalled()
     await expect(response.json()).resolves.toEqual({
       agent: expect.objectContaining({
@@ -269,6 +280,30 @@ describe('group chat REST route baseline', () => {
         provider: 'custom:legacy', model: 'legacy-model', apiMode: 'anthropic_messages', reasoningEffort: 'high',
       }),
     })
+  })
+
+  it('rejects participant PATCH after the authenticated owner loses the persisted Profile assignment', async () => {
+    refreshedAuth.role = 'admin'
+    refreshedAuth.profiles = ['default']
+    storage.rooms.set('room-revoked-profile', {
+      id: 'room-revoked-profile', name: 'Revoked Profile', inviteCode: 'REVOKED1', ownerAuthUserId: 1,
+    })
+    storage.agents.set('room-revoked-profile', [{
+      id: 'row-restricted', roomId: 'room-revoked-profile', agentId: 'agent-restricted', profile: 'restricted-profile',
+      name: 'Restricted', description: '', invited: 0, runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+      provider: '', model: '', apiMode: '', reasoningEffort: '', avatar: '',
+    }])
+
+    const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-revoked-profile/agents/agent-restricted`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'should-not-apply' }),
+    })
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({ error: 'Profile "restricted-profile" is not available for this user' })
+    expect(storage.updateRoomAgent).not.toHaveBeenCalled()
+    expect(agentClients.interruptRoom).not.toHaveBeenCalled()
   })
 
   it('interrupts the Room when participant identity fields change', async () => {
@@ -895,6 +930,7 @@ describe('group chat REST route baseline', () => {
     const source = {
       id: 'row-source-admission-race', roomId: 'room-1', agentId: 'agent-source-admission-race',
       profile: 'default', name: 'Source', sessionId: 'source-session-admission-race',
+      runtime: 'hermes', codingAgentId: '', mode: 'scoped',
     }
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.agents.set('room-1', [source])
@@ -931,6 +967,11 @@ describe('group chat REST route baseline', () => {
       id: 'job-admission-race', roomId: 'room-1', chainId: 'chain-admission-race',
       targetAgentId: source.agentId, targetSessionId: source.sessionId,
       depth: 0, kind: 'mention', leaseToken: 'lease-admission-race',
+      targetConfigRevision: 0,
+      targetRuntimeConfigJson: JSON.stringify({
+        profile: 'default', runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+        provider: '', model: '', apiMode: '', reasoningEffort: '',
+      }),
     }, {
       messageId: 'source-admission-race', content: '@Source run', senderName: 'Customer',
       senderId: 'human-1', timestamp: 1, role: 'user',

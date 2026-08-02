@@ -52,13 +52,18 @@ class BridgeBroker:
         worker_key = str(value or "").strip()
         return worker_key or profile
 
-    def _worker_for_profile(self, profile: str, worker_key: str | None = None) -> WorkerProcess:
+    def _worker_for_profile(self, profile: str, worker_key: str | None = None,
+                            managed_mcp_capability: str | None = None,
+                            require_managed_mcp_capability: bool = False) -> WorkerProcess:
         profile = self._normalize_profile(profile)
         key = self._normalize_worker_key(profile, worker_key)
         with self._lock:
             worker = self._workers.get(key)
             if worker is None:
-                worker = WorkerProcess(key, profile, _worker_endpoint(key, self.endpoint), self.agent_root, self.hermes_home)
+                worker = WorkerProcess(
+                    key, profile, _worker_endpoint(key, self.endpoint), self.agent_root, self.hermes_home,
+                    managed_mcp_capability, require_managed_mcp_capability,
+                )
                 self._workers[key] = worker
         return worker
 
@@ -139,10 +144,17 @@ class BridgeBroker:
     def _forward(self, profile: str, req: dict[str, Any], worker_key: str | None = None) -> dict[str, Any]:
         profile = self._normalize_profile(profile)
         key = self._normalize_worker_key(profile, worker_key)
-        worker = self._worker_for_profile(profile, key)
+        worker = self._worker_for_profile(
+            profile,
+            key,
+            str(req.get("managed_mcp_capability") or "").strip() or None,
+            req.get("managed_mcp_require_capability") is True,
+        )
         forwarded = dict(req)
         forwarded["profile"] = profile
         forwarded.pop("worker_key", None)
+        forwarded.pop("managed_mcp_capability", None)
+        forwarded.pop("managed_mcp_require_capability", None)
         try:
             resp = worker.request(forwarded, self._worker_request_timeout(req))
             self._record_response_routes(profile, key, resp)

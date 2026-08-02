@@ -13,6 +13,11 @@ const MANAGED_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
 
 export type EkkoMcpServers = Record<string, unknown>
 
+export interface ManagedMcpRunAuthority {
+  token: string
+  workerKey?: string
+}
+
 function isEnabledEnv(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase())
 }
@@ -76,7 +81,12 @@ function managedCommandConfig(toolset: string): Record<string, unknown> {
   return { command: 'hermes-studio-mcp', args: [toolset] }
 }
 
-function managedMcpServerConfig(profile: string, serverName: string, toolset: string): Record<string, unknown> {
+function managedMcpServerConfig(
+  profile: string,
+  serverName: string,
+  toolset: string,
+  authority?: ManagedMcpRunAuthority,
+): Record<string, unknown> {
   return {
     ...managedCommandConfig(toolset),
     env: {
@@ -87,18 +97,23 @@ function managedMcpServerConfig(profile: string, serverName: string, toolset: st
       HERMES_MCP_SERVER_NAME: serverName,
       HERMES_MCP_TOOLSET: toolset,
       [MANAGED_ENV_KEY]: '1',
+      ...(authority?.token ? {
+        HERMES_STUDIO_MCP_CAPABILITY: authority.token,
+        HERMES_STUDIO_MCP_REQUIRE_CAPABILITY: '1',
+      } : {}),
+      ...(authority?.workerKey ? { HERMES_AGENT_BRIDGE_WORKER_KEY: authority.workerKey } : {}),
     },
     enabled: true,
   }
 }
 
-export function buildManagedEkkoMcpServers(profile: string): EkkoMcpServers {
+export function buildManagedEkkoMcpServers(profile: string, authority?: ManagedMcpRunAuthority): EkkoMcpServers {
   if (!shouldIncludeManagedMcpServers()) return {}
 
   return Object.fromEntries(
     MANAGED_SERVERS.map(server => [
       server.name,
-      managedMcpServerConfig(profile, server.name, server.toolset),
+      managedMcpServerConfig(profile, server.name, server.toolset, authority),
     ]),
   )
 }

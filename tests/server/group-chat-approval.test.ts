@@ -333,6 +333,43 @@ describe('group chat approval and context baseline', () => {
     }
   })
 
+  it('keeps an unresolved Bridge approval pending and allows a later retry', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-retryable',
+      command: 'touch file',
+    })
+    await requested
+    const approvalRespond = vi.spyOn(AgentBridgeClient.prototype, 'approvalRespond')
+      .mockResolvedValueOnce({ resolved: false } as any)
+      .mockResolvedValueOnce({ resolved: true } as any)
+
+    try {
+      await expect(emitAck(human, 'approval.respond', {
+        roomId: 'room-1',
+        approval_id: 'approval-retryable',
+        choice: 'once',
+      })).resolves.toEqual({ error: 'Approval response was not resolved', resolved: false })
+      expect((groupServer as any).pendingApprovals.get('approval-retryable')).toMatchObject({
+        responding: false,
+        responded: false,
+      })
+
+      await expect(emitAck(human, 'approval.respond', {
+        roomId: 'room-1',
+        approval_id: 'approval-retryable',
+        choice: 'once',
+      })).resolves.toEqual({ ok: true, resolved: true })
+      expect(approvalRespond).toHaveBeenCalledTimes(2)
+    } finally {
+      approvalRespond.mockRestore()
+    }
+  })
+
   it('rejects a raw permanent response when the bound request disallows permanent approval', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const requested = once<any>(human, 'approval.requested')

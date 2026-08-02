@@ -289,6 +289,8 @@ describe('group chat actor identity', () => {
   })
 
   it('reprojects super-admin authority on role demotion while preserving owner authority and fencing handoffs', async () => {
+    seedAuthenticatedUser(harness.db, { id: 42, username: 'former-super-admin', role: 'super_admin', profiles: ['default'] })
+    seedAuthenticatedUser(harness.db, { id: 7, username: 'room-owner', role: 'admin', profiles: ['default'] })
     const storage = groupServer.getStorage()
     storage.saveRoom('room-owned', 'Owned Room', 'OWNED', { ownerAuthUserId: 42 })
     storage.saveRoom('room-member', 'Member Room', 'MEMBER', { ownerAuthUserId: 7 })
@@ -346,8 +348,9 @@ describe('group chat actor identity', () => {
       }],
       authority: { initiatorActorId: memberActorBefore.id, sourceActorId: memberActorBefore.id },
     })
-    const runningOwned = storage.claimHandoffJobs('demotion-worker', Date.now(), 1, 60_000)[0]
-    const runningMember = storage.claimHandoffJobs('demotion-worker', Date.now(), 1, 60_000)[0]
+    const claimed = storage.claimHandoffJobs('demotion-worker', Date.now(), 2, 60_000)
+    const runningOwned = claimed.find(job => job.id === ownedMessage.handoffJobs[0].id)!
+    const runningMember = claimed.find(job => job.id === memberMessage.handoffJobs[0].id)!
     expect(runningOwned.id).toBe(ownedMessage.handoffJobs[0].id)
     expect(runningMember.id).toBe(memberMessage.handoffJobs[0].id)
     expect(storage.getHandoffJob(runningMember.id)?.status).toBe('running')

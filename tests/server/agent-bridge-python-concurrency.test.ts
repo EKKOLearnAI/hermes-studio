@@ -388,6 +388,7 @@ enabled = server.handle({
 estimated = server.handle({
     "action": "context_estimate",
     "session_id": "session-estimate-disabled",
+    "api_mode": "anthropic_messages",
     "background_delegation_enabled": False,
 })
 
@@ -399,6 +400,47 @@ assert captured[1][-1] is None
 assert captured[1][-2] is None
 assert estimated["session_id"] == "session-estimate-disabled"
 assert captured[2]["background_delegation_enabled"] is False
+assert captured[2]["api_mode"] == "anthropic_messages"
+`)
+  })
+
+  it('reports the effective API mode used by context estimation', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+session = bridge.AgentSession(
+    session_id="session-estimate-api-mode",
+    agent=object(),
+    config={
+        "profile": "default",
+        "model": "model-a",
+        "provider": "provider-a",
+        "api_mode": "anthropic_messages",
+    },
+)
+captured = {}
+
+def fake_get_or_create(session_id, **kwargs):
+    captured.update(kwargs)
+    return session
+
+pool.get_or_create = fake_get_or_create
+pool._estimate_context_info = lambda agent, messages, instructions: {
+    "token_count": 1,
+    "fixed_context_tokens": 1,
+    "message_count": len(messages),
+    "tool_count": 0,
+    "system_prompt_chars": 0,
+}
+result = pool.estimate_context(
+    "session-estimate-api-mode",
+    messages=[],
+    api_mode="anthropic_messages",
+)
+
+assert captured["api_mode"] == "anthropic_messages"
+assert result["api_mode"] == "anthropic_messages"
 `)
   })
 

@@ -287,7 +287,12 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
-  console.log('[bootstrap] all stores initialized')
+  const { reconcileOrphanedCodingAgentExecutions } = await import('./services/agent-runner/coding-agent-runtime-ownership')
+  const codingAgentRecovery = await reconcileOrphanedCodingAgentExecutions()
+  if (codingAgentRecovery.unresolved > 0) {
+    throw new Error(`Coding agent startup recovery left ${codingAgentRecovery.unresolved} unresolved execution(s)`)
+  }
+  console.log('[bootstrap] all stores initialized; coding-agent recovery=%j', codingAgentRecovery)
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))

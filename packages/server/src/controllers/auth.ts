@@ -632,6 +632,12 @@ export async function updateManagedUser(ctx: Context) {
   const isActiveSuperAdminDemotion = user.role === 'super_admin'
     && nextRole !== 'super_admin'
     && nextStatus === 'active'
+  const currentProfiles = listUserProfiles(user.id).map(item => item.profile_name).sort()
+  const nextProfiles = [...(profiles || currentProfiles)].sort()
+  const profileAssignmentsChanged = nextRole !== 'super_admin'
+    && profiles !== undefined
+    && (currentProfiles.length !== nextProfiles.length
+      || currentProfiles.some((profile, index) => profile !== nextProfiles[index]))
   if (isActiveSuperAdminDemotion) {
     const groupChatRuntime = getGroupChatRuntimeServer()
     if (!groupChatRuntime) {
@@ -650,6 +656,26 @@ export async function updateManagedUser(ctx: Context) {
     } catch {
       ctx.status = 503
       ctx.body = { error: 'Group Chat authority reconciliation failed' }
+      return
+    }
+  } else if (profileAssignmentsChanged) {
+    const groupChatRuntime = getGroupChatRuntimeServer()
+    if (!groupChatRuntime) {
+      ctx.status = 503
+      ctx.body = { error: 'Group Chat profile authority reconciliation is unavailable' }
+      return
+    }
+    try {
+      let mutationApplied = false
+      await groupChatRuntime.reprojectAuthenticatedUserProfiles(user.id, nextProfiles, () => {
+        updated = updateManagedUserRecord()
+        if (!updated) throw new Error('User update failed')
+        mutationApplied = true
+      })
+      if (!mutationApplied || !updated) throw new Error('User update was not applied')
+    } catch {
+      ctx.status = 503
+      ctx.body = { error: 'Group Chat profile authority reconciliation failed' }
       return
     }
   } else {

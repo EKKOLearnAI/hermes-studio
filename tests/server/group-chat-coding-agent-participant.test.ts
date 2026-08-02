@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../packages/server/src/services/hermes/managed-mcp-capability', () => ({
+  GROUP_CHAT_MANAGED_MCP_SERVER_TOOLS: { 'hermes-studio-api': ['hermes_studio_api_request'] },
+  issueManagedMcpCapability: vi.fn(async () => 'test-room-capability'),
+}))
+
 const { runtimeListeners, managerMock, bridgeInterruptMock, getModelContextLengthMock, startCodingAgentRunMock, sendCodingAgentRunInputMock, stopCodingAgentRunMock, socket } = vi.hoisted(() => {
   const runtimeListeners = new Map<string, (event: string, payload: any) => void>()
   const getModelContextLengthMock = vi.fn(() => 256_000)
@@ -63,6 +68,20 @@ import {
   groupMentionTextInput,
   participantContextRevision,
 } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+
+function durableRuntimeConfig(overrides: Record<string, string> = {}) {
+  return JSON.stringify({
+    profile: 'default',
+    runtime: 'hermes',
+    codingAgentId: '',
+    mode: 'scoped',
+    provider: '',
+    model: '',
+    apiMode: '',
+    reasoningEffort: '',
+    ...overrides,
+  })
+}
 
 function authorizedAgentStorage() {
   return {
@@ -247,6 +266,7 @@ describe('Group Chat coding-agent handoff envelope', () => {
       getRoomAgentByAgentId: vi.fn(() => ({
         agentId: participant.agentId,
         sessionId: participant.sessionId,
+        profile: 'default', runtime: 'hermes', codingAgentId: '', mode: 'scoped',
       })),
       getHandoffJob: vi.fn(() => ({ id: 'job-paused', status: 'completed' })),
     })
@@ -256,6 +276,7 @@ describe('Group Chat coding-agent handoff envelope', () => {
       id: 'job-paused', roomId: 'room-1', chainId: 'chain-paused',
       targetAgentId: participant.agentId, targetSessionId: participant.sessionId,
       depth: 0, kind: 'mention' as const, leaseToken: 'lease-paused',
+      targetConfigRevision: 0, targetRuntimeConfigJson: durableRuntimeConfig(),
     }
     const source = {
       messageId: 'source-paused', content: '@Paused target run', senderName: 'Customer',
@@ -287,6 +308,7 @@ describe('Group Chat coding-agent handoff envelope', () => {
       getRoomAgentByAgentId: vi.fn(() => ({
         agentId: participant.agentId,
         sessionId: participant.sessionId,
+        profile: 'default', runtime: 'hermes', codingAgentId: '', mode: 'scoped',
       })),
       getHandoffJob: vi.fn(() => ({ id: 'job-overlapping-pause', status: 'completed' })),
     })
@@ -300,6 +322,7 @@ describe('Group Chat coding-agent handoff envelope', () => {
       id: 'job-overlapping-pause', roomId: 'room-1', chainId: 'chain-overlapping-pause',
       targetAgentId: participant.agentId, targetSessionId: participant.sessionId,
       depth: 0, kind: 'mention' as const, leaseToken: 'lease-overlapping-pause',
+      targetConfigRevision: 0, targetRuntimeConfigJson: durableRuntimeConfig(),
     }
     const source = {
       messageId: 'source-overlapping-pause', content: '@Overlapping pause target run', senderName: 'Customer',
@@ -316,10 +339,13 @@ describe('Group Chat coding-agent handoff envelope', () => {
 
   it('injects the durable chain root request into a fixed successor handoff', async () => {
     const clients = new AgentClients() as any
-    const participant = { agentId: 'participant-codex', name: 'Codex', sessionId: 'session-codex', setStorage: vi.fn() }
+    const participant = {
+      agentId: 'participant-codex', name: 'Codex', sessionId: 'session-codex', setStorage: vi.fn(),
+      profile: 'default', runtime: 'hermes', codingAgentId: '', mode: 'scoped',
+    }
     clients.rooms.set('room-1', new Map([['participant-codex', participant]]))
     clients.setStorage({
-      getRoomAgentByAgentId: vi.fn(() => ({ agentId: participant.agentId, sessionId: participant.sessionId })),
+      getRoomAgentByAgentId: vi.fn(() => participant),
       getHandoffChainRootMessage: vi.fn(() => ({
         id: 'root-user-message', roomId: 'room-1', senderId: 'human-1', senderName: 'Customer',
         content: '@Hermes Hermes只回复 FIXED-HERMES；Codex只回复 FIXED-CODEX', timestamp: 1, roomSeq: 1, role: 'user',
@@ -332,6 +358,7 @@ describe('Group Chat coding-agent handoff envelope', () => {
       id: 'job-fixed-1', roomId: 'room-1', chainId: 'chain-fixed-1',
       targetAgentId: participant.agentId, targetSessionId: participant.sessionId,
       depth: 1, kind: 'fixed', leaseToken: 'lease-fixed-1',
+      targetConfigRevision: 0, targetRuntimeConfigJson: durableRuntimeConfig(),
     }, {
       messageId: 'predecessor-message', content: 'FIXED-HERMES', senderName: 'Hermes',
       senderId: 'participant-hermes', timestamp: 2, role: 'assistant',
@@ -600,6 +627,62 @@ describe('Group Chat coding-agent participant runtime', () => {
     expect(updateRoomAgentContinuity).not.toHaveBeenCalled()
   })
 
+  it('uses the admitted durable runtime tuple for a Coding Agent after next-run settings change', async () => {
+    const participant = {
+      agentId: 'participant-codex-snapshot', profile: 'default', name: 'Codex snapshot', description: '',
+      runtime: 'coding_agent', codingAgentId: 'codex', sessionId: 'gc-room-1-participant-codex-snapshot-0',
+      sessionGeneration: 0, mode: 'scoped', provider: 'provider-new', model: 'model-new',
+      apiMode: 'responses', reasoningEffort: 'low', lastSeenRoomSeq: 0, invited: 1,
+    }
+    const clients = new AgentClients()
+    clients.setStorage({
+      ...authorizedAgentStorage(),
+      getRoom: vi.fn(() => ({
+        id: 'room-1', name: 'Room', workspace: '/workspace/project',
+        sessionSeed: '11111111111111111111111111111111', authorizationRevision: 0,
+      })),
+      getRoomAgentByAgentId: vi.fn(() => participant),
+      getRoomAgents: vi.fn(() => [participant]),
+      getRoomMembers: vi.fn(() => []),
+      getMessage: vi.fn(() => ({
+        id: 'human-message-snapshot', roomId: 'room-1', senderId: 'human-1', senderName: 'Customer',
+        content: '@Codex snapshot run', timestamp: 1, roomSeq: 1, role: 'user',
+      })),
+      getHandoffJob: vi.fn(() => ({ id: 'job-codex-snapshot', status: 'completed' })),
+      updateRoomTotalTokensForHandoff: vi.fn(() => true),
+      saveWorkspaceDiffMessageForRun: vi.fn(),
+    })
+    const client = await clients.createAgent({ ...participant, backgroundDelegationEnabled: false } as any)
+    await clients.addAgentToRoom('room-1', client)
+
+    const execution = clients.processHandoffJob({
+      id: 'job-codex-snapshot', roomId: 'room-1', chainId: 'chain-codex-snapshot',
+      targetAgentId: participant.agentId, targetSessionId: participant.sessionId,
+      depth: 0, kind: 'mention', leaseToken: 'lease-codex-snapshot', targetConfigRevision: 4,
+      targetRuntimeConfigJson: durableRuntimeConfig({
+        runtime: 'coding_agent', codingAgentId: 'codex',
+        provider: 'provider-old', model: 'model-old', apiMode: 'codex_responses', reasoningEffort: 'high',
+      }),
+    }, {
+      messageId: 'human-message-snapshot', content: '@Codex snapshot run', senderName: 'Customer',
+      senderId: 'human-1', timestamp: 1, role: 'user',
+    })
+
+    await vi.waitFor(() => expect(startCodingAgentRunMock).toHaveBeenCalled())
+    expect(startCodingAgentRunMock).toHaveBeenCalledWith('codex', expect.objectContaining({
+      profile: 'default', mode: 'scoped', provider: 'provider-old', model: 'model-old',
+      apiMode: 'codex_responses', reasoningEffort: 'high',
+    }))
+    expect(startCodingAgentRunMock).not.toHaveBeenCalledWith('codex', expect.objectContaining({
+      provider: 'provider-new', model: 'model-new', apiMode: 'responses', reasoningEffort: 'low',
+    }))
+
+    runtimeListeners.get(participant.sessionId)?.('run.completed', {
+      run_id: 'runner-1', output: 'snapshot complete',
+    })
+    await execution
+  })
+
   it('drops all late events after a participant session generation rotates', async () => {
     const participant = {
       agentId: 'participant-codex', profile: 'default', name: 'Codex A', description: '',
@@ -844,8 +927,16 @@ describe('Group Chat coding-agent participant runtime', () => {
     }
     const clients = new AgentClients()
     const saveWorkspaceDiffMessageForRun = vi.fn()
+    const order: string[] = []
     managerMock.runIdForSession.mockReturnValue('run-aborted' as any)
-    managerMock.completeWorkspaceDiffForSession.mockReturnValue({ run_id: 'run-aborted', files: [] } as any)
+    managerMock.completeWorkspaceDiffForSession.mockImplementation(() => {
+      order.push('workspace-evidence')
+      return { run_id: 'run-aborted', files: [] } as any
+    })
+    managerMock.stopAndWait.mockImplementation(async () => {
+      order.push('process-tree-stopped')
+      return true
+    })
     clients.setStorage({
       ...authorizedAgentStorage(),
       getRoom: vi.fn(() => ({ id: 'room-1', workspace: '/workspace/project', sessionSeed: '11111111111111111111111111111111', authorizationRevision: 0 })),
@@ -860,6 +951,7 @@ describe('Group Chat coding-agent participant runtime', () => {
       reportClosed: false,
       graceMs: 15_000,
     })
+    expect(order).toEqual(['process-tree-stopped', 'workspace-evidence'])
     expect(saveWorkspaceDiffMessageForRun).toHaveBeenCalledWith(expect.objectContaining({
       roomId: 'room-1', sessionId: participant.sessionId, runId: 'run-aborted', status: 'aborted',
     }))

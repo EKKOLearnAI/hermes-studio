@@ -22,12 +22,15 @@ class WorkerProcess:
     REQUEST_TIMEOUT_SECONDS = 120
     SHUTDOWN_REQUEST_TIMEOUT_SECONDS = 15
 
-    def __init__(self, key: str, profile: str, endpoint: str, agent_root: str | None, hermes_home: str | None) -> None:
+    def __init__(self, key: str, profile: str, endpoint: str, agent_root: str | None, hermes_home: str | None,
+                 managed_mcp_capability: str | None = None, require_managed_mcp_capability: bool = False) -> None:
         self.key = key or profile or "default"
         self.profile = profile or "default"
         self.endpoint = endpoint
         self.agent_root = agent_root
         self.hermes_home = hermes_home
+        self.managed_mcp_capability = str(managed_mcp_capability or "").strip()
+        self.require_managed_mcp_capability = bool(require_managed_mcp_capability)
         self.process: subprocess.Popen[str] | None = None
         self.last_used_at = time.time()
         self._lock = threading.RLock()
@@ -64,6 +67,12 @@ class WorkerProcess:
                 "HERMES_AGENT_BRIDGE_BROKER_PID": str(os.getpid()),
             }
             env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            if self.require_managed_mcp_capability:
+                env["HERMES_STUDIO_MCP_REQUIRE_CAPABILITY"] = "1"
+                if self.managed_mcp_capability:
+                    env["HERMES_STUDIO_MCP_CAPABILITY"] = self.managed_mcp_capability
+                else:
+                    env.pop("HERMES_STUDIO_MCP_CAPABILITY", None)
             self.process = subprocess.Popen(
                 args,
                 env=env,

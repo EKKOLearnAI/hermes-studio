@@ -499,16 +499,17 @@ describe('CodingAgentRunManager external event subscriptions', () => {
 
       const stopping = manager.stopAndWait('session-1', { reportClosed: false, graceMs: 15_000 })
       await vi.advanceTimersByTimeAsync(1_500)
-      expect((manager as any).cleanupRun).toHaveBeenCalledWith(run, {
-        kill: true,
-        reportClosed: false,
-        childKillGraceMs: 15_000,
-      })
+      expect((manager as any).cleanupRun).not.toHaveBeenCalled()
+      expect(manager.runIdForSession('session-1')).toBe(run.id)
       expect(child.killed).toBe(false)
 
       child.exitCode = 0
       child.emit('exit', 0)
       await expect(stopping).resolves.toBe(true)
+      expect((manager as any).cleanupRun).toHaveBeenCalledWith(run, {
+        kill: false,
+        reportClosed: false,
+      })
     } finally {
       vi.useRealTimers()
     }

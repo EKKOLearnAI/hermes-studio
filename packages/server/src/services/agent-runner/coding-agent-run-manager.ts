@@ -1,5 +1,5 @@
 import { dirname, join } from 'path'
-import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync } from 'fs'
+import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
@@ -14,6 +14,19 @@ import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
+import {
+  activateCodingAgentExecution,
+  codingAgentExecutionProcesses,
+  finalizeCodingAgentExecutionEvidence,
+  markCodingAgentExecutionIdle,
+  markCodingAgentExecutionStopping,
+  markCodingAgentExecutionTerminal,
+  markCodingAgentExecutionTreeGone,
+  markCodingAgentExecutionUnresolved,
+  prepareCodingAgentExecutionTurn,
+  reserveCodingAgentExecution,
+  updateCodingAgentExecutionCheckpoint,
+} from './coding-agent-runtime-ownership'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -83,6 +96,7 @@ export interface CodingAgentRunLaunch {
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   runtimeContext?: 'group_chat'
+  runtimeAuthorityId?: string
   reasoningEffort?: string
 }
 
@@ -101,6 +115,12 @@ interface ManagedCodingAgentRun {
   startedAt: number
   exited: boolean
   currentChild?: ChildProcess
+  currentProcessGroupId?: number
+  runtimeExecutionId?: string
+  runtimeGeneration?: number
+  workspaceCheckpointRef?: string
+  stopRequested?: boolean
+  stoppingPromise?: Promise<boolean>
   currentChildKillTimer?: ReturnType<typeof setTimeout>
   currentChildStderr?: string
   printResponseId?: string
@@ -399,30 +419,152 @@ function appendedTextDelta(existing: string, next: string): string {
   return next
 }
 
-function terminateChildProcess(child?: ChildProcess) {
-  if (!child || !child.pid || !childIsRunning(child)) return
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
-    return
+function verifiedPosixProcessGroupLeader(pid: number | undefined): number | undefined {
+  const candidate = Number(pid)
+  if (process.platform === 'win32' || !Number.isInteger(candidate) || candidate <= 0) return undefined
+  if (process.platform === 'linux') {
+    try {
+      const stat = readFileSync(`/proc/${candidate}/stat`, 'utf8')
+      const close = stat.lastIndexOf(')')
+      if (close < 0) return undefined
+      const fields = stat.slice(close + 2).split(' ')
+      const processGroup = Number.parseInt(fields[2] || '', 10)
+      return processGroup === candidate ? candidate : undefined
+    } catch {
+      return undefined
+    }
   }
   try {
-    process.kill(-child.pid, 'SIGINT')
+    process.kill(candidate, 0)
+    process.kill(-candidate, 0)
+    return candidate
   } catch {
-    try { process.kill(child.pid, 'SIGINT') } catch {}
+    return undefined
   }
 }
 
-function forceKillChildProcess(child?: ChildProcess) {
-  if (!child || !child.pid || !childIsRunning(child)) return
+function posixProcessGroupHasLiveMembers(pgid: number): boolean {
+  if (!Number.isInteger(pgid) || pgid <= 0) return false
+  if (process.platform === 'linux') {
+    try {
+      for (const entry of readdirSync('/proc')) {
+        if (!/^\d+$/.test(entry)) continue
+        let stat = ''
+        try { stat = readFileSync(`/proc/${entry}/stat`, 'utf8') } catch { continue }
+        const close = stat.lastIndexOf(')')
+        if (close < 0) continue
+        const fields = stat.slice(close + 2).split(' ')
+        const state = fields[0]
+        const processGroup = Number.parseInt(fields[2] || '', 10)
+        if (processGroup === pgid && state !== 'Z' && state !== 'X') return true
+      }
+      return false
+    } catch {
+      // Fall through to the portable process-group probe.
+    }
+  }
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (error: any) {
+    return error?.code === 'EPERM'
+  }
+}
+
+function childProcessTreeIsRunning(child?: ChildProcess, pgid?: number): boolean {
+  if (process.platform !== 'win32' && pgid) return posixProcessGroupHasLiveMembers(pgid)
+  return childIsRunning(child)
+}
+
+function signalChildProcessTree(child: ChildProcess | undefined, pgid: number | undefined, signal: 'SIGINT' | 'SIGKILL'): void {
   if (process.platform === 'win32') {
+    if (!child?.pid) return
     spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
     return
   }
-  try {
-    process.kill(-child.pid, 'SIGKILL')
-  } catch {
-    try { process.kill(child.pid, 'SIGKILL') } catch {}
+  if (pgid) {
+    try {
+      process.kill(-pgid, signal)
+      return
+    } catch {}
   }
+  if (child && typeof child.kill === 'function') {
+    try { child.kill(signal) } catch {}
+  }
+}
+
+function terminateChildProcess(child?: ChildProcess, pgid?: number) {
+  if (!childProcessTreeIsRunning(child, pgid)) return
+  signalChildProcessTree(child, pgid, 'SIGINT')
+}
+
+function forceKillChildProcess(child?: ChildProcess, pgid?: number) {
+  if (!childProcessTreeIsRunning(child, pgid)) return
+  signalChildProcessTree(child, pgid, 'SIGKILL')
+}
+
+async function waitForChildProcessTreeExit(
+  child: ChildProcess | undefined,
+  pgid: number | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!pgid && child) {
+    if (!childIsRunning(child)) return true
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (confirmed: boolean) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        child.off('exit', onExit)
+        child.off('close', onExit)
+        resolve(confirmed)
+      }
+      const onExit = () => finish(true)
+      child.once('exit', onExit)
+      child.once('close', onExit)
+      timer = setTimeout(() => finish(!childIsRunning(child)), Math.max(0, timeoutMs))
+    })
+  }
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  do {
+    if (!childProcessTreeIsRunning(child, pgid)) return true
+    await new Promise(resolve => setTimeout(resolve, 25))
+  } while (Date.now() <= deadline)
+  return !childProcessTreeIsRunning(child, pgid)
+}
+
+async function waitForExecutionMarkerExit(executionId: string | undefined, timeoutMs: number): Promise<boolean> {
+  if (!executionId || process.platform !== 'linux') return true
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  do {
+    if (codingAgentExecutionProcesses(executionId).length === 0) return true
+    await new Promise(resolve => setTimeout(resolve, 25))
+  } while (Date.now() <= deadline)
+  return codingAgentExecutionProcesses(executionId).length === 0
+}
+
+function signalExecutionMarkerGroups(executionId: string | undefined, signal: 'SIGINT' | 'SIGKILL'): boolean {
+  if (!executionId || process.platform !== 'linux') return true
+  const groups = new Set(codingAgentExecutionProcesses(executionId).map(item => item.pgrp))
+  let ownPgrp = 0
+  try {
+    const ownStat = readFileSync(`/proc/${process.pid}/stat`, 'utf8')
+    const close = ownStat.lastIndexOf(')')
+    ownPgrp = close >= 0 ? Number.parseInt(ownStat.slice(close + 2).split(' ')[2] || '', 10) : 0
+  } catch {
+    return false
+  }
+  for (const pgid of groups) {
+    if (!Number.isInteger(pgid) || pgid <= 1 || pgid === ownPgrp) return false
+  }
+  for (const pgid of groups) {
+    try { process.kill(-pgid, signal) } catch (error: any) {
+      if (error?.code !== 'ESRCH') return false
+    }
+  }
+  return true
 }
 
 function claudeContentToText(content: unknown): string {
@@ -517,6 +659,7 @@ export class CodingAgentRunManager {
   private runs = new Map<string, ManagedCodingAgentRun>()
   private sessionIndex = new Map<string, string>()
   private eventListeners = new Map<string, Set<CodingAgentRunEventListener>>()
+  private completedWorkspaceEvidence = new Map<string, unknown>()
 
   constructor(private readonly idleMs = DEFAULT_IDLE_MS) {}
 
@@ -531,7 +674,11 @@ export class CodingAgentRunManager {
 
   isSessionProcessing(sessionId: string): boolean {
     const run = this.getBySession(sessionId)
-    return childIsRunning(run?.currentChild) || Boolean(run?.terminalFinalizationEventToken)
+    return Boolean(run && (
+      run.stopRequested ||
+      childProcessTreeIsRunning(run.currentChild, run.currentProcessGroupId) ||
+      run.terminalFinalizationEventToken
+    ))
   }
 
   runIdForSession(sessionId: string): string | undefined {
@@ -548,6 +695,11 @@ export class CodingAgentRunManager {
   }
 
   completeWorkspaceDiffForSession(sessionId: string) {
+    const cached = this.completedWorkspaceEvidence.get(sessionId)
+    if (this.completedWorkspaceEvidence.has(sessionId)) {
+      this.completedWorkspaceEvidence.delete(sessionId)
+      return cached || null
+    }
     const run = this.getBySession(sessionId)
     return run ? this.completeWorkspaceRunDiff(run) : null
   }
@@ -584,6 +736,7 @@ export class CodingAgentRunManager {
     reasoningEffort?: string
     apiMode?: ApiMode
     runtimeContext?: 'group_chat'
+    runtimeAuthorityId?: string
   }): boolean {
     const run = this.getBySession(sessionId)
     if (!run || run.exited) return false
@@ -593,6 +746,7 @@ export class CodingAgentRunManager {
     if (launch.agentNativeSessionId !== undefined && String(run.launch.agentNativeSessionId || '') !== String(launch.agentNativeSessionId || '')) return false
     if (run.launch.mode !== mode) return false
     if (run.launch.runtimeContext !== launch.runtimeContext) return false
+    if (String(run.launch.runtimeAuthorityId || '') !== String(launch.runtimeAuthorityId || '')) return false
     if (mode === 'scoped') {
       const provider = String(launch.provider || '').trim()
       const model = String(launch.model || '').trim()
@@ -607,6 +761,9 @@ export class CodingAgentRunManager {
   }
 
   start(launch: CodingAgentRunLaunch): { runId: string; pid: number } {
+    if (process.platform !== 'linux' && process.env.VITEST !== 'true') {
+      throw new Error('Coding Agent runtime requires a verified durable process boundary on this platform')
+    }
     const existingRunId = this.sessionIndex.get(launch.sessionId)
     if (existingRunId) {
       const existing = this.runs.get(existingRunId)
@@ -614,6 +771,8 @@ export class CodingAgentRunManager {
     }
 
     const runId = launch.agentSessionId || makeId()
+    const incarnationToken = makeIncarnationToken(runId)
+    const runtimeExecutionId = incarnationToken
     const state = launch.state || { messages: [], isWorking: false, events: [], queue: [] }
     state.isWorking = true
     state.profile = launch.profile
@@ -621,9 +780,18 @@ export class CodingAgentRunManager {
     state.runId = runId
 
     if (isPrintAgent(launch.agentId)) {
+      reserveCodingAgentExecution({
+        executionId: runtimeExecutionId,
+        runId,
+        sessionId: launch.sessionId,
+        generation: 0,
+        workspace: launch.workspaceDir,
+      })
       const run: ManagedCodingAgentRun = {
         id: runId,
-        incarnationToken: makeIncarnationToken(runId),
+        incarnationToken,
+        runtimeExecutionId,
+        runtimeGeneration: 0,
         launch,
         state,
         lastActiveAt: Date.now(),
@@ -636,6 +804,7 @@ export class CodingAgentRunManager {
       this.ensureDbSession(run)
       this.touch(run)
       this.emitTerminalStatus(run, `${launch.agentId === 'codex' ? 'Codex' : 'Claude Code'} chat runner ready.`)
+      markCodingAgentExecutionIdle(runtimeExecutionId)
       logger.info({
         runId: run.id,
         sessionId: launch.sessionId,
@@ -654,28 +823,50 @@ export class CodingAgentRunManager {
     const args = process.platform === 'win32'
       ? ['-NoExit', '-Command', launch.shellCommand]
       : ['-lc', launch.shellCommand]
-    const proc = pty.spawn(shell, args, {
-      name: 'xterm-color',
-      cols: 120,
-      rows: 30,
-      cwd: existsSync(launch.workspaceDir) ? launch.workspaceDir : homedir(),
-      env: {
-        ...process.env,
-        ...(launch.env || {}),
-      },
+    reserveCodingAgentExecution({
+      executionId: runtimeExecutionId,
+      runId,
+      sessionId: launch.sessionId,
+      generation: 0,
+      workspace: launch.workspaceDir,
     })
+    let proc: any
+    try {
+      proc = pty.spawn(shell, args, {
+        name: 'xterm-color',
+        cols: 120,
+        rows: 30,
+        cwd: existsSync(launch.workspaceDir) ? launch.workspaceDir : homedir(),
+        env: {
+          ...process.env,
+          ...(launch.env || {}),
+          HERMES_CODING_EXECUTION_ID: runtimeExecutionId,
+        },
+      })
+      activateCodingAgentExecution({
+        executionId: runtimeExecutionId,
+        rootPid: proc.pid,
+        processGroupId: verifiedPosixProcessGroupLeader(proc.pid),
+        boundaryKind: process.platform === 'win32' ? 'windows_unverified' : 'posix_process_group',
+      })
+    } catch (error) {
+      markCodingAgentExecutionTerminal(runtimeExecutionId, 'failed')
+      throw error
+    }
 
     const run: ManagedCodingAgentRun = {
       id: runId,
-      incarnationToken: makeIncarnationToken(runId),
+      incarnationToken,
+      runtimeExecutionId,
+      runtimeGeneration: 0,
       launch,
       pty: proc,
       state,
       lastActiveAt: Date.now(),
       startedAt: Date.now(),
       exited: false,
+      currentProcessGroupId: verifiedPosixProcessGroupLeader(proc.pid),
     }
-
     this.runs.set(run.id, run)
     this.sessionIndex.set(launch.sessionId, run.id)
     this.ensureDbSession(run)
@@ -689,9 +880,11 @@ export class CodingAgentRunManager {
       this.bufferTerminalOutput(run, data)
     })
     proc.onExit(({ exitCode }: { exitCode: number }) => {
-      run.exited = true
-      this.cleanupRun(run, { kill: false })
       logger.info({ runId: run.id, sessionId: launch.sessionId, exitCode }, '[coding-agent-run] process exited')
+      if (run.stopRequested) return
+      void this.stopAndWait(launch.sessionId, { reportClosed: true, graceMs: 1_500 }).then((confirmed) => {
+        if (!confirmed) logger.error({ runId: run.id, sessionId: launch.sessionId }, '[coding-agent-run] PTY process tree termination could not be verified')
+      })
     })
 
     logger.info({
@@ -714,12 +907,16 @@ export class CodingAgentRunManager {
     const text = String(input || '').trim()
     const images = Array.isArray(options.images) ? options.images : []
     if (!text && images.length === 0) throw new Error('Input is required')
-    if (childIsRunning(run.currentChild) || run.terminalFinalizationEventToken) {
+    if (run.stopRequested || childProcessTreeIsRunning(run.currentChild, run.currentProcessGroupId) || run.terminalFinalizationEventToken) {
       const runnerName = run.launch.agentId === 'codex' ? 'Codex' : 'Claude Code'
       throw new Error(`${runnerName} is still processing the previous input`)
     }
     const systemPrompt = String(options.systemPrompt || '').trim()
     run.activeEventToken = String(options.eventToken || '').trim() || makeEventToken(run.id)
+    run.runtimeGeneration = (run.runtimeGeneration || 0) + 1
+    if (run.runtimeExecutionId && isPrintAgent(run.launch.agentId)) {
+      prepareCodingAgentExecutionTurn(run.runtimeExecutionId, run.runtimeGeneration)
+    }
     run.turnFenceInitialized = true
     run.pendingChatCompletionEvent = undefined
     run.pendingChatCompletionPayload = undefined
@@ -746,42 +943,74 @@ export class CodingAgentRunManager {
 
   async stopAndWait(
     sessionId: string,
-    options: { reportClosed?: boolean; graceMs?: number } = {},
+    options: { reportClosed?: boolean; graceMs?: number; terminalReason?: 'aborted' | 'shutdown' | 'completed' } = {},
   ): Promise<boolean> {
     const run = this.getBySession(sessionId)
     if (!run) return false
-    const child = run.currentChild
-    const stopped = this.stop(sessionId, {
-      reportClosed: options.reportClosed,
-      childKillGraceMs: options.graceMs ?? 15_000,
-    })
-    if (!stopped || !child || !childIsRunning(child)) return stopped
+    if (run.stoppingPromise) return run.stoppingPromise
 
-    const graceMs = Math.max(0, options.graceMs ?? 15_000)
-    const waitForExit = (timeoutMs: number) => new Promise<boolean>((resolve) => {
-      if (!childIsRunning(child)) {
-        resolve(true)
-        return
-      }
-      let settled = false
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const finish = (confirmed: boolean) => {
-        if (settled) return
-        settled = true
-        if (timer) clearTimeout(timer)
-        child.off('exit', onExit)
-        child.off('close', onExit)
-        resolve(confirmed)
-      }
-      const onExit = () => finish(true)
-      child.once('exit', onExit)
-      child.once('close', onExit)
-      timer = setTimeout(() => finish(!childIsRunning(child)), timeoutMs)
-    })
+    const stop = (async () => {
+      if (options.reportClosed === false && options.terminalReason !== 'shutdown') run.stoppedByUser = true
+      run.stopRequested = true
+      if (run.runtimeExecutionId) markCodingAgentExecutionStopping(run.runtimeExecutionId)
+      if (run.idleTimer) clearTimeout(run.idleTimer)
+      run.idleTimer = undefined
+      const child = run.currentChild
+      const pgid = process.platform !== 'win32'
+        ? run.currentProcessGroupId
+        : undefined
+      if (pgid) run.currentProcessGroupId = pgid
 
-    if (await waitForExit(graceMs)) return true
-    forceKillChildProcess(child)
-    return waitForExit(Math.min(5_000, Math.max(1_000, graceMs)))
+      try { run.pty?.kill() } catch {}
+      terminateChildProcess(child, pgid)
+
+      const graceMs = Math.max(0, options.graceMs ?? 15_000)
+      let [confirmed, markerGone] = await Promise.all([
+        waitForChildProcessTreeExit(child, pgid, graceMs),
+        waitForExecutionMarkerExit(run.runtimeExecutionId, graceMs),
+      ])
+      if (!confirmed || !markerGone) {
+        forceKillChildProcess(child, pgid)
+        if (!signalExecutionMarkerGroups(run.runtimeExecutionId, 'SIGKILL')) {
+          if (run.runtimeExecutionId) markCodingAgentExecutionUnresolved(run.runtimeExecutionId, 'execution_marker_signal_rejected')
+          return false
+        }
+        const forceWaitMs = Math.min(5_000, Math.max(1_000, graceMs))
+        ;[confirmed, markerGone] = await Promise.all([
+          waitForChildProcessTreeExit(child, pgid, forceWaitMs),
+          waitForExecutionMarkerExit(run.runtimeExecutionId, forceWaitMs),
+        ])
+      }
+      if (!confirmed || !markerGone) {
+        if (run.runtimeExecutionId) markCodingAgentExecutionUnresolved(run.runtimeExecutionId, 'process_tree_still_alive')
+        return false
+      }
+
+      run.currentChild = undefined
+      run.currentProcessGroupId = undefined
+      if (run.runtimeExecutionId) markCodingAgentExecutionTreeGone(run.runtimeExecutionId)
+      const workspaceEvidence = this.completeWorkspaceRunDiff(run)
+      if (run.workspaceCheckpointRef && existsSync(run.workspaceCheckpointRef)) {
+        if (run.runtimeExecutionId) markCodingAgentExecutionUnresolved(run.runtimeExecutionId, 'workspace_evidence_not_captured')
+        return false
+      }
+      this.completedWorkspaceEvidence.set(run.launch.sessionId, workspaceEvidence)
+      if (run.runtimeExecutionId) {
+        const terminalReason = options.terminalReason || (run.stoppedByUser ? 'aborted' : 'completed')
+        if (!finalizeCodingAgentExecutionEvidence(run.launch.sessionId, terminalReason)) {
+          markCodingAgentExecutionUnresolved(run.runtimeExecutionId, 'workspace_evidence_transition_failed')
+          return false
+        }
+      }
+      this.cleanupRun(run, { kill: false, reportClosed: options.reportClosed ?? true })
+      return true
+    })()
+    run.stoppingPromise = stop
+    try {
+      return await stop
+    } finally {
+      if (run.stoppingPromise === stop) run.stoppingPromise = undefined
+    }
   }
 
   stop(
@@ -790,11 +1019,11 @@ export class CodingAgentRunManager {
   ): boolean {
     const run = this.getBySession(sessionId)
     if (!run) return false
-    if (options.reportClosed === false) run.stoppedByUser = true
-    this.cleanupRun(run, {
-      kill: true,
-      reportClosed: options.reportClosed ?? true,
-      childKillGraceMs: options.childKillGraceMs,
+    void this.stopAndWait(sessionId, {
+      reportClosed: options.reportClosed,
+      graceMs: options.childKillGraceMs,
+    }).catch((err) => {
+      logger.error({ err, sessionId }, '[coding-agent-run] asynchronous stop failed')
     })
     return true
   }
@@ -976,9 +1205,22 @@ export class CodingAgentRunManager {
     }
   }
 
-  shutdown() {
-    for (const run of [...this.runs.values()]) this.cleanupRun(run, { kill: true })
+  async shutdownAndWait(): Promise<boolean> {
+    const results = await Promise.all([...this.runs.values()].map(run => (
+      this.stopAndWait(run.launch.sessionId, {
+        reportClosed: false,
+        graceMs: 1_500,
+        terminalReason: 'shutdown',
+      })
+    )))
     this.eventListeners.clear()
+    return results.every(Boolean)
+  }
+
+  shutdown() {
+    void this.shutdownAndWait().catch((err) => {
+      logger.error({ err }, '[coding-agent-run] shutdown failed')
+    })
   }
 
   private getBySession(sessionId: string): ManagedCodingAgentRun | null {
@@ -1042,7 +1284,9 @@ export class CodingAgentRunManager {
         return
       }
       logger.info({ runId: current.id, sessionId: current.launch.sessionId, idleMs: this.idleMs }, '[coding-agent-run] closing idle hidden session')
-      this.cleanupRun(current, { kill: true })
+      void this.stopAndWait(current.launch.sessionId, { reportClosed: true, graceMs: 1_500 }).then((confirmed) => {
+        if (!confirmed) logger.error({ runId: current.id, sessionId: current.launch.sessionId }, '[coding-agent-run] idle process tree termination could not be verified')
+      })
     }, this.idleMs)
   }
 
@@ -1059,10 +1303,10 @@ export class CodingAgentRunManager {
     if (this.sessionIndex.get(run.launch.sessionId) === run.id) this.sessionIndex.delete(run.launch.sessionId)
     if (options.kill && !run.exited) {
       try { run.pty?.kill() } catch {}
-      terminateChildProcess(run.currentChild)
-      if (childIsRunning(run.currentChild)) {
+      terminateChildProcess(run.currentChild, run.currentProcessGroupId)
+      if (childProcessTreeIsRunning(run.currentChild, run.currentProcessGroupId)) {
         run.currentChildKillTimer = setTimeout(
-          () => forceKillChildProcess(run.currentChild),
+          () => forceKillChildProcess(run.currentChild, run.currentProcessGroupId),
           Math.max(0, options.childKillGraceMs ?? 1_500),
         )
       }
@@ -1078,6 +1322,27 @@ export class CodingAgentRunManager {
       }, run.activeEventToken)
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
     }
+  }
+
+  private async settleExitedChildProcessTree(run: ManagedCodingAgentRun, child: ChildProcess): Promise<boolean> {
+    const pgid = process.platform === 'win32' ? undefined : run.currentProcessGroupId
+    let groupGone = !childProcessTreeIsRunning(child, pgid)
+    let markerGone = await waitForExecutionMarkerExit(run.runtimeExecutionId, 0)
+    if (groupGone && markerGone) return true
+    terminateChildProcess(child, pgid)
+    if (!signalExecutionMarkerGroups(run.runtimeExecutionId, 'SIGINT')) return false
+    ;[groupGone, markerGone] = await Promise.all([
+      waitForChildProcessTreeExit(child, pgid, 1_500),
+      waitForExecutionMarkerExit(run.runtimeExecutionId, 1_500),
+    ])
+    if (groupGone && markerGone) return true
+    forceKillChildProcess(child, pgid)
+    if (!signalExecutionMarkerGroups(run.runtimeExecutionId, 'SIGKILL')) return false
+    ;[groupGone, markerGone] = await Promise.all([
+      waitForChildProcessTreeExit(child, pgid, 5_000),
+      waitForExecutionMarkerExit(run.runtimeExecutionId, 5_000),
+    ])
+    return groupGone && markerGone
   }
 
   private startClaudePrintTurn(
@@ -1137,11 +1402,21 @@ export class CodingAgentRunManager {
       env: {
         ...process.env,
         ...(run.launch.env || {}),
+        ...(run.runtimeExecutionId ? { HERMES_CODING_EXECUTION_ID: run.runtimeExecutionId } : {}),
       },
       pipeStdin: Boolean(streamInput),
     })
+    if (run.runtimeExecutionId && child.pid) {
+      activateCodingAgentExecution({
+        executionId: run.runtimeExecutionId,
+        rootPid: child.pid,
+        processGroupId: verifiedPosixProcessGroupLeader(child.pid),
+        boundaryKind: process.platform === 'win32' ? 'windows_unverified' : 'posix_process_group',
+      })
+    }
     const eventToken = run.activeEventToken
     run.currentChild = child
+    run.currentProcessGroupId = verifiedPosixProcessGroupLeader(child.pid)
 
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -1172,6 +1447,8 @@ export class CodingAgentRunManager {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
+      run.currentProcessGroupId = undefined
+      if (run.runtimeExecutionId) markCodingAgentExecutionIdle(run.runtimeExecutionId)
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude print failed to start')
       this.handleClaudePrintResponseEvent(run, {
         type: 'response.failed',
@@ -1191,38 +1468,56 @@ export class CodingAgentRunManager {
 
     child.on('exit', (code) => {
       if (!this.isCurrentChildTurn(run, child, eventToken)) return
-      if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
-      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
-      run.currentChildKillTimer = undefined
-      run.currentChild = undefined
-      logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
-      if (run.stoppedByUser) return
-      if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(
-          run,
-          run.pendingChatCompletionEvent,
-          run.pendingChatCompletionPayload,
-          run.pendingChatCompletionEventToken,
-        )
-        return
-      }
-      if (code === 0) {
-        this.completeClaudePrintTurn(run)
-        return
-      }
-      this.handleClaudePrintResponseEvent(run, {
-        type: 'response.failed',
-        data: {
+      void (async () => {
+        if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
+        if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+        run.currentChildKillTimer = undefined
+        logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
+        if (run.stopRequested || run.stoppedByUser) return
+        const treeGone = await this.settleExitedChildProcessTree(run, child)
+        if (!this.isCurrentChildTurn(run, child, eventToken)) return
+        if (!treeGone) {
+          this.handleClaudePrintResponseEvent(run, {
+            type: 'response.failed',
+            data: { type: 'response.failed', response: {
+              id: run.printResponseId, object: 'response', status: 'failed', model: run.launch.model,
+              error: { message: 'Claude Code process tree termination could not be verified' }, output: [],
+            } },
+          })
+          return
+        }
+        run.currentChild = undefined
+        run.currentProcessGroupId = undefined
+        if (run.runtimeExecutionId) markCodingAgentExecutionIdle(run.runtimeExecutionId)
+        if (run.pendingChatCompletionEvent) {
+          void this.emitAndMarkPrintChatRunCompletedAfterUsage(
+            run,
+            run.pendingChatCompletionEvent,
+            run.pendingChatCompletionPayload,
+            run.pendingChatCompletionEventToken,
+          )
+          return
+        }
+        if (code === 0) {
+          this.completeClaudePrintTurn(run)
+          return
+        }
+        this.handleClaudePrintResponseEvent(run, {
           type: 'response.failed',
-          response: {
-            id: run.printResponseId,
-            object: 'response',
-            status: 'failed',
-            model: run.launch.model,
-            error: { message: exitErrorMessage('Claude Code', code, run.currentChildStderr) },
-            output: [],
+          data: {
+            type: 'response.failed',
+            response: {
+              id: run.printResponseId,
+              object: 'response',
+              status: 'failed',
+              model: run.launch.model,
+              error: { message: exitErrorMessage('Claude Code', code, run.currentChildStderr) },
+              output: [],
+            },
           },
-        },
+        })
+      })().catch((err) => {
+        logger.error({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to finalize Claude process tree')
       })
     })
   }
@@ -1630,10 +1925,20 @@ export class CodingAgentRunManager {
       env: {
         ...process.env,
         ...(run.launch.env || {}),
+        ...(run.runtimeExecutionId ? { HERMES_CODING_EXECUTION_ID: run.runtimeExecutionId } : {}),
       },
     })
+    if (run.runtimeExecutionId && child.pid) {
+      activateCodingAgentExecution({
+        executionId: run.runtimeExecutionId,
+        rootPid: child.pid,
+        processGroupId: verifiedPosixProcessGroupLeader(child.pid),
+        boundaryKind: process.platform === 'win32' ? 'windows_unverified' : 'posix_process_group',
+      })
+    }
     const eventToken = run.activeEventToken
     run.currentChild = child
+    run.currentProcessGroupId = verifiedPosixProcessGroupLeader(child.pid)
 
     let stdoutBuffer = ''
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -1657,6 +1962,8 @@ export class CodingAgentRunManager {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
+      run.currentProcessGroupId = undefined
+      if (run.runtimeExecutionId) markCodingAgentExecutionIdle(run.runtimeExecutionId)
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex exec failed to start')
       this.handleClaudePrintResponseEvent(run, {
         type: 'response.failed',
@@ -1676,38 +1983,56 @@ export class CodingAgentRunManager {
 
     child.on('exit', (code) => {
       if (!this.isCurrentChildTurn(run, child, eventToken)) return
-      if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
-      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
-      run.currentChildKillTimer = undefined
-      run.currentChild = undefined
-      logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
-      if (run.stoppedByUser) return
-      if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(
-          run,
-          run.pendingChatCompletionEvent,
-          run.pendingChatCompletionPayload,
-          run.pendingChatCompletionEventToken,
-        )
-        return
-      }
-      if (code === 0) {
-        this.completeCodexExecTurn(run, run.codexPendingUsage)
-        return
-      }
-      this.handleClaudePrintResponseEvent(run, {
-        type: 'response.failed',
-        data: {
+      void (async () => {
+        if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
+        if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+        run.currentChildKillTimer = undefined
+        logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
+        if (run.stopRequested || run.stoppedByUser) return
+        const treeGone = await this.settleExitedChildProcessTree(run, child)
+        if (!this.isCurrentChildTurn(run, child, eventToken)) return
+        if (!treeGone) {
+          this.handleClaudePrintResponseEvent(run, {
+            type: 'response.failed',
+            data: { type: 'response.failed', response: {
+              id: run.printResponseId, object: 'response', status: 'failed', model: run.launch.model,
+              error: { message: 'Codex process tree termination could not be verified' }, output: [],
+            } },
+          })
+          return
+        }
+        run.currentChild = undefined
+        run.currentProcessGroupId = undefined
+        if (run.runtimeExecutionId) markCodingAgentExecutionIdle(run.runtimeExecutionId)
+        if (run.pendingChatCompletionEvent) {
+          void this.emitAndMarkPrintChatRunCompletedAfterUsage(
+            run,
+            run.pendingChatCompletionEvent,
+            run.pendingChatCompletionPayload,
+            run.pendingChatCompletionEventToken,
+          )
+          return
+        }
+        if (code === 0) {
+          this.completeCodexExecTurn(run, run.codexPendingUsage)
+          return
+        }
+        this.handleClaudePrintResponseEvent(run, {
           type: 'response.failed',
-          response: {
-            id: run.printResponseId,
-            object: 'response',
-            status: 'failed',
-            model: run.launch.model,
-            error: { message: exitErrorMessage('Codex', code, run.currentChildStderr) },
-            output: [],
+          data: {
+            type: 'response.failed',
+            response: {
+              id: run.printResponseId,
+              object: 'response',
+              status: 'failed',
+              model: run.launch.model,
+              error: { message: exitErrorMessage('Codex', code, run.currentChildStderr) },
+              output: [],
+            },
           },
-        },
+        })
+      })().catch((err) => {
+        logger.error({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to finalize Codex process tree')
       })
     })
   }
@@ -2231,11 +2556,13 @@ export class CodingAgentRunManager {
 
   private startWorkspaceRunDiff(run: ManagedCodingAgentRun) {
     try {
-      startWorkspaceRunCheckpoint({
+      const checkpointRef = startWorkspaceRunCheckpoint({
         sessionId: run.launch.sessionId,
         runId: run.id,
         workspace: run.launch.workspaceDir,
       })
+      run.workspaceCheckpointRef = checkpointRef || undefined
+      if (run.runtimeExecutionId) updateCodingAgentExecutionCheckpoint(run.runtimeExecutionId, checkpointRef)
     } catch (err) {
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[workspace-diff] failed to start coding agent run checkpoint')
     }
@@ -2249,6 +2576,11 @@ export class CodingAgentRunManager {
         workspace: run.launch.workspaceDir,
         assistantMessageId: run.assistantMessageId,
       })
+      if (run.workspaceCheckpointRef && existsSync(run.workspaceCheckpointRef)) {
+        return null
+      }
+      run.workspaceCheckpointRef = undefined
+      if (run.runtimeExecutionId) updateCodingAgentExecutionCheckpoint(run.runtimeExecutionId, null)
       if (!change) return null
       this.emitToChat(run.launch.sessionId, 'workspace.diff.completed', {
         event: 'workspace.diff.completed',

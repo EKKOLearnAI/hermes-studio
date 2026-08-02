@@ -115,6 +115,37 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
+export const CODING_AGENT_RUNTIME_OWNERSHIP_TABLE = 'coding_agent_runtime_ownership'
+
+export const CODING_AGENT_RUNTIME_OWNERSHIP_SCHEMA: Record<string, string> = {
+  execution_id: 'TEXT PRIMARY KEY',
+  run_id: 'TEXT NOT NULL',
+  session_id: 'TEXT NOT NULL',
+  generation: 'INTEGER NOT NULL DEFAULT 0',
+  owner_instance_id: 'TEXT NOT NULL',
+  owner_pid: 'INTEGER NOT NULL',
+  owner_birth_token: "TEXT NOT NULL DEFAULT ''",
+  owner_boot_id: "TEXT NOT NULL DEFAULT ''",
+  root_pid: 'INTEGER',
+  root_birth_token: "TEXT NOT NULL DEFAULT ''",
+  process_group_id: 'INTEGER',
+  boundary_kind: "TEXT NOT NULL DEFAULT ''",
+  state: "TEXT NOT NULL DEFAULT 'spawning'",
+  workspace: "TEXT NOT NULL DEFAULT ''",
+  checkpoint_ref: "TEXT NOT NULL DEFAULT ''",
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  terminal_at: 'INTEGER',
+  terminal_reason: "TEXT NOT NULL DEFAULT ''",
+}
+
+export const CODING_AGENT_RUNTIME_OWNERSHIP_INDEXES = {
+  idx_coding_agent_runtime_session: `CREATE INDEX IF NOT EXISTS idx_coding_agent_runtime_session
+    ON ${CODING_AGENT_RUNTIME_OWNERSHIP_TABLE}(session_id, generation)`,
+  idx_coding_agent_runtime_state: `CREATE INDEX IF NOT EXISTS idx_coding_agent_runtime_state
+    ON ${CODING_AGENT_RUNTIME_OWNERSHIP_TABLE}(state)`,
+}
+
 // ============================================================================
 // Workspace Run Changes
 // ============================================================================
@@ -622,6 +653,8 @@ export const GC_HANDOFF_JOBS_SCHEMA: Record<string, string> = {
   targetAgentId: 'TEXT NOT NULL',
   targetSessionId: 'TEXT NOT NULL',
   targetSessionGeneration: 'INTEGER NOT NULL DEFAULT 0',
+  targetConfigRevision: 'INTEGER NOT NULL DEFAULT 0',
+  targetRuntimeConfigJson: "TEXT NOT NULL DEFAULT ''",
   depth: 'INTEGER NOT NULL DEFAULT 0',
   kind: "TEXT NOT NULL DEFAULT 'mention'",
   chainOrderJson: "TEXT NOT NULL DEFAULT ''",
@@ -686,6 +719,7 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   model: "TEXT NOT NULL DEFAULT ''",
   apiMode: "TEXT NOT NULL DEFAULT ''",
   reasoningEffort: "TEXT NOT NULL DEFAULT ''",
+  configRevision: 'INTEGER NOT NULL DEFAULT 0',
   avatar: "TEXT NOT NULL DEFAULT ''",
   lastSeenRoomSeq: 'INTEGER NOT NULL DEFAULT 0',
   lastSuccessfulRunId: "TEXT NOT NULL DEFAULT ''",
@@ -1368,6 +1402,10 @@ export function initAllHermesTables(): void {
     createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(CODING_AGENT_RUNTIME_OWNERSHIP_TABLE, CODING_AGENT_RUNTIME_OWNERSHIP_SCHEMA, {
+      indexes: CODING_AGENT_RUNTIME_OWNERSHIP_INDEXES,
+    })
+    createIndexes(db, CODING_AGENT_RUNTIME_OWNERSHIP_INDEXES)
     syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
       indexes: WORKSPACE_RUN_CHANGES_INDEXES,
     })

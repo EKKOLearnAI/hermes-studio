@@ -44,7 +44,7 @@ const readConfigYamlForProfileMock = vi.fn()
 const bridgeSwitchSessionModelMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
-  stop: vi.fn(),
+  stopAndWait: vi.fn(async () => true),
 }))
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
@@ -235,7 +235,8 @@ describe('session conversations controller', () => {
     bridgeSwitchSessionModelMock.mockReset()
     bridgeGetRuntimeStateMock.mockReset()
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
-    codingAgentRunManagerMock.stop.mockReset()
+    codingAgentRunManagerMock.stopAndWait.mockReset()
+    codingAgentRunManagerMock.stopAndWait.mockResolvedValue(true)
   })
 
   it('lists conversations from the local session store without internal Group Chat participant sessions', async () => {
@@ -1837,7 +1838,7 @@ describe('session conversations controller', () => {
       api_mode: 'chat_completions',
       agent_native_session_id: '',
     })
-    expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()
+    expect(codingAgentRunManagerMock.stopAndWait).not.toHaveBeenCalled()
     expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
   })
@@ -1874,7 +1875,7 @@ describe('session conversations controller', () => {
     const ctx: any = { params: { id: 'codex-session' }, body: null }
     await mod.remove(ctx)
 
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(codingAgentRunManagerMock.stopAndWait).toHaveBeenCalledWith('codex-session', { reportClosed: false })
     expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
     expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
     expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
@@ -1940,7 +1941,7 @@ describe('session conversations controller', () => {
     }
     await mod.batchRemove(ctx)
 
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(codingAgentRunManagerMock.stopAndWait).toHaveBeenCalledWith('codex-session', { reportClosed: false })
     expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
     expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
     expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')

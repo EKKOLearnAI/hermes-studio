@@ -172,7 +172,12 @@ export async function handleAbort(
     }
   } else if (isCodingAgentRun) {
     activeState.abortController?.abort()
-    codingAgentRunManager.stop(sessionId, { reportClosed: false })
+    if (codingAgentRunManager.hasSession(sessionId)) {
+      const codingAgentStopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false })
+      if (!codingAgentStopped) {
+        throw new Error('Coding agent process tree did not stop during abort')
+      }
+    }
     if (hasEkkoBackgroundTasks) {
       await abortGlobalEkkoBackgroundTasks(sessionId)
       for (const task of settleInterruptedBackgroundTasks(activeState)) {

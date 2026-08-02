@@ -8,7 +8,7 @@ const replaceStateMock = vi.fn()
 const calcAndUpdateUsageMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   hasSession: vi.fn(() => false),
-  stop: vi.fn(() => false),
+  stopAndWait: vi.fn(async () => false),
 }))
 const ekkoBackgroundMock = vi.hoisted(() => ({
   has: vi.fn(() => false),
@@ -66,7 +66,7 @@ describe('run chat abort goal handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     codingAgentRunManagerMock.hasSession.mockReturnValue(false)
-    codingAgentRunManagerMock.stop.mockReturnValue(false)
+    codingAgentRunManagerMock.stopAndWait.mockResolvedValue(false)
     ekkoBackgroundMock.has.mockReturnValue(false)
     ekkoBackgroundMock.abort.mockResolvedValue(0)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 0, outputTokens: 0 })
@@ -254,7 +254,7 @@ describe('run chat abort goal handling', () => {
     const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
     const { emit, nsp, socket } = makeHarness()
     codingAgentRunManagerMock.hasSession.mockReturnValue(true)
-    codingAgentRunManagerMock.stop.mockReturnValue(true)
+    codingAgentRunManagerMock.stopAndWait.mockResolvedValue(true)
     const state = {
       messages: [],
       isWorking: true,
@@ -276,7 +276,7 @@ describe('run chat abort goal handling', () => {
 
     expect(bridge.interrupt).not.toHaveBeenCalled()
     expect(bridge.goalPause).not.toHaveBeenCalled()
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(codingAgentRunManagerMock.stopAndWait).toHaveBeenCalledWith('session-1', { reportClosed: false })
     expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
       ended_at: expect.any(Number),
       end_reason: 'abort',
@@ -285,7 +285,7 @@ describe('run chat abort goal handling', () => {
       source: 'workflow',
     }), 'session-1')
     expect(flushBridgePendingToDbMock).not.toHaveBeenCalled()
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(codingAgentRunManagerMock.stopAndWait).toHaveBeenCalledWith('session-1', { reportClosed: false })
     expect(state.isWorking).toBe(false)
     expect(state.isAborting).toBe(false)
     expect(emit).toHaveBeenCalledWith('abort.completed', expect.objectContaining({
@@ -300,12 +300,12 @@ describe('run chat abort goal handling', () => {
     const { emit, nsp, socket } = makeHarness()
     const sessionMap = new Map()
     codingAgentRunManagerMock.hasSession.mockReturnValue(true)
-    codingAgentRunManagerMock.stop.mockReturnValue(true)
+    codingAgentRunManagerMock.stopAndWait.mockResolvedValue(true)
     const runQueuedItem = vi.fn()
 
     await handleAbort(nsp as any, socket as any, 'session-1', sessionMap as any, {}, runQueuedItem)
 
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(codingAgentRunManagerMock.stopAndWait).toHaveBeenCalledWith('session-1', { reportClosed: false })
     expect(sessionMap.get('session-1')).toEqual(expect.objectContaining({
       isWorking: false,
       isAborting: false,

@@ -117,6 +117,10 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   agentNativeSessionId?: string
   isolateSettings?: boolean
   runtimeContext?: 'group_chat'
+  /** Signed Room-run capability injected only into managed MCP subprocesses. */
+  managedMcpCapability?: string
+  /** Immutable durable job/lease identity used for launch compatibility. */
+  runtimeAuthorityId?: string
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
 }
 
@@ -865,7 +869,12 @@ function hermesMcpCommandConfig(toolset: string): { command: string; args?: stri
   return { command: 'hermes-studio-mcp', args: [toolset] }
 }
 
-function hermesMcpServerConfig(profile: string, serverName: string, toolset: string): { command: string; args?: string[]; env: Record<string, string> } {
+function hermesMcpServerConfig(
+  profile: string,
+  serverName: string,
+  toolset: string,
+  managedMcpCapability = '',
+): { command: string; args?: string[]; env: Record<string, string> } {
   const appHome = getWebUiHome()
   return {
     ...hermesMcpCommandConfig(toolset),
@@ -877,6 +886,10 @@ function hermesMcpServerConfig(profile: string, serverName: string, toolset: str
       HERMES_MCP_SERVER_NAME: serverName,
       HERMES_MCP_TOOLSET: toolset,
       [HERMES_MCP_MANAGED_ENV_KEY]: '1',
+      ...(managedMcpCapability ? {
+        HERMES_STUDIO_MCP_CAPABILITY: managedMcpCapability,
+        HERMES_STUDIO_MCP_REQUIRE_CAPABILITY: '1',
+      } : {}),
     },
   }
 }
@@ -930,13 +943,13 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
   }
 }
 
-function claudeMcpConfigJson(profile: string, ...existingContents: Array<string | null | undefined>): string {
+function claudeMcpConfigJson(profile: string, managedMcpCapability = '', ...existingContents: Array<string | null | undefined>): string {
   const mcpServers: Record<string, unknown> = {}
   for (const content of existingContents) {
     Object.assign(mcpServers, parseClaudeMcpServers(content))
   }
   for (const server of HERMES_MCP_SERVERS) {
-    mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset)
+    mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset, managedMcpCapability)
   }
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
@@ -985,10 +998,10 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
   return Array.from(blockByServer.values()).filter(Boolean)
 }
 
-function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
+function codexMcpConfigToml(profile: string, managedMcpCapability = '', ...externalContents: Array<string | null | undefined>): string {
   const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
   for (const item of HERMES_MCP_SERVERS) {
-    const server = hermesMcpServerConfig(profile, item.name, item.toolset)
+    const server = hermesMcpServerConfig(profile, item.name, item.toolset, managedMcpCapability)
     const lines = [
       `[mcp_servers.${item.name}]`,
       `command = ${tomlString(server.command)}`,
@@ -1762,8 +1775,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const globalMcpConfig = globalMcpPath ? await safeReadFile(globalMcpPath) : ''
     const existingMcpConfig = existingMcpPath ? await safeReadFile(existingMcpPath) : ''
     await writeScopedFile('mcp', input.runtimeContext === 'group_chat'
-      ? claudeMcpConfigJson(scope.profile)
-      : claudeMcpConfigJson(scope.profile, globalMcpConfig, existingMcpConfig))
+      ? claudeMcpConfigJson(scope.profile, input.managedMcpCapability || '__group_chat_capability_required__')
+      : claudeMcpConfigJson(scope.profile, '', globalMcpConfig, existingMcpConfig))
     await writeScopedFile('prompt', hermesPromptDocument())
 
     const settingsPath = join(rootDir, 'settings.json')
@@ -1821,6 +1834,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '',
       codexMcpConfigToml(
         scope.profile,
+        input.runtimeContext === 'group_chat'
+          ? input.managedMcpCapability || '__group_chat_capability_required__'
+          : '',
         ...(input.runtimeContext === 'group_chat'
           ? []
           : [
@@ -1960,6 +1976,7 @@ export async function startCodingAgentRun(
     apiMode: launch.apiMode,
     reasoningEffort: launch.reasoningEffort,
     runtimeContext: input.runtimeContext,
+    runtimeAuthorityId: input.runtimeAuthorityId,
   })) {
     const stopped = await codingAgentRunManager.stopAndWait(sessionId, {
       reportClosed: false,
@@ -1989,6 +2006,7 @@ export async function startCodingAgentRun(
     reasoningEffort: launch.reasoningEffort,
     sessionSource: sessionSource === 'coding_agent' ? undefined : sessionSource,
     runtimeContext: input.runtimeContext,
+    runtimeAuthorityId: input.runtimeAuthorityId,
   })
   updateSession(sessionId, {
     source: sessionSource,
@@ -2021,8 +2039,8 @@ export function sendCodingAgentRunInput(
   return codingAgentRunManager.send(sessionId, input, { systemPrompt, images, storageInput, eventToken })
 }
 
-export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
-  return { stopped: codingAgentRunManager.stop(sessionId) }
+export async function stopCodingAgentRun(sessionId: string): Promise<{ stopped: boolean }> {
+  return { stopped: await codingAgentRunManager.stopAndWait(sessionId) }
 }
 
 export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {

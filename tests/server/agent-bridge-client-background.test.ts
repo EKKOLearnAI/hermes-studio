@@ -54,12 +54,35 @@ describe('AgentBridgeClient background delegation requests', () => {
       model: 'model-a',
       provider: 'provider-a',
     })
+    await client.contextEstimate('session-estimate-api-mode', [], undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+      api_mode: 'anthropic_messages',
+    })
+    await client.contextEstimate('session-estimate-clear-api-mode', [], undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+      api_mode: '',
+    })
+    await client.contextEstimate('session-estimate-legacy', [], undefined, 'default', {
+      model: 'model-a',
+      provider: 'provider-a',
+    })
 
     expect(request.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       api_mode: 'anthropic_messages',
     }))
     expect(request.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ api_mode: '' }))
     expect(request.mock.calls[2]?.[0]).not.toHaveProperty('api_mode')
+    expect(request.mock.calls[3]?.[0]).toEqual(expect.objectContaining({
+      action: 'context_estimate',
+      api_mode: 'anthropic_messages',
+    }))
+    expect(request.mock.calls[4]?.[0]).toEqual(expect.objectContaining({
+      action: 'context_estimate',
+      api_mode: '',
+    }))
+    expect(request.mock.calls[5]?.[0]).not.toHaveProperty('api_mode')
   })
 
   it('forwards recovery routes and delivery acknowledgements', async () => {

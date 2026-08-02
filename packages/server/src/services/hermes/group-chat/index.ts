@@ -21,7 +21,7 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
 import { insertWorkspaceRunChange, deleteWorkspaceRunChangesForRoom, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
-import { findUserById, findUserByUsername, getUserAvatar, listUserProfiles } from '../../../db/hermes/users-store'
+import { findUserById, findUserByUsername, getUserAvatar, listUserProfiles, userCanAccessProfile } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { getGroupChatLocalIdentitySecret } from '../../auth'
@@ -233,6 +233,9 @@ interface PendingApprovalBinding {
     sourceHandoffLeaseToken: string
     allowedChoices: ApprovalChoice[]
     allowPermanent: boolean
+    agentName: string
+    command: string
+    description: string
     responding: boolean
     responded: boolean
     conflicted: boolean
@@ -257,6 +260,7 @@ interface RoomAgent {
     model: string
     apiMode: string
     reasoningEffort: string
+    configRevision: number
     avatar: string
     lastSeenRoomSeq: number
     lastSuccessfulRunId: string
@@ -595,6 +599,8 @@ export interface GroupHandoffJob extends GroupHandoffPlan {
     roomAuthorizationRevision: number
     authorizationReaderEpoch: number
     targetSessionGeneration: number
+    targetConfigRevision: number
+    targetRuntimeConfigJson: string
     status: 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'authorization_revoked'
     attemptCount: number
     availableAt: number
@@ -1484,6 +1490,8 @@ export class ChatStorage {
             targetAgentId: String(row.targetAgentId),
             targetSessionId: String(row.targetSessionId),
             targetSessionGeneration: Math.max(0, Math.floor(Number(row.targetSessionGeneration) || 0)),
+            targetConfigRevision: Math.max(0, Math.floor(Number(row.targetConfigRevision) || 0)),
+            targetRuntimeConfigJson: String(row.targetRuntimeConfigJson || ''),
             depth: normalizeMentionDepth(row.depth),
             kind: String(row.kind || 'mention') as GroupHandoffKind,
             chainOrderJson: String(row.chainOrderJson || ''),
@@ -1704,16 +1712,21 @@ export class ChatStorage {
                targetActorId, targetActorAuthorizationRevision, targetActorContextRevision,
                roomAuthorizationRevision, authorizationReaderEpoch,
                targetAgentId, targetSessionId, targetSessionGeneration,
+               targetConfigRevision, targetRuntimeConfigJson,
                depth, kind, chainOrderJson, status, attemptCount, availableAt, leaseOwner, leaseToken,
                leaseExpiresAt, lastError, createdAt, updatedAt, completedAt
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', '', 0, '', ?, ?, 0)
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, '', '', 0, '', ?, ?, 0)
              ON CONFLICT(sourceMessageId, targetAgentId) DO NOTHING`,
         )
         const getTarget = db.prepare(
-            'SELECT sessionId, sessionGeneration FROM gc_room_agents WHERE roomId = ? AND agentId = ?',
+            `SELECT profile, runtime, codingAgentId, sessionId, sessionGeneration, mode,
+                    provider, model, apiMode, reasoningEffort, configRevision
+             FROM gc_room_agents WHERE roomId = ? AND agentId = ?`,
         )
         for (const plan of plans) {
-            const target = getTarget.get(roomId, plan.targetAgentId) as { sessionId?: string; sessionGeneration?: number } | undefined
+            const target = getTarget.get(roomId, plan.targetAgentId) as Pick<RoomAgent,
+                'profile' | 'runtime' | 'codingAgentId' | 'sessionId' | 'sessionGeneration' | 'mode'
+                | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'configRevision'> | undefined
             if (!target || String(target.sessionId || '') !== plan.targetSessionId) {
                 throw new Error(`Handoff target participant ${plan.targetAgentId} is missing or stale`)
             }
@@ -1727,6 +1740,16 @@ export class ChatStorage {
             })
             if (fenceReason) throw new Error(`Handoff rejected while runtime mutation is in progress: ${fenceReason}`)
             this.requireHandoffCapabilities(db, targetActor, ['room.read', 'room.write'])
+            const targetRuntimeConfigJson = JSON.stringify({
+                profile: String(target.profile || ''),
+                runtime: target.runtime === 'coding_agent' ? 'coding_agent' : 'hermes',
+                codingAgentId: String(target.codingAgentId || ''),
+                mode: target.mode === 'global' ? 'global' : 'scoped',
+                provider: String(target.provider || ''),
+                model: String(target.model || ''),
+                apiMode: String(target.apiMode || ''),
+                reasoningEffort: String(target.reasoningEffort || ''),
+            })
             insert.run(
                 this.handoffJobId(sourceMessageId, plan.targetAgentId), roomId, plan.chainId, sourceMessageId,
                 initiatorActor.id, initiatorActor.authorizationRevision, initiatorActor.contextRevision,
@@ -1734,6 +1757,7 @@ export class ChatStorage {
                 targetActor.id, targetActor.authorizationRevision, targetActor.contextRevision,
                 Number(room.authorizationRevision || 0), GROUP_CHAT_IDENTITY_READER_EPOCH,
                 plan.targetAgentId, plan.targetSessionId, Math.max(0, Math.floor(Number(target.sessionGeneration) || 0)),
+                Math.max(0, Math.floor(Number(target.configRevision) || 0)), targetRuntimeConfigJson,
                 normalizeMentionDepth(plan.depth), plan.kind, String(plan.chainOrderJson || ''), now, now, now,
             )
         }
@@ -1796,6 +1820,21 @@ export class ChatStorage {
         if (!hasCapabilities(initiator, ['room.read'])) return deny('Initiator room.read authorization was revoked')
         if (!hasCapabilities(source, ['room.write', 'agent.invoke'])) return deny('Source room.write or agent.invoke authorization was revoked')
         if (!hasCapabilities(target, ['room.read', 'room.write'])) return deny('Target room.read or room.write authorization was revoked')
+        if (initiator.actorType === 'authenticated_human') {
+            if (!Number.isInteger(initiator.authUserId) || Number(initiator.authUserId) <= 0) {
+                return deny('Authenticated initiator identity is malformed')
+            }
+            const initiatorUser = findUserById(Number(initiator.authUserId))
+            const targetProfile = db.prepare(
+                'SELECT profile FROM gc_room_agents WHERE roomId = ? AND agentId = ?',
+            ).get(row.roomId, row.targetAgentId) as { profile?: string } | undefined
+            if (!initiatorUser || initiatorUser.status !== 'active' || !targetProfile?.profile) {
+                return deny('Initiator account or target Profile is unavailable')
+            }
+            if (initiatorUser.role !== 'super_admin' && !userCanAccessProfile(initiatorUser.id, targetProfile.profile)) {
+                return deny(`Initiator Profile assignment for "${targetProfile.profile}" was revoked`)
+            }
+        }
         if (target.actorType !== 'agent' || target.agentId !== String(row.targetAgentId || '')) {
             return deny('Target actor identity changed')
         }
@@ -1831,11 +1870,11 @@ export class ChatStorage {
                        SELECT queued.id FROM gc_handoff_jobs AS queued
                        WHERE queued.roomId = job.roomId
                          AND queued.targetAgentId = job.targetAgentId
-                         AND queued.status = 'pending' AND queued.availableAt <= ?
+                         AND queued.status = 'pending'
                        ORDER BY queued.createdAt ASC, queued.id ASC LIMIT 1
                    )
                  ORDER BY job.createdAt ASC, job.id ASC LIMIT ?`,
-            ).all(now, now, Math.max(1, Math.floor(limit))) as any[]
+            ).all(now, Math.max(1, Math.floor(limit))) as any[]
             const revoke = db.prepare(
                 `UPDATE gc_handoff_jobs
                  SET status = 'authorization_revoked', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
@@ -1966,9 +2005,29 @@ export class ChatStorage {
             `UPDATE gc_handoff_jobs
              SET status = 'cancelled', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
                  lastError = ?, updatedAt = ?, completedAt = ?
-             WHERE roomId = ?${targetClause} AND status IN ('pending', 'running')`
+             WHERE roomId = ?${targetClause} AND status IN ('pending', 'running')`,
         ).run(...params)
         return Number(result?.changes || 0)
+    }
+
+    cancelHandoffChain(roomId: string, chainId: string, reason = 'Relay stopped by user'): GroupHandoffJob[] {
+        const db = this.db()
+        if (!db || !roomId || !chainId) return []
+        const now = Date.now()
+        return this.withImmediateTransaction(db, () => {
+            const running = (db.prepare(
+                `SELECT * FROM gc_handoff_jobs
+                 WHERE roomId = ? AND chainId = ? AND status = 'running'
+                 ORDER BY createdAt ASC, id ASC`,
+            ).all(roomId, chainId) as any[]).map(row => this.mapHandoffJob(row))
+            db.prepare(
+                `UPDATE gc_handoff_jobs
+                 SET status = 'cancelled', leaseOwner = '', leaseToken = '', leaseExpiresAt = 0,
+                     lastError = ?, updatedAt = ?, completedAt = ?
+                 WHERE roomId = ? AND chainId = ? AND status IN ('pending', 'running')`,
+            ).run(reason.slice(0, 2000), now, now, roomId, chainId)
+            return running
+        })
     }
 
     rescheduleHandoffJobWithoutAttempt(jobId: string, leaseToken: string, error: string, retryAt: number): boolean {
@@ -2568,7 +2627,7 @@ export class ChatStorage {
 
     getRoomAgents(roomId: string): RoomAgent[] {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, configRevision, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ?'
         ).all(roomId) || []) as unknown as RoomAgent[]
     }
 
@@ -2643,7 +2702,8 @@ export class ChatStorage {
             sessionId: binding.sessionId || participantSessionId(roomId, agentId, generation),
             sessionGeneration: generation,
             mode: binding.mode || 'scoped', provider: binding.provider || '', model: binding.model || '',
-            apiMode: binding.apiMode || '', reasoningEffort: binding.reasoningEffort || '', avatar: binding.avatar || '',
+            apiMode: binding.apiMode || '', reasoningEffort: binding.reasoningEffort || '', configRevision: 0,
+            avatar: binding.avatar || '',
             lastSeenRoomSeq: binding.lastSeenRoomSeq ?? contextBaseline,
             lastSuccessfulRunId: binding.lastSuccessfulRunId || '', checkpoint: onboardingCheckpoint,
             checkpointSourceMessageIds: onboardingSourceMessageIds, checkpointFromRoomSeq: onboardingFromRoomSeq,
@@ -2679,14 +2739,35 @@ export class ChatStorage {
 
     getRoomAgent(roomId: string, agentRef: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, configRevision, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
         ).get(roomId, agentRef, agentRef) as any) ?? null
     }
 
     getRoomAgentByAgentId(roomId: string, agentId: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
+            'SELECT id, roomId, agentId, profile, name, description, invited, runtime, codingAgentId, sessionId, sessionGeneration, mode, provider, model, apiMode, reasoningEffort, configRevision, avatar, lastSeenRoomSeq, lastSuccessfulRunId, checkpoint, checkpointSourceMessageIds, checkpointFromRoomSeq, checkpointThroughRoomSeq FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
         ).get(roomId, agentId) as any) ?? null
+    }
+
+    updateRoomAgentRuntimeConfig(
+        roomId: string,
+        agentRef: string,
+        patch: Pick<RoomAgent, 'provider' | 'model' | 'apiMode' | 'reasoningEffort'>,
+    ): RoomAgent | null {
+        const db = this.db()
+        if (!db) return null
+        this.withImmediateTransaction(db, () => {
+            db.prepare(
+                `UPDATE gc_room_agents
+                 SET provider = ?, model = ?, apiMode = ?, reasoningEffort = ?,
+                     configRevision = configRevision + 1
+                 WHERE roomId = ? AND (id = ? OR agentId = ?)`
+            ).run(
+                patch.provider, patch.model, patch.apiMode, patch.reasoningEffort,
+                roomId, agentRef, agentRef,
+            )
+        })
+        return this.getRoomAgent(roomId, agentRef)
     }
 
     updateRoomAgent(roomId: string, agentRef: string, patch: Pick<RoomAgent, 'name' | 'description' | 'mode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'avatar'>): RoomAgent | null {
@@ -3478,6 +3559,55 @@ export class ChatStorage {
         })
     }
 
+    reprojectAuthenticatedUserProfiles(
+        authUserId: number,
+        nextProfiles: readonly string[],
+        mutateUser?: () => void,
+    ): {
+        changedRooms: string[]
+        runningTargets: Array<{ roomId: string; targetAgentId: string; targetSessionId: string }>
+    } {
+        const db = this.db()
+        if (!db || !Number.isInteger(authUserId) || authUserId <= 0) {
+            return { changedRooms: [], runningTargets: [] }
+        }
+        const allowed = new Set(nextProfiles.map(profile => String(profile || '').trim()).filter(Boolean))
+        return this.withImmediateTransaction(db, () => {
+            mutateUser?.()
+            const changedRooms: string[] = []
+            const runningTargets: Array<{ roomId: string; targetAgentId: string; targetSessionId: string }> = []
+            for (const room of this.getAllRooms()) {
+                const actor = this.findActiveActorByAuthUserId(room.id, authUserId)
+                if (!actor) continue
+                const revokedProfiles = (db.prepare(
+                    'SELECT DISTINCT profile FROM gc_room_agents WHERE roomId = ?',
+                ).all(room.id) as Array<{ profile: string }>)
+                    .map(row => String(row.profile || ''))
+                    .filter(profile => profile && !allowed.has(profile))
+                if (!revokedProfiles.length) continue
+                const placeholders = revokedProfiles.map(() => '?').join(', ')
+                const runningRows = db.prepare(
+                    `SELECT DISTINCT job.targetAgentId, job.targetSessionId
+                     FROM gc_handoff_jobs AS job
+                     INNER JOIN gc_room_agents AS agent
+                       ON agent.roomId = job.roomId AND agent.agentId = job.targetAgentId
+                     WHERE job.roomId = ? AND job.status = 'running' AND agent.profile IN (${placeholders})`,
+                ).all(room.id, ...revokedProfiles) as Array<{ targetAgentId: string; targetSessionId: string }>
+                db.prepare(
+                    `UPDATE gc_room_actors SET authorizationRevision = authorizationRevision + 1, updatedAt = ?
+                     WHERE id = ? AND active = 1`,
+                ).run(Date.now(), actor.id)
+                this.fenceRoomHandoffsForAuthorityChange(db, room.id, 'Authenticated user Profile assignment changed')
+                db.prepare('UPDATE gc_rooms SET authorizationRevision = authorizationRevision + 1 WHERE id = ?').run(room.id)
+                changedRooms.push(room.id)
+                for (const row of runningRows) {
+                    if (row.targetAgentId && row.targetSessionId) runningTargets.push({ roomId: room.id, ...row })
+                }
+            }
+            return { changedRooms, runningTargets }
+        })
+    }
+
     deactivateAuthenticatedHumanActorWithRetention(roomId: string, authUserId: number): GroupActor | null {
         const db = this.db()
         if (!db || !Number.isFinite(authUserId) || authUserId <= 0) {
@@ -3683,6 +3813,7 @@ export class GroupChatServer {
     private handoffDispatchTimer: ReturnType<typeof setTimeout> | null = null
     private handoffDispatchRunning = false
     private handoffDispatcherReady = false
+    private handoffQuiescenceWaiters: Array<() => void> = []
     /** Bridge approval id -> server-observed originating room and live agent run. */
     private pendingApprovals = new Map<string, PendingApprovalBinding>()
     private inviteAttemptLimiter?: GroupChatInviteAttemptLimiter
@@ -3777,6 +3908,20 @@ export class GroupChatServer {
             }, '[GroupChat] role authority fence committed but runtime interrupt failed')
         }
         if (interruptFailure) throw interruptFailure
+        return changedRooms
+    }
+
+    async reprojectAuthenticatedUserProfiles(
+        authUserId: number,
+        nextProfiles: readonly string[],
+        mutateUser?: () => void,
+    ): Promise<string[]> {
+        const { changedRooms, runningTargets } = this.storage.reprojectAuthenticatedUserProfiles(authUserId, nextProfiles, mutateUser)
+        const interruptResults = await Promise.allSettled(runningTargets.map(target =>
+            this.agentClients.interruptHandoffTarget(target.roomId, target.targetAgentId, target.targetSessionId),
+        ))
+        const failed = interruptResults.find(result => result.status === 'rejected')
+        if (failed?.status === 'rejected') throw failed.reason
         return changedRooms
     }
 
@@ -4184,12 +4329,14 @@ export class GroupChatServer {
         this.scheduleHandoffDispatch(0)
     }
 
-    stopHandoffDispatcher(): void {
+    async stopHandoffDispatcher(): Promise<void> {
         this.handoffDispatcherReady = false
         if (this.handoffDispatchTimer) {
             clearTimeout(this.handoffDispatchTimer)
             this.handoffDispatchTimer = null
         }
+        if (!this.handoffDispatchRunning) return
+        await new Promise<void>((resolve) => (this.handoffQuiescenceWaiters ||= []).push(resolve))
     }
 
     private scheduleHandoffDispatch(delayMs = 0): void {
@@ -4322,6 +4469,8 @@ export class GroupChatServer {
             }
         } finally {
             this.handoffDispatchRunning = false
+            const waiters = (this.handoffQuiescenceWaiters ||= []).splice(0)
+            for (const resolve of waiters) resolve()
             if (this.handoffDispatcherReady) this.scheduleHandoffDispatch(1_000)
         }
     }
@@ -4479,6 +4628,7 @@ export class GroupChatServer {
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string; totalTokens?: number; agentSessionId?: string; sourceHandoffJobId?: string; sourceHandoffLeaseToken?: string }) => this.handleContextStatus(socket, data))
         socket.on('interrupt_agent', (data: { roomId?: string; agentId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
+        socket.on('interrupt_handoff_chain', (data: { roomId?: string; chainId?: string }, ack?: (response?: unknown) => void) => this.handleInterruptHandoffChain(socket, data, ack))
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; agentSessionId?: string; sourceHandoffJobId?: string; sourceHandoffLeaseToken?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; agentSessionId?: string; sourceHandoffJobId?: string; sourceHandoffLeaseToken?: string; approval_id?: string; choice?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
@@ -4843,6 +4993,20 @@ export class GroupChatServer {
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
         const agents = this.storage.getRoomAgents(roomId).map(serializeRoomAgent)
+        this.pruneStalePendingApprovals()
+        const pendingApprovals = this.socketAccessPolicy(socket, roomId).canApprove
+            ? [...this.pendingApprovals.entries()]
+                .filter(([, binding]) => binding.roomId === roomId && !binding.conflicted && !binding.responded)
+                .map(([approvalId, binding]) => ({
+                    roomId,
+                    agentName: binding.agentName,
+                    approval_id: approvalId,
+                    command: binding.command,
+                    description: binding.description,
+                    choices: binding.allowedChoices,
+                    allow_permanent: binding.allowPermanent,
+                }))
+            : []
 
         ack?.({
             roomId,
@@ -4854,6 +5018,7 @@ export class GroupChatServer {
             rooms: this.getDiscoverableRoomIds(socket),
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            pendingApprovals,
             mentionProtocolVersion: GROUP_CHAT_CHAIN_PROTOCOL_VERSION,
         })
 
@@ -5261,6 +5426,44 @@ export class GroupChatServer {
         }
     }
 
+    private async handleInterruptHandoffChain(socket: Socket, data: { roomId?: string; chainId?: string }, ack?: (response?: unknown) => void): Promise<void> {
+        const roomId = String(data.roomId || '')
+        const chainId = String(data.chainId || '')
+        if (!roomId || !chainId) {
+            ack?.({ error: 'roomId and chainId are required' })
+            return
+        }
+        const room = this.rooms.get(roomId)
+        if (!room?.hasOnlineMember(socket.id)) {
+            ack?.({ error: 'Not in room' })
+            return
+        }
+        if (!this.canSocketManageRoom(socket, roomId)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+        try {
+            // Commit the exact chain fence first. Only runtimes that owned a
+            // running job in this chain are interrupted; concurrent chains stay intact.
+            const running = this.storage.cancelHandoffChain(roomId, chainId, 'Relay stopped by user')
+            const targets = new Map<string, { sessionId: string; name: string }>()
+            for (const job of running) {
+                const participant = this.storage.getRoomAgentByAgentId(roomId, job.targetAgentId)
+                if (!participant || String(participant.sessionId || '') !== String(job.targetSessionId || '')) continue
+                targets.set(job.targetAgentId, { sessionId: job.targetSessionId, name: participant.name })
+            }
+            for (const [agentId, target] of targets) {
+                await this.agentClients.interruptHandoffTarget(roomId, agentId, target.sessionId)
+                this.clearPendingApprovals(roomId, agentId)
+                this.emitToRoomReaders(roomId, 'context_status', { roomId, agentId, agentName: target.name, status: 'ready' })
+            }
+            ack?.({ ok: true, cancelled: running.length })
+        } catch (err: any) {
+            logger.warn(`[GroupChat] failed to interrupt handoff chain ${chainId} in room ${roomId}: ${err.message}`)
+            ack?.({ error: err.message || 'interrupt failed' })
+        }
+    }
+
     private async handleInterruptAgent(socket: Socket, data: { roomId?: string; agentId?: string; agentName?: string }, ack?: (response?: unknown) => void): Promise<void> {
         const roomId = data.roomId
         const agentRef = data.agentId || data.agentName
@@ -5319,6 +5522,9 @@ export class GroupChatServer {
     }
 
     private pruneStalePendingApprovals(): void {
+        // Some migration/test harnesses hydrate legacy server objects without
+        // invoking the current constructor. Treat missing transient state as empty.
+        if (!(this.pendingApprovals instanceof Map)) this.pendingApprovals = new Map()
         for (const [approvalId, binding] of this.pendingApprovals) {
             if (binding.conflicted) continue
             const durableCurrent = !binding.sourceHandoffJobId || this.storage.isHandoffExecutionCurrent(
@@ -5339,6 +5545,9 @@ export class GroupChatServer {
                 && existing.sourceHandoffJobId === binding.sourceHandoffJobId
                 && existing.sourceHandoffLeaseToken === binding.sourceHandoffLeaseToken
                 && existing.allowPermanent === binding.allowPermanent
+                && existing.agentName === binding.agentName
+                && existing.command === binding.command
+                && existing.description === binding.description
                 && existing.allowedChoices.length === binding.allowedChoices.length
                 && existing.allowedChoices.every((choice, index) => choice === binding.allowedChoices[index])
             if (!sameOrigin) {
@@ -5395,6 +5604,9 @@ export class GroupChatServer {
             sourceHandoffLeaseToken,
             allowedChoices,
             allowPermanent,
+            agentName,
+            command: data.command || '',
+            description: data.description || '',
         })) return
         this.emitToRoomApprovalResponders(roomId, 'approval.requested', {
             event: 'approval.requested',
@@ -5498,8 +5710,12 @@ export class GroupChatServer {
                 return
             }
             binding.responding = false
+            if (!result?.resolved) {
+                ack?.({ error: 'Approval response was not resolved', resolved: false })
+                return
+            }
             binding.responded = true
-            ack?.({ ok: true, resolved: Boolean(result?.resolved) })
+            ack?.({ ok: true, resolved: true })
         } catch (err: any) {
             if (this.pendingApprovals.get(approvalId) === binding && !binding.conflicted) binding.responding = false
             logger.warn(`[GroupChat] failed to respond approval ${approvalId}: ${err.message}`)

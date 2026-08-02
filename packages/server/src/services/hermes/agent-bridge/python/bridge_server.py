@@ -120,6 +120,7 @@ class BridgeServer:
                 profile=req.get("profile"),
                 model=req.get("model"),
                 provider=req.get("provider"),
+                api_mode=req.get("api_mode"),
                 workspace=req.get("workspace"),
                 background_delegation_enabled=background_delegation_enabled,
             )

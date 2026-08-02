@@ -58,6 +58,11 @@ export interface AgentBridgeChatOptions {
   /** Local patch (reasoning-effort): per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  /** Isolates a durable Room run in a worker whose managed MCP subprocesses
+   * receive only this run-scoped capability. */
+  worker_key?: string
+  managed_mcp_capability?: string
+  managed_mcp_require_capability?: boolean
 }
 
 export type AgentBridgeMessage =
@@ -118,6 +123,7 @@ export interface AgentBridgeContextEstimate extends AgentBridgeResponse {
   profile?: string
   model?: string
   provider?: string
+  api_mode?: string
 }
 
 export interface AgentBridgeCommandResult extends AgentBridgeResponse {
@@ -497,6 +503,11 @@ export class AgentBridgeClient {
         : {}),
       // Local patch (reasoning-effort): per-session reasoning effort override.
       ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
+      ...(options.worker_key ? { worker_key: options.worker_key } : {}),
+      ...(options.managed_mcp_capability ? { managed_mcp_capability: options.managed_mcp_capability } : {}),
+      ...(options.managed_mcp_require_capability !== undefined
+        ? { managed_mcp_require_capability: options.managed_mcp_require_capability }
+        : {}),
     })
   }
 
@@ -505,7 +516,9 @@ export class AgentBridgeClient {
     messages: unknown[],
     instructions?: string,
     profile?: string,
-    options: Pick<AgentBridgeChatOptions, 'model' | 'provider' | 'workspace' | 'background_delegation_enabled'> = {},
+    options: Pick<AgentBridgeChatOptions,
+      'model' | 'provider' | 'api_mode' | 'workspace' | 'background_delegation_enabled'
+      | 'worker_key' | 'managed_mcp_capability' | 'managed_mcp_require_capability'> = {},
   ): Promise<AgentBridgeContextEstimate> {
     return this.request<AgentBridgeContextEstimate>({
       action: 'context_estimate',
@@ -515,9 +528,15 @@ export class AgentBridgeClient {
       ...(profile ? { profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.api_mode !== undefined ? { api_mode: options.api_mode } : {}),
       ...(options.workspace ? { workspace: options.workspace } : {}),
       ...(options.background_delegation_enabled !== undefined
         ? { background_delegation_enabled: options.background_delegation_enabled }
+        : {}),
+      ...(options.worker_key ? { worker_key: options.worker_key } : {}),
+      ...(options.managed_mcp_capability ? { managed_mcp_capability: options.managed_mcp_capability } : {}),
+      ...(options.managed_mcp_require_capability !== undefined
+        ? { managed_mcp_require_capability: options.managed_mcp_require_capability }
         : {}),
     })
   }

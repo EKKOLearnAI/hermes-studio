@@ -1090,12 +1090,14 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
     const storage = chatServer.getStorage()
     const roomId = ctx.params.roomId
     if (!requireManageRoom(ctx, storage, roomId)) return
+    const authenticatedUserId = authenticatedRequesterId(ctx.state)
     const existing = storage.getRoomAgent(roomId, ctx.params.agentId)
     if (!existing) {
         ctx.status = 404
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (!requireCurrentAgentProfile(ctx, authenticatedUserId, existing.profile)) return
     const requested = ctx.request.body as Partial<AgentInput>
     const requestedKeys = Object.keys(requested as Record<string, unknown>)
     const configOnlyUpdate = requestedKeys.length > 0 && requestedKeys.every(key => (
@@ -1134,18 +1136,27 @@ groupChatRoutes.patch('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', as
             reasoningEffort: requested.reasoningEffort === undefined ? existing.reasoningEffort : requested.reasoningEffort,
             avatar: requested.avatar === undefined ? existing.avatar : requested.avatar,
         })
-        const agent = storage.updateRoomAgent(roomId, ctx.params.agentId, {
-            name: normalized.name || existing.name,
-            description: normalized.description || '',
-            mode: normalized.mode || 'scoped',
-            provider: normalized.provider || '',
-            model: normalized.model || '',
-            apiMode: normalized.apiMode || '',
-            reasoningEffort: normalized.reasoningEffort || '',
-            avatar: normalized.avatar as string,
-        })
-        if (!configOnlyUpdate) await chatServer.agentClients.interruptRoom(roomId)
-        if (agent) chatServer.agentClients.updateAgentIdentity(roomId, agent.agentId, agent.name, agent.description)
+        const agent = configOnlyUpdate
+            ? storage.updateRoomAgentRuntimeConfig(roomId, ctx.params.agentId, {
+                provider: normalized.provider || '',
+                model: normalized.model || '',
+                apiMode: normalized.apiMode || '',
+                reasoningEffort: normalized.reasoningEffort || '',
+            })
+            : storage.updateRoomAgent(roomId, ctx.params.agentId, {
+                name: normalized.name || existing.name,
+                description: normalized.description || '',
+                mode: normalized.mode || 'scoped',
+                provider: normalized.provider || '',
+                model: normalized.model || '',
+                apiMode: normalized.apiMode || '',
+                reasoningEffort: normalized.reasoningEffort || '',
+                avatar: normalized.avatar as string,
+            })
+        if (!configOnlyUpdate) {
+            await chatServer.agentClients.interruptRoom(roomId)
+            if (agent) chatServer.agentClients.updateAgentIdentity(roomId, agent.agentId, agent.name, agent.description)
+        }
         ctx.body = { agent: serializeRoomAgent(agent) }
     } catch (err: any) {
         ctx.status = Number(err?.status || 400)

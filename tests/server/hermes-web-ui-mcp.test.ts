@@ -45,6 +45,62 @@ describe('hermes-web-ui MCP server', () => {
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
   })
 
+  it('fails closed before managed API side effects when the durable capability is rejected', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-mcp-capability-'))
+    homes.push(home)
+    let sideEffectHits = 0
+    const server = createServer((req, res) => {
+      if (req.url === '/api/internal/managed-mcp/capabilities/authorize') {
+        res.statusCode = 403
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ error: 'Managed MCP capability revoked' }))
+        return
+      }
+      if (req.url === '/api/openapi.json') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ openapi: '3.0.3', paths: {
+          '/api/test-side-effect': { post: { requestBody: { required: false, content: { 'application/json': { schema: { type: 'object' } } } } } },
+        } }))
+        return
+      }
+      if (req.url === '/api/test-side-effect') sideEffectHits += 1
+      res.setHeader('content-type', 'application/json')
+      res.end('{}')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('expected TCP server address')
+    const responses = new Map<number, any>()
+    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'api'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_WEB_UI_HOME: home,
+        HERMES_WEB_UI_MANAGED_MCP: '1',
+        HERMES_STUDIO_MCP_CAPABILITY: 'revoked-capability',
+      },
+    })
+    child.stdout.on('data', chunk => {
+      for (const line of String(chunk).trim().split('\n')) {
+        if (!line) continue
+        const message = JSON.parse(line)
+        responses.set(message.id, message)
+      }
+    })
+
+    writeRpc(child, 1, 'tools/call', {
+      name: 'hermes_studio_api_request',
+      arguments: { method: 'POST', path: '/api/test-side-effect', body: { destructive: true } },
+    })
+    const response = await waitForRpc(responses, 1)
+
+    expect(response.result.isError).toBe(true)
+    expect(response.result.content[0].text).toContain('capability')
+    expect(sideEffectHits).toBe(0)
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
+
   it('exposes a public Web UI API requester tool', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-mcp-'))
     homes.push(home)

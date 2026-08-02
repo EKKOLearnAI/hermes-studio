@@ -3,7 +3,7 @@ import { createHmac, randomBytes } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { countTokens } from '../../../lib/context-compressor'
-import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
+import { AgentBridgeClient, type AgentBridgeChatOptions, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
 import { resolveBridgeRunModelConfig } from '../run-chat/model-config'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
@@ -31,6 +31,10 @@ import {
     stripMentionRoutingTokens,
 } from './mention-routing'
 import { buildCodingAgentGroupHandoffEnvelope } from './handoff-envelope'
+import {
+    GROUP_CHAT_MANAGED_MCP_SERVER_TOOLS,
+    issueManagedMcpCapability,
+} from '../managed-mcp-capability'
 export { buildCodingAgentGroupHandoffEnvelope }
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
@@ -66,6 +70,17 @@ interface MessageData {
     timestamp: number
 }
 
+type ParticipantRuntimeSnapshot = {
+    profile: string
+    runtime: 'hermes' | 'coding_agent'
+    codingAgentId: '' | 'claude-code' | 'codex'
+    mode: 'scoped' | 'global'
+    provider: string
+    model: string
+    apiMode: string
+    reasoningEffort: string
+}
+
 type MentionMessage = {
     messageId?: string
     content: string
@@ -81,6 +96,7 @@ type MentionMessage = {
     handoffKind?: 'mention' | 'fixed' | 'fanout'
     chainRequest?: string
     targetSessionId?: string
+    runtimeSnapshot?: ParticipantRuntimeSnapshot
 }
 
 export function groupMentionTextInput(
@@ -127,7 +143,7 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 const SUMMARY_SESSION_CRASH_CLEANUP_MS = 10 * 60 * 1000
-export type GroupModelContext = { model: string; provider: string }
+export type GroupModelContext = { model: string; provider: string; apiMode?: string }
 export type GroupCompressionInput = {
     triggerTokens: number
     maxHistoryTokens: number
@@ -167,6 +183,7 @@ interface BridgeContextCache {
     profile?: string
     model?: string
     provider?: string
+    apiMode?: string
 }
 
 type PersistedParticipantBinding = {
@@ -203,6 +220,38 @@ type GroupBridgeSessionIdentity = GroupBridgeSessionRevisions & {
 function revisionNumber(value: unknown): number {
     const numeric = Number(value)
     return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : 0
+}
+
+export function parseParticipantRuntimeSnapshot(value: unknown): ParticipantRuntimeSnapshot {
+    try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid shape')
+        const record = parsed as Record<string, unknown>
+        const profile = typeof record.profile === 'string' ? record.profile.trim() : ''
+        const runtime = record.runtime
+        const codingAgentId = record.codingAgentId
+        const mode = record.mode
+        if (!profile || (runtime !== 'hermes' && runtime !== 'coding_agent')
+            || (mode !== 'scoped' && mode !== 'global')
+            || typeof record.provider !== 'string' || typeof record.model !== 'string'
+            || typeof record.apiMode !== 'string' || typeof record.reasoningEffort !== 'string'
+            || (runtime === 'hermes' && codingAgentId !== '')
+            || (runtime === 'coding_agent' && codingAgentId !== 'claude-code' && codingAgentId !== 'codex')) {
+            throw new Error('invalid fields')
+        }
+        return {
+            profile,
+            runtime,
+            codingAgentId: codingAgentId as ParticipantRuntimeSnapshot['codingAgentId'],
+            mode,
+            provider: record.provider,
+            model: record.model,
+            apiMode: record.apiMode,
+            reasoningEffort: record.reasoningEffort,
+        }
+    } catch {
+        throw new Error('Invalid durable participant runtime snapshot')
+    }
 }
 
 function sessionActorIdentity(agentId: string, profile: string, name: string): string {
@@ -247,12 +296,13 @@ export function groupContextTokensWithFixedOverhead(
 }
 
 export function isGroupBridgeContextCacheCompatible(
-    cache: { model?: string; provider?: string } | null | undefined,
+    cache: { model?: string; provider?: string; apiMode?: string } | null | undefined,
     modelContext: GroupModelContext,
 ): boolean {
     if (!cache) return false
     if (modelContext.model && cache.model !== modelContext.model) return false
     if (modelContext.provider && cache.provider !== modelContext.provider) return false
+    if (modelContext.apiMode !== undefined && cache.apiMode !== modelContext.apiMode) return false
     return true
 }
 
@@ -571,9 +621,9 @@ class AgentClient {
         if (binding?.runtime === 'coding_agent') {
             this.markSessionInterrupted(sessionId)
             const runId = codingAgentRunManager.runIdForSession(sessionId) || 'interrupted'
-            const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
             const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
             if (!stopped && codingAgentRunManager.runIdForSession(sessionId)) return false
+            const workspaceRunChange = codingAgentRunManager.completeWorkspaceDiffForSession(sessionId)
             this.codingAgentReplyCancels.get(sessionId)?.()
             await this.persistCodingAgentWorkspaceDiff(roomId, sessionId, {
                 run_id: runId,
@@ -694,6 +744,7 @@ class AgentClient {
             profile: typeof data.profile === 'string' ? data.profile : undefined,
             model: typeof data.model === 'string' ? data.model : modelContext.model || undefined,
             provider: typeof data.provider === 'string' ? data.provider : modelContext.provider || undefined,
+            apiMode: typeof data.api_mode === 'string' ? data.api_mode : modelContext.apiMode,
         })
     }
 
@@ -717,6 +768,7 @@ class AgentClient {
         instructions: string | undefined,
         modelContext: GroupModelContext,
         phase: string,
+        isolation: Pick<AgentBridgeChatOptions, 'worker_key' | 'managed_mcp_capability' | 'managed_mcp_require_capability'>,
     ): Promise<number | undefined> {
         if (!this.roomSessionIsCurrent(roomId, sessionId)) return undefined
         const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions, modelContext)
@@ -744,7 +796,9 @@ class AgentClient {
             {
                 ...(modelContext.model ? { model: modelContext.model } : {}),
                 ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+                ...(modelContext.apiMode !== undefined ? { api_mode: modelContext.apiMode } : {}),
                 background_delegation_enabled: this.backgroundDelegationEnabled,
+                ...isolation,
             },
         )
         this.cacheBridgeContext(sessionId, estimate, instructions, modelContext)
@@ -951,7 +1005,8 @@ class AgentClient {
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
-        if (this.participantBinding(roomId)?.runtime === 'coding_agent') {
+        const effectiveBinding = msg.runtimeSnapshot || this.participantBinding(roomId)
+        if (effectiveBinding?.runtime === 'coding_agent') {
             await this.replyToCodingAgentMention(roomId, msg, onStatus)
             return
         }
@@ -1019,11 +1074,28 @@ class AgentClient {
                 }
                 reportStatus('ready')
             }
-            const participantSnapshot = { ...(this.participantBinding(roomId) || {}) }
-            const profileModelContext = await resolveGroupAgentModelContext(this.profile)
+            const participantSnapshot = msg.runtimeSnapshot
+                ? { ...msg.runtimeSnapshot }
+                : { ...(this.participantBinding(roomId) || {}) }
+            const profileModelContext = await resolveGroupAgentModelContext(participantSnapshot.profile || this.profile)
             const modelContext = {
                 model: String(participantSnapshot.model || profileModelContext.model || '').trim(),
                 provider: String(participantSnapshot.provider || profileModelContext.provider || '').trim(),
+                apiMode: String(participantSnapshot.apiMode || ''),
+            }
+            const managedMcpCapability = msg.handoffJobId && msg.handoffLeaseToken
+                ? await issueManagedMcpCapability(this.storage, {
+                    jobId: msg.handoffJobId,
+                    leaseToken: msg.handoffLeaseToken,
+                    participantAgentId: this.agentId,
+                    profile: this.profile,
+                    serverTools: GROUP_CHAT_MANAGED_MCP_SERVER_TOOLS,
+                })
+                : ''
+            const bridgeIsolation = {
+                worker_key: `group-chat:${roomId}:${this.agentId}:${msg.handoffJobId || 'unscoped'}`,
+                managed_mcp_capability: managedMcpCapability,
+                managed_mcp_require_capability: true,
             }
             const routedPrefix = msg.handoffKind === 'fanout'
                 ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
@@ -1101,6 +1173,7 @@ class AgentClient {
                                 estimateInstructions,
                                 modelContext,
                                 'build',
+                                bridgeIsolation,
                             )
                         },
                     })
@@ -1179,6 +1252,7 @@ class AgentClient {
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
                     // Used only if this operation creates the cached AgentSession.
                     background_delegation_enabled: this.backgroundDelegationEnabled,
+                    ...bridgeIsolation,
                 },
             )
             bridgeStarted = true
@@ -1350,7 +1424,10 @@ class AgentClient {
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
-        const binding = this.participantBinding(roomId)
+        const liveBinding = this.participantBinding(roomId)
+        const binding = liveBinding && msg.runtimeSnapshot
+            ? { ...liveBinding, ...msg.runtimeSnapshot }
+            : liveBinding
         const codingAgentId = binding?.codingAgentId
         if (!binding || binding.runtime !== 'coding_agent' || (codingAgentId !== 'claude-code' && codingAgentId !== 'codex')) {
             throw new Error(`Coding agent participant "${this.name}" is not configured`)
@@ -1587,6 +1664,18 @@ class AgentClient {
                 })
             }, eventToken)
 
+            const managedMcpCapability = msg.handoffJobId && msg.handoffLeaseToken
+                ? await issueManagedMcpCapability(this.storage, {
+                    jobId: msg.handoffJobId,
+                    leaseToken: msg.handoffLeaseToken,
+                    participantAgentId: this.agentId,
+                    profile: binding.profile || this.profile,
+                    serverTools: GROUP_CHAT_MANAGED_MCP_SERVER_TOOLS,
+                })
+                : ''
+            const runtimeAuthorityId = msg.handoffJobId && msg.handoffLeaseToken
+                ? `${msg.handoffJobId}:${msg.handoffLeaseToken}`
+                : `unscoped:${randomBytes(16).toString('hex')}`
             const launch = {
                 agentId: codingAgentId,
                 mode: binding.mode || 'scoped',
@@ -1595,6 +1684,7 @@ class AgentClient {
                 apiMode: binding.apiMode as any,
                 reasoningEffort: binding.reasoningEffort,
                 runtimeContext: 'group_chat' as const,
+                runtimeAuthorityId,
             }
             let runId = codingAgentRunManager.runIdForSession(sessionId)
             if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, launch)) {
@@ -1613,6 +1703,11 @@ class AgentClient {
                     reasoningEffort: binding.reasoningEffort,
                     workspace: roomWorkspace || null,
                     runtimeContext: 'group_chat',
+                    // Direct, non-durable mentions receive an intentionally invalid
+                    // token so managed MCP fails closed instead of inheriting Profile
+                    // credentials. Durable handoffs receive their exact capability.
+                    managedMcpCapability: managedMcpCapability || '__group_chat_capability_required__',
+                    runtimeAuthorityId,
                 })
                 if (!executionIsCurrent()) {
                     await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false, graceMs: 15_000 })
@@ -2456,6 +2551,8 @@ export class AgentClients {
         depth: number
         kind: 'mention' | 'fixed' | 'fanout'
         leaseToken: string
+        targetConfigRevision: number
+        targetRuntimeConfigJson: string
     }, source: MentionMessage): Promise<void> {
         const agent = this.getAgents(job.roomId).find(candidate => candidate.agentId === job.targetAgentId)
         if (!agent) {
@@ -2463,9 +2560,16 @@ export class AgentClients {
             err.safeRetry = true
             throw err
         }
+        const runtimeSnapshot = parseParticipantRuntimeSnapshot(job.targetRuntimeConfigJson)
         const binding = this._storage?.getRoomAgentByAgentId?.(job.roomId, job.targetAgentId)
         if (!binding || String(binding.sessionId || '') !== job.targetSessionId) {
             throw new Error(`Handoff target session changed for ${job.targetAgentId}`)
+        }
+        if (String(binding.profile || '') !== runtimeSnapshot.profile
+            || String(binding.runtime || 'hermes') !== runtimeSnapshot.runtime
+            || String(binding.codingAgentId || '') !== runtimeSnapshot.codingAgentId
+            || String(binding.mode || 'scoped') !== runtimeSnapshot.mode) {
+            throw new Error(`Handoff target runtime identity changed for ${job.targetAgentId}`)
         }
         let chainRequest = ''
         if (job.kind === 'fixed' && job.depth > 0) {
@@ -2485,6 +2589,7 @@ export class AgentClients {
             handoffKind: job.kind,
             ...(chainRequest ? { chainRequest } : {}),
             targetSessionId: job.targetSessionId,
+            runtimeSnapshot,
         })
         const completed = this._storage?.getHandoffJob?.(job.id)
         if (!completed || !['completed', 'failed'].includes(completed.status)) {
@@ -2545,12 +2650,16 @@ export class AgentClients {
         const queue = this._mentionQueue.get(agentKey)
         if (!queue || queue.length === 0) return
 
-        this._mentionQueue.delete(agentKey)
-        logger.debug(`[AgentClients] draining ${queue.length} queued mention(s) for ${agentKey}`)
-
-        // Process the last queued mention only (most recent, discards stale intermediate ones)
-        const last = queue[queue.length - 1]
-        await this._processAgentMention(roomId, last.agent, last.msg)
+        const next = queue.shift()
+        if (queue.length === 0) this._mentionQueue.delete(agentKey)
+        if (!next) return
+        const currentAgent = this.rooms.get(roomId)?.get(next.agent.agentId)
+        if (currentAgent !== next.agent) {
+            await this._drainQueue(agentKey, roomId)
+            return
+        }
+        logger.debug(`[AgentClients] draining queued mention for ${agentKey}; ${queue.length} remaining`)
+        await this._processAgentMention(roomId, next.agent, next.msg)
     }
 }
 

@@ -11,6 +11,9 @@ const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`
 const DISPLAY_COMMAND = 'hermes-studio-mcp'
 const SERVER_NAME = process.env.HERMES_MCP_SERVER_NAME || DISPLAY_COMMAND
 const TOOLSETS = new Set(['api', 'browser', 'devices', 'use'])
+const MANAGED_MCP = String(process.env.HERMES_WEB_UI_MANAGED_MCP || '').trim() === '1'
+const MANAGED_CAPABILITY = String(process.env.HERMES_STUDIO_MCP_CAPABILITY || '').trim()
+const REQUIRE_MANAGED_CAPABILITY = String(process.env.HERMES_STUDIO_MCP_REQUIRE_CAPABILITY || '').trim() === '1' || Boolean(MANAGED_CAPABILITY)
 const ALLOWED_PUBLIC_REQUEST_HEADERS = new Set([
   'accept',
   'accept-language',
@@ -152,6 +155,26 @@ async function request(path, options = {}) {
     throw new Error(envelope.body?.error || envelope.bodyText || `HTTP ${envelope.status}`)
   }
   return envelope.body
+}
+
+async function authorizeManagedTool(tool) {
+  if (!MANAGED_MCP || !REQUIRE_MANAGED_CAPABILITY) return
+  if (!MANAGED_CAPABILITY) throw new Error('Managed MCP capability is required')
+  const response = await fetch(`${baseUrl()}/api/internal/managed-mcp/capabilities/authorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      capability: MANAGED_CAPABILITY,
+      server: SERVER_NAME,
+      toolset: ACTIVE_TOOLSET,
+      tool,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.error || `Managed MCP capability rejected (HTTP ${response.status})`)
+  }
 }
 
 function appendQuery(path, query) {
@@ -1746,6 +1769,7 @@ async function callTool(name, args = {}) {
   const resolvedName = resolveToolName(name)
   const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
   if (resolvedName === categoryToolset?.name) return await callCategoryToolset(args)
+  await authorizeManagedTool(resolvedName)
   switch (resolvedName) {
     case 'hermes_studio_browser_tabs': {
       if (args.action === 'list') return jsonText(await browserRequest('tabs.list'))

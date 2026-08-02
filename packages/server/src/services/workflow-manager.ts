@@ -1155,7 +1155,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     if (!sessionId) return
     const existing = getSession(sessionId)
     if (isWorkflowCodingAgentSession(existing)) {
-      codingAgentRunManager.stop(sessionId, { reportClosed: false })
+      if (codingAgentRunManager.runIdForSession(sessionId)) {
+        const stopped = await codingAgentRunManager.stopAndWait(sessionId, { reportClosed: false })
+        if (!stopped) throw new Error(`Coding agent process tree termination could not be verified for session ${sessionId}`)
+      }
     } else if (agent === 'hermes') {
       await deleteHermesSessionIfPresent(sessionId, profile || existing?.profile || 'default')
     }

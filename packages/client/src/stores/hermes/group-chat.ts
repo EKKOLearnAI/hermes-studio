@@ -145,7 +145,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const currentRoomId = ref<string | null>(null)
     const roomAuthorityGeneration = ref(0)
     watch(currentRoomId, (roomId, previousRoomId) => {
-        if (roomId !== previousRoomId) roomAuthorityGeneration.value += 1
+        if (roomId === previousRoomId) return
+        roomAuthorityGeneration.value += 1
+        // Activity is scoped to one Room authority generation. Clear it
+        // synchronously so a late stream event from the previous Room cannot
+        // leave the Activity Dock lit while the next Room is loading.
+        contextStatuses.value = new Map()
+        activeStreamByAgent.clear()
     }, { flush: 'sync' })
     const rooms = ref<RoomInfo[]>([])
     const messages = ref<ChatMessage[]>([])
@@ -162,6 +168,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const serverMentionProtocolVersion = ref(0)
     const typingUsers = ref<Map<string, { name: string; timer: ReturnType<typeof setTimeout> }>>(new Map())
     const contextStatuses = ref<Map<string, { agentId: string; agentName: string; status: string }>>(new Map())
+    const activeStreamByAgent = new Map<string, string>()
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const totalMessages = ref(0)
@@ -343,6 +350,31 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredGroupUserName() || getStoredUsername() || '')
 
+    function normalizePendingApproval(data: any): GroupPendingApproval | null {
+        if (!data?.approval_id) return null
+        const description = data.description || ''
+        const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
+        const isMemoryWrite = !Boolean(data.allow_permanent) && (
+            normalizedDescription === 'save to memory' ||
+            normalizedDescription.startsWith('save to memory:') ||
+            normalizedDescription.startsWith('save to memory?')
+        )
+        const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
+            .filter((choice: unknown): choice is GroupPendingApproval['choices'][number] =>
+                choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+        return {
+            roomId: String(data.roomId || ''),
+            agentName: String(data.agentName || ''),
+            approvalId: String(data.approval_id),
+            command: String(data.command || ''),
+            description,
+            choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
+            allowPermanent: Boolean(data.allow_permanent),
+            isMemoryWrite,
+            requestedAt: Date.now(),
+        }
+    }
+
     function upsertRoom(room: RoomInfo | undefined | null) {
         if (!room) return
         const idx = rooms.value.findIndex(existing => existing.id === room.id)
@@ -399,6 +431,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         } else {
             contextStatuses.value.clear()
         }
+        activeStreamByAgent.clear()
+        const reconciledApprovals = new Map<string, GroupPendingApproval>()
+        for (const raw of Array.isArray(res.pendingApprovals) ? res.pendingApprovals : []) {
+            const approval = normalizePendingApproval(raw)
+            if (approval && approval.roomId === currentRoomId.value) reconciledApprovals.set(approval.approvalId, approval)
+        }
+        pendingApprovals.value = reconciledApprovals
     }
 
     async function waitForRealtimeSocket(socket: GroupChatSocket, generation: number): Promise<void> {
@@ -568,6 +607,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('disconnect', (reason) => {
             console.log('[GroupChat] disconnected:', reason)
             connected.value = false
+            for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
+            typingUsers.value.clear()
+            contextStatuses.value = new Map()
+            activeStreamByAgent.clear()
+            pendingApprovals.value = new Map()
         })
 
         socket.on('connect_error', (err: Error) => {
@@ -605,6 +649,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 if (autoPlaySpeechEnabled.value && resolvedMsg.role === 'assistant' && resolvedMsg.content?.trim()) {
                     setTimeout(() => playMessageSpeech(resolvedMsg.id, resolvedMsg.content), 300)
                 }
+                if (activeStreamByAgent.get(resolvedMsg.senderId) === resolvedMsg.id) {
+                    activeStreamByAgent.delete(resolvedMsg.senderId)
+                    contextStatuses.value.delete(resolvedMsg.senderId)
+                    contextStatuses.value = new Map(contextStatuses.value)
+                }
             }
         })
 
@@ -621,6 +670,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             ))
             msg.isStreaming = true
             msg.firstSeenAt = msg.firstSeenAt ?? msg.timestamp ?? Date.now()
+            if (msg.senderId) activeStreamByAgent.set(msg.senderId, msg.id)
             const idx = messages.value.findIndex(m => m.id === msg.id)
             if (idx >= 0) {
                 const existing = messages.value[idx]
@@ -668,6 +718,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('message_stream_end', (data: { roomId: string; id: string }) => {
             if (data.roomId !== currentRoomId.value) return
             const idx = messages.value.findIndex(m => m.id === data.id)
+            const senderId = idx >= 0 ? messages.value[idx].senderId : ''
             if (
                 idx >= 0 &&
                 !messages.value[idx].content?.trim() &&
@@ -684,6 +735,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 if (needsFinalContentRecovery(messages.value[idx])) {
                     scheduleMissingFinalContentRecovery(data.roomId, data.id)
                 }
+            }
+            if (senderId && activeStreamByAgent.get(senderId) === data.id) {
+                activeStreamByAgent.delete(senderId)
+                contextStatuses.value.delete(senderId)
+                contextStatuses.value = new Map(contextStatuses.value)
             }
         })
 
@@ -727,6 +783,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 const agentId = String(data.agentId || data.agentName)
                 if (data.status === 'ready') {
                     contextStatuses.value.delete(agentId)
+                    activeStreamByAgent.delete(agentId)
                     messages.value = messages.value
                         .map(m => (
                             (m.senderId === agentId || (!data.agentId && m.senderName === data.agentName)) && m.isStreaming
@@ -748,28 +805,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
 
         socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
-            if (!data.approval_id) return
-            const description = data.description || ''
-            const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
-            const isMemoryWrite = !Boolean(data.allow_permanent) && (
-                normalizedDescription === 'save to memory' ||
-                normalizedDescription.startsWith('save to memory:') ||
-                normalizedDescription.startsWith('save to memory?')
-            )
-            const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
-                .filter((choice): choice is GroupPendingApproval['choices'][number] =>
-                    choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
-            pendingApprovals.value.set(data.approval_id, {
-                roomId: data.roomId,
-                agentName: data.agentName || '',
-                approvalId: data.approval_id,
-                command: data.command || '',
-                description,
-                choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
-                allowPermanent: Boolean(data.allow_permanent),
-                isMemoryWrite,
-                requestedAt: Date.now(),
-            })
+            const approval = normalizePendingApproval(data)
+            if (!approval || approval.roomId !== currentRoomId.value) return
+            pendingApprovals.value.set(approval.approvalId, approval)
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
@@ -792,6 +830,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 resetMessagePaging()
                 typingUsers.value.clear()
                 contextStatuses.value.clear()
+                activeStreamByAgent.clear()
                 pendingApprovals.value.clear()
             }
         })
@@ -834,6 +873,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         roomName.value = ''
         typingUsers.value.clear()
         contextStatuses.value.clear()
+        activeStreamByAgent.clear()
         pendingApprovals.value.clear()
     }
 
@@ -1118,6 +1158,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             resetMessagePaging()
             typingUsers.value.clear()
             contextStatuses.value.clear()
+            activeStreamByAgent.clear()
             const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
             if (idx >= 0 && res.room) rooms.value[idx] = res.room
             await loadAgents(roomId)
@@ -1234,6 +1275,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         if (_typingTimer) { clearTimeout(_typingTimer); _typingTimer = null }
     }
 
+    async function interruptHandoffChain(chainId: string) {
+        const socket = getSocket()
+        if (!socket || !currentRoomId.value) return
+        await new Promise<void>((resolve, reject) => {
+            socket.emit('interrupt_handoff_chain', { roomId: currentRoomId.value, chainId }, (res: any) => {
+                if (res?.error) reject(new Error(res.error))
+                else resolve()
+            })
+        })
+    }
+
     async function interruptAgent(agentId: string) {
         const socket = getSocket()
         if (!socket || !currentRoomId.value) return
@@ -1308,6 +1360,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         loadRooms,
         emitTyping,
         emitStopTyping,
+        interruptHandoffChain,
         interruptAgent,
         respondApproval,
         createNewRoom,

@@ -132,6 +132,31 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.socket.disconnect.mockClear()
   })
 
+  it('clears active reply generations immediately when switching rooms', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('context_status', { roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', status: 'replying' })
+    emitSocket('message_stream_start', assistantMessage({ id: 'room-1-run', senderId: 'agent-1', senderName: 'Worker' }))
+    store.currentRoomId = 'room-2'
+
+    expect(store.contextStatuses.size).toBe(0)
+  })
+
+  it('keeps only the newest reply generation active and clears it on its terminal stream event', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('context_status', { roomId: 'room-1', agentId: 'agent-1', agentName: 'Worker', status: 'replying' })
+    emitSocket('message_stream_start', assistantMessage({ id: 'old-run', senderId: 'agent-1', senderName: 'Worker' }))
+    emitSocket('message_stream_start', assistantMessage({ id: 'new-run', senderId: 'agent-1', senderName: 'Worker', timestamp: 2 }))
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'old-run' })
+
+    expect(store.contextStatuses.has('agent-1')).toBe(true)
+
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'new-run' })
+
+    expect(store.contextStatuses.has('agent-1')).toBe(false)
+  })
+
   it('preserves streamed reasoning when the final message supplies content only', async () => {
     const store = await createJoinedStore()
 

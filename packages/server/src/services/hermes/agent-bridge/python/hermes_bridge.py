@@ -251,9 +251,13 @@ class BridgeBroker(_broker.BridgeBroker):
         _sync_broker_patches()
         super().__init__(endpoint, agent_root, hermes_home)
 
-    def _worker_for_profile(self, profile: str, worker_key: str | None = None) -> WorkerProcess:
+    def _worker_for_profile(self, profile: str, worker_key: str | None = None,
+                            managed_mcp_capability: str | None = None,
+                            require_managed_mcp_capability: bool = False) -> WorkerProcess:
         _sync_broker_patches()
-        return super()._worker_for_profile(profile, worker_key)
+        return super()._worker_for_profile(
+            profile, worker_key, managed_mcp_capability, require_managed_mcp_capability
+        )
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         _sync_broker_patches()

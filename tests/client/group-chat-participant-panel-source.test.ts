@@ -28,6 +28,15 @@ const roomHandoffLocaleKeys = [
   'handoffRunning',
   'handoffFailed',
   'handoffInterrupted',
+  'activityDock',
+  'activityStep',
+  'viewHandoffProgress',
+  'stopHandoff',
+  'stopReply',
+  'stoppingActivity',
+  'activityCompleted',
+  'activityRunning',
+  'activityPending',
 ]
 
 describe('GroupChatPanel mixed-runtime participant UI contract', () => {
@@ -127,9 +136,9 @@ describe('GroupChatPanel mixed-runtime participant UI contract', () => {
   })
 
   it('uses stable participant identity for interrupt and remove controls', () => {
-    expect(panelSource).toContain('handleInterruptAgent(status.agentId)')
+    expect(panelSource).toContain('stopActivityReply(status.agentId)')
     expect(panelSource).toContain('handleRemoveAgent(agent.agentId)')
-    expect(panelSource).not.toContain('handleInterruptAgent(agent.name)')
+    expect(panelSource).not.toContain('stopActivityReply(agent.name)')
     expect(panelSource).not.toContain('handleRemoveAgent(agent.name)')
   })
 

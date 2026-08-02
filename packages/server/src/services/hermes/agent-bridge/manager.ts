@@ -222,17 +222,26 @@ function firstExistingExecutable(candidates: string[]): string | undefined {
 }
 
 function resolveAgentRoot(explicit?: string, hermesHome = detectHermesHome()): string | undefined {
+  const hermesBinRoot = agentRootFromHermesBin()
+  // An explicit HERMES_BIN is an immutable runtime selection. Do not silently
+  // pair it with an unrelated system-wide Hermes Agent installation when that
+  // selected command has no adjacent source/package root.
+  const conventionalRoots = process.env.HERMES_BIN?.trim()
+    ? []
+    : [
+        '/usr/local/lib/hermes-agent',
+        '/usr/local/hermes-agent',
+        '/opt/hermes/hermes-agent',
+        '/opt/hermes-agent',
+      ]
   const candidates = [
     explicit,
     process.env.HERMES_AGENT_ROOT,
     join(hermesHome, 'hermes-agent'),
-    agentRootFromHermesBin(),
+    hermesBinRoot,
     process.cwd(),
     join(process.cwd(), 'hermes-agent'),
-    '/usr/local/lib/hermes-agent',
-    '/usr/local/hermes-agent',
-    '/opt/hermes/hermes-agent',
-    '/opt/hermes-agent',
+    ...conventionalRoots,
   ].filter((value): value is string => !!value && value.trim().length > 0)
   return candidates.find(candidate => existsSync(join(candidate, 'run_agent.py')))
 }

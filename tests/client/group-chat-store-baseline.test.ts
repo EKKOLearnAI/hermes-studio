@@ -670,6 +670,26 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.pendingApprovals.size).toBe(0)
   })
 
+  it('keeps a pending approval visible when Bridge reports unresolved', async () => {
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+    emitSocket('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      approval_id: 'approval-unresolved',
+      command: 'touch file',
+      choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: any, ack?: Function) => {
+      if (event === 'approval.respond' && ack) ack({ error: 'Approval response was not resolved', resolved: false })
+      return groupChatApiMock.socket
+    })
+
+    await expect(store.respondApproval('once')).rejects.toThrow('Approval response was not resolved')
+    expect(store.pendingApprovals.has('approval-unresolved')).toBe(true)
+  })
+
   it('tracks pending approvals and removes them when resolved', async () => {
     const store = await loadStore()
     await store.connect()

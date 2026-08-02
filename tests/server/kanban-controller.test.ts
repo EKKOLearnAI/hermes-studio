@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const originalKanbanHome = process.env.HERMES_KANBAN_HOME
 
 const mockReadFile = vi.hoisted(() => vi.fn())
 const mockListBoards = vi.hoisted(() => vi.fn())
@@ -99,6 +101,7 @@ function ctx(overrides: Record<string, any> = {}) {
 describe('kanban controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    process.env.HERMES_KANBAN_HOME = '/Users/tester/.hermes'
     mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }])
     mockGetTask.mockImplementation(async (id: string) => ({
       task: { id, assignee: null, status: 'ready' },
@@ -106,6 +109,11 @@ describe('kanban controller', () => {
       events: [],
       runs: [],
     }))
+  })
+
+  afterEach(() => {
+    if (originalKanbanHome === undefined) delete process.env.HERMES_KANBAN_HOME
+    else process.env.HERMES_KANBAN_HOME = originalKanbanHome
   })
 
   it('lists boards and tasks with explicit/default board context', async () => {

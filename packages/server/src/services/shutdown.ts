@@ -50,7 +50,13 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
     isShuttingDown = true
 
     const stopAgentBridge = Boolean(agentBridgeManager && shouldStopAgentBridgeOnShutdown(signal))
+    // Start Coding Agent process-tree cleanup immediately. It must not sit
+    // behind preview/gateway/bridge teardown that can hang until the deadline.
+    const codingAgentShutdown = typeof (codingAgentRunManager as any).shutdownAndWait === 'function'
+      ? (codingAgentRunManager as any).shutdownAndWait()
+      : Promise.resolve((codingAgentRunManager.shutdown(), true))
 
+    let exitCode = 0
     // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
     // to stop worker subprocesses, so this cap must be longer than that.
     const forceExitTimer = setTimeout(() => {
@@ -61,7 +67,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
           logger.warn(err, 'Failed to force-stop agent bridge during shutdown timeout')
         }
       }
-      process.exit(0)
+      process.exit(exitCode || 1)
     }, getShutdownForceExitMs())
 
     logger.info('Shutting down (%s)...', signal)
@@ -89,7 +95,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
       // Stop accepting/routing chat work before stopping the bridge. This lets
       // ChatRunSocket release any claimed background completion back to Hermes
       // while the broker is still reachable.
-      groupChatServer?.stopHandoffDispatcher?.()
+      await groupChatServer?.stopHandoffDispatcher?.()
       if (chatRunServer) {
         await chatRunServer.close()
         logger.info('ChatRunSocket closed')
@@ -111,7 +117,8 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
       stopAppRelayClient()
       logger.info('App relay clients closed')
 
-      codingAgentRunManager.shutdown()
+      const codingAgentsStopped = await codingAgentShutdown
+      if (!codingAgentsStopped) throw new Error('Coding agent process-tree shutdown could not be verified')
       logger.info('Coding agent hidden sessions closed')
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
@@ -133,12 +140,13 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         )))
       }
     } catch (err) {
-      logger.error(err, 'Shutdown error')
+      exitCode = 1
+      logger.error(err, 'Shutdown error; exiting non-zero without declaring graceful completion')
     }
 
-    closeDb()
+    if (exitCode === 0) closeDb()
     clearTimeout(forceExitTimer)
-    process.exit(0)
+    process.exit(exitCode)
   }
 }
 

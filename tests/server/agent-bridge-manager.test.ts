@@ -35,6 +35,8 @@ describe('agent bridge manager command resolution', () => {
     delete process.env.HERMES_AGENT_ROOT
     delete process.env.HERMES_AGENT_BRIDGE_PYTHON
     delete process.env.HERMES_AGENT_BRIDGE_UV
+    delete process.env.HERMES_AGENT_BRIDGE_WORKER_PROFILE
+    delete process.env.HERMES_BIN
     delete process.env.UV
   })
 
