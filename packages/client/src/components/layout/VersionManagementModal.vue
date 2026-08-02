@@ -195,6 +195,10 @@ function formatBytes(value?: number): string {
   return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
 }
 
+function displayHermesAgentVersion(value?: string): string {
+  return value?.split('·')[0]?.trim() || '-'
+}
+
 function jobProgressText(job: VersionDownloadJob): string {
   if (job.receivedBytes && job.totalBytes) {
     return `${formatBytes(job.receivedBytes)} / ${formatBytes(job.totalBytes)}`
@@ -305,10 +309,30 @@ async function removeWebUi(version: string) {
             </div>
             <NButton size="small" secondary @click="loadAll">{{ t('runtimeVersions.refresh') }}</NButton>
           </div>
-          <div class="active-path">
-            <span>{{ t('runtimeVersions.activeVersion') }}: {{ status?.hermes.activeVersion || '-' }}</span>
-            <span :title="status?.hermes.activeDirectory || ''">{{ status?.hermes.activeDirectory || '-' }}</span>
+          <div class="active-path stacked">
+            <span
+              data-testid="active-hermes-agent-version"
+              :title="status?.hermes.agentVersion || ''"
+            >
+              {{ t('runtimeVersions.currentHermesAgentVersion') }}: {{ displayHermesAgentVersion(status?.hermes.agentVersion) }}
+            </span>
+            <span
+              data-testid="active-runtime-directory"
+              :title="status?.hermes.activeDirectory || ''"
+            >
+              {{ t('runtimeVersions.activeRuntimeDirectory') }}: {{ status?.hermes.activeDirectory || '-' }}
+            </span>
           </div>
+          <NAlert
+            data-testid="runtime-cli-update-note"
+            type="info"
+            :bordered="false"
+          >
+            <div class="runtime-update-note">
+              <span>{{ t('runtimeVersions.cliUpdateDescription') }}</span>
+              <code>hermes-studio cli update</code>
+            </div>
+          </NAlert>
           <div class="runtime-directory-control">
             <div class="runtime-directory-value">
               <strong>{{ t('runtimeVersions.runtimeDirectory') }}</strong>
@@ -575,6 +599,22 @@ async function removeWebUi(version: string) {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  &.stacked {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+
+    span {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    span:last-child {
+      color: var(--text-color-3);
+    }
+  }
 }
 
 .runtime-directory-control {
@@ -585,6 +625,21 @@ async function removeWebUi(version: string) {
   padding: 8px 10px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
+}
+
+.runtime-update-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  code {
+    width: fit-content;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--hover-color);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+  }
 }
 
 .runtime-directory-value {

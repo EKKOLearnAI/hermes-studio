@@ -47,6 +47,7 @@ function runtimeStatus() {
     remoteError: '',
     hermes: {
       activeVersion: '0.18.0',
+      agentVersion: 'v0.19.1 (2026.7.30) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
       activeDirectory: '/state/desktop-runtime/hermes/0.18.0/mac-arm64',
       storageDirectory: '/state/desktop-runtime',
       defaultStorageDirectory: '/state/desktop-runtime',
@@ -74,6 +75,31 @@ describe('VersionManagementModal Runtime storage selector', () => {
     api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
     api.fetchVersionDownloadJobs.mockResolvedValue({ jobs: [] })
     api.selectRuntimeRoot.mockResolvedValue({ success: true, active: {} })
+  })
+
+  it('explains how to update Hermes Runtime from the command line', async () => {
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const note = wrapper.get('[data-testid="runtime-cli-update-note"]')
+    expect(note.text()).toContain('runtimeVersions.cliUpdateDescription')
+    expect(note.text()).toContain('hermes-studio cli update')
+  })
+
+  it('shows the installed Hermes Agent version instead of the Runtime package version', async () => {
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const activeVersion = wrapper.get('[data-testid="active-hermes-agent-version"]')
+    expect(activeVersion.text()).toContain('v0.19.1 (2026.7.30)')
+    expect(activeVersion.text()).not.toContain('upstream')
+    expect(activeVersion.text()).not.toContain('0.18.0')
+    expect(activeVersion.attributes('title')).toContain('local 470cf66b')
+
+    const runtimeDirectory = wrapper.get('[data-testid="active-runtime-directory"]')
+    expect(runtimeDirectory.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64')
   })
 
   it('opens the desktop picker and schedules migration to the selected directory', async () => {

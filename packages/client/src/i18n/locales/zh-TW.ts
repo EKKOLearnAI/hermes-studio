@@ -259,6 +259,9 @@ export default {
   runtimeVersions: {
     title: '版本管理',
     runtimeTitle: 'Hermes Runtime',
+    currentHermesAgentVersion: '目前 Hermes Agent 版本',
+    activeRuntimeDirectory: '目前 Runtime 路徑',
+    cliUpdateDescription: 'Hermes Runtime 0.19.1 及以上版本支援透過以下指令單獨升級內建的 Hermes Agent；此指令不會升級 Hermes Studio 桌面端或 Web UI。執行前請先完全結束 Hermes Studio：',
     webUiTitle: 'Web UI',
     platform: '平台',
     currentWebUi: '目前 Web UI',

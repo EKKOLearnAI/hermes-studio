@@ -271,6 +271,9 @@ export default {
   runtimeVersions: {
     title: '버전 관리',
     runtimeTitle: 'Hermes Runtime',
+    currentHermesAgentVersion: '현재 Hermes Agent 버전',
+    activeRuntimeDirectory: '현재 Runtime 경로',
+    cliUpdateDescription: 'Hermes Runtime 0.19.1 이상에서는 다음 명령으로 내장 Hermes Agent만 업데이트할 수 있습니다. Hermes Studio 데스크톱 앱이나 Web UI는 업데이트되지 않습니다. 실행 전에 Hermes Studio를 완전히 종료하세요:',
     webUiTitle: 'Web UI',
     platform: '플랫폼',
     currentWebUi: '현재 Web UI',

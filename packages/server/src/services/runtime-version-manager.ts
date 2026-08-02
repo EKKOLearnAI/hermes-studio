@@ -5,7 +5,7 @@ import { get as httpsGet } from 'https'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import * as tar from 'tar'
 import { config } from '../config'
-import { getHermesWebUiVersion } from './system-info'
+import { getHermesAgentVersion, getHermesWebUiVersion } from './system-info'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
 const DEFAULT_REMOTE_MANIFEST_URL = 'https://hermes-studio.ai/versions.json'
@@ -76,6 +76,7 @@ export interface RuntimeVersionStatus {
   remoteError: string
   hermes: {
     activeVersion: string
+    agentVersion: string
     activeDirectory: string
     storageDirectory: string
     defaultStorageDirectory: string
@@ -335,7 +336,10 @@ async function fetchRemoteVersions(): Promise<{ manifest: RemoteVersionManifest 
 
 export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
   const active = readActiveVersionManifest()
-  const { manifest, error } = await fetchRemoteVersions()
+  const [{ manifest, error }, agentVersion] = await Promise.all([
+    fetchRemoteVersions(),
+    getHermesAgentVersion(),
+  ])
   const webUiVersion = getHermesWebUiVersion()
 
   return {
@@ -346,6 +350,7 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
     remoteError: error,
     hermes: {
       activeVersion: active?.hermesRuntimeVersion || '',
+      agentVersion,
       activeDirectory: active?.runtimeDirectory || '',
       storageDirectory: runtimeStorageRoot(active),
       defaultStorageDirectory: defaultDesktopRuntimeRoot(),

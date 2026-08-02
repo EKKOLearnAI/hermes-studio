@@ -57,6 +57,7 @@ export interface RuntimeVersionStatus {
   remoteError: string
   hermes: {
     activeVersion: string
+    agentVersion: string
     activeDirectory: string
     storageDirectory: string
     defaultStorageDirectory: string

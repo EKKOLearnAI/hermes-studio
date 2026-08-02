@@ -259,6 +259,9 @@ export default {
   runtimeVersions: {
     title: 'Version Management',
     runtimeTitle: 'Hermes Runtime',
+    currentHermesAgentVersion: 'Current Hermes Agent version',
+    activeRuntimeDirectory: 'Active Runtime directory',
+    cliUpdateDescription: 'Hermes Runtime 0.19.1 and later can use the following command to update the bundled Hermes Agent only. It does not update the Hermes Studio desktop app or Web UI. Fully quit Hermes Studio before running:',
     webUiTitle: 'Web UI',
     platform: 'Platform',
     currentWebUi: 'Current Web UI',

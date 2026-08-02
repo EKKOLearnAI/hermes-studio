@@ -70,6 +70,10 @@ export function normalizeHermesAgentVersion(raw: string): string {
   return raw.split('\n')[0]?.replace(/^Hermes Agent\s+/, '').trim() || ''
 }
 
+export async function getHermesAgentVersion(): Promise<string> {
+  return normalizeHermesAgentVersion(await hermesCli.getVersion())
+}
+
 function isValidDeviceIdentity(value: any): value is DeviceIdentity {
   return typeof value?.device_id === 'string' &&
     value.device_id.length >= 16 &&
@@ -152,7 +156,7 @@ export function verifyDeviceSignature(input: {
 }
 
 export async function getPublicSystemInfo(): Promise<PublicSystemInfo> {
-  const hermesAgentVersion = normalizeHermesAgentVersion(await hermesCli.getVersion())
+  const hermesAgentVersion = await getHermesAgentVersion()
   const identity = await getDeviceIdentity()
 
   return {

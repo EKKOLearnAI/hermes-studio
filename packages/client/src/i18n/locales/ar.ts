@@ -259,6 +259,9 @@ export default {
   runtimeVersions: {
     title: 'إدارة الإصدارات',
     runtimeTitle: 'Hermes Runtime',
+    currentHermesAgentVersion: 'إصدار Hermes Agent الحالي',
+    activeRuntimeDirectory: 'مسار Runtime النشط',
+    cliUpdateDescription: 'في Hermes Runtime بالإصدار 0.19.1 والإصدارات الأحدث، يحدّث الأمر التالي Hermes Agent المضمّن فقط. ولا يحدّث تطبيق Hermes Studio لسطح المكتب أو Web UI. أغلق Hermes Studio بالكامل قبل تنفيذه:',
     webUiTitle: 'واجهة الويب',
     platform: 'المنصة',
     currentWebUi: 'واجهة الويب الحالية',

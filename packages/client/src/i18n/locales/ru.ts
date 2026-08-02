@@ -181,6 +181,9 @@ export default {
   runtimeVersions: {
     title: 'Управление версиями',
     runtimeTitle: 'Hermes Runtime',
+    currentHermesAgentVersion: 'Текущая версия Hermes Agent',
+    activeRuntimeDirectory: 'Путь к активному Runtime',
+    cliUpdateDescription: 'В Hermes Runtime версии 0.19.1 и новее следующая команда обновляет только встроенный Hermes Agent. Она не обновляет настольное приложение Hermes Studio или Web UI. Перед выполнением полностью закройте Hermes Studio:',
     webUiTitle: 'Web UI',
     platform: 'Платформа',
     currentWebUi: 'Текущий Web UI',
