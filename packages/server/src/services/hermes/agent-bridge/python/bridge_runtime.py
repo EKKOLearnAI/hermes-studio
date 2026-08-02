@@ -894,15 +894,19 @@ def _log_worker_startup_context(profile: str | None) -> None:
         })
 
 
-def _load_reasoning_config() -> dict[str, Any] | None:
+def _load_reasoning_config(model: str = "") -> dict[str, Any] | None:
     _ensure_agent_imports()
     try:
-        from hermes_constants import parse_reasoning_effort
+        from hermes_constants import resolve_reasoning_config
+    except ImportError:
+        try:
+            from hermes_constants import parse_reasoning_effort
 
-        effort = str((_load_cfg().get("agent") or {}).get("reasoning_effort", "") or "").strip()
-        return parse_reasoning_effort(effort)
-    except Exception:
-        return None
+            effort = str((_load_cfg().get("agent") or {}).get("reasoning_effort", "") or "").strip()
+            return parse_reasoning_effort(effort)
+        except Exception:
+            return None
+    return resolve_reasoning_config(_load_cfg(), model)
 
 
 def _load_service_tier() -> str | None:

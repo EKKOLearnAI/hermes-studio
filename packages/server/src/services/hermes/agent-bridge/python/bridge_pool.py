@@ -313,7 +313,7 @@ class AgentPool:
                     credential_pool=runtime.get("credential_pool"),
                     quiet_mode=True,
                     verbose_logging=False,
-                    reasoning_config=_load_reasoning_config(),
+                    reasoning_config=_load_reasoning_config(resolved_model),
                     service_tier=_load_service_tier(),
                     enabled_toolsets=_load_enabled_toolsets(),
                     platform=_bridge_platform(),
