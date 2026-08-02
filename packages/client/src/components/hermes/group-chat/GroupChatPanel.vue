@@ -1011,7 +1011,7 @@ function handleMessageParticipantAvatar(payload: { participantId: string, messag
 }
 
 function handleParticipantQuickShowUpdate(show: boolean) {
-    if (!show) closeParticipantQuickSettings()
+    if (!show) closeParticipantQuickSettings(true)
 }
 
 function handleParticipantQuickClickOutside(event: MouseEvent) {

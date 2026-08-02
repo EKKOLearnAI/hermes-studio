@@ -28,6 +28,7 @@ describe('Group Chat participant avatar direct controls', () => {
     expect(panelSource).toContain('class="participant-quick-settings message-participant-quick-settings"')
     expect(panelSource).toContain(':x="participantQuickX"')
     expect(panelSource).toContain(':y="participantQuickY"')
+    expect(panelSource).toContain('if (!show) closeParticipantQuickSettings(true)')
     expect(panelSource).toContain("reasoningEffort: pending.value || ''")
     expect(panelSource).toContain('value: reasoningEffort')
     expect(panelSource).toContain('participantQuickKey(roomId, agent.agentId, authorityGeneration)')
@@ -80,7 +81,8 @@ describe('Group Chat participant avatar direct controls', () => {
   it('localizes the direct avatar controls in every shipped locale', () => {
     for (const file of localeFiles) {
       const source = readFileSync(`packages/client/src/i18n/locales/${file}`, 'utf8')
-      for (const key of localeKeys) expect(source).toContain(`${key}:`)
+      for (const key of localeKeys) expect(source, `${file} should localize ${key}`).toContain(`${key}:`)
+      expect(source, `${file} should not use vue-i18n linked-message syntax in mentionParticipant`).not.toMatch(/mentionParticipant:\s*['\"]@/)
     }
   })
 
