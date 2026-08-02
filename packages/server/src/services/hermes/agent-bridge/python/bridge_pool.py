@@ -458,6 +458,10 @@ class AgentPool:
         if not callable(switch_model):
             raise RuntimeError("loaded agent does not support switch_model")
 
+        with _profile_env(target_profile):
+            _refresh_worker_profile_env()
+            reasoning_config = _load_reasoning_config(requested_model)
+
         switch_model(
             new_model=requested_model,
             new_provider=resolved_provider,
@@ -465,6 +469,7 @@ class AgentPool:
             base_url=runtime.get("base_url") or "",
             api_mode=runtime.get("api_mode") or "",
         )
+        session.agent.reasoning_config = reasoning_config
         if resolved_provider.lower() == "moa":
             self._install_moa_reference_callback(session)
         session.config.update({

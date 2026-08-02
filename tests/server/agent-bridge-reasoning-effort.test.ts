@@ -100,6 +100,10 @@ class FakeAIAgent:
         self.raise_on_run = False
         self.run_reasoning_configs = []
 
+    def switch_model(self, **kwargs):
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+
     def run_conversation(self, _message, **_kwargs):
         self.run_reasoning_configs.append(dict(self.reasoning_config or {}))
         if self.raise_on_run:
@@ -148,6 +152,23 @@ print(json.dumps({
       { model: 'gpt-5.6-sol', received_config: true },
       { model: 'gpt-5.6-orbit', received_config: true },
     ])
+  })
+
+  it('refreshes model-aware reasoning for a loaded session switched from Luna to Sol', () => {
+    const result = runPython(`${reasoningHarness}
+session = pool.get_or_create("switched", model="gpt-5.6-luna")
+before = dict(session.agent.reasoning_config)
+pool.switch_session_model("switched", "gpt-5.6-sol", "openai", "default")
+print(json.dumps({
+    "before": before,
+    "after": session.agent.reasoning_config,
+    "model": session.config["model"],
+}))
+`)
+
+    expect(result.before.effort).toBe('max')
+    expect(result.after.effort).toBe('xhigh')
+    expect(result.model).toBe('gpt-5.6-sol')
   })
 
   it('keeps the global parser fallback for Hermes runtimes without the shared resolver', () => {
