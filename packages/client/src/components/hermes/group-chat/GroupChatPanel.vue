@@ -73,6 +73,9 @@ const agentName = ref('')
 const agentDescription = ref('')
 const editingAgentId = ref('')
 const expandedParticipantId = ref('')
+const participantQuickX = ref<number | undefined>(undefined)
+const participantQuickY = ref<number | undefined>(undefined)
+let participantQuickTrigger: HTMLElement | null = null
 const participantRuntime = ref<'hermes' | 'coding_agent'>('hermes')
 const participantCodingAgentId = ref<'' | 'claude-code' | 'codex'>('')
 const participantMode = ref<'scoped' | 'global'>('scoped')
@@ -290,6 +293,9 @@ function canApproveRoom(room: Pick<RoomInfo, 'canApprove'> | null | undefined): 
 }
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
 const currentRoomCanApprove = computed(() => canApproveRoom(currentRoom.value))
+const expandedParticipant = computed(() => (
+    store.agents.find(agent => agent.agentId === expandedParticipantId.value) || null
+))
 const handoffModeOptions = computed(() => [
     { label: t('groupChat.handoffModeMentions'), value: 'mentions' },
     { label: t('groupChat.handoffModeFixed'), value: 'fixed' },
@@ -924,7 +930,8 @@ async function saveParticipantQuickSetting(agent: RoomAgent, updates: Partial<Pa
     await queue
 }
 
-function handleQuickModelChange(agent: RoomAgent, value: string | null) {
+function handleQuickModelChange(agent: RoomAgent | null, value: string | null) {
+    if (!agent) return
     if (!value) return
     const separator = value.indexOf('\u0000')
     if (separator < 1) return
@@ -936,7 +943,8 @@ function handleQuickModelChange(agent: RoomAgent, value: string | null) {
     void saveParticipantQuickSetting(agent, { provider, model, apiMode })
 }
 
-function handleQuickApiModeChange(agent: RoomAgent, apiMode: string | null) {
+function handleQuickApiModeChange(agent: RoomAgent | null, apiMode: string | null) {
+    if (!agent) return
     if (!apiMode) return
     void saveParticipantQuickSetting(agent, { apiMode })
 }
@@ -949,7 +957,8 @@ function commitParticipantReasoning(agent: RoomAgent) {
     void saveParticipantQuickSetting(agent, { reasoningEffort: pending.value || '' }, pending.previous)
 }
 
-function handleQuickReasoningChange(agent: RoomAgent, value: number | [number, number]) {
+function handleQuickReasoningChange(agent: RoomAgent | null, value: number | [number, number]) {
+    if (!agent) return
     const numericValue = Array.isArray(value) ? value[0] : value
     const reasoningEffort = participantReasoningOptions.value[Math.round(numericValue)]?.value
     if (reasoningEffort === undefined || reasoningEffort === (agent.reasoningEffort || '')) return
@@ -962,12 +971,54 @@ function handleQuickReasoningChange(agent: RoomAgent, value: number | [number, n
 }
 
 function mentionParticipant(agent: RoomAgent) {
-    expandedParticipantId.value = ''
+    closeParticipantQuickSettings()
     groupChatInputRef.value?.insertParticipantMention(agent.agentId, agent.name)
 }
 
-function toggleParticipantQuickSettings(agentId: string) {
-    expandedParticipantId.value = expandedParticipantId.value === agentId ? '' : agentId
+function closeParticipantQuickSettings(restoreFocus = false) {
+    const trigger = participantQuickTrigger
+    expandedParticipantId.value = ''
+    participantQuickX.value = undefined
+    participantQuickY.value = undefined
+    participantQuickTrigger = null
+    if (restoreFocus) void nextTick(() => trigger?.focus())
+}
+
+function openParticipantQuickSettings(agentId: string, trigger: HTMLElement) {
+    if (expandedParticipantId.value === agentId && participantQuickTrigger === trigger) {
+        closeParticipantQuickSettings(true)
+        return
+    }
+    const agent = store.agents.find(candidate => candidate.agentId === agentId)
+    if (!agent) return
+    const rect = trigger.getBoundingClientRect()
+    participantQuickX.value = rect.right + 8
+    participantQuickY.value = rect.top + Math.min(18, rect.height / 2)
+    participantQuickTrigger = trigger
+    expandedParticipantId.value = agent.agentId
+}
+
+function handleParticipantAvatarTrigger(agentId: string, event: MouseEvent) {
+    const trigger = event.currentTarget
+    if (trigger instanceof HTMLElement) openParticipantQuickSettings(agentId, trigger)
+}
+
+function handleMessageParticipantAvatar(payload: { participantId: string, trigger: HTMLElement }) {
+    openParticipantQuickSettings(payload.participantId, payload.trigger)
+}
+
+function handleParticipantQuickShowUpdate(show: boolean) {
+    if (!show) closeParticipantQuickSettings()
+}
+
+function handleParticipantQuickClickOutside(event: MouseEvent) {
+    const target = event.target
+    if (target instanceof Node && participantQuickTrigger?.contains(target)) return
+    closeParticipantQuickSettings()
+}
+
+function handleParticipantQuickEscape() {
+    closeParticipantQuickSettings(true)
 }
 
 function participantModelValue(agent: RoomAgent): string | null {
@@ -1045,7 +1096,7 @@ watch(() => store.currentRoomId, (roomId, previousRoomId) => {
         participantQuickSaveQueues.clear()
         for (const pending of participantReasoningCommits.values()) clearTimeout(pending.timer)
         participantReasoningCommits.clear()
-        expandedParticipantId.value = ''
+        closeParticipantQuickSettings()
     }
     if (roomId !== previousRoomId && (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value)) closeWorkspacePanel()
     handoffJobs.value = []
@@ -1464,7 +1515,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                         class="participant-avatar-trigger"
                                         :aria-label="`${t('groupChat.participantQuickSettings')}: ${agent.name}`"
                                         :aria-expanded="expandedParticipantId === agent.agentId"
-                                        @click="toggleParticipantQuickSettings(agent.agentId)"
+                                        @click.stop="handleParticipantAvatarTrigger(agent.agentId, $event)"
                                     >
                                         <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="agent.avatar || profileAvatarFor(agent.profile)" :size="28" />
                                     </button>
@@ -1478,48 +1529,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.agentId)">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                     </button>
-                                </div>
-                                <div v-if="expandedParticipantId === agent.agentId" class="participant-quick-settings" @click.stop>
-                                    <p class="participant-quick-settings-hint">{{ t('groupChat.participantSettingsNextRun') }}</p>
-                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control">
-                                        <label>{{ t('groupChat.participantModel') }}</label>
-                                        <NSelect
-                                            :value="participantModelValue(agent)"
-                                            :options="participantModelOptions(agent)"
-                                            filterable
-                                            size="small"
-                                            @update:value="value => handleQuickModelChange(agent, value as string | null)"
-                                        />
-                                    </div>
-                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control">
-                                        <label>{{ t('groupChat.participantApiMode') }}</label>
-                                        <NSelect
-                                            :value="participantApiModeFor(agent)"
-                                            :options="participantApiModeOptionsFor(agent)"
-                                            size="small"
-                                            @update:value="value => handleQuickApiModeChange(agent, value as string | null)"
-                                        />
-                                    </div>
-                                    <div v-if="currentRoomCanManage && (agent.mode || 'scoped') === 'scoped'" class="participant-quick-control participant-reasoning-control">
-                                        <label>{{ t('groupChat.participantReasoningEffort') }} · {{ participantReasoningLabel(agent) }}</label>
-                                        <NSlider
-                                            class="participant-reasoning-slider"
-                                            :value="participantReasoningSliderValue(agent)"
-                                            :min="0"
-                                            :max="participantReasoningOptions.length - 1"
-                                            :step="1"
-                                            :format-tooltip="participantReasoningSliderLabel"
-                                            @update:value="value => handleQuickReasoningChange(agent, value)"
-                                            @dragend="commitParticipantReasoning(agent)"
-                                        />
-                                        <div class="participant-reasoning-range" aria-hidden="true">
-                                            <span>{{ participantReasoningOptions[0].label }}</span>
-                                            <span>{{ participantReasoningOptions[participantReasoningOptions.length - 1].label }}</span>
-                                        </div>
-                                    </div>
-                                    <NButton type="primary" size="small" block class="participant-mention-button" :title="t('groupChat.mentionParticipant')" @click="mentionParticipant(agent)">
-                                        @ {{ agent.name }}
-                                    </NButton>
                                 </div>
                             </div>
                         </div>
@@ -1594,7 +1603,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 <span v-if="job.lastError" class="handoff-status-error">{{ job.lastError }}</span>
                             </div>
                         </div>
-                        <GroupMessageList />
+                        <GroupMessageList
+                            :expanded-participant-id="expandedParticipantId"
+                            @participant-avatar-click="handleMessageParticipantAvatar"
+                            @participant-quick-close="closeParticipantQuickSettings"
+                        />
                         <Transition name="approval-float">
                             <div v-if="visibleApproval" class="approval-float-panel">
                                 <div class="approval-float-header">
@@ -1741,6 +1754,70 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 <p>{{ t('groupChat.selectOrCreate') }}</p>
             </div>
         </div>
+
+        <NPopover
+            v-if="expandedParticipant"
+            trigger="manual"
+            placement="right-start"
+            :show="true"
+            :x="participantQuickX"
+            :y="participantQuickY"
+            :width="320"
+            :show-arrow="true"
+            :internal-trap-focus="true"
+            content-class="participant-quick-popover-content"
+            @update:show="handleParticipantQuickShowUpdate"
+            @clickoutside="handleParticipantQuickClickOutside"
+        >
+            <div
+                class="participant-quick-settings message-participant-quick-settings"
+                role="dialog"
+                :aria-label="`${t('groupChat.participantQuickSettings')}: ${expandedParticipant.name}`"
+                @keydown.esc.stop.prevent="handleParticipantQuickEscape"
+            >
+                <div class="participant-quick-settings-title">{{ expandedParticipant.name }}</div>
+                <p class="participant-quick-settings-hint">{{ t('groupChat.participantSettingsNextRun') }}</p>
+                <div v-if="currentRoomCanManage && (expandedParticipant.mode || 'scoped') === 'scoped'" class="participant-quick-control">
+                    <label>{{ t('groupChat.participantModel') }}</label>
+                    <NSelect
+                        :value="participantModelValue(expandedParticipant)"
+                        :options="participantModelOptions(expandedParticipant)"
+                        filterable
+                        size="small"
+                        @update:value="value => handleQuickModelChange(expandedParticipant, value as string | null)"
+                    />
+                </div>
+                <div v-if="currentRoomCanManage && (expandedParticipant.mode || 'scoped') === 'scoped'" class="participant-quick-control">
+                    <label>{{ t('groupChat.participantApiMode') }}</label>
+                    <NSelect
+                        :value="participantApiModeFor(expandedParticipant)"
+                        :options="participantApiModeOptionsFor(expandedParticipant)"
+                        size="small"
+                        @update:value="value => handleQuickApiModeChange(expandedParticipant, value as string | null)"
+                    />
+                </div>
+                <div v-if="currentRoomCanManage && (expandedParticipant.mode || 'scoped') === 'scoped'" class="participant-quick-control participant-reasoning-control">
+                    <label>{{ t('groupChat.participantReasoningEffort') }} · {{ participantReasoningLabel(expandedParticipant) }}</label>
+                    <NSlider
+                        class="participant-reasoning-slider"
+                        :value="participantReasoningSliderValue(expandedParticipant)"
+                        :min="0"
+                        :max="participantReasoningOptions.length - 1"
+                        :step="1"
+                        :format-tooltip="participantReasoningSliderLabel"
+                        @update:value="value => handleQuickReasoningChange(expandedParticipant, value)"
+                        @dragend="commitParticipantReasoning(expandedParticipant)"
+                    />
+                    <div class="participant-reasoning-range" aria-hidden="true">
+                        <span>{{ participantReasoningOptions[0].label }}</span>
+                        <span>{{ participantReasoningOptions[participantReasoningOptions.length - 1].label }}</span>
+                    </div>
+                </div>
+                <NButton type="primary" size="small" block class="participant-mention-button" :title="t('groupChat.mentionParticipant')" @click="mentionParticipant(expandedParticipant)">
+                    @ {{ expandedParticipant.name }}
+                </NButton>
+            </div>
+        </NPopover>
 
         <!-- Create room modal -->
         <Teleport to="body">
@@ -3086,10 +3163,14 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex-direction: column;
     gap: 14px;
     min-width: 0;
-    margin: 0 4px 10px 44px;
-    padding: 8px 6px 10px 12px;
-    border-inline-start: 2px solid rgba(var(--accent-primary-rgb), 0.48);
+    padding: 4px;
     background: transparent;
+}
+
+.participant-quick-settings-title {
+    font-size: 14px;
+    font-weight: 650;
+    color: $text-primary;
 }
 
 .participant-mention-button {

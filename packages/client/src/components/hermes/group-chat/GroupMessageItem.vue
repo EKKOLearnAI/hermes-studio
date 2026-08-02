@@ -41,6 +41,11 @@ const props = defineProps<{
     agents: RoomAgent[]
     members?: MemberInfo[]
     currentUserId?: string
+    expandedParticipantId?: string
+}>()
+
+const emit = defineEmits<{
+    participantAvatarClick: [payload: { participantId: string, trigger: HTMLElement }]
 }>()
 
 const { t } = useI18n()
@@ -52,9 +57,14 @@ const toolPanelStore = useToolPanelStore()
 const speech = useGlobalSpeech()
 const voiceSettings = useVoiceSettings()
 const previewUrl = ref<string | null>(null)
-const isAgent = computed(() => {
-    return props.agents.some(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
+const agentInfo = computed(() => {
+    const exactParticipant = props.agents.find(a => a.agentId === props.message.senderId)
+    if (exactParticipant) return exactParticipant
+    if (props.message.role !== 'assistant' && props.message.role !== 'tool') return undefined
+    return props.agents.find(a => a.name === props.message.senderName)
 })
+
+const isAgent = computed(() => !!agentInfo.value)
 
 const isAgentError = computed(() => {
     if (props.message.role !== 'assistant') return false
@@ -66,14 +76,17 @@ const isSelf = computed(() => {
     return !!props.currentUserId && props.message.senderId === props.currentUserId
 })
 
-const agentInfo = computed(() => {
-    return props.agents.find(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
-})
-
 const timeStr = computed(() => formatChatTimestamp(props.message.timestamp))
 
 const avatarProfileName = computed(() => agentInfo.value?.profile || props.message.senderName || props.message.senderId)
 const avatarProfile = computed(() => profilesStore.profiles.find(profile => profile.name === agentInfo.value?.profile))
+
+function handleParticipantAvatarClick(event: MouseEvent): void {
+    const participant = agentInfo.value
+    const trigger = event.currentTarget
+    if (!participant || !(trigger instanceof HTMLElement)) return
+    emit('participantAvatarClick', { participantId: participant.agentId, trigger })
+}
 
 // 找当前消息发送者在 members 里的记录
 const memberInfo = computed(() => {
@@ -588,7 +601,17 @@ onBeforeUnmount(() => {
 
 <template>
     <div v-if="isToolMessage" class="group-message tool-message">
-        <div class="avatar">
+        <button
+            v-if="agentInfo"
+            type="button"
+            class="avatar participant-message-avatar-trigger"
+            :aria-label="`${t('groupChat.participantQuickSettings')}: ${agentInfo.name}`"
+            :aria-expanded="expandedParticipantId === agentInfo.agentId"
+            @click="handleParticipantAvatarClick"
+        >
+            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
+        </button>
+        <div v-else class="avatar">
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
@@ -640,7 +663,17 @@ onBeforeUnmount(() => {
     </div>
     <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf }">
         <!-- Avatar -->
-        <div class="avatar">
+        <button
+            v-if="agentInfo"
+            type="button"
+            class="avatar participant-message-avatar-trigger"
+            :aria-label="`${t('groupChat.participantQuickSettings')}: ${agentInfo.name}`"
+            :aria-expanded="expandedParticipantId === agentInfo.agentId"
+            @click="handleParticipantAvatarClick"
+        >
+            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
+        </button>
+        <div v-else class="avatar">
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
@@ -965,6 +998,24 @@ onBeforeUnmount(() => {
     margin-top: 2px;
     overflow: hidden;
     border-radius: 8px;
+}
+
+.participant-message-avatar-trigger {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+
+    &:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.28);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--accent-primary);
+        outline-offset: 2px;
+    }
 }
 
 .msg-body {

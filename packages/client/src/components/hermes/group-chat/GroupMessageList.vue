@@ -9,6 +9,13 @@ import VirtualMessageList from '../chat/VirtualMessageList.vue'
 const store = useGroupChatStore()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
+const props = defineProps<{
+    expandedParticipantId?: string
+}>()
+const emit = defineEmits<{
+    participantAvatarClick: [payload: { participantId: string, trigger: HTMLElement }]
+    participantQuickClose: []
+}>()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
 const showScrollBottomButton = ref(false)
 const displayMessages = computed(() => store.sortedMessages.filter(msg =>
@@ -38,6 +45,7 @@ function updateScrollBottomButton(): void {
 
 function handleListScroll(): void {
     updateScrollBottomButton()
+    emit('participantQuickClose')
 }
 
 function handleScrollBottomClick(): void {
@@ -127,6 +135,8 @@ defineExpose({ scrollToBottom })
                     :agents="store.agents"
                     :members="store.members"
                     :current-user-id="store.userId"
+                    :expanded-participant-id="props.expandedParticipantId"
+                    @participant-avatar-click="payload => emit('participantAvatarClick', payload)"
                 />
             </template>
         </VirtualMessageList>

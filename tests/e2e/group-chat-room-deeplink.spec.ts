@@ -35,6 +35,7 @@ const groupWorkspaceDiff = {
 const messagesByRoom: Record<string, unknown[]> = {
   'room-alpha': [
     { id: 'alpha-msg', roomId: 'room-alpha', senderId: 'user-1', senderName: 'Alice', content: 'Alpha room message', timestamp: 1_790_000_000, role: 'user' },
+    { id: 'alpha-same-name-user', roomId: 'room-alpha', senderId: 'user-2', senderName: 'Worker', content: 'Human with duplicate display name', timestamp: 1_790_000_000.5, role: 'user' },
     { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
   ],
@@ -411,19 +412,35 @@ test.describe('group chat room deep links', () => {
     })
   }
 
-  test('participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }, testInfo) => {
+  test('message-stream participant avatar opens direct model, API mode, reasoning, and structured mention controls', async ({ page }, testInfo) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
-    await page.getByRole('button', { name: 'Agents (1)' }).click()
 
     const avatar = page.getByRole('button', { name: 'Participant settings: Worker' })
+    await expect(avatar).toHaveCount(1)
     await expect(avatar).toBeVisible()
-    await avatar.click()
+    await expect(page.locator('.group-message', { hasText: 'Human with duplicate display name' }).locator('.participant-message-avatar-trigger')).toHaveCount(0)
+    await expect(avatar).toHaveAttribute('aria-expanded', 'false')
+    await avatar.focus()
+    await avatar.press('Enter')
+    await expect(avatar).toHaveAttribute('aria-expanded', 'true')
 
-    const quick = page.locator('.agent-popover .participant-quick-settings')
+    const quick = page.locator('.message-participant-quick-settings')
+    await expect(quick).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(quick).toHaveCount(0)
+    await expect(avatar).toBeFocused()
+    await avatar.click()
+    await expect(avatar).toHaveAttribute('aria-expanded', 'true')
     await expect(quick).toBeVisible()
     await expect(quick.locator('.participant-reasoning-slider')).toBeVisible()
     await expect(quick.getByText('Changes apply to this participant\'s next run.')).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('participant-avatar-controls.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('message-participant-avatar-controls.png'), fullPage: true })
+
+    const avatarBox = await avatar.boundingBox()
+    const quickBox = await quick.boundingBox()
+    expect(avatarBox).not.toBeNull()
+    expect(quickBox).not.toBeNull()
+    expect(Math.abs((quickBox?.x || 0) - ((avatarBox?.x || 0) + (avatarBox?.width || 0)))).toBeLessThan(80)
 
     const selects = quick.locator('.n-select')
     await expect(selects).toHaveCount(2)
@@ -456,12 +473,30 @@ test.describe('group chat room deep links', () => {
     await sent
   })
 
-  test('read-only members can mention a participant without seeing runtime configuration controls', async ({ page }) => {
+  test('read-only members can open the message participant card and mention without runtime controls', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-readonly')
-    await page.getByRole('button', { name: 'Agents (1)' }).click()
-    await page.getByRole('button', { name: 'Participant settings: Observer' }).click()
 
-    const quick = page.locator('.agent-popover .participant-quick-settings')
+    const socketState = await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__)
+    expect(socketState).toBeTruthy()
+    await page.evaluate(() => {
+      const state = (window as any).__PW_GROUP_SOCKET__
+      const socket = state.sockets.at(-1)
+      socket?.__trigger?.('message', {
+        id: 'readonly-agent-message',
+        roomId: 'room-readonly',
+        senderId: 'agent-readonly',
+        senderName: 'Observer',
+        content: 'Observer response',
+        timestamp: 1_790_000_010,
+        role: 'assistant',
+      })
+    })
+
+    const avatar = page.getByRole('button', { name: 'Participant settings: Observer' })
+    await expect(avatar).toBeVisible()
+    await avatar.click()
+
+    const quick = page.locator('.message-participant-quick-settings')
     await expect(quick).toBeVisible()
     await expect(quick.locator('.n-select')).toHaveCount(0)
     await expect(quick.locator('.participant-reasoning-slider')).toHaveCount(0)

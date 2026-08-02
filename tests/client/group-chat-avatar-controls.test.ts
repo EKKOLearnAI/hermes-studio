@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+const messageListSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+const messageItemSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
 const inputSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatInput.vue', 'utf8')
 const bridgeClientSource = readFileSync('packages/server/src/services/hermes/agent-bridge/client.ts', 'utf8')
 const bridgeServerSource = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_server.py', 'utf8')
@@ -17,23 +19,34 @@ const localeKeys = [
 ]
 
 describe('Group Chat participant avatar direct controls', () => {
-  it('opens a participant-owned inline avatar panel with direct model, API mode, reasoning slider, and mention controls', () => {
-    expect(panelSource).toContain('class="participant-avatar-trigger"')
-    expect(panelSource).toContain('class="participant-quick-settings"')
-    expect(panelSource).toContain('expandedParticipantId === agent.agentId')
-    expect(panelSource).not.toContain('<NPopover trigger="click" placement="bottom-start" :width="320">')
+  it('opens one shared participant panel from the semantic message-stream avatar', () => {
+    expect(messageItemSource).toContain('class="avatar participant-message-avatar-trigger"')
+    expect(messageItemSource).toContain(':aria-expanded="expandedParticipantId === agentInfo.agentId"')
+    expect(messageItemSource).toContain("emit('participantAvatarClick', { participantId: participant.agentId, trigger })")
+    expect(messageListSource).toContain('@participant-avatar-click="payload => emit(\'participantAvatarClick\', payload)"')
+    expect(panelSource).toContain('@participant-avatar-click="handleMessageParticipantAvatar"')
+    expect(panelSource).toContain('class="participant-quick-settings message-participant-quick-settings"')
+    expect(panelSource).toContain(':x="participantQuickX"')
+    expect(panelSource).toContain(':y="participantQuickY"')
     expect(panelSource).toContain("reasoningEffort: pending.value || ''")
     expect(panelSource).toContain('value: reasoningEffort')
     expect(panelSource).toContain('participantQuickKey(roomId, agent.agentId, authorityGeneration)')
     expect(panelSource).toContain('applyParticipantQuickState(roomId, agent.agentId, authorityGeneration, desired)')
     expect(panelSource).toContain('participantQuickDesired.clear()')
     expect(panelSource).toContain('participantReasoningCommits.clear()')
-    expect(panelSource).toContain('participantModelOptions(agent)')
-    expect(panelSource).toContain('participantApiModeOptionsFor(agent)')
+    expect(panelSource).toContain('participantModelOptions(expandedParticipant)')
+    expect(panelSource).toContain('participantApiModeOptionsFor(expandedParticipant)')
     expect(panelSource).toContain('class="participant-reasoning-slider"')
     expect(panelSource).toContain('<NSlider')
-    expect(panelSource).toContain('@update:value="value => handleQuickReasoningChange(agent, value)"')
-    expect(panelSource).toContain('@click="mentionParticipant(agent)"')
+    expect(panelSource).toContain('@update:value="value => handleQuickReasoningChange(expandedParticipant, value)"')
+    expect(panelSource).toContain('@click="mentionParticipant(expandedParticipant)"')
+  })
+
+  it('resolves the message participant by stable sender ID before the legacy name fallback', () => {
+    expect(messageItemSource).toContain("props.agents.find(a => a.agentId === props.message.senderId)")
+    expect(messageItemSource).toContain("props.agents.find(a => a.name === props.message.senderName)")
+    expect(messageItemSource).toContain("props.message.role !== 'assistant' && props.message.role !== 'tool'")
+    expect(messageItemSource).not.toContain("a.agentId === props.message.senderId || a.name === props.message.senderName")
   })
 
   it('uses immediate participant PATCH updates without a secondary save modal', () => {
@@ -60,7 +73,7 @@ describe('Group Chat participant avatar direct controls', () => {
 
   it('preserves old Room participants with empty next-run settings', () => {
     expect(panelSource).toContain("agent.reasoningEffort || ''")
-    expect(panelSource).toContain("agent.mode || 'scoped'")
+    expect(panelSource).toContain("expandedParticipant.mode || 'scoped'")
     expect(panelSource).toContain("agent.runtime || 'hermes'")
   })
 
@@ -73,7 +86,7 @@ describe('Group Chat participant avatar direct controls', () => {
 
   it('forwards a Hermes participant API mode through the complete Agent Bridge contract', () => {
     expect(panelSource).toContain("apiMode: String(requested.apiMode || '')")
-    expect(panelSource).toContain('participantApiModeOptionsFor(agent)')
+    expect(panelSource).toContain('participantApiModeOptionsFor(expandedParticipant)')
     expect(panelSource).toContain("runtime === 'hermes'")
     expect(panelSource).toContain("'bedrock_converse'")
     expect(panelSource).toContain("'codex_app_server'")
