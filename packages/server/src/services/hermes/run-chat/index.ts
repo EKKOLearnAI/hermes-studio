@@ -240,12 +240,16 @@ export class ChatRunSocket {
     // Pre-warm the Hermes Agent for this profile to avoid ~15s cold start
     // on the first chat message. The bridge caches the created AgentSession,
     // so subsequent context_estimate calls complete in ~1ms.
-    this.bridge.contextEstimate(
-      `warm-${Date.now()}`,
-      [],
-      '',
-      currentProfile(),
-    ).catch(() => { /* prewarm failure is non-fatal — user gets normal cold-start delay */ })
+    // Guard against bridges that don't implement contextEstimate (e.g. mocks,
+    // older bridge versions) — prewarm must never break the socket connection.
+    if (typeof this.bridge.contextEstimate === 'function') {
+      this.bridge.contextEstimate(
+        `warm-${Date.now()}`,
+        [],
+        '',
+        currentProfile(),
+      ).catch(() => { /* prewarm failure is non-fatal — user gets normal cold-start delay */ })
+    }
     const profileExists = (profile: string) => {
       if (!profile || profile === 'default') return true
       return listProfileNamesFromDisk().includes(profile)
