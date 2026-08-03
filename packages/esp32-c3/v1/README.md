@@ -42,6 +42,19 @@ retained for paging rather than being shortened to the OLED status-preview
 length. Wrapped lines are prepared once before playback, and only the subtitle
 rows are sent over I²C when the page changes.
 
+## Voice Modes
+
+The device page can switch between the existing push-to-talk mode and an
+automatic listening mode. Automatic listening runs a lightweight VAD entirely
+on the ESP32-C3 while the device is idle. It keeps about 800 ms of local
+pre-roll, opens the existing ADPCM voice stream only after sustained
+speech-like activity, and ends the turn after one second of silence.
+
+Listening is suspended while a turn is transcribing, thinking, using tools, or
+playing speech, so device playback cannot trigger a new turn. The existing
+button controls remain unchanged: long press talks, single click stops the
+current response, and double click clears the session.
+
 From the repository root, use:
 
 ```bash
