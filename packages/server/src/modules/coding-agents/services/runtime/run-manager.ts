@@ -1103,8 +1103,8 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     }
     if (isTerminalEvent) {
-          const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
-          run.assistantMessageId = this.persistTerminalResponse(run, final?.id || undefined)
+      const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
+      run.assistantMessageId = this.persistTerminalResponse(run, final?.id || undefined)
       if (run.launch.mode !== 'scoped' && final?.usage) {
         const usage = normalizeTokenUsage(final.usage)
         if (!usage.isEstimated) {
