@@ -57,4 +57,13 @@ describe('transcodeToMp3', () => {
     expect(result.audio.length).toBeGreaterThan(0)
     expect(looksLikeMp3(result.audio)).toBe(true)
   })
+
+  it.runIf(hasFfmpeg)('trusts wav bytes over an incorrect mp3 content type', async () => {
+    const wav = wavTone()
+    const result = await transcodeToMp3(wav, 'audio/mpeg')
+
+    expect(result.audio).not.toBe(wav)
+    expect(result.mimeType).toBe('audio/mpeg')
+    expect(looksLikeMp3(result.audio)).toBe(true)
+  })
 })

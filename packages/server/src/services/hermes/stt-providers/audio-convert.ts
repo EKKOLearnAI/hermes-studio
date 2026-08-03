@@ -125,7 +125,9 @@ export async function transcodeToMp3(
   mimeType: string,
 ): Promise<{ audio: Buffer; mimeType: string }> {
   const normalized = normalizeMimeType(mimeType)
-  if (normalized.includes('mpeg') || normalized.includes('mp3') || looksLikeMp3(input)) {
+  const wavBytes = looksLikeWav(input)
+  const claimsMp3 = normalized.includes('mpeg') || normalized.includes('mp3')
+  if (looksLikeMp3(input) || (!wavBytes && claimsMp3)) {
     return { audio: input, mimeType: 'audio/mpeg' }
   }
   if (!(await isFfmpegAvailable())) {
