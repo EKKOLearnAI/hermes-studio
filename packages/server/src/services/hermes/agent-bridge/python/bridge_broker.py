@@ -249,6 +249,10 @@ class BridgeBroker:
             profile = self._normalize_profile(req.get("profile"))
             return self._forward(profile, req, self._normalize_worker_key(profile, req.get("worker_key")))
 
+        if action == "provider_credentials":
+            profile = self._normalize_profile(req.get("profile"))
+            return self._forward(profile, req, self._normalize_worker_key(profile, req.get("worker_key")))
+
         if action in {"get_result", "get_output"}:
             profile, worker_key = self._route_for_run(str(req.get("run_id") or ""))
             return self._forward(profile, req, worker_key)

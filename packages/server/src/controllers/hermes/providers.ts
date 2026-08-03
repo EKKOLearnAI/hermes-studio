@@ -17,8 +17,8 @@ import {
 import { refreshProviderModels, restoreProviderModels } from '../../services/hermes/provider-model-refresh'
 import { appendProviderAuditEvent } from '../../db/hermes/provider-audit-store'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth'])
-const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
+const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 function requestedProfile(ctx: any): string {

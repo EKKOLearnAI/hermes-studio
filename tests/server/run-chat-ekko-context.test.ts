@@ -1087,6 +1087,7 @@ describe('ekko-agent context usage events', () => {
     expect(resolveEkkoProviderRuntimeConfigMock).toHaveBeenCalledWith({
       profile: 'default',
       provider: 'custom:fun-codex',
+      model: 'ekko-test-model',
       baseUrl: undefined,
       apiKey: undefined,
       apiMode: undefined,

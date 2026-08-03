@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 let hermesHome = ''
+const mockResolveAuthorizedCredentials = vi.fn()
 
 function readAuthJson(path = 'auth.json') {
   return JSON.parse(readFileSync(join(hermesHome, path), 'utf-8'))
@@ -26,6 +27,9 @@ async function loadNousAuthController() {
   vi.doMock('../../packages/server/src/services/logger', () => ({
     logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
   }))
+  vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+    resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
+  }))
   return import('../../packages/server/src/controllers/hermes/nous-auth')
 }
 
@@ -33,10 +37,12 @@ describe('Nous auth controller', () => {
   beforeEach(() => {
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-nous-auth-'))
     process.env.HERMES_HOME = hermesHome
+    mockResolveAuthorizedCredentials.mockReset()
   })
 
   afterEach(() => {
     vi.doUnmock('../../packages/server/src/services/logger')
+    vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
     delete process.env.HERMES_HOME
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''
@@ -73,10 +79,18 @@ describe('Nous auth controller', () => {
       access_token: 'research-access-token',
       refresh_token: 'research-refresh-token',
     })
+    mockResolveAuthorizedCredentials.mockResolvedValue({
+      provider: 'nous',
+      apiKey: 'research-agent-key',
+    })
 
     const ctx = makeCtx('research')
     await status(ctx)
 
     expect(ctx.body).toEqual({ authenticated: true })
+    expect(mockResolveAuthorizedCredentials).toHaveBeenCalledWith({
+      profile: 'research',
+      provider: 'nous',
+    })
   })
 })

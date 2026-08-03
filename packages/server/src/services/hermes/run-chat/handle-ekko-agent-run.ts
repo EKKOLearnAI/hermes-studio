@@ -415,6 +415,7 @@ export async function handleEkkoAgentRun(
   const runtimeConfig = await resolveEkkoProviderRuntimeConfig({
     profile,
     provider: modelConfig.provider,
+    model: modelConfig.model,
     baseUrl: data.baseUrl || data.base_url,
     apiKey: data.apiKey || data.api_key,
     apiMode: requestedApiMode || storedApiMode,

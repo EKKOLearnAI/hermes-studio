@@ -5,6 +5,7 @@ const SCOPED_CODING_AGENT_AUTH_PROVIDERS = new Set([
   'qwen-oauth',
   'nous',
   'claude-oauth',
+  'minimax-oauth',
 ])
 
 export function isScopedCodingAgentAuthProvider(provider: unknown): boolean {

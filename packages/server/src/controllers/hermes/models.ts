@@ -250,7 +250,44 @@ function providerShouldFetchLiveModels(providerKey: string): boolean {
 }
 
 function providerSupportsStoredOAuth(providerKey: string): boolean {
-  return providerKey === 'claude-oauth'
+  return providerKey === 'claude-oauth' || providerKey === 'minimax-oauth'
+}
+
+interface StoredOAuthCredential {
+  authorized: boolean
+  baseUrl: string
+}
+
+function storedOAuthCredential(auth: any, providerKey: string): StoredOAuthCredential {
+  const providerKeys = providerKey === 'claude-oauth'
+    ? ['claude-oauth', 'anthropic']
+    : [providerKey]
+  for (const key of providerKeys) {
+    const provider = auth?.providers?.[key]
+    const pool = auth?.credential_pool?.[key]
+    const poolEntry = Array.isArray(pool)
+      ? pool.find((entry: any) => entry?.access_token || entry?.agent_key)
+      : undefined
+    const authorized = !!(
+      provider?.tokens?.access_token ||
+      provider?.access_token ||
+      provider?.agent_key ||
+      poolEntry?.access_token ||
+      poolEntry?.agent_key
+    )
+    if (!authorized) continue
+    const baseUrl = String(
+      provider?.inference_base_url ||
+      provider?.runtime_base_url ||
+      provider?.base_url ||
+      poolEntry?.inference_base_url ||
+      poolEntry?.runtime_base_url ||
+      poolEntry?.base_url ||
+      '',
+    ).trim().replace(/\/+$/, '')
+    return { authorized: true, baseUrl }
+  }
+  return { authorized: false, baseUrl: '' }
 }
 
 function includeConfiguredDefaultModel(providerKey: string, modelsList: string[], currentDefault: string, currentDefaultProvider: string): string[] {
@@ -365,20 +402,15 @@ async function buildAvailableForProfile(
   try { envContent = await readFile(profileEnvPath(profile), 'utf-8') } catch {}
   const { envHasValue, envGetValue } = envReader(envContent)
 
-  const isOAuthAuthorized = (providerKey: string): boolean => {
-    try {
-      const authPath = profileAuthPath(profile)
-      if (!existsSync(authPath)) return false
-      const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
-      const provider = auth.providers?.[providerKey]
-      const pool = auth.credential_pool?.[providerKey]
-      return !!(
-        provider?.tokens?.access_token ||
-        provider?.access_token ||
-        (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
-      )
-    } catch { return false }
-  }
+  let storedAuth: any = {}
+  try {
+    const authPath = profileAuthPath(profile)
+    if (existsSync(authPath)) storedAuth = JSON.parse(readFileSync(authPath, 'utf-8'))
+  } catch {}
+  const oauthCredential = (providerKey: string): StoredOAuthCredential => (
+    storedOAuthCredential(storedAuth, providerKey)
+  )
+  const isOAuthAuthorized = (providerKey: string): boolean => oauthCredential(providerKey).authorized
 
   const groups: AvailableGroup[] = []
   const seenProviders = new Set<string>()
@@ -437,7 +469,7 @@ async function buildAvailableForProfile(
     }
     const preset = PROVIDER_PRESETS.find((p: any) => p.value === providerKey)
     const label = preset?.label || providerKey.replace(/^custom:/, '')
-    let baseUrl = preset?.base_url || ''
+    let baseUrl = oauthCredential(providerKey).baseUrl || preset?.base_url || ''
     if (envMapping.base_url_env && envHasValue(envMapping.base_url_env)) {
       baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
     }
@@ -665,23 +697,15 @@ export async function getAvailable(ctx: any) {
       groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
     }
 
-    const isOAuthAuthorized = (providerKey: string): boolean => {
-      try {
-        const authPath = getActiveAuthPath()
-        if (!existsSync(authPath)) return false
-        const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
-        const provider = auth.providers?.[providerKey]
-        const pool = auth.credential_pool?.[providerKey]
-        // Legacy OAuth providers are stored under providers.*; newer Hermes
-        // credential pools store Codex-style OAuth entries under
-        // credential_pool.*. Treat either shape as an authorized provider.
-        return !!(
-          provider?.tokens?.access_token ||
-          provider?.access_token ||
-          (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
-        )
-      } catch { return false }
-    }
+    let storedAuth: any = {}
+    try {
+      const authPath = getActiveAuthPath()
+      if (existsSync(authPath)) storedAuth = JSON.parse(readFileSync(authPath, 'utf-8'))
+    } catch {}
+    const oauthCredential = (providerKey: string): StoredOAuthCredential => (
+      storedOAuthCredential(storedAuth, providerKey)
+    )
+    const isOAuthAuthorized = (providerKey: string): boolean => oauthCredential(providerKey).authorized
 
     // 同一请求内复用 copilot 动态模型（getCopilotModelsDetailed 内部有 inflight + 缓存，
     // 这里再缓存到局部变量进一步减少分支）
@@ -722,7 +746,7 @@ export async function getAvailable(ctx: any) {
       }
       const preset = PROVIDER_PRESETS.find((p: any) => p.value === providerKey)
       const label = preset?.label || providerKey.replace(/^custom:/, '')
-      let baseUrl = preset?.base_url || ''
+      let baseUrl = oauthCredential(providerKey).baseUrl || preset?.base_url || ''
       if (envMapping.base_url_env && envHasValue(envMapping.base_url_env)) {
         baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
       }

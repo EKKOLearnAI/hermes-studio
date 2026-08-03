@@ -14,12 +14,14 @@ from bridge_pool import AgentPool
 from bridge_runtime import (
     _agent_root,
     _apply_profile_env,
+    _ensure_agent_imports,
     _hermes_home,
     _install_stop_signal_handlers,
     _jsonable,
     _positive_int,
     _profile_env,
     _profile_home,
+    _resolve_runtime,
     _restore_profile_env,
     _start_parent_process_watchdog,
     _worker_profile,
@@ -121,6 +123,59 @@ class BridgeServer:
                 workspace=req.get("workspace"),
                 background_delegation_enabled=background_delegation_enabled,
             )
+
+        if action == "provider_credentials":
+            requested_provider = str(req.get("provider") or "").strip().lower()
+            if not requested_provider:
+                raise ValueError("provider is required")
+            runtime_provider = "anthropic" if requested_provider == "claude-oauth" else requested_provider
+            try:
+                if requested_provider == "minimax-oauth":
+                    # MiniMax access tokens are short-lived. Its generic
+                    # credential-pool row is diagnostic and may still contain
+                    # the previous access token, so call Hermes' authoritative
+                    # refresh-aware resolver directly.
+                    _ensure_agent_imports()
+                    from hermes_cli.auth import resolve_minimax_oauth_runtime_credentials
+
+                    credentials = resolve_minimax_oauth_runtime_credentials()
+                    runtime = {
+                        "provider": requested_provider,
+                        "api_mode": "anthropic_messages",
+                        "base_url": credentials.get("base_url", ""),
+                        "api_key": credentials.get("api_key", ""),
+                        "source": credentials.get("source", "oauth"),
+                    }
+                else:
+                    runtime = _resolve_runtime(str(req.get("model") or "").strip(), runtime_provider)
+                api_key = runtime.get("api_key")
+                if callable(api_key):
+                    api_key = api_key()
+                token = str(api_key or "").strip()
+                if not token:
+                    raise RuntimeError(
+                        f"Hermes Agent returned no runtime token for {requested_provider}"
+                    )
+                return {
+                    "resolved": True,
+                    "requested_provider": requested_provider,
+                    "provider": str(runtime.get("provider") or runtime_provider),
+                    "api_key": token,
+                    "base_url": str(runtime.get("base_url") or "").rstrip("/"),
+                    "api_mode": str(runtime.get("api_mode") or ""),
+                    "source": str(runtime.get("source") or ""),
+                    "last_refresh": runtime.get("last_refresh"),
+                    "expires_at": runtime.get("expires_at"),
+                    "expires_at_ms": runtime.get("expires_at_ms"),
+                }
+            except Exception as exc:
+                return {
+                    "resolved": False,
+                    "requested_provider": requested_provider,
+                    "error": str(exc),
+                    "code": str(getattr(exc, "code", "") or ""),
+                    "relogin_required": bool(getattr(exc, "relogin_required", False)),
+                }
 
         if action == "get_result":
             return self.pool.get_result(str(req.get("run_id") or ""))

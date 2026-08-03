@@ -42,7 +42,7 @@ describe('workflow import capabilities', () => {
     ], groups)).toThrow('unavailable')
   })
 
-  it.each(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth'])(
+  it.each(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth', 'minimax-oauth'])(
     'rejects scoped Coding Agent targets backed by auth provider %s',
     (provider) => {
       expect(() => assertWorkflowImportCapabilities([

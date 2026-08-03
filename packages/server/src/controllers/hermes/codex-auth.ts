@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 
 // --- OAuth Constants ---
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -34,14 +35,6 @@ function cleanupExpiredSessions() {
 
 // --- Auth file helpers ---
 interface AuthJson { version?: number; active_provider?: string; providers?: Record<string, any>; credential_pool?: Record<string, any[]>; updated_at?: string }
-interface CodexCredentialRef {
-  accessToken: string
-  refreshToken?: string
-  lastRefresh?: string
-  provider?: any
-  poolEntry?: any
-}
-
 function loadAuthJson(authPath: string): AuthJson {
   try { return JSON.parse(readFileSync(authPath, 'utf-8')) as AuthJson } catch { return { version: 1 } }
 }
@@ -75,45 +68,6 @@ function requestedProfile(ctx: any): string {
 
 function authPathForProfile(profile: string): string {
   return join(getProfileDir(profile), 'auth.json')
-}
-
-function decodeJwtExp(token: string): number | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    const payload = Buffer.from(parts[1], 'base64url').toString('utf-8')
-    const claims = JSON.parse(payload)
-    return typeof claims.exp === 'number' ? claims.exp : null
-  } catch { return null }
-}
-
-function getCodexCredential(auth: AuthJson): CodexCredentialRef | null {
-  const provider = auth.providers?.['openai-codex']
-  const providerTokens = provider?.tokens
-  const providerAccessToken = providerTokens?.access_token || provider?.access_token
-  const pool = auth.credential_pool?.['openai-codex']
-  const poolEntry = Array.isArray(pool) ? pool.find(entry => entry?.access_token) : undefined
-
-  if (providerAccessToken) {
-    return {
-      accessToken: providerAccessToken,
-      refreshToken: providerTokens?.refresh_token || provider?.refresh_token,
-      lastRefresh: provider.last_refresh,
-      provider,
-      poolEntry,
-    }
-  }
-
-  if (poolEntry?.access_token) {
-    return {
-      accessToken: poolEntry.access_token,
-      refreshToken: poolEntry.refresh_token,
-      lastRefresh: poolEntry.last_refresh,
-      poolEntry,
-    }
-  }
-
-  return null
 }
 
 // --- Background login worker ---
@@ -200,44 +154,12 @@ export async function poll(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const authPath = authPathForProfile(requestedProfile(ctx))
-    const auth = loadAuthJson(authPath)
-    const credential = getCodexCredential(auth)
-    if (!credential) { ctx.body = { authenticated: false }; return }
-    const exp = decodeJwtExp(credential.accessToken)
-    if (exp && exp <= Date.now() / 1000 + 120) {
-      if (credential.refreshToken) {
-        try {
-          const refreshRes = await fetch(CODEX_OAUTH_TOKEN_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: credential.refreshToken, client_id: CODEX_CLIENT_ID }).toString(),
-            signal: AbortSignal.timeout(15000),
-          })
-          if (refreshRes.ok) {
-            const newTokens = await refreshRes.json() as { access_token: string; refresh_token?: string }
-            const lastRefresh = new Date().toISOString()
-            if (credential.provider?.tokens) {
-              credential.provider.tokens.access_token = newTokens.access_token
-              if (newTokens.refresh_token) { credential.provider.tokens.refresh_token = newTokens.refresh_token }
-              credential.provider.last_refresh = lastRefresh
-            } else if (credential.provider) {
-              credential.provider.access_token = newTokens.access_token
-              if (newTokens.refresh_token) { credential.provider.refresh_token = newTokens.refresh_token }
-              credential.provider.last_refresh = lastRefresh
-            }
-            if (credential.poolEntry) {
-              credential.poolEntry.access_token = newTokens.access_token
-              if (newTokens.refresh_token) { credential.poolEntry.refresh_token = newTokens.refresh_token }
-              credential.poolEntry.last_refresh = lastRefresh
-            }
-            saveAuthJson(authPath, auth)
-            saveCodexCliTokens(newTokens.access_token, newTokens.refresh_token || credential.refreshToken)
-            ctx.body = { authenticated: true, last_refresh: lastRefresh }; return
-          }
-        } catch { }
-      }
-      ctx.body = { authenticated: false }; return
-    }
-    ctx.body = { authenticated: true, last_refresh: credential.lastRefresh }
-  } catch { ctx.body = { authenticated: false } }
+    const credentials = await resolveAuthorizedProviderRuntimeCredentials({
+      profile: requestedProfile(ctx),
+      provider: 'openai-codex',
+    })
+    ctx.body = { authenticated: true, last_refresh: credentials.lastRefresh }
+  } catch (err: any) {
+    ctx.body = { authenticated: false, relogin_required: err?.reloginRequired === true }
+  }
 }

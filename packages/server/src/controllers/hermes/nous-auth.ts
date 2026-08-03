@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 
 // --- Nous Portal OAuth Constants ---
 const NOUS_PORTAL_URL = 'https://portal.nousresearch.com'
@@ -300,15 +301,12 @@ export async function poll(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const authPath = authPathForProfile(requestedProfile(ctx))
-    const auth = loadAuthJson(authPath)
-    const nousProvider = auth.providers?.['nous']
-    if (!nousProvider?.access_token) {
-      ctx.body = { authenticated: false }
-      return
-    }
+    await resolveAuthorizedProviderRuntimeCredentials({
+      profile: requestedProfile(ctx),
+      provider: 'nous',
+    })
     ctx.body = { authenticated: true }
-  } catch {
-    ctx.body = { authenticated: false }
+  } catch (err: any) {
+    ctx.body = { authenticated: false, relogin_required: err?.reloginRequired === true }
   }
 }

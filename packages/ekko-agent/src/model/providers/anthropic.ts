@@ -297,8 +297,9 @@ function anthropicUrl(config: ModelProviderConfig): string {
 
 function anthropicHeaders(config: ModelProviderConfig): HeadersInit {
   const headers = requestHeaders(config, { 'anthropic-version': '2023-06-01' }) as Record<string, string>
-  if (isOfficialAnthropicBaseUrl(config.baseUrl)) delete headers.authorization
-  if (config.apiKey) headers['x-api-key'] = config.apiKey
+  const usesBearerAuth = ['claude-oauth', 'minimax-oauth'].includes(config.id)
+  if (isOfficialAnthropicBaseUrl(config.baseUrl) && !usesBearerAuth) delete headers.authorization
+  if (config.apiKey && !usesBearerAuth) headers['x-api-key'] = config.apiKey
   return headers
 }
 

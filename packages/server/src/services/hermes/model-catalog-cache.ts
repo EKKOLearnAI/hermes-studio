@@ -9,6 +9,7 @@ import { fetchCopilotModelsWithOAuthToken, resolveCopilotOAuthToken } from './co
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
+import { resolveAuthorizedProviderRuntimeCredentials } from './authorized-provider-credentials'
 
 export type ModelCatalogSource = 'live' | 'fallback'
 
@@ -68,6 +69,7 @@ const AUTH_CATALOG_PROVIDERS = new Set([
   'nous',
   'claude-oauth',
   'qwen-oauth',
+  'minimax-oauth',
 ])
 let backgroundRefresh: Promise<void> | null = null
 
@@ -344,21 +346,6 @@ function mergeCandidate(candidates: Map<string, RefreshCandidate>, candidate: Re
   existing.skip_live_fetch = existing.skip_live_fetch === true && candidate.skip_live_fetch === true
 }
 
-function authCredentialToken(value: any): string {
-  return String(
-    value?.agent_key ||
-    value?.tokens?.access_token ||
-    value?.access_token ||
-    value?.tokens?.refresh_token ||
-    value?.refresh_token ||
-    '',
-  ).trim()
-}
-
-function authAccessToken(value: any): string {
-  return String(value?.tokens?.access_token || value?.access_token || '').trim()
-}
-
 async function fetchCodexOAuthModels(accessToken: string): Promise<string[]> {
   if (!accessToken) return []
   try {
@@ -455,17 +442,17 @@ async function profileStoredAuthCredential(profile: string, provider: string): P
       poolEntry
     )
     if (!hasAuth) return { hasAuth: false }
-    const apiKey = provider === 'nous'
-      ? authCredentialToken(providerEntry) || authCredentialToken(poolEntry)
-      : authAccessToken(providerEntry) || authAccessToken(poolEntry)
-    const baseUrl = String(
-      providerEntry?.inference_base_url ||
-      providerEntry?.base_url ||
-      poolEntry?.inference_base_url ||
-      poolEntry?.base_url ||
-      '',
-    ).trim()
-    return { hasAuth: true, ...(apiKey ? { api_key: apiKey } : {}), ...(baseUrl ? { base_url: baseUrl } : {}) }
+    try {
+      const credentials = await resolveAuthorizedProviderRuntimeCredentials({ profile, provider })
+      return {
+        hasAuth: true,
+        api_key: credentials.apiKey,
+        ...(credentials.baseUrl ? { base_url: credentials.baseUrl } : {}),
+      }
+    } catch (err) {
+      logger.warn(err, '[model-catalog-cache] failed to refresh authorized credentials profile=%s provider=%s', profile, provider)
+      return { hasAuth: true }
+    }
   } catch {
     return { hasAuth: false }
   }

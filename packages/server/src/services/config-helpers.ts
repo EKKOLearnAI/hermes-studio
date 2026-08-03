@@ -18,6 +18,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   'kimi-coding': { api_key_env: 'KIMI_API_KEY', base_url_env: 'KIMI_BASE_URL' },
   'kimi-coding-cn': { api_key_env: 'KIMI_CN_API_KEY', base_url_env: '' },
   minimax: { api_key_env: 'MINIMAX_API_KEY', base_url_env: 'MINIMAX_BASE_URL' },
+  'minimax-oauth': { api_key_env: '', base_url_env: '' },
   'minimax-cn': { api_key_env: 'MINIMAX_CN_API_KEY', base_url_env: 'MINIMAX_CN_BASE_URL' },
   deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
   alibaba: { api_key_env: 'DASHSCOPE_API_KEY', base_url_env: 'DASHSCOPE_BASE_URL' },

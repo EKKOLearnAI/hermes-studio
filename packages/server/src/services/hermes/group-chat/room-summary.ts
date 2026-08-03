@@ -350,6 +350,7 @@ export class GroupRoomSummaryService {
     const runtimeConfig = await resolveEkkoProviderRuntimeConfig({
       profile: input.profile,
       provider: input.provider,
+      model: input.model,
       apiMode: input.apiMode || undefined,
     })
     const { providerConfig } = resolveModelProviderConfigs({

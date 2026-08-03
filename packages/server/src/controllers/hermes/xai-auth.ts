@@ -7,6 +7,7 @@ import { URL } from 'url'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
 import { updateConfigYamlForProfile } from '../../services/config-helpers'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 
 const XAI_OAUTH_ISSUER = 'https://auth.x.ai'
 const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`
@@ -352,18 +353,12 @@ export async function poll(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const auth = loadAuthJson(authPathForProfile(requestedProfile(ctx)))
-    const provider = auth.providers?.['xai-oauth']
-    const pool = auth.credential_pool?.['xai-oauth']
-    ctx.body = {
-      authenticated: !!(
-        provider?.tokens?.access_token ||
-        provider?.access_token ||
-        (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
-      ),
-      last_refresh: provider?.last_refresh,
-    }
-  } catch {
-    ctx.body = { authenticated: false }
+    const credentials = await resolveAuthorizedProviderRuntimeCredentials({
+      profile: requestedProfile(ctx),
+      provider: 'xai-oauth',
+    })
+    ctx.body = { authenticated: true, last_refresh: credentials.lastRefresh }
+  } catch (err: any) {
+    ctx.body = { authenticated: false, relogin_required: err?.reloginRequired === true }
   }
 }

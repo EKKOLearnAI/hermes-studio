@@ -7,6 +7,7 @@ const SCOPED_EXTERNAL_AGENT_AUTH_PROVIDERS = new Set([
   'qwen-oauth',
   'nous',
   'claude-oauth',
+  'minimax-oauth',
 ])
 
 export function isAuthModelProvider(provider?: string): boolean {

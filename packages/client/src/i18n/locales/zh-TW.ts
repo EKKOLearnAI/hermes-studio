@@ -1710,6 +1710,15 @@ export default {
     anthropicSubmitCode: '提交代碼',
     anthropicApproved: '登入成功！',
     anthropicExpired: '授權已過期，請重試。',
+    minimaxLoginTitle: 'MiniMax Coding Plan 登入',
+    minimaxRegionHint: '請選擇 Coding Plan 帳號所屬的 MiniMax 區域。',
+    minimaxGlobal: '國際站',
+    minimaxChina: '中國站',
+    minimaxStart: '開始授權',
+    minimaxWaiting: '請開啟 MiniMax 授權頁並輸入此代碼。授權完成後視窗會自動關閉。',
+    minimaxOpenLink: '開啟 MiniMax 授權頁',
+    minimaxApproved: '登入成功！',
+    minimaxExpired: '授權已過期，請重試。',
   },
 
   // 設定檔

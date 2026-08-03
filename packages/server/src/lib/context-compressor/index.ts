@@ -567,6 +567,7 @@ async function callEkkoSummarizer(
   const runtimeConfig = await resolveEkkoProviderRuntimeConfig({
     profile: options.profile,
     provider,
+    model,
     baseUrl: upstream,
     apiKey,
     apiMode: String(options.apiMode || '').trim() || undefined,

@@ -222,6 +222,7 @@ const MODEL_AUTH_PROVIDERS = new Set([
   'xai-oauth',
   'qwen-oauth',
   'nous',
+  'minimax-oauth',
 ])
 
 /**

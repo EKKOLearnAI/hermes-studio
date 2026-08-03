@@ -118,6 +118,22 @@ export interface AgentBridgeContextEstimate extends AgentBridgeResponse {
   provider?: string
 }
 
+export interface AgentBridgeProviderCredentials extends AgentBridgeResponse {
+  resolved: boolean
+  requested_provider: string
+  provider?: string
+  api_key?: string
+  base_url?: string
+  api_mode?: string
+  source?: string
+  last_refresh?: string
+  expires_at?: string
+  expires_at_ms?: number
+  error?: string
+  code?: string
+  relogin_required?: boolean
+}
+
 export interface AgentBridgeCommandResult extends AgentBridgeResponse {
   session_id: string
   command: string
@@ -516,6 +532,19 @@ export class AgentBridgeClient {
       ...(options.background_delegation_enabled !== undefined
         ? { background_delegation_enabled: options.background_delegation_enabled }
         : {}),
+    })
+  }
+
+  providerCredentials(
+    profile: string,
+    provider: string,
+    model?: string,
+  ): Promise<AgentBridgeProviderCredentials> {
+    return this.request<AgentBridgeProviderCredentials>({
+      action: 'provider_credentials',
+      profile,
+      provider,
+      ...(model ? { model } : {}),
     })
   }
 

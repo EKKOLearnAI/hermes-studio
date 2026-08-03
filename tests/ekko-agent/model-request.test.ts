@@ -113,6 +113,16 @@ describe('ekko-agent model requests', () => {
       baseUrl: 'https://portal.qwen.ai/v1',
       requestStyle: 'openai-chat',
     })
+    expect(authorizedModelProviderPreset('claude-oauth')).toMatchObject({
+      id: 'claude-oauth',
+      baseUrl: 'https://api.anthropic.com',
+      requestStyle: 'anthropic-messages',
+    })
+    expect(authorizedModelProviderPreset('minimax-oauth')).toMatchObject({
+      id: 'minimax-oauth',
+      baseUrl: 'https://api.minimax.io/anthropic',
+      requestStyle: 'anthropic-messages',
+    })
   })
 
   it.each([
@@ -868,6 +878,29 @@ describe('ekko-agent model requests', () => {
       authorization: 'Bearer test-key',
       'x-api-key': 'test-key',
     })
+  })
+
+  it('uses Bearer-only auth for MiniMax Coding Plan', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      content: [{ type: 'text', text: 'OK' }],
+      stop_reason: 'end_turn',
+    }), { status: 200 }))
+    const client = new AnthropicMessagesModelClient({
+      id: 'minimax-oauth',
+      type: 'anthropic',
+      requestStyle: 'anthropic-messages',
+      baseUrl: 'https://api.minimax.io/anthropic',
+      apiKey: 'oauth-access-token',
+      defaultModel: 'MiniMax-M3',
+    }, { fetch: fetchMock })
+
+    await client.create({ messages: [{ role: 'user', content: 'hi' }] })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.minimax.io/anthropic/v1/messages')
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer oauth-access-token',
+    })
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty('x-api-key')
   })
 
   it('merges Anthropic streaming input, output, and cache usage', async () => {

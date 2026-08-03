@@ -210,6 +210,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
   },
   {
+    label: 'MiniMax Coding Plan (OAuth)',
+    value: 'minimax-oauth',
+    builtin: true,
+    base_url: 'https://api.minimax.io/anthropic',
+    api_mode: 'anthropic_messages',
+    models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
+  },
+  {
     label: 'MiniMax (China)',
     value: 'minimax-cn',
     builtin: true,

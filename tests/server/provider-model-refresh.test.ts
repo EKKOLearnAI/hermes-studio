@@ -123,6 +123,12 @@ describe('provider model refresh', () => {
       ],
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
+    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+      resolveAuthorizedProviderRuntimeCredentials: vi.fn().mockResolvedValue({
+        apiKey: 'profile-codex-token',
+        baseUrl: 'https://chatgpt.com/backend-api/codex',
+      }),
+    }))
 
     const { refreshProviderModels } = await loadRefresh()
     const refreshed = await refreshProviderModels('research', 'openai-codex', { confirm: true })

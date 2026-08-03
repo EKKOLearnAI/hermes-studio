@@ -98,4 +98,28 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
       apiMode: 'codex_responses',
     })
   })
+
+  it('uses the authorized MiniMax region and fresh token over stale explicit values', async () => {
+    mocks.resolveAuthorized.mockResolvedValue({
+      baseUrl: 'https://api.minimaxi.com/anthropic',
+      apiKey: 'fresh-minimax-token',
+      apiMode: 'anthropic_messages',
+    })
+    const { resolveEkkoProviderRuntimeConfig } = await import(
+      '../../packages/server/src/services/ekko-agent/provider-runtime'
+    )
+
+    await expect(resolveEkkoProviderRuntimeConfig({
+      profile: 'default',
+      provider: 'minimax-oauth',
+      baseUrl: 'https://api.minimax.io/anthropic',
+      apiKey: 'stale-minimax-token',
+      apiMode: 'chat_completions',
+    })).resolves.toEqual({
+      provider: 'minimax-oauth',
+      baseUrl: 'https://api.minimaxi.com/anthropic',
+      apiKey: 'fresh-minimax-token',
+      apiMode: 'anthropic_messages',
+    })
+  })
 })

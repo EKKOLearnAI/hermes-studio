@@ -4,6 +4,7 @@ import { dirname, join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
 import { updateConfigYamlForProfile } from '../../services/config-helpers'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 
 const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 const ANTHROPIC_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize'
@@ -264,17 +265,12 @@ export async function submit(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const auth = loadAuthJson(authPathForProfile(requestedProfile(ctx)))
-    const provider = auth.providers?.[CLAUDE_OAUTH_PROVIDER] || auth.providers?.[ANTHROPIC_RUNTIME_PROVIDER]
-    const pool = auth.credential_pool?.[CLAUDE_OAUTH_PROVIDER] || auth.credential_pool?.[ANTHROPIC_RUNTIME_PROVIDER]
-    const hasProviderToken = !!(provider?.tokens?.access_token || provider?.access_token)
-    const hasPoolToken = Array.isArray(pool) && pool.some(entry => entry?.access_token)
-    if (!hasProviderToken && !hasPoolToken) {
-      ctx.body = { authenticated: false }
-      return
-    }
-    ctx.body = { authenticated: true, last_refresh: provider?.last_refresh }
-  } catch {
-    ctx.body = { authenticated: false }
+    const credentials = await resolveAuthorizedProviderRuntimeCredentials({
+      profile: requestedProfile(ctx),
+      provider: CLAUDE_OAUTH_PROVIDER,
+    })
+    ctx.body = { authenticated: true, last_refresh: credentials.lastRefresh }
+  } catch (err: any) {
+    ctx.body = { authenticated: false, relogin_required: err?.reloginRequired === true }
   }
 }

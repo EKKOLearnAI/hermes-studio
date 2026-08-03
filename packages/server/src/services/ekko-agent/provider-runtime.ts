@@ -15,6 +15,7 @@ export interface EkkoProviderRuntimeConfig {
 export async function resolveEkkoProviderRuntimeConfig(input: {
   profile: string
   provider: string
+  model?: string
   baseUrl?: string
   apiKey?: string
   apiMode?: string
@@ -24,10 +25,23 @@ export async function resolveEkkoProviderRuntimeConfig(input: {
 
   const profile = String(input.profile || '').trim() || 'default'
   const providerKey = providerKeyWithoutCustomPrefix(provider.toLowerCase())
-  const authorized = await resolveEkkoAuthorizedProviderCredentials(profile, provider)
-  let baseUrl = String(input.baseUrl || authorized.baseUrl || '').trim()
-  let apiKey = String(input.apiKey || authorized.apiKey || '').trim()
-  let apiMode = String(input.apiMode || '').trim()
+  const authorized = await resolveEkkoAuthorizedProviderCredentials(profile, provider, input.model)
+  const authorizedValuesFirst = providerKey === 'minimax-oauth'
+  let baseUrl = String(
+    authorizedValuesFirst
+      ? authorized.baseUrl || input.baseUrl || ''
+      : input.baseUrl || authorized.baseUrl || '',
+  ).trim()
+  let apiKey = String(
+    authorizedValuesFirst
+      ? authorized.apiKey || input.apiKey || ''
+      : input.apiKey || authorized.apiKey || '',
+  ).trim()
+  let apiMode = String(
+    authorizedValuesFirst
+      ? authorized.apiMode || input.apiMode || ''
+      : input.apiMode || authorized.apiMode || '',
+  ).trim()
 
   let config: Record<string, any> = {}
   try {

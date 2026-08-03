@@ -51,6 +51,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
     lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
     'xai-oauth': { api_key_env: '', base_url_env: '' },
+    'minimax-oauth': { api_key_env: '', base_url_env: '' },
     openrouter: {},
     copilot: { api_key_env: 'GITHUB_TOKEN', base_url_env: '' },
   },
@@ -60,6 +61,7 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
   buildProviderModelMap: () => ({
     deepseek: ['deepseek-chat', 'deepseek-reasoner'],
     'xai-oauth': ['grok-4.3', 'grok-4.20-0309-reasoning'],
+    'minimax-oauth': ['MiniMax-M3', 'MiniMax-M2.7'],
     openrouter: ['openrouter/auto'],
   }),
   PROVIDER_PRESETS: [
@@ -96,6 +98,14 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       label: 'xAI Grok OAuth (SuperGrok Subscription)',
       base_url: 'https://api.x.ai/v1',
       models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
+      builtin: true,
+    },
+    {
+      value: 'minimax-oauth',
+      label: 'MiniMax Coding Plan (OAuth)',
+      base_url: 'https://api.minimax.io/anthropic',
+      api_mode: 'anthropic_messages',
+      models: ['MiniMax-M3', 'MiniMax-M2.7'],
       builtin: true,
     },
     {
@@ -584,6 +594,58 @@ describe('models controller — model visibility', () => {
         models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
       }),
     ]))
+  })
+
+  it.each([
+    ['global', 'https://api.minimax.io/anthropic'],
+    ['China', 'https://api.minimaxi.com/anthropic'],
+  ])('uses the authorized MiniMax %s region URL to read the refreshed model cache', async (_region, baseUrl) => {
+    mockReadFile.mockResolvedValue('')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'MiniMax-M3', provider: 'minimax-oauth' },
+    })
+    mockExistsSync.mockReturnValue(true)
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      providers: {
+        'minimax-oauth': {
+          access_token: 'minimax-token',
+          inference_base_url: baseUrl,
+        },
+      },
+    }))
+    mockReadProviderModelCatalogCache.mockResolvedValue({
+      version: 1,
+      updated_at: '2026-08-03T09:38:34.855Z',
+      providers: {
+        [modelCatalogKey('minimax-oauth', baseUrl)]: {
+          provider: 'minimax-oauth',
+          label: 'MiniMax Coding Plan (OAuth)',
+          base_url: baseUrl,
+          models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.5'],
+          source: 'live',
+          updated_at: '2026-08-03T09:38:34.855Z',
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'minimax-oauth',
+        base_url: baseUrl,
+        models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.5'],
+      }),
+    ]))
+    expect(mockResolveProviderCatalogModels).toHaveBeenCalledWith(
+      expect.anything(),
+      'minimax-oauth',
+      baseUrl,
+      expect.any(Array),
+      expect.objectContaining({ profile: 'default' }),
+    )
   })
 
   it('marks allProviders with base URL env support for editable preset URLs', async () => {

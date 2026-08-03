@@ -15,6 +15,7 @@ const KIMI_CODING_CN_PROVIDER = 'kimi-coding-cn'
 const GLM_CODING_PLAN_PROVIDER = 'glm'
 const ALIBABA_CODING_PLAN_PROVIDER = 'alibaba-coding-plan'
 const MINIMAX_PROVIDER = 'minimax'
+const MINIMAX_OAUTH_PROVIDER = 'minimax-oauth'
 const MINIMAX_CN_PROVIDER = 'minimax-cn'
 
 const STEPFUN_PROVIDER = 'stepfun'
@@ -329,6 +330,20 @@ describe('provider presets', () => {
         'MiniMax-M2',
       ]))
     }
+  })
+
+  it('keeps MiniMax Coding Plan OAuth separate from API-key providers', () => {
+    expect(PROVIDER_ENV_MAP[MINIMAX_OAUTH_PROVIDER]).toEqual({ api_key_env: '', base_url_env: '' })
+    const preset = SERVER_PROVIDER_PRESETS.find(candidate => candidate.value === MINIMAX_OAUTH_PROVIDER)
+    expect(preset).toMatchObject({
+      base_url: 'https://api.minimax.io/anthropic',
+      api_mode: 'anthropic_messages',
+    })
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, MINIMAX_OAUTH_PROVIDER)).toEqual([
+      'MiniMax-M3',
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+    ])
   })
 
   it('includes current GitHub Copilot fallback models', () => {

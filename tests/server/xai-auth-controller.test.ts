@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
@@ -6,6 +6,11 @@ import YAML from 'js-yaml'
 import { applyXaiOAuthDefaultModel, saveXaiOAuthTokensForProfile, status } from '../../packages/server/src/controllers/hermes/xai-auth'
 
 let hermesHome = ''
+const mockResolveAuthorizedCredentials = vi.hoisted(() => vi.fn())
+
+vi.mock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+  resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
+}))
 
 function writeFile(relativePath: string, content: string) {
   const target = join(hermesHome, relativePath)
@@ -36,6 +41,7 @@ describe('xAI auth controller', () => {
   beforeEach(() => {
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-xai-auth-'))
     process.env.HERMES_HOME = hermesHome
+    mockResolveAuthorizedCredentials.mockReset()
   })
 
   afterEach(() => {
@@ -114,10 +120,19 @@ describe('xAI auth controller', () => {
         },
       },
     }, null, 2))
+    mockResolveAuthorizedCredentials.mockResolvedValue({
+      provider: 'xai-oauth',
+      apiKey: 'research-access-token',
+      lastRefresh: '2026-06-02T00:00:00.000Z',
+    })
 
     const ctx = makeCtx('research')
     await status(ctx)
 
     expect(ctx.body).toEqual({ authenticated: true, last_refresh: '2026-06-02T00:00:00.000Z' })
+    expect(mockResolveAuthorizedCredentials).toHaveBeenCalledWith({
+      profile: 'research',
+      provider: 'xai-oauth',
+    })
   })
 })
