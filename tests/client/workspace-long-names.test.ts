@@ -46,15 +46,6 @@ const NEmptyStub = defineComponent({
   },
 })
 
-const NTreeStub = defineComponent({
-  props: ['data', 'renderLabel'],
-  setup(props) {
-    return () => h('div', (props.data || []).map((option: any) =>
-      h('div', { class: 'tree-node' }, [props.renderLabel({ option })]),
-    ))
-  },
-})
-
 function mountFileList() {
   return mount(FileList, {
     global: {
@@ -103,18 +94,13 @@ describe('workspace long names', () => {
       }],
     } as any)
 
-    const wrapper = mount(FileTree, {
-      global: {
-        stubs: {
-          NTree: NTreeStub,
-        },
-      },
-    })
+    const wrapper = mount(FileTree)
     await vi.waitFor(() => {
       expect(wrapper.find('.tree-node-label').exists()).toBe(true)
     })
 
     expect(wrapper.find('.tree-node-label').text()).toBe(longName)
     expect(wrapper.find('.tree-node-label').attributes('title')).toBe(longName)
+    expect(wrapper.find('.n-tree-node-switcher').attributes('style')).toContain('width: 6px')
   })
 })

@@ -84,6 +84,7 @@ watch([effectiveProfile, () => filesStore.currentWorkspaceSessionId, () => files
       :selected-keys="selectedKeys"
       :on-load="handleLoad"
       :render-label="renderLabel"
+      :indent="6"
       expand-on-click
       block-line
       @update:selected-keys="handleSelect"
