@@ -1,10 +1,22 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const workflowManagerTestDbDir = mkdtempSync(join(tmpdir(), 'hermes-workflow-manager-'))
+const originalWorkflowManagerTestDbDir = process.env.HERMES_WEB_UI_TEST_DB_DIR
+const originalWorkflowManagerWebUiHome = process.env.HERMES_WEB_UI_HOME
+const originalWorkflowManagerStateDir = process.env.HERMES_WEBUI_STATE_DIR
+const workflowManagerTestRoot = mkdtempSync(join(tmpdir(), 'hermes-workflow-manager-'))
+const workflowManagerTestDbDir = join(workflowManagerTestRoot, 'db')
+const workflowManagerTestHome = join(workflowManagerTestRoot, 'home')
 process.env.HERMES_WEB_UI_TEST_DB_DIR = workflowManagerTestDbDir
+process.env.HERMES_WEB_UI_HOME = workflowManagerTestHome
+process.env.HERMES_WEBUI_STATE_DIR = workflowManagerTestHome
+
+function restoreEnvironmentVariable(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
+}
 
 const chatRunMock = vi.hoisted(() => ({
   runAndWait: vi.fn(),
@@ -47,14 +59,30 @@ vi.mock('../../packages/server/src/db/hermes/session-store', async (importOrigin
 afterAll(async () => {
   const { closeDb } = await import('../../packages/server/src/db/index')
   closeDb()
-  delete process.env.HERMES_WEB_UI_TEST_DB_DIR
-  rmSync(workflowManagerTestDbDir, { recursive: true, force: true })
+  restoreEnvironmentVariable('HERMES_WEB_UI_TEST_DB_DIR', originalWorkflowManagerTestDbDir)
+  restoreEnvironmentVariable('HERMES_WEB_UI_HOME', originalWorkflowManagerWebUiHome)
+  restoreEnvironmentVariable('HERMES_WEBUI_STATE_DIR', originalWorkflowManagerStateDir)
+  rmSync(workflowManagerTestRoot, { recursive: true, force: true })
 })
 
 describe('workflow manager', () => {
-  it('uses an isolated SQLite directory for this suite', async () => {
+  it('isolates both SQLite and default workflow workspaces for this suite', async () => {
+    const { config } = await import('../../packages/server/src/config')
     const { getStoragePath } = await import('../../packages/server/src/db/index')
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { createWorkflow, deleteWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+
     expect(getStoragePath()).toBe(join(workflowManagerTestDbDir, 'hermes-web-ui.db'))
+    expect(config.appHome).toBe(workflowManagerTestHome)
+
+    initAllStores()
+    const workflow = createWorkflow({ name: 'Isolated workspace', profile: 'default' })
+    try {
+      expect(workflow.workspace).toBe(join(workflowManagerTestHome, 'workflow', 'default', workflow.id))
+      expect(existsSync(workflow.workspace!)).toBe(true)
+    } finally {
+      deleteWorkflow(workflow.id)
+    }
   })
 
   it('returns a server-wide singleton instance', async () => {
