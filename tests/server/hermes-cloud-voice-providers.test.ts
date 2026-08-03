@@ -138,7 +138,7 @@ describe('Hermes-compatible cloud TTS providers', () => {
 
     expect(url).toContain('/v1/t2a_v2?GroupId=group-1')
     expect(JSON.parse(String(init.body))).toMatchObject({
-      model: 'speech-02-hd',
+      model: 'speech-2.8-hd',
       text: 'hello',
       voice_setting: {
         voice_id: 'English_expressive_narrator',
@@ -149,6 +149,31 @@ describe('Hermes-compatible cloud TTS providers', () => {
       },
     })
     expect(output.audio.toString()).toBe('minimax-audio')
+  })
+
+  it('accepts the MiniMax China endpoint with the same TTS payload', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { audio: Buffer.from('minimax-cn-audio').toString('hex') },
+      base_resp: { status_code: 0 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await minimaxTtsProvider.synthesize({ text: 'hello' }, {
+      apiKey: 'minimax-key',
+      baseUrl: 'https://api.minimaxi.com/v1/t2a_v2',
+    })
+    const { url, init } = fetchCall(fetchMock)
+
+    expect(url).toContain('/v1/t2a_v2')
+    expect(url).toContain('api.minimaxi.com')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      model: 'speech-2.8-hd',
+      text: 'hello',
+    })
+    expect(output.audio.toString()).toBe('minimax-cn-audio')
   })
 
   it('uses DeepInfra through its OpenAI-compatible audio endpoint', async () => {

@@ -25,7 +25,7 @@ const DEFAULTS = {
   },
   minimax: {
     baseUrl: 'https://api.minimax.io/v1/t2a_v2',
-    model: 'speech-02-hd',
+    model: 'speech-2.8-hd',
     voice: 'English_expressive_narrator',
   },
 } as const

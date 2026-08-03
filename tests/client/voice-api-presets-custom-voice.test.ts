@@ -23,4 +23,13 @@ describe('Custom TTS voice capability', () => {
     const missing = selectableTts.filter(entry => !entry.capabilities?.voices).map(entry => entry.id)
     expect(missing).toEqual([])
   })
+
+  it('exposes both MiniMax TTS regions with the 2.8 default model', () => {
+    const presets = VOICE_API_PRESETS.filter(entry => entry.provider === 'minimax')
+    expect(presets.map(entry => entry.baseUrl).sort()).toEqual([
+      'https://api.minimax.io/v1/t2a_v2',
+      'https://api.minimaxi.com/v1/t2a_v2',
+    ])
+    expect(presets.every(entry => entry.defaultModel === 'speech-2.8-hd')).toBe(true)
+  })
 })
