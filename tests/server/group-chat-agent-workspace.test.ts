@@ -126,6 +126,16 @@ describe('group chat agent workspace bridge runs', () => {
 
     const nonAsciiA = groupBridgeSessionId('room-1', 'default', '丫鬟', '0')
     const nonAsciiB = groupBridgeSessionId('room-1', 'default', '书童', '0')
+    const selectedModelA = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      provider: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'low',
+    })
+    const selectedModelB = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      provider: 'provider-a',
+      model: 'model-b',
+      reasoningEffort: 'low',
+    })
 
     expect(first).toHaveLength(120)
     expect(second).toHaveLength(120)
@@ -134,6 +144,255 @@ describe('group chat agent workspace bridge runs', () => {
     expect(second).toMatch(/_h_[0-9a-f]{16}$/)
     expect(collidingPrefixA).not.toBe(collidingPrefixB)
     expect(nonAsciiA).not.toBe(nonAsciiB)
+    expect(selectedModelA).not.toBe(selectedModelB)
+
+    const hermesSession = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      agent: 'hermes',
+      provider: 'provider-a',
+      model: 'model-a',
+    })
+    const codexSession = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      agent: 'codex',
+      provider: 'provider-a',
+      model: 'model-a',
+    })
+    const codexResponsesSession = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      agent: 'codex',
+      provider: 'provider-a',
+      model: 'model-a',
+      apiMode: 'codex_responses',
+    })
+    const codexChatSession = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      agent: 'codex',
+      provider: 'provider-a',
+      model: 'model-a',
+      apiMode: 'chat_completions',
+    })
+    const hermesWithIgnoredApiMode = groupBridgeSessionId('room-1', 'default', 'Worker', '0', {
+      agent: 'hermes',
+      provider: 'provider-a',
+      model: 'model-a',
+      apiMode: 'anthropic_messages',
+    })
+    expect(hermesSession).not.toBe(codexSession)
+    expect(codexResponsesSession).not.toBe(codexChatSession)
+    expect(hermesWithIgnoredApiMode).toBe(hermesSession)
+  })
+
+  it('dispatches a Codex group agent through chat-run without invoking the Hermes bridge', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('reasoning.delta', { delta: 'thinking' })
+      options.onEvent?.('tool.started', {
+        tool_call_id: 'tool-1',
+        name: 'list_files',
+        arguments: { path: '/tmp' },
+      })
+      options.onEvent?.('tool.completed', {
+        tool_call_id: 'tool-1',
+        name: 'list_files',
+        output: 'file.txt',
+      })
+      options.onEvent?.('reasoning.delta', { delta: 'next thought' })
+      options.onEvent?.('tool.started', {
+        tool_call_id: 'tool-2',
+        name: 'read_file',
+        arguments: { path: '/tmp/file.txt' },
+      })
+      options.onEvent?.('tool.completed', {
+        tool_call_id: 'tool-2',
+        name: 'read_file',
+        output: 'contents',
+      })
+      options.onEvent?.('message.delta', { delta: 'Codex answer' })
+      return { ok: true, output: 'Codex answer', reasoning: 'thinkingnext thought' }
+    })
+    const chatRunService = {
+      runAndWait,
+      abortSession: vi.fn(async () => {}),
+    }
+    const clients = new AgentClients()
+    clients.setChatRunService(chatRunService)
+    const client = await clients.createAgent({
+      agentId: 'agent-codex',
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Coder',
+      description: 'Writes code',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getMessagesForContext: vi.fn(() => [{
+        id: 'msg-1',
+        roomId: 'room-1',
+        senderId: 'human-1',
+        senderName: 'Human',
+        content: '@Coder implement it',
+        timestamp: 1,
+        role: 'user',
+      }]),
+      getContextSnapshot: vi.fn(() => null),
+    })
+
+    await client.replyToMention('room-1', {
+      messageId: 'msg-1',
+      content: '@Coder implement it',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    expect(runAndWait).toHaveBeenCalledWith(expect.objectContaining({
+      coding_agent_id: 'codex',
+      source: 'workflow',
+      session_source: 'workflow',
+      mode: 'scoped',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoning_effort: 'high',
+      background_delegation_enabled: false,
+    }), expect.objectContaining({
+      profile: 'research',
+      onEvent: expect.any(Function),
+    }))
+    expect(String(runAndWait.mock.calls[0][0].input)).toContain('群聊上下文')
+    expect(bridgeMock.chat).not.toHaveBeenCalled()
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        content: 'Codex answer',
+        reasoning: null,
+      }),
+      expect.any(Function),
+    )
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        role: 'assistant',
+        tool_calls: [expect.objectContaining({
+          id: 'tool-1',
+          function: expect.objectContaining({ name: 'list_files' }),
+        })],
+        reasoning: 'thinking',
+      }),
+      expect.any(Function),
+    )
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        role: 'tool',
+        tool_call_id: 'tool-1',
+        tool_name: 'list_files',
+        content: 'file.txt',
+      }),
+      expect.any(Function),
+    )
+    const persistedAgentMessages = mockSocket.emit.mock.calls
+      .filter(([event, payload]) => event === 'message' && payload?.roomId === 'room-1')
+      .map(([, payload]) => payload)
+    expect(persistedAgentMessages
+      .filter(payload => payload.role === 'assistant' && payload.tool_calls?.length)
+      .map(payload => payload.reasoning)).toEqual(['thinking', 'next thought'])
+    expect(new Set(persistedAgentMessages.map(payload => payload.run_id)).size).toBe(1)
+    expect(persistedAgentMessages.every(payload => /^gcmsg_/.test(payload.run_id))).toBe(true)
+  })
+
+  it('finishes a group-only Codex tool card when chat-run has no matching completed event', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('tool.started', {
+        tool_call_id: 'call-write-stdin',
+        name: 'write_stdin',
+        arguments: { session_id: 86404, chars: '', yield_time_ms: 3000 },
+      })
+      options.onEvent?.('message.delta', { delta: 'Weather answer' })
+      return { ok: true, output: 'Weather answer' }
+    })
+    const clients = new AgentClients()
+    clients.setChatRunService({
+      runAndWait,
+      abortSession: vi.fn(async () => {}),
+    })
+    const client = await clients.createAgent({
+      agentId: 'agent-codex-terminal-tool',
+      agent: 'codex',
+      profile: 'default',
+      name: 'Codex',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getMessagesForContext: vi.fn(() => []),
+      getContextSnapshot: vi.fn(() => null),
+    })
+
+    await client.replyToMention('room-terminal-tool', {
+      messageId: 'msg-terminal-tool',
+      content: '@Codex check the weather',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    const persistedMessages = mockSocket.emit.mock.calls
+      .filter(([event, payload]) => event === 'message' && payload?.roomId === 'room-terminal-tool')
+      .map(([, payload]) => payload)
+    const toolCallIndex = persistedMessages.findIndex(payload => payload.role === 'assistant' && payload.tool_calls?.[0]?.id === 'call-write-stdin')
+    const toolResultIndex = persistedMessages.findIndex(payload => payload.role === 'tool' && payload.tool_call_id === 'call-write-stdin')
+    const finalAnswerIndex = persistedMessages.findIndex(payload => payload.role === 'assistant' && payload.content === 'Weather answer')
+
+    expect(toolCallIndex).toBeGreaterThanOrEqual(0)
+    expect(toolResultIndex).toBeGreaterThan(toolCallIndex)
+    expect(finalAnswerIndex).toBeGreaterThan(toolResultIndex)
+    expect(persistedMessages[toolResultIndex]).toEqual(expect.objectContaining({
+      tool_name: 'write_stdin',
+      content: '',
+      run_id: persistedMessages[toolCallIndex].run_id,
+    }))
+  })
+
+  it('interrupts a non-Hermes group agent through chat-run only', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const chatRunService = {
+      runAndWait: vi.fn(),
+      abortSession: vi.fn(async () => {}),
+    }
+    const clients = new AgentClients()
+    clients.setChatRunService(chatRunService)
+    const client = await clients.createAgent({
+      agentId: 'agent-ekko',
+      agent: 'ekko',
+      profile: 'default',
+      name: 'Ekko',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({ getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '' })) })
+    ;(clients as any).rooms.set('room-1', new Map([[client.agentId, client]]))
+
+    await clients.interruptAgent('room-1', 'Ekko')
+
+    expect(chatRunService.abortSession).toHaveBeenCalledWith(
+      expect.stringMatching(/^gc_/),
+      'Interrupted by group chat user',
+    )
+    expect(bridgeMock.interrupt).not.toHaveBeenCalled()
   })
 
   it('does not block room-wide interrupts for idle agents with no bridge session', async () => {
@@ -216,12 +475,16 @@ describe('group chat agent workspace bridge runs', () => {
     expect(bridgeMock.chat).toHaveBeenCalledTimes(1)
   })
 
-  async function createClient(workspace = '') {
+  async function createClient(
+    workspace = '',
+    runtimeConfig: { provider?: string; model?: string; reasoningEffort?: string } = {},
+  ) {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients()
     const client = await clients.createAgent({
       agentId: 'agent-1',
       profile: 'default',
+      ...runtimeConfig,
       name: 'Worker',
       description: '',
       invited: 0,
@@ -264,6 +527,27 @@ describe('group chat agent workspace bridge runs', () => {
     )
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('run_id')
+  })
+
+  it('passes the room agent model selection and reasoning effort to the bridge', async () => {
+    const client = await createClient('', {
+      provider: 'selected-provider',
+      model: 'selected-model',
+      reasoningEffort: 'high',
+    })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker hi',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+    })
+
+    expect(bridgeMock.chat.mock.calls[0]?.[5]).toMatchObject({
+      provider: 'selected-provider',
+      model: 'selected-model',
+      reasoning_effort: 'high',
+    })
   })
 
   it('cancels a pending reply when interrupt arrives before bridge.chat starts', async () => {

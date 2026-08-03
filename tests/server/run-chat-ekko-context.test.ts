@@ -337,12 +337,14 @@ describe('ekko-agent context usage events', () => {
       input: 'think carefully',
       coding_agent_id: 'ekko-agent',
       reasoning_effort: 'high',
+      background_delegation_enabled: false,
       instructions: 'Keep the spoken response short and use plain text.',
     }, 'default', sessionMap, vi.fn(() => false))
 
     expect(agentRunMock).toHaveBeenCalledWith(expect.objectContaining({
       reasoningEffort: 'high',
       reasoningSummary: 'auto',
+      backgroundDelegationEnabled: false,
       modelDefaults: expect.objectContaining({
         reasoningEffort: 'high',
         reasoningSummary: 'auto',

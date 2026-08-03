@@ -265,6 +265,7 @@ describe('group chat history windows', () => {
         args: { room: 'room-1' },
       },
       'run-1_part_0',
+      'run-1',
       'Inspect the room before calling lookup.',
     )
 
@@ -273,6 +274,7 @@ describe('group chat history windows', () => {
       expect.objectContaining({
         roomId: 'room-1',
         id: 'run-1_part_0_toolcall_call-1',
+        run_id: 'run-1',
         role: 'assistant',
         reasoning: 'Inspect the room before calling lookup.',
         reasoning_content: 'Inspect the room before calling lookup.',

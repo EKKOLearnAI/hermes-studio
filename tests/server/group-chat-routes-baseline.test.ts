@@ -34,12 +34,19 @@ describe('group chat REST route baseline', () => {
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
-      addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited) => {
-        const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited }
+      addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, metadata = {}) => {
+        const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited, ...metadata }
         storage.agents.set(roomId, [...(storage.agents.get(roomId) || []), row])
         return row
       }),
       getRoomAgent: vi.fn((roomId, ref) => (storage.agents.get(roomId) || []).find((a: any) => a.id === ref || a.agentId === ref) || null),
+      updateRoomAgent: vi.fn((roomId, ref, profile, name, description, metadata = {}) => {
+        const rows = storage.agents.get(roomId) || []
+        const row = rows.find((agent: any) => agent.id === ref || agent.agentId === ref)
+        if (!row) return null
+        Object.assign(row, { profile, name, description, ...metadata })
+        return row
+      }),
       removeRoomMembersForAgent: vi.fn(),
       removeRoomAgent: vi.fn((roomId, ref) => storage.agents.set(roomId, (storage.agents.get(roomId) || []).filter((a: any) => a.id !== ref && a.agentId !== ref))),
       clearRoomContext: vi.fn((roomId) => { const room = storage.rooms.get(roomId); if (room) Object.assign(room, { totalTokens: 0, sessionSeed: 'rotated' }) }),
@@ -136,18 +143,248 @@ describe('group chat REST route baseline', () => {
     })
   })
 
-  it('rejects duplicate room agent profiles', async () => {
+  it('allows multiple room agents backed by the same profile', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.agents.set('room-1', [{ id: 'row-agent', agentId: 'agent-1', profile: 'default', name: 'Agent' }])
 
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: 'default', name: 'Agent' }),
+      body: JSON.stringify({ profile: 'default', name: 'Second Agent' }),
     })
 
-    expect(res.status).toBe(409)
-    await expect(res.json()).resolves.toEqual({ error: 'Agent already in room' })
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      agent: {
+        profile: 'default',
+        name: 'Second Agent',
+      },
+    })
+    expect(storage.getRoomAgents('room-1')).toHaveLength(2)
+  })
+
+  it('persists the selected provider, model, api mode, and reasoning effort for a room agent', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'codex',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        name: 'Researcher',
+        description: 'Finds evidence',
+        avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Researcher',
+      description: 'Finds evidence',
+    }))
+    expect(storage.addRoomAgent).toHaveBeenCalledWith(
+      'room-1',
+      expect.any(String),
+      'research',
+      'Researcher',
+      'Finds evidence',
+      0,
+      {
+        agent: 'codex',
+        provider: 'openai',
+        model: 'gpt-test',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
+      },
+    )
+    expect(body.agent).toMatchObject({
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
+    })
+  })
+
+  it('rejects incomplete or invalid room agent runtime configuration', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+
+    const missingModel = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: 'research', provider: 'openai' }),
+    })
+    expect(missingModel.status).toBe(400)
+
+    const invalidReasoning = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        reasoningEffort: 'extreme',
+      }),
+    })
+    expect(invalidReasoning.status).toBe(400)
+
+    const missingApiMode = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'codex',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+      }),
+    })
+    expect(missingApiMode.status).toBe(400)
+
+    const invalidApiMode = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'ekko',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        apiMode: 'unsupported',
+      }),
+    })
+    expect(invalidApiMode.status).toBe(400)
+
+    const invalidAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'unknown',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+      }),
+    })
+    expect(invalidAgent.status).toBe(400)
+
+    const invalidAvatar = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        avatar: JSON.stringify({ type: 'image', dataUrl: 'javascript:alert(1)' }),
+      }),
+    })
+    expect(invalidAvatar.status).toBe(400)
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+  })
+
+  it('ignores apiMode for Hermes room agents', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'hermes',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        apiMode: 'anthropic_messages',
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'hermes',
+      apiMode: '',
+    }))
+    expect(storage.addRoomAgent.mock.calls.at(-1)?.[6]).toMatchObject({
+      agent: 'hermes',
+      apiMode: '',
+    })
+  })
+
+  it('updates a room agent while preserving its identity and replacing its group runtime', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.agents.set('room-1', [{
+      id: 'row-agent',
+      roomId: 'room-1',
+      agentId: 'agent-1',
+      agent: 'hermes',
+      profile: 'default',
+      provider: 'openai',
+      model: 'old-model',
+      apiMode: '',
+      reasoningEffort: '',
+      name: 'Worker',
+      description: '',
+      invited: 0,
+    }])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/row-agent`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'codex',
+        profile: 'research',
+        provider: 'openai',
+        model: 'new-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        name: 'Reviewer',
+        description: 'Reviews changes',
+      }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'agent-1',
+      agent: 'codex',
+      profile: 'research',
+      model: 'new-model',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Reviewer',
+    }))
+    expect(agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-1')
+    expect(agentClients.addAgentToRoom).toHaveBeenCalled()
+    expect(storage.updateRoomAgent).toHaveBeenCalledWith(
+      'room-1',
+      'row-agent',
+      'research',
+      'Reviewer',
+      'Reviews changes',
+      {
+        agent: 'codex',
+        provider: 'openai',
+        model: 'new-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+      },
+    )
+    expect(body.agent).toMatchObject({
+      id: 'row-agent',
+      agentId: 'agent-1',
+      profile: 'research',
+      name: 'Reviewer',
+    })
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {

@@ -2651,6 +2651,8 @@ export default {
     selectOrCreate: 'اختر غرفة أو أنشئ واحدة لبدء المحادثة',
     agents: 'الوكلاء',
     addAgent: 'إضافة وكيل',
+    agentType: 'الوكيل',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     selectProfile: 'اختر بروفايل',
     agentAdded: 'تم إضافة الوكيل',
     selectRoomFirst: 'يرجى اختيار غرفة أولاً',

@@ -2651,6 +2651,8 @@ export default {
     selectOrCreate: 'Select or create a room to start chatting',
     agents: 'Agents',
     addAgent: 'Add Agent',
+    agentType: 'Agent',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     selectProfile: 'Select a profile',
     agentAdded: 'Agent added',
     selectRoomFirst: 'Please select a room first',

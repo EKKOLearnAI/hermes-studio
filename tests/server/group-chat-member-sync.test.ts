@@ -215,7 +215,15 @@ describe('Group Chat member/agent identity sync', () => {
       profile: 'default',
       reason: 'join failed',
     })
-    expect(addRoomAgent).toHaveBeenCalledWith('room-1', expect.any(String), 'default', 'Worker', '', 0)
+    expect(addRoomAgent).toHaveBeenCalledWith(
+      'room-1',
+      expect.any(String),
+      'default',
+      'Worker',
+      '',
+      0,
+      { agent: 'hermes', provider: '', model: '', apiMode: '', reasoningEffort: '' },
+    )
     expect(removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
   })
@@ -417,6 +425,58 @@ describe('Group Chat member/agent identity sync', () => {
     expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', agentName: 'Worker', status: 'replying' }))
     expect(broadcastEmit).toHaveBeenCalledWith('room_updated', { roomId: 'room-1', totalTokens: 456 })
     expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'current-stream', senderName: 'Worker' }))
+  })
+
+  it('accepts side-channel events for the persisted non-Hermes runtime session', () => {
+    const broadcastEmit = vi.fn()
+    const agentMember = {
+      id: 'agent-socket-1',
+      userId: 'agent-ekko-1',
+      name: 'ekko-agent',
+      description: '',
+      joinedAt: Date.now(),
+      online: true,
+      socketId: 'agent-socket-1',
+      source: 'agent',
+      avatar: '',
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', {
+      getOnlineMemberBySocketId: vi.fn(() => agentMember),
+    }]])
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
+      getRoomAgentByAgentId: vi.fn(() => ({
+        id: 'row-ekko-1',
+        roomId: 'room-1',
+        agentId: 'agent-ekko-1',
+        agent: 'ekko',
+        profile: 'default',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        reasoningEffort: '',
+        name: 'ekko-agent',
+      })),
+    }
+    server.nsp = { to: vi.fn(() => ({ emit: broadcastEmit })) }
+    const socket = { id: 'agent-socket-1' }
+    const sessionId = groupBridgeSessionId('room-1', 'default', 'ekko-agent', 'seed-1', {
+      agent: 'ekko',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      reasoningEffort: '',
+    })
+
+    server.handleMessageStreamStart(socket, {
+      roomId: 'room-1',
+      id: 'ekko-stream',
+      agentSessionId: sessionId,
+    })
+
+    expect(broadcastEmit).toHaveBeenCalledWith(
+      'message_stream_start',
+      expect.objectContaining({ id: 'ekko-stream', senderName: 'ekko-agent' }),
+    )
   })
 
   it('does not drop queued mentions when room interrupt is not synchronized', async () => {

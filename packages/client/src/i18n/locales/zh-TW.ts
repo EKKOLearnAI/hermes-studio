@@ -2611,6 +2611,8 @@ export default {
     selectOrCreate: '選擇或建立一個房間開始聊天',
     agents: '智慧代理',
     addAgent: '新增智慧代理',
+    agentType: 'Agent 類型',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     selectProfile: '選擇一個設定檔',
     agentAdded: '智慧代理已新增',
     selectRoomFirst: '請先選擇一個群組',

@@ -13,6 +13,7 @@ import {
     getStoredUserName,
     type RoomInfo,
     type RoomAgent,
+    type RoomAgentInput,
     type ChatMessage,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
@@ -21,6 +22,7 @@ import {
     getRoomDetail,
     joinRoomByCode,
     addAgent,
+    updateAgent,
     listAgents,
     removeAgent,
     cloneRoom as cloneRoomApi,
@@ -416,6 +418,16 @@ const currentUserAvatar = ref('')
 
         socket.on('message', (msg: ChatMessage) => {
             if (msg.roomId === currentRoomId.value) {
+                if (msg.role === 'assistant' && msg.tool_calls?.length) {
+                    const responseRunId = inferredGroupResponseRunId(msg)
+                    messages.value = messages.value.map(message => (
+                        message.isStreaming &&
+                        message.senderId === msg.senderId &&
+                        inferredGroupResponseRunId(message) === responseRunId
+                            ? { ...message, reasoning: '', reasoning_content: '' }
+                            : message
+                    ))
+                }
                 const idx = messages.value.findIndex(m => m.id === msg.id)
                 const existing = idx >= 0 ? messages.value[idx] : null
                 const resolvedMsg = mergeFinalMessage(existing, msg)
@@ -559,6 +571,7 @@ const currentUserAvatar = ref('')
                         ))
                         .filter(m => !(
                             m.senderName === data.agentName &&
+                            m.role !== 'tool' &&
                             !m.content?.trim() &&
                             !m.reasoning?.trim() &&
                             !m.tool_calls?.length
@@ -773,7 +786,7 @@ const currentUserAvatar = ref('')
     async function createNewRoom(
         name: string,
         inviteCode: string,
-        agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[],
+        agentList?: RoomAgentInput[],
         compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number },
         workspace?: string,
         memberProfile?: { name: string; description?: string },
@@ -900,10 +913,24 @@ const currentUserAvatar = ref('')
         } catch { /* ignore */ }
     }
 
-    async function addAgentToRoom(roomId: string, data: { profile: string; name?: string; description?: string; invited?: boolean }) {
+    async function addAgentToRoom(roomId: string, data: RoomAgentInput) {
         try {
             const res = await addAgent(roomId, data)
             agents.value.push(res.agent)
+            return res.agent
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentInput) {
+        try {
+            const res = await updateAgent(roomId, agentId, data)
+            agents.value = res.agents ?? agents.value.map(agent => (
+                agent.id === agentId || agent.agentId === agentId ? res.agent : agent
+            ))
+            if (res.members) members.value = res.members
             return res.agent
         } catch (err: any) {
             error.value = err.message
@@ -1024,6 +1051,7 @@ const currentUserAvatar = ref('')
         setRoomInviteCode,
         loadAgents,
         addAgentToRoom,
+        updateAgentInRoom,
         removeAgentFromRoom,
     }
 })
@@ -1066,6 +1094,18 @@ function groupWorkspaceDiffPayload(value: unknown): GroupWorkspaceDiffPayload | 
         : null
 }
 
+function inferredGroupResponseRunId(message: ChatMessage): string {
+    const explicit = String(message.run_id || '').trim()
+    if (explicit) return explicit
+    const match = String(message.id || '').match(/^(.+)_part_\d+(?:_tool(?:call|result)_.+)?$/)
+    return match?.[1] || ''
+}
+
+function groupToolPairKey(message: ChatMessage, toolCallId: string): string {
+    const runId = inferredGroupResponseRunId(message)
+    return `${runId || 'legacy'}\u0000${toolCallId}`
+}
+
 function attachWorkspaceDiffsToParentMessages(messages: ChatMessage[]): ChatMessage[] {
     const mapped: ChatMessage[] = messages.map(message => ({ ...message, workspaceChanges: [] }))
     const assistantById = new Map(
@@ -1083,15 +1123,44 @@ function attachWorkspaceDiffsToParentMessages(messages: ChatMessage[]): ChatMess
     })
 }
 
+function segmentGroupReasoningSnapshots(messages: ChatMessage[]): ChatMessage[] {
+    const previousByRun = new Map<string, string>()
+    return messages.map(message => {
+        if (message.role !== 'assistant') return message
+        if (!message.tool_calls?.length && !runtimePayloadText(message.content).trim()) return message
+        const runId = inferredGroupResponseRunId(message)
+        const current = String(message.reasoning || message.reasoning_content || '')
+        if (!runId || !current) return message
+        const key = `${message.senderId}\u0000${runId}`
+        const previous = previousByRun.get(key) || ''
+        previousByRun.set(key, current)
+        if (!previous || !current.startsWith(previous)) return message
+        const segment = current.slice(previous.length).trimStart()
+        return {
+            ...message,
+            reasoning: segment || null,
+            reasoning_content: segment || null,
+        }
+    })
+}
+
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
+    msgs = segmentGroupReasoningSnapshots(msgs)
     const toolNameMap = new Map<string, string>()
     const toolArgsMap = new Map<string, unknown>()
     for (const msg of msgs) {
         if (msg.role === 'assistant' && msg.tool_calls?.length) {
             for (const tc of msg.tool_calls) {
                 if (!tc?.id) continue
-                if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-                if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
+                const pairKey = groupToolPairKey(msg, tc.id)
+                if (tc.function?.name) {
+                    toolNameMap.set(pairKey, tc.function.name)
+                    toolNameMap.set(`legacy\u0000${tc.id}`, tc.function.name)
+                }
+                if (hasRuntimeToolPayload(tc.function?.arguments)) {
+                    toolArgsMap.set(pairKey, tc.function.arguments)
+                    toolArgsMap.set(`legacy\u0000${tc.id}`, tc.function.arguments)
+                }
             }
         }
     }
@@ -1128,6 +1197,7 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 result.push({
                     ...msg,
                     id: `${msg.id}_${tc.id}`,
+                    run_id: inferredGroupResponseRunId(msg) || msg.run_id,
                     role: 'tool',
                     content: '',
                     toolName: tc.function?.name || undefined,
@@ -1141,8 +1211,12 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
 
         if (msg.role === 'tool') {
             const tcId = msg.tool_call_id || ''
-            const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-            const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
+            const pairKey = groupToolPairKey(msg, tcId)
+            const legacyPairKey = `legacy\u0000${tcId}`
+            const toolName = msg.tool_name || toolNameMap.get(pairKey) || toolNameMap.get(legacyPairKey) || undefined
+            const toolArgs = toolArgsMap.has(pairKey)
+                ? toolArgsMap.get(pairKey)
+                : toolArgsMap.get(legacyPairKey)
             let preview = ''
             const toolResult = toolName === 'workspace_diff'
                 ? parseWorkspaceDiffPayload((msg as any).content)
@@ -1159,11 +1233,15 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 }
             }
             const placeholderIdx = result.findIndex(
-                m => m.role === 'tool' && m.toolCallId === tcId && !m.toolResult
+                m => m.role === 'tool' &&
+                    m.toolCallId === tcId &&
+                    !m.toolResult &&
+                    (!inferredGroupResponseRunId(msg) || inferredGroupResponseRunId(m) === inferredGroupResponseRunId(msg))
             )
             const merged: ChatMessage = {
                 ...msg,
                 id: placeholderIdx !== -1 ? result[placeholderIdx].id : msg.id,
+                run_id: inferredGroupResponseRunId(msg) || result[placeholderIdx]?.run_id || msg.run_id,
                 senderId: placeholderIdx !== -1 ? result[placeholderIdx].senderId : msg.senderId,
                 senderName: placeholderIdx !== -1 ? result[placeholderIdx].senderName : msg.senderName,
                 timestamp: placeholderIdx !== -1 ? result[placeholderIdx].timestamp : msg.timestamp,
@@ -1189,4 +1267,41 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
         result.push(msg)
     }
     return attachWorkspaceDiffsToParentMessages(result)
+}
+
+export function groupAgentRunMessages(messages: ChatMessage[]): ChatMessage[] {
+    const result: ChatMessage[] = []
+    const groupedByRun = new Map<string, ChatMessage>()
+    for (const message of messages) {
+        const runId = inferredGroupResponseRunId(message)
+        if (!runId || (message.role !== 'assistant' && message.role !== 'tool')) {
+            result.push(message)
+            continue
+        }
+        const groupKey = `${message.senderId}\u0000${runId}`
+        const existing = groupedByRun.get(groupKey)
+        if (existing) {
+            existing.runItems!.push(message)
+            existing.isStreaming = existing.runItems!.some(item => item.isStreaming || item.toolStatus === 'running')
+            continue
+        }
+        const grouped: ChatMessage = {
+            ...message,
+            id: `group-agent-run:${message.senderId}:${runId}`,
+            run_id: runId,
+            role: 'agent_run',
+            content: '',
+            reasoning: null,
+            reasoning_content: null,
+            tool_calls: null,
+            runItems: [message],
+            isStreaming: Boolean(message.isStreaming || message.toolStatus === 'running'),
+        }
+        groupedByRun.set(groupKey, grouped)
+        result.push(grouped)
+    }
+    for (const grouped of groupedByRun.values()) {
+        grouped.runItems!.sort((left, right) => left.timestamp - right.timestamp)
+    }
+    return result
 }

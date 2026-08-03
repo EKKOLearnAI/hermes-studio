@@ -20,10 +20,29 @@ export interface RoomAgent {
     id: string
     roomId: string
     agentId: string
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude'
     profile: string
+    provider: string
+    model: string
+    apiMode: string
+    reasoningEffort: string
     name: string
     description: string
+    avatar: string
     invited: number
+}
+
+export interface RoomAgentInput {
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    profile: string
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+    name?: string
+    description?: string
+    avatar?: string
+    invited?: boolean
 }
 
 export interface AgentAddResult {
@@ -42,6 +61,7 @@ export interface ChatMessage {
     senderName: string
     content: string
     timestamp: number
+    run_id?: string | null
     role?: string
     tool_call_id?: string | null
     tool_calls?: any[] | null
@@ -60,6 +80,7 @@ export interface ChatMessage {
     workspaceChanges?: GroupWorkspaceDiffPayload[]
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
+    runItems?: ChatMessage[]
 }
 
 export interface GroupWorkspaceDiffFile {
@@ -181,7 +202,7 @@ export async function createRoom(data: {
     inviteCode: string
     memberName?: string
     memberDescription?: string
-    agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
+    agents?: RoomAgentInput[]
     compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
     workspace?: string
 }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
@@ -227,14 +248,17 @@ export async function updateInviteCode(roomId: string, inviteCode: string): Prom
     })
 }
 
-export async function addAgent(roomId: string, data: {
-    profile: string
-    name?: string
-    description?: string
-    invited?: boolean
-}): Promise<{ agent: RoomAgent }> {
+export async function addAgent(roomId: string, data: RoomAgentInput): Promise<{ agent: RoomAgent }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+}
+
+export async function updateAgent(roomId: string, agentId: string, data: RoomAgentInput): Promise<{ agent: RoomAgent; agents: RoomAgent[]; members: MemberInfo[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
     })

@@ -2355,6 +2355,8 @@ export default {
 
   // 更新履歴
   groupChat: {
+    agentType: 'エージェント',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     roomSettings: 'ルーム設定',
     inviteCodeSettings: '招待コード設定',
     inviteCodePlaceholder: '新しい招待コードを入力',

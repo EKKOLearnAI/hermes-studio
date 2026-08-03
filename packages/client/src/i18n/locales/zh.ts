@@ -2653,6 +2653,8 @@ export default {
     selectOrCreate: '选择或创建一个房间开始聊天',
     agents: '智能体',
     addAgent: '添加智能体',
+    agentType: 'Agent 类型',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     selectProfile: '选择一个配置',
     agentAdded: '智能体已添加',
     selectRoomFirst: '请先选择一个群组',

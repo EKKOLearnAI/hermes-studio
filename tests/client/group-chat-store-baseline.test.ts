@@ -52,6 +52,7 @@ const groupChatApiMock = vi.hoisted(() => {
     getRoomDetail: vi.fn(),
     joinRoomByCode: vi.fn(),
     addAgent: vi.fn(),
+    updateAgent: vi.fn(),
     listAgents: vi.fn(),
     removeAgent: vi.fn(),
     cloneRoom: vi.fn(),
@@ -275,6 +276,44 @@ describe('group chat store baseline lifecycle', () => {
       description: 'family profile',
     }))
     expect(localStorage.getItem('gc_user_name')).toBe('妈妈')
+  })
+
+  it('replaces a room agent from the update API response', async () => {
+    const store = await loadStore()
+    const updatedAgent = {
+      ...agent,
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'new-model',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Reviewer',
+    } as RoomAgent
+    store.agents = [agent]
+    groupChatApiMock.updateAgent.mockResolvedValue({
+      agent: updatedAgent,
+      agents: [updatedAgent],
+      members: [member],
+    })
+
+    await store.updateAgentInRoom('room-1', agent.id, {
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'new-model',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Reviewer',
+    })
+
+    expect(groupChatApiMock.updateAgent).toHaveBeenCalledWith('room-1', agent.id, expect.objectContaining({
+      agent: 'codex',
+      profile: 'research',
+      model: 'new-model',
+    }))
+    expect(store.agents).toEqual([updatedAgent])
+    expect(store.members).toEqual([member])
   })
 
   it('joins invite rooms over realtime before fetching protected detail when the socket starts disconnected', async () => {

@@ -303,6 +303,143 @@ describe('group chat store streaming merge', () => {
     ])
   })
 
+  it('keeps an empty tool completion after the agent reports ready', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-1',
+      run_id: 'run-1',
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'terminal_exec', arguments: '{"command":"curl"}' },
+      }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-1',
+      run_id: 'run-1',
+      role: 'tool',
+      tool_call_id: 'call-1',
+      tool_name: 'terminal_exec',
+      content: '',
+    }))
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'ready' })
+
+    expect(store.messages).toHaveLength(2)
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-1',
+        toolName: 'terminal_exec',
+        toolStatus: 'done',
+      }),
+    ])
+  })
+
+  it('keeps reasoning split across consecutive tool calls in one agent run', async () => {
+    const store = await createJoinedStore()
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'run-1_part_0', run_id: 'run-1' }))
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'run-1_part_0', delta: 'first thought' })
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-1',
+      run_id: 'run-1',
+      timestamp: 2,
+      reasoning: 'first thought',
+      tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'first_tool', arguments: '{}' } }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-1',
+      run_id: 'run-1',
+      timestamp: 3,
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: 'first result',
+    }))
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'run-1_part_0', delta: 'second thought' })
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-2',
+      run_id: 'run-1',
+      timestamp: 4,
+      reasoning: 'second thought',
+      tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'second_tool', arguments: '{}' } }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-2',
+      run_id: 'run-1',
+      timestamp: 5,
+      role: 'tool',
+      tool_call_id: 'call-2',
+      content: 'second result',
+    }))
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'run-1_part_0', delta: 'final thought' })
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0',
+      run_id: 'run-1',
+      timestamp: 6,
+      content: 'final answer',
+      reasoning: 'final thought',
+    }))
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].runItems).toEqual([
+      expect.objectContaining({ toolCallId: 'call-1', reasoning: 'first thought', toolStatus: 'done' }),
+      expect.objectContaining({ toolCallId: 'call-2', reasoning: 'second thought', toolStatus: 'done' }),
+      expect.objectContaining({ content: 'final answer', reasoning: 'final thought' }),
+    ])
+  })
+
+  it('projects historical cumulative reasoning snapshots as incremental segments', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-1_part_0_toolcall_call-1',
+        run_id: 'run-1',
+        timestamp: 2,
+        reasoning: 'first thought',
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'first_tool', arguments: '{}' } }],
+      }),
+      assistantMessage({
+        id: 'run-1_part_0_toolresult_call-1',
+        run_id: 'run-1',
+        timestamp: 3,
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: 'first result',
+      }),
+      assistantMessage({
+        id: 'run-1_part_0_toolcall_call-2',
+        run_id: 'run-1',
+        timestamp: 4,
+        reasoning: 'first thoughtsecond thought',
+        tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'second_tool', arguments: '{}' } }],
+      }),
+      assistantMessage({
+        id: 'run-1_part_0_toolresult_call-2',
+        run_id: 'run-1',
+        timestamp: 5,
+        role: 'tool',
+        tool_call_id: 'call-2',
+        content: 'second result',
+      }),
+      assistantMessage({
+        id: 'run-1_part_0',
+        run_id: 'run-1',
+        timestamp: 6,
+        content: 'final answer',
+        reasoning: 'first thoughtsecond thoughtfinal thought',
+      }),
+    ])
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+    expect(grouped[0].runItems).toEqual([
+      expect.objectContaining({ toolCallId: 'call-1', reasoning: 'first thought' }),
+      expect.objectContaining({ toolCallId: 'call-2', reasoning: 'second thought' }),
+      expect.objectContaining({ content: 'final answer', reasoning: 'final thought' }),
+    ])
+  })
+
   it('maps non-string and falsy tool payloads from room history', async () => {
     const store = await createJoinedStore([
       assistantMessage({
@@ -327,6 +464,84 @@ describe('group chat store streaming merge', () => {
       toolResult: { ok: true },
       reasoning: 'Check the room data before calling lookup.',
       toolStatus: 'done',
+    })
+  })
+
+  it('locks interleaved agent tool chains to their own response run cards', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'agent-a-call',
+        senderId: 'agent-a',
+        senderName: 'Agent A',
+        run_id: 'run-a',
+        timestamp: 1,
+        tool_calls: [{ id: 'shared-call', type: 'function', function: { name: 'lookup_a', arguments: '{"agent":"a"}' } }],
+      }),
+      assistantMessage({
+        id: 'agent-b-call',
+        senderId: 'agent-b',
+        senderName: 'Agent B',
+        run_id: 'run-b',
+        timestamp: 2,
+        tool_calls: [{ id: 'shared-call', type: 'function', function: { name: 'lookup_b', arguments: '{"agent":"b"}' } }],
+      }),
+      assistantMessage({
+        id: 'agent-a-result',
+        senderId: 'agent-a',
+        senderName: 'Agent A',
+        run_id: 'run-a',
+        timestamp: 3,
+        role: 'tool',
+        tool_call_id: 'shared-call',
+        content: 'result-a',
+      }),
+      assistantMessage({
+        id: 'agent-b-result',
+        senderId: 'agent-b',
+        senderName: 'Agent B',
+        run_id: 'run-b',
+        timestamp: 4,
+        role: 'tool',
+        tool_call_id: 'shared-call',
+        content: 'result-b',
+      }),
+      assistantMessage({
+        id: 'agent-a-answer',
+        senderId: 'agent-a',
+        senderName: 'Agent A',
+        run_id: 'run-a',
+        timestamp: 5,
+        content: 'answer-a',
+      }),
+      assistantMessage({
+        id: 'agent-b-answer',
+        senderId: 'agent-b',
+        senderName: 'Agent B',
+        run_id: 'run-b',
+        timestamp: 6,
+        content: 'answer-b',
+      }),
+    ])
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+
+    expect(grouped).toHaveLength(2)
+    expect(grouped[0]).toMatchObject({
+      senderName: 'Agent A',
+      run_id: 'run-a',
+      runItems: [
+        expect.objectContaining({ toolName: 'lookup_a', toolResult: 'result-a' }),
+        expect.objectContaining({ content: 'answer-a' }),
+      ],
+    })
+    expect(grouped[1]).toMatchObject({
+      senderName: 'Agent B',
+      run_id: 'run-b',
+      runItems: [
+        expect.objectContaining({ toolName: 'lookup_b', toolResult: 'result-b' }),
+        expect.objectContaining({ content: 'answer-b' }),
+      ],
     })
   })
 

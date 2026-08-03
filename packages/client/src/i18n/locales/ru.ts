@@ -2307,6 +2307,8 @@ export default {
     selectOrCreate: 'Выберите или создайте комнату, чтобы начать чат',
     agents: 'Агенты',
     addAgent: 'Добавить агента',
+    agentType: 'Агент',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     selectProfile: 'Выберите профиль',
     agentAdded: 'Агент добавлен',
     selectRoomFirst: 'Сначала выберите комнату',

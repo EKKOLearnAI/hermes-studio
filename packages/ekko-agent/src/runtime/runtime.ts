@@ -8,7 +8,7 @@ import {
 } from '../model/messages'
 import { countTextTokens } from '../model/tokens'
 import type { AgentOutputMessage } from '../model/messages'
-import type { AgentMessage, AgentToolCall, ModelRequest, ModelResponse } from '../model/types'
+import type { AgentMessage, AgentToolCall, AgentToolDefinition, ModelRequest, ModelResponse } from '../model/types'
 import type { AgentSkill } from '../skills/types'
 import { AgentToolRegistry, createDefaultToolRegistry } from '../tools/registry'
 import { sanitizeAgentToolResult } from '../tools/tool-result-sanitizer'
@@ -44,6 +44,36 @@ interface BackgroundTask {
   sessionId?: string
   controller: AbortController
   promise: Promise<AgentToolResult>
+}
+
+function foregroundOnlyDelegateTaskDefinition(definition: AgentToolDefinition): AgentToolDefinition {
+  if (definition.name !== 'delegate_task') return definition
+  const parameters = definition.parameters || {}
+  const properties = parameters.properties && typeof parameters.properties === 'object' && !Array.isArray(parameters.properties)
+    ? parameters.properties as Record<string, unknown>
+    : {}
+  const rawMode = properties.mode
+  const mode = rawMode && typeof rawMode === 'object' && !Array.isArray(rawMode)
+    ? rawMode as Record<string, unknown>
+    : {}
+  return {
+    ...definition,
+    description: [
+      'Delegate one self-contained task to an isolated Ekko subagent.',
+      'Only foreground delegation is available in this run; the parent waits for the result.',
+    ].join(' '),
+    parameters: {
+      ...parameters,
+      properties: {
+        ...properties,
+        mode: {
+          ...mode,
+          enum: ['foreground'],
+          description: 'foreground waits for and returns the result.',
+        },
+      },
+    },
+  }
 }
 
 export class AgentRuntime {
@@ -179,7 +209,16 @@ export class AgentRuntime {
       runId,
       skillMutationSource: 'foreground',
       delegationDepth: input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0,
-      delegateTask: request => this.delegateTask(request, input, runId, emit),
+      delegateTask: request => {
+        if (request.mode === 'background' && input.backgroundDelegationEnabled === false) {
+          return Promise.resolve({
+            ok: false,
+            content: 'Background subtask delegation is disabled for this run. Use foreground mode.',
+            error: 'Background subtask delegation is disabled for this run. Use foreground mode.',
+          })
+        }
+        return this.delegateTask(request, input, runId, emit)
+      },
     }
     if (memoryContext) {
       emit({
@@ -587,7 +626,9 @@ export class AgentRuntime {
       ? this.tools.definitions().filter(definition => (
           (input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0) === 0 ||
           definition.name !== 'delegate_task'
-        ))
+        )).map(definition => input.backgroundDelegationEnabled === false
+          ? foregroundOnlyDelegateTaskDefinition(definition)
+          : definition)
       : []
     const tools = toolDefinitions.length > 0 ? toolDefinitions : undefined
     return {
@@ -763,6 +804,7 @@ export class AgentRuntime {
           modelDefaults: parentInput.modelDefaults,
           contextKey: childContextKey,
           memoryEnabled: false,
+          backgroundDelegationEnabled: parentInput.backgroundDelegationEnabled,
           logContext: parentInput.logContext,
           onEvent: (event) => {
             if ('runId' in event) childRunId = event.runId

@@ -67,6 +67,7 @@ export interface EkkoAgentRunSocketData {
   peerExcludeSocketId?: string
   queue_id?: string
   reasoning_effort?: string
+  background_delegation_enabled?: boolean
   background_delegation_id?: string
   autonomous?: boolean
   onEvent?: (event: string, payload: any) => void
@@ -1156,6 +1157,7 @@ export async function handleEkkoAgentRun(
           memoryEnabled: false,
           toolContext,
           metadata,
+          backgroundDelegationEnabled: data.background_delegation_enabled !== false,
         }).then(estimate => estimate.contextTokens)
         return (await fixedContextEstimate) + localMessageTokens
       },
@@ -1222,6 +1224,7 @@ export async function handleEkkoAgentRun(
       },
       toolContext,
       metadata,
+      backgroundDelegationEnabled: data.background_delegation_enabled !== false,
     })
     assistantText = result.output.content || assistantText
     const outputUsage = result.output.usage

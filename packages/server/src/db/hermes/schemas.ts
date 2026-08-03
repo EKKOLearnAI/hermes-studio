@@ -576,6 +576,7 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   senderName: 'TEXT NOT NULL',
   content: 'TEXT NOT NULL',
   timestamp: 'INTEGER NOT NULL',
+  run_id: 'TEXT',
   role: "TEXT NOT NULL DEFAULT 'user'",
   tool_call_id: 'TEXT',
   tool_calls: 'TEXT',
@@ -592,9 +593,15 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   roomId: 'TEXT NOT NULL',
   agentId: 'TEXT NOT NULL',
+  agent: "TEXT NOT NULL DEFAULT 'hermes'",
   profile: 'TEXT NOT NULL',
+  provider: "TEXT NOT NULL DEFAULT ''",
+  model: "TEXT NOT NULL DEFAULT ''",
+  apiMode: "TEXT NOT NULL DEFAULT ''",
+  reasoningEffort: "TEXT NOT NULL DEFAULT ''",
   name: 'TEXT NOT NULL',
   description: "TEXT NOT NULL DEFAULT ''",
+  avatar: "TEXT NOT NULL DEFAULT ''",
   invited: 'INTEGER NOT NULL DEFAULT 0',
 }
 

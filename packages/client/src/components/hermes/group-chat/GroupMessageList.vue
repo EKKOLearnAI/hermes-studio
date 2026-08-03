@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { groupAgentRunMessages, useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
+import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
 
 const store = useGroupChatStore()
@@ -11,11 +12,11 @@ const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
 const showScrollBottomButton = ref(false)
-const displayMessages = computed(() => store.sortedMessages.filter(msg =>
+const displayMessages = computed(() => groupAgentRunMessages(store.sortedMessages.filter(msg =>
     msg.role !== 'tool' ||
     toolTraceVisible.value ||
     msg.toolStatus === 'running',
-))
+)))
 const listPadding = computed(() => store.activePendingApproval ? '16px 20px 260px' : '16px 20px')
 let pendingInitialBottomRoomId: string | null = store.currentRoomId
 
@@ -58,13 +59,15 @@ watch(() => store.currentRoomId, (roomId) => {
     pendingInitialBottomRoomId = roomId
 })
 
-watch(() => displayMessages.value.map(msg => [
-    msg.id,
-    msg.content?.length ?? 0,
-    msg.reasoning?.length ?? 0,
-    msg.reasoning_content?.length ?? 0,
-    msg.toolStatus ?? '',
-].join(':')).join('|'), async () => {
+watch(() => displayMessages.value.map(msg =>
+    (msg.runItems || [msg]).map(item => [
+        item.id,
+        item.content?.length ?? 0,
+        item.reasoning?.length ?? 0,
+        item.reasoning_content?.length ?? 0,
+        item.toolStatus ?? '',
+    ].join(':')).join(','),
+).join('|'), async () => {
     const shouldForceInitialBottom = !!store.currentRoomId &&
         pendingInitialBottomRoomId === store.currentRoomId &&
         displayMessages.value.length > 0
@@ -122,7 +125,15 @@ defineExpose({ scrollToBottom })
                 </div>
             </template>
             <template #item="{ message: msg }">
+                <GroupAgentRunCard
+                    v-if="msg.runItems?.length"
+                    :message="msg"
+                    :agents="store.agents"
+                    :members="store.members"
+                    :current-user-id="store.userId"
+                />
                 <GroupMessageItem
+                    v-else
                     :message="msg"
                     :agents="store.agents"
                     :members="store.members"

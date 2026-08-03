@@ -27,7 +27,12 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 interface AgentConfig {
     agentId?: string
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
     profile: string
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
     name: string
     description: string
     invited: number
@@ -42,6 +47,7 @@ interface MessageData {
     senderName: string
     content: string
     timestamp: number
+    run_id?: string | null
 }
 
 type MentionMessage = {
@@ -69,6 +75,13 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
+export type GroupAgentSessionConfig = {
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    provider?: string
+    model?: string
+    apiMode?: string
+    reasoningEffort?: string
+}
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
 type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
 
@@ -81,6 +94,7 @@ interface WorkspaceDiffRunState {
     roomId: string
     sessionId: string
     runId: string
+    responseRunId: string
     workspace: string
     abortRequested: boolean
     finalized: boolean
@@ -99,8 +113,17 @@ interface BridgeContextCache {
     provider?: string
 }
 
-export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
-    return resolveBridgeRunModelConfig({ profile })
+export async function resolveGroupAgentModelContext(
+    profile: string,
+    model?: string,
+    provider?: string,
+): Promise<GroupModelContext> {
+    return resolveBridgeRunModelConfig({
+        profile,
+        requestedModel: model,
+        requestedProvider: provider,
+        preferRequested: true,
+    })
 }
 
 export function estimateGroupHistoryMessageTokens(history: Array<{ content?: unknown }>): number {
@@ -155,11 +178,48 @@ export interface AgentEventHandler {
     onMemberLeft?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
 }
 
+export interface GroupChatRunService {
+    runAndWait(
+        data: {
+            input: string | ContentBlock[]
+            session_id: string
+            model?: string
+            provider?: string
+            apiMode?: string
+            instructions?: string
+            workspace?: string | null
+            source?: string
+            session_source?: 'workflow'
+            coding_agent_id?: 'claude-code' | 'codex' | 'ekko-agent'
+            mode?: 'scoped'
+            profile?: string
+            reasoning_effort?: string
+            background_delegation_enabled?: boolean
+        },
+        options?: {
+            profile?: string
+            timeoutMs?: number
+            onEvent?: (event: string, payload: any) => void
+        },
+    ): Promise<{
+        ok: boolean
+        output?: string | null
+        reasoning?: string | null
+        error?: string
+    }>
+    abortSession(sessionId: string, reason?: string): Promise<void>
+}
+
 // ─── Agent Client (single connection) ─────────────────────────
 
 class AgentClient {
     readonly agentId: string
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
     readonly profile: string
+    readonly provider: string
+    readonly model: string
+    readonly apiMode: string
+    readonly reasoningEffort: string
     readonly name: string
     readonly description: string
     private readonly backgroundDelegationEnabled: false
@@ -171,14 +231,22 @@ class AgentClient {
     private storage: any = null
     private pendingToolCallIds = new Map<string, string[]>()
     private pendingToolBaseIds = new Map<string, string>()
+    private pendingToolRunIds = new Map<string, string>()
+    private pendingToolNames = new Map<string, string>()
     private bridgeContextCache = new Map<string, BridgeContextCache>()
     private workspaceDiffRuns = new Map<string, WorkspaceDiffRunState>()
     private interruptVersions = new Map<string, number>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
+    private chatRunService: GroupChatRunService | null = null
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+        this.agent = config.agent || 'hermes'
         this.profile = config.profile
+        this.provider = String(config.provider || '').trim()
+        this.model = String(config.model || '').trim()
+        this.apiMode = this.agent === 'hermes' ? '' : String(config.apiMode || '').trim()
+        this.reasoningEffort = String(config.reasoningEffort || '').trim()
         this.name = config.name
         this.description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
@@ -193,6 +261,16 @@ class AgentClient {
         return this.socket?.id
     }
 
+    private sessionConfig(): GroupAgentSessionConfig {
+        return {
+            agent: this.agent,
+            provider: this.provider,
+            model: this.model,
+            apiMode: this.apiMode,
+            reasoningEffort: this.reasoningEffort,
+        }
+    }
+
     setContextEngine(engine: any): void {
         this.contextEngine = engine
     }
@@ -203,6 +281,10 @@ class AgentClient {
 
     setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void {
         this.workspaceDiffBroadcaster = broadcaster
+    }
+
+    setChatRunService(service: GroupChatRunService | null): void {
+        this.chatRunService = service
     }
 
     async connect(port?: number): Promise<void> {
@@ -309,7 +391,22 @@ class AgentClient {
 
     async interrupt(roomId: string): Promise<boolean> {
         const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
+        if (this.agent !== 'hermes') {
+            if (!this.chatRunService) throw new Error('Chat run service is not ready')
+            await this.chatRunService.abortSession(sessionId, 'Interrupted by group chat user')
+            this.markSessionInterrupted(sessionId)
+            const abortedStates = this.markWorkspaceDiffAborted(roomId)
+            try {
+                for (const state of abortedStates) {
+                    await this.finalizeWorkspaceDiffOnce(state, 'aborted', null)
+                }
+            } finally {
+                try { this.stopTyping(roomId) } catch { /* disconnected */ }
+                try { this.emitContextStatus(roomId, 'ready', undefined, sessionId) } catch { /* disconnected */ }
+            }
+            return true
+        }
         let result: Awaited<ReturnType<AgentBridgeClient['interrupt']>> | null = null
         try {
             result = await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
@@ -340,7 +437,7 @@ class AgentClient {
         return true
     }
 
-    emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string): void {
+    emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string, responseRunId?: string): void {
         this.ensureConnected()
         this.socket!.emit('message_stream_start', {
             roomId,
@@ -348,6 +445,7 @@ class AgentClient {
             senderId: this.socket?.id || this.agentId,
             senderName: this.name,
             timestamp: Date.now(),
+            ...(responseRunId ? { run_id: responseRunId } : {}),
             ...(agentSessionId ? { agentSessionId } : {}),
         })
     }
@@ -478,7 +576,7 @@ class AgentClient {
         return `${roomId}\u0000${sessionId}\u0000${runId}`
     }
 
-    private beginWorkspaceDiffIfNeeded(args: { roomId: string; sessionId: string; runId: string; workspace: string }): WorkspaceDiffRunState | null {
+    private beginWorkspaceDiffIfNeeded(args: { roomId: string; sessionId: string; runId: string; responseRunId: string; workspace: string }): WorkspaceDiffRunState | null {
         if (!args.workspace) return null
         startWorkspaceRunCheckpoint({
             sessionId: args.sessionId,
@@ -512,7 +610,7 @@ class AgentClient {
         const room = this.storage?.getRoom?.(roomId)
         if (!room) return false
         const seed = String(room.sessionSeed || '0')
-        return groupBridgeSessionId(roomId, this.profile, this.name, seed) === sessionId
+        return groupBridgeSessionId(roomId, this.profile, this.name, seed, this.sessionConfig()) === sessionId
     }
 
     private markWorkspaceDiffAborted(roomId: string): WorkspaceDiffRunState[] {
@@ -561,6 +659,7 @@ class AgentClient {
                 senderName: this.name,
                 sessionId: current.sessionId,
                 runId: current.runId,
+                responseRunId: current.responseRunId,
                 status: finalStatus,
                 workspace: current.workspace,
                 draft,
@@ -581,12 +680,194 @@ class AgentClient {
      * Called by AgentClients.processMentions() — no socket round-trip needed.
      * onStatus is called to report context compression progress.
      */
+    private groupRuntimeInput(roomId: string, msg: MentionMessage): string | ContentBlock[] {
+        const routedPrefix = isAllAgentsMentioned(msg.content)
+            ? '群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。'
+            : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+        const history = this.buildRoomEstimateHistory(roomId)
+        const maxHistoryTokens = Math.max(1024, Number(this.storage?.getRoom?.(roomId)?.maxHistoryTokens || 32000))
+        const retained: GroupEstimateMessage[] = []
+        let retainedTokens = 0
+        for (let index = history.length - 1; index >= 0; index--) {
+            const item = history[index]
+            const tokens = countTokens(item.content)
+            if (retained.length > 0 && retainedTokens + tokens > maxHistoryTokens) break
+            retained.unshift(item)
+            retainedTokens += tokens
+        }
+        const transcript = retained
+            .map(item => `${item.role === 'assistant' ? 'Agent' : '成员'}：${item.content}`)
+            .join('\n\n')
+        const context = [
+            `你是群聊 Agent「${this.name}」。`,
+            this.description ? `Agent 描述：${this.description}` : '',
+            routedPrefix,
+            transcript ? `以下是群聊上下文，请结合上下文回复当前消息：\n<group_chat_context>\n${transcript}\n</group_chat_context>` : '',
+        ].filter(Boolean).join('\n\n')
+        const rawInput = msg.input || msg.content
+        if (isContentBlockArray(rawInput)) {
+            return [
+                { type: 'text', text: context },
+                ...rawInput.map((block) => block.type === 'text'
+                    ? { ...block, text: stripMentionRoutingTokens(String(block.text || msg.content), this.name) || msg.content }
+                    : block),
+            ]
+        }
+        return `${context}\n\n当前消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+    }
+
+    private async replyToMentionWithChatRun(
+        roomId: string,
+        msg: MentionMessage,
+        onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
+    ): Promise<void> {
+        if (!this.chatRunService) throw new Error('Chat run service is not ready')
+        const responseRunId = groupMessageId(roomId, this.profile, this.name)
+        const runMessageId = groupMessagePartId(responseRunId, 0)
+        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
+        const interruptVersion = this.interruptVersion(sessionId)
+        const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
+            onStatus?.(status, { agentSessionId: sessionId })
+        }
+        let streamStarted = false
+        let streamEnded = false
+        let currentContent = ''
+        let reasoningContent = ''
+        let sawReasoningDelta = false
+        let abortRequested = false
+        let workspaceRunState: WorkspaceDiffRunState | null = null
+        let toolEventWrites = Promise.resolve()
+        const isCurrent = () => this.replySessionIsCurrent(roomId, sessionId, interruptVersion)
+        const queueToolEventWrite = (write: () => Promise<void>) => {
+            toolEventWrites = toolEventWrites
+                .then(write)
+                .catch((err: any) => logger.warn(`[AgentClients] failed to record group tool event: ${err.message || err}`))
+        }
+        const endStream = () => {
+            if (!streamStarted || streamEnded) return
+            streamEnded = true
+            this.emitMessageStreamEnd(roomId, runMessageId, sessionId)
+        }
+        try {
+            this.startTyping(roomId)
+            reportStatus('replying')
+            this.emitMessageStreamStart(roomId, runMessageId, sessionId, responseRunId)
+            streamStarted = true
+            const workspace = String(this.storage?.getRoom?.(roomId)?.workspace || '').trim()
+            if (workspace) {
+                workspaceRunState = this.beginWorkspaceDiffIfNeeded({
+                    roomId,
+                    sessionId,
+                    runId: runMessageId,
+                    responseRunId,
+                    workspace,
+                })
+            }
+            const codingAgentId = this.agent === 'ekko'
+                ? 'ekko-agent'
+                : this.agent === 'claude'
+                    ? 'claude-code'
+                    : 'codex'
+            const result = await this.chatRunService.runAndWait({
+                input: this.groupRuntimeInput(roomId, msg),
+                session_id: sessionId,
+                model: this.model || undefined,
+                provider: this.provider || undefined,
+                ...(this.apiMode ? { apiMode: this.apiMode } : {}),
+                instructions: this.description || undefined,
+                workspace: workspace || null,
+                source: 'workflow',
+                session_source: 'workflow',
+                coding_agent_id: codingAgentId,
+                mode: 'scoped',
+                profile: this.profile,
+                reasoning_effort: this.reasoningEffort || undefined,
+                background_delegation_enabled: false,
+            }, {
+                profile: this.profile,
+                timeoutMs: 120000,
+                onEvent: (event, payload = {}) => {
+                    if (!isCurrent()) {
+                        if (!abortRequested) {
+                            abortRequested = true
+                            void this.chatRunService?.abortSession(sessionId, 'Interrupted because group chat room state changed')
+                        }
+                        return
+                    }
+                    if (event === 'message.delta' && typeof payload.delta === 'string') {
+                        currentContent += payload.delta
+                        this.emitMessageStreamDelta(roomId, runMessageId, payload.delta, sessionId)
+                    } else if ((event === 'reasoning.delta' || event === 'thinking.delta') && typeof payload.delta === 'string') {
+                        sawReasoningDelta = true
+                        reasoningContent += payload.delta
+                        this.emitMessageReasoningDelta(roomId, runMessageId, payload.delta, sessionId)
+                    } else if (event === 'tool.started') {
+                        const toolReasoning = reasoningContent
+                        reasoningContent = ''
+                        queueToolEventWrite(() => this.recordToolStarted(
+                            roomId,
+                            sessionId,
+                            payload,
+                            runMessageId,
+                            responseRunId,
+                            toolReasoning,
+                        ))
+                    } else if (event === 'tool.completed' || event === 'tool.failed') {
+                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, payload))
+                    } else if (event === 'approval.requested') {
+                        this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
+                    } else if (event === 'approval.resolved') {
+                        this.emitApprovalResolved(roomId, { ...payload, agentSessionId: sessionId })
+                    }
+                },
+            })
+            if (!isCurrent()) return
+            await toolEventWrites
+            await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            if (!result.ok) throw new Error(result.error || 'Run failed')
+            const finalContent = String(result.output || currentContent || '').trim()
+            if (!sawReasoningDelta) reasoningContent = String(result.reasoning || reasoningContent || '')
+            if (finalContent) {
+                if (!currentContent) this.emitMessageStreamDelta(roomId, runMessageId, finalContent, sessionId)
+                this.stopTyping(roomId)
+                await this.sendMessage(roomId, finalContent, runMessageId, {
+                    role: 'assistant',
+                    run_id: responseRunId,
+                    mentionDepth: nextMentionDepth(msg),
+                    reasoning: reasoningContent || null,
+                    reasoning_content: reasoningContent || null,
+                }, sessionId)
+            }
+            endStream()
+            await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', finalContent ? runMessageId : null)
+            reportStatus('ready')
+        } catch (err) {
+            if (!isCurrent()) return
+            await toolEventWrites
+            await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? runMessageId : null)
+            await this.sendAgentErrorMessage(roomId, runMessageId, err, msg, reasoningContent, sessionId, responseRunId)
+            endStream()
+            reportStatus('ready')
+        } finally {
+            try { endStream() } catch { /* stale room session */ }
+            if (this.roomSessionIsCurrent(roomId, sessionId)) {
+                try { this.stopTyping(roomId) } catch { /* disconnected */ }
+            }
+        }
+    }
+
     async replyToMention(
         roomId: string,
         msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
+        if (this.agent !== 'hermes') {
+            await this.replyToMentionWithChatRun(roomId, msg, onStatus)
+            return
+        }
         const runMessageId = groupMessageId(roomId, this.profile, this.name)
         let partIndex = 0
         let streamMessageId = groupMessagePartId(runMessageId, partIndex)
@@ -609,7 +890,7 @@ class AgentClient {
             let instructions: string | undefined
             const bridge = new AgentBridgeClient()
             const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                 onStatus?.(status, { ...extra, agentSessionId: sessionId })
@@ -652,7 +933,7 @@ class AgentClient {
                 }
                 reportStatus('ready')
             }
-            const modelContext = await resolveGroupAgentModelContext(this.profile)
+            const modelContext = await resolveGroupAgentModelContext(this.profile, this.model, this.provider)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -756,6 +1037,7 @@ class AgentClient {
                 {
                     ...(modelContext.model ? { model: modelContext.model } : {}),
                     ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+                    ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort } : {}),
                     source: 'api_server',
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
                     // Used only if this operation creates the cached AgentSession.
@@ -772,11 +1054,12 @@ class AgentClient {
                     roomId,
                     sessionId,
                     runId: started.run_id,
+                    responseRunId: runMessageId,
                     workspace: roomWorkspace,
                 })
             }
 
-            this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
+            this.emitMessageStreamStart(roomId, streamMessageId, sessionId, runMessageId)
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
@@ -791,6 +1074,7 @@ class AgentClient {
                     instructions,
                     modelContext,
                     chunk,
+                    runMessageId,
                     reasoningContent,
                     () => streamMessageId,
                     async (toolReasoning) => {
@@ -803,6 +1087,7 @@ class AgentClient {
                             }
                             await this.sendMessage(roomId, currentContent, streamMessageId, {
                                 role: 'assistant',
+                                run_id: runMessageId,
                                 mentionDepth: nextMentionDepth(msg),
                                 reasoning: toolReasoning || null,
                                 reasoning_content: toolReasoning || null,
@@ -813,7 +1098,7 @@ class AgentClient {
                         this.emitMessageStreamEnd(roomId, toolBaseId, sessionId)
                         partIndex += 1
                         streamMessageId = groupMessagePartId(runMessageId, partIndex)
-                        this.emitMessageStreamStart(roomId, streamMessageId, sessionId)
+                        this.emitMessageStreamStart(roomId, streamMessageId, sessionId, runMessageId)
                         streamStarted = true
                         return toolBaseId
                     },
@@ -835,7 +1120,7 @@ class AgentClient {
                     await stopStaleStartedRun?.()
                     return
                 }
-                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId)
+                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent, sessionId, runMessageId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
                 this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
                 this.stopTyping(roomId)
@@ -860,6 +1145,7 @@ class AgentClient {
                 this.stopTyping(roomId)
                 await this.sendMessage(roomId, currentContent, streamMessageId, {
                     role: 'assistant',
+                    run_id: runMessageId,
                     mentionDepth: nextMentionDepth(msg),
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
@@ -891,7 +1177,7 @@ class AgentClient {
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
             }
             try {
-                await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent, activeSessionId || undefined)
+                await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent, activeSessionId || undefined, runMessageId)
                 if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId, activeSessionId || undefined)
             } catch (sendErr: any) {
                 logger.warn(`[AgentClients] ${this.name}: failed to send error message: ${sendErr.message}`)
@@ -957,11 +1243,13 @@ class AgentClient {
         sourceMsg: MentionMessage,
         reasoningContent = '',
         sessionId?: string,
+        responseRunId?: string,
     ): Promise<void> {
         const detail = error instanceof Error ? error.message : String(error || 'Run failed')
         const content = detail.startsWith('Error:') ? detail : `Error: ${detail}`
         await this.sendMessage(roomId, content, messageId, {
             role: 'assistant',
+            ...(responseRunId ? { run_id: responseRunId } : {}),
             mentionDepth: nextMentionDepth(sourceMsg),
             finish_reason: 'error',
             reasoning: reasoningContent || null,
@@ -976,6 +1264,7 @@ class AgentClient {
         instructions: string | undefined,
         modelContext: GroupModelContext,
         chunk: AgentBridgeOutput,
+        responseRunId: string,
         initialReasoning: string,
         getCurrentMessageId: () => string,
         beforeToolStarted: (reasoning: string) => Promise<string>,
@@ -990,11 +1279,11 @@ class AgentClient {
                 const toolReasoning = reasoning
                 const toolBaseId = await beforeToolStarted(toolReasoning)
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, toolReasoning)
+                await this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, responseRunId, toolReasoning)
                 reasoning = ''
             } else if (eventType === 'tool.completed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
-                this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
+                await this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
             } else if (eventType === 'approval.requested') {
                 this.emitApprovalRequested(roomId, {
                     event: 'approval.requested',
@@ -1028,12 +1317,18 @@ class AgentClient {
         sessionId: string,
         ev: Record<string, unknown>,
         runMessageId: string,
+        responseRunId: string,
         reasoning = '',
-    ): void {
+    ): Promise<void> {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
-        const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
-        this.trackPendingToolCall(roomId, toolName, toolCallId)
+        const rawToolCallId = String(ev.tool_call_id || '').trim()
+        const toolCallId = groupToolCallId(rawToolCallId, toolName, this.nextToolIndex(roomId, toolName))
+        if (!rawToolCallId || !this.pendingToolBaseIds.has(toolCallId)) {
+            this.trackPendingToolCall(roomId, toolName, toolCallId)
+        }
         this.pendingToolBaseIds.set(toolCallId, runMessageId)
+        this.pendingToolRunIds.set(toolCallId, responseRunId)
+        this.pendingToolNames.set(toolCallId, toolName)
         const timestamp = Date.now()
         const rawArgs = ev.args ?? ev.arguments ?? ev.input ?? {}
         const args = normalizeToolArgs(rawArgs)
@@ -1052,28 +1347,36 @@ class AgentClient {
             senderName: this.name,
             content: '',
             timestamp,
+            run_id: responseRunId,
             role: 'assistant',
             tool_calls: [toolCall],
             finish_reason: 'tool_calls',
             reasoning: reasoning || null,
             reasoning_content: reasoning || null,
         }
-        this.sendMessage(roomId, '', msg.id, {
+        return this.sendMessage(roomId, '', msg.id, {
             role: 'assistant',
+            run_id: responseRunId,
             tool_calls: msg.tool_calls,
             finish_reason: 'tool_calls',
             reasoning: reasoning || null,
             reasoning_content: reasoning || null,
             timestamp,
-        }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
+        }, sessionId)
+            .then(() => undefined)
+            .catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message || err}`))
     }
 
-    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): void {
-        const toolName = String(ev.tool_name || ev.tool || ev.name || '')
+    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): Promise<void> {
         const rawId = String(ev.tool_call_id || '').trim()
+        const toolName = String(ev.tool_name || ev.tool || ev.name || this.pendingToolNames.get(rawId) || '')
+        if (rawId) this.removePendingToolCall(roomId, toolName, rawId)
         const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
         const runMessageId = this.pendingToolBaseIds.get(toolCallId) || groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
+        const responseRunId = this.pendingToolRunIds.get(toolCallId) || inferResponseRunId(runMessageId)
         this.pendingToolBaseIds.delete(toolCallId)
+        this.pendingToolRunIds.delete(toolCallId)
+        this.pendingToolNames.delete(toolCallId)
         const output = bridgeToolOutput(ev)
         const timestamp = Date.now()
         const msg: MessageData & Record<string, any> = {
@@ -1083,16 +1386,33 @@ class AgentClient {
             senderName: this.name,
             content: output,
             timestamp,
+            run_id: responseRunId,
             role: 'tool',
             tool_call_id: toolCallId,
             tool_name: toolName || null,
         }
-        this.sendMessage(roomId, output, msg.id, {
+        return this.sendMessage(roomId, output, msg.id, {
             role: 'tool',
+            run_id: responseRunId,
             tool_call_id: toolCallId,
             tool_name: toolName || null,
             timestamp,
-        }, sessionId).catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message}`))
+        }, sessionId)
+            .then(() => undefined)
+            .catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message || err}`))
+    }
+
+    private async completePendingToolsForRun(roomId: string, sessionId: string, responseRunId: string): Promise<void> {
+        const pendingToolCallIds = Array.from(this.pendingToolRunIds.entries())
+            .filter(([, pendingRunId]) => pendingRunId === responseRunId)
+            .map(([toolCallId]) => toolCallId)
+        for (const toolCallId of pendingToolCallIds) {
+            await this.recordToolCompleted(roomId, sessionId, {
+                tool_call_id: toolCallId,
+                tool_name: this.pendingToolNames.get(toolCallId) || '',
+                output: '',
+            })
+        }
     }
 
     private pendingToolKey(roomId: string, toolName: string): string {
@@ -1114,6 +1434,15 @@ class AgentClient {
         if (list.length) this.pendingToolCallIds.set(key, list)
         else this.pendingToolCallIds.delete(key)
         return id
+    }
+
+    private removePendingToolCall(roomId: string, toolName: string, toolCallId: string): void {
+        const key = this.pendingToolKey(roomId, toolName)
+        const list = this.pendingToolCallIds.get(key)
+        if (!list?.length) return
+        const next = list.filter(id => id !== toolCallId)
+        if (next.length) this.pendingToolCallIds.set(key, next)
+        else this.pendingToolCallIds.delete(key)
     }
 
     private nextToolIndex(roomId: string, toolName: string): number {
@@ -1158,8 +1487,22 @@ class AgentClient {
     }
 }
 
-export function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
-    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`
+export function groupBridgeSessionId(
+    roomId: string,
+    profile: string,
+    name: string,
+    sessionSeed: string,
+    runtimeConfig: GroupAgentSessionConfig = {},
+): string {
+    const agent = String(runtimeConfig.agent || 'hermes').trim()
+    const provider = String(runtimeConfig.provider || '').trim()
+    const model = String(runtimeConfig.model || '').trim()
+    const apiMode = agent === 'hermes' ? '' : String(runtimeConfig.apiMode || '').trim()
+    const reasoningEffort = String(runtimeConfig.reasoningEffort || '').trim()
+    const runtimeKey = agent !== 'hermes' || provider || model || apiMode || reasoningEffort
+        ? `_${agent}_${provider}_${model}_${apiMode}_${reasoningEffort}`
+        : ''
+    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}${runtimeKey}`
     const safePrefix = rawKey.replace(/[^a-zA-Z0-9_-]/g, '_')
     const keyHash = createHash('sha256').update(rawKey).digest('hex').slice(0, 16)
     const suffix = `_h_${keyHash}`
@@ -1175,6 +1518,11 @@ function groupMessagePartId(runMessageId: string, partIndex: number): string {
     return `${safeId(runMessageId)}_part_${partIndex}`
 }
 
+function inferResponseRunId(messageId: string): string {
+    const match = String(messageId || '').match(/^(.+)_part_\d+(?:_tool(?:call|result)_.+)?$/)
+    return match?.[1] || String(messageId || '')
+}
+
 function groupToolCallId(rawToolCallId: unknown, toolName: string, index: number): string {
     const raw = String(rawToolCallId || '').trim()
     if (raw) return raw
@@ -1186,7 +1534,7 @@ function safeId(value: string): string {
 }
 
 function bridgeToolOutput(ev: Record<string, unknown>): string {
-    const value = ev.result ?? ev.output ?? ev.result_preview ?? ev.preview ?? ''
+    const value = ev.result ?? ev.output ?? ev.result_preview ?? ev.preview ?? ev.error ?? ''
     return typeof value === 'string' ? value : JSON.stringify(value ?? '')
 }
 
@@ -1216,6 +1564,7 @@ export class AgentClients {
     private _contextEngine: any = null
     private _storage: any = null
     private _workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
+    private _chatRunService: GroupChatRunService | null = null
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
@@ -1234,6 +1583,7 @@ export class AgentClients {
         if (this._contextEngine) client.setContextEngine(this._contextEngine)
         if (this._storage) client.setStorage(this._storage)
         client.setWorkspaceDiffBroadcaster(this._workspaceDiffBroadcaster)
+        client.setChatRunService(this._chatRunService)
 
         logger.info(`[AgentClients] Connected: ${client.name} (${client.agentId})`)
         return client
@@ -1444,6 +1794,13 @@ export class AgentClients {
         this._workspaceDiffBroadcaster = broadcaster
         this.rooms.forEach((room) => {
             room.forEach((client) => client.setWorkspaceDiffBroadcaster(broadcaster))
+        })
+    }
+
+    setChatRunService(service: GroupChatRunService | null): void {
+        this._chatRunService = service
+        this.rooms.forEach((room) => {
+            room.forEach((client) => client.setChatRunService(service))
         })
     }
 

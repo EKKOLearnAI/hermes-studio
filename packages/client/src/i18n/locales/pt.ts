@@ -2356,6 +2356,8 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   groupChat: {
+    agentType: 'Agente',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     roomSettings: 'Configurações da sala',
     inviteCodeSettings: 'Configurações do código de convite',
     inviteCodePlaceholder: 'Insira um novo código de convite',

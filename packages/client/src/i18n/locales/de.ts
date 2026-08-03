@@ -2356,6 +2356,8 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   groupChat: {
+    agentType: 'Agent',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     roomSettings: 'Raumeinstellungen',
     inviteCodeSettings: 'Einladungscode-Einstellungen',
     inviteCodePlaceholder: 'Neuen Einladungscode eingeben',

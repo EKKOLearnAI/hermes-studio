@@ -2,7 +2,7 @@
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, NModal, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber, NDropdown, NModal, NPopover, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -15,11 +15,23 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
+import type { MemberInfo, RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
+import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
+import {
+    inferCodingAgentApiMode,
+    normalizeCodingAgentApiMode,
+    type CodingAgentApiMode,
+} from '@/api/coding-agents'
+import type { ProfileAvatar as ProfileAvatarData } from '@/api/hermes/profiles'
+import {
+    defaultGroupAgentAvatar,
+    groupAgentAvatar,
+    parseStoredAvatar,
+} from '@/utils/group-agent-avatar'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -44,6 +56,9 @@ watch(
 const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
+const showMemberRail = ref(true)
+const editingAgent = ref<RoomAgent | null>(null)
+const isSavingAgent = ref(false)
 const showCompressionModal = ref(false)
 const showUserProfileModal = ref(false)
 const userProfileName = ref('')
@@ -53,9 +68,16 @@ const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, 
 const isCompressing = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
+const selectedAgentType = ref<GroupAgentType>('hermes')
 const selectedProfile = ref<string | null>(null)
+const selectedAgentProvider = ref('')
+const selectedAgentModel = ref('')
+const selectedAgentApiMode = ref<CodingAgentApiMode>('codex_responses')
+const selectedAgentReasoningEffort = ref('')
 const agentName = ref('')
 const agentDescription = ref('')
+const agentAvatar = ref<ProfileAvatarData | null>(null)
+const agentAvatarFileInput = ref<HTMLInputElement | null>(null)
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
@@ -84,13 +106,144 @@ const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
 
-function profileAvatarFor(profileName?: string) {
-    if (!profileName) return null
-    return profilesStore.profiles.find(profile => profile.name === profileName)?.avatar || null
+type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude'
+
+const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
+    { label: 'Hermes', value: 'hermes' },
+    { label: 'Claude Code', value: 'claude' },
+    { label: 'Codex', value: 'codex' },
+    { label: 'Ekko Agent', value: 'ekko' },
+])
+
+function getAgentModelGroups(profile: string) {
+    return (appStore.profileModelGroups.find(entry => entry.profile === profile)?.groups || [])
+        .filter((group) => {
+            if (group.provider === 'moa') return selectedAgentType.value === 'hermes'
+            if (selectedAgentType.value === 'hermes') return true
+            const codingAgentId = selectedAgentType.value === 'ekko'
+                ? 'ekko-agent'
+                : selectedAgentType.value === 'claude'
+                    ? 'claude-code'
+                    : 'codex'
+            return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
+        })
+}
+
+function getDefaultAgentModel(profile: string) {
+    const groups = getAgentModelGroups(profile)
+    const selectedGroup = groups.find(group => group.provider === appStore.selectedProvider)
+    if (
+        profile === profilesStore.activeProfileName &&
+        selectedGroup?.models.includes(appStore.selectedModel)
+    ) {
+        return { provider: appStore.selectedProvider, model: appStore.selectedModel }
+    }
+    const profileModels = appStore.profileModelGroups.find(entry => entry.profile === profile)
+    const defaultGroup = groups.find(group => group.provider === profileModels?.default_provider)
+    const fallbackGroup = defaultGroup || groups.find(group => group.models.length > 0)
+    return {
+        provider: fallbackGroup?.provider || '',
+        model: fallbackGroup?.models.includes(profileModels?.default || '')
+            ? profileModels?.default || ''
+            : fallbackGroup?.models[0] || '',
+    }
+}
+
+const agentProviderOptions = computed(() =>
+    getAgentModelGroups(selectedProfile.value || '').map(group => ({
+        label: group.label || group.provider,
+        value: group.provider,
+    }))
+)
+
+const agentModelOptions = computed(() => {
+    const group = getAgentModelGroups(selectedProfile.value || '')
+        .find(item => item.provider === selectedAgentProvider.value)
+    return (group?.models || []).map(modelId => ({
+        label: appStore.displayModelName(modelId, group?.provider),
+        value: modelId,
+    }))
+})
+
+const selectedAgentProviderGroup = computed(() =>
+    getAgentModelGroups(selectedProfile.value || '')
+        .find(item => item.provider === selectedAgentProvider.value)
+)
+
+const agentApiModeOptions = computed(() => [
+    { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
+    { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
+    { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+])
+
+const agentReasoningEffortOptions = computed(() => [
+    { label: t('chat.reasoningEffort.options.default'), value: '' },
+    { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+    { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+    { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+    { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+    { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+    { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+    { label: t('chat.reasoningEffort.options.max'), value: 'max' },
+])
+
+const agentAvatarPreview = computed(() =>
+    agentAvatar.value || defaultGroupAgentAvatar(selectedAgentType.value)
+)
+
+const canConfirmAddAgent = computed(() =>
+    Boolean(
+        selectedProfile.value &&
+        selectedAgentProvider.value &&
+        selectedAgentModel.value &&
+        (selectedAgentType.value === 'hermes' || selectedAgentApiMode.value),
+    )
+)
+
+function syncAgentApiMode() {
+    const group = selectedAgentProviderGroup.value
+    selectedAgentApiMode.value = normalizeCodingAgentApiMode(
+        group?.api_mode,
+        inferCodingAgentApiMode(group?.provider || selectedAgentProvider.value, group?.base_url),
+    )
+}
+
+function syncAgentModelSelection(profile: string) {
+    const defaults = getDefaultAgentModel(profile)
+    selectedAgentProvider.value = defaults.provider
+    selectedAgentModel.value = defaults.model
+    syncAgentApiMode()
+}
+
+function handleAgentProfileChange(profile: string) {
+    selectedProfile.value = profile
+    syncAgentModelSelection(profile)
+}
+
+function handleAgentTypeChange(agent: GroupAgentType) {
+    selectedAgentType.value = agent
+    if (selectedProfile.value) syncAgentModelSelection(selectedProfile.value)
+}
+
+function handleAgentProviderChange(provider: string) {
+    selectedAgentProvider.value = provider
+    selectedAgentModel.value = agentModelOptions.value[0]?.value || ''
+    syncAgentApiMode()
 }
 
 function agentAvatarName(agent: RoomAgent): string {
-    return agent.profile || agent.name || agent.agentId
+    return agent.agent || 'hermes'
+}
+
+function agentContextStatus(agent: RoomAgent): { agentName: string; status: string } | undefined {
+    return store.contextStatuses.get(agent.name)
+        || Array.from(store.contextStatuses.values()).find(status => status.agentName === agent.name)
+}
+
+function agentActivityLabel(agent: RoomAgent): string {
+    return agentContextStatus(agent)?.status === 'compressing'
+        ? t('groupChat.agentCompressing')
+        : t('groupChat.agentReplying')
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
@@ -100,6 +253,18 @@ function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): bo
     return room?.canManage === true
 }
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const railMembers = computed<MemberInfo[]>(() => {
+    if (store.members.some(member => member.userId === store.userId)) return store.members
+    return [{
+        id: `current:${store.userId}`,
+        userId: store.userId,
+        name: store.userName || t('groupChat.you'),
+        description: '',
+        joinedAt: 0,
+        avatar: store.currentUserAvatar,
+    }, ...store.members]
+})
+const participantCount = computed(() => railMembers.value.length + store.agents.length)
 const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
 const canUpdateInviteCode = computed(() => {
@@ -115,13 +280,20 @@ const userMemberAvatar = computed(() => {
     // Prefer the live member list (populated when a room is active)
     const member = store.members.find(m => m.userId === store.userId)
     const raw = member?.avatar || store.currentUserAvatar
-    if (!raw) return null
-    try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
-        if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
-    } catch { /* malformed JSON — fall through to multiavatar */ }
-    return null
+    return parseMemberAvatar(raw)
 })
+
+function parseMemberAvatar(raw: unknown) {
+    return parseStoredAvatar(raw)
+}
+
+function memberAvatarFor(member: MemberInfo) {
+    return member.userId === store.userId ? userMemberAvatar.value : parseMemberAvatar(member.avatar)
+}
+
+function handleRoomMemberClick(member: MemberInfo) {
+    if (member.userId === store.userId) handleOpenUserProfile()
+}
 
 function formatTokens(tokens: number): string {
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tokens`
@@ -490,9 +662,104 @@ async function handleSendMessage(content: string, attachments?: Attachment[]) {
     }
 }
 
+function resetAgentForm() {
+    selectedProfile.value = null
+    selectedAgentType.value = 'hermes'
+    selectedAgentProvider.value = ''
+    selectedAgentModel.value = ''
+    selectedAgentApiMode.value = 'codex_responses'
+    selectedAgentReasoningEffort.value = ''
+    agentName.value = ''
+    agentDescription.value = ''
+    agentAvatar.value = null
+}
+
+function closeAgentModal() {
+    showAddAgentModal.value = false
+    editingAgent.value = null
+    resetAgentForm()
+}
+
 async function handleAddAgent() {
     if (!currentRoomCanManage.value) return
-    await profilesStore.fetchProfiles()
+    await Promise.all([
+        profilesStore.fetchProfiles(),
+        appStore.loadModels(),
+    ])
+    editingAgent.value = null
+    resetAgentForm()
+    selectedAgentType.value = 'hermes'
+    selectedProfile.value =
+        profilesStore.activeProfileName ||
+        profilesStore.profiles.find(profile => profile.active)?.name ||
+        profilesStore.profiles[0]?.name ||
+        'default'
+    syncAgentModelSelection(selectedProfile.value)
+    selectedAgentReasoningEffort.value = ''
+    showAddAgentModal.value = true
+}
+
+function randomAgentAvatarSeed() {
+    return `group-agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function handleRandomAgentAvatar() {
+    agentAvatar.value = { type: 'generated', seed: randomAgentAvatarSeed() }
+}
+
+function handleResetAgentAvatar() {
+    agentAvatar.value = null
+}
+
+function triggerAgentAvatarUpload() {
+    agentAvatarFileInput.value?.click()
+}
+
+async function handleAgentAvatarFileChange(event: Event) {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        message.warning(t('profiles.avatar.invalidType'))
+        return
+    }
+    if (file.size > 1024 * 1024) {
+        message.warning(t('profiles.avatar.tooLarge'))
+        return
+    }
+    try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result || ''))
+            reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+            reader.readAsDataURL(file)
+        })
+        agentAvatar.value = { type: 'image', dataUrl }
+    } catch {
+        message.error(t('profiles.avatar.saveFailed'))
+    }
+}
+
+async function handleEditAgent(agent: RoomAgent) {
+    if (!currentRoomCanManage.value) return
+    await Promise.all([
+        profilesStore.fetchProfiles(),
+        appStore.loadModels(),
+    ])
+    editingAgent.value = agent
+    selectedAgentType.value = agent.agent || 'hermes'
+    selectedProfile.value = agent.profile
+    selectedAgentProvider.value = agent.provider || ''
+    selectedAgentModel.value = agent.model || ''
+    selectedAgentApiMode.value = normalizeCodingAgentApiMode(
+        agent.apiMode,
+        inferCodingAgentApiMode(agent.provider),
+    )
+    selectedAgentReasoningEffort.value = agent.reasoningEffort || ''
+    agentName.value = agent.name || ''
+    agentDescription.value = agent.description || ''
+    agentAvatar.value = parseStoredAvatar(agent.avatar)
     showAddAgentModal.value = true
 }
 
@@ -546,17 +813,21 @@ async function confirmAddAgent() {
         message.warning(t('groupChat.selectRoomFirst'))
         return
     }
-    if (!selectedProfile.value) return
+    if (!canConfirmAddAgent.value || !selectedProfile.value || isSavingAgent.value) return
+    isSavingAgent.value = true
     try {
         await store.addAgentToRoom(store.currentRoomId, {
+            agent: selectedAgentType.value,
             profile: selectedProfile.value,
+            provider: selectedAgentProvider.value,
+            model: selectedAgentModel.value,
+            apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value,
+            reasoningEffort: selectedAgentReasoningEffort.value,
             name: agentName.value.trim() || undefined,
             description: agentDescription.value.trim() || undefined,
+            avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
         })
-        showAddAgentModal.value = false
-        selectedProfile.value = null
-        agentName.value = ''
-        agentDescription.value = ''
+        closeAgentModal()
         message.success(t('groupChat.agentAdded'))
     } catch (err: any) {
         if (err.message?.includes('already')) {
@@ -564,6 +835,33 @@ async function confirmAddAgent() {
         } else {
             message.error(extractApiErrorMessage(err))
         }
+    } finally {
+        isSavingAgent.value = false
+    }
+}
+
+async function confirmUpdateAgent() {
+    if (!store.currentRoomId || !editingAgent.value) return
+    if (!canConfirmAddAgent.value || !selectedProfile.value || isSavingAgent.value) return
+    isSavingAgent.value = true
+    try {
+        await store.updateAgentInRoom(store.currentRoomId, editingAgent.value.id, {
+            agent: selectedAgentType.value,
+            profile: selectedProfile.value,
+            provider: selectedAgentProvider.value,
+            model: selectedAgentModel.value,
+            apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value,
+            reasoningEffort: selectedAgentReasoningEffort.value,
+            name: agentName.value.trim() || undefined,
+            description: agentDescription.value.trim() || undefined,
+            avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
+        })
+        closeAgentModal()
+        message.success(t('common.saved'))
+    } catch (err: any) {
+        message.error(extractApiErrorMessage(err))
+    } finally {
+        isSavingAgent.value = false
     }
 }
 
@@ -684,6 +982,9 @@ async function handleRemoveAgent(agentId: string) {
     if (!currentRoomCanManage.value) return
     try {
         await store.removeAgentFromRoom(store.currentRoomId, agentId)
+        if (editingAgent.value && (editingAgent.value.id === agentId || editingAgent.value.agentId === agentId)) {
+            closeAgentModal()
+        }
     } catch {
         message.error(t('common.deleteFailed'))
     }
@@ -806,65 +1107,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </button>
                 </div>
                 <div class="header-info">
-                    <!-- Stacked avatars (user + agents) -->
-                    <NPopover v-if="store.agents.length" trigger="click" placement="bottom-end" :width="220">
-                        <template #trigger>
-                            <button
-                                type="button"
-                                class="avatar-stack-inner avatar-stack-trigger"
-                                :aria-label="`${t('groupChat.agents')} (${store.agents.length})`"
-                            >
-                                <!-- User avatar first -->
-                                <span class="avatar-stack-item" :style="{ zIndex: store.agents.length + 1 }">
-                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
-                                </span>
-                                <span
-                                    v-for="(agent, index) in store.agents.slice(-4)"
-                                    :key="agent.id"
-                                    class="avatar-stack-item"
-                                    :style="{ zIndex: store.agents.length - index }"
-                                >
-                                    <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="24" />
-                                </span>
-                                <span v-if="store.agents.length > 4" class="avatar-stack-more">+{{ store.agents.length - 4 }}</span>
-                            </button>
-                        </template>
-                        <div class="agent-popover">
-                            <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
-                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
-                                <div class="agent-popover-info">
-                                    <span class="agent-popover-name">{{ store.userName || 'You' }}</span>
-                                    <span class="agent-popover-profile">{{ t('groupChat.you') }}</span>
-                                </div>
-                            </div>
-                            <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
-                                <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
-                                <div class="agent-popover-info">
-                                    <span class="agent-popover-name">{{ agent.name }}</span>
-                                    <span class="agent-popover-profile">{{ agent.profile }}</span>
-                                </div>
-                                <button v-if="currentRoomCanManage" class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                                </button>
-                            </div>
-                        </div>
-                    </NPopover>
-                    <!-- Only user avatar, no agents -->
-                    <div v-else-if="store.userName" class="avatar-stack-inner">
-                        <span class="avatar-stack-item">
-                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="24" />
-                        </span>
-                    </div>
-                    <button v-if="hasRoom" class="icon-btn" :title="t('groupChat.yourName')" @click="handleOpenUserProfile">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 20h9" />
-                            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
-                        </svg>
-                    </button>
-                    <button v-if="currentRoomCanManage" class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    </button>
                     <button
                         v-if="currentRoom?.workspace && currentRoomCanManage"
                         class="icon-btn workspace-panel-toggle"
@@ -892,9 +1134,18 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </template>
                         {{ t('groupChat.clearContextConfirm') }}
                     </NPopconfirm>
-                    <span v-if="store.members.length" class="member-count">
-                        {{ store.members.length }} {{ t('groupChat.members') }}
-                    </span>
+                    <button
+                        v-if="participantCount"
+                        type="button"
+                        class="member-count member-count-toggle"
+                        :aria-expanded="showMemberRail"
+                        @click="showMemberRail = !showMemberRail"
+                    >
+                        <span>{{ participantCount }} {{ t('groupChat.members') }}</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" :class="{ collapsed: !showMemberRail }" aria-hidden="true">
+                            <polyline points="15 18 9 12 15 6" />
+                        </svg>
+                    </button>
                     <span class="connection-dot" :class="{ connected: store.connected, disconnected: !store.connected }"></span>
                 </div>
             </div>
@@ -905,6 +1156,85 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 class="group-chat-content-wrapper"
                 :class="{ 'chat-main--drop-active': isChatDropActive }"
             >
+                <aside
+                    v-if="showMemberRail"
+                    class="agent-avatar-rail"
+                    :aria-label="`${participantCount} ${t('groupChat.members')}`"
+                >
+                    <div class="agent-avatar-rail-trigger">
+                        <button
+                            v-for="member in railMembers"
+                            :key="member.id"
+                            type="button"
+                            class="agent-avatar-rail-item agent-avatar-rail-user"
+                            :class="{ 'agent-avatar-rail-current-user': member.userId === store.userId }"
+                            :title="member.userId === store.userId ? t('groupChat.yourName') : member.name"
+                            :aria-label="member.userId === store.userId ? t('groupChat.yourName') : member.name"
+                            :disabled="member.userId !== store.userId"
+                            @click="handleRoomMemberClick(member)"
+                        >
+                            <ProfileAvatar
+                                class="agent-avatar"
+                                :name="member.name || t('groupChat.you')"
+                                :avatar="memberAvatarFor(member)"
+                                :size="32"
+                            />
+                        </button>
+                        <span v-if="store.agents.length" class="agent-avatar-rail-divider" aria-hidden="true"></span>
+                        <NPopover
+                            v-for="agent in store.agents"
+                            :key="agent.id"
+                            trigger="hover"
+                            placement="right"
+                            :show-arrow="false"
+                            :disabled="!agentContextStatus(agent)"
+                        >
+                            <template #trigger>
+                                <button
+                                    type="button"
+                                    class="agent-avatar-rail-item"
+                                    :class="{ 'agent-avatar-rail-active': !!agentContextStatus(agent) }"
+                                    :aria-label="agent.name"
+                                    :aria-busy="!!agentContextStatus(agent)"
+                                    :disabled="!currentRoomCanManage"
+                                    @click="handleEditAgent(agent)"
+                                >
+                                    <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="groupAgentAvatar(agent)" :size="32" />
+                                </button>
+                            </template>
+                            <div class="agent-avatar-activity-popover">
+                                <span class="agent-avatar-activity-text">
+                                    @{{ agent.name }} {{ agentActivityLabel(agent) }}
+                                </span>
+                                <button
+                                    v-if="currentRoomCanManage"
+                                    type="button"
+                                    class="agent-avatar-stop"
+                                    :aria-label="t('common.stop')"
+                                    @click.stop="handleInterruptAgent(agent.name)"
+                                >
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                        <rect x="6" y="6" width="12" height="12" rx="1" />
+                                    </svg>
+                                    <span>{{ t('common.stop') }}</span>
+                                </button>
+                            </div>
+                        </NPopover>
+                    </div>
+                    <button
+                        v-if="currentRoomCanManage"
+                        type="button"
+                        class="agent-avatar-rail-add"
+                        :title="t('groupChat.addAgent')"
+                        :aria-label="t('groupChat.addAgent')"
+                        @click="handleAddAgent"
+                    >
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                            <line x1="12" y1="5" x2="12" y2="19" />
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                    </button>
+                </aside>
                 <div class="group-chat-surface">
                     <div class="group-message-shell">
                         <GroupMessageList />
@@ -943,33 +1273,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 </div>
                             </div>
                         </Transition>
-                    </div>
-                    <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
-                        <div v-if="store.contextStatuses.size > 0" class="context-status-list">
-                            <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
-                                <span class="typing-dots">
-                                    <span /><span /><span />
-                                </span>
-                                <span v-if="status.status === 'compressing'">
-                                    @{{ status.agentName }} {{ t('groupChat.agentCompressing') }}
-                                </span>
-                                <span v-else>
-                                    @{{ status.agentName }} {{ t('groupChat.agentReplying') }}
-                                </span>
-                                <button v-if="currentRoomCanManage" class="context-stop-btn" :title="t('common.cancel')" @click="handleInterruptAgent(status.agentName)">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div v-else-if="store.typingText" class="typing-indicator">
-                            <span class="typing-dots">
-                                <span /><span /><span />
-                            </span>
-                            {{ store.typingText }}
-                        </div>
                     </div>
                     <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
                 </div>
@@ -1066,15 +1369,89 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         </Teleport>
 
         <Teleport to="body">
-            <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="showAddAgentModal = false">
+            <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
                 <div class="modal">
-                    <h3>{{ t('groupChat.addAgent') }}</h3>
+                    <h3>{{ editingAgent ? `${t('common.update')} ${editingAgent.name}` : t('groupChat.addAgent') }}</h3>
+                    <div class="group-agent-avatar-editor">
+                        <ProfileAvatar
+                            :name="selectedAgentType"
+                            :avatar="agentAvatarPreview"
+                            :size="64"
+                        />
+                        <div class="group-agent-avatar-controls">
+                            <span class="form-label">{{ t('profiles.avatar.customize') }}</span>
+                            <div class="group-agent-avatar-actions">
+                                <NButton size="small" @click="triggerAgentAvatarUpload">
+                                    {{ t('profiles.avatar.upload') }}
+                                </NButton>
+                                <NButton size="small" @click="handleRandomAgentAvatar">
+                                    {{ t('profiles.avatar.random') }}
+                                </NButton>
+                                <NButton size="small" @click="handleResetAgentAvatar">
+                                    {{ t('profiles.avatar.reset') }}
+                                </NButton>
+                            </div>
+                            <span class="group-agent-avatar-hint">{{ t('profiles.avatar.hint') }}</span>
+                        </div>
+                        <input
+                            ref="agentAvatarFileInput"
+                            class="group-agent-avatar-file"
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            @change="handleAgentAvatarFileChange"
+                        >
+                    </div>
                     <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.agentType') }}</label>
                         <NSelect
-                            v-model:value="selectedProfile"
+                            :value="selectedAgentType"
+                            :options="groupAgentTypeOptions"
+                            @update:value="handleAgentTypeChange"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('sidebar.profiles') }}</label>
+                        <NSelect
+                            :value="selectedProfile"
                             :options="profileOptions"
                             :placeholder="t('groupChat.selectProfile')"
                             filterable
+                            @update:value="handleAgentProfileChange"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('models.provider') }}</label>
+                        <NSelect
+                            :value="selectedAgentProvider"
+                            :options="agentProviderOptions"
+                            :placeholder="t('models.selectProvider')"
+                            filterable
+                            @update:value="handleAgentProviderChange"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('models.models') }}</label>
+                        <NSelect
+                            v-model:value="selectedAgentModel"
+                            :options="agentModelOptions"
+                            :placeholder="t('models.selectModel')"
+                            :disabled="!selectedAgentProvider"
+                            filterable
+                        />
+                    </div>
+                    <div v-if="selectedAgentType !== 'hermes'" class="form-group">
+                        <label class="form-label">{{ t('codingAgents.protocolScope') }}</label>
+                        <NSelect
+                            v-model:value="selectedAgentApiMode"
+                            :options="agentApiModeOptions"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('chat.reasoningEffort.tooltip') }}</label>
+                        <NSelect
+                            v-model:value="selectedAgentReasoningEffort"
+                            :options="agentReasoningEffortOptions"
+                            :placeholder="t('chat.reasoningEffort.tooltip')"
                         />
                     </div>
                     <div class="form-group">
@@ -1093,10 +1470,28 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             :placeholder="t('groupChat.agentDescPlaceholder')"
                         />
                     </div>
-                    <div class="modal-actions">
+                    <div class="modal-actions" :class="{ 'agent-modal-actions': editingAgent }">
+                        <NPopconfirm
+                            v-if="editingAgent"
+                            @positive-click="handleRemoveAgent(editingAgent.id)"
+                        >
+                            <template #trigger>
+                                <NButton type="error" secondary :disabled="isSavingAgent">
+                                    {{ t('common.delete') }}
+                                </NButton>
+                            </template>
+                            {{ t('common.delete') }} {{ editingAgent.name }}?
+                        </NPopconfirm>
                         <NSpace justify="end">
-                            <NButton @click="showAddAgentModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" :disabled="!selectedProfile" @click="confirmAddAgent">{{ t('common.add') }}</NButton>
+                            <NButton :disabled="isSavingAgent" @click="closeAgentModal">{{ t('common.cancel') }}</NButton>
+                            <NButton
+                                type="primary"
+                                :disabled="!canConfirmAddAgent"
+                                :loading="isSavingAgent"
+                                @click="editingAgent ? confirmUpdateAgent() : confirmAddAgent()"
+                            >
+                                {{ editingAgent ? t('common.update') : t('common.add') }}
+                            </NButton>
                         </NSpace>
                     </div>
                 </div>
@@ -1311,61 +1706,6 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
-// ─── Status Bar ──────────────────────────────────────────
-
-.status-bar {
-    flex-shrink: 0;
-    padding: 6px 20px;
-    overflow: hidden;
-}
-
-.context-status-list {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-
-    &::-webkit-scrollbar {
-        height: 0;
-    }
-}
-
-.context-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
-    color: $text-secondary;
-    background-color: $bg-card-hover;
-    border-radius: $radius-sm;
-
-    .dark & {
-        background-color: rgba(255, 255, 255, 0.06);
-    }
-}
-
-.context-stop-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid rgba(var(--error-rgb), 0.18);
-    border-radius: $radius-sm;
-    background: rgba(var(--error-rgb), 0.06);
-    color: $error;
-    cursor: pointer;
-    padding: 0;
-    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-
-    &:hover {
-        color: #ffffff;
-        background: $error;
-        border-color: $error;
-    }
-}
-
 .approval-float-panel {
     position: absolute;
     right: 16px;
@@ -1485,37 +1825,6 @@ export default defineComponent({ components: { CreateRoomForm } })
 .approval-float-leave-to {
     opacity: 0;
     transform: translateY(10px) scale(0.98);
-}
-
-.typing-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: $text-muted;
-}
-
-.typing-dots {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-
-    span {
-        display: block;
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background-color: $text-muted;
-        animation: typing-bounce 1.2s infinite;
-
-        &:nth-child(2) { animation-delay: 0.2s; }
-        &:nth-child(3) { animation-delay: 0.4s; }
-    }
-}
-
-@keyframes typing-bounce {
-    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-    30% { transform: translateY(-3px); opacity: 1; }
 }
 
 // ─── Room Sidebar ────────────────────────────────────────
@@ -1782,6 +2091,211 @@ export default defineComponent({ components: { CreateRoomForm } })
     max-width: 100%;
 }
 
+.agent-avatar-rail {
+    flex: 0 0 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 72px;
+    min-height: 0;
+    padding: 12px 0;
+    overflow: hidden;
+    box-sizing: border-box;
+    border-inline-end: 1px solid $border-color;
+    background: rgba(var(--bg-main-surface-rgb), 0.55);
+}
+
+.agent-avatar-rail-trigger {
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    gap: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+.agent-avatar-rail-item {
+    display: flex;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid rgba(var(--text-primary-rgb), 0.12);
+    border-radius: 50%;
+    background: $bg-secondary;
+    cursor: pointer;
+    transition: border-color $transition-fast, box-shadow $transition-fast;
+    -webkit-app-region: no-drag;
+
+    &:hover {
+        border-color: rgba(var(--accent-primary-rgb), 0.55);
+    }
+
+    &:focus-visible {
+        border-color: rgba(var(--accent-primary-rgb), 0.75);
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.14);
+        outline: none;
+    }
+
+    &:disabled {
+        cursor: default;
+    }
+
+    .agent-avatar {
+        width: 32px;
+        height: 32px;
+    }
+}
+
+.agent-avatar-rail-current-user {
+    border-color: rgba(var(--accent-primary-rgb), 0.28);
+}
+
+.agent-avatar-rail-active {
+    border-color: transparent;
+    animation: agent-avatar-rainbow-glow 4s linear infinite;
+}
+
+.agent-avatar-activity-popover {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 280px;
+}
+
+.agent-avatar-activity-text {
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.agent-avatar-stop {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid rgba(var(--error-rgb), 0.24);
+    border-radius: $radius-sm;
+    color: $error;
+    background: rgba(var(--error-rgb), 0.08);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: color $transition-fast, border-color $transition-fast, background $transition-fast;
+
+    &:hover {
+        border-color: $error;
+        color: #ffffff;
+        background: $error;
+    }
+}
+
+@keyframes agent-avatar-rainbow-glow {
+    0% {
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+    }
+
+    16.66% {
+        box-shadow:
+            0 0 0 2px #feca57,
+            0 0 10px rgba(254, 202, 87, 0.4),
+            0 0 20px rgba(254, 202, 87, 0.2);
+    }
+
+    33.33% {
+        box-shadow:
+            0 0 0 2px #48dbfb,
+            0 0 10px rgba(72, 219, 251, 0.4),
+            0 0 20px rgba(72, 219, 251, 0.2);
+    }
+
+    50% {
+        box-shadow:
+            0 0 0 2px #ff9ff3,
+            0 0 10px rgba(255, 159, 243, 0.4),
+            0 0 20px rgba(255, 159, 243, 0.2);
+    }
+
+    66.66% {
+        box-shadow:
+            0 0 0 2px #54a0ff,
+            0 0 10px rgba(84, 160, 255, 0.4),
+            0 0 20px rgba(84, 160, 255, 0.2);
+    }
+
+    83.33% {
+        box-shadow:
+            0 0 0 2px #5f27cd,
+            0 0 10px rgba(95, 39, 205, 0.4),
+            0 0 20px rgba(95, 39, 205, 0.2);
+    }
+
+    100% {
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-avatar-rail-active {
+        animation: none;
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+    }
+}
+
+.agent-avatar-rail-divider {
+    flex: 0 0 1px;
+    width: 24px;
+    background: $border-color;
+}
+
+.agent-avatar-rail-add {
+    display: flex;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    margin-top: 10px;
+    padding: 0;
+    border: 1px dashed rgba(var(--accent-primary-rgb), 0.65);
+    border-radius: 50%;
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    cursor: pointer;
+    transition: color $transition-fast, border-color $transition-fast, background $transition-fast;
+    -webkit-app-region: no-drag;
+
+    &:hover {
+        border-color: rgba(var(--accent-primary-rgb), 0.82);
+        color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.13);
+    }
+}
+
 .group-chat-surface {
     flex: 1;
     min-height: 0;
@@ -1998,20 +2512,8 @@ export default defineComponent({ components: { CreateRoomForm } })
         height: 28px;
     }
 
-    .avatar-stack-item,
-    .avatar-stack-more {
-        width: 24px;
-        height: 24px;
-    }
-
-    .avatar-stack-item,
-    .avatar-stack-more,
     .icon-btn {
         box-sizing: content-box;
-    }
-
-    .avatar-stack-item {
-        margin-inline-start: -10px;
     }
 
     .header-left {
@@ -2077,64 +2579,32 @@ export default defineComponent({ components: { CreateRoomForm } })
         font-size: 12px;
         color: $text-muted;
     }
-}
 
-// ─── Header Avatar Stack ──────────────────────────────
+    .member-count-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 3px 5px;
+        border: 0;
+        border-radius: $radius-sm;
+        background: transparent;
+        cursor: pointer;
+        transition: color $transition-fast, background-color $transition-fast;
+        -webkit-app-region: no-drag;
 
-.avatar-stack {
-    cursor: pointer;
-}
+        &:hover {
+            color: $text-secondary;
+            background: rgba(var(--accent-primary-rgb), 0.06);
+        }
 
-.avatar-stack-inner {
-    display: flex;
-    align-items: center;
-}
+        svg {
+            transition: transform $transition-fast;
 
-.avatar-stack-trigger {
-    padding: 0;
-    border: 0;
-    color: inherit;
-    background: transparent;
-    cursor: pointer;
-    -webkit-app-region: no-drag;
-}
-
-.avatar-stack-item {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 2px solid $bg-card;
-    margin-inline-start: -12px;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: $bg-secondary;
-    transition: transform $transition-fast;
-
-    &:first-child {
-        margin-inline-start: 0;
+            &.collapsed {
+                transform: rotate(180deg);
+            }
+        }
     }
-
-    &:hover {
-        transform: translateY(-2px);
-        z-index: 100 !important;
-    }
-}
-
-.avatar-stack-more {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 2px solid $bg-card;
-    margin-inline-start: -12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: $bg-secondary;
-    font-size: 11px;
-    font-weight: 600;
-    color: $text-secondary;
 }
 
 .agent-avatar {
@@ -2147,78 +2617,6 @@ export default defineComponent({ components: { CreateRoomForm } })
     :deep(svg) {
         width: 100%;
         height: 100%;
-    }
-}
-
-// ─── Agent Popover ─────────────────────────────────────
-
-.agent-popover {
-    max-height: 300px;
-    overflow-y: auto;
-}
-
-.agent-popover-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: $text-muted;
-    padding: 0 0 8px;
-    border-bottom: 1px solid $border-color;
-    margin-bottom: 8px;
-}
-
-.agent-popover-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 4px;
-    border-radius: $radius-sm;
-    transition: background-color $transition-fast;
-
-    &:hover {
-        background-color: rgba(var(--accent-primary-rgb), 0.06);
-    }
-
-    .agent-popover-info {
-        flex: 1;
-        min-width: 0;
-    }
-
-    .agent-popover-name {
-        display: block;
-        font-size: 13px;
-        color: $text-primary;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .agent-popover-profile {
-        display: block;
-        font-size: 11px;
-        color: $text-muted;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .agent-popover-remove {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        border: none;
-        background: none;
-        border-radius: $radius-sm;
-        color: $text-muted;
-        cursor: pointer;
-        flex-shrink: 0;
-        transition: all $transition-fast;
-
-        &:hover {
-            color: $error;
-            background-color: rgba(200, 50, 50, 0.08);
-        }
     }
 }
 
@@ -2279,6 +2677,9 @@ export default defineComponent({ components: { CreateRoomForm } })
     padding: 24px;
     width: 400px;
     max-width: 90vw;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 
     h3 {
@@ -2308,6 +2709,43 @@ export default defineComponent({ components: { CreateRoomForm } })
     margin-bottom: 16px;
 }
 
+.group-agent-avatar-editor {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding: 12px;
+    border: 1px solid $border-color;
+    border-radius: $radius-md;
+    background: rgba(var(--text-primary-rgb), 0.02);
+}
+
+.group-agent-avatar-controls {
+    min-width: 0;
+    flex: 1;
+
+    .form-label {
+        margin-bottom: 7px;
+    }
+}
+
+.group-agent-avatar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.group-agent-avatar-hint {
+    display: block;
+    margin-top: 6px;
+    color: $text-muted;
+    font-size: 11px;
+}
+
+.group-agent-avatar-file {
+    display: none;
+}
+
 .form-label {
     display: block;
     font-size: 13px;
@@ -2331,6 +2769,10 @@ export default defineComponent({ components: { CreateRoomForm } })
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+}
+
+.agent-modal-actions {
+    justify-content: space-between;
 }
 
 .form-hint {
@@ -2379,6 +2821,28 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     .chat-header {
         padding: 16px 12px 16px 52px;
+    }
+
+    .agent-avatar-rail {
+        flex-basis: 68px;
+        width: 68px;
+        padding: 10px 0;
+    }
+
+    .agent-avatar-rail-item {
+        width: 32px;
+        height: 32px;
+
+        .agent-avatar {
+            width: 30px;
+            height: 30px;
+        }
+    }
+
+    .agent-avatar-rail-add {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
     }
 
     .header-sidebar-toggle {

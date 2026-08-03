@@ -340,6 +340,7 @@ export async function bootstrap() {
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
   chatRunServer = new ChatRunSocket(groupChatServer.getIO())
   setChatRunServer(chatRunServer)
+  groupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.

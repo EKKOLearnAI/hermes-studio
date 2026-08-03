@@ -23,6 +23,15 @@ describe('group chat agent model config', () => {
     expect(result).toEqual({ model: 'research-model', provider: 'research-provider' })
   })
 
+  it('prefers the model and provider selected for the room agent', async () => {
+    const { resolveGroupAgentModelContext } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+
+    const result = await resolveGroupAgentModelContext('research', 'selected-model', 'selected-provider')
+
+    expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
+    expect(result).toEqual({ model: 'selected-model', provider: 'selected-provider' })
+  })
+
   it('requires cached context metadata to match the active model and provider', async () => {
     const { isGroupBridgeContextCacheCompatible } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
 

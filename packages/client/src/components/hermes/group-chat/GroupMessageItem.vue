@@ -3,7 +3,6 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
     copyTextToClipboard,
     extractUnifiedDiffPayload,
@@ -25,6 +24,7 @@ import ToolChangeCard from '@/components/hermes/chat/ToolChangeCard.vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { isServerTtsProvider } from '@/api/hermes/tts'
+import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -41,12 +41,12 @@ const props = defineProps<{
     agents: RoomAgent[]
     members?: MemberInfo[]
     currentUserId?: string
+    embedded?: boolean
 }>()
 
 const { t } = useI18n()
 const toast = useMessage()
 const groupChatStore = useGroupChatStore()
-const profilesStore = useProfilesStore()
 const filesStore = useFilesStore()
 const toolPanelStore = useToolPanelStore()
 const speech = useGlobalSpeech()
@@ -72,9 +72,6 @@ const agentInfo = computed(() => {
 
 const timeStr = computed(() => formatChatTimestamp(props.message.timestamp))
 
-const avatarProfileName = computed(() => agentInfo.value?.profile || props.message.senderName || props.message.senderId)
-const avatarProfile = computed(() => profilesStore.profiles.find(profile => profile.name === agentInfo.value?.profile))
-
 // 找当前消息发送者在 members 里的记录
 const memberInfo = computed(() => {
     if (isAgent.value) return null
@@ -86,26 +83,20 @@ const memberInfo = computed(() => {
 
 // 解析 member 的 avatar JSON
 const memberAvatar = computed(() => {
-    const av = memberInfo.value?.avatar
-    if (!av) return null
-    try {
-        const parsed = typeof av === 'string' ? JSON.parse(av) : av
-        if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
-    } catch {}
-    return null
+    return parseStoredAvatar(memberInfo.value?.avatar)
 })
 
 // 当前消息要显示的头像(profile / member / fallback)
 const currentAvatar = computed(() => {
     if (isAgent.value) {
-        return avatarProfile.value?.avatar ?? null
+        return groupAgentAvatar(agentInfo.value)
     }
     return memberAvatar.value
 })
 
 // 给 ProfileAvatar 的 name seed
 const avatarDisplayName = computed(() => {
-    if (isAgent.value) return avatarProfileName.value
+    if (isAgent.value) return agentInfo.value?.agent || 'hermes'
     return props.message.senderName || props.message.senderId || 'user'
 })
 
@@ -587,13 +578,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div v-if="isToolMessage" class="group-message tool-message">
-        <div class="avatar">
+    <div v-if="isToolMessage" class="group-message tool-message" :class="{ embedded }">
+        <div v-if="!embedded" class="avatar">
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">
-            <div class="msg-header">
+            <div v-if="!embedded" class="msg-header">
                 <span class="sender-name">{{ message.senderName }}</span>
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
@@ -635,17 +626,17 @@ onBeforeUnmount(() => {
                     <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
                 </div>
             </div>
-            <span class="msg-time">{{ timeStr }}</span>
+            <span v-if="!embedded" class="msg-time">{{ timeStr }}</span>
         </div>
     </div>
-    <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf }">
+    <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf, embedded }">
         <!-- Avatar -->
-        <div class="avatar">
+        <div v-if="!embedded" class="avatar">
             <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">
-            <div class="msg-header">
+            <div v-if="!embedded" class="msg-header">
                 <span class="sender-name">{{ message.senderName }}</span>
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
@@ -755,7 +746,7 @@ onBeforeUnmount(() => {
                         <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
                     </svg>
                 </button>
-                <span class="message-time">{{ timeStr }}</span>
+                <span v-if="!embedded" class="message-time">{{ timeStr }}</span>
             </div>
         </div>
     </div>
@@ -808,10 +799,38 @@ onBeforeUnmount(() => {
     &.self .msg-content {
         background-color: rgba(var(--accent-primary-rgb), 0.06);
     }
+
+    &.embedded {
+        width: 100%;
+        padding: 0;
+        gap: 0;
+
+        .msg-body {
+            width: 100%;
+            max-width: 100%;
+        }
+
+        .msg-content,
+        &.agent .msg-content.agent-content,
+        &.self .msg-content {
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            padding: 8px 10px;
+        }
+
+        .message-meta {
+            padding-inline: 10px;
+        }
+    }
 }
 
 .tool-message {
     align-items: flex-start;
+
+    &.embedded {
+        padding: 4px 8px;
+    }
 }
 
 .tool-line {
@@ -1143,9 +1162,9 @@ onBeforeUnmount(() => {
     }
 }
 
-:global(html.theme-has-custom-background .group-message .msg-content:not(.agent-error)),
-:global(html.theme-has-custom-background .group-message.agent .msg-content.agent-content:not(.agent-error)),
-:global(html.theme-has-custom-background .group-message.self .msg-content:not(.agent-error)) {
+:global(html.theme-has-custom-background .group-message:not(.embedded) .msg-content:not(.agent-error)),
+:global(html.theme-has-custom-background .group-message.agent:not(.embedded) .msg-content.agent-content:not(.agent-error)),
+:global(html.theme-has-custom-background .group-message.self:not(.embedded) .msg-content:not(.agent-error)) {
     background-color: rgba(var(--bg-main-surface-rgb), 0.78);
     border: 1px solid rgba(var(--text-primary-rgb), 0.18);
     -webkit-backdrop-filter: blur(8px) saturate(110%);

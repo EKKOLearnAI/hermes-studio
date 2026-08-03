@@ -69,6 +69,8 @@ export interface AgentRuntimeRunInput {
   contextKey?: string
   context?: unknown
   memoryEnabled?: boolean
+  /** When false, delegate_task only accepts foreground mode for this run. */
+  backgroundDelegationEnabled?: boolean
   /** Correlation fields only; log events and payloads remain runtime-owned. */
   logContext?: EkkoRuntimeLogContext
   onMemoryUsage?: (input: {

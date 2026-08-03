@@ -436,6 +436,49 @@ describe('ekko-agent runtime', () => {
     ]))
   })
 
+  it('removes and rejects background delegation when the run disables it', async () => {
+    const tools = new AgentToolRegistry()
+    tools.register(new DelegateTaskTool())
+    const requests: ModelRequest[] = []
+    const client = modelClient((request, call) => {
+      requests.push(request)
+      if (call === 1) {
+        return {
+          content: '',
+          toolCalls: [{
+            id: 'delegate-disabled',
+            name: 'delegate_task',
+            arguments: { goal: 'Run validation later', mode: 'background' },
+          }],
+          finishReason: 'tool_calls',
+        }
+      }
+      return { content: 'Background delegation was unavailable.', finishReason: 'stop' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const events: any[] = []
+
+    const result = await runtime.run({
+      messages: ['Do the work'],
+      metadata: { session_id: 'no-background-session' },
+      backgroundDelegationEnabled: false,
+      onEvent: event => events.push(event),
+    })
+
+    const delegateDefinition = requests[0].tools?.find(tool => tool.name === 'delegate_task')
+    expect((delegateDefinition?.parameters?.properties as any)?.mode?.enum).toEqual(['foreground'])
+    expect(result.steps.find(step => step.type === 'tool')).toMatchObject({
+      type: 'tool',
+      toolName: 'delegate_task',
+      result: {
+        ok: false,
+        error: 'Background subtask delegation is disabled for this run. Use foreground mode.',
+      },
+    })
+    expect(runtime.hasBackgroundTasks('no-background-session')).toBe(false)
+    expect(events.some(event => event.type === 'subagent.start')).toBe(false)
+  })
+
   it('aborts detached background delegated tasks by session', async () => {
     const tools = new AgentToolRegistry()
     tools.register(new DelegateTaskTool())

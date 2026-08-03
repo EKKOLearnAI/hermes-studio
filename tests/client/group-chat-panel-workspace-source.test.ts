@@ -17,7 +17,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('if (!currentRoomCanManage.value) return')
     expect(source).toContain('if (!canManageRoom(room)) return')
     expect(source).toContain("options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })")
-    expect(source).toContain('v-if="currentRoomCanManage" class="context-stop-btn"')
+    expect(source).toContain('v-if="currentRoomCanManage"')
+    expect(source).toContain('class="agent-avatar-stop"')
   })
 
   it('renders the active room workspace badge beside the room title like single chat', () => {
@@ -45,6 +46,51 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain('class="page-sidebar-menu-btn workspace-sidebar-button"')
   })
 
+  it('renders room agents as an avatar-only rail on the left of the chat surface', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const headerInfo = source.slice(
+      source.indexOf('<div class="header-info">'),
+      source.indexOf('</div>', source.indexOf('<div class="header-info">')),
+    )
+    const rail = source.slice(
+      source.indexOf('class="agent-avatar-rail"'),
+      source.indexOf('<div class="group-chat-surface">'),
+    )
+
+    expect(headerInfo).not.toContain('avatar-stack-trigger')
+    expect(rail).toContain('v-for="member in railMembers"')
+    expect(rail).toContain('v-for="agent in store.agents"')
+    expect(rail).toContain('class="agent-avatar-rail-item"')
+    expect(rail).toContain(':avatar="memberAvatarFor(member)"')
+    expect(rail).toContain('@click="handleRoomMemberClick(member)"')
+    expect(rail).toContain('@click="handleEditAgent(agent)"')
+    expect(rail).toContain('class="agent-avatar-rail-add"')
+    expect(rail).not.toContain('avatar-stack-more')
+    expect(source).not.toContain('transform: translateY(-1px)')
+    expect(source).toContain('const participantCount = computed(() => railMembers.value.length + store.agents.length)')
+    expect(source).toContain('const showMemberRail = ref(true)')
+    expect(source).toContain('@click="showMemberRail = !showMemberRail"')
+    expect(source).toContain('overflow-y: auto')
+  })
+
+  it('moves active agent status and interruption from the input status bar to the avatar rail', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain("function agentContextStatus(agent: RoomAgent)")
+    expect(source).toContain("'agent-avatar-rail-active': !!agentContextStatus(agent)")
+    expect(source).toContain(':disabled="!agentContextStatus(agent)"')
+    expect(source).toContain('@click.stop="handleInterruptAgent(agent.name)"')
+    expect(source).toContain('animation: agent-avatar-rainbow-glow 4s linear infinite')
+    expect(source).toContain('@keyframes agent-avatar-rainbow-glow')
+    expect(source).toContain('0 0 0 2px #ff6b6b')
+    expect(source).toContain('0 0 0 2px #48dbfb')
+    expect(source).toContain('0 0 0 2px #5f27cd')
+    expect(source).toContain('flex: 0 0 72px')
+    expect(source).toContain('width: 72px')
+    expect(source).not.toContain('class="status-bar"')
+    expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
+  })
+
   it('wires invite-code rotation into the manageable room settings modal', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
@@ -56,5 +102,32 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('v-model:value="inviteCodeDraft"')
     expect(source).toContain('@click="handleSaveInviteCode"')
     expect(source).toContain(":title=\"t('groupChat.roomSettings')\"")
+  })
+
+  it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain("const selectedAgentProvider = ref('')")
+    expect(source).toContain("const selectedAgentModel = ref('')")
+    expect(source).toContain("const selectedAgentApiMode = ref<CodingAgentApiMode>('codex_responses')")
+    expect(source).toContain("const selectedAgentReasoningEffort = ref('')")
+    expect(source).toContain('provider: selectedAgentProvider.value')
+    expect(source).toContain('model: selectedAgentModel.value')
+    expect(source).toContain("apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value")
+    expect(source).toContain('reasoningEffort: selectedAgentReasoningEffort.value')
+    expect(source).toContain('inferCodingAgentApiMode(')
+    expect(source).toContain('normalizeCodingAgentApiMode(')
+    expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")
+    expect(source).toContain('agent: selectedAgentType.value')
+    expect(source).toContain("{ label: 'Hermes', value: 'hermes' }")
+    expect(source).toContain("{ label: 'Claude Code', value: 'claude' }")
+    expect(source).toContain("{ label: 'Codex', value: 'codex' }")
+    expect(source).toContain("{ label: 'Ekko Agent', value: 'ekko' }")
+    expect(source).toContain('v-model:value="agentName"')
+    expect(source).toContain('v-model:value="agentDescription"')
+    expect(source).toContain('avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value)')
+    expect(source).toContain('@click="handleRandomAgentAvatar"')
+    expect(source).toContain('@change="handleAgentAvatarFileChange"')
+    expect(source).toContain(':avatar="groupAgentAvatar(agent)"')
   })
 })

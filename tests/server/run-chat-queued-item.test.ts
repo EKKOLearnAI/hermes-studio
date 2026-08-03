@@ -208,6 +208,38 @@ describe('ChatRunSocket queued bridge runs', () => {
     expect(namespace.to).toHaveBeenCalledWith('session:session-1')
   })
 
+  it('notifies an optional runAndWait observer without changing accumulated output', async () => {
+    handleBridgeRunMock.mockImplementationOnce(async (_nsp, _socket, data) => {
+      data.onEvent?.('reasoning.delta', { delta: 'thought' })
+      data.onEvent?.('message.delta', { delta: 'answer' })
+      data.onEvent?.('run.completed', { run_id: 'run-observed', output: 'answer' })
+    })
+
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const onEvent = vi.fn()
+
+    const result = await server.runAndWait({
+      session_id: 'session-1',
+      input: 'observed workflow node',
+      source: 'workflow',
+      session_source: 'workflow',
+    }, { profile: 'default', onEvent })
+
+    expect(onEvent.mock.calls.map(call => call[0])).toEqual([
+      'reasoning.delta',
+      'message.delta',
+      'run.completed',
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      run_id: 'run-observed',
+      output: 'answer',
+      reasoning: 'thought',
+    })
+  })
+
   it('auto-responds once to approvals only when runAndWait enables it', async () => {
     handleBridgeRunMock.mockImplementationOnce(async (_nsp, _socket, data) => {
       data.onEvent?.('approval.requested', {

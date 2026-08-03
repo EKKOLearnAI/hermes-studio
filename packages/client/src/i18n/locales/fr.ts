@@ -2356,6 +2356,8 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   groupChat: {
+    agentType: 'Agent',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     roomSettings: 'Paramètres du salon',
     inviteCodeSettings: 'Paramètres du code d’invitation',
     inviteCodePlaceholder: 'Saisir un nouveau code d’invitation',

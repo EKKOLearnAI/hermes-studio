@@ -1042,7 +1042,13 @@ export class ChatRunSocket {
       background_delegation_enabled?: boolean
       one_shot_model?: boolean
     },
-    options: { profile?: string; user?: AuthenticatedUser; timeoutMs?: number; approvalChoice?: ChatRunAutoApprovalChoice } = {},
+    options: {
+      profile?: string
+      user?: AuthenticatedUser
+      timeoutMs?: number
+      approvalChoice?: ChatRunAutoApprovalChoice
+      onEvent?: (event: string, payload: any) => void
+    } = {},
   ): Promise<ChatRunAndWaitResult> {
     const sessionId = String(data.session_id || '').trim()
     if (!sessionId) throw new Error('session_id is required')
@@ -1117,6 +1123,11 @@ export class ChatRunSocket {
         if (typeof payload.run_id === 'string' && payload.run_id) runId = payload.run_id
         if (event === 'message.delta' && typeof payload.delta === 'string') output += payload.delta
         if ((event === 'reasoning.delta' || event === 'thinking.delta') && typeof payload.delta === 'string') reasoning += payload.delta
+        try {
+          options.onEvent?.(event, payload)
+        } catch (err) {
+          logger.warn(err, '[chat-run-socket] runAndWait event observer failed for session %s', sessionId)
+        }
         if (event === 'approval.requested') {
           void respondToApproval(payload)
         } else if (event === 'run.completed') {

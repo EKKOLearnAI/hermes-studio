@@ -4816,16 +4816,34 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "apiMode": {
+                    "type": "string"
+                  },
+                  "avatar": {
+                    "type": "string"
+                  },
                   "description": {
                     "type": "string"
                   },
                   "invited": {
                     "type": "boolean"
                   },
+                  "model": {
+                    "type": "string"
+                  },
                   "name": {
                     "type": "string"
                   },
                   "profile": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
                     "type": "string"
                   }
                 },
@@ -4873,6 +4891,90 @@
       }
     },
     "/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update :agentId",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/agents/:agentId",
+        "operationId": "putAgents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "apiMode": {
+                    "type": "string"
+                  },
+                  "avatar": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "profile": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "reasoningEffort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "profile"
+                ]
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Group Chat"

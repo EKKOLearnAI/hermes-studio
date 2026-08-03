@@ -2355,6 +2355,8 @@ export default {
 
   // 변경 이력
   groupChat: {
+    agentType: '에이전트',
+    agentTypes: { hermes: 'Hermes', ekko: 'Ekko', codex: 'Codex', claude: 'Claude' },
     roomSettings: '방 설정',
     inviteCodeSettings: '초대 코드 설정',
     inviteCodePlaceholder: '새 초대 코드 입력',
