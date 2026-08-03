@@ -10,7 +10,7 @@
 import type { Server, Socket } from 'socket.io'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { clearSessionMessages, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
+import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
 import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
@@ -32,6 +32,7 @@ import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from '.
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
+import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 
 export type { ContentBlock } from './types'
 
@@ -273,6 +274,9 @@ export class ChatRunSocket {
       session_id?: string
       model?: string
       instructions?: string
+      group_system_prompt?: string
+      group_room_id?: string
+      group_agent_id?: string
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       queue_id?: string
@@ -355,6 +359,9 @@ export class ChatRunSocket {
             provider: data.provider,
             model_groups: data.model_groups,
             instructions: data.instructions,
+            groupSystemPrompt: data.group_system_prompt,
+            groupRoomId: data.group_room_id,
+            groupAgentId: data.group_agent_id,
             profile: runProfile,
             workspace: data.workspace,
             source,
@@ -493,6 +500,9 @@ export class ChatRunSocket {
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
+      group_system_prompt?: string
+      group_room_id?: string
+      group_agent_id?: string
       workspace?: string | null
       category_id?: number | null
       source?: string
@@ -514,6 +524,7 @@ export class ChatRunSocket {
       allow_command_passthrough?: boolean
       reasoning_effort?: string
       background_delegation_enabled?: boolean
+      context_compression_enabled?: boolean
       background_delegation_id?: string
       background_claim_id?: string
       autonomous?: boolean
@@ -983,6 +994,9 @@ export class ChatRunSocket {
       provider: next.provider,
       model_groups: next.model_groups,
       instructions: next.instructions,
+      group_system_prompt: next.groupSystemPrompt,
+      group_room_id: next.groupRoomId,
+      group_agent_id: next.groupAgentId,
       workspace: next.workspace,
       source: next.source,
       session_source: next.sessionSource,
@@ -1021,6 +1035,9 @@ export class ChatRunSocket {
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
+      group_system_prompt?: string
+      group_room_id?: string
+      group_agent_id?: string
       workspace?: string | null
       source?: string
       session_source?: 'global_agent' | 'workflow'
@@ -1040,6 +1057,7 @@ export class ChatRunSocket {
       reasoning_effort?: string
       /** Hermes Agent creation policy used by internal orchestration callers. */
       background_delegation_enabled?: boolean
+      context_compression_enabled?: boolean
       one_shot_model?: boolean
     },
     options: {
@@ -1203,6 +1221,17 @@ export class ChatRunSocket {
       event: 'run.failed',
       error: reason,
     })
+  }
+
+  async disposeSession(sessionId: string): Promise<void> {
+    const sid = String(sessionId || '').trim()
+    if (!sid) return
+    codingAgentRunManager.stop(sid, { reportClosed: false })
+    const state = this.sessionMap.get(sid)
+    state?.abortController?.abort()
+    this.sessionMap.delete(sid)
+    this.runWaiters.delete(sid)
+    deleteSession(sid)
   }
 
   emitExternalEvent(sessionId: string, event: string, payload: any) {

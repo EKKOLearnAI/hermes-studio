@@ -83,6 +83,7 @@ describe('group chat agent workspace bridge runs', () => {
       }
     })
     bridgeMock.interrupt.mockResolvedValue(undefined)
+    bridgeMock.destroy.mockResolvedValue(undefined)
   })
 
   function workspaceDraft(runId: string, sessionId = 'session-1') {
@@ -227,7 +228,14 @@ describe('group chat agent workspace bridge runs', () => {
       backgroundDelegationEnabled: false,
     } as any) as any
     client.setStorage({
-      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getRoom: vi.fn(() => ({ name: 'Engineering Room', sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getRoomMembers: vi.fn(() => [
+        { id: 'member-1', userId: 'human-1', name: 'Human', description: 'Product owner' },
+      ]),
+      getRoomAgents: vi.fn(() => [
+        { id: 'room-agent-1', agentId: 'agent-codex', name: 'Coder', description: 'Writes code' },
+        { id: 'room-agent-2', agentId: 'agent-reviewer', name: 'Reviewer', description: 'Reviews changes' },
+      ]),
       getMessagesForContext: vi.fn(() => [{
         id: 'msg-1',
         roomId: 'room-1',
@@ -247,6 +255,15 @@ describe('group chat agent workspace bridge runs', () => {
       senderId: 'human-1',
       timestamp: 1,
       role: 'user',
+    }, {
+      summary: 'Use the shared room architecture.',
+      history: [{
+        id: 'prior-1',
+        timestamp: 0,
+        role: 'assistant',
+        senderName: 'Reviewer',
+        content: 'Keep single chat unchanged.',
+      }],
     })
 
     expect(runAndWait).toHaveBeenCalledWith(expect.objectContaining({
@@ -259,12 +276,20 @@ describe('group chat agent workspace bridge runs', () => {
       model: 'gpt-test',
       apiMode: 'codex_responses',
       reasoning_effort: 'high',
+      group_room_id: 'room-1',
+      group_agent_id: 'agent-codex',
       background_delegation_enabled: false,
+      context_compression_enabled: false,
     }), expect.objectContaining({
       profile: 'research',
       onEvent: expect.any(Function),
     }))
-    expect(String(runAndWait.mock.calls[0][0].input)).toContain('群聊上下文')
+    expect(String(runAndWait.mock.calls[0][0].input)).toContain('截至总结锚点的群聊总结')
+    expect(String(runAndWait.mock.calls[0][0].input)).toContain('Keep single chat unchanged.')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('你是"Coder"，群聊房间"Engineering Room"中的 AI 助手')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('- Human: Product owner')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('- Reviewer: Reviews changes')
+    expect(runAndWait.mock.calls[0][0].group_system_prompt).toBe(runAndWait.mock.calls[0][0].instructions)
     expect(bridgeMock.chat).not.toHaveBeenCalled()
     expect(mockSocket.emit).toHaveBeenCalledWith(
       'message',
@@ -307,6 +332,63 @@ describe('group chat agent workspace bridge runs', () => {
       .map(payload => payload.reasoning)).toEqual(['thinking', 'next thought'])
     expect(new Set(persistedAgentMessages.map(payload => payload.run_id)).size).toBe(1)
     expect(persistedAgentMessages.every(payload => /^gcmsg_/.test(payload.run_id))).toBe(true)
+    expect(runAndWait.mock.calls[0][0].session_id).toMatch(/^gc_run_/)
+  })
+
+  it.each([
+    ['ekko', 'ekko-agent'],
+    ['claude', 'claude-code'],
+  ] as const)('passes the dynamic group system prompt to the %s runtime', async (agent, codingAgentId) => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('message.delta', { delta: 'done' })
+      return { ok: true, output: 'done' }
+    })
+    const clients = new AgentClients()
+    clients.setChatRunService({
+      runAndWait,
+      abortSession: vi.fn(async () => {}),
+    })
+    const client = await clients.createAgent({
+      agentId: `agent-${agent}`,
+      agent,
+      profile: 'default',
+      name: agent === 'ekko' ? 'Ekko' : 'Claude',
+      description: `${agent} room role`,
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ name: 'Runtime Room', workspace: '' })),
+      getRoomMembers: vi.fn(() => [
+        { id: 'member-1', userId: 'human-1', name: 'Human', description: 'Room owner' },
+      ]),
+      getRoomAgents: vi.fn(() => [
+        {
+          id: `room-agent-${agent}`,
+          agentId: `agent-${agent}`,
+          name: agent === 'ekko' ? 'Ekko' : 'Claude',
+          description: `${agent} room role`,
+        },
+      ]),
+    })
+
+    await client.replyToMention('room-runtime', {
+      messageId: `msg-${agent}`,
+      content: `@${agent === 'ekko' ? 'Ekko' : 'Claude'} reply`,
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    const runData = runAndWait.mock.calls[0][0]
+    expect(runData.coding_agent_id).toBe(codingAgentId)
+    expect(runData.instructions).toContain(`你是"${agent === 'ekko' ? 'Ekko' : 'Claude'}"，群聊房间"Runtime Room"中的 AI 助手`)
+    expect(runData.instructions).toContain('- Human: Room owner')
+    expect(runData.group_system_prompt).toBe(runData.instructions)
+    expect(runData.group_room_id).toBe('room-runtime')
+    expect(runData.group_agent_id).toBe(`agent-${agent}`)
   })
 
   it('finishes a group-only Codex tool card when chat-run has no matching completed event', async () => {
@@ -385,11 +467,13 @@ describe('group chat agent workspace bridge runs', () => {
     } as any) as any
     client.setStorage({ getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '' })) })
     ;(clients as any).rooms.set('room-1', new Map([[client.agentId, client]]))
+    const activeSessionId = `gc_run_room-1_default_Ekko_${'a'.repeat(32)}`
+    client.activeSessions.set('room-1', activeSessionId)
 
     await clients.interruptAgent('room-1', 'Ekko')
 
     expect(chatRunService.abortSession).toHaveBeenCalledWith(
-      expect.stringMatching(/^gc_/),
+      activeSessionId,
       'Interrupted by group chat user',
     )
     expect(bridgeMock.interrupt).not.toHaveBeenCalled()
@@ -411,10 +495,8 @@ describe('group chat agent workspace bridge runs', () => {
     client.setStorage(storage as any)
     ;(clients as any).rooms.set('room-1', new Map([[client.agentId, client]]))
 
-    const sessionId = await workerSessionId()
-
     await expect(clients.interruptRoom('room-1')).resolves.toBeUndefined()
-    expect(bridgeMock.interrupt).toHaveBeenCalledWith(sessionId, 'Interrupted by group chat user', 'default')
+    expect(bridgeMock.interrupt).not.toHaveBeenCalled()
   })
 
   it('does not drain queued mentions while a room interrupt is still pending', async () => {
@@ -449,7 +531,7 @@ describe('group chat agent workspace bridge runs', () => {
       throw new Error('timed out waiting for condition')
     }
 
-    await clients.processMentions('room-1', {
+    const firstMention = clients.processMentions('room-1', {
       content: '@Worker first',
       senderName: 'Alice',
       senderId: 'user-1',
@@ -471,8 +553,91 @@ describe('group chat agent workspace bridge runs', () => {
     expect(bridgeMock.chat).toHaveBeenCalledTimes(1)
     finishInterrupt()
     await interruptPromise
+    await firstMention
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(bridgeMock.chat).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks a mentioned agent active before rolling-summary preparation finishes', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const statuses: Array<{ agentName: string; status: string }> = []
+    let finishSummary!: (value: { summary: string; history: [] }) => void
+    const replyToMention = vi.fn(async () => {})
+    const agent = {
+      id: 'agent-socket-1',
+      agentId: 'agent-1',
+      name: 'Worker',
+      replyToMention,
+    }
+    clients.rooms.set('room-1', new Map([[agent.agentId, agent]]))
+    clients.setActivityBroadcaster((_roomId: string, agentName: string, status: string) => {
+      statuses.push({ agentName, status })
+    })
+    clients.setRoomSummaryService({
+      prepareForMessage: vi.fn(() => new Promise(resolve => { finishSummary = resolve })),
+    })
+
+    const processing = clients.processMentions('room-1', {
+      messageId: 'message-10',
+      content: '@Worker check this',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    expect(statuses[0]).toEqual({ agentName: 'Worker', status: 'replying' })
+    expect(replyToMention).not.toHaveBeenCalled()
+
+    finishSummary({ summary: 'summary', history: [] })
+    await processing
+    expect(replyToMention).toHaveBeenCalledOnce()
+    expect(statuses.at(-1)).toEqual({ agentName: 'Worker', status: 'ready' })
+  })
+
+  it('keeps an agent active until all queued mentions finish', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const statuses: string[] = []
+    let finishFirst!: () => void
+    const replyToMention = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>(resolve => { finishFirst = resolve }))
+      .mockResolvedValueOnce(undefined)
+    const agent = {
+      id: 'agent-socket-1',
+      agentId: 'agent-1',
+      name: 'Worker',
+      replyToMention,
+    }
+    clients.rooms.set('room-1', new Map([[agent.agentId, agent]]))
+    clients.setActivityBroadcaster((_roomId: string, _agentName: string, status: string) => {
+      statuses.push(status)
+    })
+
+    const first = clients.processMentions('room-1', {
+      messageId: 'message-1',
+      content: '@Worker first',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 1,
+      role: 'user',
+    })
+    await Promise.resolve()
+    await clients.processMentions('room-1', {
+      messageId: 'message-2',
+      content: '@Worker second',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 2,
+      role: 'user',
+    })
+
+    expect(statuses).toEqual(['replying'])
+    finishFirst()
+    await first
+    expect(replyToMention).toHaveBeenCalledTimes(2)
+    expect(statuses).toEqual(['replying', 'ready'])
   })
 
   async function createClient(
@@ -525,6 +690,8 @@ describe('group chat agent workspace bridge runs', () => {
         background_delegation_enabled: false,
       }),
     )
+    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('你是"Worker"，群聊房间"room-1"中的 AI 助手')
+    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('群聊系统支持 agent 之间通过 @名字 接力')
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('run_id')
   })
@@ -550,15 +717,11 @@ describe('group chat agent workspace bridge runs', () => {
     })
   })
 
-  it('cancels a pending reply when interrupt arrives before bridge.chat starts', async () => {
-    bridgeMock.interrupt.mockRejectedValueOnce(new Error('unknown session'))
+  it('does not launch a reply after its fresh session has been superseded', async () => {
     const client = await createClient('/tmp/workspace')
-    client.__testStorage.getRoomMembers = vi.fn(() => [])
-    client.setContextEngine({
-      buildContext: vi.fn(async () => {
-        await client.interrupt('room-1')
-        return { conversationHistory: [], instructions: 'ctx', meta: {} }
-      }),
+    client.__testStorage.getRoom.mockImplementation(() => {
+      client.activeSessions.set('room-1', 'replacement-session')
+      return { sessionSeed: 'seed-1', workspace: '/tmp/workspace' }
     })
 
     await client.replyToMention('room-1', {
@@ -568,18 +731,12 @@ describe('group chat agent workspace bridge runs', () => {
       timestamp: 1,
     })
 
-    const sessionId = await workerSessionId()
-    expect(bridgeMock.interrupt).toHaveBeenCalledWith(sessionId, 'Interrupted by group chat user', 'default')
     expect(trackerMock.startWorkspaceRunCheckpoint).not.toHaveBeenCalled()
     expect(bridgeMock.chat).not.toHaveBeenCalled()
   })
 
-  it('does not start a bridge workspace run after the room generation changes before launch', async () => {
+  it('uses and disposes a different temporary bridge session for every reply', async () => {
     const client = await createClient('/tmp/workspace')
-    const storage = (client as any).__testStorage
-    storage.getRoom
-      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
-      .mockReturnValue({ sessionSeed: 'seed-2', workspace: '/tmp/workspace' })
 
     await client.replyToMention('room-1', {
       content: '@Worker hi',
@@ -587,17 +744,26 @@ describe('group chat agent workspace bridge runs', () => {
       senderId: 'user-1',
       timestamp: 1,
     })
+    await client.replyToMention('room-1', {
+      content: '@Worker again',
+      senderName: 'Alice',
+      senderId: 'user-1',
+      timestamp: 2,
+    })
 
-    expect(trackerMock.startWorkspaceRunCheckpoint).not.toHaveBeenCalled()
-    expect(bridgeMock.chat).not.toHaveBeenCalled()
+    const sessionIds = bridgeMock.chat.mock.calls.map(call => call[0])
+    expect(sessionIds).toHaveLength(2)
+    expect(sessionIds[0]).toMatch(/^gc_run_/)
+    expect(sessionIds[1]).toMatch(/^gc_run_/)
+    expect(sessionIds[0]).not.toBe(sessionIds[1])
+    expect(bridgeMock.destroy).toHaveBeenCalledWith(sessionIds[0], 'default')
+    expect(bridgeMock.destroy).toHaveBeenCalledWith(sessionIds[1], 'default')
   })
 
   it('does not start a bridge workspace run after the room is deleted before launch', async () => {
     const client = await createClient('/tmp/workspace')
     const storage = (client as any).__testStorage
-    storage.getRoom
-      .mockReturnValueOnce({ sessionSeed: '0', workspace: '/tmp/workspace' })
-      .mockReturnValue(undefined)
+    storage.getRoom.mockReturnValue(undefined)
 
     await client.replyToMention('room-1', {
       content: '@Worker hi',
@@ -648,7 +814,9 @@ describe('group chat agent workspace bridge runs', () => {
 
   it('finalizes an aborted workspace diff on interrupt and ignores a later stream finalizer', async () => {
     const client = await createClient('/tmp/workspace')
-    const sessionId = await workerSessionId()
+    const { groupRuntimeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const sessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
+    client.activeSessions.set('room-1', sessionId)
     const runId = '0123456789abcdef0123456789abcdef'
     const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
@@ -676,7 +844,9 @@ describe('group chat agent workspace bridge runs', () => {
   it('does not fail a synced interrupt when best-effort UI status emits cannot use the socket', async () => {
     const client = await createClient('/tmp/workspace')
     mockSocket.connected = false
-    const sessionId = await workerSessionId()
+    const { groupRuntimeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const sessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
+    client.activeSessions.set('room-1', sessionId)
     const runId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
@@ -696,7 +866,9 @@ describe('group chat agent workspace bridge runs', () => {
   it('does not mark workspace diff runs aborted when bridge interrupt fails', async () => {
     bridgeMock.interrupt.mockRejectedValueOnce(new Error('stale session'))
     const client = await createClient('/tmp/workspace')
-    const sessionId = await workerSessionId()
+    const { groupRuntimeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const sessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
+    client.activeSessions.set('room-1', sessionId)
     const runId = 'dddddddddddddddddddddddddddddddd'
     const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
@@ -712,7 +884,9 @@ describe('group chat agent workspace bridge runs', () => {
   it('keeps workspace diff finalization pending when bridge interrupt is not synced yet', async () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
     const client = await createClient('/tmp/workspace')
-    const sessionId = await workerSessionId()
+    const { groupRuntimeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const sessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
+    client.activeSessions.set('room-1', sessionId)
     const runId = 'cccccccccccccccccccccccccccccccc'
     const state = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId, workspace: '/tmp/workspace' })
     const saveWorkspaceDiffMessageForRun = client.__testStorage.saveWorkspaceDiffMessageForRun
@@ -747,13 +921,26 @@ describe('group chat agent workspace bridge runs', () => {
     expect(client.workspaceDiffRuns.size).toBe(0)
   })
 
-  it('drops late assistant output after clear-context rotates the room session generation', async () => {
+  it('drops late assistant output after the active temporary session is replaced', async () => {
     bridgeMock.interrupt.mockResolvedValueOnce({ ok: true, synced: false })
+    let activeClient: any
+    bridgeMock.streamOutput.mockImplementation(async function* (runId: string) {
+      activeClient.activeSessions.set('room-1', 'replacement-session')
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: 'session-1',
+        status: 'complete',
+        delta: 'late',
+        cursor: 1,
+        output: 'late',
+        done: true,
+        events: [],
+        event_cursor: 0,
+      }
+    })
     const client = await createClient('/tmp/workspace')
-    client.__testStorage.getRoom
-      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
-      .mockReturnValueOnce({ sessionSeed: 'seed-1', workspace: '/tmp/workspace' })
-      .mockReturnValue({ sessionSeed: 'seed-2', workspace: '/tmp/workspace' })
+    activeClient = client
 
     await client.replyToMention('room-1', {
       content: '@Worker hi',
@@ -762,7 +949,7 @@ describe('group chat agent workspace bridge runs', () => {
       timestamp: 1,
     })
 
-    const sessionId = await workerSessionId()
+    const sessionId = bridgeMock.chat.mock.calls[0][0]
     expect(bridgeMock.interrupt).toHaveBeenCalledWith(
       sessionId,
       'Interrupted because group chat room state changed',
@@ -770,9 +957,15 @@ describe('group chat agent workspace bridge runs', () => {
     )
     expect(bridgeMock.destroy).toHaveBeenCalledWith(sessionId, 'default')
     expect(client.__testStorage.saveWorkspaceDiffMessageForRun).not.toHaveBeenCalled()
-    expect(mockSocket.emit).not.toHaveBeenCalledWith('message_stream_end', expect.objectContaining({ roomId: 'room-1' }))
+    expect(mockSocket.emit).toHaveBeenCalledWith('message_stream_end', expect.objectContaining({
+      roomId: 'room-1',
+      agentSessionId: sessionId,
+    }))
     expect(mockSocket.emit).not.toHaveBeenCalledWith('message', expect.objectContaining({ role: 'assistant' }), expect.any(Function))
-    expect(trackerMock.discardWorkspaceRunCheckpoint).not.toHaveBeenCalled()
+    expect(trackerMock.discardWorkspaceRunCheckpoint).toHaveBeenCalledWith({
+      sessionId,
+      runId: 'bridge-run-id',
+    })
     expect(client.workspaceDiffRuns.size).toBe(0)
   })
 
@@ -782,7 +975,9 @@ describe('group chat agent workspace bridge runs', () => {
     saveWorkspaceDiffMessageForRun.mockReturnValue({ message: { id: 'diff-1', roomId: 'room-1' }, totalTokens: 0 })
     const runA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     const runB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    const sessionId = await workerSessionId()
+    const { groupRuntimeSessionId } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const sessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
+    client.activeSessions.set('room-1', sessionId)
     const stateA = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId: runA, workspace: '/tmp/workspace' })
     const stateB = client.beginWorkspaceDiffIfNeeded({ roomId: 'room-1', sessionId, runId: runB, workspace: '/tmp/workspace' })
 

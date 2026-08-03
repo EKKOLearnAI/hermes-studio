@@ -109,6 +109,8 @@ describe('prompts', () => {
         expect(result).toContain('Bob')
         expect(result).toContain('- Claude')
         expect(result).not.toContain('@Claude')
+        expect(result).toContain('## 图片格式')
+        expect(result).toContain('## 发送文件给用户')
     })
 
     it('builds agent instructions with empty member list', () => {

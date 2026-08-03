@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NInput, NButton, NSpace, NInputNumber, NCollapse, NCollapseItem } from 'naive-ui'
+import { NInput, NButton, NSpace, NInputNumber, NSelect } from 'naive-ui'
 import { getStoredUsername } from '@/api/client'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
+import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
+import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
+import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
+import type { RoomSummaryConfig } from '@/api/hermes/group-chat'
 
 type InputLikeInstance = {
     focus: () => void
 }
 
 const { t } = useI18n()
+const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 const emit = defineEmits<{
-    submit: [name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace: string]
+    submit: [name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string]
     cancel: []
 }>()
 
@@ -22,11 +29,63 @@ const userName = ref(localStorage.getItem('gc_user_name') || getStoredUsername()
 const description = ref(localStorage.getItem('gc_user_description') || '')
 const roomInput = ref<InputLikeInstance | null>(null)
 
-const compression = ref({
-    triggerTokens: 100000,
-    maxHistoryTokens: 32000,
-    tailMessageCount: 10,
-})
+const summaryProfile = computed(() => profilesStore.activeProfileName || 'default')
+const summaryProvider = ref('')
+const summaryModel = ref('')
+const summaryApiMode = ref('chat_completions')
+const summaryEveryTurns = ref(20)
+
+const summaryModelGroups = computed(() =>
+    (appStore.profileModelGroups.find(entry => entry.profile === summaryProfile.value)?.groups || [])
+        .filter(group => group.provider !== 'moa' && canScopedCodingAgentUseProvider('ekko-agent', group.provider))
+)
+const summaryProviderOptions = computed(() => summaryModelGroups.value.map(group => ({
+    label: group.label || group.provider,
+    value: group.provider,
+})))
+const selectedSummaryProviderGroup = computed(() =>
+    summaryModelGroups.value.find(group => group.provider === summaryProvider.value)
+)
+const summaryModelOptions = computed(() =>
+    (selectedSummaryProviderGroup.value?.models || []).map(model => ({
+        label: appStore.displayModelName(model, summaryProvider.value),
+        value: model,
+    }))
+)
+const summaryApiModeOptions = computed(() => [
+    { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
+    { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
+    { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+])
+
+function syncSummaryProvider() {
+    const profileModels = appStore.profileModelGroups.find(entry => entry.profile === summaryProfile.value)
+    const preferred = summaryModelGroups.value.find(group => group.provider === appStore.selectedProvider)
+        || summaryModelGroups.value.find(group => group.provider === profileModels?.default_provider)
+        || summaryModelGroups.value[0]
+    summaryProvider.value = preferred?.provider || ''
+    summaryModel.value = preferred?.models.includes(profileModels?.default || '')
+        ? profileModels?.default || ''
+        : preferred?.models[0] || ''
+    summaryApiMode.value = normalizeCodingAgentApiMode(
+        preferred?.api_mode,
+        inferCodingAgentApiMode(preferred?.provider || '', preferred?.base_url),
+    )
+}
+
+function handleSummaryProviderChange(provider: string) {
+    summaryProvider.value = provider
+    summaryModel.value = summaryModelOptions.value[0]?.value || ''
+    const group = selectedSummaryProviderGroup.value
+    summaryApiMode.value = normalizeCodingAgentApiMode(
+        group?.api_mode,
+        inferCodingAgentApiMode(group?.provider || provider, group?.base_url),
+    )
+}
+
+watch([summaryModelGroups, summaryProfile], () => {
+    if (!summaryModelGroups.value.some(group => group.provider === summaryProvider.value)) syncSummaryProvider()
+}, { immediate: true })
 
 function generateCode(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -42,7 +101,13 @@ function handleCreate() {
     const code = inviteCode.value.trim() || generateCode()
     const user = userName.value.trim()
     if (!name || !user) return
-    emit('submit', name, code, user, description.value.trim(), { ...compression.value }, workspace.value || '')
+    emit('submit', name, code, user, description.value.trim(), {
+        summaryProfile: summaryProfile.value,
+        summaryProvider: summaryProvider.value,
+        summaryModel: summaryModel.value,
+        summaryApiMode: summaryApiMode.value,
+        summaryEveryTurns: summaryEveryTurns.value,
+    }, workspace.value || '')
 }
 
 function focusRoomInput() {
@@ -100,32 +165,42 @@ function focusRoomInput() {
             <FolderPicker v-model="workspace" />
         </div>
 
-        <NCollapse class="compression-collapse">
-            <NCollapseItem :title="t('groupChat.compressionSettings')" name="compression">
-                <div class="compression-fields">
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.triggerTokens') }}</label>
-                        <NInputNumber v-model:value="compression.triggerTokens" :min="1000" :step="1000" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.triggerTokensDesc') }}</p>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.maxHistoryTokens') }}</label>
-                        <NInputNumber v-model:value="compression.maxHistoryTokens" :min="1000" :step="1000" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.maxHistoryTokensDesc') }}</p>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">{{ t('groupChat.tailMessageCount') }}</label>
-                        <NInputNumber v-model:value="compression.tailMessageCount" :min="1" :step="5" style="width: 100%" />
-                        <p class="form-hint">{{ t('groupChat.tailMessageCountDesc') }}</p>
-                    </div>
-                </div>
-            </NCollapseItem>
-        </NCollapse>
+        <section class="summary-section">
+            <h4>{{ t('groupChat.summarySettings') }}</h4>
+            <p class="form-hint summary-hint">{{ t('groupChat.summarySettingsDesc') }}</p>
+            <div class="form-group">
+                <label class="form-label">{{ t('groupChat.summaryProvider') }}</label>
+                <NSelect
+                    :value="summaryProvider"
+                    :options="summaryProviderOptions"
+                    :placeholder="t('groupChat.summaryProviderPlaceholder')"
+                    @update:value="handleSummaryProviderChange"
+                />
+            </div>
+            <div class="form-group">
+                <label class="form-label">{{ t('groupChat.summaryModel') }}</label>
+                <NSelect
+                    v-model:value="summaryModel"
+                    :options="summaryModelOptions"
+                    :disabled="!summaryProvider"
+                    :placeholder="t('groupChat.summaryModelPlaceholder')"
+                />
+            </div>
+            <div class="form-group">
+                <label class="form-label">{{ t('groupChat.summaryApiMode') }}</label>
+                <NSelect v-model:value="summaryApiMode" :options="summaryApiModeOptions" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">{{ t('groupChat.summaryEveryTurns') }}</label>
+                <NInputNumber v-model:value="summaryEveryTurns" :min="1" :max="1000" :step="1" style="width: 100%" />
+                <p class="form-hint">{{ t('groupChat.summaryEveryTurnsDesc') }}</p>
+            </div>
+        </section>
 
         <div class="modal-actions">
             <NSpace justify="end">
                 <NButton @click="emit('cancel')">{{ t('common.cancel') }}</NButton>
-                <NButton type="primary" :disabled="!roomName.trim() || !userName.trim()" @click="handleCreate">{{ t('common.create') }}</NButton>
+                <NButton type="primary" :disabled="!roomName.trim() || !userName.trim() || !summaryProvider || !summaryModel || !summaryApiMode" @click="handleCreate">{{ t('common.create') }}</NButton>
             </NSpace>
         </div>
     </div>
@@ -160,11 +235,19 @@ function focusRoomInput() {
     align-items: center;
 }
 
-.compression-collapse {
+.summary-section {
+    padding: 14px;
     margin-bottom: 16px;
+    border: 1px solid $border-color;
+    border-radius: 10px;
+
+    h4 {
+        margin: 0;
+        font-size: 14px;
+    }
 }
 
-.compression-fields {
-    padding-top: 8px;
+.summary-hint {
+    margin: 4px 0 14px;
 }
 </style>

@@ -87,6 +87,7 @@ describe('handleCodingAgentRun', () => {
       mode: 'global',
       profile: 'default',
     }), state)
+    expect(startCodingAgentRunMock.mock.calls[0][1]).not.toHaveProperty('groupRuntimeScope')
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'use global codex', 'system prompt')
   })
 
@@ -200,6 +201,54 @@ describe('handleCodingAgentRun', () => {
     }, 'default', sessionMap as any)
 
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'hello claude', 'system prompt')
+  })
+
+  it('uses the group-chat system prompt for a group coding-agent run only', async () => {
+    managerMock.runIdForSession.mockReturnValue(undefined)
+    managerMock.isSessionLaunchCompatible.mockReturnValue(true)
+    startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
+    sendCodingAgentRunInputMock.mockResolvedValue({ runId: 'agent-session-1' })
+
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const state = {
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    }
+    const sessionMap = new Map([['group-session-1', state]])
+    const socket = {
+      data: {},
+      join: vi.fn(),
+      emit: vi.fn(),
+    }
+
+    await handleCodingAgentRun({} as any, socket as any, {
+      session_id: 'group-session-1',
+      input: 'reply in the room',
+      coding_agent_id: 'codex',
+      source: 'workflow',
+      session_source: 'workflow',
+      group_system_prompt: 'dynamic group system prompt',
+      group_room_id: 'room-1',
+      group_agent_id: 'room-agent-codex',
+    }, 'default', sessionMap as any)
+
+    expect(startCodingAgentRunMock).toHaveBeenCalledWith('codex', expect.objectContaining({
+      sessionId: 'group-session-1',
+      groupSystemPrompt: 'dynamic group system prompt',
+      groupRuntimeScope: {
+        roomId: 'room-1',
+        agentId: 'room-agent-codex',
+      },
+    }), state)
+    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
+      'group-session-1',
+      'reply in the room',
+      'dynamic group system prompt',
+    )
+    expect(getSystemPromptMock).not.toHaveBeenCalled()
   })
 
   it('reopens an ended coding-agent session before sending a new input', async () => {

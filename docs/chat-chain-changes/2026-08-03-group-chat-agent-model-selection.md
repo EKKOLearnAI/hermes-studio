@@ -1,8 +1,8 @@
 ---
 date: 2026-08-03
 pr: pending
-feature: Group chat agent runtime, model selection, and response-run cards
-impact: Newly added group chat agents persist and run as Hermes, Ekko, Codex, or Claude with isolated tool traces and their selected profile, provider, model, API mode, and reasoning effort.
+feature: Group chat agent runtime, rolling shared summaries, and response-run cards
+impact: Group agents run in fresh isolated sessions from one clean room summary and unsummarized history while preserving their selected runtime configuration and keeping single-chat defaults unchanged.
 ---
 
 The group chat Add Agent flow now lets room managers choose Hermes, Ekko,
@@ -39,3 +39,43 @@ Room cloning preserves each source agent's runtime selection. A profile is now
 only a runtime configuration source, so the same room may contain multiple
 agents backed by the same profile. Mention routing, room membership, and agent
 name and description behavior remain unchanged.
+
+Room creation now selects the provider, model, API mode, and human-turn interval
+used for rolling room summaries. Before an Agent run crosses that interval, a
+bare isolated Ekko Agent updates the previous summary from the next clean
+message window. The shared context contains only human messages and assistant
+final text; reasoning, tool calls, tool results, and workspace traces are not
+replayed. Summary state and its message anchor are persisted, visible, editable,
+and retained when a summary attempt fails.
+
+Hermes, Ekko, Codex, and Claude group replies now start from a fresh ephemeral
+runtime session for every run. They receive the same room summary plus
+unsummarized shared history and do not continue an Agent-specific chat history.
+The group path explicitly disables chat-run context compression for these
+ephemeral sessions; ordinary single-chat callers omit that option and retain
+their previous compression and session behavior.
+
+Each run also rebuilds the existing group system prompt from the current room
+name, Agent name and description, human members, Agent members, and group
+handoff rules. Hermes receives it through Agent Bridge instructions, Ekko
+receives it as a system message, and Codex and Claude receive it as their
+coding-agent system prompt. This group-only injection does not replace or alter
+the single-chat prompt path. Each room Agent has one stable group-only scoped
+config directory. Codex and Claude overwrite that Agent's `config.toml` or
+`hermes-rules.md` before launching a fresh execution session, so replies do not
+accumulate per-run config directories and do not write into single-chat scoped
+config. Proxy targets remain isolated by chat session and Agent session IDs, so
+group and single-chat runs can execute concurrently.
+
+Room creation and room-level settings use right-side drawers. The settings
+drawer includes the room name, invite code, validated workspace directory,
+summary configuration, status, anchor navigation, and manual editing, and
+relies on its header close control without a duplicate footer button. Room
+managers also get the same combined workspace, terminal, and desktop-browser
+tool drawer used by single chat, gated by the existing room-management
+permission.
+
+When room creation does not provide an explicit workspace, the server creates
+and persists `<HERMES_WEB_UI_HOME>/group-chat/<profile>/<room-id>`, using the
+room summary profile and generated room ID. Explicit user-selected workspaces
+remain authoritative.

@@ -5,7 +5,7 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat streaming baseline', () => {
@@ -18,6 +18,7 @@ describe('group chat streaming baseline', () => {
     harness = await createTestGroupChatServer()
     groupServer = harness.groupServer
     port = harness.port
+    vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
     groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
     groupServer.getStorage().addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
   })
@@ -37,12 +38,7 @@ describe('group chat streaming baseline', () => {
     await emitAck(alice, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     await emitAck(bob, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     await emitAck(worker, 'join', { roomId: 'room-1' })
-    const agentSessionId = groupBridgeSessionId(
-      'room-1',
-      'default',
-      'Worker',
-      String(groupServer.getStorage().getRoom('room-1')?.sessionSeed || '0'),
-    )
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Worker')
     return { alice, bob, worker, agentSessionId }
   }
 

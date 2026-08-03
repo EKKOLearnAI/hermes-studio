@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { createServer, type Server as HttpServer } from 'http'
-import { mkdir, mkdtemp, rm } from 'fs/promises'
+import { access, mkdir, mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -40,13 +40,16 @@ describe('group chat room workspace', () => {
   let httpServer: HttpServer
   let root: string
   let originalWorkspaceBase: string | undefined
+  let originalWebUiHome: string | undefined
 
   beforeEach(async () => {
     vi.resetModules()
     dbState.db = new DatabaseSync(':memory:')
     root = await mkdtemp(join(tmpdir(), 'hermes-gc-workspace-'))
     originalWorkspaceBase = process.env.WORKSPACE_BASE
+    originalWebUiHome = process.env.HERMES_WEB_UI_HOME
     process.env.WORKSPACE_BASE = root
+    process.env.HERMES_WEB_UI_HOME = join(root, 'web-ui-home')
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
     httpServer = createServer()
@@ -58,6 +61,8 @@ describe('group chat room workspace', () => {
     dbState.db = null
     if (originalWorkspaceBase === undefined) delete process.env.WORKSPACE_BASE
     else process.env.WORKSPACE_BASE = originalWorkspaceBase
+    if (originalWebUiHome === undefined) delete process.env.HERMES_WEB_UI_HOME
+    else process.env.HERMES_WEB_UI_HOME = originalWebUiHome
     await rm(root, { recursive: true, force: true })
   })
 
@@ -71,6 +76,8 @@ describe('group chat room workspace', () => {
     storage.saveRoom('room-1', 'Room 1')
     const initialSeed = storage.getRoom('room-1')?.sessionSeed
     expect(storage.getRoom('room-1')?.workspace).toBe('')
+    expect(server.updateRoomName('room-1', 'Renamed Room')?.name).toBe('Renamed Room')
+    expect(storage.getRoom('room-1')?.name).toBe('Renamed Room')
 
     const firstWorkspaceRoom = storage.updateRoomWorkspace('room-1', workspace)
     expect(firstWorkspaceRoom?.workspace).toBe(workspace)
@@ -105,6 +112,40 @@ describe('group chat room workspace', () => {
 
     expect(ctx.body.room.workspace).toBe(workspace)
     expect(server.getStorage().getRoom(ctx.body.room.id)?.workspace).toBe(workspace)
+    server.getIO().close()
+  })
+
+  it('creates a profile-scoped default workspace when the room omits one', async () => {
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const server = new GroupChatServer(httpServer)
+    setGroupChatServer(server)
+
+    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const ctx: any = {
+      request: {
+        body: {
+          name: 'Room 1',
+          inviteCode: 'invite-1',
+          summary: {
+            profile: 'research',
+            provider: 'openai',
+            model: 'summary-model',
+            apiMode: 'chat_completions',
+            everyTurns: 10,
+          },
+          agents: [],
+        },
+      },
+      status: 200,
+      body: undefined,
+    }
+
+    await handler(ctx, async () => {})
+
+    const expectedWorkspace = join(root, 'web-ui-home', 'group-chat', 'research', ctx.body.room.id)
+    expect(ctx.body.room.workspace).toBe(expectedWorkspace)
+    await expect(access(expectedWorkspace)).resolves.toBeUndefined()
     server.getIO().close()
   })
 
@@ -194,7 +235,7 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
-  it('ignores unvalidated workspace values hidden in create-room compression config', async () => {
+  it('ignores deprecated compression config, including hidden workspace values', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
     const server = new GroupChatServer(httpServer)
@@ -216,8 +257,10 @@ describe('group chat room workspace', () => {
 
     await handler(ctx, async () => {})
 
-    expect(ctx.body.room.workspace).toBe('')
-    expect(ctx.body.room.triggerTokens).toBe(123)
+    expect(ctx.body.room.workspace).toBe(
+      join(root, 'web-ui-home', 'group-chat', 'default', ctx.body.room.id),
+    )
+    expect(ctx.body.room.triggerTokens).toBe(100000)
     server.getIO().close()
   })
 
@@ -368,8 +411,9 @@ describe('group chat room workspace', () => {
     server.getIO().close()
   })
 
-  it('adds workspace to existing gc_rooms tables with a default value', async () => {
+  it('upgrades existing gc_rooms tables with workspace and rolling-summary defaults', async () => {
     dbState.db?.exec('DROP TABLE gc_rooms')
+    dbState.db?.exec('DROP TABLE gc_room_summaries')
     dbState.db?.exec(`CREATE TABLE gc_rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -385,8 +429,22 @@ describe('group chat room workspace', () => {
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
     initAllHermesTables()
 
-    const row = dbState.db?.prepare('SELECT workspace FROM gc_rooms WHERE id = ?').get('old-room') as { workspace: string }
-    expect(row.workspace).toBe('')
+    const row = dbState.db?.prepare(
+      `SELECT workspace, summaryProfile, summaryProvider, summaryModel,
+              summaryApiMode, summaryEveryTurns
+       FROM gc_rooms WHERE id = ?`,
+    ).get('old-room') as Record<string, unknown>
+    expect(row).toMatchObject({
+      workspace: '',
+      summaryProfile: 'default',
+      summaryProvider: '',
+      summaryModel: '',
+      summaryApiMode: '',
+      summaryEveryTurns: 20,
+    })
+    expect(dbState.db?.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gc_room_summaries'`,
+    ).get()).toEqual({ name: 'gc_room_summaries' })
   })
 
   it('validates workspace updates through the group room REST route', async () => {

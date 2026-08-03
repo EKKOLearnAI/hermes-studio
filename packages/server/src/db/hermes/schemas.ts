@@ -558,6 +558,11 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   name: 'TEXT NOT NULL',
   inviteCode: 'TEXT UNIQUE',
+  summaryProfile: "TEXT NOT NULL DEFAULT 'default'",
+  summaryProvider: "TEXT NOT NULL DEFAULT ''",
+  summaryModel: "TEXT NOT NULL DEFAULT ''",
+  summaryApiMode: "TEXT NOT NULL DEFAULT ''",
+  summaryEveryTurns: 'INTEGER NOT NULL DEFAULT 20',
   triggerTokens: 'INTEGER NOT NULL DEFAULT 100000',
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
@@ -613,6 +618,20 @@ export const GC_CONTEXT_SNAPSHOTS_SCHEMA: Record<string, string> = {
   lastMessageId: 'TEXT NOT NULL',
   lastMessageTimestamp: 'INTEGER NOT NULL',
   updatedAt: 'INTEGER NOT NULL',
+}
+
+export const GC_ROOM_SUMMARIES_TABLE = 'gc_room_summaries'
+
+export const GC_ROOM_SUMMARIES_SCHEMA: Record<string, string> = {
+  roomId: 'TEXT PRIMARY KEY',
+  summary: "TEXT NOT NULL DEFAULT ''",
+  summaryThroughMessageId: "TEXT NOT NULL DEFAULT ''",
+  summaryThroughMessageTimestamp: 'INTEGER NOT NULL DEFAULT 0',
+  summarizedTurnCount: 'INTEGER NOT NULL DEFAULT 0',
+  status: "TEXT NOT NULL DEFAULT 'idle'",
+  version: 'INTEGER NOT NULL DEFAULT 0',
+  updatedAt: 'INTEGER NOT NULL DEFAULT 0',
+  lastError: 'TEXT',
 }
 
 export const GC_ROOM_MEMBERS_TABLE = 'gc_room_members'
@@ -1165,6 +1184,7 @@ export function initAllHermesTables(): void {
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
     syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
+    syncTable(GC_ROOM_SUMMARIES_TABLE, GC_ROOM_SUMMARIES_SCHEMA)
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
     syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
 

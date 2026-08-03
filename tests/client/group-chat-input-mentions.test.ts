@@ -161,4 +161,22 @@ describe('GroupChatInput mentions', () => {
 
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).not.toBe('168px')
   })
+
+  it('keeps the draft intact when room configuration blocks sending', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const wrapper = mount(GroupChatInput, {
+      props: { sendBlocked: true },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('@Worker keep this draft')
+    await textarea.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('send-blocked')).toHaveLength(1)
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('@Worker keep this draft')
+  })
 })

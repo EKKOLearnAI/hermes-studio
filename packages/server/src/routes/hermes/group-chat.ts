@@ -36,6 +36,11 @@ function generateInviteCode(): string {
     return code
 }
 
+function contentPreview(content: unknown): string {
+    const value = typeof content === 'string' ? content : JSON.stringify(content ?? '')
+    return value.length > 500 ? `${value.slice(0, 500)}…` : value
+}
+
 type AgentInput = {
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
     profile: string
@@ -47,6 +52,14 @@ type AgentInput = {
     description?: string
     avatar?: string
     invited?: boolean | number
+}
+
+type RoomSummaryInput = {
+    profile?: string
+    provider?: string
+    model?: string
+    apiMode?: string
+    everyTurns?: number
 }
 
 const GROUP_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -205,7 +218,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const { name, inviteCode, agents, compression, workspace, memberName, memberDescription } = ctx.request.body as {
+    const createInput = ctx.request.body as {
         name?: string
         inviteCode?: string
         agents?: {
@@ -220,14 +233,36 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
             avatar?: string
             invited?: boolean
         }[]
-        compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
+        summary?: RoomSummaryInput
         workspace?: string
         memberName?: string
         memberDescription?: string
     }
+    const { name, inviteCode, agents, summary, workspace, memberName, memberDescription } = createInput
     if (!name || !inviteCode) {
         ctx.status = 400
         ctx.body = { error: 'name and inviteCode are required' }
+        return
+    }
+    const hasSummaryConfig = summary !== undefined
+    const summaryProfile = String(summary?.profile || 'default').trim() || 'default'
+    const summaryProvider = String(summary?.provider || '').trim()
+    const summaryModel = String(summary?.model || '').trim()
+    const summaryApiMode = String(summary?.apiMode || 'chat_completions').trim()
+    const summaryEveryTurns = Math.floor(Number(summary?.everyTurns ?? 20))
+    if (hasSummaryConfig && (!summaryProvider || !summaryModel)) {
+        ctx.status = 400
+        ctx.body = { error: 'summary profile, provider and model are required' }
+        return
+    }
+    if (hasSummaryConfig && !GROUP_AGENT_API_MODES.has(summaryApiMode)) {
+        ctx.status = 400
+        ctx.body = { error: 'Invalid summary apiMode' }
+        return
+    }
+    if (hasSummaryConfig && (!Number.isFinite(summaryEveryTurns) || summaryEveryTurns < 1 || summaryEveryTurns > 1000)) {
+        ctx.status = 400
+        ctx.body = { error: 'summary everyTurns must be between 1 and 1000' }
         return
     }
     if (
@@ -270,13 +305,18 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
             }
         }
     }
-    const compressionConfig = compression ? {
-        triggerTokens: compression.triggerTokens,
-        maxHistoryTokens: compression.maxHistoryTokens,
-        tailMessageCount: compression.tailMessageCount,
+    if (!normalizedWorkspace) {
+        normalizedWorkspace = chatServer.ensureDefaultRoomWorkspace(roomId, summaryProfile)
+    }
+    const roomConfig = {
+        summaryProfile,
+        summaryProvider,
+        summaryModel,
+        summaryApiMode,
+        summaryEveryTurns,
         workspace: normalizedWorkspace,
-    } : { workspace: normalizedWorkspace }
-    storage.saveRoom(roomId, name, inviteCode, compressionConfig)
+    }
+    storage.saveRoom(roomId, name, inviteCode, roomConfig)
     persistRoomCreator(storage, roomId, ctx.state?.user, memberName, memberDescription)
 
     const addedAgents = []
@@ -332,9 +372,11 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     const roomId = generateId()
     const code = inviteCode?.trim() || generateInviteCode()
     storage.saveRoom(roomId, name?.trim() || `${sourceRoom.name} Copy`, code, {
-        triggerTokens: sourceRoom.triggerTokens,
-        maxHistoryTokens: sourceRoom.maxHistoryTokens,
-        tailMessageCount: sourceRoom.tailMessageCount,
+        summaryProfile: sourceRoom.summaryProfile,
+        summaryProvider: sourceRoom.summaryProvider,
+        summaryModel: sourceRoom.summaryModel,
+        summaryApiMode: sourceRoom.summaryApiMode,
+        summaryEveryTurns: sourceRoom.summaryEveryTurns,
         workspace: sourceRoom.workspace || '',
     })
     persistRoomCreator(storage, roomId, ctx.state?.user)
@@ -801,14 +843,15 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     }
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
     try {
-        await chatServer.deleteRoomRuntimeState(roomId)
+        await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
+            await chatServer!.deleteRoomRuntimeState(roomId)
+            storage.deleteRoom(roomId)
+        })
     } catch (err: any) {
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
     }
-    // Delete all data
-    storage.deleteRoom(roomId)
     ctx.body = { success: true }
 })
 
@@ -834,17 +877,19 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async
         return
     }
     try {
-        await chatServer.clearRoomRuntimeState(roomId)
+        await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
+            await chatServer!.clearRoomRuntimeState(roomId)
+            storage.clearRoomContext(roomId)
+        })
     } catch (err: any) {
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
     }
-    storage.clearRoomContext(roomId)
     ctx.body = { success: true, room: serializeRoom(storage.getRoom(roomId), true) }
 })
 
-// Update room compression config
+// Update room name and rolling-summary config
 groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) => {
     if (!chatServer) {
         ctx.status = 503
@@ -853,10 +898,13 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     }
 
     const roomId = ctx.params.roomId
-    const { triggerTokens, maxHistoryTokens, tailMessageCount } = ctx.request.body as {
-        triggerTokens?: number
-        maxHistoryTokens?: number
-        tailMessageCount?: number
+    const { name, summaryProfile, summaryProvider, summaryModel, summaryApiMode, summaryEveryTurns } = ctx.request.body as {
+        name?: string
+        summaryProfile?: string
+        summaryProvider?: string
+        summaryModel?: string
+        summaryApiMode?: string
+        summaryEveryTurns?: number
     }
 
     const storage = chatServer.getStorage()
@@ -871,7 +919,65 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
         ctx.body = { error: 'Access denied' }
         return
     }
-    storage.updateRoomConfig(roomId, { triggerTokens, maxHistoryTokens, tailMessageCount })
+
+    const hasNameUpdate = name !== undefined
+    const hasSummaryUpdate = [
+        summaryProfile,
+        summaryProvider,
+        summaryModel,
+        summaryApiMode,
+        summaryEveryTurns,
+    ].some(value => value !== undefined)
+    if (!hasNameUpdate && !hasSummaryUpdate) {
+        ctx.status = 400
+        ctx.body = { error: 'No room config changes supplied' }
+        return
+    }
+
+    const normalizedName = hasNameUpdate && typeof name === 'string' ? name.trim() : room.name
+    if (hasNameUpdate && (typeof name !== 'string' || !normalizedName || normalizedName.length > 120)) {
+        ctx.status = 400
+        ctx.body = { error: 'Room name must be between 1 and 120 characters' }
+        return
+    }
+
+    const profile = String(summaryProfile ?? room.summaryProfile).trim()
+    const provider = String(summaryProvider ?? room.summaryProvider).trim()
+    const model = String(summaryModel ?? room.summaryModel).trim()
+    const apiMode = String(summaryApiMode ?? room.summaryApiMode).trim()
+    const everyTurns = Math.floor(Number(summaryEveryTurns ?? room.summaryEveryTurns))
+    if (hasSummaryUpdate) {
+        if (!profile || !provider || !model) {
+            ctx.status = 400
+            ctx.body = { error: 'summary profile, provider and model are required' }
+            return
+        }
+        if (!GROUP_AGENT_API_MODES.has(apiMode)) {
+            ctx.status = 400
+            ctx.body = { error: 'Invalid summary apiMode' }
+            return
+        }
+        if (!Number.isFinite(everyTurns) || everyTurns < 1 || everyTurns > 1000) {
+            ctx.status = 400
+            ctx.body = { error: 'summaryEveryTurns must be between 1 and 1000' }
+            return
+        }
+    }
+
+    await chatServer.getRoomSummaryService().runExclusive(roomId, () => {
+        if (hasNameUpdate && normalizedName !== room.name) {
+            chatServer!.updateRoomName(roomId, normalizedName)
+        }
+        if (hasSummaryUpdate) {
+            storage.updateRoomConfig(roomId, {
+                summaryProfile: profile,
+                summaryProvider: provider,
+                summaryModel: model,
+                summaryApiMode: apiMode,
+                summaryEveryTurns: everyTurns,
+            })
+        }
+    })
     ctx.body = { room: serializeRoom(storage.getRoom(roomId), true) }
 })
 
@@ -923,14 +1029,49 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace', async (ctx
     }
 })
 
-// Force compress a room's context
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/compress', async (ctx) => {
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) => {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
         return
     }
 
+    const roomId = ctx.params.roomId
+    const storage = chatServer.getStorage()
+    const room = storage.getRoom(roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canManageRoom(storage, roomId, ctx.state?.user) && !canReadRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+
+    const summary = chatServer.getRoomSummaryService().getState(roomId)
+    const anchorMessage = summary.summaryThroughMessageId
+        ? storage.getMessage(summary.summaryThroughMessageId)
+        : null
+    ctx.body = {
+        summary,
+        anchor: anchorMessage ? {
+            id: anchorMessage.id,
+            timestamp: anchorMessage.timestamp,
+            senderName: anchorMessage.senderName,
+            role: anchorMessage.role,
+            content: contentPreview(anchorMessage.content),
+        } : null,
+    }
+})
+
+groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
     const roomId = ctx.params.roomId
     const storage = chatServer.getStorage()
     if (!storage.getRoom(roomId)) {
@@ -943,19 +1084,12 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/compress', async (ctx
         ctx.body = { error: 'Access denied' }
         return
     }
-
-    const engine = chatServer.getContextEngine()
-    if (!engine) {
-        ctx.status = 503
-        ctx.body = { error: 'Context engine not available' }
+    const text = (ctx.request.body as { summary?: string })?.summary
+    if (typeof text !== 'string' || text.length > 200_000) {
+        ctx.status = 400
+        ctx.body = { error: 'summary must be a string no longer than 200000 characters' }
         return
     }
-
-    try {
-        const result = await engine.forceCompress(roomId)
-        ctx.body = { success: true, summary: result }
-    } catch (err: any) {
-        ctx.status = 500
-        ctx.body = { error: err.message }
-    }
+    const summary = await chatServer.getRoomSummaryService().updateSummaryText(roomId, text.trim())
+    ctx.body = { summary }
 })

@@ -4,7 +4,7 @@ import {
   createTestGroupChatServer,
   emitAck,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
@@ -20,6 +20,7 @@ describe('group chat agent routing baseline', () => {
     harness = await createTestGroupChatServer()
     groupServer = harness.groupServer
     port = harness.port
+    vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
     groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
     groupServer.getStorage().addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
   })
@@ -41,8 +42,7 @@ describe('group chat agent routing baseline', () => {
   }
 
   function currentAgentSessionId() {
-    const room = groupServer.getStorage().getRoom('room-1')
-    return groupBridgeSessionId('room-1', 'default', 'Worker', String(room?.sessionSeed || '0'))
+    return groupRuntimeSessionId('room-1', 'default', 'Worker')
   }
 
   it('routes human messages through mention processing', async () => {

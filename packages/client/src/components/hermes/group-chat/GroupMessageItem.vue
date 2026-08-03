@@ -716,6 +716,7 @@ onBeforeUnmount(() => {
             <div class="message-meta">
                 <button
                     v-if="canPlaySpeech"
+                    type="button"
                     class="speech-bubble-btn"
                     :class="{ playing: isPlayingThisMessage, paused: isPausedThisMessage }"
                     :title="isPlayingThisMessage ? (isPausedThisMessage ? t('chat.resumeSpeech') : t('chat.pauseSpeech')) : t('chat.playSpeech')"
@@ -726,6 +727,7 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                     v-if="copyableContent"
+                    type="button"
                     class="copy-bubble-btn"
                     :title="t('chat.copyBubble')"
                     @click="copyBubbleContent"
@@ -737,6 +739,7 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                     v-if="quotableContent"
+                    type="button"
                     class="reference-bubble-btn"
                     :title="t('chat.referenceMessage')"
                     @click="referenceBubbleContent"
@@ -1027,15 +1030,25 @@ onBeforeUnmount(() => {
     gap: 6px;
     margin-top: 4px;
     padding: 0 4px;
+    padding-bottom: 4px;
     color: $text-muted;
-    opacity: 0;
-    transition: opacity 0.15s ease;
+    opacity: 1;
+}
 
-    .group-message:hover & {
-        opacity: 1;
+.group-message:not(.agent) {
+    .message-meta {
+        opacity: 0;
+        transition: opacity 0.15s ease;
     }
 
-    @media (max-width: 768px) {
+    &:hover .message-meta,
+    &:focus-within .message-meta {
+        opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .group-message:not(.agent) .message-meta {
         opacity: 1;
     }
 }

@@ -56,6 +56,7 @@ export interface EkkoAgentRunSocketData {
   category_id?: number | null
   source?: string
   session_source?: 'global_agent' | 'workflow'
+  context_compression_enabled?: boolean
   baseUrl?: string
   base_url?: string
   apiKey?: string
@@ -1135,7 +1136,7 @@ export async function handleEkkoAgentRun(
       profile,
     }
     let fixedContextEstimate: Promise<number> | undefined
-    const compressedHistory = await buildCompressedHistory(
+    const compressedHistory = data.context_compression_enabled === false ? [] : await buildCompressedHistory(
       sessionId,
       profile,
       baseUrl,

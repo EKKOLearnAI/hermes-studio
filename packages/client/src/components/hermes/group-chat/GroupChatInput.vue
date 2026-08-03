@@ -11,7 +11,15 @@ import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 
 const { t } = useI18n()
-const emit = defineEmits<{ send: [content: string, attachments?: Attachment[]] }>()
+const props = withDefaults(defineProps<{
+    sendBlocked?: boolean
+}>(), {
+    sendBlocked: false,
+})
+const emit = defineEmits<{
+    send: [content: string, attachments?: Attachment[]]
+    'send-blocked': []
+}>()
 const store = useGroupChatStore()
 const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
@@ -324,6 +332,10 @@ function handleKeydown(e: KeyboardEvent) {
 function handleSend() {
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
+    if (props.sendBlocked) {
+        emit('send-blocked')
+        return
+    }
 
     emit('send', content, attachments.value.length > 0 ? attachments.value : undefined)
     inputText.value = ''

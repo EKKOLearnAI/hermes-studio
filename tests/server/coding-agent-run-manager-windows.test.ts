@@ -161,6 +161,49 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).sessionIndex.clear()
   })
 
+  it('keeps scoped Claude prompts on file instead of adding a CLI prompt payload', () => {
+    const manager = new CodingAgentRunManager()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-single-claude-1',
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'claude-test',
+      sessionId: 'chat-session-single-claude-1',
+      command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\claude.cmd',
+      args: [
+        '--settings',
+        'C:\\Users\\Administrator\\.hermes-web-ui\\settings.json',
+        '--append-system-prompt-file',
+        'C:\\Users\\Administrator\\.hermes-web-ui\\hermes-rules.md',
+      ],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    manager.send('chat-session-single-claude-1', 'test', {
+      systemPrompt: 'ordinary single-chat prompt',
+    })
+
+    const commandLine = testState.spawnCalls[0].args[3]
+    expect(commandLine).toContain('^"--append-system-prompt-file^"')
+    expect(commandLine).toContain('hermes-rules.md')
+    expect(commandLine).not.toContain('^"--append-system-prompt^"')
+    expect(commandLine).not.toContain('ordinary^ single-chat^ prompt')
+
+    const run = (manager as any).runs.get('agent-session-single-claude-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
+
   it('pipes image content to hidden Claude Code turns using stream-json', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'hermes-claude-image-'))
     const imagePath = join(tempDir, 'sample image.png')

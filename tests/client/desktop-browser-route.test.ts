@@ -54,7 +54,7 @@ describe('desktop browser chat panel gate', () => {
     expect(chatPanel).toContain("activeToolPanel === 'browser'")
     expect(chatPanel).toContain('@attach="handleBrowserAttachment"')
     expect(chatPanel).toContain('OPEN_DESKTOP_BROWSER_PANEL_EVENT')
-    expect(groupChatPanel).toContain("activeWorkspacePanel = ref<'files' | 'browser'>('files')")
+    expect(groupChatPanel).toContain("activeWorkspacePanel = ref<'files' | 'terminal' | 'browser'>('files')")
     expect(groupChatPanel).toContain('OPEN_DESKTOP_BROWSER_PANEL_EVENT')
     expect(groupChatPanel).toContain('const DesktopBrowserPanel = defineAsyncComponent')
     expect(groupChatPanel).toContain("activeWorkspacePanel === 'browser'")

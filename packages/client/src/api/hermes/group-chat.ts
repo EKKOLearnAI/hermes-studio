@@ -9,11 +9,45 @@ export interface RoomInfo {
     name: string
     inviteCode: string | null
     canManage?: boolean
-    triggerTokens?: number
-    maxHistoryTokens?: number
-    tailMessageCount?: number
+    summaryProfile: string
+    summaryProvider: string
+    summaryModel: string
+    summaryApiMode: string
+    summaryEveryTurns: number
     totalTokens?: number
     workspace: string
+}
+
+export interface RoomSummaryConfig {
+    summaryProfile: string
+    summaryProvider: string
+    summaryModel: string
+    summaryApiMode: string
+    summaryEveryTurns: number
+}
+
+export interface RoomConfigInput extends Partial<RoomSummaryConfig> {
+    name?: string
+}
+
+export interface RoomSummaryState {
+    roomId: string
+    summary: string
+    summaryThroughMessageId: string
+    summaryThroughMessageTimestamp: number
+    summarizedTurnCount: number
+    status: 'idle' | 'summarizing' | 'success' | 'failed'
+    version: number
+    updatedAt: number
+    lastError: string | null
+}
+
+export interface RoomSummaryAnchor {
+    id: string
+    timestamp: number
+    senderName: string
+    role?: string
+    content: string
 }
 
 export interface RoomAgent {
@@ -203,7 +237,13 @@ export async function createRoom(data: {
     memberName?: string
     memberDescription?: string
     agents?: RoomAgentInput[]
-    compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
+    summary: {
+        profile: string
+        provider: string
+        model: string
+        apiMode: string
+        everyTurns: number
+    }
     workspace?: string
 }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request('/api/hermes/group-chat/rooms', {
@@ -286,7 +326,7 @@ export async function clearRoomContext(roomId: string): Promise<{ success: boole
     })
 }
 
-export async function updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): Promise<{ room: RoomInfo }> {
+export async function updateRoomConfig(roomId: string, config: RoomConfigInput): Promise<{ room: RoomInfo }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -302,9 +342,15 @@ export async function updateRoomWorkspace(roomId: string, workspace: string): Pr
     })
 }
 
-export async function forceCompress(roomId: string): Promise<{ success: boolean; summary: string }> {
-    return request(`/api/hermes/group-chat/rooms/${roomId}/compress`, {
-        method: 'POST',
+export async function getRoomSummary(roomId: string): Promise<{ summary: RoomSummaryState; anchor: RoomSummaryAnchor | null }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/summary`)
+}
+
+export async function updateRoomSummary(roomId: string, summary: string): Promise<{ summary: RoomSummaryState }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/summary`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary }),
     })
 }
 

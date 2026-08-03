@@ -4603,9 +4603,6 @@
                   "agents": {
                     "type": "boolean"
                   },
-                  "compression": {
-                    "type": "number"
-                  },
                   "inviteCode": {
                     "type": "string"
                   },
@@ -4618,13 +4615,17 @@
                   "name": {
                     "type": "string"
                   },
+                  "summary": {
+                    "type": "object"
+                  },
                   "workspace": {
                     "type": "string"
                   }
                 },
                 "required": [
                   "inviteCode",
-                  "name"
+                  "name",
+                  "summary"
                 ]
               }
             }
@@ -5105,42 +5106,6 @@
         }
       }
     },
-    "/api/hermes/group-chat/rooms/{roomId}/compress": {
-      "post": {
-        "tags": [
-          "Group Chat"
-        ],
-        "summary": "Create compress",
-        "description": "POST /api/hermes/group-chat/rooms/:roomId/compress",
-        "operationId": "createCompress",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        },
-        "parameters": [
-          {
-            "name": "roomId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
     "/api/hermes/group-chat/rooms/{roomId}/config": {
       "put": {
         "tags": [
@@ -5182,14 +5147,23 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "maxHistoryTokens": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "summaryApiMode": {
+                    "type": "string"
+                  },
+                  "summaryEveryTurns": {
                     "type": "number"
                   },
-                  "tailMessageCount": {
-                    "type": "number"
+                  "summaryModel": {
+                    "type": "string"
                   },
-                  "triggerTokens": {
-                    "type": "number"
+                  "summaryProfile": {
+                    "type": "string"
+                  },
+                  "summaryProvider": {
+                    "type": "string"
                   }
                 }
               }
@@ -5246,6 +5220,91 @@
                 "required": [
                   "inviteCode"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/summary": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get summary",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/summary",
+        "operationId": "getSummary",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update summary",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/summary",
+        "operationId": "updateSummary",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "summary": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }

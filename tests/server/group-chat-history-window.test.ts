@@ -36,11 +36,12 @@ vi.mock('../../packages/server/src/services/auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { countTokens, SUMMARY_PREFIX } from '../../packages/server/src/lib/context-compressor'
+import { countTokens } from '../../packages/server/src/lib/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { AgentClients, groupBridgeSessionId, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
+import { GroupRoomSummaryService } from '../../packages/server/src/services/hermes/group-chat/room-summary'
 
 function makeDb(): DatabaseSync {
   return new DatabaseSync(':memory:')
@@ -164,7 +165,7 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
-  it('preserves snapshot summary tokens when the snapshot anchor was pruned from retained history', () => {
+  it('continues shared context by timestamp when the summary anchor was pruned', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
 
@@ -175,71 +176,63 @@ describe('group chat history windows', () => {
     }))
 
     storage.saveMessageAndRefreshRoom(seeded[0] as any)
-    storage.saveContextSnapshot('room-1', 'Earlier summary', 'msg-1', 1)
+    storage.saveRoomSummary({
+      roomId: 'room-1',
+      summary: 'Earlier summary',
+      summaryThroughMessageId: 'msg-1',
+      summaryThroughMessageTimestamp: 1,
+      summarizedTurnCount: 1,
+      status: 'success',
+      version: 1,
+      updatedAt: 1,
+      lastError: null,
+    })
 
-    let latest: { totalTokens: number } | null = null
-    for (const message of seeded.slice(1)) latest = storage.saveMessageAndRefreshRoom(message as any)
+    for (const message of seeded.slice(1)) storage.saveMessageAndRefreshRoom(message as any)
 
     const retained = storage.getMessagesForContext('room-1')
-    const expectedTotalTokens = countTokens(SUMMARY_PREFIX + 'Earlier summary')
-      + retained.reduce((sum, message) => sum + countTokens(String(message.content)), 0)
+    const context = groupServer.getRoomSummaryService().buildRuntimeContext('room-1')
 
     expect(retained).toHaveLength(500)
     expect(retained.some(message => message.id === 'msg-1')).toBe(false)
-    expect(storage.getContextSnapshot('room-1')?.lastMessageId).toBe('msg-1')
-    expect(latest?.totalTokens).toBe(expectedTotalTokens)
-    expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
+    expect(context.summary).toBe('Earlier summary')
+    expect(context.history).toHaveLength(500)
+    expect(context.history[0]?.id).toBe('msg-2')
+    expect(context.history.at(-1)?.id).toBe('msg-501')
   })
 
-  it('uses the full context transcript for the final AgentClient room estimate', async () => {
+  it('builds Agent context from the full retained transcript rather than the UI page', () => {
     const messages = Array.from({ length: 160 }, (_value, index) => ({
+      id: `message-${index + 1}`,
       senderId: 'user-1',
       senderName: 'Alice',
       content: `message ${index + 1}`,
       role: 'user',
       timestamp: index + 1,
     }))
-    const sessionId = groupBridgeSessionId('room-1', 'default', 'Worker', 'seed-1')
     const storage = {
       getMessagesForContext: vi.fn(() => messages),
       getRecentMessagesForUI: vi.fn(() => messages.slice(-150)),
-      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', sessionSeed: 'seed-1' })),
-      getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker' })),
-      updateRoomTotalTokens: vi.fn(),
-    }
-    const bridge = {
-      contextEstimate: vi.fn(async (_sessionId: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) => ({
-        token_count: 4321,
-        fixed_context_tokens: 0,
-        message_count: history.length,
+      getRoom: vi.fn(() => ({
+        id: 'room-1',
+        summaryProfile: 'default',
+        summaryProvider: 'openai',
+        summaryModel: 'test',
+        summaryApiMode: '',
+        summaryEveryTurns: 200,
       })),
+      getRoomSummary: vi.fn(() => null),
+      saveRoomSummary: vi.fn(),
     }
 
-    const clients = new AgentClients()
-    const client = await clients.createAgent({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      description: '',
-      invited: 0,
-    } as any)
-    client.setStorage(storage as any)
-
-    await (client as any).refreshRoomFullContextEstimate('room-1', sessionId, bridge, undefined, { model: '', provider: '' })
+    const context = new GroupRoomSummaryService(storage as any).buildRuntimeContext('room-1')
 
     expect(storage.getMessagesForContext).toHaveBeenCalledWith('room-1')
     expect(storage.getRecentMessagesForUI).not.toHaveBeenCalled()
-    expect(bridge.contextEstimate).toHaveBeenCalledTimes(1)
-    expect(bridge.contextEstimate.mock.calls[0][1]).toHaveLength(160)
-    expect(storage.updateRoomTotalTokens).toHaveBeenCalledWith('room-1', 4321)
-    expect(mockSocket.emit).toHaveBeenCalledWith('context_status', expect.objectContaining({
-      roomId: 'room-1',
-      agentName: 'Worker',
-      status: 'replying',
-      totalTokens: 4321,
-    }))
-
-    client.disconnect()
+    expect(context.summary).toBe('')
+    expect(context.history).toHaveLength(160)
+    expect(context.history[0]?.id).toBe('message-1')
+    expect(context.history.at(-1)?.id).toBe('message-160')
   })
 
   it('includes the active reasoning segment in persisted group tool-call messages', async () => {

@@ -1,42 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-const { mockIo, mockSocket } = vi.hoisted(() => {
-  const mockSocket: any = {
-    id: 'agent-socket-1',
-    connected: true,
-    io: { on: vi.fn() },
-    on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-      if (event === 'connect') queueMicrotask(() => handler())
-      return mockSocket
-    }),
-    emit: vi.fn(),
-    disconnect: vi.fn(),
-  }
-  return {
-    mockSocket,
-    mockIo: vi.fn(() => mockSocket),
-  }
-})
-
-vi.mock('socket.io-client', () => ({
-  io: mockIo,
-}))
-
-vi.mock('../../packages/server/src/services/auth', () => ({
-  getToken: vi.fn(async () => 'test-token'),
-}))
-
-import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
-import type {
-  GatewayCaller,
-  MessageFetcher,
-  StoredMessage,
-} from '../../packages/server/src/services/hermes/context-engine/types'
-import { AgentClients } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { describe, expect, it } from 'vitest'
+import type { StoredMessage } from '../../packages/server/src/services/hermes/context-engine/types'
 import {
   buildProjectedGroupChatHistory,
   projectGroupChatMessage,
 } from '../../packages/server/src/services/hermes/group-chat/context-projection'
+import {
+  cleanGroupMessages,
+  GroupRoomSummaryService,
+} from '../../packages/server/src/services/hermes/group-chat/room-summary'
 
 function makeMessage(overrides: Partial<StoredMessage>): StoredMessage {
   return {
@@ -52,10 +23,6 @@ function makeMessage(overrides: Partial<StoredMessage>): StoredMessage {
 }
 
 describe('group chat context projection', () => {
-  afterEach(() => {
-    vi.clearAllMocks()
-  })
-
   it('projects own agent messages as assistant and other participants with attribution as user', () => {
     expect(projectGroupChatMessage(makeMessage({ senderId: 'agent-1', senderName: 'Worker', role: 'assistant', content: '@Bob I handled it' }), {
       agentId: 'agent-1',
@@ -123,7 +90,7 @@ describe('group chat context projection', () => {
     ])
   })
 
-  it('uses the same projection semantics for actual model context and final room token estimates', async () => {
+  it('keeps only member messages and final assistant text in the shared room context', () => {
     const messages = [
       makeMessage({ id: 'm1', senderName: 'Alice', senderId: 'user-1', role: 'user', content: '@Worker please compare options' }),
       makeMessage({ id: 'm2', senderName: 'Worker', senderId: 'agent-1', role: 'assistant', content: '@Bob I will take this' }),
@@ -131,85 +98,55 @@ describe('group chat context projection', () => {
       makeMessage({ id: 'm4', senderName: 'Worker', senderId: 'agent-1', role: 'tool', tool_name: 'search', content: 'docs found', timestamp: 4 }),
     ]
 
-    const fetcher: MessageFetcher = {
-      getMessagesForContext: vi.fn(() => messages),
-      getContextSnapshot: vi.fn(() => null),
-      saveContextSnapshot: vi.fn(),
-      deleteContextSnapshot: vi.fn(),
-    }
-    const gatewayCaller: GatewayCaller = {
-      summarize: vi.fn(),
-    }
-    const engine = new ContextEngine({
-      config: { triggerTokens: 100_000, maxHistoryTokens: 32_000, tailMessageCount: 10, charsPerToken: 4, summarizationTimeoutMs: 30_000 },
-      messageFetcher: fetcher,
-      gatewayCaller,
-    })
-
-    const result = await engine.buildContext({
-      roomId: 'room-1',
-      agentId: 'agent-1',
-      agentName: 'Worker',
-      agentDescription: '',
-      agentSocketId: 'agent-socket-1',
-      roomName: 'general',
-      memberNames: ['Alice', 'Worker', 'Reviewer'],
-      members: [],
-      upstream: '',
-      apiKey: null,
-      currentMessage: messages[messages.length - 1],
-    })
-
-    const clients = new AgentClients()
-    const client = await clients.createAgent({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      description: '',
-      invited: 0,
-    } as any)
-    client.setStorage({
-      getMessagesForContext: vi.fn(() => messages),
-    } as any)
-
-    expect((client as any).buildRoomEstimateHistory('room-1')).toEqual(result.conversationHistory)
-
-    client.disconnect()
+    expect(cleanGroupMessages(messages as any).map(message => ({
+      id: message.id,
+      role: message.role,
+      senderName: message.senderName,
+      content: message.content,
+    }))).toEqual([
+      { id: 'm1', role: 'user', senderName: 'Alice', content: '@Worker please compare options' },
+      { id: 'm2', role: 'assistant', senderName: 'Worker', content: '@Bob I will take this' },
+    ])
   })
 
-  it('includes persisted summary snapshots in final room token estimate history', async () => {
+  it('combines the persisted room summary with clean messages after its anchor', () => {
     const messages = [
       makeMessage({ id: 'm1', senderName: 'Alice', senderId: 'user-1', role: 'user', content: 'older request', timestamp: 1 }),
       makeMessage({ id: 'm2', senderName: 'Worker', senderId: 'agent-1', role: 'assistant', content: 'old answer', timestamp: 2 }),
       makeMessage({ id: 'm3', senderName: 'Alice', senderId: 'user-1', role: 'user', content: '@Worker latest request', timestamp: 3 }),
     ]
-
-    const clients = new AgentClients()
-    const client = await clients.createAgent({
-      agentId: 'agent-1',
-      profile: 'default',
-      name: 'Worker',
-      description: '',
-      invited: 0,
-    } as any)
-    client.setStorage({
-      getMessagesForContext: vi.fn(() => messages),
-      getContextSnapshot: vi.fn(() => ({
+    const service = new GroupRoomSummaryService({
+      getRoom: () => ({
+        id: 'room-1',
+        summaryProfile: 'default',
+        summaryProvider: 'openai',
+        summaryModel: 'test',
+        summaryApiMode: '',
+        summaryEveryTurns: 20,
+      }),
+      getMessagesForContext: () => messages,
+      getRoomSummary: () => ({
         roomId: 'room-1',
         summary: 'Earlier room summary',
-        lastMessageId: 'm1',
-        lastMessageTimestamp: 1,
-        updatedAt: Date.now(),
-      })),
-    } as any)
+        summaryThroughMessageId: 'm1',
+        summaryThroughMessageTimestamp: 1,
+        summarizedTurnCount: 1,
+        status: 'success',
+        version: 1,
+        updatedAt: 1,
+        lastError: null,
+      }),
+      saveRoomSummary: () => {},
+    })
 
-    expect((client as any).buildRoomEstimateHistory('room-1')).toEqual([
-      { role: 'user', content: '[Previous conversation summary]\nEarlier room summary' },
-      { role: 'assistant', content: 'I have reviewed the conversation history and understand the context.' },
-      { role: 'assistant', content: '[Worker]: old answer' },
-      { role: 'user', content: '[Alice]: latest request' },
-    ])
-
-    client.disconnect()
+    expect(service.buildRuntimeContext('room-1', 'm3')).toEqual({
+      summary: 'Earlier room summary',
+      history: [expect.objectContaining({
+        id: 'm2',
+        role: 'assistant',
+        senderName: 'Worker',
+        content: 'old answer',
+      })],
+    })
   })
 })

@@ -352,10 +352,10 @@ test.describe('group chat room deep links', () => {
     const settingsButton = page.locator('.chat-header .header-info .compression-settings-button')
     await settingsButton.click()
 
-    const modal = page.locator('.room-settings-modal')
-    await expect(modal.getByRole('heading', { name: 'Room Settings' })).toBeVisible()
-    const inviteInput = modal.getByPlaceholder('Enter a new invite code')
-    const updateButton = modal.getByRole('button', { name: 'Update' })
+    const drawer = page.locator('.n-drawer').filter({ has: page.locator('.room-settings-drawer') })
+    await expect(drawer.getByText('Room Settings', { exact: true })).toBeVisible()
+    const inviteInput = drawer.getByPlaceholder('Enter a new invite code')
+    const updateButton = drawer.getByRole('button', { name: 'Update' }).nth(1)
 
     await expect(inviteInput).toHaveValue('ALPHA1')
     await expect(updateButton).toBeDisabled()
@@ -376,9 +376,10 @@ test.describe('group chat room deep links', () => {
     await updateButton.click()
     await expect((await failureResponse).status()).toBe(409)
 
-    await modal.getByRole('button', { name: 'Cancel' }).click()
+    await page.keyboard.press('Escape')
+    await expect(drawer).toBeHidden()
     await settingsButton.click()
-    await expect(modal.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
+    await expect(drawer.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {

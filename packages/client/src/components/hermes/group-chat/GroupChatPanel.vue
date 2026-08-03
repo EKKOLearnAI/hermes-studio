@@ -2,11 +2,11 @@
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber, NDropdown, NModal, NPopover, type DropdownOption } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber, NDropdown, NModal, NPopover, NDrawer, NDrawerContent, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
+import { getRoomSummary, updateRoomConfig, updateRoomSummary } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
@@ -15,7 +15,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { MemberInfo, RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
+import type { MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -37,6 +37,7 @@ const FilesPanel = defineAsyncComponent(async () => (await import('@/components/
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default)
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/DesktopBrowserPanel.vue')).default)
+const TerminalPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/TerminalPanel.vue')).default)
 
 const { t } = useI18n()
 const router = useRouter()
@@ -59,13 +60,31 @@ const showAddAgentModal = ref(false)
 const showMemberRail = ref(true)
 const editingAgent = ref<RoomAgent | null>(null)
 const isSavingAgent = ref(false)
-const showCompressionModal = ref(false)
+const showRoomSettingsModal = ref(false)
 const showUserProfileModal = ref(false)
 const userProfileName = ref('')
 const userProfileDescription = ref('')
 const isSavingUserProfile = ref(false)
-const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
-const isCompressing = ref(false)
+const summaryConfig = ref<RoomSummaryConfig>({
+    summaryProfile: 'default',
+    summaryProvider: '',
+    summaryModel: '',
+    summaryApiMode: 'chat_completions',
+    summaryEveryTurns: 20,
+})
+const roomSummaryState = ref<RoomSummaryState | null>(null)
+const roomSummaryAnchor = ref<RoomSummaryAnchor | null>(null)
+const roomSummaryDraft = ref('')
+const isLoadingRoomSummary = ref(false)
+const isSavingRoomSummary = ref(false)
+const inlineSummaryStatus = ref<{
+    roomId: string
+    status: 'summarizing' | 'success' | 'failed'
+    error: string
+} | null>(null)
+let inlineSummaryStatusTimer: ReturnType<typeof setTimeout> | null = null
+const roomNameDraft = ref('')
+const isSavingRoomName = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
 const selectedAgentType = ref<GroupAgentType>('hermes')
@@ -86,11 +105,13 @@ const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
+const groupMessageListRef = ref<(InstanceType<typeof GroupMessageList> & { scrollToMessage: (messageId: string) => Promise<boolean> }) | null>(null)
+const summarySettingsSectionRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
 const isChatDropActive = ref(false)
 const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
 const showWorkspacePanel = ref(false)
-const activeWorkspacePanel = ref<'files' | 'browser'>('files')
+const activeWorkspacePanel = ref<'files' | 'terminal' | 'browser'>('files')
 const desktopBrowserAvailable = hasDesktopBrowserBridge()
 const workspacePanelMobile = ref(window.innerWidth <= 768)
 const WORKSPACE_PANEL_MIN_WIDTH = 360
@@ -187,6 +208,101 @@ const agentReasoningEffortOptions = computed(() => [
     { label: t('chat.reasoningEffort.options.max'), value: 'max' },
 ])
 
+const summaryModelGroups = computed(() =>
+    (appStore.profileModelGroups.find(entry => entry.profile === summaryConfig.value.summaryProfile)?.groups || [])
+        .filter(group => group.provider !== 'moa' && canScopedCodingAgentUseProvider('ekko-agent', group.provider))
+)
+const summaryProviderOptions = computed(() => summaryModelGroups.value.map(group => ({
+    label: group.label || group.provider,
+    value: group.provider,
+})))
+const selectedSummaryProviderGroup = computed(() =>
+    summaryModelGroups.value.find(group => group.provider === summaryConfig.value.summaryProvider)
+)
+const summaryModelOptions = computed(() =>
+    (selectedSummaryProviderGroup.value?.models || []).map(model => ({
+        label: appStore.displayModelName(model, summaryConfig.value.summaryProvider),
+        value: model,
+    }))
+)
+const summaryApiModeOptions = computed(() => [
+    { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
+    { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
+    { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+])
+const liveRoomSummaryState = computed(() => {
+    const roomId = store.currentRoomId
+    return (roomId && store.roomSummaryStates.get(roomId)) || roomSummaryState.value
+})
+
+function clearInlineSummaryStatusTimer() {
+    if (inlineSummaryStatusTimer === null) return
+    clearTimeout(inlineSummaryStatusTimer)
+    inlineSummaryStatusTimer = null
+}
+
+function hideInlineSummaryStatus() {
+    clearInlineSummaryStatusTimer()
+    inlineSummaryStatus.value = null
+}
+
+watch(
+    () => {
+        const state = liveRoomSummaryState.value
+        return state ? `${state.roomId}:${state.version}:${state.status}:${state.updatedAt}` : ''
+    },
+    async () => {
+        const state = liveRoomSummaryState.value
+        if (!state || state.roomId !== store.currentRoomId) {
+            hideInlineSummaryStatus()
+            return
+        }
+        if (state.status === 'summarizing') {
+            clearInlineSummaryStatusTimer()
+            inlineSummaryStatus.value = {
+                roomId: state.roomId,
+                status: 'summarizing',
+                error: '',
+            }
+        } else if (
+            (state.status === 'success' || state.status === 'failed')
+            && inlineSummaryStatus.value?.roomId === state.roomId
+            && inlineSummaryStatus.value.status === 'summarizing'
+        ) {
+            inlineSummaryStatus.value = {
+                roomId: state.roomId,
+                status: state.status,
+                error: state.status === 'failed' ? String(state.lastError || '').trim() : '',
+            }
+            clearInlineSummaryStatusTimer()
+            const completedRoomId = state.roomId
+            inlineSummaryStatusTimer = setTimeout(() => {
+                if (inlineSummaryStatus.value?.roomId === completedRoomId) {
+                    inlineSummaryStatus.value = null
+                }
+                inlineSummaryStatusTimer = null
+            }, state.status === 'failed' ? 6000 : 3000)
+        }
+        if (!showRoomSettingsModal.value) return
+        roomSummaryState.value = state
+        if (state.status === 'success') roomSummaryDraft.value = state.summary
+        try {
+            roomSummaryAnchor.value = (await getRoomSummary(state.roomId)).anchor
+        } catch { /* the next settings open refreshes it */ }
+    },
+    { flush: 'sync' },
+)
+
+function handleSummaryProviderChange(provider: string) {
+    summaryConfig.value.summaryProvider = provider
+    const group = summaryModelGroups.value.find(item => item.provider === provider)
+    summaryConfig.value.summaryModel = group?.models[0] || ''
+    summaryConfig.value.summaryApiMode = normalizeCodingAgentApiMode(
+        group?.api_mode,
+        inferCodingAgentApiMode(group?.provider || provider, group?.base_url),
+    )
+}
+
 const agentAvatarPreview = computed(() =>
     agentAvatar.value || defaultGroupAgentAvatar(selectedAgentType.value)
 )
@@ -253,6 +369,15 @@ function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): bo
     return room?.canManage === true
 }
 const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const currentRoomNeedsSummaryConfiguration = computed(() => {
+    const room = currentRoom.value
+    if (!room) return false
+    return !String(room.summaryProfile || '').trim()
+        || !String(room.summaryProvider || '').trim()
+        || !String(room.summaryModel || '').trim()
+        || !String(room.summaryApiMode || '').trim()
+        || Number(room.summaryEveryTurns || 0) < 1
+})
 const railMembers = computed<MemberInfo[]>(() => {
     if (store.members.some(member => member.userId === store.userId)) return store.members
     return [{
@@ -267,6 +392,17 @@ const railMembers = computed<MemberInfo[]>(() => {
 const participantCount = computed(() => railMembers.value.length + store.agents.length)
 const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)
 const currentWorkspaceLabel = computed(() => workspaceBasename(currentRoom.value?.workspace || ''))
+const groupToolPanelTitle = computed(() => desktopBrowserAvailable
+    ? `${t('drawer.files')} / ${t('drawer.terminal')} / ${t('browser.title')}`
+    : `${t('drawer.files')} / ${t('drawer.terminal')}`
+)
+const canUpdateRoomName = computed(() => {
+    const nextName = roomNameDraft.value.trim()
+    return currentRoomCanManage.value
+        && !isSavingRoomName.value
+        && !!nextName
+        && nextName !== (currentRoom.value?.name || '')
+})
 const canUpdateInviteCode = computed(() => {
     const nextCode = inviteCodeDraft.value.trim()
     return currentRoomCanManage.value && !isSavingInviteCode.value && !!nextCode && nextCode !== (currentRoom.value?.inviteCode || '')
@@ -377,18 +513,25 @@ function closeWorkspacePanel(): void {
 }
 
 function toggleWorkspacePanel(): void {
+    if (showWorkspacePanel.value) {
+        closeWorkspacePanel()
+        return
+    }
+    showWorkspacePanel.value = true
+}
+
+function openWorkspaceFilesPanel(): void {
     if (!currentRoom.value?.workspace) return
     if (showWorkspacePanel.value && activeWorkspacePanel.value === 'files') {
         closeWorkspacePanel()
         return
     }
-    activeWorkspacePanel.value = 'files'
-    showWorkspacePanel.value = true
+    selectWorkspacePanel('files')
 }
 
-function selectWorkspacePanel(panel: 'files' | 'browser'): void {
-    if (panel === 'browser') {
-        if (!desktopBrowserAvailable) return
+function selectWorkspacePanel(panel: 'files' | 'terminal' | 'browser'): void {
+    if (panel === 'browser' && !desktopBrowserAvailable) return
+    if (panel !== 'files') {
         if (toolPanelStore.workspaceDiff?.editable && filesStore.hasUnsavedChanges) {
             message.warning(t('files.unsavedChanges'))
             return
@@ -519,14 +662,14 @@ function extractApiErrorMessage(err: any): string {
     return raw || t('common.saveFailed')
 }
 
-async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }, workspace: string) {
+async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string) {
     try {
         store.setUserInfo(userName, description)
         const res = await store.createNewRoom(
             name,
             inviteCode,
             undefined,
-            compression,
+            summary,
             workspace,
             { name: userName, description },
         )
@@ -662,6 +805,17 @@ async function handleSendMessage(content: string, attachments?: Attachment[]) {
     }
 }
 
+async function handleSummaryConfigurationRequired() {
+    if (!currentRoomCanManage.value) {
+        message.warning(t('groupChat.summaryConfigurationOwnerRequired'))
+        return
+    }
+    message.warning(t('groupChat.summaryConfigurationRequired'))
+    void handleOpenRoomSettings()
+    await nextTick()
+    summarySettingsSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 function resetAgentForm() {
     selectedProfile.value = null
     selectedAgentType.value = 'hermes'
@@ -775,6 +929,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    hideInlineSummaryStatus()
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
@@ -785,7 +940,9 @@ onUnmounted(() => {
 })
 
 watch(() => store.currentRoomId, (roomId, previousRoomId) => {
-    if (roomId !== previousRoomId && (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value)) closeWorkspacePanel()
+    if (roomId === previousRoomId) return
+    hideInlineSummaryStatus()
+    if (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value) closeWorkspacePanel()
 })
 
 watch(() => filesStore.previewFile, previewFile => {
@@ -880,7 +1037,8 @@ async function handleSaveWorkspace() {
     const room = store.rooms.find(r => r.id === roomId)
     if (!canManageRoom(room)) return
     try {
-        await store.setRoomWorkspace(roomId, String(workspaceValue.value || '').trim())
+        const updatedRoom = await store.setRoomWorkspace(roomId, String(workspaceValue.value || '').trim())
+        workspaceValue.value = updatedRoom?.workspace || ''
         showWorkspaceModal.value = false
         workspaceRoomId.value = null
         message.success(t('chat.workspaceSet'))
@@ -916,18 +1074,52 @@ async function handleSaveUserProfile() {
     }
 }
 
-function handleOpenRoomSettings() {
+async function handleOpenRoomSettings() {
     if (!currentRoomCanManage.value) return
     const room = store.rooms.find(r => r.id === store.currentRoomId)
     if (room) {
+        roomNameDraft.value = room.name
         inviteCodeDraft.value = room.inviteCode || ''
-        compressionConfig.value = {
-            triggerTokens: room.triggerTokens ?? 100000,
-            maxHistoryTokens: room.maxHistoryTokens ?? 32000,
-            tailMessageCount: room.tailMessageCount ?? 10,
+        workspaceRoomId.value = room.id
+        workspaceValue.value = room.workspace || ''
+        summaryConfig.value = {
+            summaryProfile: room.summaryProfile || profilesStore.activeProfileName || 'default',
+            summaryProvider: room.summaryProvider || '',
+            summaryModel: room.summaryModel || '',
+            summaryApiMode: room.summaryApiMode || 'chat_completions',
+            summaryEveryTurns: room.summaryEveryTurns || 20,
         }
     }
-    showCompressionModal.value = true
+    showRoomSettingsModal.value = true
+    if (!store.currentRoomId) return
+    isLoadingRoomSummary.value = true
+    try {
+        const result = await getRoomSummary(store.currentRoomId)
+        roomSummaryState.value = result.summary
+        roomSummaryAnchor.value = result.anchor
+        roomSummaryDraft.value = result.summary.summary
+        store.roomSummaryStates.set(store.currentRoomId, result.summary)
+    } catch (err: any) {
+        message.error(err?.message || t('groupChat.summaryLoadFailed'))
+    } finally {
+        isLoadingRoomSummary.value = false
+    }
+}
+
+async function handleSaveRoomName() {
+    if (!store.currentRoomId || !canUpdateRoomName.value) return
+    isSavingRoomName.value = true
+    try {
+        const res = await updateRoomConfig(store.currentRoomId, { name: roomNameDraft.value.trim() })
+        const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
+        if (idx >= 0 && res.room) store.rooms[idx] = res.room
+        if (res.room) store.roomName = res.room.name
+        message.success(t('common.saved'))
+    } catch (err: any) {
+        message.error(err?.message || t('common.saveFailed'))
+    } finally {
+        isSavingRoomName.value = false
+    }
 }
 
 async function handleSaveInviteCode() {
@@ -945,36 +1137,53 @@ async function handleSaveInviteCode() {
     }
 }
 
-async function handleSaveCompressionConfig() {
+async function handleSaveSummaryConfig() {
     if (!store.currentRoomId) return
     if (!currentRoomCanManage.value) return
     try {
-        const res = await updateRoomConfig(store.currentRoomId, { ...compressionConfig.value })
+        const res = await updateRoomConfig(store.currentRoomId, { ...summaryConfig.value })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
         if (idx >= 0 && res.room) store.rooms[idx] = res.room
-        showCompressionModal.value = false
-        message.success(t('groupChat.compressionSaved'))
+        message.success(t('groupChat.summaryConfigSaved'))
     } catch {
         message.error(t('common.saveFailed'))
     }
 }
 
-async function handleForceCompress() {
-    if (!store.currentRoomId || isCompressing.value) return
-    if (!currentRoomCanManage.value) return
-    if (store.contextStatuses.size > 0) {
-        message.warning(t('groupChat.compressingInProgress'))
-        return
-    }
-    isCompressing.value = true
+async function handleSaveRoomSummary() {
+    if (!store.currentRoomId || isSavingRoomSummary.value || !currentRoomCanManage.value) return
+    isSavingRoomSummary.value = true
     try {
-        await forceCompress(store.currentRoomId)
-        message.success(t('groupChat.compressionSaved'))
-    } catch {
-        message.error(t('common.saveFailed'))
+        const result = await updateRoomSummary(store.currentRoomId, roomSummaryDraft.value)
+        roomSummaryState.value = result.summary
+        store.roomSummaryStates.set(store.currentRoomId, result.summary)
+        message.success(t('groupChat.summaryUpdated'))
+    } catch (err: any) {
+        message.error(err?.message || t('common.saveFailed'))
     } finally {
-        isCompressing.value = false
+        isSavingRoomSummary.value = false
     }
+}
+
+function roomSummaryStatusLabel(status?: RoomSummaryState['status']): string {
+    return t(`groupChat.summaryStatus.${status || 'idle'}`)
+}
+
+function formatSummaryTime(timestamp?: number): string {
+    return timestamp ? new Date(timestamp).toLocaleString() : t('groupChat.summaryNever')
+}
+
+async function handleLocateSummaryAnchor() {
+    const anchorId = roomSummaryAnchor.value?.id || liveRoomSummaryState.value?.summaryThroughMessageId
+    if (!anchorId) return
+    while (!store.messages.some(item => item.id === anchorId) && store.hasMoreBefore && !store.hasReachedMessageDisplayLimit) {
+        const loaded = await store.loadOlderMessages()
+        if (!loaded) break
+    }
+    showRoomSettingsModal.value = false
+    await nextTick()
+    const located = await groupMessageListRef.value?.scrollToMessage(anchorId)
+    if (!located) message.warning(t('groupChat.summaryAnchorNotLoaded'))
 }
 
 async function handleRemoveAgent(agentId: string) {
@@ -1098,7 +1307,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         class="workspace-badge"
                         type="button"
                         :title="currentRoom.workspace"
-                        @click="toggleWorkspacePanel"
+                        @click="openWorkspaceFilesPanel"
                     >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -1108,11 +1317,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
                 <div class="header-info">
                     <button
-                        v-if="currentRoom?.workspace && currentRoomCanManage"
+                        v-if="currentRoomCanManage"
                         class="icon-btn workspace-panel-toggle"
                         :class="{ active: showWorkspacePanel }"
-                        :title="t('chat.workspace')"
-                        :aria-label="t('chat.workspace')"
+                        :title="groupToolPanelTitle"
+                        :aria-label="groupToolPanelTitle"
                         :aria-pressed="showWorkspacePanel"
                         @click="toggleWorkspacePanel"
                     >
@@ -1237,7 +1446,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </aside>
                 <div class="group-chat-surface">
                     <div class="group-message-shell">
-                        <GroupMessageList />
+                        <GroupMessageList ref="groupMessageListRef" />
                         <Transition name="approval-float">
                             <div v-if="visibleApproval" class="approval-float-panel">
                                 <div class="approval-float-header">
@@ -1274,73 +1483,161 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </div>
                         </Transition>
                     </div>
-                    <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
+                    <Transition name="summary-inline">
+                        <div
+                            v-if="inlineSummaryStatus"
+                            class="group-summary-inline-status"
+                            :class="`is-${inlineSummaryStatus.status}`"
+                            role="status"
+                            aria-live="polite"
+                        >
+                            <span class="group-summary-inline-label">
+                                {{ roomSummaryStatusLabel(inlineSummaryStatus.status) }}
+                            </span>
+                            <span
+                                v-if="inlineSummaryStatus.status === 'summarizing'"
+                                class="group-summary-inline-spinner"
+                                aria-hidden="true"
+                            ></span>
+                            <svg
+                                v-else-if="inlineSummaryStatus.status === 'success'"
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                class="group-summary-inline-success-icon"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15" />
+                                <path d="M8 12L11 15L16 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <svg
+                                v-else
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                class="group-summary-inline-error-icon"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15" />
+                                <path d="M15 9L9 15M9 9L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <span
+                                v-if="inlineSummaryStatus.status === 'failed' && inlineSummaryStatus.error"
+                                class="group-summary-inline-detail"
+                                :title="inlineSummaryStatus.error"
+                            >
+                                {{ inlineSummaryStatus.error }}
+                            </span>
+                        </div>
+                    </Transition>
+                    <GroupChatInput
+                        ref="groupChatInputRef"
+                        :send-blocked="currentRoomNeedsSummaryConfiguration"
+                        @send="handleSendMessage"
+                        @send-blocked="handleSummaryConfigurationRequired"
+                    />
                 </div>
                 <aside
-                    v-if="showWorkspacePanel && (activeWorkspacePanel === 'browser' ? desktopBrowserAvailable : (toolPanelStore.workspaceDiff || currentRoom?.workspace || filesStore.previewFile?.workspaceRoomId === store.currentRoomId))"
+                    v-if="showWorkspacePanel && (
+                        activeWorkspacePanel === 'files'
+                        || activeWorkspacePanel === 'terminal'
+                        || (activeWorkspacePanel === 'browser' && desktopBrowserAvailable)
+                        || toolPanelStore.workspaceDiff
+                        || currentRoom?.workspace
+                        || filesStore.previewFile?.workspaceRoomId === store.currentRoomId
+                    )"
                     class="group-workspace-panel"
                     :style="workspacePanelStyle"
                 >
                     <div class="group-workspace-resize-handle" @pointerdown="startWorkspaceResize" />
                     <div class="group-workspace-panel-inner">
-                        <div
-                            v-if="desktopBrowserAvailable && !toolPanelStore.workspaceDiff && !filesStore.previewFile"
-                            class="group-workspace-panel-tabs"
-                            role="tablist"
-                        >
-                            <button
-                                type="button"
-                                role="tab"
-                                :class="{ active: activeWorkspacePanel === 'files' }"
-                                :aria-selected="activeWorkspacePanel === 'files'"
-                                @click="selectWorkspacePanel('files')"
-                            >
-                                {{ t('drawer.files') }}
-                            </button>
-                            <button
-                                type="button"
-                                role="tab"
-                                :class="{ active: activeWorkspacePanel === 'browser' }"
-                                :aria-selected="activeWorkspacePanel === 'browser'"
-                                @click="selectWorkspacePanel('browser')"
-                            >
-                                {{ t('browser.title') }}
-                            </button>
-                            <button class="group-workspace-panel-close" type="button" :title="t('files.closePreview')" @click="closeWorkspacePanel">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                            </button>
-                        </div>
-                        <DesktopBrowserPanel
-                            class="group-browser-panel"
-                            v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
-                            @attach="handleBrowserAttachment"
-                        />
                         <WorkspaceDiffPreview
-                            v-else-if="toolPanelStore.workspaceDiff"
+                            v-if="toolPanelStore.workspaceDiff"
                             :custom-close="closeWorkspacePanel"
                         />
                         <FilePreview
                             v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
                             :custom-close="closeWorkspacePanel"
                         />
-                        <template v-else-if="currentRoom?.workspace">
-                            <div v-if="!desktopBrowserAvailable" class="group-workspace-panel-header">
-                                <span>{{ t('drawer.files') }}</span>
-                                <button type="button" :title="t('files.closePreview')" @click="closeWorkspacePanel">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                        <line x1="6" y1="6" x2="18" y2="18" />
+                        <template v-else>
+                            <div class="group-tool-tabs" role="tablist">
+                                <button
+                                    class="group-tool-tab"
+                                    :class="{ active: activeWorkspacePanel === 'files' }"
+                                    type="button"
+                                    role="tab"
+                                    :title="t('drawer.files')"
+                                    :aria-label="t('drawer.files')"
+                                    :aria-selected="activeWorkspacePanel === 'files'"
+                                    @click="selectWorkspacePanel('files')"
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+                                    </svg>
+                                </button>
+                                <button
+                                    class="group-tool-tab"
+                                    :class="{ active: activeWorkspacePanel === 'terminal' }"
+                                    type="button"
+                                    role="tab"
+                                    :title="t('drawer.terminal')"
+                                    :aria-label="t('drawer.terminal')"
+                                    :aria-selected="activeWorkspacePanel === 'terminal'"
+                                    @click="selectWorkspacePanel('terminal')"
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                                        <path d="m7 9 3 3-3 3M13 15h4" />
+                                    </svg>
+                                </button>
+                                <button
+                                    v-if="desktopBrowserAvailable"
+                                    class="group-tool-tab"
+                                    :class="{ active: activeWorkspacePanel === 'browser' }"
+                                    type="button"
+                                    role="tab"
+                                    :title="t('browser.title')"
+                                    :aria-label="t('browser.title')"
+                                    :aria-selected="activeWorkspacePanel === 'browser'"
+                                    @click="selectWorkspacePanel('browser')"
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                                        <path d="M3 9h18" />
+                                        <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                                        <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
                                     </svg>
                                 </button>
                             </div>
-                            <div class="group-workspace-panel-content">
-                                <FilesPanel
-                                    :workspace-room-id="store.currentRoomId"
-                                    :workspace="currentRoom.workspace"
-                                    @attach="handleWorkspaceFileAttach"
+                            <div class="group-tool-content">
+                                <template v-if="currentRoom?.workspace">
+                                    <FilesPanel
+                                        v-show="activeWorkspacePanel === 'files'"
+                                        :workspace-room-id="store.currentRoomId"
+                                        :workspace="currentRoom.workspace"
+                                        @attach="handleWorkspaceFileAttach"
+                                    />
+                                </template>
+                                <div v-else-if="activeWorkspacePanel === 'files'" class="group-workspace-empty">
+                                    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                                        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                    </svg>
+                                    <span>{{ t('chat.setWorkspaceTitle') }}</span>
+                                    <NButton type="primary" size="small" @click="handleOpenWorkspacePicker()">
+                                        {{ t('chat.setWorkspace') }}
+                                    </NButton>
+                                </div>
+                                <TerminalPanel
+                                    v-show="activeWorkspacePanel === 'terminal'"
+                                    class="group-terminal-panel"
+                                    :visible="showWorkspacePanel && activeWorkspacePanel === 'terminal'"
+                                />
+                                <DesktopBrowserPanel
+                                    v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
+                                    class="group-browser-panel"
+                                    @attach="handleBrowserAttachment"
                                 />
                             </div>
                         </template>
@@ -1358,15 +1655,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
             </div>
         </div>
 
-        <!-- Create room modal -->
-        <Teleport to="body">
-            <div v-if="showCreateModal" class="modal-backdrop" @click.self="showCreateModal = false">
-                <div class="modal">
-                    <h3>{{ t('groupChat.createRoom') }}</h3>
-                    <CreateRoomForm @submit="handleCreateRoom" @cancel="showCreateModal = false" />
-                </div>
-            </div>
-        </Teleport>
+        <NDrawer v-model:show="showCreateModal" placement="right" :width="workspacePanelMobile ? '100%' : 520">
+            <NDrawerContent :title="t('groupChat.createRoom')" closable>
+                <CreateRoomForm @submit="handleCreateRoom" @cancel="showCreateModal = false" />
+            </NDrawerContent>
+        </NDrawer>
 
         <Teleport to="body">
             <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
@@ -1585,73 +1878,165 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </NSpace>
                 </template>
             </NModal>
-            <div v-if="showCompressionModal" class="modal-backdrop" @click.self="showCompressionModal = false">
-                <div class="modal room-settings-modal">
-                    <h3>{{ t('groupChat.roomSettings') }}</h3>
-                    <section class="settings-section">
-                        <h4>{{ t('groupChat.inviteCodeSettings') }}</h4>
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.inviteCode') }}</label>
-                            <div class="code-row invite-code-row">
+            <NDrawer
+                v-model:show="showRoomSettingsModal"
+                placement="right"
+                :width="workspacePanelMobile ? '100%' : 520"
+            >
+                <NDrawerContent :title="t('groupChat.roomSettings')" closable>
+                    <div class="room-settings-drawer">
+                        <section class="settings-section">
+                            <h4>{{ t('groupChat.roomName') }}</h4>
+                            <div class="code-row room-name-row">
                                 <NInput
-                                    v-model:value="inviteCodeDraft"
-                                    :placeholder="t('groupChat.inviteCodePlaceholder')"
-                                    :disabled="isSavingInviteCode"
-                                    @keyup.enter="handleSaveInviteCode"
+                                    v-model:value="roomNameDraft"
+                                    :placeholder="t('groupChat.roomNamePlaceholder')"
+                                    :maxlength="120"
+                                    :disabled="isSavingRoomName"
+                                    @keyup.enter="handleSaveRoomName"
                                 />
-                                <NButton size="small" :disabled="isSavingInviteCode" :title="t('groupChat.generateInviteCode')" @click="inviteCodeDraft = generateCode()">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                        <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                                    </svg>
-                                </NButton>
                                 <NButton
                                     type="primary"
-                                    :disabled="!canUpdateInviteCode"
-                                    :loading="isSavingInviteCode"
-                                    @click="handleSaveInviteCode"
+                                    :disabled="!canUpdateRoomName"
+                                    :loading="isSavingRoomName"
+                                    @click="handleSaveRoomName"
                                 >
                                     {{ t('common.update') }}
                                 </NButton>
                             </div>
-                            <p class="form-hint">{{ t('groupChat.inviteCodeRotateHint') }}</p>
+                        </section>
+                        <section class="settings-section">
+                            <h4>{{ t('groupChat.inviteCodeSettings') }}</h4>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.inviteCode') }}</label>
+                                <div class="code-row invite-code-row">
+                                    <NInput
+                                        v-model:value="inviteCodeDraft"
+                                        :placeholder="t('groupChat.inviteCodePlaceholder')"
+                                        :disabled="isSavingInviteCode"
+                                        @keyup.enter="handleSaveInviteCode"
+                                    />
+                                    <NButton size="small" :disabled="isSavingInviteCode" :title="t('groupChat.generateInviteCode')" @click="inviteCodeDraft = generateCode()">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                            <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                        </svg>
+                                    </NButton>
+                                    <NButton
+                                        type="primary"
+                                        :disabled="!canUpdateInviteCode"
+                                        :loading="isSavingInviteCode"
+                                        @click="handleSaveInviteCode"
+                                    >
+                                        {{ t('common.update') }}
+                                    </NButton>
+                                </div>
+                                <p class="form-hint">{{ t('groupChat.inviteCodeRotateHint') }}</p>
+                            </div>
+                        </section>
+                        <section class="settings-section">
+                            <h4>{{ t('chat.setWorkspaceTitle') }}</h4>
+                            <FolderPicker v-model="workspaceValue" />
+                            <NSpace justify="end">
+                                <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
+                                <NButton type="primary" @click="handleSaveWorkspace">{{ t('common.save') }}</NButton>
+                            </NSpace>
+                        </section>
+                        <section ref="summarySettingsSectionRef" class="settings-section">
+                            <h4>{{ t('groupChat.summarySettings') }}</h4>
+                            <p v-if="currentRoomNeedsSummaryConfiguration" class="summary-config-required">
+                                {{ t('groupChat.summaryConfigurationRequired') }}
+                            </p>
+                            <p class="form-hint">{{ t('groupChat.summarySettingsDesc') }}</p>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.summaryProvider') }}</label>
+                                <NSelect
+                                    :value="summaryConfig.summaryProvider"
+                                    :options="summaryProviderOptions"
+                                    @update:value="handleSummaryProviderChange"
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.summaryModel') }}</label>
+                                <NSelect
+                                    v-model:value="summaryConfig.summaryModel"
+                                    :options="summaryModelOptions"
+                                    :disabled="!summaryConfig.summaryProvider"
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.summaryApiMode') }}</label>
+                                <NSelect v-model:value="summaryConfig.summaryApiMode" :options="summaryApiModeOptions" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.summaryEveryTurns') }}</label>
+                                <NInputNumber v-model:value="summaryConfig.summaryEveryTurns" :min="1" :max="1000" :step="1" style="width: 100%" />
+                                <p class="form-hint">{{ t('groupChat.summaryEveryTurnsDesc') }}</p>
+                            </div>
+                            <NButton
+                                type="primary"
+                                :disabled="!summaryConfig.summaryProvider || !summaryConfig.summaryModel || !summaryConfig.summaryApiMode"
+                                @click="handleSaveSummaryConfig"
+                            >
+                                {{ t('groupChat.saveSummaryConfig') }}
+                            </NButton>
+                        </section>
+                    <section class="settings-section summary-state-section">
+                        <div class="summary-state-heading">
+                            <h4>{{ t('groupChat.currentSummary') }}</h4>
+                            <span class="summary-status" :class="`is-${liveRoomSummaryState?.status || 'idle'}`">
+                                {{ roomSummaryStatusLabel(liveRoomSummaryState?.status) }}
+                            </span>
                         </div>
+                        <div v-if="isLoadingRoomSummary" class="summary-loading">{{ t('common.loading') }}</div>
+                        <template v-else>
+                            <div class="summary-meta">
+                                <span>{{ t('groupChat.summaryUpdatedAt') }}：{{ formatSummaryTime(liveRoomSummaryState?.updatedAt) }}</span>
+                                <span>{{ t('groupChat.summarizedTurns') }}：{{ liveRoomSummaryState?.summarizedTurnCount || 0 }}</span>
+                            </div>
+                            <div v-if="liveRoomSummaryState?.lastError" class="summary-error">
+                                {{ liveRoomSummaryState.lastError }}
+                            </div>
+                            <div class="summary-anchor">
+                                <div>
+                                    <strong>{{ t('groupChat.summaryAnchor') }}</strong>
+                                    <template v-if="roomSummaryAnchor">
+                                        <span>{{ roomSummaryAnchor.senderName }} · {{ formatSummaryTime(roomSummaryAnchor.timestamp) }}</span>
+                                        <p>{{ roomSummaryAnchor.content }}</p>
+                                    </template>
+                                    <span v-else>{{ liveRoomSummaryState?.summaryThroughMessageId || t('groupChat.summaryNoAnchor') }}</span>
+                                </div>
+                                <NButton
+                                    v-if="liveRoomSummaryState?.summaryThroughMessageId"
+                                    size="small"
+                                    @click="handleLocateSummaryAnchor"
+                                >
+                                    {{ t('groupChat.locateSummaryAnchor') }}
+                                </NButton>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.summaryContent') }}</label>
+                                <NInput
+                                    v-model:value="roomSummaryDraft"
+                                    type="textarea"
+                                    :rows="12"
+                                    :disabled="liveRoomSummaryState?.status === 'summarizing'"
+                                    :placeholder="t('groupChat.summaryEmpty')"
+                                />
+                                <p class="form-hint">{{ t('groupChat.summaryEditKeepsAnchor') }}</p>
+                            </div>
+                            <NButton
+                                type="primary"
+                                :loading="isSavingRoomSummary"
+                                :disabled="liveRoomSummaryState?.status === 'summarizing'"
+                                @click="handleSaveRoomSummary"
+                            >
+                                {{ t('groupChat.saveSummary') }}
+                            </NButton>
+                        </template>
                     </section>
-                    <section class="settings-section">
-                        <h4>{{ t('groupChat.compressionSettings') }}</h4>
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.triggerTokens') }}</label>
-                            <NInputNumber v-model:value="compressionConfig.triggerTokens" :min="1000" :step="10000" style="width: 100%" />
-                            <p class="form-hint">{{ t('groupChat.triggerTokensDesc') }}</p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.maxHistoryTokens') }}</label>
-                            <NInputNumber v-model:value="compressionConfig.maxHistoryTokens" :min="1000" :step="1000" style="width: 100%" />
-                            <p class="form-hint">{{ t('groupChat.maxHistoryTokensDesc') }}</p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.tailMessageCount') }}</label>
-                            <NInputNumber v-model:value="compressionConfig.tailMessageCount" :min="1" :step="5" style="width: 100%" />
-                            <p class="form-hint">{{ t('groupChat.tailMessageCountDesc') }}</p>
-                        </div>
-                    </section>
-                    <div style="margin-top: 8px">
-                        <NButton
-                            block
-                            :disabled="isCompressing || store.contextStatuses.size > 0"
-                            :loading="isCompressing"
-                            @click="handleForceCompress"
-                        >
-                            {{ isCompressing ? t('groupChat.compressingInProgress') : t('groupChat.compressNow') }}
-                        </NButton>
                     </div>
-                    <div class="modal-actions">
-                        <NSpace justify="end">
-                            <NButton @click="showCompressionModal = false">{{ t('common.cancel') }}</NButton>
-                            <NButton type="primary" @click="handleSaveCompressionConfig">{{ t('groupChat.saveCompression') }}</NButton>
-                        </NSpace>
-                    </div>
-                </div>
-            </div>
+                </NDrawerContent>
+            </NDrawer>
         </Teleport>
 
     </div>
@@ -2306,6 +2691,74 @@ export default defineComponent({ components: { CreateRoomForm } })
     animation: group-chat-surface-fade-in 1.5s ease both;
 }
 
+.group-summary-inline-status {
+    display: flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 6px;
+    width: 520px;
+    max-width: calc(100% - 40px);
+    min-width: 0;
+    box-sizing: border-box;
+    margin: 0 20px;
+    padding: 3px 8px;
+    border-radius: $radius-sm;
+    color: $text-secondary;
+    background: rgba(0, 0, 0, 0.03);
+    font-size: 11px;
+
+    &.is-success {
+        color: #52c41a;
+    }
+
+    &.is-failed {
+        color: #ff4d4f;
+    }
+}
+
+.group-summary-inline-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: $text-secondary;
+    font-family: $font-code;
+    white-space: nowrap;
+}
+
+.group-summary-inline-spinner {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border: 1.5px solid $text-muted;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: group-summary-inline-spin 0.6s linear infinite;
+}
+
+.group-summary-inline-success-icon,
+.group-summary-inline-error-icon {
+    flex-shrink: 0;
+}
+
+.group-summary-inline-detail {
+    min-width: 0;
+    overflow: hidden;
+    color: $text-muted;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.summary-inline-enter-active,
+.summary-inline-leave-active {
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.summary-inline-enter-from,
+.summary-inline-leave-to {
+    opacity: 0;
+    transform: translateY(3px);
+}
+
 .workspace-panel-toggle.active {
     color: var(--accent-primary);
     background: rgba(var(--accent-primary-rgb), 0.1);
@@ -2373,95 +2826,108 @@ export default defineComponent({ components: { CreateRoomForm } })
 
 .group-workspace-panel-inner {
     display: flex;
+    flex-direction: row;
     flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: $bg-main-surface;
+}
+
+.group-tool-tabs {
+    display: flex;
     flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-}
-
-.group-workspace-panel-tabs {
-    height: 47px;
-    padding: 8px 12px;
-    border-bottom: 1px solid $border-color;
-    display: flex;
     align-items: center;
+    flex-shrink: 0;
+    order: 2;
+    width: 48px;
+    height: 100%;
     gap: 4px;
+    padding: 8px 6px;
+    border-inline-start: 1px solid $border-color;
+    background: $bg-sidebar-surface;
     box-sizing: border-box;
-
-    button {
-        height: 30px;
-        padding: 0 10px;
-        border: 0;
-        border-radius: $radius-sm;
-        color: $text-secondary;
-        background: transparent;
-        cursor: pointer;
-
-        &:hover,
-        &.active {
-            color: var(--accent-primary);
-            background: rgba(var(--accent-primary-rgb), 0.1);
-        }
-    }
-
-    .group-workspace-panel-close {
-        width: 30px;
-        padding: 0;
-        margin-inline-start: auto;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
 }
 
-.group-browser-panel {
-    flex: 1;
-    min-height: 0;
-}
+.group-tool-tab {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-secondary;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all $transition-fast;
 
-.group-workspace-panel-header {
-    height: 47px;
-    padding: 8px 12px;
-    border-bottom: 1px solid $border-color;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    box-sizing: border-box;
-    color: $text-primary;
-    font-size: 13px;
-    font-weight: 500;
+    svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
 
-    button {
-        width: 28px;
-        height: 28px;
-        padding: 0;
-        border: 0;
-        border-radius: $radius-sm;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        color: $text-secondary;
-        background: transparent;
-        cursor: pointer;
+    &:hover {
+        color: $text-primary;
+        background: rgba(var(--accent-primary-rgb), 0.06);
+    }
 
-        &:hover {
-            color: $text-primary;
-            background: rgba(var(--accent-primary-rgb), 0.08);
+    &.active {
+        color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.12);
+
+        &::after {
+            content: '';
+            position: absolute;
+            inset-inline-end: -6px;
+            top: 9px;
+            bottom: 9px;
+            width: 2px;
+            border-radius: 2px 0 0 2px;
+            background: var(--accent-primary);
         }
     }
 }
 
-.group-workspace-panel-content {
+.group-tool-content {
+    order: 1;
     flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    background: $bg-main-surface;
 
     > * {
         height: 100%;
         min-height: 0;
     }
+}
+
+.group-workspace-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    color: $text-muted;
+    text-align: center;
+    font-size: 13px;
+
+    > svg {
+        color: $text-secondary;
+    }
+}
+
+.group-browser-panel,
+.group-terminal-panel {
+    min-height: 0;
 }
 
 @media (max-width: $breakpoint-mobile) {
@@ -2690,8 +3156,8 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
-.room-settings-modal {
-    width: 480px;
+.room-settings-drawer {
+    min-width: 0;
 }
 
 .settings-section {
@@ -2703,6 +3169,107 @@ export default defineComponent({ components: { CreateRoomForm } })
         font-weight: 600;
         color: $text-primary;
     }
+}
+
+.summary-state-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+
+    h4 {
+        margin-bottom: 0;
+    }
+}
+
+.summary-config-required {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: $radius-sm;
+    color: #d97706;
+    background: rgba(217, 119, 6, 0.1);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.summary-status {
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: $text-muted;
+    background: rgba(var(--text-primary-rgb), 0.06);
+
+    &.is-summarizing {
+        color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.12);
+    }
+
+    &.is-success {
+        color: #36ad6a;
+        background: rgba(54, 173, 106, 0.12);
+    }
+
+    &.is-failed {
+        color: #d03050;
+        background: rgba(208, 48, 80, 0.12);
+    }
+}
+
+.summary-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: 10px 0;
+    color: $text-muted;
+    font-size: 11px;
+}
+
+.summary-error {
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: $radius-sm;
+    color: #d03050;
+    background: rgba(208, 48, 80, 0.08);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.summary-anchor {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding: 10px;
+    border: 1px solid $border-color;
+    border-radius: $radius-sm;
+    color: $text-secondary;
+    font-size: 12px;
+
+    strong,
+    span {
+        display: block;
+    }
+
+    span {
+        margin-top: 3px;
+        color: $text-muted;
+    }
+
+    p {
+        margin: 6px 0 0;
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow-wrap: anywhere;
+    }
+}
+
+.summary-loading {
+    padding: 20px 0;
+    color: $text-muted;
+    text-align: center;
 }
 
 .form-group {
@@ -2799,6 +3366,12 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+@keyframes group-summary-inline-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 // ─── Mobile ──────────────────────────────────────────────
 
 @media (max-width: $breakpoint-mobile) {
@@ -2821,6 +3394,11 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     .chat-header {
         padding: 16px 12px 16px 52px;
+    }
+
+    .group-summary-inline-status {
+        max-width: calc(100% - 24px);
+        margin: 0 12px;
     }
 
     .agent-avatar-rail {

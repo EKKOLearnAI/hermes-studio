@@ -37,6 +37,9 @@ export interface QueuedRun {
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   instructions?: string
+  groupSystemPrompt?: string
+  groupRoomId?: string
+  groupAgentId?: string
   profile: string
   workspace?: string | null
   source?: ChatRunSource

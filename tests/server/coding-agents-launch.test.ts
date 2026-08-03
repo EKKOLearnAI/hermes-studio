@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -478,6 +478,124 @@ describe('coding agent launch preparation', () => {
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('--setting-sources local')
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
+  })
+
+  it('writes group prompts only to the current hidden run files and preserves single-chat prompts', async () => {
+    const home = makeHome()
+    const sharedLaunch = {
+      profile: 'default',
+      provider: 'custom_group_prompt',
+      model: 'test-model',
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-test',
+    }
+    const groupSystemPrompt = [
+      'GROUP_ONLY_DYNAMIC_PROMPT',
+      '当前房间：测试群聊',
+      '## 图片格式',
+    ].join('\n')
+
+    const groupClaude = await prepareCodingAgentLaunch('claude-code', {
+      ...sharedLaunch,
+      sessionId: 'gc-run-claude',
+      agentSessionId: 'gc-agent-claude',
+      groupSystemPrompt,
+      groupRuntimeScope: {
+        roomId: 'room-1',
+        agentId: 'room-agent-claude',
+      },
+    })
+    const singleClaude = await prepareCodingAgentLaunch('claude-code', {
+      ...sharedLaunch,
+      sessionId: 'single-run-claude',
+      agentSessionId: 'single-agent-claude',
+    })
+    const groupCodex = await prepareCodingAgentLaunch('codex', {
+      ...sharedLaunch,
+      sessionId: 'gc-run-codex',
+      agentSessionId: 'gc-agent-codex',
+      groupSystemPrompt,
+      groupRuntimeScope: {
+        roomId: 'room-1',
+        agentId: 'room-agent-codex',
+      },
+    })
+    const singleCodex = await prepareCodingAgentLaunch('codex', {
+      ...sharedLaunch,
+      sessionId: 'single-run-codex',
+      agentSessionId: 'single-agent-codex',
+    })
+
+    expect(groupClaude.rootDir).not.toBe(singleClaude.rootDir)
+    expect(groupCodex.rootDir).not.toBe(singleCodex.rootDir)
+    expect(groupClaude.rootDir).toContain(join('custom_group_prompt', 'claude-code', 'group-chat'))
+    expect(groupCodex.rootDir).toContain(join('custom_group_prompt', 'codex', 'group-chat'))
+    expect(groupClaude.rootDir).not.toContain(join('claude-code', 'runs'))
+    expect(groupCodex.rootDir).not.toContain(join('codex', 'runs'))
+
+    const groupClaudePrompt = readFileSync(join(groupClaude.rootDir, 'hermes-rules.md'), 'utf-8')
+    const singleClaudePrompt = readFileSync(join(singleClaude.rootDir, 'hermes-rules.md'), 'utf-8')
+    const groupCodexConfig = readFileSync(join(groupCodex.rootDir, 'config.toml'), 'utf-8')
+    const singleCodexConfig = readFileSync(join(singleCodex.rootDir, 'config.toml'), 'utf-8')
+
+    expect(groupClaudePrompt).toContain(groupSystemPrompt)
+    expect(groupCodexConfig).toContain('GROUP_ONLY_DYNAMIC_PROMPT')
+    expect(singleClaudePrompt).toContain('# 输出格式规范')
+    expect(singleCodexConfig).toContain('# 输出格式规范')
+    expect(singleClaudePrompt).not.toContain('GROUP_ONLY_DYNAMIC_PROMPT')
+    expect(singleCodexConfig).not.toContain('GROUP_ONLY_DYNAMIC_PROMPT')
+
+    expect(groupClaude.args).toContain('--append-system-prompt-file')
+    expect(groupClaude.args).not.toContain('--append-system-prompt')
+    expect(groupClaude.args.join(' ')).not.toContain('GROUP_ONLY_DYNAMIC_PROMPT')
+    expect(groupCodex.args.join(' ')).not.toContain('developer_instructions=')
+    expect(groupCodex.args.join(' ')).not.toContain('GROUP_ONLY_DYNAMIC_PROMPT')
+
+    const updatedGroupPrompt = `${groupSystemPrompt}\nUPDATED_SAME_FILE`
+    const nextGroupClaude = await prepareCodingAgentLaunch('claude-code', {
+      ...sharedLaunch,
+      sessionId: 'gc-run-claude-next',
+      agentSessionId: 'gc-agent-claude-next',
+      groupSystemPrompt: updatedGroupPrompt,
+      groupRuntimeScope: {
+        roomId: 'room-1',
+        agentId: 'room-agent-claude',
+      },
+    })
+    const nextGroupCodex = await prepareCodingAgentLaunch('codex', {
+      ...sharedLaunch,
+      sessionId: 'gc-run-codex-next',
+      agentSessionId: 'gc-agent-codex-next',
+      groupSystemPrompt: updatedGroupPrompt,
+      groupRuntimeScope: {
+        roomId: 'room-1',
+        agentId: 'room-agent-codex',
+      },
+    })
+
+    expect(nextGroupClaude.rootDir).toBe(groupClaude.rootDir)
+    expect(nextGroupCodex.rootDir).toBe(groupCodex.rootDir)
+    expect(readFileSync(join(nextGroupClaude.rootDir, 'hermes-rules.md'), 'utf-8')).toContain('UPDATED_SAME_FILE')
+    expect(readFileSync(join(nextGroupCodex.rootDir, 'config.toml'), 'utf-8')).toContain('UPDATED_SAME_FILE')
+
+    expect(existsSync(join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_group_prompt',
+      'claude-code',
+      'hermes-rules.md',
+    ))).toBe(false)
+    expect(existsSync(join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_group_prompt',
+      'codex',
+      'config.toml',
+    ))).toBe(false)
   })
 
   it('uses Claude Code auto permission mode for scoped root launches', async () => {

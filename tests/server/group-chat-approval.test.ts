@@ -5,7 +5,7 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat approval and context baseline', () => {
@@ -18,6 +18,7 @@ describe('group chat approval and context baseline', () => {
     harness = await createTestGroupChatServer()
     groupServer = harness.groupServer
     port = harness.port
+    vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
     groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
     groupServer.getStorage().addRoomAgent('room-1', 'agent-1', 'default', 'Agent', '', 0)
   })
@@ -27,12 +28,7 @@ describe('group chat approval and context baseline', () => {
   })
 
   async function joinPair() {
-    const agentSessionId = groupBridgeSessionId(
-      'room-1',
-      'default',
-      'Agent',
-      String(groupServer.getStorage().getRoom('room-1')?.sessionSeed || '0'),
-    )
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
@@ -83,6 +79,47 @@ describe('group chat approval and context baseline', () => {
     const joined = await emitAck<any>(lateJoiner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     expect(joined.contextStatuses).toEqual([])
+  })
+
+  it('accepts the matching ready event after a fresh runtime session is disposed', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const replying = once<any>(human, 'context_status')
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', agentSessionId })
+    await expect(replying).resolves.toMatchObject({ agentName: 'Agent', status: 'replying' })
+
+    // Fresh group runs are removed from AgentClients immediately after they
+    // emit ready. The terminal status must still be matched against the
+    // session that created the stored replying state.
+    vi.mocked(groupServer.agentClients.agentSessionIsCurrent).mockReturnValue(false)
+    const ready = once<any>(human, 'context_status')
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'ready', agentSessionId })
+    await expect(ready).resolves.toMatchObject({ agentName: 'Agent', status: 'ready' })
+
+    const lateJoiner = await connectGroupChatClient(port, 'human-2', 'Late')
+    harness.sockets.push(lateJoiner)
+    const joined = await emitAck<any>(lateJoiner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(joined.contextStatuses).toEqual([])
+  })
+
+  it('does not let a late ready event clear a newer fresh run', async () => {
+    const { agent, agentSessionId: firstSessionId } = await joinPair()
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', agentSessionId: firstSessionId })
+    await wait()
+
+    const secondSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', agentSessionId: secondSessionId })
+    await wait()
+
+    vi.mocked(groupServer.agentClients.agentSessionIsCurrent).mockReturnValue(false)
+    agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'ready', agentSessionId: firstSessionId })
+    await wait()
+
+    const lateJoiner = await connectGroupChatClient(port, 'human-2', 'Late')
+    harness.sockets.push(lateJoiner)
+    const joined = await emitAck<any>(lateJoiner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(joined.contextStatuses).toEqual([
+      expect.objectContaining({ agentName: 'Agent', status: 'replying' }),
+    ])
   })
 
   it('relays approval requested with default choices', async () => {

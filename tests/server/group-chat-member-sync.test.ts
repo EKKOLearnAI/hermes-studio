@@ -286,6 +286,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
+      getRoomSummaryService: () => ({ runExclusive: async (_roomId: string, task: () => unknown) => task() }),
       deleteRoomRuntimeState: vi.fn(async () => { calls.push('runtime-delete') }),
     }
     setGroupChatServer(chatServer as any)
@@ -311,6 +312,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
+      getRoomSummaryService: () => ({ runExclusive: async (_roomId: string, task: () => unknown) => task() }),
       deleteRoomRuntimeState: vi.fn(async () => { throw Object.assign(new Error('still running'), { status: 409 }) }),
     }
     setGroupChatServer(chatServer as any)
@@ -543,6 +545,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
+      getRoomSummaryService: () => ({ runExclusive: async (_roomId: string, task: () => unknown) => task() }),
       clearRoomRuntimeState: vi.fn(async () => { calls.push('runtime-clear') }),
     }
     setGroupChatServer(chatServer as any)
@@ -569,6 +572,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
+      getRoomSummaryService: () => ({ runExclusive: async (_roomId: string, task: () => unknown) => task() }),
       clearRoomRuntimeState: vi.fn(async () => { throw Object.assign(new Error('still running'), { status: 409 }) }),
     }
     setGroupChatServer(chatServer as any)
@@ -646,6 +650,38 @@ describe('Group Chat member/agent identity sync', () => {
     expect(interruptAck).toHaveBeenCalledWith({ error: 'Access denied' })
     expect(approvalAck).toHaveBeenCalledWith({ error: 'Access denied' })
     expect(server.agentClients.interruptAgent).not.toHaveBeenCalled()
+  })
+
+  it('clears reconnectable replying state after an agent interrupt succeeds', async () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', { hasOnlineMember: vi.fn(() => true) }]])
+    server.contextStatusState = new Map([['room-1', new Map([[
+      'Worker',
+      {
+        agentName: 'Worker',
+        status: 'replying',
+        agentSessionId: 'fresh-run-1',
+      },
+    ]])]])
+    server.agentClients = { interruptAgent: vi.fn(async () => {}) }
+    server.canSocketManageRoom = vi.fn(() => true)
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    const ack = vi.fn()
+
+    await server.handleInterruptAgent(
+      { id: 'socket-1' },
+      { roomId: 'room-1', agentName: 'Worker' },
+      ack,
+    )
+
+    expect(server.contextStatusState.size).toBe(0)
+    expect(emit).toHaveBeenCalledWith('context_status', {
+      roomId: 'room-1',
+      agentName: 'Worker',
+      status: 'ready',
+    })
+    expect(ack).toHaveBeenCalledWith({ ok: true })
   })
 
   it('denies runtime agent sockets realtime management actions even after they join the room', async () => {
@@ -807,6 +843,7 @@ describe('Group Chat member/agent identity sync', () => {
     setGroupChatServer({
       getStorage: () => storage,
       agentClients: {},
+      ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
 
     const handler = routeHandler('/api/hermes/group-chat/rooms', 'POST')

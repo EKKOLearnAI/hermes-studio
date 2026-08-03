@@ -174,6 +174,7 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('message', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('approval.requested', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
+    expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
   })
 
   it('joins a room from REST detail and realtime ack state', async () => {
@@ -409,6 +410,17 @@ describe('group chat store baseline lifecycle', () => {
     store.rooms = [room]
     emitSocket('typing', { roomId: 'room-1', userId: 'user-2', userName: 'Bob' })
     store.contextStatuses.set('Agent', { agentName: 'Agent', status: 'replying' })
+    store.roomSummaryStates.set('room-1', {
+      roomId: 'room-1',
+      summary: 'old summary',
+      summaryThroughMessageId: 'msg-1',
+      summaryThroughMessageTimestamp: 1,
+      summarizedTurnCount: 1,
+      status: 'success',
+      version: 1,
+      updatedAt: 1,
+      lastError: null,
+    })
     store.pendingApprovals.set('approval-1', {
       roomId: 'room-1',
       agentName: 'Agent',
@@ -427,10 +439,65 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.messages).toEqual([])
     expect(store.typingNames).toEqual([])
     expect(store.contextStatuses.size).toBe(0)
+    expect(store.roomSummaryStates.has('room-1')).toBe(false)
     expect(store.rooms[0].totalTokens).toBe(0)
 
     emitSocket('room_cleared', { roomId: 'room-1', totalTokens: 0 })
     expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('tracks live rolling-summary status by room', async () => {
+    const store = await loadStore()
+    await store.connect()
+
+    emitSocket('room_summary_updated', {
+      roomId: 'room-1',
+      summary: 'Current state',
+      summaryThroughMessageId: 'message-8',
+      summaryThroughMessageTimestamp: 8,
+      summarizedTurnCount: 8,
+      status: 'success',
+      version: 2,
+      updatedAt: 9,
+      lastError: null,
+    })
+
+    expect(store.roomSummaryStates.get('room-1')).toMatchObject({
+      summary: 'Current state',
+      status: 'success',
+      summarizedTurnCount: 8,
+      summaryThroughMessageId: 'message-8',
+    })
+  })
+
+  it('settles local agent activity when interrupt succeeds', async () => {
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+    store.contextStatuses.set('Agent', { agentName: 'Agent', status: 'replying' })
+    store.messages = [{
+      id: 'agent-stream',
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      content: 'partial answer',
+      timestamp: 2,
+      role: 'assistant',
+      isStreaming: true,
+    }]
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: any, ack?: Function) => {
+      if (event === 'interrupt_agent' && ack) ack({ ok: true })
+      return groupChatApiMock.socket
+    })
+
+    await store.interruptAgent('Agent')
+
+    expect(store.contextStatuses.has('Agent')).toBe(false)
+    expect(store.messages[0]).toMatchObject({
+      id: 'agent-stream',
+      content: 'partial answer',
+      isStreaming: false,
+    })
   })
 
   it('tracks pending approvals and removes them when resolved', async () => {
@@ -457,13 +524,17 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.pendingApprovals.size).toBe(0)
   })
 
-  it('updates the current room token display on room_updated', async () => {
+  it('updates the current room name and token display on room_updated', async () => {
     const store = await loadStore()
     store.rooms = [{ ...room, totalTokens: 7 }]
+    store.currentRoomId = 'room-1'
+    store.roomName = 'Room 1'
     await store.connect()
 
-    emitSocket('room_updated', { roomId: 'room-1', totalTokens: 42 })
+    emitSocket('room_updated', { roomId: 'room-1', name: 'Renamed Room', totalTokens: 42 })
 
     expect(store.rooms[0].totalTokens).toBe(42)
+    expect(store.rooms[0].name).toBe('Renamed Room')
+    expect(store.roomName).toBe('Renamed Room')
   })
 })

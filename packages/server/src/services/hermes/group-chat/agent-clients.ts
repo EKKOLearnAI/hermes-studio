@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client'
-import { createHash, randomBytes } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { countTokens } from '../../../lib/context-compressor'
@@ -13,13 +13,13 @@ import {
 } from '../run-chat/workspace-diff-tracker'
 import type { ContentBlock } from '../run-chat/types'
 import type { StoredMessage } from '../context-engine/types'
-import { buildProjectedGroupChatHistory, isWorkspaceDiffToolMessage, projectGroupChatMessage } from './context-projection'
-import { sliceGroupMessagesForSnapshotTail } from './group-message-ordering'
+import type { GroupRoomSummaryService, GroupRuntimeContext } from './room-summary'
 import {
     isAllAgentsMentioned,
     resolveMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
+import { buildAgentInstructions } from '../context-engine/prompt'
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
@@ -84,6 +84,11 @@ export type GroupAgentSessionConfig = {
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
 type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
+type AgentActivityBroadcaster = (
+    roomId: string,
+    agentName: string,
+    status: 'compressing' | 'replying' | 'ready',
+) => void
 
 function isUnknownBridgeSessionError(err: unknown): boolean {
     const message = String((err as any)?.message || err || '').toLowerCase()
@@ -187,6 +192,9 @@ export interface GroupChatRunService {
             provider?: string
             apiMode?: string
             instructions?: string
+            group_system_prompt?: string
+            group_room_id?: string
+            group_agent_id?: string
             workspace?: string | null
             source?: string
             session_source?: 'workflow'
@@ -195,6 +203,7 @@ export interface GroupChatRunService {
             profile?: string
             reasoning_effort?: string
             background_delegation_enabled?: boolean
+            context_compression_enabled?: boolean
         },
         options?: {
             profile?: string
@@ -208,6 +217,7 @@ export interface GroupChatRunService {
         error?: string
     }>
     abortSession(sessionId: string, reason?: string): Promise<void>
+    disposeSession?(sessionId: string): Promise<void>
 }
 
 // ─── Agent Client (single connection) ─────────────────────────
@@ -227,7 +237,6 @@ class AgentClient {
     private joinedRooms = new Set<string>()
     private handlers: AgentEventHandler
     private _reconnecting = false
-    private contextEngine: any = null
     private storage: any = null
     private pendingToolCallIds = new Map<string, string[]>()
     private pendingToolBaseIds = new Map<string, string>()
@@ -236,6 +245,7 @@ class AgentClient {
     private bridgeContextCache = new Map<string, BridgeContextCache>()
     private workspaceDiffRuns = new Map<string, WorkspaceDiffRunState>()
     private interruptVersions = new Map<string, number>()
+    private activeSessions = new Map<string, string>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private chatRunService: GroupChatRunService | null = null
 
@@ -259,20 +269,6 @@ class AgentClient {
 
     get id(): string | undefined {
         return this.socket?.id
-    }
-
-    private sessionConfig(): GroupAgentSessionConfig {
-        return {
-            agent: this.agent,
-            provider: this.provider,
-            model: this.model,
-            apiMode: this.apiMode,
-            reasoningEffort: this.reasoningEffort,
-        }
-    }
-
-    setContextEngine(engine: any): void {
-        this.contextEngine = engine
     }
 
     setStorage(storage: any): void {
@@ -390,8 +386,8 @@ class AgentClient {
     }
 
     async interrupt(roomId: string): Promise<boolean> {
-        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
+        const sessionId = this.activeSessions.get(roomId)
+        if (!sessionId) return true
         if (this.agent !== 'hermes') {
             if (!this.chatRunService) throw new Error('Chat run service is not ready')
             await this.chatRunService.abortSession(sessionId, 'Interrupted by group chat user')
@@ -469,6 +465,14 @@ class AgentClient {
 
     getJoinedRooms(): string[] {
         return Array.from(this.joinedRooms)
+    }
+
+    getActiveSessionId(roomId: string): string | undefined {
+        return this.activeSessions.get(roomId)
+    }
+
+    isActiveSession(roomId: string, sessionId: string): boolean {
+        return this.activeSessions.get(roomId) === sessionId
     }
 
     private finiteToken(value: unknown): number | undefined {
@@ -607,10 +611,8 @@ class AgentClient {
     }
 
     private roomSessionIsCurrent(roomId: string, sessionId: string): boolean {
-        const room = this.storage?.getRoom?.(roomId)
-        if (!room) return false
-        const seed = String(room.sessionSeed || '0')
-        return groupBridgeSessionId(roomId, this.profile, this.name, seed, this.sessionConfig()) === sessionId
+        return Boolean(this.storage?.getRoom?.(roomId))
+            && this.activeSessions.get(roomId) === sessionId
     }
 
     private markWorkspaceDiffAborted(roomId: string): WorkspaceDiffRunState[] {
@@ -680,52 +682,94 @@ class AgentClient {
      * Called by AgentClients.processMentions() — no socket round-trip needed.
      * onStatus is called to report context compression progress.
      */
-    private groupRuntimeInput(roomId: string, msg: MentionMessage): string | ContentBlock[] {
+    private groupRuntimeInput(msg: MentionMessage, runtimeContext: GroupRuntimeContext): string | ContentBlock[] {
         const routedPrefix = isAllAgentsMentioned(msg.content)
             ? '群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。'
             : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
-        const history = this.buildRoomEstimateHistory(roomId)
-        const maxHistoryTokens = Math.max(1024, Number(this.storage?.getRoom?.(roomId)?.maxHistoryTokens || 32000))
-        const retained: GroupEstimateMessage[] = []
-        let retainedTokens = 0
-        for (let index = history.length - 1; index >= 0; index--) {
-            const item = history[index]
-            const tokens = countTokens(item.content)
-            if (retained.length > 0 && retainedTokens + tokens > maxHistoryTokens) break
-            retained.unshift(item)
-            retainedTokens += tokens
-        }
-        const transcript = retained
-            .map(item => `${item.role === 'assistant' ? 'Agent' : '成员'}：${item.content}`)
+        const transcript = runtimeContext.history
+            .map(item => `${item.role === 'assistant' ? '智能体' : '成员'}「${item.senderName}」：${item.content}`)
             .join('\n\n')
         const context = [
-            `你是群聊 Agent「${this.name}」。`,
-            this.description ? `Agent 描述：${this.description}` : '',
             routedPrefix,
-            transcript ? `以下是群聊上下文，请结合上下文回复当前消息：\n<group_chat_context>\n${transcript}\n</group_chat_context>` : '',
+            runtimeContext.summary
+                ? `以下是截至总结锚点的群聊总结：\n<group_chat_summary>\n${runtimeContext.summary}\n</group_chat_summary>`
+                : '',
+            transcript
+                ? `以下是总结锚点之后、当前消息之前的群聊记录：\n<group_chat_history>\n${transcript}\n</group_chat_history>`
+                : '',
         ].filter(Boolean).join('\n\n')
         const rawInput = msg.input || msg.content
         if (isContentBlockArray(rawInput)) {
+            let markedCurrent = false
             return [
                 { type: 'text', text: context },
-                ...rawInput.map((block) => block.type === 'text'
-                    ? { ...block, text: stripMentionRoutingTokens(String(block.text || msg.content), this.name) || msg.content }
-                    : block),
+                ...rawInput.map((block) => {
+                    if (block.type !== 'text') return block
+                    const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name) || msg.content
+                    if (markedCurrent) return { ...block, text }
+                    markedCurrent = true
+                    return { ...block, text: `当前消息：${text}` }
+                }),
             ]
         }
         return `${context}\n\n当前消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
     }
 
+    private groupSystemPrompt(roomId: string): string {
+        const room = this.storage?.getRoom?.(roomId)
+        const rawMembers = this.storage?.getRoomMembers?.(roomId)
+        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const humanMembers = Array.isArray(rawMembers) ? rawMembers : []
+        const roomAgents = Array.isArray(rawAgents) ? rawAgents : []
+        const members = [
+            ...humanMembers.map((member: any) => ({
+                userId: String(member.userId || member.id || ''),
+                name: String(member.name || ''),
+                description: String(member.description || ''),
+            })),
+            ...roomAgents.map((agent: any) => ({
+                userId: String(agent.agentId || agent.id || ''),
+                name: String(agent.name || ''),
+                description: String(agent.description || ''),
+            })),
+        ].filter(member => member.name)
+        return buildAgentInstructions({
+            agentName: this.name,
+            roomName: String(room?.name || roomId),
+            agentDescription: this.description,
+            memberNames: members.map(member => member.name),
+            members,
+        })
+    }
+
+    private groupConversationHistory(runtimeContext: GroupRuntimeContext): Array<{ role: 'user' | 'assistant'; content: string }> {
+        const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+        if (runtimeContext.summary) {
+            history.push({
+                role: 'user',
+                content: `[群聊历史总结]\n${runtimeContext.summary}`,
+            })
+        }
+        for (const message of runtimeContext.history) {
+            history.push({
+                role: message.role,
+                content: `${message.senderName}：${message.content}`,
+            })
+        }
+        return history
+    }
+
     private async replyToMentionWithChatRun(
         roomId: string,
         msg: MentionMessage,
+        runtimeContext: GroupRuntimeContext,
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
         if (!this.chatRunService) throw new Error('Chat run service is not ready')
         const responseRunId = groupMessageId(roomId, this.profile, this.name)
         const runMessageId = groupMessagePartId(responseRunId, 0)
-        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
+        const sessionId = groupRuntimeSessionId(roomId, this.profile, this.name)
+        this.activeSessions.set(roomId, sessionId)
         const interruptVersion = this.interruptVersion(sessionId)
         const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
             onStatus?.(status, { agentSessionId: sessionId })
@@ -769,13 +813,17 @@ class AgentClient {
                 : this.agent === 'claude'
                     ? 'claude-code'
                     : 'codex'
+            const groupSystemPrompt = this.groupSystemPrompt(roomId)
             const result = await this.chatRunService.runAndWait({
-                input: this.groupRuntimeInput(roomId, msg),
+                input: this.groupRuntimeInput(msg, runtimeContext),
                 session_id: sessionId,
                 model: this.model || undefined,
                 provider: this.provider || undefined,
                 ...(this.apiMode ? { apiMode: this.apiMode } : {}),
-                instructions: this.description || undefined,
+                instructions: groupSystemPrompt,
+                group_system_prompt: groupSystemPrompt,
+                group_room_id: roomId,
+                group_agent_id: this.agentId,
                 workspace: workspace || null,
                 source: 'workflow',
                 session_source: 'workflow',
@@ -784,6 +832,7 @@ class AgentClient {
                 profile: this.profile,
                 reasoning_effort: this.reasoningEffort || undefined,
                 background_delegation_enabled: false,
+                context_compression_enabled: false,
             }, {
                 profile: this.profile,
                 timeoutMs: 120000,
@@ -854,18 +903,23 @@ class AgentClient {
             try { endStream() } catch { /* stale room session */ }
             if (this.roomSessionIsCurrent(roomId, sessionId)) {
                 try { this.stopTyping(roomId) } catch { /* disconnected */ }
+                this.activeSessions.delete(roomId)
             }
+            await this.chatRunService.disposeSession?.(sessionId).catch((err: any) => {
+                logger.warn(`[AgentClients] failed to dispose temporary group chat session ${sessionId}: ${err.message || err}`)
+            })
         }
     }
 
     async replyToMention(
         roomId: string,
         msg: MentionMessage,
+        runtimeContext: GroupRuntimeContext = { summary: '', history: [] },
         onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
         if (this.agent !== 'hermes') {
-            await this.replyToMentionWithChatRun(roomId, msg, onStatus)
+            await this.replyToMentionWithChatRun(roomId, msg, runtimeContext, onStatus)
             return
         }
         const runMessageId = groupMessageId(roomId, this.profile, this.name)
@@ -885,12 +939,11 @@ class AgentClient {
             // Notify room that agent is typing
             this.startTyping(roomId)
 
-            // Build compressed context if context engine is available
-            let conversationHistory: Array<{ role: string; content: string }> = []
-            let instructions: string | undefined
+            const conversationHistory = this.groupConversationHistory(runtimeContext)
+            let instructions = this.groupSystemPrompt(roomId)
             const bridge = new AgentBridgeClient()
-            const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed, this.sessionConfig())
+            const sessionId = groupRuntimeSessionId(roomId, this.profile, this.name)
+            this.activeSessions.set(roomId, sessionId)
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                 onStatus?.(status, { ...extra, agentSessionId: sessionId })
@@ -935,72 +988,7 @@ class AgentClient {
             }
             const modelContext = await resolveGroupAgentModelContext(this.profile, this.model, this.provider)
 
-            if (this.contextEngine && this.storage) {
-                try {
-                    logger.debug(`[AgentClients] ${this.name}: building context...`)
-                    // Get room members with descriptions for context
-                    const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
-                    const memberNames = roomMembers.map((m: any) => m.name)
-                    const members = roomMembers.map((m: any) => ({ userId: m.userId, name: m.name, description: m.description }))
-
-                    // Get room compression config
-                    const roomInfo = this.storage.getRoom(roomId)
-                    const compression = roomInfo ? {
-                        triggerTokens: roomInfo.triggerTokens,
-                        maxHistoryTokens: roomInfo.maxHistoryTokens,
-                        tailMessageCount: roomInfo.tailMessageCount,
-                    } : undefined
-
-                    const ctx = await this.contextEngine.buildContext({
-                        roomId,
-                        agentId: this.agentId,
-                        agentName: this.name,
-                        agentDescription: this.description,
-                        agentSocketId: this.socket?.id || '',
-                        roomName: roomId,
-                        memberNames,
-                        members,
-                        upstream: '',
-                        apiKey: null,
-                        currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
-                        compression,
-                        profile: this.profile,
-                        onProgress: (event: { status: 'compressing'; messageCount: number; tokenCount: number }) => {
-                            reportStatus('compressing', {
-                                messageCount: event.messageCount,
-                                totalTokens: event.tokenCount,
-                            })
-                        },
-                        contextTokenEstimator: async (history: Array<{ role: 'user' | 'assistant'; content: string }>, estimateInstructions: string) => {
-                            return this.estimateGroupContextTokens(
-                                roomId,
-                                sessionId,
-                                bridge,
-                                history,
-                                estimateInstructions,
-                                modelContext,
-                                'build',
-                            )
-                        },
-                    })
-                    if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
-                        await stopStaleStartedRun?.()
-                        return
-                    }
-                    conversationHistory = ctx.conversationHistory
-                    instructions = ctx.instructions
-                    if (typeof ctx.meta.contextTokenEstimate === 'number' && Number.isFinite(ctx.meta.contextTokenEstimate)) {
-                        this.storage.updateRoomTotalTokens?.(roomId, ctx.meta.contextTokenEstimate)
-                        reportStatus('replying', { totalTokens: ctx.meta.contextTokenEstimate })
-                    }
-                    logger.debug(`[AgentClients] ${this.name}: context built — historyLen=${conversationHistory.length}, meta=%j`, ctx.meta)
-                    reportStatus('replying')
-                } catch (err: any) {
-                    logger.warn(`[AgentClients] ${this.name}: context engine failed: ${err.message}`)
-                    reportStatus('replying')
-                    // Degrade: continue without context
-                }
-            }
+            reportStatus('replying')
 
             // Keep routing explicit while removing only the mention tokens that
             // selected this agent. This avoids making @all look like an
@@ -1017,7 +1005,7 @@ class AgentClient {
                 })
                 : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
             const runPrompt = 'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.'
-            instructions = instructions ? `${runPrompt}\n${instructions}` : runPrompt
+            instructions = `${instructions}\n\n${runPrompt}`
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
@@ -1152,7 +1140,6 @@ class AgentClient {
                 }, sessionId)
                 this.emitMessageStreamEnd(roomId, streamMessageId, sessionId)
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', streamMessageId)
-                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
                 reportStatus('ready')
                 return
             }
@@ -1188,52 +1175,16 @@ class AgentClient {
             } else {
                 onStatus?.('ready')
             }
+        } finally {
+            if (activeSessionId) {
+                if (this.activeSessions.get(roomId) === activeSessionId) this.activeSessions.delete(roomId)
+                await new AgentBridgeClient().destroy(activeSessionId, this.profile).catch((err: any) => {
+                    if (!isUnknownBridgeSessionError(err)) {
+                        logger.warn(`[AgentClients] ${this.name}: failed to destroy temporary bridge session: ${err.message || err}`)
+                    }
+                })
+            }
         }
-    }
-
-    private async refreshRoomFullContextEstimate(
-        roomId: string,
-        sessionId: string,
-        bridge: AgentBridgeClient,
-        instructions?: string,
-        modelContext: GroupModelContext = { model: '', provider: '' },
-    ): Promise<void> {
-        if (!this.storage?.getMessagesForContext) return
-        try {
-            const history = this.buildRoomEstimateHistory(roomId)
-            const cachedTokens = await this.estimateGroupContextTokens(
-                roomId,
-                sessionId,
-                bridge,
-                history,
-                instructions,
-                modelContext,
-                'final',
-            )
-            if (cachedTokens == null || cachedTokens <= 0) return
-            if (!this.roomSessionIsCurrent(roomId, sessionId)) return
-            const rounded = Math.floor(cachedTokens)
-            this.storage.updateRoomTotalTokens?.(roomId, rounded)
-            this.emitContextStatus(roomId, 'replying', { totalTokens: rounded }, sessionId)
-        } catch (err: any) {
-            logger.warn(`[GroupChat] failed to refresh final context estimate room=${roomId} agent=${this.name}: ${err.message}`)
-        }
-    }
-
-    private buildRoomEstimateHistory(roomId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
-        const messages: StoredMessage[] = this.storage?.getMessagesForContext?.(roomId) || []
-        const snapshot = this.storage?.getContextSnapshot?.(roomId)
-        if (snapshot?.summary) {
-            const tail = sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId).messages
-            return buildProjectedGroupChatHistory(snapshot.summary, tail, { agentId: this.agentId, socketId: this.socket?.id, name: this.name })
-        }
-        return messages
-            .filter((message: any) => !isWorkspaceDiffToolMessage(message))
-            .map((message: any) => this.mapRoomMessageForEstimate(message))
-    }
-
-    private mapRoomMessageForEstimate(message: any): { role: 'user' | 'assistant'; content: string } {
-        return projectGroupChatMessage(message, { agentId: this.agentId, socketId: this.socket?.id, name: this.name })
     }
 
     private async sendAgentErrorMessage(
@@ -1509,6 +1460,11 @@ export function groupBridgeSessionId(
     return `${safePrefix.slice(0, Math.max(0, 120 - suffix.length))}${suffix}`
 }
 
+export function groupRuntimeSessionId(roomId: string, profile: string, name: string): string {
+    const prefix = `gc_run_${safeId(roomId)}_${safeId(profile)}_${safeId(name)}`.slice(0, 96)
+    return `${prefix}_${randomUUID().replace(/-/g, '')}`
+}
+
 function groupMessageId(roomId: string, profile: string, name: string): string {
     const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160)
@@ -1561,15 +1517,17 @@ function extractBridgeFinalText(chunk: AgentBridgeOutput | null): string {
 
 export class AgentClients {
     private rooms = new Map<string, Map<string, AgentClient>>()
-    private _contextEngine: any = null
     private _storage: any = null
     private _workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private _chatRunService: GroupChatRunService | null = null
+    private _roomSummaryService: GroupRoomSummaryService | null = null
+    private _activityBroadcaster: AgentActivityBroadcaster | null = null
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
-    private _mentionQueue = new Map<string, Array<{ agent: AgentClient; msg: MentionMessage }>>()
+    private _mentionQueue = new Map<string, Array<{ agents: AgentClient[]; msg: MentionMessage }>>()
     private _pausedRooms = new Set<string>()
+    private _scheduledAgentCounts = new Map<string, Map<string, number>>()
 
     /**
      * Create an agent client and connect it to the server.
@@ -1580,7 +1538,6 @@ export class AgentClients {
         await client.connect(port)
 
         // Auto-apply stored references (fixes propagation for agents created after set*)
-        if (this._contextEngine) client.setContextEngine(this._contextEngine)
         if (this._storage) client.setStorage(this._storage)
         client.setWorkspaceDiffBroadcaster(this._workspaceDiffBroadcaster)
         client.setChatRunService(this._chatRunService)
@@ -1625,10 +1582,6 @@ export class AgentClients {
             room.delete(agentId)
             logger.info(`[AgentClients] ${client.name} left room: ${roomId}`)
 
-            // Invalidate context engine cache for this agent
-            if (this._contextEngine) {
-                try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
-            }
         }
 
         if (room.size === 0) {
@@ -1649,6 +1602,16 @@ export class AgentClients {
      */
     getAgent(roomId: string, agentId: string): AgentClient | undefined {
         return this.rooms.get(roomId)?.get(agentId)
+    }
+
+    activeSessionIds(roomId: string): string[] {
+        return this.getAgents(roomId)
+            .map(agent => agent.getActiveSessionId(roomId))
+            .filter((sessionId): sessionId is string => Boolean(sessionId))
+    }
+
+    agentSessionIsCurrent(roomId: string, agentId: string, sessionId: string): boolean {
+        return this.getAgent(roomId, agentId)?.isActiveSession(roomId, sessionId) === true
     }
 
     /**
@@ -1683,21 +1646,69 @@ export class AgentClients {
         return err
     }
 
-    private mentionQueueKeysForRoom(roomId: string): string[] {
-        return Array.from(this._mentionQueue.keys()).filter(key => key === roomId || key.startsWith(`${roomId}:`))
+    private reportAgentActivity(
+        roomId: string,
+        agentName: string,
+        status: 'compressing' | 'replying' | 'ready',
+    ): void {
+        this._activityBroadcaster?.(roomId, agentName, status)
+        logger.debug(`[AgentClients] room ${roomId} agent ${agentName} status: ${status}`)
+    }
+
+    private scheduleAgentActivity(roomId: string, agentName: string): void {
+        let roomCounts = this._scheduledAgentCounts.get(roomId)
+        if (!roomCounts) {
+            roomCounts = new Map()
+            this._scheduledAgentCounts.set(roomId, roomCounts)
+        }
+        const count = roomCounts.get(agentName) || 0
+        roomCounts.set(agentName, count + 1)
+        if (count === 0) this.reportAgentActivity(roomId, agentName, 'replying')
+    }
+
+    private finishAgentActivity(roomId: string, agentName: string): void {
+        const roomCounts = this._scheduledAgentCounts.get(roomId)
+        const count = roomCounts?.get(agentName) || 0
+        if (count > 1) {
+            roomCounts!.set(agentName, count - 1)
+            return
+        }
+        roomCounts?.delete(agentName)
+        if (roomCounts?.size === 0) this._scheduledAgentCounts.delete(roomId)
+        if (count > 0) this.reportAgentActivity(roomId, agentName, 'ready')
+    }
+
+    private clearScheduledAgentActivity(roomId: string, agentName: string): void {
+        const roomCounts = this._scheduledAgentCounts.get(roomId)
+        const hadScheduledWork = (roomCounts?.get(agentName) || 0) > 0
+        roomCounts?.delete(agentName)
+        if (roomCounts?.size === 0) this._scheduledAgentCounts.delete(roomId)
+        const queue = this._mentionQueue.get(roomId)
+        if (queue) {
+            for (const entry of queue) {
+                entry.agents = entry.agents.filter(agent => agent.name !== agentName)
+            }
+        }
+        if (hadScheduledWork) this.reportAgentActivity(roomId, agentName, 'ready')
     }
 
     private clearMentionQueuesForRoom(roomId: string): void {
-        for (const key of this.mentionQueueKeysForRoom(roomId)) this._mentionQueue.delete(key)
+        this._mentionQueue.delete(roomId)
+        const roomCounts = this._scheduledAgentCounts.get(roomId)
+        this._scheduledAgentCounts.delete(roomId)
+        for (const agentName of roomCounts?.keys() || []) {
+            this.reportAgentActivity(roomId, agentName, 'ready')
+        }
     }
 
-    private queueMention(agentKey: string, agent: AgentClient, msg: MentionMessage): void {
-        let queue = this._mentionQueue.get(agentKey)
+    private queueMention(roomId: string, agents: AgentClient[], msg: MentionMessage): void {
+        let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
-            this._mentionQueue.set(agentKey, queue)
+            this._mentionQueue.set(roomId, queue)
         }
-        queue.push({ agent, msg })
+        queue.push({ agents, msg })
+        for (const agent of agents) this.scheduleAgentActivity(roomId, agent.name)
     }
 
     async interruptAgent(roomId: string, agentName: string): Promise<void> {
@@ -1705,7 +1716,7 @@ export class AgentClients {
         if (!agent) throw new Error(`Agent "${agentName}" not found in room "${roomId}"`)
         const synced = await agent.interrupt(roomId)
         if (!synced) throw this.buildUnsyncedInterruptError(roomId)
-        this._mentionQueue.delete(`${roomId}:${agent.name}`)
+        this.clearScheduledAgentActivity(roomId, agentName)
     }
 
     async interruptRoom(roomId: string): Promise<void> {
@@ -1742,21 +1753,12 @@ export class AgentClients {
         this._pausedRooms.delete(roomId)
         logger.info(`[AgentClients] All agents disconnected from room: ${roomId}`)
 
-        // Invalidate context engine cache for this room
-        if (this._contextEngine) {
-            try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
-        }
     }
 
     resetRoomContext(roomId: string): void {
         this.clearMentionQueuesForRoom(roomId)
         this._pausedRooms.delete(roomId)
-        for (const key of Array.from(this._processingRooms)) {
-            if (key.startsWith(`${roomId}:`)) this._processingRooms.delete(key)
-        }
-        if (this._contextEngine) {
-            try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
-        }
+        this._processingRooms.delete(roomId)
     }
 
     /**
@@ -1768,16 +1770,6 @@ export class AgentClients {
         })
         this.rooms.clear()
         logger.info('[AgentClients] All agents disconnected')
-    }
-
-    /**
-     * Set context engine for all existing and future agents.
-     */
-    setContextEngine(engine: any): void {
-        this._contextEngine = engine
-        this.rooms.forEach((room) => {
-            room.forEach((client) => client.setContextEngine(engine))
-        })
     }
 
     /**
@@ -1804,6 +1796,14 @@ export class AgentClients {
         })
     }
 
+    setRoomSummaryService(service: GroupRoomSummaryService | null): void {
+        this._roomSummaryService = service
+    }
+
+    setActivityBroadcaster(broadcaster: AgentActivityBroadcaster | null): void {
+        this._activityBroadcaster = broadcaster
+    }
+
 
     /**
      * Server-side: parse @mentions and forward to matching agents directly.
@@ -1812,66 +1812,65 @@ export class AgentClients {
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
         const agents = this.getAgents(roomId)
         const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0) return
+        if (mentioned.length === 0 && msg.role !== 'user') return
 
-        logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
+        if (mentioned.length > 0) {
+            logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
+        }
 
-        for (const agent of mentioned) {
-            this._processAgentMention(roomId, agent, msg).catch((err) => {
-                logger.error(`[AgentClients] error processing mention for ${agent.name}: ${err.message}`)
-            })
+        this.queueMention(roomId, mentioned, msg)
+        if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
+            await this._drainRoomQueue(roomId)
         }
     }
 
-    /**
-     * Process a single agent mention with status reporting and queue drain.
-     */
-    private async _processAgentMention(
-        roomId: string,
-        agent: AgentClient,
-        msg: MentionMessage,
-    ): Promise<void> {
-        const agentKey = `${roomId}:${agent.name}`
-        if (this._pausedRooms.has(roomId)) {
-            this.queueMention(agentKey, agent, msg)
-            logger.debug(`[AgentClients] room ${roomId} is interrupting, queued mention for agent ${agent.name}`)
-            return
+    async processSummaryCheck(roomId: string, messageId: string): Promise<void> {
+        this.queueMention(roomId, [], {
+            messageId,
+            content: '',
+            senderName: '',
+            senderId: '',
+            timestamp: Date.now(),
+            role: 'user',
+        })
+        if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
+            await this._drainRoomQueue(roomId)
         }
-        if (this._processingRooms.has(agentKey)) {
-            this.queueMention(agentKey, agent, msg)
-            logger.debug(`[AgentClients] agent ${agent.name} is processing, queued mention in room ${roomId}`)
-            return
-        }
+    }
 
-        this._processingRooms.add(agentKey)
-        const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-            agent.emitContextStatus(roomId, status, extra)
-            logger.debug(`[AgentClients] room ${roomId} agent ${agent.name} status: ${status}`)
-        }
-
+    private async _drainRoomQueue(roomId: string): Promise<void> {
+        if (this._processingRooms.has(roomId) || this._pausedRooms.has(roomId)) return
+        this._processingRooms.add(roomId)
         try {
-            await agent.replyToMention(roomId, msg, onStatus)
-        } finally {
-            this._processingRooms.delete(agentKey)
-            if (!this._pausedRooms.has(roomId)) {
-                await this._drainQueue(agentKey, roomId)
+            while (!this._pausedRooms.has(roomId)) {
+                const queue = this._mentionQueue.get(roomId)
+                const next = queue?.shift()
+                if (!next) break
+                if (queue?.length === 0) this._mentionQueue.delete(roomId)
+
+                const runtimeContext = this._roomSummaryService
+                    ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
+                    : { summary: '', history: [] }
+                const results = await Promise.allSettled(next.agents.map(async (agent) => {
+                    const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
+                        if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
+                    }
+                    try {
+                        await agent.replyToMention(roomId, next.msg, runtimeContext, onStatus)
+                    } finally {
+                        this.finishAgentActivity(roomId, agent.name)
+                    }
+                }))
+                for (let index = 0; index < results.length; index += 1) {
+                    const result = results[index]
+                    if (result.status === 'rejected') {
+                        logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${result.reason?.message || result.reason}`)
+                    }
+                }
             }
+        } finally {
+            this._processingRooms.delete(roomId)
         }
-    }
-
-    /**
-     * Drain queued mentions for a room after processing completes.
-     */
-    private async _drainQueue(agentKey: string, roomId: string): Promise<void> {
-        const queue = this._mentionQueue.get(agentKey)
-        if (!queue || queue.length === 0) return
-
-        this._mentionQueue.delete(agentKey)
-        logger.debug(`[AgentClients] draining ${queue.length} queued mention(s) for ${agentKey}`)
-
-        // Process the last queued mention only (most recent, discards stale intermediate ones)
-        const last = queue[queue.length - 1]
-        await this._processAgentMention(roomId, last.agent, last.msg)
     }
 }
 

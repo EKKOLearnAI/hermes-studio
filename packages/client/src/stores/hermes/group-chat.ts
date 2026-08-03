@@ -14,6 +14,8 @@ import {
     type RoomInfo,
     type RoomAgent,
     type RoomAgentInput,
+    type RoomSummaryConfig,
+    type RoomSummaryState,
     type ChatMessage,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
@@ -153,6 +155,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const error = ref<string | null>(null)
     const typingUsers = ref<Map<string, { name: string; timer: ReturnType<typeof setTimeout> }>>(new Map())
     const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
+    const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const totalMessages = ref(0)
@@ -223,6 +226,24 @@ const currentUserAvatar = ref('')
         setTimeout(() => {
             void recoverMissingFinalContent(roomId, messageId)
         }, STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS)
+    }
+
+    function settleAgentActivity(agentName: string) {
+        contextStatuses.value.delete(agentName)
+        messages.value = messages.value
+            .map(m => (
+                m.senderName === agentName && m.isStreaming
+                    ? { ...m, isStreaming: false }
+                    : m
+            ))
+            .filter(m => !(
+                m.senderName === agentName &&
+                m.role !== 'tool' &&
+                !m.content?.trim() &&
+                !m.reasoning?.trim() &&
+                !m.tool_calls?.length
+            ))
+        contextStatuses.value = new Map(contextStatuses.value)
     }
 
     // Computed: returns first active status for backward compat
@@ -562,26 +583,19 @@ const currentUserAvatar = ref('')
         socket.on('context_status', (data: { roomId: string; agentName: string; status: string }) => {
             if (data.roomId === currentRoomId.value) {
                 if (data.status === 'ready') {
-                    contextStatuses.value.delete(data.agentName)
-                    messages.value = messages.value
-                        .map(m => (
-                            m.senderName === data.agentName && m.isStreaming
-                                ? { ...m, isStreaming: false }
-                                : m
-                        ))
-                        .filter(m => !(
-                            m.senderName === data.agentName &&
-                            m.role !== 'tool' &&
-                            !m.content?.trim() &&
-                            !m.reasoning?.trim() &&
-                            !m.tool_calls?.length
-                        ))
+                    settleAgentActivity(data.agentName)
                 } else {
                     contextStatuses.value.set(data.agentName, { agentName: data.agentName, status: data.status })
+                    // Trigger reactivity
+                    contextStatuses.value = new Map(contextStatuses.value)
                 }
-                // Trigger reactivity
-                contextStatuses.value = new Map(contextStatuses.value)
             }
+        })
+
+        socket.on('room_summary_updated', (summary: RoomSummaryState) => {
+            if (!summary?.roomId) return
+            roomSummaryStates.value.set(summary.roomId, summary)
+            roomSummaryStates.value = new Map(roomSummaryStates.value)
         })
 
         socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
@@ -616,14 +630,22 @@ const currentUserAvatar = ref('')
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
-        socket.on('room_updated', (data: { roomId: string; totalTokens: number }) => {
+        socket.on('room_updated', (data: { roomId: string; totalTokens?: number; name?: string }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
-            if (room) room.totalTokens = data.totalTokens
+            if (!room) return
+            if (typeof data.totalTokens === 'number') room.totalTokens = data.totalTokens
+            if (typeof data.name === 'string' && data.name.trim()) {
+                room.name = data.name.trim()
+                if (currentRoomId.value === data.roomId) roomName.value = room.name
+            }
+            rooms.value = [...rooms.value]
         })
 
         socket.on('room_cleared', (data: { roomId: string; totalTokens: number }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (room) room.totalTokens = data.totalTokens
+            roomSummaryStates.value.delete(data.roomId)
+            roomSummaryStates.value = new Map(roomSummaryStates.value)
             if (data.roomId === currentRoomId.value) {
                 messages.value = []
                 resetMessagePaging()
@@ -645,6 +667,7 @@ const currentUserAvatar = ref('')
         roomName.value = ''
         typingUsers.value.clear()
         contextStatuses.value.clear()
+        roomSummaryStates.value.clear()
         pendingApprovals.value.clear()
     }
 
@@ -787,7 +810,7 @@ const currentUserAvatar = ref('')
         name: string,
         inviteCode: string,
         agentList?: RoomAgentInput[],
-        compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number },
+        summary?: RoomSummaryConfig,
         workspace?: string,
         memberProfile?: { name: string; description?: string },
     ) {
@@ -798,7 +821,13 @@ const currentUserAvatar = ref('')
                 memberName: memberProfile?.name,
                 memberDescription: memberProfile?.description,
                 agents: agentList,
-                compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
+                summary: {
+                    profile: summary?.summaryProfile || getActiveProfileName() || 'default',
+                    provider: summary?.summaryProvider || '',
+                    model: summary?.summaryModel || '',
+                    apiMode: summary?.summaryApiMode || 'chat_completions',
+                    everyTurns: summary?.summaryEveryTurns || 20,
+                },
                 workspace: workspace || undefined,
             })
             upsertRoom(res.room)
@@ -829,6 +858,8 @@ const currentUserAvatar = ref('')
         try {
             await deleteRoomApi(roomId)
             rooms.value = rooms.value.filter(r => r.id !== roomId)
+            roomSummaryStates.value.delete(roomId)
+            roomSummaryStates.value = new Map(roomSummaryStates.value)
             clearMessageReference(roomId)
             if (currentRoomId.value === roomId) {
                 currentRoomId.value = null
@@ -865,6 +896,8 @@ const currentUserAvatar = ref('')
             resetMessagePaging()
             typingUsers.value.clear()
             contextStatuses.value.clear()
+            roomSummaryStates.value.delete(roomId)
+            roomSummaryStates.value = new Map(roomSummaryStates.value)
             const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
             if (idx >= 0 && res.room) rooms.value[idx] = res.room
             return res
@@ -973,7 +1006,13 @@ const currentUserAvatar = ref('')
         await new Promise<void>((resolve, reject) => {
             socket.emit('interrupt_agent', { roomId: currentRoomId.value, agentName }, (res: any) => {
                 if (res?.error) reject(new Error(res.error))
-                else resolve()
+                else {
+                    // The server also broadcasts ready. Clear optimistically on
+                    // the successful acknowledgement so the breathing state
+                    // cannot linger if that broadcast races a reconnect.
+                    settleAgentActivity(agentName)
+                    resolve()
+                }
             })
         })
     }
@@ -1009,6 +1048,7 @@ const currentUserAvatar = ref('')
         error,
         contextStatus,
         contextStatuses,
+        roomSummaryStates,
         pendingApprovals,
         activePendingApproval,
         autoPlaySpeechEnabled,

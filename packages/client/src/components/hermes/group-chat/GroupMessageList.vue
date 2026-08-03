@@ -33,6 +33,18 @@ function scrollToBottom(options?: BottomScrollOptions): void {
     showScrollBottomButton.value = false
 }
 
+async function scrollToMessage(messageId: string): Promise<boolean> {
+    const target = displayMessages.value.find(message =>
+        (message.runItems || [message]).some(item => item.id === messageId),
+    )
+    if (!target) return false
+    await nextTick()
+    const selector = `[data-group-message-id="${CSS.escape(target.id)}"]`
+    const element = (listRef.value as any)?.$el?.querySelector?.(selector) as HTMLElement | null
+    element?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return Boolean(element)
+}
+
 function updateScrollBottomButton(): void {
     showScrollBottomButton.value = displayMessages.value.length > 0 && !(listRef.value?.isNearBottom(1000) ?? true)
 }
@@ -88,7 +100,7 @@ onMounted(async () => {
     updateScrollBottomButton()
 })
 
-defineExpose({ scrollToBottom })
+defineExpose({ scrollToBottom, scrollToMessage })
 </script>
 
 <template>
@@ -125,20 +137,22 @@ defineExpose({ scrollToBottom })
                 </div>
             </template>
             <template #item="{ message: msg }">
-                <GroupAgentRunCard
-                    v-if="msg.runItems?.length"
-                    :message="msg"
-                    :agents="store.agents"
-                    :members="store.members"
-                    :current-user-id="store.userId"
-                />
-                <GroupMessageItem
-                    v-else
-                    :message="msg"
-                    :agents="store.agents"
-                    :members="store.members"
-                    :current-user-id="store.userId"
-                />
+                <div :data-group-message-id="msg.id">
+                    <GroupAgentRunCard
+                        v-if="msg.runItems?.length"
+                        :message="msg"
+                        :agents="store.agents"
+                        :members="store.members"
+                        :current-user-id="store.userId"
+                    />
+                    <GroupMessageItem
+                        v-else
+                        :message="msg"
+                        :agents="store.agents"
+                        :members="store.members"
+                        :current-user-id="store.userId"
+                    />
+                </div>
             </template>
         </VirtualMessageList>
         <button

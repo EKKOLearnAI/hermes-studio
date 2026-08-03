@@ -35,6 +35,9 @@ export interface CodingAgentRunSocketData {
   api_mode?: any
   reasoning_effort?: string
   session_source?: 'global_agent' | 'workflow'
+  group_system_prompt?: string
+  group_room_id?: string
+  group_agent_id?: string
 }
 
 function codingAgentId(data: CodingAgentRunSocketData): ExternalCodingAgentId {
@@ -67,6 +70,12 @@ export async function handleCodingAgentRun(
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)
+  const groupSystemPrompt = String(data.group_system_prompt || '').trim()
+  const groupRoomId = String(data.group_room_id || '').trim()
+  const groupAgentId = String(data.group_agent_id || '').trim()
+  if (groupSystemPrompt && (!groupRoomId || !groupAgentId)) {
+    throw new Error('Group coding-agent run requires group_room_id and group_agent_id')
+  }
   if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, {
     agentId,
     mode,
@@ -91,6 +100,10 @@ export async function handleCodingAgentRun(
       apiMode: launchApiMode,
       reasoningEffort: data.reasoning_effort,
       sessionSource: data.session_source,
+      ...(groupSystemPrompt ? { groupSystemPrompt } : {}),
+      ...(groupRoomId && groupAgentId
+        ? { groupRuntimeScope: { roomId: groupRoomId, agentId: groupAgentId } }
+        : {}),
     }, state)
     runId = started.agentSessionId
   }
@@ -117,7 +130,7 @@ export async function handleCodingAgentRun(
     await writeModelRunProfileToken(socketUser, profile)
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex'
     const runPrompt = [
-      includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : '',
+      groupSystemPrompt || (includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : ''),
     ].filter(Boolean).join('\n')
     if (Array.isArray(data.input)) {
       await sendCodingAgentRunInput(
