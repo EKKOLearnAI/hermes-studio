@@ -25,7 +25,7 @@ const DEFAULTS = {
   },
   minimax: {
     baseUrl: 'https://api.minimax.io/v1/t2a_v2',
-    model: 'speech-02-hd',
+    model: 'speech-2.8-hd',
     voice: 'English_expressive_narrator',
   },
 } as const
@@ -57,6 +57,15 @@ function appendPath(url: URL, path: string): URL {
   return result
 }
 
+function apiRootFor(url: URL): URL {
+  const result = new URL(url)
+  result.search = ''
+  result.pathname = result.pathname
+    .replace(/\/(?:t2a_v2|t2a_async_v2|voice_clone|files\/upload)\/?$/, '')
+    .replace(/\/+$/, '')
+  return result
+}
+
 function numberOption(value: unknown, fallback: number): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -68,6 +77,11 @@ async function checkedResponse(response: Response, provider: string, apiKey: str
     .replaceAll(apiKey, '[redacted]')
     .slice(0, 500)
   throw new Error(`${provider} TTS returned ${response.status}${detail ? `: ${detail}` : ''}`)
+}
+
+async function checkedJson<T extends object>(response: Response, provider: string, apiKey: string): Promise<T> {
+  const checked = await checkedResponse(response, provider, apiKey)
+  return await checked.json() as T
 }
 
 function result(
@@ -96,6 +110,70 @@ function wrapPcmAsWav(pcm: Buffer, sampleRate = 24_000, channels = 1, sampleWidt
   header.write('data', 36)
   header.writeUInt32LE(dataSize, 40)
   return Buffer.concat([header, pcm])
+}
+
+function parseAudioDataUri(dataUri: string, provider: string): { audio: Buffer; mimeType: string; extension: 'mp3' | 'wav' | 'm4a' } {
+  const match = /^data:(audio\/(?:mpeg|mp3|wav|x-wav|mp4|m4a));base64,([A-Za-z0-9+/=]+)$/.exec(dataUri)
+  if (!match) throw new Error(`${provider} voiceCloneDataUri must be an mp3, m4a, or wav data URI`)
+  const mimeType = match[1] === 'audio/mp3' ? 'audio/mpeg' : match[1] === 'audio/x-wav' ? 'audio/wav' : match[1]
+  const audio = Buffer.from(match[2], 'base64')
+  if (!audio.length) throw new Error(`${provider} voiceCloneDataUri is empty`)
+  if (audio.length > 20 * 1024 * 1024) throw new Error(`${provider} voiceCloneDataUri must be 20 MiB or smaller`)
+  const extension = mimeType === 'audio/wav' ? 'wav' : mimeType === 'audio/m4a' || mimeType === 'audio/mp4' ? 'm4a' : 'mp3'
+  return { audio, mimeType, extension }
+}
+
+function sanitizeVoiceId(raw: unknown, fallback: string): string {
+  const value = String(raw || fallback).trim()
+  return value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || fallback
+}
+
+function assertMiniMaxStatus(payload: { base_resp?: { status_code?: unknown; status_msg?: unknown } }, operation: string) {
+  if (payload.base_resp !== undefined && Number(payload.base_resp.status_code) !== 0) {
+    throw new Error(`MiniMax ${operation} API error: ${String(payload.base_resp.status_msg || 'unknown error')}`)
+  }
+}
+
+async function resolveMiniMaxVoiceId(options: CloudTtsProviderOptions, apiKey: string, ttsUrl: URL, signal?: AbortSignal): Promise<string> {
+  const mode = options.voiceMode || 'preset'
+  const voiceId = sanitizeVoiceId(options.voice, DEFAULTS.minimax.voice)
+  if (mode === 'preset') return voiceId
+
+  const apiRoot = apiRootFor(ttsUrl)
+  if (!options.voiceCloneDataUri) {
+    throw new Error('MiniMax voiceCloneDataUri is required for voiceClone mode')
+  }
+  const { audio, mimeType, extension } = parseAudioDataUri(options.voiceCloneDataUri, 'MiniMax')
+  const form = new FormData()
+  form.set('purpose', 'voice_clone')
+  form.set('file', new Blob([new Uint8Array(audio)], { type: mimeType }), `voice-clone.${extension}`)
+  const uploadPayload = await checkedJson<{ file?: { file_id?: unknown }; file_id?: unknown; base_resp?: { status_code?: unknown; status_msg?: unknown } }>(await fetch(appendPath(apiRoot, '/files/upload'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+    signal,
+  }), 'MiniMax', apiKey)
+  assertMiniMaxStatus(uploadPayload, 'voice clone upload')
+  const fileId = typeof uploadPayload.file_id === 'string'
+    ? uploadPayload.file_id
+    : typeof uploadPayload.file?.file_id === 'string' ? uploadPayload.file.file_id : ''
+  if (!fileId) throw new Error('MiniMax voice clone upload returned no file_id')
+
+  const clonePayload = await checkedJson<{ voice_id?: unknown; base_resp?: { status_code?: unknown; status_msg?: unknown } }>(await fetch(appendPath(apiRoot, '/voice_clone'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      voice_id: voiceId,
+      model: options.model || DEFAULTS.minimax.model,
+    }),
+    signal,
+  }), 'MiniMax', apiKey)
+  assertMiniMaxStatus(clonePayload, 'voice clone')
+  return typeof clonePayload.voice_id === 'string' && clonePayload.voice_id.trim() ? clonePayload.voice_id : voiceId
 }
 
 export const elevenLabsTtsProvider: TtsProvider<CloudTtsProviderOptions> = {
@@ -237,7 +315,7 @@ export const minimaxTtsProvider: TtsProvider<CloudTtsProviderOptions> = {
       ? {
           ...common,
           voice_setting: {
-            voice_id: options.voice || DEFAULTS.minimax.voice,
+            voice_id: await resolveMiniMaxVoiceId(options, apiKey, url, req.signal),
             speed: numberOption(options.speed, 1),
             vol: numberOption(options.volume, 1),
             pitch: numberOption(options.pitch, 0),

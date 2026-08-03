@@ -31,6 +31,10 @@ const mimoCloneFileName = ref('')
 const mimoCloneFormat = ref<'mp3' | 'wav'>('wav')
 const MIMO_CLONE_AUDIO_MAX_BYTES = 10 * 1024 * 1024
 const MIMO_CLONE_AUDIO_ACCEPT = 'audio/mpeg,audio/mp3,audio/wav,.mp3,.wav'
+const voiceModeOptions = [
+  { label: 'Preset voice', value: 'preset' },
+  { label: 'Voice clone', value: 'voiceClone' },
+]
 
 const preset = computed(() =>
   props.connection ? VOICE_API_PRESETS.find(p => p.kind === props.connection!.kind && p.provider === props.connection!.provider && (p.baseUrl === props.connection!.baseUrl || !p.baseUrl)) : null
@@ -73,6 +77,10 @@ watch(() => props.connection, (conn) => {
       mimoCloneDataUri.value = voiceSettings.mimoVoiceCloneDataUri.value
       mimoCloneFileName.value = voiceSettings.mimoVoiceCloneFileName.value
       mimoCloneFormat.value = voiceSettings.mimoVoiceCloneFormat.value
+    } else if (conn.provider === 'minimax') {
+      mimoCloneDataUri.value = voiceSettings.mimoVoiceCloneDataUri.value
+      mimoCloneFileName.value = voiceSettings.mimoVoiceCloneFileName.value
+      mimoCloneFormat.value = conn.settings.voiceCloneFormat === 'mp3' ? 'mp3' : voiceSettings.mimoVoiceCloneFormat.value
     }
   }
 }, { immediate: true })
@@ -140,8 +148,14 @@ async function handleSave() {
         ? 'voiceClone'
         : model === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : 'preset'
       if (model === 'mimo-v2.5-tts-voiceclone') {
-        // These fields are consumed client-side by useVoiceApiConnections and
-        // deliberately omitted from the server's small settings payload.
+        settings.voiceCloneDataUri = mimoCloneDataUri.value
+        settings.voiceCloneFileName = mimoCloneFileName.value
+        settings.voiceCloneFormat = mimoCloneFormat.value
+      }
+    } else if (props.connection.provider === 'minimax') {
+      const mode = stringField('voiceMode')
+      settings.voiceMode = mode === 'voiceClone' ? mode : 'preset'
+      if (settings.voiceMode === 'voiceClone') {
         settings.voiceCloneDataUri = mimoCloneDataUri.value
         settings.voiceCloneFileName = mimoCloneFileName.value
         settings.voiceCloneFormat = mimoCloneFormat.value
@@ -339,6 +353,37 @@ function handleDoubaoVoiceUpdate(value: string) {
                 </NButton>
               </NSpace>
               <span style="font-size: 12px; opacity: 0.6">{{ t('settings.voice.mimoCloneAudioHint') }}</span>
+            </NSpace>
+          </NFormItem>
+        </template>
+
+        <template v-if="connection.provider === 'minimax'">
+          <NFormItem label="Voice mode">
+            <NSelect
+              :value="stringField('voiceMode') || 'preset'"
+              :options="voiceModeOptions"
+              @update:value="value => setField('voiceMode', value)"
+            />
+          </NFormItem>
+          <NFormItem label="Clone audio" v-if="stringField('voiceMode') === 'voiceClone'">
+            <NSpace vertical style="width: 100%">
+              <input
+                ref="mimoCloneAudioInput"
+                type="file"
+                :accept="MIMO_CLONE_AUDIO_ACCEPT"
+                style="display: none"
+                @change="handleMimoCloneAudioChange"
+              />
+              <NSpace align="center">
+                <NButton size="small" @click="mimoCloneAudioInput?.click()">Upload audio</NButton>
+                <span v-if="mimoCloneFileName" style="font-size: 12px; opacity: 0.7">
+                  {{ mimoCloneFileName }} · {{ mimoCloneFormat }}
+                </span>
+                <NButton v-if="mimoCloneDataUri" size="small" tertiary @click="clearMimoCloneAudio">
+                  Clear
+                </NButton>
+              </NSpace>
+              <span style="font-size: 12px; opacity: 0.6">Upload an mp3 or wav reference clip for cloning.</span>
             </NSpace>
           </NFormItem>
         </template>

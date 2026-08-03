@@ -292,7 +292,7 @@ export function useVoiceApiConnections() {
       })
       await refresh()
       await setActiveConnection('tts', `tts-${provider}`)
-      if (provider === 'mimo') {
+      if (provider === 'mimo' || provider === 'minimax') {
         if (hasCloneDataUri && typeof cloneDataUri === 'string') vs.setMimoVoiceCloneDataUri(cloneDataUri)
         if (hasCloneFileName && typeof cloneFileName === 'string') vs.setMimoVoiceCloneFileName(cloneFileName)
       }

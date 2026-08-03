@@ -175,6 +175,13 @@ function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
       ? hzToEdgePitch(edgePitch)
       : typeof options.pitch === 'string' ? options.pitch : undefined,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
+    voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
+    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string'
+      ? options.voiceCloneDataUri
+      : voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav'
+      ? options.voiceCloneFormat
+      : voiceSettings.mimoVoiceCloneFormat.value,
     provider,
   }
 }
@@ -186,8 +193,7 @@ function mimoOptionsFor(connection: VoiceApiConnection): MimoTtsOptions {
     model: String(options.model || 'mimo-v2.5-tts'),
     voice: typeof options.voice === 'string' ? options.voice : undefined,
     authMode: options.authMode === 'api-key' || options.authMode === 'bearer' || options.authMode === 'both' ? options.authMode : undefined,
-    voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceDesign' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
-    voiceDesignDesc: typeof options.voiceDesignDesc === 'string' ? options.voiceDesignDesc : undefined,
+    voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
     voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string'
       ? options.voiceCloneDataUri
       : voiceSettings.mimoVoiceCloneDataUri.value || undefined,

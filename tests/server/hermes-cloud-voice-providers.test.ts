@@ -138,7 +138,7 @@ describe('Hermes-compatible cloud TTS providers', () => {
 
     expect(url).toContain('/v1/t2a_v2?GroupId=group-1')
     expect(JSON.parse(String(init.body))).toMatchObject({
-      model: 'speech-02-hd',
+      model: 'speech-2.8-hd',
       text: 'hello',
       voice_setting: {
         voice_id: 'English_expressive_narrator',
@@ -149,6 +149,52 @@ describe('Hermes-compatible cloud TTS providers', () => {
       },
     })
     expect(output.audio.toString()).toBe('minimax-audio')
+  })
+
+  it('uploads MiniMax clone audio before t2a_v2 synthesis', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        file: { file_id: 'file-123' },
+        base_resp: { status_code: 0 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        voice_id: 'cloned_voice',
+        base_resp: { status_code: 0 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { audio: Buffer.from('cloned-audio').toString('hex') },
+        base_resp: { status_code: 0 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await minimaxTtsProvider.synthesize({ text: 'hello' }, {
+      apiKey: 'minimax-key',
+      voiceMode: 'voiceClone',
+      voiceCloneDataUri: `data:audio/wav;base64,${Buffer.from('audio').toString('base64')}`,
+      voice: 'clone-voice',
+      model: 'speech-2.8-hd',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.minimax.io/v1/files/upload')
+    expect(fetchMock.mock.calls[0][1].body).toBeInstanceOf(FormData)
+    expect(String(fetchMock.mock.calls[1][0])).toBe('https://api.minimax.io/v1/voice_clone')
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({
+      file_id: 'file-123',
+      voice_id: 'clone-voice',
+      model: 'speech-2.8-hd',
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1].body)).voice_setting.voice_id).toBe('cloned_voice')
+    expect(output.audio.toString()).toBe('cloned-audio')
   })
 
   it('uses DeepInfra through its OpenAI-compatible audio endpoint', async () => {
