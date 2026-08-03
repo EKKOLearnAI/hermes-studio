@@ -4,7 +4,7 @@ import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
 import GroupMessageItem from './GroupMessageItem.vue'
-import { groupAgentAvatar } from '@/utils/group-agent-avatar'
+import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 
 const props = defineProps<{
     message: ChatMessage
@@ -13,12 +13,14 @@ const props = defineProps<{
     currentUserId?: string
 }>()
 
+const emit = defineEmits<{
+    mentionAgent: [agent: RoomAgent]
+}>()
+
 const items = computed(() => props.message.runItems || [])
 const agentInfo = computed(() => props.agents.find(agent =>
     agent.agentId === props.message.senderId || agent.name === props.message.senderName
 ))
-const avatarDisplayName = computed(() => agentInfo.value?.agent || 'hermes')
-const avatar = computed(() => groupAgentAvatar(agentInfo.value))
 const lastTimestamp = computed(() => items.value.at(-1)?.timestamp || props.message.timestamp)
 const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 </script>
@@ -26,7 +28,13 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 <template>
     <div class="group-agent-run" :data-run-id="message.run_id || undefined">
         <div class="run-avatar">
-            <ProfileAvatar :name="avatarDisplayName" :avatar="avatar" :size="36" />
+            <GroupAgentMessageAvatar
+                v-if="agentInfo"
+                :agent="agentInfo"
+                :size="36"
+                @mention="emit('mentionAgent', $event)"
+            />
+            <ProfileAvatar v-else name="hermes" :size="36" />
         </div>
         <div class="run-column">
             <div class="run-header">

@@ -38,6 +38,14 @@ describe('group chat mention routing', () => {
     expect(isAgentMentioned('mailto@Alice.example', 'Alice')).toBe(false)
   })
 
+  it('routes mentions after CJK speaker prefixes, emoji, and punctuation', () => {
+    expect(isAgentMentioned('hermes：@Bob 老板喊你，出来露个脸。', 'Bob')).toBe(true)
+    expect(isAgentMentioned('老板喊你@Bob 出来露个脸。', 'Bob')).toBe(true)
+    expect(isAgentMentioned('🤖@Bob 出来露个脸。', 'Bob')).toBe(true)
+    expect(isAgentMentioned('(agent)@Bob 出来露个脸。', 'Bob')).toBe(true)
+    expect(isAgentMentioned('mailto@Bob.example', 'Bob')).toBe(false)
+  })
+
   it('routes @all to every room agent except the sender identity', () => {
     expect(resolveMentionTargets(agents, '@all summarize the options', 'socket-alice').map(a => a.name)).toEqual(['Bob', 'Regex.Bot'])
   })

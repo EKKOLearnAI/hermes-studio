@@ -25,6 +25,7 @@ import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { isServerTtsProvider } from '@/api/hermes/tts'
 import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
+import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -42,6 +43,10 @@ const props = defineProps<{
     members?: MemberInfo[]
     currentUserId?: string
     embedded?: boolean
+}>()
+
+const emit = defineEmits<{
+    mentionAgent: [agent: RoomAgent]
 }>()
 
 const { t } = useI18n()
@@ -580,7 +585,13 @@ onBeforeUnmount(() => {
 <template>
     <div v-if="isToolMessage" class="group-message tool-message" :class="{ embedded }">
         <div v-if="!embedded" class="avatar">
-            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
+            <GroupAgentMessageAvatar
+                v-if="isAgent && agentInfo"
+                :agent="agentInfo"
+                :size="36"
+                @mention="emit('mentionAgent', $event)"
+            />
+            <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">
@@ -632,7 +643,13 @@ onBeforeUnmount(() => {
     <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf, embedded }">
         <!-- Avatar -->
         <div v-if="!embedded" class="avatar">
-            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
+            <GroupAgentMessageAvatar
+                v-if="isAgent && agentInfo"
+                :agent="agentInfo"
+                :size="36"
+                @mention="emit('mentionAgent', $event)"
+            />
+            <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">

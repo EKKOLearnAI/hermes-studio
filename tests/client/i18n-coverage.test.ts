@@ -87,6 +87,27 @@ function hasPath(messages: Record<string, unknown>, key: string): boolean {
   return typeof getPath(messages, key) !== 'undefined'
 }
 
+function flattenLeafPaths(value: unknown, prefix = ''): Map<string, string> {
+  const leaves = new Map<string, string>()
+  if (!value || typeof value !== 'object') return leaves
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (child && typeof child === 'object') {
+      for (const [childPath, childValue] of flattenLeafPaths(child, path)) {
+        leaves.set(childPath, childValue)
+      }
+    } else {
+      leaves.set(path, String(child ?? ''))
+    }
+  }
+  return leaves
+}
+
+function interpolationNames(value: string): string[] {
+  return [...value.matchAll(/\{([^}]+)\}/g)].map(match => match[1]).sort()
+}
+
 const SKILLS_USAGE_LOCALIZED_KEYS = [
   'sidebar.skillsUsage',
   'skillsUsage.title',
@@ -276,6 +297,31 @@ describe('i18n locale coverage', () => {
     )
 
     expect(missing).toEqual([])
+  })
+
+  it('fully defines the raw group-chat namespace in every locale', () => {
+    const englishGroupChat = flattenLeafPaths(en.groupChat)
+    const issues = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      const localizedGroupChat = flattenLeafPaths(localeMessages.groupChat)
+      const missing = [...englishGroupChat.keys()]
+        .filter(key => !localizedGroupChat.has(key))
+        .map(key => `${locale}: missing groupChat.${key}`)
+      const extra = [...localizedGroupChat.keys()]
+        .filter(key => !englishGroupChat.has(key))
+        .map(key => `${locale}: extra groupChat.${key}`)
+      const interpolationMismatches = [...englishGroupChat.entries()].flatMap(([key, englishValue]) => {
+        const localizedValue = localizedGroupChat.get(key)
+        if (typeof localizedValue === 'undefined') return []
+        const expected = interpolationNames(englishValue)
+        const actual = interpolationNames(localizedValue)
+        return expected.join('|') === actual.join('|')
+          ? []
+          : [`${locale}: groupChat.${key} placeholders ${actual.join(',')} != ${expected.join(',')}`]
+      })
+      return [...missing, ...extra, ...interpolationMismatches]
+    })
+
+    expect(issues).toEqual([])
   })
 
   it('compiles every changelog message in every locale', () => {

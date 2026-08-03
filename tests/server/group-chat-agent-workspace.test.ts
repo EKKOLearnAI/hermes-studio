@@ -596,6 +596,39 @@ describe('group chat agent workspace bridge runs', () => {
     expect(statuses.at(-1)).toEqual({ agentName: 'Worker', status: 'ready' })
   })
 
+  it('dispatches an agent handoff after a CJK speaker prefix', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const replyToMention = vi.fn(async () => {})
+    const codex = {
+      id: 'codex-socket',
+      agentId: 'agent-codex',
+      name: 'codex',
+      replyToMention,
+    }
+    clients.rooms.set('room-1', new Map([[codex.agentId, codex]]))
+
+    await clients.processMentions('room-1', {
+      messageId: 'hermes-handoff-1',
+      content: 'hermes：@codex 老板喊你，出来露个脸。',
+      senderName: 'hermes',
+      senderId: 'agent-hermes',
+      timestamp: 1,
+      role: 'assistant',
+      mentionDepth: 1,
+    })
+
+    expect(replyToMention).toHaveBeenCalledWith(
+      'room-1',
+      expect.objectContaining({
+        messageId: 'hermes-handoff-1',
+        mentionDepth: 1,
+      }),
+      { summary: '', history: [] },
+      expect.any(Function),
+    )
+  })
+
   it('keeps an agent active until all queued mentions finish', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any

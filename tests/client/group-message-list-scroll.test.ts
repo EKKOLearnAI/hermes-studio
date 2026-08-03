@@ -72,6 +72,7 @@ vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
     template: `
       <div class="virtual-message-list-stub" @scroll="$emit('scroll')">
         <slot name="before" />
+        <slot v-if="messages.length === 0" name="empty" />
         <slot name="item" v-for="message in messages" :key="message.id" :message="message" />
       </div>
     `,
@@ -122,6 +123,45 @@ describe('GroupMessageList scroll behavior', () => {
     await flushListUpdates()
 
     expect(wrapper.getComponent({ name: 'VirtualMessageList' }).props('virtualized')).toBe(false)
+  })
+
+  it('shows all four agent avatars in the group-chat empty state', () => {
+    const wrapper = mount(GroupMessageList)
+    const avatars = wrapper.findAll('.empty-agent-avatar img')
+
+    expect(avatars.map(avatar => avatar.attributes('alt'))).toEqual([
+      'Hermes',
+      'Ekko',
+      'Codex',
+      'Claude',
+    ])
+    expect(wrapper.get('.empty-state p').text()).toBe('groupChat.emptyState')
+    expect(wrapper.text()).not.toContain('chat.emptyState')
+  })
+
+  it('shows the summary boundary immediately after the summarized-through message', async () => {
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [makeMessage('message-1'), makeMessage('message-2')]
+    store.roomSummaryStates.set('room-1', {
+      roomId: 'room-1',
+      summary: 'Earlier discussion',
+      summaryThroughMessageId: 'message-1',
+      summaryThroughMessageTimestamp: Date.now(),
+      summarizedTurnCount: 10,
+      status: 'success',
+      version: 1,
+      updatedAt: Date.now(),
+      lastError: null,
+    })
+
+    const wrapper = mount(GroupMessageList)
+    await flushListUpdates()
+
+    const firstMessage = wrapper.get('[data-group-message-id="message-1"]')
+    expect(firstMessage.get('.summary-anchor-divider').text()).toBe('groupChat.summaryMessagesAbove')
+    expect(firstMessage.get('.summary-anchor-divider').attributes('data-summary-anchor-message-id')).toBe('message-1')
+    expect(wrapper.get('[data-group-message-id="message-2"]').find('.summary-anchor-divider').exists()).toBe(false)
   })
 
   it('shows a bottom jump button when the group transcript is far from the bottom', async () => {

@@ -75,6 +75,13 @@ managers also get the same combined workspace, terminal, and desktop-browser
 tool drawer used by single chat, gated by the existing room-management
 permission.
 
+Hovering a room Agent avatar now shows that Agent's type, profile, provider, and
+model, with an action that inserts its exact `@name` at the current group input
+cursor. Active Agent popovers retain their run status and stop action. Server
+mention routing also accepts Agent handoffs after CJK, emoji, and punctuation
+speaker prefixes, so output such as `hermes：@codex ...` schedules Codex while
+ASCII identifier and email-like prefixes remain excluded.
+
 When room creation does not provide an explicit workspace, the server creates
 and persists `<HERMES_WEB_UI_HOME>/group-chat/<profile>/<room-id>`, using the
 room summary profile and generated room ID. Explicit user-selected workspaces

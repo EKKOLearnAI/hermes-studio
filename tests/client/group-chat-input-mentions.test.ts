@@ -85,6 +85,30 @@ describe('GroupChatInput mentions', () => {
     expect(wrapper.find('.mention-dropdown').text()).toContain('@Worker')
   })
 
+  it('inserts an agent mention at the current cursor from the avatar action', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.emitTyping = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      attachTo: document.body,
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('老板喊你')
+    ;(textarea.element as HTMLTextAreaElement).setSelectionRange(5, 5)
+    ;(wrapper.vm as any).insertMention('codex')
+    await nextTick()
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('老板喊你 @codex ')
+    expect(document.activeElement).toBe(textarea.element)
+    expect(store.emitTyping).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
   it('shows the active room reference outside the input and can cancel it', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
     const settingsStore = useSettingsStore()

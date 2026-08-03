@@ -167,6 +167,62 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
   })
 
+  it('shows agent runtime details when hovering message avatars and can insert a mention into the group input', () => {
+    const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const avatarSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentMessageAvatar.vue', 'utf8')
+    const itemSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
+    const runCardSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
+
+    expect(avatarSource).toContain('class="message-agent-popover"')
+    expect(avatarSource).toContain("t('workflow.profile')")
+    expect(avatarSource).toContain("t('profiles.provider')")
+    expect(avatarSource).toContain("t('profiles.model')")
+    expect(avatarSource).toContain('class="message-agent-mention"')
+    expect(avatarSource).toContain("@click.stop=\"emit('mention', agent)\"")
+    expect(itemSource).toContain('<GroupAgentMessageAvatar')
+    expect(runCardSource).toContain('<GroupAgentMessageAvatar')
+    expect(panelSource).toContain('@mention-agent="handleMentionAgent"')
+    expect(panelSource).toContain('groupChatInputRef.value?.insertMention?.(agent.name)')
+    expect(panelSource).not.toContain('class="agent-avatar-popover"')
+  })
+
+  it('loads persisted room summary state for the inline transcript anchor without a locate action', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain('async function loadRoomSummaryState(roomId: string)')
+    expect(source).toContain('if (roomId) void loadRoomSummaryState(roomId)')
+    expect(source).not.toContain('handleLocateSummaryAnchor')
+    expect(source).not.toContain('@click="handleLocateSummaryAnchor"')
+  })
+
+  it('fades the group chat surface when switching between rooms like single chat', () => {
+    const groupSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const singleSource = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+
+    expect(groupSource).toContain('ref="groupChatSurfaceRef"')
+    expect(groupSource).toContain('if (!roomId || !previousRoomId || roomId === previousRoomId) return')
+    expect(groupSource).toContain('roomFadeAnimation?.cancel()')
+    expect(groupSource).toContain('roomFadeAnimation = surface.animate(')
+    expect(groupSource).toContain('duration: 1500')
+    expect(groupSource).toContain("easing: 'ease'")
+    expect(groupSource).toContain("{ flush: 'post' }")
+    expect(singleSource).toContain('duration: 1500')
+    expect(singleSource).toContain('easing: "ease"')
+  })
+
+  it('shows the refactor notice once and persists acknowledgement locally', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain("const GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY = 'hermes.groupChat.refactorNotice.v1.acknowledged'")
+    expect(source).toContain("window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'")
+    expect(source).toContain("window.localStorage.setItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY, '1')")
+    expect(source).toContain('v-model:show="showGroupChatRefactorNotice"')
+    expect(source).toContain(':mask-closable="false"')
+    expect(source).toContain(':close-on-esc="false"')
+    expect(source).toContain("t('groupChat.refactorNoticeMessage')")
+    expect(source).toContain('@click="acknowledgeGroupChatRefactorNotice"')
+  })
+
   it('renders room creation and manageable room settings as right-side drawers', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 

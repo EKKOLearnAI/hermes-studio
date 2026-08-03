@@ -294,6 +294,34 @@ function selectMention(name: string) {
     })
 }
 
+function insertMention(name: string) {
+    const mentionName = String(name || '').trim()
+    if (!mentionName) return
+
+    const el = textareaRef.value
+    const selectionStart = el?.selectionStart ?? inputText.value.length
+    const selectionEnd = el?.selectionEnd ?? selectionStart
+    const before = inputText.value.slice(0, selectionStart)
+    const after = inputText.value.slice(selectionEnd)
+    const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
+    const trailingSpace = after && /^\s/.test(after) ? '' : ' '
+    const inserted = `${leadingSpace}@${mentionName}${trailingSpace}`
+    inputText.value = `${before}${inserted}${after}`
+    mentionActive.value = false
+    mentionStartIndex.value = -1
+    mentionQuery.value = ''
+    store.emitTyping()
+
+    nextTick(() => {
+        if (!el) return
+        const existingWhitespaceOffset = !trailingSpace && /^[ \t]/.test(after) ? 1 : 0
+        const nextPosition = before.length + inserted.length + existingWhitespaceOffset
+        el.setSelectionRange(nextPosition, nextPosition)
+        el.focus()
+        autoSizeTextarea(el)
+    })
+}
+
 // ─── Event Handlers ──────────────────────────────────────
 
 function handleKeydown(e: KeyboardEvent) {
@@ -457,7 +485,7 @@ function handleDrop(e: DragEvent) {
     addFiles(Array.from(e.dataTransfer?.files || []))
 }
 
-defineExpose({ addFiles })
+defineExpose({ addFiles, insertMention })
 
 function removeAttachment(id: string) {
     const idx = attachments.value.findIndex(a => a.id === id)

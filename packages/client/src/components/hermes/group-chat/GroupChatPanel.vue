@@ -57,6 +57,7 @@ watch(
 const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
+const showGroupChatRefactorNotice = ref(false)
 const showMemberRail = ref(true)
 const editingAgent = ref<RoomAgent | null>(null)
 const isSavingAgent = ref(false)
@@ -104,16 +105,21 @@ const contextRoomId = ref<string | null>(null)
 const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
-const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
-const groupMessageListRef = ref<(InstanceType<typeof GroupMessageList> & { scrollToMessage: (messageId: string) => Promise<boolean> }) | null>(null)
+const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
+    addFiles?: (files: File[]) => void
+    insertMention?: (name: string) => void
+}) | null>(null)
 const summarySettingsSectionRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
 const isChatDropActive = ref(false)
 const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
+const groupChatSurfaceRef = ref<HTMLElement | null>(null)
+let roomFadeAnimation: Animation | null = null
 const showWorkspacePanel = ref(false)
 const activeWorkspacePanel = ref<'files' | 'terminal' | 'browser'>('files')
 const desktopBrowserAvailable = hasDesktopBrowserBridge()
 const workspacePanelMobile = ref(window.innerWidth <= 768)
+const GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY = 'hermes.groupChat.refactorNotice.v1.acknowledged'
 const WORKSPACE_PANEL_MIN_WIDTH = 360
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 560
 const WORKSPACE_PANEL_STORAGE_KEY = 'hermes.groupChat.workspacePanelWidth'
@@ -362,6 +368,10 @@ function agentActivityLabel(agent: RoomAgent): string {
         : t('groupChat.agentReplying')
 }
 
+function handleMentionAgent(agent: RoomAgent) {
+    groupChatInputRef.value?.insertMention?.(agent.name)
+}
+
 const hasRoom = computed(() => !!store.currentRoomId)
 const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
 const contextRoom = computed(() => store.rooms.find(room => room.id === contextRoomId.value) || null)
@@ -585,6 +595,15 @@ function openPageSidebar() {
     showSidebar.value = true
 }
 
+function acknowledgeGroupChatRefactorNotice() {
+    try {
+        window.localStorage.setItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY, '1')
+    } catch {
+        // The notice can still be dismissed when persistent browser storage is unavailable.
+    }
+    showGroupChatRefactorNotice.value = false
+}
+
 function openSettingsPage() {
     router.push({ name: 'hermes.settings' })
 }
@@ -705,7 +724,7 @@ function buildRoomUrl(roomId: string) {
 async function copyRoomLink(roomId: string) {
     const ok = await copyToClipboard(buildRoomUrl(roomId))
     if (ok) message.success(t('common.copied'))
-    else message.error(t('common.copied') + ' ✗')
+    else message.error(t('chat.copyFailed'))
 }
 
 const roomContextMenuOptions = computed<DropdownOption[]>(() => {
@@ -918,6 +937,11 @@ async function handleEditAgent(agent: RoomAgent) {
 }
 
 onMounted(() => {
+    try {
+        showGroupChatRefactorNotice.value = window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'
+    } catch {
+        showGroupChatRefactorNotice.value = true
+    }
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
@@ -935,15 +959,61 @@ onUnmounted(() => {
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
     stopWorkspaceResize()
+    roomFadeAnimation?.cancel()
     if (showWorkspacePanel.value) closeWorkspacePanel()
     else toolPanelStore.closeWorkspaceDiff()
+    roomFadeAnimation = null
 })
+
+async function loadRoomSummaryState(roomId: string) {
+    try {
+        const result = await getRoomSummary(roomId)
+        const existing = store.roomSummaryStates.get(roomId)
+        if (!existing || result.summary.version >= existing.version) {
+            store.roomSummaryStates.set(roomId, result.summary)
+        }
+        if (store.currentRoomId !== roomId) return
+        roomSummaryState.value = store.roomSummaryStates.get(roomId) || result.summary
+        roomSummaryAnchor.value = result.anchor
+        roomSummaryDraft.value = roomSummaryState.value.summary
+    } catch {
+        // A missing summary should not block entering or reading the room.
+    }
+}
 
 watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     if (roomId === previousRoomId) return
     hideInlineSummaryStatus()
+    roomSummaryState.value = null
+    roomSummaryAnchor.value = null
+    roomSummaryDraft.value = ''
     if (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value) closeWorkspacePanel()
-})
+    if (roomId) void loadRoomSummaryState(roomId)
+}, { immediate: true })
+
+watch(
+    () => store.currentRoomId,
+    async (roomId, previousRoomId) => {
+        if (!roomId || !previousRoomId || roomId === previousRoomId) return
+
+        await nextTick()
+        const surface = groupChatSurfaceRef.value
+        if (!surface || typeof surface.animate !== 'function') return
+
+        roomFadeAnimation?.cancel()
+        roomFadeAnimation = surface.animate(
+            [
+                { opacity: 0 },
+                { opacity: 1 },
+            ],
+            {
+                duration: 1500,
+                easing: 'ease',
+            },
+        )
+    },
+    { flush: 'post' },
+)
 
 watch(() => filesStore.previewFile, previewFile => {
     if (previewFile?.workspaceRoomId === store.currentRoomId) {
@@ -1173,19 +1243,6 @@ function formatSummaryTime(timestamp?: number): string {
     return timestamp ? new Date(timestamp).toLocaleString() : t('groupChat.summaryNever')
 }
 
-async function handleLocateSummaryAnchor() {
-    const anchorId = roomSummaryAnchor.value?.id || liveRoomSummaryState.value?.summaryThroughMessageId
-    if (!anchorId) return
-    while (!store.messages.some(item => item.id === anchorId) && store.hasMoreBefore && !store.hasReachedMessageDisplayLimit) {
-        const loaded = await store.loadOlderMessages()
-        if (!loaded) break
-    }
-    showRoomSettingsModal.value = false
-    await nextTick()
-    const located = await groupMessageListRef.value?.scrollToMessage(anchorId)
-    if (!located) message.warning(t('groupChat.summaryAnchorNotLoaded'))
-}
-
 async function handleRemoveAgent(agentId: string) {
     if (!store.currentRoomId) return
     if (!currentRoomCanManage.value) return
@@ -1350,7 +1407,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         :aria-expanded="showMemberRail"
                         @click="showMemberRail = !showMemberRail"
                     >
-                        <span>{{ participantCount }} {{ t('groupChat.members') }}</span>
+                        <span>{{ t('groupChat.members', { count: participantCount }) }}</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" :class="{ collapsed: !showMemberRail }" aria-hidden="true">
                             <polyline points="15 18 9 12 15 6" />
                         </svg>
@@ -1368,7 +1425,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 <aside
                     v-if="showMemberRail"
                     class="agent-avatar-rail"
-                    :aria-label="`${participantCount} ${t('groupChat.members')}`"
+                    :aria-label="t('groupChat.members', { count: participantCount })"
                 >
                     <div class="agent-avatar-rail-trigger">
                         <button
@@ -1444,9 +1501,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </svg>
                     </button>
                 </aside>
-                <div class="group-chat-surface">
+                <div ref="groupChatSurfaceRef" class="group-chat-surface">
                     <div class="group-message-shell">
-                        <GroupMessageList ref="groupMessageListRef" />
+                        <GroupMessageList
+                            @mention-agent="handleMentionAgent"
+                        />
                         <Transition name="approval-float">
                             <div v-if="visibleApproval" class="approval-float-panel">
                                 <div class="approval-float-header">
@@ -1664,7 +1723,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         <Teleport to="body">
             <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
                 <div class="modal">
-                    <h3>{{ editingAgent ? `${t('common.update')} ${editingAgent.name}` : t('groupChat.addAgent') }}</h3>
+                    <h3>{{ editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent') }}</h3>
                     <div class="group-agent-avatar-editor">
                         <ProfileAvatar
                             :name="selectedAgentType"
@@ -1773,7 +1832,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     {{ t('common.delete') }}
                                 </NButton>
                             </template>
-                            {{ t('common.delete') }} {{ editingAgent.name }}?
+                            {{ t('groupChat.deleteAgentConfirm', { name: editingAgent.name }) }}
                         </NPopconfirm>
                         <NSpace justify="end">
                             <NButton :disabled="isSavingAgent" @click="closeAgentModal">{{ t('common.cancel') }}</NButton>
@@ -1823,6 +1882,24 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     </div>
                 </div>
             </div>
+            <NModal
+                v-model:show="showGroupChatRefactorNotice"
+                preset="dialog"
+                :title="t('groupChat.refactorNoticeTitle')"
+                :mask-closable="false"
+                :close-on-esc="false"
+                :closable="false"
+                style="width: 480px; max-width: 92vw"
+            >
+                <p class="group-chat-refactor-notice">
+                    {{ t('groupChat.refactorNoticeMessage') }}
+                </p>
+                <template #action>
+                    <NButton type="primary" @click="acknowledgeGroupChatRefactorNotice">
+                        {{ t('common.confirm') }}
+                    </NButton>
+                </template>
+            </NModal>
             <NModal
                 v-model:show="showWorkspaceModal"
                 preset="dialog"
@@ -1936,7 +2013,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <section class="settings-section">
                             <h4>{{ t('chat.setWorkspaceTitle') }}</h4>
                             <FolderPicker v-model="workspaceValue" />
-                            <NSpace justify="end">
+                            <NSpace class="room-workspace-actions" justify="end">
                                 <NButton @click="handleClearWorkspace">{{ t('workflow.workspace.clear') }}</NButton>
                                 <NButton type="primary" @click="handleSaveWorkspace">{{ t('common.save') }}</NButton>
                             </NSpace>
@@ -1990,8 +2067,14 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <div v-if="isLoadingRoomSummary" class="summary-loading">{{ t('common.loading') }}</div>
                         <template v-else>
                             <div class="summary-meta">
-                                <span>{{ t('groupChat.summaryUpdatedAt') }}：{{ formatSummaryTime(liveRoomSummaryState?.updatedAt) }}</span>
-                                <span>{{ t('groupChat.summarizedTurns') }}：{{ liveRoomSummaryState?.summarizedTurnCount || 0 }}</span>
+                                <span>
+                                    <span>{{ t('groupChat.summaryUpdatedAt') }}</span>
+                                    <strong>{{ formatSummaryTime(liveRoomSummaryState?.updatedAt) }}</strong>
+                                </span>
+                                <span>
+                                    <span>{{ t('groupChat.summarizedTurns') }}</span>
+                                    <strong>{{ liveRoomSummaryState?.summarizedTurnCount || 0 }}</strong>
+                                </span>
                             </div>
                             <div v-if="liveRoomSummaryState?.lastError" class="summary-error">
                                 {{ liveRoomSummaryState.lastError }}
@@ -2005,13 +2088,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     </template>
                                     <span v-else>{{ liveRoomSummaryState?.summaryThroughMessageId || t('groupChat.summaryNoAnchor') }}</span>
                                 </div>
-                                <NButton
-                                    v-if="liveRoomSummaryState?.summaryThroughMessageId"
-                                    size="small"
-                                    @click="handleLocateSummaryAnchor"
-                                >
-                                    {{ t('groupChat.locateSummaryAnchor') }}
-                                </NButton>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">{{ t('groupChat.summaryContent') }}</label>
@@ -2071,6 +2147,11 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex: 1;
     min-height: 0;
     display: flex;
+}
+
+.group-chat-refactor-notice {
+    margin: 0;
+    line-height: 1.7;
 }
 
 @media (max-width: $breakpoint-mobile) {
@@ -3222,6 +3303,21 @@ export default defineComponent({ components: { CreateRoomForm } })
     margin: 10px 0;
     color: $text-muted;
     font-size: 11px;
+
+    > span {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 4px;
+    }
+
+    strong {
+        color: $text-secondary;
+        font-weight: 500;
+    }
+}
+
+.room-workspace-actions {
+    margin-top: 12px;
 }
 
 .summary-error {
