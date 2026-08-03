@@ -16,6 +16,7 @@ vi.mock('naive-ui', () => ({
     warning: vi.fn(),
     info: vi.fn(),
   }),
+  NPopover: { template: '<div><slot name="trigger" /><slot /></div>' },
 }))
 
 vi.mock('@/api/hermes/download', () => ({

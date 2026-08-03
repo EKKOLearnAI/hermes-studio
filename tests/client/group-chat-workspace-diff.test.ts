@@ -66,6 +66,7 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('naive-ui', () => ({
   useMessage: () => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }),
+  NPopover: { template: '<div><slot name="trigger" /><slot /></div>' },
 }))
 
 const payload: GroupWorkspaceDiffPayload = {

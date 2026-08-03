@@ -211,6 +211,9 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
 
 async function setup(page: Page, path: string, platform?: DesktopPlatform) {
   if (platform) await installDesktopBridge(page, platform)
+  await page.addInitScript(() => {
+    window.localStorage.setItem('hermes.groupChat.refactorNotice.v1.acknowledged', '1')
+  })
   await authenticate(page)
   await mockGroupChatSocket(page)
   const api = await mockGroupChatApi(page)
@@ -320,7 +323,7 @@ test.describe('group chat room deep links', () => {
       await expect(trigger).toHaveCSS('-webkit-app-region', 'no-drag')
       await trigger.click()
 
-      const modal = page.locator('.modal').filter({ hasText: 'Update Worker' })
+      const modal = page.locator('.modal').filter({ hasText: 'Edit Worker' })
       await expect(modal).toBeVisible()
       await expect(modal.getByText('Avatar', { exact: true })).toBeVisible()
       await expect(modal.getByText('Agent Name', { exact: true })).toBeVisible()
