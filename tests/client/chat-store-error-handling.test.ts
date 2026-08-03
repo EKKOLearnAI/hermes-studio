@@ -7,6 +7,7 @@ const chatApi = vi.hoisted(() => ({
   resumeSession: vi.fn(),
   registerSessionHandlers: vi.fn(),
   unregisterSessionHandlers: vi.fn(),
+  respondClarify: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
@@ -16,7 +17,7 @@ vi.mock('@/api/hermes/chat', () => ({
   unregisterSessionHandlers: chatApi.unregisterSessionHandlers,
   getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
   respondToolApproval: vi.fn(),
-  respondClarify: vi.fn(),
+  respondClarify: chatApi.respondClarify,
   onPeerUserMessage: vi.fn(() => vi.fn()),
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
@@ -241,5 +242,48 @@ describe('chat store error handling - #1644', () => {
     const errorMessage = msgs.find((m: Message) => m.systemType === 'error')
     expect(errorMessage).toBeDefined()
     expect(errorMessage?.content).toBe('Error: Late socket error')
+  })
+
+  it('preserves null clarify deadlines and emits only the first response', async () => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('ask me a question')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
+    onEvent({
+      event: 'clarify.requested',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      clarify_id: 'clarify-null',
+      question: 'Choose one',
+      choices: ['A', 'B'],
+      timeout_ms: null,
+    })
+
+    expect(store.activePendingClarify).toMatchObject({
+      clarifyId: 'clarify-null',
+      timeoutMs: null,
+    })
+    store.respondToClarify('A')
+    store.respondToClarify('B')
+    expect(chatApi.respondClarify).toHaveBeenCalledTimes(1)
+    expect(chatApi.respondClarify).toHaveBeenCalledWith('session-1', 'clarify-null', 'A', 'chat-run')
+    expect(store.activePendingClarify).toBeNull()
+
+    onEvent({
+      event: 'clarify.requested',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      clarify_id: 'clarify-finite',
+      question: 'Choose again',
+      timeout_ms: 45_000,
+    })
+    expect(store.activePendingClarify).toMatchObject({
+      clarifyId: 'clarify-finite',
+      timeoutMs: 45_000,
+    })
   })
 })

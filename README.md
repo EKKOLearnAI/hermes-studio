@@ -324,6 +324,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `PYTHON` | auto-discovered | Fallback Python executable for the agent bridge. |
 | `HERMES_AGENT_BRIDGE_ENDPOINT` | platform default | Agent bridge broker endpoint. Windows defaults to `tcp://127.0.0.1:18765`; macOS/Linux defaults to `ipc:///tmp/hermes-agent-bridge.sock`. |
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Timeout for Node requests to the bridge broker. |
+| `HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS` | `none` | Clarify and approval deadline. Unset, `0`, or `none` waits until an explicit response or run/session/bridge cancellation. A positive integer enables a fail-closed deadline; approvals deny rather than execute when it expires. Restart the bridge after changing it. |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | Short retry window for connecting to the bridge socket. |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | Timeout while waiting for the Python bridge to become ready. |
 | `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | enabled | Stop the bridge broker during Web UI shutdown and restart. Set `0`, `false`, `no`, or `off` to keep the bridge across restarts. |

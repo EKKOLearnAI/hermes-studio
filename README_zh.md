@@ -329,6 +329,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `PYTHON` | 自动发现 | agent bridge 的 Python 可执行文件 fallback。 |
 | `HERMES_AGENT_BRIDGE_ENDPOINT` | 平台默认值 | Agent bridge broker endpoint。Windows 默认 `tcp://127.0.0.1:18765`；macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock`。 |
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Node 请求 bridge broker 的响应超时。 |
+| `HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS` | `none` | Clarify 与 approval 的等待期限。未设置、`0` 或 `none` 时会等待明确响应，或等待 run/session/bridge 取消；正整数会启用 fail-closed 超时，未响应的 approval 会被拒绝而不会执行。修改后需重启 bridge。 |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | 连接 bridge socket 失败时的短重试窗口。 |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | 等待 Python bridge ready 的超时。 |
 | `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | 开启 | Web UI 关闭和重启时是否停止 bridge broker；设为 `0`、`false`、`no` 或 `off` 才会在重启时保留 broker。 |

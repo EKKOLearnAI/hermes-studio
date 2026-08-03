@@ -28,8 +28,6 @@ import types
 from pathlib import Path
 
 bridge_runtime = types.ModuleType("bridge_runtime")
-bridge_runtime.APPROVAL_TIMEOUT_MS = 1000
-bridge_runtime.APPROVAL_TIMEOUT_SECONDS = 1
 bridge_runtime._approval_pattern_keys = lambda *_args, **_kwargs: []
 bridge_runtime._base_hermes_home = lambda: Path(tempfile.gettempdir())
 bridge_runtime._bridge_platform = lambda: "agent-bridge"
@@ -38,6 +36,7 @@ bridge_runtime._discover_bridge_mcp_tools = lambda *_args, **_kwargs: []
 bridge_runtime._ensure_agent_imports = lambda: None
 bridge_runtime._hermes_home = lambda *_args, **_kwargs: Path(tempfile.gettempdir())
 bridge_runtime._install_execute_code_approval_memory_patch = lambda *_args, **_kwargs: None
+bridge_runtime._interaction_timeout_seconds = lambda: None
 bridge_runtime._jsonable = lambda value: value
 bridge_runtime._load_cfg = lambda *_args, **_kwargs: {}
 bridge_runtime._load_enabled_toolsets = lambda *_args, **_kwargs: []

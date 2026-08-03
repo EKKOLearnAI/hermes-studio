@@ -36,8 +36,10 @@ class BridgeBroker:
         self._session_worker_key: dict[str, str] = {}
         self._approval_profile: dict[str, str] = {}
         self._approval_worker_key: dict[str, str] = {}
+        self._approval_session: dict[str, str] = {}
         self._clarify_profile: dict[str, str] = {}
         self._clarify_worker_key: dict[str, str] = {}
+        self._clarify_session: dict[str, str] = {}
         self._compression_profile: dict[str, str] = {}
         self._compression_worker_key: dict[str, str] = {}
         self._lock = threading.RLock()
@@ -100,14 +102,25 @@ class BridgeBroker:
             for event in resp.get("events") or []:
                 if not isinstance(event, dict):
                     continue
+                event_type = str(event.get("event") or "")
                 approval_id = str(event.get("approval_id") or "")
-                if approval_id:
+                if event_type == "approval.requested" and approval_id:
                     self._approval_profile[approval_id] = profile
                     self._approval_worker_key[approval_id] = worker_key
+                    self._approval_session[approval_id] = session_id
+                elif event_type == "approval.resolved" and approval_id:
+                    self._approval_profile.pop(approval_id, None)
+                    self._approval_worker_key.pop(approval_id, None)
+                    self._approval_session.pop(approval_id, None)
                 clarify_id = str(event.get("clarify_id") or "")
-                if clarify_id:
+                if event_type == "clarify.requested" and clarify_id:
                     self._clarify_profile[clarify_id] = profile
                     self._clarify_worker_key[clarify_id] = worker_key
+                    self._clarify_session[clarify_id] = session_id
+                elif event_type == "clarify.resolved" and clarify_id:
+                    self._clarify_profile.pop(clarify_id, None)
+                    self._clarify_worker_key.pop(clarify_id, None)
+                    self._clarify_session.pop(clarify_id, None)
                 request_id = str(event.get("request_id") or "")
                 if event.get("event") == "bridge.compression.requested" and request_id:
                     self._compression_profile[request_id] = profile
@@ -129,8 +142,10 @@ class BridgeBroker:
             self._session_worker_key.clear()
             self._approval_profile.clear()
             self._approval_worker_key.clear()
+            self._approval_session.clear()
             self._clarify_profile.clear()
             self._clarify_worker_key.clear()
+            self._clarify_session.clear()
             self._compression_profile.clear()
             self._compression_worker_key.clear()
         for worker in workers:
@@ -317,6 +332,16 @@ class BridgeBroker:
                 with self._lock:
                     self._session_profile.pop(session_id, None)
                     self._session_worker_key.pop(session_id, None)
+                    for approval_id, pending_session_id in list(self._approval_session.items()):
+                        if pending_session_id == session_id:
+                            self._approval_profile.pop(approval_id, None)
+                            self._approval_worker_key.pop(approval_id, None)
+                            self._approval_session.pop(approval_id, None)
+                    for clarify_id, pending_session_id in list(self._clarify_session.items()):
+                        if pending_session_id == session_id:
+                            self._clarify_profile.pop(clarify_id, None)
+                            self._clarify_worker_key.pop(clarify_id, None)
+                            self._clarify_session.pop(clarify_id, None)
             return resp
 
         if action == "approval_respond":
@@ -328,7 +353,13 @@ class BridgeBroker:
                 worker_key = self._approval_worker_key.get(approval_id)
             if not profile:
                 raise KeyError(f"unknown approval request: {approval_id}")
-            return self._forward(profile, req, worker_key)
+            resp = self._forward(profile, req, worker_key)
+            if resp.get("ok") is not False:
+                with self._lock:
+                    self._approval_profile.pop(approval_id, None)
+                    self._approval_worker_key.pop(approval_id, None)
+                    self._approval_session.pop(approval_id, None)
+            return resp
 
         if action == "clarify_respond":
             clarify_id = str(req.get("clarify_id") or "").strip()
@@ -339,7 +370,13 @@ class BridgeBroker:
                 worker_key = self._clarify_worker_key.get(clarify_id)
             if not profile:
                 raise KeyError(f"unknown clarify request: {clarify_id}")
-            return self._forward(profile, req, worker_key)
+            resp = self._forward(profile, req, worker_key)
+            if resp.get("ok") is not False:
+                with self._lock:
+                    self._clarify_profile.pop(clarify_id, None)
+                    self._clarify_worker_key.pop(clarify_id, None)
+                    self._clarify_session.pop(clarify_id, None)
+            return resp
 
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
@@ -364,8 +401,10 @@ class BridgeBroker:
                 self._session_worker_key.clear()
                 self._approval_profile.clear()
                 self._approval_worker_key.clear()
+                self._approval_session.clear()
                 self._clarify_profile.clear()
                 self._clarify_worker_key.clear()
+                self._clarify_session.clear()
                 self._compression_profile.clear()
                 self._compression_worker_key.clear()
             destroyed = 0
@@ -398,8 +437,10 @@ class BridgeBroker:
                 self._session_worker_key = {key: value for key, value in self._session_worker_key.items() if key in self._session_profile}
                 self._approval_profile = {key: value for key, value in self._approval_profile.items() if value != profile}
                 self._approval_worker_key = {key: value for key, value in self._approval_worker_key.items() if key in self._approval_profile}
+                self._approval_session = {key: value for key, value in self._approval_session.items() if key in self._approval_profile}
                 self._clarify_profile = {key: value for key, value in self._clarify_profile.items() if value != profile}
                 self._clarify_worker_key = {key: value for key, value in self._clarify_worker_key.items() if key in self._clarify_profile}
+                self._clarify_session = {key: value for key, value in self._clarify_session.items() if key in self._clarify_profile}
                 self._compression_profile = {key: value for key, value in self._compression_profile.items() if value != profile}
                 self._compression_worker_key = {key: value for key, value in self._compression_worker_key.items() if key in self._compression_profile}
 

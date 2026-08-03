@@ -34,6 +34,8 @@ const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const bridgeSwitchSessionModelMock = vi.fn()
+const bridgeStatusIfLoadedMock = vi.fn()
+const bridgeDestroyMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
@@ -118,6 +120,8 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn().mockImplementation(() => ({
     switchSessionModel: bridgeSwitchSessionModelMock,
+    statusIfLoaded: bridgeStatusIfLoadedMock,
+    destroy: bridgeDestroyMock,
   })),
   getAgentBridgeManager: vi.fn(() => ({
     getRuntimeState: bridgeGetRuntimeStateMock,
@@ -199,6 +203,9 @@ describe('session conversations controller', () => {
     readConfigYamlForProfileMock.mockReset()
     readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
     bridgeSwitchSessionModelMock.mockReset()
+    bridgeStatusIfLoadedMock.mockReset()
+    bridgeStatusIfLoadedMock.mockResolvedValue({ ok: true, loaded: false, exists: false })
+    bridgeDestroyMock.mockReset()
     bridgeGetRuntimeStateMock.mockReset()
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
@@ -1700,6 +1707,25 @@ describe('session conversations controller', () => {
       deleted: false,
       hermes: { attempted: true, deleted: true, profile: 'travel', error: undefined },
     })
+  })
+
+  it('destroys a loaded bridge session before deleting its persisted session', async () => {
+    bridgeGetRuntimeStateMock.mockReturnValue({ ready: true, running: true, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
+    bridgeStatusIfLoadedMock.mockResolvedValue({ ok: true, loaded: true, exists: true })
+    bridgeDestroyMock.mockResolvedValue({ ok: true, destroyed: true })
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'travel', source: 'cli' })
+    getExactSessionDetailFromDbWithProfileMock.mockResolvedValue({ id: 'session-1', messages: [] })
+    deleteHermesSessionForProfileMock.mockResolvedValue(true)
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, body: null }
+    await mod.remove(ctx)
+
+    expect(bridgeStatusIfLoadedMock).toHaveBeenCalledWith('session-1', 'travel', { timeoutMs: 5000 })
+    expect(bridgeDestroyMock).toHaveBeenCalledWith('session-1', 'travel')
+    expect(bridgeDestroyMock.mock.invocationCallOrder[0]).toBeLessThan(deleteHermesSessionForProfileMock.mock.invocationCallOrder[0])
+    expect(ctx.body).toMatchObject({ ok: true, deleted: true })
   })
 
   it('deletes a local coding-agent session without invoking Hermes CLI deletion', async () => {

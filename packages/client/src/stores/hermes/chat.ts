@@ -354,7 +354,7 @@ export interface PendingClarify {
   clarifyId: string
   question: string
   choices: string[] | null
-  timeoutMs: number
+  timeoutMs: number | null
   requestedAt: number
 }
 
@@ -2590,14 +2590,18 @@ export const useChatStore = defineStore('chat', () => {
 
   function setPendingClarify(evt: RunEvent) {
     const sid = evt.session_id
-    const clarifyId = (evt as any).clarify_id as string | undefined
+    const clarifyId = evt.clarify_id
     if (!sid || !clarifyId) return
+    const rawTimeoutMs = evt.timeout_ms
+    const timeoutMs = typeof rawTimeoutMs === 'number' && Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
+      ? rawTimeoutMs
+      : null
     pendingClarifies.value.set(sid, {
       sessionId: sid,
       clarifyId,
       question: String((evt as any).question || ''),
       choices: Array.isArray((evt as any).choices) ? (evt as any).choices : null,
-      timeoutMs: Number((evt as any).timeout_ms) || 300000,
+      timeoutMs,
       requestedAt: Date.now(),
     })
     pendingClarifies.value = new Map(pendingClarifies.value)

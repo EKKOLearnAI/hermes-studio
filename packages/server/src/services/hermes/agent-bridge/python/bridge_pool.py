@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from bridge_runtime import (
-    APPROVAL_TIMEOUT_MS,
-    APPROVAL_TIMEOUT_SECONDS,
     _approval_pattern_keys,
     _base_hermes_home,
     _bridge_platform,
@@ -25,6 +23,7 @@ from bridge_runtime import (
     _ensure_agent_imports,
     _hermes_home,
     _install_execute_code_approval_memory_patch,
+    _interaction_timeout_seconds,
     _jsonable,
     _load_cfg,
     _load_enabled_toolsets,
@@ -42,6 +41,10 @@ from bridge_runtime import (
     _title_user_message,
     _tool_names_from_definitions,
 )
+
+
+_INTERACTION_CANCELLED = object()
+_INTERACTION_TIMED_OUT = object()
 
 
 def _bind_session_workspace_cwd(session_id: str, workspace: str | None) -> bool:
@@ -169,6 +172,13 @@ class AgentSession:
     background_tasks: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+@dataclass
+class PendingInteraction:
+    session_id: str
+    response_queue: queue.Queue[Any]
+    allowed_responses: frozenset[str] | None = None
+
+
 class AgentPool:
     MAX_BACKGROUND_EVENTS_PER_SESSION = 500
     MAX_BACKGROUND_TASKS_PER_SESSION = 50
@@ -178,13 +188,15 @@ class AgentPool:
         self._runs: dict[str, RunRecord] = {}
         self._lock = threading.RLock()
         self._db = SessionDbHolder()
-        self._approval_requests: dict[str, queue.Queue[str]] = {}
+        self._interaction_timeout_seconds = _interaction_timeout_seconds()
+        self._approval_requests: dict[str, PendingInteraction] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
+        self._gateway_approval_timers: dict[str, threading.Timer] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._background_notification_claims: dict[tuple[str, str], dict[str, Any]] = {}
         self._suppressed_background_delegations: set[str] = set()
-        self._clarify_requests: dict[str, queue.Queue[str]] = {}
+        self._clarify_requests: dict[str, PendingInteraction] = {}
         self._run_context = threading.local()
         self._approval_handlers: dict[str, Callable[..., str]] = {}
         self._exec_ask_depth = 0
@@ -1169,13 +1181,82 @@ class AgentPool:
 
         return callback
 
+    def _interaction_timeout_ms(self) -> int | None:
+        timeout = self._interaction_timeout_seconds
+        return timeout * 1000 if timeout is not None else None
+
+    def _wait_for_interaction(
+        self,
+        requests: dict[str, PendingInteraction],
+        request_id: str,
+        pending: PendingInteraction,
+    ) -> Any:
+        try:
+            if self._interaction_timeout_seconds is None:
+                return pending.response_queue.get()
+            try:
+                return pending.response_queue.get(timeout=self._interaction_timeout_seconds)
+            except queue.Empty:
+                with self._lock:
+                    if requests.get(request_id) is pending:
+                        requests.pop(request_id, None)
+                        return _INTERACTION_TIMED_OUT
+                # A responder or cancellation claimed the request while get()
+                # reached its deadline. Both enqueue before releasing the lock.
+                return pending.response_queue.get()
+        finally:
+            with self._lock:
+                if requests.get(request_id) is pending:
+                    requests.pop(request_id, None)
+
+    def _cancel_pending_interactions(self, session_id: str | None = None) -> int:
+        cancelled: list[PendingInteraction] = []
+        gateway_requests: list[tuple[str, str]] = []
+        timers: list[threading.Timer] = []
+        with self._lock:
+            for requests in (self._approval_requests, self._clarify_requests):
+                for request_id, pending in list(requests.items()):
+                    if session_id is not None and pending.session_id != session_id:
+                        continue
+                    requests.pop(request_id, None)
+                    pending.response_queue.put_nowait(_INTERACTION_CANCELLED)
+                    cancelled.append(pending)
+            for approval_id, gateway_session_id in list(self._gateway_approval_requests.items()):
+                if session_id is not None and gateway_session_id != session_id:
+                    continue
+                self._gateway_approval_requests.pop(approval_id, None)
+                self._gateway_approval_pattern_keys.pop(approval_id, None)
+                timer = self._gateway_approval_timers.pop(approval_id, None)
+                if timer is not None:
+                    timers.append(timer)
+                gateway_requests.append((approval_id, gateway_session_id))
+        for timer in timers:
+            timer.cancel()
+        for approval_id, gateway_session_id in gateway_requests:
+            try:
+                from tools.approval import resolve_gateway_approval
+
+                resolve_gateway_approval(gateway_session_id, "deny")
+            except Exception:
+                pass
+            self._append_event(gateway_session_id, {
+                "event": "approval.resolved",
+                "approval_id": approval_id,
+                "choice": "deny",
+            })
+        return len(cancelled) + len(gateway_requests)
+
     def _approval_callback(self, session_id: str):
         def callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
             approval_id = uuid.uuid4().hex
-            response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
-            with self._lock:
-                self._approval_requests[approval_id] = response_queue
             choices = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
+            pending = PendingInteraction(
+                session_id,
+                queue.Queue(maxsize=1),
+                frozenset(choices),
+            )
+            with self._lock:
+                self._approval_requests[approval_id] = pending
             self._append_event(session_id, {
                 "event": "approval.requested",
                 "approval_id": approval_id,
@@ -1183,15 +1264,11 @@ class AgentPool:
                 "description": str(description or ""),
                 "choices": choices,
                 "allow_permanent": bool(allow_permanent),
-                "timeout_ms": APPROVAL_TIMEOUT_MS,
+                "timeout_ms": self._interaction_timeout_ms(),
             })
-            try:
-                choice = response_queue.get(timeout=APPROVAL_TIMEOUT_SECONDS)
-            except queue.Empty:
+            choice = self._wait_for_interaction(self._approval_requests, approval_id, pending)
+            if choice is _INTERACTION_TIMED_OUT or choice is _INTERACTION_CANCELLED:
                 choice = "deny"
-            finally:
-                with self._lock:
-                    self._approval_requests.pop(approval_id, None)
             self._append_event(session_id, {
                 "event": "approval.resolved",
                 "approval_id": approval_id,
@@ -1204,23 +1281,25 @@ class AgentPool:
     def _clarify_callback(self, session_id: str):
         def callback(question: str, choices: list[str] | None = None) -> str:
             clarify_id = uuid.uuid4().hex
-            response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+            pending = PendingInteraction(session_id, queue.Queue(maxsize=1))
             with self._lock:
-                self._clarify_requests[clarify_id] = response_queue
+                self._clarify_requests[clarify_id] = pending
             self._append_event(session_id, {
                 "event": "clarify.requested",
                 "clarify_id": clarify_id,
                 "question": str(question or ""),
                 "choices": list(choices) if choices else None,
-                "timeout_ms": 300_000,
+                "timeout_ms": self._interaction_timeout_ms(),
             })
-            try:
-                user_response = response_queue.get(timeout=300)
-            except queue.Empty:
-                user_response = "[user did not respond within 5m]"
-            finally:
-                with self._lock:
-                    self._clarify_requests.pop(clarify_id, None)
+            user_response = self._wait_for_interaction(self._clarify_requests, clarify_id, pending)
+            if user_response is _INTERACTION_TIMED_OUT:
+                user_response = f"[user did not respond within {self._interaction_timeout_seconds}s]"
+            elif user_response is _INTERACTION_CANCELLED:
+                user_response = "[clarification cancelled]"
+            self._append_event(session_id, {
+                "event": "clarify.resolved",
+                "clarify_id": clarify_id,
+            })
             return user_response
 
         return callback
@@ -1281,8 +1360,20 @@ class AgentPool:
                 "pattern_keys": pattern_keys,
                 "choices": choices,
                 "allow_permanent": True,
-                "timeout_ms": 300_000,
+                "timeout_ms": self._interaction_timeout_ms(),
             })
+            if self._interaction_timeout_seconds is not None:
+                timer = threading.Timer(
+                    self._interaction_timeout_seconds,
+                    self.respond_approval,
+                    args=(approval_id, "deny"),
+                )
+                timer.daemon = True
+                with self._lock:
+                    if approval_id not in self._gateway_approval_requests:
+                        return
+                    self._gateway_approval_timers[approval_id] = timer
+                timer.start()
 
         return callback
 
@@ -1671,6 +1762,7 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._approval_handlers.pop(session.session_id, None)
+                self._cancel_pending_interactions(session.session_id)
                 try:
                     del self._run_context.session_id
                 except AttributeError:
@@ -1771,6 +1863,7 @@ class AgentPool:
             "user_interrupt",
         )
         self._settle_interrupted_background_tasks(session_id)
+        self._cancel_pending_interactions(session_id)
         if not hasattr(session.agent, "interrupt"):
             raise RuntimeError("agent does not support interrupt")
         session.agent.interrupt(message)
@@ -1805,43 +1898,42 @@ class AgentPool:
         if cleaned not in {"once", "session", "always", "deny"}:
             cleaned = "deny"
         with self._lock:
-            response_queue = self._approval_requests.get(approval_id)
-        if response_queue is None:
-            with self._lock:
+            pending = self._approval_requests.pop(approval_id, None)
+            if pending is not None:
+                if pending.allowed_responses is not None and cleaned not in pending.allowed_responses:
+                    cleaned = "deny"
+                pending.response_queue.put_nowait(cleaned)
+            else:
                 gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
                 pattern_keys = self._gateway_approval_pattern_keys.pop(approval_id, [])
-            if gateway_session_id is None:
-                return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
-            try:
-                from tools.approval import resolve_gateway_approval
-
-                resolved = resolve_gateway_approval(gateway_session_id, cleaned) > 0
-            except Exception:
-                resolved = False
-            if resolved:
-                _persist_execute_code_approval_choice(gateway_session_id, pattern_keys, cleaned)
-            self._append_event(gateway_session_id, {
-                "event": "approval.resolved",
-                "approval_id": approval_id,
-                "choice": cleaned,
-            })
-            return {"approval_id": approval_id, "resolved": resolved, "choice": cleaned}
+                timer = self._gateway_approval_timers.pop(approval_id, None)
+        if pending is not None:
+            return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
+        if gateway_session_id is None:
+            return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
+        if timer is not None:
+            timer.cancel()
         try:
-            response_queue.put_nowait(cleaned)
-        except queue.Full:
-            pass
-        return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
+            from tools.approval import resolve_gateway_approval
+
+            resolved = resolve_gateway_approval(gateway_session_id, cleaned) > 0
+        except Exception:
+            resolved = False
+        if resolved:
+            _persist_execute_code_approval_choice(gateway_session_id, pattern_keys, cleaned)
+        self._append_event(gateway_session_id, {
+            "event": "approval.resolved",
+            "approval_id": approval_id,
+            "choice": cleaned,
+        })
+        return {"approval_id": approval_id, "resolved": resolved, "choice": cleaned}
 
     def respond_clarify(self, clarify_id: str, response: str) -> dict[str, Any]:
         with self._lock:
-            response_queue = self._clarify_requests.get(clarify_id)
-        if response_queue is None:
-            return {"clarify_id": clarify_id, "resolved": False}
-        try:
-            response_queue.put_nowait(response)
-        except queue.Full:
-            pass
-        return {"clarify_id": clarify_id, "resolved": True}
+            pending = self._clarify_requests.pop(clarify_id, None)
+            if pending is not None:
+                pending.response_queue.put_nowait(response)
+        return {"clarify_id": clarify_id, "resolved": pending is not None}
 
     def get_history(self, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -2241,6 +2333,7 @@ class AgentPool:
             session_id,
             "session_destroyed",
         )
+        self._cancel_pending_interactions(session_id)
         with self._lock:
             session = self._sessions.pop(session_id, None)
         if session is None:
@@ -2276,6 +2369,8 @@ class AgentPool:
         with self._lock:
             sessions = list(self._sessions.values())
             claimed_notifications = list(self._background_notification_claims)
+
+        self._cancel_pending_interactions()
 
         interrupted_sessions = 0
         for session in sessions:

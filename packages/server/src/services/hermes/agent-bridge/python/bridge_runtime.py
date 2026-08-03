@@ -20,8 +20,7 @@ from typing import Any, Callable
 DEFAULT_ENDPOINT = "tcp://127.0.0.1:18765" if os.name == "nt" else "ipc:///tmp/hermes-agent-bridge.sock"
 DEFAULT_AGENT_ROOT = "~/.hermes/hermes-agent"
 DEFAULT_HERMES_HOME = "~/.hermes"
-APPROVAL_TIMEOUT_SECONDS = 120
-APPROVAL_TIMEOUT_MS = APPROVAL_TIMEOUT_SECONDS * 1000
+INTERACTION_TIMEOUT_ENV = "HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"
 PARENT_WATCHDOG_INTERVAL_SECONDS = 2.0
 OPENROUTER_ATTRIBUTION_ENV = {
     "referer": "HERMES_OPENROUTER_APP_REFERER",
@@ -43,6 +42,23 @@ def _positive_int(value: str | None) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _interaction_timeout_seconds() -> int | None:
+    raw = os.environ.get(INTERACTION_TIMEOUT_ENV)
+    if raw is None or raw.strip().lower() in {"", "0", "none"}:
+        return None
+    try:
+        timeout = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{INTERACTION_TIMEOUT_ENV} must be a positive integer, 0, or none"
+        ) from exc
+    if timeout <= 0:
+        raise ValueError(
+            f"{INTERACTION_TIMEOUT_ENV} must be a positive integer, 0, or none"
+        )
+    return timeout
 
 
 def _title_user_message(message: Any) -> str:

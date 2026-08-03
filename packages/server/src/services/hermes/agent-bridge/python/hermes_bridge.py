@@ -52,6 +52,7 @@ _RUNTIME_PATCH_NAMES = (
     "_find_agent_root",
     "_hermes_home",
     "_hidden_subprocess_kwargs",
+    "_interaction_timeout_seconds",
     "_json_default",
     "_json_line_bytes",
     "_jsonable",
@@ -72,8 +73,6 @@ _RUNTIME_PATCH_NAMES = (
 )
 
 _POOL_PATCH_NAMES = (
-    "APPROVAL_TIMEOUT_MS",
-    "APPROVAL_TIMEOUT_SECONDS",
     "_approval_pattern_keys",
     "_base_hermes_home",
     "_bridge_platform",
@@ -82,6 +81,7 @@ _POOL_PATCH_NAMES = (
     "_ensure_agent_imports",
     "_hermes_home",
     "_install_execute_code_approval_memory_patch",
+    "_interaction_timeout_seconds",
     "_jsonable",
     "_load_cfg",
     "_load_enabled_toolsets",

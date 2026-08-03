@@ -93,6 +93,23 @@ async function notifyBridgeSessionModelChanged(
   }
 }
 
+async function destroyLoadedBridgeSession(sessionId: string, profile?: string): Promise<void> {
+  try {
+    const state = getAgentBridgeManager().getRuntimeState()
+    if (!state.ready || !state.running) return
+    const bridge = new AgentBridgeClient({
+      endpoint: state.endpoint,
+      timeoutMs: 5000,
+      connectRetryMs: 0,
+    })
+    const status = await bridge.statusIfLoaded(sessionId, profile, { timeoutMs: 5000 })
+    if (status.loaded === false || status.exists === false) return
+    await bridge.destroy(sessionId, profile)
+  } catch (err) {
+    logger.warn(err, '[sessions] failed to destroy loaded bridge session')
+  }
+}
+
 function explicitProfileFilter(ctx: any): string | undefined {
   const value = typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : ''
   return value || undefined
@@ -1093,6 +1110,7 @@ export async function remove(ctx: any) {
   const hermesProfile = requestedProfile(ctx) || existing?.profile || getActiveProfileName()
   const codingAgentSession = isCodingAgentSession(existing)
   if (codingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
+  else await destroyLoadedBridgeSession(sessionId, hermesProfile)
   const hermes = codingAgentSession
     ? { attempted: false, deleted: false, profile: hermesProfile }
     : await deleteHermesSessionIfPresent(sessionId, hermesProfile)
@@ -1163,6 +1181,7 @@ export async function batchRemove(ctx: any) {
 
     const codingAgentSession = isCodingAgentSession(existing)
     if (codingAgentSession) codingAgentRunManager.stop(id, { reportClosed: false })
+    else await destroyLoadedBridgeSession(id, targetProfile || getActiveProfileName())
     const hermes = codingAgentSession
       ? { attempted: false, deleted: false, profile: targetProfile || 'default' }
       : await deleteHermesSessionIfPresent(id, targetProfile)

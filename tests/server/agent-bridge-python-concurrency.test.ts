@@ -30,6 +30,7 @@ import types
 from pathlib import Path
 
 os.environ["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] = "default"
+os.environ.pop("HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS", None)
 
 tools_pkg = types.ModuleType("tools")
 tools_pkg.__path__ = []
@@ -536,6 +537,12 @@ pool._append_event(session.session_id, {
     "task_count": 1,
     "goal": "background work",
 })
+clarify_result = {}
+clarify_thread = threading.Thread(
+    target=lambda: clarify_result.setdefault("value", pool._clarify_callback("session-1")("pick")),
+)
+clarify_thread.start()
+assert wait_for(lambda: len(pool._clarify_requests) == 1)
 
 result = pool.interrupt("session-1", "Aborted by user")
 
@@ -552,6 +559,10 @@ assert calls == [{
     "parent_session_id": "session-1",
     "reason": "user_interrupt",
 }, {"parent_message": "Aborted by user"}]
+clarify_thread.join(timeout=5)
+assert not clarify_thread.is_alive()
+assert clarify_result == {"value": "[clarification cancelled]"}
+assert pool._clarify_requests == {}
 assert pool._suppressed_background_delegations == {"deleg-current"}
 polled = pool.poll_background()
 assert polled["sessions"][0]["tasks"][0]["status"] == "interrupted"
@@ -827,6 +838,178 @@ assert [(msg["role"], msg["content"]) for msg in messages] == [
 `)
   })
 
+  it('keeps clarify and terminal approval pending by default until one response resolves them', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+assert pool._interaction_timeout_seconds is None
+session = bridge.AgentSession(session_id="session-a", agent=types.SimpleNamespace())
+record = bridge.RunRecord(run_id="run-a", session_id="session-a")
+session.running = True
+session.current_run_id = record.run_id
+pool._sessions[session.session_id] = session
+pool._runs[record.run_id] = record
+
+results = {}
+approval_thread = threading.Thread(
+    target=lambda: results.setdefault("approval", pool._approval_callback("session-a")("danger", "confirm")),
+)
+clarify_thread = threading.Thread(
+    target=lambda: results.setdefault("clarify", pool._clarify_callback("session-a")("pick", ["a", "b"])),
+)
+approval_thread.start()
+clarify_thread.start()
+assert wait_for(lambda: len(pool._approval_requests) == 1 and len(pool._clarify_requests) == 1)
+time.sleep(0.1)
+assert approval_thread.is_alive()
+assert clarify_thread.is_alive()
+
+approval_id = next(iter(pool._approval_requests))
+clarify_id = next(iter(pool._clarify_requests))
+requested = [event for event in record.events if event["event"].endswith(".requested")]
+assert len(requested) == 2
+assert all(event.get("timeout_ms") is None for event in requested)
+
+assert pool.respond_approval(approval_id, "once")["resolved"] is True
+assert pool.respond_approval(approval_id, "always")["resolved"] is False
+assert pool.respond_clarify(clarify_id, "a")["resolved"] is True
+assert pool.respond_clarify(clarify_id, "b")["resolved"] is False
+approval_thread.join(timeout=5)
+clarify_thread.join(timeout=5)
+assert not approval_thread.is_alive()
+assert not clarify_thread.is_alive()
+assert results == {"approval": "once", "clarify": "a"}
+resolved = [event for event in record.events if event["event"].endswith(".resolved")]
+assert {event.get("approval_id") for event in resolved if event["event"] == "approval.resolved"} == {approval_id}
+assert {event.get("clarify_id") for event in resolved if event["event"] == "clarify.resolved"} == {clarify_id}
+assert pool._approval_requests == {}
+assert pool._clarify_requests == {}
+
+restricted = {}
+restricted_thread = threading.Thread(
+    target=lambda: restricted.setdefault(
+        "approval",
+        pool._approval_callback("session-a")("restricted", "no permanent", allow_permanent=False),
+    ),
+)
+restricted_thread.start()
+assert wait_for(lambda: len(pool._approval_requests) == 1)
+restricted_id = next(iter(pool._approval_requests))
+restricted_response = pool.respond_approval(restricted_id, "always")
+assert restricted_response == {
+    "approval_id": restricted_id,
+    "resolved": True,
+    "choice": "deny",
+}
+restricted_thread.join(timeout=5)
+assert not restricted_thread.is_alive()
+assert restricted == {"approval": "deny"}
+`)
+  })
+
+  it('uses a configured positive interaction timeout and fails closed', () => {
+    runPython(String.raw`
+${harness}
+
+os.environ["HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"] = "1"
+pool, _fake_db = make_pool()
+session = bridge.AgentSession(session_id="session-a", agent=types.SimpleNamespace())
+record = bridge.RunRecord(run_id="run-a", session_id="session-a")
+session.running = True
+session.current_run_id = record.run_id
+pool._sessions[session.session_id] = session
+pool._runs[record.run_id] = record
+
+results = {}
+approval_thread = threading.Thread(
+    target=lambda: results.setdefault("approval", pool._approval_callback("session-a")("danger", "confirm")),
+)
+clarify_thread = threading.Thread(
+    target=lambda: results.setdefault("clarify", pool._clarify_callback("session-a")("pick")),
+)
+gateway_notify = pool._gateway_approval_notify("session-a")
+gateway_notify({"command": "gateway-danger", "description": "confirm"})
+gateway_approval_id = next(iter(pool._gateway_approval_requests))
+approval_thread.start()
+clarify_thread.start()
+approval_thread.join(timeout=3)
+clarify_thread.join(timeout=3)
+assert not approval_thread.is_alive()
+assert not clarify_thread.is_alive()
+assert results == {
+    "approval": "deny",
+    "clarify": "[user did not respond within 1s]",
+}
+assert wait_for(lambda: approval._resolved_gateway == [("session-a", "deny")], timeout=3)
+assert pool.respond_approval(gateway_approval_id, "once")["resolved"] is False
+requested = [event for event in record.events if event["event"].endswith(".requested")]
+assert len(requested) == 3
+assert all(event.get("timeout_ms") == 1000 for event in requested)
+assert any(event.get("event") == "clarify.resolved" for event in record.events)
+assert pool._approval_requests == {}
+assert pool._clarify_requests == {}
+
+os.environ["HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"] = "none"
+assert bridge._interaction_timeout_seconds() is None
+os.environ["HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"] = "0"
+assert bridge._interaction_timeout_seconds() is None
+os.environ["HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"] = "9"
+assert bridge._interaction_timeout_seconds() == 9
+os.environ["HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS"] = "invalid"
+try:
+    bridge._interaction_timeout_seconds()
+    raise AssertionError("invalid interaction timeout was accepted")
+except ValueError as exc:
+    assert "positive integer, 0, or none" in str(exc)
+`)
+  })
+
+  it('releases only matching pending interactions on destroy and all remaining waits on shutdown', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+results = {}
+threads = []
+for session_id in ("session-a", "session-b"):
+    for kind, callback in (
+        ("approval", pool._approval_callback(session_id)),
+        ("clarify", pool._clarify_callback(session_id)),
+    ):
+        if kind == "approval":
+            target = lambda sid=session_id, cb=callback: results.setdefault(
+                (sid, "approval"), cb("danger", "confirm")
+            )
+        else:
+            target = lambda sid=session_id, cb=callback: results.setdefault(
+                (sid, "clarify"), cb("pick")
+            )
+        thread = threading.Thread(target=target)
+        thread.start()
+        threads.append(thread)
+
+assert wait_for(lambda: len(pool._approval_requests) == 2 and len(pool._clarify_requests) == 2)
+destroyed = pool.destroy("session-a")
+assert destroyed["destroyed"] is False
+assert wait_for(lambda: ("session-a", "approval") in results and ("session-a", "clarify") in results)
+assert results[("session-a", "approval")] == "deny"
+assert results[("session-a", "clarify")] == "[clarification cancelled]"
+assert len(pool._approval_requests) == 1
+assert len(pool._clarify_requests) == 1
+
+cleanup = pool.shutdown()
+assert cleanup["interrupted_sessions"] == 0
+for thread in threads:
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+assert results[("session-b", "approval")] == "deny"
+assert results[("session-b", "clarify")] == "[clarification cancelled]"
+assert pool._approval_requests == {}
+assert pool._clarify_requests == {}
+`)
+  })
+
   it('remembers execute_code approvals inside the bridge without patching upstream files', () => {
     runPython(String.raw`
 ${harness}
@@ -983,6 +1166,7 @@ assert sorted(approval._resolved_gateway) == [
 terminal_commands = {}
 gateway_commands = {}
 timeouts = {}
+gateway_timeouts = {}
 for sid, record in records.items():
     for event in record.events:
         if event.get("event") != "approval.requested":
@@ -993,6 +1177,7 @@ for sid, record in records.items():
             timeouts[sid] = event.get("timeout_ms")
         if command == f"gateway:{sid}":
             gateway_commands[sid] = command
+            gateway_timeouts[sid] = event.get("timeout_ms")
 
 assert terminal_commands == {
     "session-a": "cmd:session-a",
@@ -1003,8 +1188,12 @@ assert gateway_commands == {
     "session-b": "gateway:session-b",
 }
 assert timeouts == {
-    "session-a": 120000,
-    "session-b": 120000,
+    "session-a": None,
+    "session-b": None,
+}
+assert gateway_timeouts == {
+    "session-a": None,
+    "session-b": None,
 }
 
 same_session = bridge.AgentSession(session_id="same-session", agent=FakeAgent("same-session"))
@@ -1044,6 +1233,10 @@ broker._session_profile["session-a"] = "default"
 broker._session_worker_key["session-a"] = "default"
 broker._approval_profile["approval-a"] = "default"
 broker._approval_worker_key["approval-a"] = "default"
+broker._approval_session["approval-a"] = "session-a"
+broker._clarify_profile["clarify-a"] = "default"
+broker._clarify_worker_key["clarify-a"] = "default"
+broker._clarify_session["clarify-a"] = "session-a"
 broker._compression_profile["compression-a"] = "default"
 broker._compression_worker_key["compression-a"] = "default"
 
@@ -1059,6 +1252,10 @@ assert broker._session_profile == {}
 assert broker._session_worker_key == {}
 assert broker._approval_profile == {}
 assert broker._approval_worker_key == {}
+assert broker._approval_session == {}
+assert broker._clarify_profile == {}
+assert broker._clarify_worker_key == {}
+assert broker._clarify_session == {}
 assert broker._compression_profile == {}
 assert broker._compression_worker_key == {}
 
@@ -1473,6 +1670,41 @@ assert result["first"] == "session"
 `)
   })
 
+  it('removes broker interaction routes when requests resolve', () => {
+    runPython(String.raw`
+${harness}
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+broker._record_response_routes("default", "worker-a", {
+    "session_id": "session-a",
+    "events": [
+        {"event": "approval.requested", "approval_id": "approval-a"},
+        {"event": "clarify.requested", "clarify_id": "clarify-a"},
+    ],
+})
+assert broker._approval_profile == {"approval-a": "default"}
+assert broker._approval_worker_key == {"approval-a": "worker-a"}
+assert broker._approval_session == {"approval-a": "session-a"}
+assert broker._clarify_profile == {"clarify-a": "default"}
+assert broker._clarify_worker_key == {"clarify-a": "worker-a"}
+assert broker._clarify_session == {"clarify-a": "session-a"}
+
+broker._record_response_routes("default", "worker-a", {
+    "session_id": "session-a",
+    "events": [
+        {"event": "approval.resolved", "approval_id": "approval-a"},
+        {"event": "clarify.resolved", "clarify_id": "clarify-a"},
+    ],
+})
+assert broker._approval_profile == {}
+assert broker._approval_worker_key == {}
+assert broker._approval_session == {}
+assert broker._clarify_profile == {}
+assert broker._clarify_worker_key == {}
+assert broker._clarify_session == {}
+`)
+  })
+
   it('cleans broker workers and wires worker parent watchdog state', () => {
     runPython(String.raw`
 ${harness}
@@ -1493,6 +1725,9 @@ broker._run_profile["run-a"] = "default"
 broker._running_run_profile["run-a"] = "default"
 broker._session_profile["session-a"] = "default"
 broker._approval_profile["approval-a"] = "default"
+broker._approval_session["approval-a"] = "session-a"
+broker._clarify_profile["clarify-a"] = "default"
+broker._clarify_session["clarify-a"] = "session-a"
 broker._compression_profile["compression-a"] = "default"
 
 broker.stop()
@@ -1503,6 +1738,9 @@ assert broker._run_profile == {}
 assert broker._running_run_profile == {}
 assert broker._session_profile == {}
 assert broker._approval_profile == {}
+assert broker._approval_session == {}
+assert broker._clarify_profile == {}
+assert broker._clarify_session == {}
 assert broker._compression_profile == {}
 
 created = {}

@@ -256,6 +256,7 @@ export default {
           ['PYTHON', 'agent bridge 的 Python 可执行文件 fallback'],
           ['HERMES_AGENT_BRIDGE_ENDPOINT', 'Agent bridge broker endpoint。Windows 默认 tcp://127.0.0.1:18765；macOS/Linux 默认 ipc:///tmp/hermes-agent-bridge.sock'],
           ['HERMES_AGENT_BRIDGE_TIMEOUT_MS', 'Node 请求 bridge broker 的响应超时'],
+          ['HERMES_AGENT_BRIDGE_INTERACTION_TIMEOUT_SECONDS', 'Clarify 与 approval 的等待期限；未设置、0 或 none 会等待明确响应，正整数会在对应秒数后对未响应 approval 执行拒绝'],
           ['HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS', '连接 bridge socket 失败时的短重试窗口'],
           ['HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS', '等待 Python bridge ready 的超时'],
           ['HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN', 'Web UI 关闭和重启时默认停止 bridge broker；设为 0/false/no/off 才会在重启时保留 broker'],
