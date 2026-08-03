@@ -585,6 +585,64 @@ describe('stt transcribe controller', () => {
     }, { clientId: 'device-1' })
   })
 
+  it('silently completes an MCU turn when the provider detects no speech', async () => {
+    const emitMcuEvent = vi.fn()
+    vi.doMock('../../packages/server/src/services/global-agent/server', () => ({
+      getActiveGlobalAgentServer: () => ({ emitMcuEvent }),
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/stt-providers', async (importOriginal) => {
+      const original = await importOriginal<typeof import('../../packages/server/src/services/hermes/stt-providers')>()
+      const { SttNoSpeechDetectedError } = await import('../../packages/server/src/services/hermes/stt-providers/types')
+      return {
+        ...original,
+        transcribeWithProvider: vi.fn(async () => {
+          throw new SttNoSpeechDetectedError('no speech detected')
+        }),
+      }
+    })
+
+    const { ctrl, store } = await initControllerAndStore()
+    store.saveSttProviderSetting('default', 'openai', {
+      settings: {
+        baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
+        model: 'gpt-4o-transcribe',
+      },
+      secrets: { apiKey: 'server-secret' },
+    })
+    store.saveActiveSttProvider('default', 'openai')
+
+    const ctx = makeRawAudioCtx(
+      { id: 7, username: 'han', role: 'admin' },
+      Buffer.from('raw-mcu-wav'),
+      {
+        'content-type': 'audio/wav',
+        authorization: 'Bearer user-token',
+        'x-hermes-mcu-interaction-id': 'voice-1',
+        'x-hermes-mcu-device-id': 'device-1',
+      },
+    )
+
+    await ctrl.mcuVoiceTurn(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toMatchObject({ ok: true, accepted: true, interactionId: 'voice-1' })
+    await waitForMockCalls(emitMcuEvent, 2)
+    expect(emitMcuEvent).toHaveBeenCalledWith({
+      type: 'interaction.status',
+      interactionId: 'voice-1',
+      status: 'completed',
+      text: '',
+    }, { clientId: 'device-1' })
+    expect(emitMcuEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'audio.enqueue' }),
+      expect.anything(),
+    )
+    expect(emitMcuEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed' }),
+      expect.anything(),
+    )
+  })
+
   it.each([
     'http://10.0.0.1:8000/v1/audio/transcriptions',
     'http://172.16.0.1:8000/v1/audio/transcriptions',

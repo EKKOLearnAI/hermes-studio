@@ -752,14 +752,31 @@ export async function mcuVoiceTurn(ctx: Context) {
         clientId,
       })
     } catch (error) {
+      const globalAgentServer = getActiveGlobalAgentServer()
+      if (error instanceof SttNoSpeechDetectedError) {
+        logger.info({
+          userId,
+          profile,
+          provider,
+          audioBytes: audio.length,
+          contentType,
+          debugAudioPath,
+        }, '[mcu-stt] voice turn completed without detected speech')
+        globalAgentServer?.emitMcuEvent({
+          type: 'interaction.status',
+          interactionId,
+          status: 'completed',
+          text: '',
+        }, { clientId })
+        return
+      }
+
       const detail = error instanceof Error ? error.message : String(error)
       const text = isAbortError(error)
         ? 'STT request timed out'
         : error instanceof SttProviderConfigError
           ? error.message
-          : error instanceof SttNoSpeechDetectedError
-            ? error.message
-            : detail || 'MCU voice turn failed'
+          : detail || 'MCU voice turn failed'
       logger.warn({
         userId,
         profile,
@@ -769,7 +786,6 @@ export async function mcuVoiceTurn(ctx: Context) {
         debugAudioPath,
         error: detail,
       }, '[mcu-stt] voice turn failed')
-      const globalAgentServer = getActiveGlobalAgentServer()
       globalAgentServer?.emitMcuEvent({
         type: 'interaction.status',
         interactionId,
