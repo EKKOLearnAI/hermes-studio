@@ -9,6 +9,19 @@ import { getCompatibleCustomProviders } from '../../services/hermes/custom-provi
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
 const XAI_VIDEO_MODEL = 'grok-imagine-video'
+const MINIMAX_VIDEO_DEFAULT_MODEL = 'MiniMax-Hailuo-2.3'
+const MINIMAX_VIDEO_REGIONS = {
+  global_en: {
+    generateUrl: 'https://api.minimax.io/v1/video_generation',
+    queryUrl: 'https://api.minimax.io/v1/query/video_generation',
+    downloadUrl: 'https://api.minimax.io/v1/files/retrieve',
+  },
+  cn_zh: {
+    generateUrl: 'https://api.minimaxi.com/v1/video_generation',
+    queryUrl: 'https://api.minimaxi.com/v1/query/video_generation',
+    downloadUrl: 'https://api.minimaxi.com/v1/files/retrieve',
+  },
+} as const
 const APIKEY_IMAGE_PROVIDER = 'fun-codex'
 const APIKEY_IMAGE_MODEL = 'gpt-image-2'
 const APIKEY_IMAGE_TO_IMAGE_MODEL = 'gpt-5.4-mini'
@@ -126,6 +139,23 @@ function resolveXaiToken(profile: string): { token: string; source: string } | n
   if (Array.isArray(pool)) {
     const poolToken = String(pool.find(entry => entry?.access_token)?.access_token || '').trim()
     if (poolToken) return { token: poolToken, source: 'xai-oauth' }
+  }
+
+  return null
+}
+
+function resolveMiniMaxToken(profile: string): { token: string; source: string } | null {
+  const envToken = String(process.env.MINIMAX_API_KEY || '').trim()
+  if (envToken) return { token: envToken, source: 'MINIMAX_API_KEY' }
+
+  const auth = readJsonFile(authPathForProfile(profile)) as AuthJson | null
+  const providerToken = String(auth?.providers?.['minimax-oauth']?.access_token || '').trim()
+  if (providerToken) return { token: providerToken, source: 'minimax-oauth' }
+
+  const pool = auth?.credential_pool?.['minimax-oauth']
+  if (Array.isArray(pool)) {
+    const poolToken = String(pool.find(entry => entry?.access_token)?.access_token || '').trim()
+    if (poolToken) return { token: poolToken, source: 'minimax-oauth' }
   }
 
   return null
@@ -628,6 +658,138 @@ export async function grokImageToVideo(ctx: Context) {
 
     ctx.status = 504
     ctx.body = { request_id: requestId, status: latest?.status || 'pending', error: 'Timed out waiting for xAI video generation' }
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || String(err) }
+  }
+}
+
+async function requestMiniMaxJson(url: string, token: string, init: RequestInit = {}): Promise<any> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(init.headers || {}),
+    },
+  })
+  const text = await res.text()
+  let data: any = null
+  try { data = text ? JSON.parse(text) : null } catch {}
+  const baseCode = data?.base_resp?.status_code
+  if (!res.ok || (Number.isFinite(baseCode) && Number(baseCode) !== 0)) {
+    const detail = data?.base_resp?.status_msg || data?.error?.message || data?.error || text || res.statusText
+    const err: any = new Error(`MiniMax request failed: ${res.status} ${detail}`)
+    err.status = res.status === 401 || res.status === 403 ? 502 : 502
+    throw err
+  }
+  return data
+}
+
+function minimaxVideoUrls(region: string): { generateUrl: string; queryUrl: string; downloadUrl: string } {
+  return region === 'cn_zh'
+    ? MINIMAX_VIDEO_REGIONS.cn_zh
+    : MINIMAX_VIDEO_REGIONS.global_en
+}
+
+export async function minimaxTextToVideo(ctx: Context) {
+  let profile: string
+  try {
+    profile = resolveMediaProfile(ctx)
+  } catch (err: any) {
+    ctx.status = err.status || 400
+    ctx.body = { error: err.message || String(err), code: err.code || 'invalid_profile' }
+    return
+  }
+
+  const tokenInfo = resolveMiniMaxToken(profile)
+  if (!tokenInfo) {
+    ctx.status = 401
+    ctx.body = {
+      error: `Missing MiniMax token for profile "${profile}". Set MINIMAX_API_KEY or complete MiniMax OAuth login first.`,
+      code: 'missing_minimax_token',
+    }
+    return
+  }
+
+  const body = ctx.request.body as any
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+  if (!prompt) {
+    ctx.status = 400
+    ctx.body = { error: 'prompt is required', code: 'missing_prompt' }
+    return
+  }
+
+  try {
+    const region = String(body.region || 'global_en').trim() === 'cn_zh' ? 'cn_zh' : 'global_en'
+    const urls = minimaxVideoUrls(region)
+    const rawTimeoutMs = Number(body.timeout_ms || DEFAULT_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(rawTimeoutMs)
+      ? Math.max(10000, Math.min(rawTimeoutMs, 30 * 60 * 1000))
+      : DEFAULT_TIMEOUT_MS
+    const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
+
+    const requestBody: Record<string, unknown> = {
+      model: typeof body.model === 'string' && body.model.trim() ? body.model.trim() : MINIMAX_VIDEO_DEFAULT_MODEL,
+      prompt,
+    }
+    for (const field of ['prompt_optimizer', 'fast_pretreatment', 'resolution', 'callback_url'] as const) {
+      const value = body[field]
+      if (value !== undefined && value !== null && value !== '') requestBody[field] = value
+    }
+    if (body.duration !== undefined && body.duration !== null && body.duration !== '') {
+      const duration = Number(body.duration)
+      if (Number.isFinite(duration) && duration > 0) requestBody.duration = duration
+    }
+
+    const started = await requestMiniMaxJson(urls.generateUrl, tokenInfo.token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    })
+    const taskId = String(started?.task_id || '').trim()
+    if (!taskId) throw new Error('MiniMax response missing task_id')
+
+    const deadline = Date.now() + timeoutMs
+    let latest: any = null
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS))
+      latest = await requestMiniMaxJson(`${urls.queryUrl}?task_id=${encodeURIComponent(taskId)}`, tokenInfo.token)
+      const status = String(latest?.status || '').toLowerCase()
+      if (status === 'succeed' || status === 'success' || status === 'done') {
+        const fileId = String(latest?.file_id || '').trim()
+        const outputPath = requestedOutputPath || defaultMediaOutputPath(taskId)
+        let videoUrl = ''
+        if (fileId) {
+          const fileData = await requestMiniMaxJson(`${urls.downloadUrl}?file_id=${encodeURIComponent(fileId)}`, tokenInfo.token)
+          videoUrl = String(fileData?.file?.download_url || fileData?.download_url || '').trim()
+          if (videoUrl) await downloadVideo(videoUrl, outputPath)
+        }
+        ctx.body = {
+          task_id: taskId,
+          status: latest.status,
+          file_id: fileId,
+          video_url: videoUrl,
+          output_path: outputPath,
+          region,
+          token_source: tokenInfo.source,
+          profile,
+        }
+        return
+      }
+      if (status === 'fail' || status === 'failed' || status === 'error') {
+        ctx.status = 502
+        ctx.body = {
+          task_id: taskId,
+          status: latest.status,
+          error: latest?.base_resp?.status_msg || 'MiniMax video generation failed',
+        }
+        return
+      }
+    }
+
+    ctx.status = 504
+    ctx.body = { task_id: taskId, status: latest?.status || 'pending', error: 'Timed out waiting for MiniMax video generation' }
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || String(err) }

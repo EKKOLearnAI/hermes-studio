@@ -97,4 +97,165 @@ describe('media controller', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('rejects MiniMax text-to-video without credentials', async () => {
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({})),
+    }))
+    const { minimaxTextToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+    const ctx: any = {
+      state: { serverTokenAuth: true },
+      query: {},
+      request: { body: { prompt: 'a cat on a skateboard' } },
+      get: vi.fn(() => ''),
+      status: 200,
+      body: undefined,
+    }
+
+    await minimaxTextToVideo(ctx)
+
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toMatchObject({ code: 'missing_minimax_token' })
+  })
+
+  it('generates a text-to-video through the MiniMax global endpoint', async () => {
+    vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({})),
+    }))
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlString = String(url)
+      if (urlString.includes('/query/video_generation')) {
+        return new Response(JSON.stringify({ status: 'Succeed', file_id: 'file_abc', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/files/retrieve')) {
+        return new Response(JSON.stringify({ file: { download_url: 'https://cdn.example.com/video.mp4' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/video_generation')) {
+        return new Response(JSON.stringify({ task_id: 'task_123', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(Buffer.from('mock-mp4-bytes'), { status: 200 })
+    })
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as any
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((cb: () => void) => { cb(); return 0 }) as any
+    try {
+      const { minimaxTextToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: {
+          body: {
+            prompt: 'a cinematic aerial shot of a mountain lake',
+            output_path: '/tmp/hermes-web-ui-minimax-video.mp4',
+          },
+        },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await minimaxTextToVideo(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({
+        task_id: 'task_123',
+        status: 'Succeed',
+        file_id: 'file_abc',
+        output_path: '/tmp/hermes-web-ui-minimax-video.mp4',
+        region: 'global_en',
+        profile: 'default',
+      })
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimax.io/v1/video_generation')
+      const requestInit = fetchMock.mock.calls[0][1] as RequestInit
+      expect(requestInit.method).toBe('POST')
+      expect(JSON.parse(String(requestInit.body))).toMatchObject({
+        model: 'MiniMax-Hailuo-2.3',
+        prompt: 'a cinematic aerial shot of a mountain lake',
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.setTimeout = originalSetTimeout
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('generates a text-to-video through the MiniMax CN endpoint when region is cn_zh', async () => {
+    vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({})),
+    }))
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlString = String(url)
+      if (urlString.includes('/query/video_generation')) {
+        return new Response(JSON.stringify({ status: 'Succeed', file_id: 'file_cn', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/files/retrieve')) {
+        return new Response(JSON.stringify({ file: { download_url: 'https://cdn.example.com/video-cn.mp4' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/video_generation')) {
+        return new Response(JSON.stringify({ task_id: 'task_cn', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(Buffer.from('mock-mp4-bytes'), { status: 200 })
+    })
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as any
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((cb: () => void) => { cb(); return 0 }) as any
+    try {
+      const { minimaxTextToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: { body: { prompt: 'a city skyline at night', region: 'cn_zh' } },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await minimaxTextToVideo(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ task_id: 'task_cn', region: 'cn_zh' })
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimaxi.com/v1/video_generation')
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.setTimeout = originalSetTimeout
+      vi.unstubAllEnvs()
+    }
+  })
 })
