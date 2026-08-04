@@ -1,6 +1,6 @@
 ---
 date: 2026-08-04
-pr: pending
+pr: 2352
 feature: Hide group run Agent descriptions
 impact: Group chat run headers now show only the Agent name instead of repeating the Agent description beside it.
 ---
