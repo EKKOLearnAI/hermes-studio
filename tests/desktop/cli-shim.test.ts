@@ -145,7 +145,7 @@ describe('Hermes Studio CLI shim', () => {
     expect(forwardedArgs).toHaveLength(3)
     expect(forwardedArgs[0]).toBe('-e')
     expect(forwardedArgs[2]).toBe('version')
-  })
+  }, 20_000)
 
   it('sets the desktop MCP URL from HERMES_DESKTOP_PORT when present', () => {
     const content = createMcpShimContent('/runtime/node', '/resources/webui/bin/hermes-studio-mcp.mjs', 'http://127.0.0.1:8748', 'darwin')

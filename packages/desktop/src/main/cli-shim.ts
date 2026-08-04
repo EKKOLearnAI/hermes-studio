@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { dirname, join, posix, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import { HERMES_CLI_ARG } from './cli-constants'
 
@@ -47,11 +47,11 @@ interface McpShimInstallOptions extends CliShimInstallOptions {
 }
 
 function platformDelimiter(platform: NodeJS.Platform): string {
-  return platform === 'win32' ? ';' : delimiter
+  return platform === 'win32' ? ';' : ':'
 }
 
 function pathKey(value: string, platform: NodeJS.Platform): string {
-  const normalized = resolve(value)
+  const normalized = platform === 'win32' ? win32.resolve(value) : posix.resolve(value)
   return platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
