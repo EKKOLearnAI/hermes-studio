@@ -2833,6 +2833,19 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_37_1: '本次涵蓋 14 個 PR 的版本以群聊全面重構為核心：每個 Agent 可獨立選擇 Profile、Provider、模型、API 模式、推理強度、身分和 workspace（#2334）',
+    new_0_6_37_2: '群聊房間現在使用全新隔離執行，將每則回覆與其 reasoning 和工具過程分組顯示，並加入共享可編輯滾動摘要、摘要狀態與邊界、Agent mention、房間及 workspace 抽屜和舊房間遷移提示（#2334）',
+    new_0_6_37_3: 'MiniMax Coding Plan OAuth 現已支援 Global 與中國區，Codex、xAI、Anthropic、Nous 和 MiniMax 的授權憑證會透過持久 Runtime Bridge 自動重新整理（#2337）',
+    new_0_6_37_4: 'ESP32-C3 v1 和 v2 新增可選自動聆聽模式，支援本機 VAD、預錄音、靜音結束、播放抑制，並保留按鍵說話控制（#2338）',
+    new_0_6_37_5: 'MCU Global Agent 現使用精簡的 Ekko 語音模式，可委派安全的背景工作，保留工作階段歷史和 workspace，並不再向裝置轉送過大的工具結果（#2326）',
+    new_0_6_37_6: '自訂及 OpenAI 相容 TTS 會自動重試 Provider 支援的音訊格式，並將非 MP3 輸出轉換為 Hermes 可播放格式（#2328）',
+    new_0_6_37_7: 'Profile 匯入與匯出最長可執行 10 分鐘，逾時提示更明確，並支援並行封存隔離、檔名清理與暫存檔回收（#2310、#2324）',
+    new_0_6_37_8: 'Hermes Agent Bridge 現會套用模型專屬的預設推理強度，同時保留單次執行明確覆寫與舊 Runtime 回退邏輯（#2325）',
+    new_0_6_37_9: '版本管理會分別顯示實際安裝的 Hermes Agent 版本和 Runtime 路徑，並說明 CLI 更新範圍與完整退出 Studio 的要求（#2323）',
+    new_0_6_37_10: 'Workspace 檔案樹縮小層級縮排，讓深層目錄名稱維持可見（#2340）',
+    new_0_6_37_11: '桌面端預設升級至 Hermes Agent 0.20.0，採用固定原始碼與可攜式 Node/npm，支援 Windows 更新後重建的啟動器、無系統 Python 更新，並讓受管理 Gateway 保持隱藏執行（#2321、#2344）',
+    new_0_6_37_12: 'Windows Runtime 儲存遷移現在無需系統管理員權限即可處理更新產生的連結，同時重新定位 Python、支援 Unicode 自訂路徑，並在首次重新啟動時更新 CLI 與 MCP shim（#2345）',
+    new_0_6_37_13: 'macOS 桌面簽章改用明確的暫時 keychain，ARM64 與 x64 均相容 macOS 26 runner 的嚴格模式（#2315）',
     new_0_6_36_1: '本版本涵蓋 0.6.35 之後合併的全部 28 個 PR，涉及語音、阿拉伯語與 RTL、App Relay、Agent 穩定性、聊天體驗、看板、Journey、MCU 字幕和 Ekko 請求日誌',
     new_0_6_36_2: '語音設定已統一到「模型」頁面，Hermes 原生與 Web UI Provider 可協同使用；自訂 TTS 支援選擇 voice，Edge TTS 支援任意 voice ID 和阿拉伯語選項（#2260、#2265、#2267）',
     new_0_6_36_3: '阿拉伯語與端到端 RTL 支援現已涵蓋文件流、Naive UI、聊天、群聊、Workflow、浮層、抽屜、逐內容區塊文字方向，並修正了 Profile 文案（#2269、#2270、#2271、#2273、#2277、#2294、#2303）',

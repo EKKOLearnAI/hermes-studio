@@ -97,7 +97,7 @@ describe('Hermes Studio CLI shim', () => {
     expect(appPath).toBe('C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe')
     expect(nodePath).toBe('C:\\runtime\\node\\node.exe')
     expect(webUiScriptPath).toBe('C:\\resources\\webui\\bin\\hermes-web-ui.mjs')
-    expect(forwarder).toContain("path.join(webUiHome,'desktop-runtime','hermes','0.19.1','win-x64')")
+    expect(forwarder).toContain("path.join(webUiHome,'desktop-runtime','hermes','0.20.0','win-x64')")
     expect(forwarder).toContain("path.join(webUiHome,'desktop-runtime','active-version.json')")
     expect(forwarder).toContain("active.platform==='win-x64'")
     expect(forwarder).toContain("let virtualEnv=path.join(runtime,'python','venv')")

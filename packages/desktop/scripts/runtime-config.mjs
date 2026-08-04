@@ -1,7 +1,7 @@
-export const DEFAULT_HERMES_VERSION = '0.19.1'
+export const DEFAULT_HERMES_VERSION = '0.20.0'
 export const DEFAULT_HERMES_SOURCE_REPOSITORY = 'https://github.com/NousResearch/hermes-agent.git'
-export const DEFAULT_HERMES_SOURCE_REF = 'v2026.7.30'
-export const DEFAULT_HERMES_SOURCE_COMMIT = 'cc4cab2f592e60a197e796506de9168f74baf3ea'
+export const DEFAULT_HERMES_SOURCE_REF = 'v2026.8.3'
+export const DEFAULT_HERMES_SOURCE_COMMIT = '3c27eb6234bf91b8ceee9e9071591b31e9b148cb'
 
 export function hermesVersion(env = process.env) {
   return env.HERMES_VERSION || DEFAULT_HERMES_VERSION

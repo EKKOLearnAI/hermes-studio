@@ -142,7 +142,7 @@ function windowsCmdShimContent(name: 'hermes-studio' | 'hermes-studio-mcp', mark
 export function createPowerShellShimContent(
   executablePath: string,
   archName: string = process.arch,
-  runtimeVersion = '0.19.1',
+  runtimeVersion = '0.20.0',
   nodePath = process.execPath,
   webUiScriptPath = resolve(process.cwd(), 'bin', 'hermes-web-ui.mjs'),
 ): string {
@@ -216,7 +216,7 @@ export function createShimContent(
   executablePath: string,
   platform: NodeJS.Platform = process.platform,
   archName: string = process.arch,
-  runtimeVersion = '0.19.1',
+  runtimeVersion = '0.20.0',
   nodePath = process.execPath,
   webUiScriptPath = resolve(process.cwd(), 'bin', 'hermes-web-ui.mjs'),
 ): string {

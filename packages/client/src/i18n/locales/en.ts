@@ -2871,6 +2871,19 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_37_1: 'The headline of this 14-PR release is a complete Group Chat rebuild: every Agent can independently choose its Profile, provider, model, API mode, reasoning effort, identity, and workspace (#2334)',
+    new_0_6_37_2: 'Group rooms now start fresh isolated runs, keep each reply together with its reasoning and tools, and use a shared editable rolling summary with status, boundaries, Agent mentions, room and workspace drawers, and legacy migration guidance (#2334)',
+    new_0_6_37_3: 'MiniMax Coding Plan OAuth supports Global and China regions, while authorized Codex, xAI, Anthropic, Nous, and MiniMax credentials now refresh through the persistent Runtime Bridge (#2337)',
+    new_0_6_37_4: 'ESP32-C3 v1 and v2 gain optional automatic listening with local VAD, pre-roll audio, silence completion, playback suppression, and preserved push-to-talk controls (#2338)',
+    new_0_6_37_5: 'MCU Global Agent now uses concise Ekko voice mode, can delegate safe background work, preserves session history and workspaces, and no longer forwards oversized tool payloads (#2326)',
+    new_0_6_37_6: 'Custom and OpenAI-compatible TTS automatically retry provider-supported audio formats and convert non-MP3 output for Hermes playback (#2328)',
+    new_0_6_37_7: 'Profile export and import now allow up to ten minutes, surface actionable timeout errors, isolate concurrent archives, sanitize filenames, and clean temporary files (#2310, #2324)',
+    new_0_6_37_8: 'Hermes Agent Bridge now applies model-specific reasoning defaults while preserving explicit per-run overrides and the legacy fallback (#2325)',
+    new_0_6_37_9: 'Version Management reports the actual installed Hermes Agent version separately from the Runtime path and clarifies CLI update scope and shutdown requirements (#2323)',
+    new_0_6_37_10: 'Workspace file trees use tighter indentation so deeply nested names remain visible (#2340)',
+    new_0_6_37_11: 'Desktop now targets Hermes Agent 0.20.0, builds from pinned source, pins portable Node and npm, accepts regenerated Windows launchers, supports updates without system Python, and keeps the managed gateway hidden (#2321, #2344)',
+    new_0_6_37_12: 'Windows Runtime storage migration now handles update-generated links without administrator privileges, rebases Python, supports Unicode custom paths, and refreshes CLI and MCP shims on the first restart (#2345)',
+    new_0_6_37_13: 'macOS desktop signing now uses an explicit temporary keychain compatible with strict macOS 26 runners for both architectures (#2315)',
     new_0_6_36_1: 'This release covers all 28 PRs merged after 0.6.35, spanning voice, Arabic and RTL, App Relay, Agent reliability, chat UX, Kanban, Journey, MCU subtitles, and Ekko request logging',
     new_0_6_36_2: 'Voice settings are unified in Models for Hermes-native and Web UI providers; Custom TTS supports voice selection, and Edge TTS accepts any voice ID with Arabic options (#2260, #2265, #2267)',
     new_0_6_36_3: 'Arabic and end-to-end RTL support now cover document flow, Naive UI, chat, Group Chat, Workflow, overlays, drawers, per-block text direction, and corrected Profile wording (#2269, #2270, #2271, #2273, #2277, #2294, #2303)',
