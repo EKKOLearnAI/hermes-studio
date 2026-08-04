@@ -184,6 +184,21 @@ const currentUserAvatar = ref('')
         autoPlaySpeechEnabled.value = enabled
     }
 
+    function sortRoomsByActivity() {
+        rooms.value = [...rooms.value].sort((a, b) =>
+            Number(b.lastActiveAt || b.createdAt || 0) - Number(a.lastActiveAt || a.createdAt || 0)
+            || Number(b.createdAt || 0) - Number(a.createdAt || 0)
+            || b.id.localeCompare(a.id),
+        )
+    }
+
+    function recordPersistedRoomActivity(roomId: string, timestamp: number) {
+        const room = rooms.value.find(item => item.id === roomId)
+        if (!room || !Number.isFinite(timestamp)) return
+        room.lastActiveAt = Math.max(Number(room.lastActiveAt || room.createdAt || 0), timestamp)
+        sortRoomsByActivity()
+    }
+
     function setMessageReference(roomId: string, reference: MessageReference) {
         const next = new Map(messageReferences.value)
         next.set(roomId, reference)
@@ -438,6 +453,7 @@ const currentUserAvatar = ref('')
         })
 
         socket.on('message', (msg: ChatMessage) => {
+            recordPersistedRoomActivity(msg.roomId, Number(msg.timestamp || 0))
             if (msg.roomId === currentRoomId.value) {
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                     const responseRunId = inferredGroupResponseRunId(msg)
@@ -805,6 +821,7 @@ const currentUserAvatar = ref('')
         try {
             const res = await listRooms()
             rooms.value = res.rooms
+            sortRoomsByActivity()
         } catch (err: any) {
             error.value = err.message
         }

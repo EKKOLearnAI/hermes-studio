@@ -16,6 +16,8 @@ export interface RoomInfo {
     summaryEveryTurns: number
     totalTokens?: number
     workspace: string
+    createdAt?: number
+    lastActiveAt?: number
 }
 
 export interface RoomSummaryConfig {

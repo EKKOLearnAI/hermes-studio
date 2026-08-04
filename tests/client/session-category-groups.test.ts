@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildVisibleSessionCategoryGroups } from '../../packages/client/src/components/hermes/chat/session-category-groups'
+import {
+  buildRecentSessionCategoryGroup,
+  buildVisibleSessionCategoryGroups,
+} from '../../packages/client/src/components/hermes/chat/session-category-groups'
 
 describe('session category groups', () => {
   it('hides categories that have no visible sessions', () => {
@@ -42,5 +45,20 @@ describe('session category groups', () => {
       label: 'Uncategorized',
       sessions: [{ id: 'session-1', categoryId: 999 }],
     }])
+  })
+
+  it('builds a dynamic recent group by strict activity time without changing real categories', () => {
+    const sessions = [
+      { id: 'older', categoryId: 1, updatedAt: 100 },
+      { id: 'newest', categoryId: null, updatedAt: 300 },
+      { id: 'middle', categoryId: 2, updatedAt: 200 },
+    ]
+
+    expect(buildRecentSessionCategoryGroup(sessions, 2, 'Recent')).toEqual({
+      key: 'recent',
+      label: 'Recent',
+      sessions: [sessions[1], sessions[2]],
+    })
+    expect(sessions.map(session => session.categoryId)).toEqual([1, null, 2])
   })
 })

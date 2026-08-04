@@ -570,6 +570,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
+  createdAt: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_MESSAGES_TABLE = 'gc_messages'

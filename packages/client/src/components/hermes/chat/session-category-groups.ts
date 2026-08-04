@@ -7,6 +7,10 @@ export interface SessionCategoryAssignment {
   categoryId?: number | null;
 }
 
+export interface RecentSessionAssignment extends SessionCategoryAssignment {
+  updatedAt?: number | null;
+}
+
 export interface VisibleSessionCategoryGroup<T> {
   key: string;
   label: string;
@@ -37,4 +41,19 @@ export function buildVisibleSessionCategoryGroups<T extends SessionCategoryAssig
     });
   }
   return groups;
+}
+
+export function buildRecentSessionCategoryGroup<T extends RecentSessionAssignment>(
+  sessions: readonly T[],
+  limit: number,
+  label: string,
+): VisibleSessionCategoryGroup<T> {
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 10)));
+  return {
+    key: "recent",
+    label,
+    sessions: [...sessions]
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, safeLimit),
+  };
 }

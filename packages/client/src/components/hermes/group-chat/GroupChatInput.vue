@@ -102,7 +102,26 @@ watch(() => settingsStore.display.chat_input_height, () => {
 watch(
     () => activeMessageReference.value?.id,
     (id) => {
-        if (id) nextTick(() => textareaRef.value?.focus())
+        if (!id) return
+        const reference = activeMessageReference.value
+        const senderName = reference?.sender?.trim() || ''
+        const senderId = reference?.senderId?.trim() || ''
+        const validAgent = store.agents.some(agent =>
+            (senderId && (agent.agentId === senderId || agent.id === senderId)) || agent.name === senderName,
+        )
+        const validMember = store.members.some(member =>
+            (senderId && member.userId === senderId) || member.name === senderName,
+        )
+        const isSelf = !!senderId && senderId === store.userId
+        const escapedName = senderName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const alreadyMentioned = senderName
+            ? new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
+            : false
+        if (senderName && !isSelf && (validAgent || validMember) && !alreadyMentioned) {
+            inputText.value = `@${senderName} ${inputText.value}`
+            store.emitTyping()
+        }
+        nextTick(() => textareaRef.value?.focus())
     },
 )
 

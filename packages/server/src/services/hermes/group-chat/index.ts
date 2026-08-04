@@ -125,9 +125,11 @@ export interface RoomInfo {
     sessionSeed: string
     workspace: string
     ownerAuthUserId: number | null
+    createdAt: number
+    lastActiveAt: number
 }
 
-const ROOM_SELECT_COLUMNS = [
+const ROOM_BASE_COLUMNS = [
     'id',
     'name',
     'inviteCode',
@@ -143,7 +145,20 @@ const ROOM_SELECT_COLUMNS = [
     'sessionSeed',
     'workspace',
     'ownerAuthUserId',
+    'createdAt',
+]
+const ROOM_SELECT_COLUMNS = ROOM_BASE_COLUMNS.join(', ')
+const ROOM_LIST_COLUMNS = [
+    ...ROOM_BASE_COLUMNS.map(column => `r.${column}`),
+    `COALESCE((
+        SELECT MAX(m.timestamp)
+        FROM gc_messages m
+        WHERE m.roomId = r.id
+          AND m.role != 'tool'
+          AND COALESCE(m.finish_reason, '') != 'streaming'
+    ), r.createdAt) AS lastActiveAt`,
 ].join(', ')
+const ROOM_LIST_ORDER = 'lastActiveAt DESC, r.createdAt DESC, r.id DESC'
 
 export interface RoomSummaryConfig {
     summaryProfile?: string
@@ -360,15 +375,15 @@ class ChatStorage {
     // ─── Rooms ────────────────────────────────────────────────
 
     getRoom(roomId: string): RoomInfo | undefined {
-        return this.db()?.prepare(`SELECT ${ROOM_SELECT_COLUMNS} FROM gc_rooms WHERE id = ?`).get(roomId) as any
+        return this.db()?.prepare(`SELECT ${ROOM_LIST_COLUMNS} FROM gc_rooms r WHERE r.id = ?`).get(roomId) as any
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
-        return this.db()?.prepare(`SELECT ${ROOM_SELECT_COLUMNS} FROM gc_rooms WHERE inviteCode = ?`).get(code) as any
+        return this.db()?.prepare(`SELECT ${ROOM_LIST_COLUMNS} FROM gc_rooms r WHERE r.inviteCode = ?`).get(code) as any
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare(`SELECT ${ROOM_SELECT_COLUMNS} FROM gc_rooms ORDER BY id`).all() || []) as any[]
+        return (this.db()?.prepare(`SELECT ${ROOM_LIST_COLUMNS} FROM gc_rooms r ORDER BY ${ROOM_LIST_ORDER}`).all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -376,32 +391,32 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT DISTINCT ${ROOM_LIST_COLUMNS}
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              WHERE a.profile IN (${placeholders})
-             ORDER BY r.id`
+             ORDER BY ${ROOM_LIST_ORDER}`
         ).all(...uniqueProfiles) || []) as any[]
     }
 
     getRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT DISTINCT ${ROOM_LIST_COLUMNS}
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              WHERE m.authUserId = ?
-             ORDER BY r.id`
+             ORDER BY ${ROOM_LIST_ORDER}`
         ).all(authUserId) || []) as any[]
     }
 
     getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT ${ROOM_SELECT_COLUMNS}
-             FROM gc_rooms
-             WHERE ownerAuthUserId = ?
-             ORDER BY id`
+            `SELECT ${ROOM_LIST_COLUMNS}
+             FROM gc_rooms r
+             WHERE r.ownerAuthUserId = ?
+             ORDER BY ${ROOM_LIST_ORDER}`
         ).all(authUserId) || []) as any[]
     }
 
@@ -411,8 +426,8 @@ class ChatStorage {
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
                 id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
-                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
@@ -424,6 +439,7 @@ class ChatStorage {
             Math.max(1, Math.floor(Number(config?.summaryEveryTurns || 20))),
             config?.workspace || '',
             ownerAuthUserId,
+            Date.now(),
         )
     }
 

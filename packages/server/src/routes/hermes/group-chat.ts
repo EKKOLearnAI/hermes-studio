@@ -170,7 +170,11 @@ function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>,
             for (const room of storage.getRoomsForAuthUser(user.id)) addRoom(room, canManageRoom(storage, room.id, user))
         }
     }
-    return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id))
+    return [...byId.values()].sort((a, b) =>
+        Number(b.lastActiveAt || b.createdAt || 0) - Number(a.lastActiveAt || a.createdAt || 0)
+        || Number(b.createdAt || 0) - Number(a.createdAt || 0)
+        || String(b.id).localeCompare(String(a.id)),
+    )
 }
 
 async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: string, input: AgentInput, agentId = generateId()) {

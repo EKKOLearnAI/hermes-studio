@@ -134,6 +134,71 @@ describe('GroupChatInput mentions', () => {
     expect(store.activeMessageReference).toBeNull()
   })
 
+  it('automatically mentions a valid quoted agent once', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.userId = 'human-1'
+    store.agents = [{ id: 'row-1', agentId: 'agent-1', profile: 'worker', name: 'Worker', roomId: 'room-1', description: '', invited: 1 }]
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    store.setMessageReference('room-1', {
+      id: 'message-1',
+      role: 'assistant',
+      content: 'A referenced response',
+      sender: 'Worker',
+      senderId: 'agent-1',
+    })
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('@Worker ')
+    store.setMessageReference('room-1', {
+      id: 'message-2',
+      role: 'assistant',
+      content: 'Another response',
+      sender: 'Worker',
+      senderId: 'agent-1',
+    })
+    await nextTick()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('@Worker ')
+  })
+
+  it('does not auto-mention self or an invalid quoted sender', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.userId = 'human-1'
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    store.setMessageReference('room-1', {
+      id: 'self',
+      role: 'user',
+      content: 'My message',
+      sender: 'Me',
+      senderId: 'human-1',
+    })
+    await nextTick()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+
+    store.setMessageReference('room-1', {
+      id: 'missing',
+      role: 'assistant',
+      content: 'Removed member',
+      sender: 'Removed',
+      senderId: 'removed-1',
+    })
+    await nextTick()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+
   it('applies the configured desktop input height', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
     const settingsStore = useSettingsStore()
