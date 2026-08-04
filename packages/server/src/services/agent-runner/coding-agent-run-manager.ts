@@ -915,18 +915,19 @@ export class CodingAgentRunManager {
     const promptArgument = hasArg(run.launch.args, '--append-system-prompt-file')
       ? ''
       : normalizeCliPromptArgument(systemPrompt)
-    const streamInput = images.length > 0 ? buildClaudeStreamJsonInput(input, images) : ''
+    const inputFormat = images.length > 0 ? 'stream-json' : 'text'
+    const stdinInput = images.length > 0 ? buildClaudeStreamJsonInput(input, images) : input
     const args = [
       ...run.launch.args,
       ...nativeSessionArgs,
       ...(promptArgument ? ['--append-system-prompt', promptArgument] : []),
       '-p',
-      ...(streamInput ? ['--input-format', 'stream-json'] : []),
+      '--input-format',
+      inputFormat,
       '--output-format',
       'stream-json',
       '--include-partial-messages',
       '--verbose',
-      ...(streamInput ? [] : [input]),
     ]
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
@@ -934,7 +935,7 @@ export class CodingAgentRunManager {
         ...process.env,
         ...(run.launch.env || {}),
       },
-      pipeStdin: Boolean(streamInput),
+      pipeStdin: true,
     })
     run.currentChild = child
 
@@ -953,11 +954,11 @@ export class CodingAgentRunManager {
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
     })
 
-    if (streamInput && child.stdin) {
+    if (child.stdin) {
       child.stdin.on('error', (err) => {
-        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude stream input failed')
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude stdin input failed')
       })
-      child.stdin.end(`${streamInput}\n`)
+      child.stdin.end(`${stdinInput}\n`)
     }
 
     child.on('error', (err) => {
@@ -1378,8 +1379,8 @@ export class CodingAgentRunManager {
       '--dangerously-bypass-approvals-and-sandbox',
     ]
     const args = run.launch.agentNativeSessionId && run.nativeResumeReady
-      ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, input]
-      : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, input]
+      ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, '-']
+      : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, '-']
 
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
@@ -1387,6 +1388,7 @@ export class CodingAgentRunManager {
         ...process.env,
         ...(run.launch.env || {}),
       },
+      pipeStdin: true,
     })
     run.currentChild = child
 
@@ -1404,6 +1406,13 @@ export class CodingAgentRunManager {
       const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
     })
+
+    if (child.stdin) {
+      child.stdin.on('error', (err) => {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex stdin input failed')
+      })
+      child.stdin.end(`${input}\n`)
+    }
 
     child.on('error', (err) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)

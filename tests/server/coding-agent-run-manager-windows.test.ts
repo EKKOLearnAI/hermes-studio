@@ -85,7 +85,15 @@ describe('coding agent Windows process launch', () => {
       state: { messages: [], isWorking: false, events: [], queue: [] },
     })
 
-    manager.send('chat-session-1', 'test', { systemPrompt: 'system prompt\nsecond line' })
+    const groupInput = [
+      '群聊系统：这条消息已经提及你，请直接回复。',
+      '',
+      '以下是群聊记录：',
+      `用户：${'长文本'.repeat(4000)}`,
+      '',
+      '当前消息：检查这个问题',
+    ].join('\n')
+    manager.send('chat-session-1', groupInput, { systemPrompt: 'system prompt\nsecond line' })
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
@@ -95,14 +103,17 @@ describe('coding agent Windows process launch', () => {
     expect(testState.spawnCalls[0].args[3]).toContain('^"--settings^"')
     expect(testState.spawnCalls[0].args[3]).toContain('^"--append-system-prompt^"')
     expect(testState.spawnCalls[0].args[3]).toContain('^"system^ prompt^ /^ second^ line^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"--input-format^" ^"text^"')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\n')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\r')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"test^"')
+    expect(testState.spawnCalls[0].args[3]).not.toContain('群聊系统')
+    expect(testState.spawnCalls[0].args[3].length).toBeLessThan(8191)
     expect(testState.spawnCalls[0].options).toMatchObject({
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsVerbatimArguments: true,
       windowsHide: true,
     })
+    expect(testState.spawnCalls[0].child.stdin.end).toHaveBeenCalledWith(`${groupInput}\n`)
 
     const run = (manager as any).runs.get('agent-session-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
@@ -132,7 +143,15 @@ describe('coding agent Windows process launch', () => {
       state: { messages: [], isWorking: false, events: [], queue: [] },
     })
 
-    manager.send('chat-session-codex-1', 'test', { systemPrompt: 'system prompt\nsecond line' })
+    const groupInput = [
+      '群聊系统：这条消息已经提及你，请直接回复。',
+      '',
+      '以下是群聊记录：',
+      `用户：${'长文本'.repeat(4000)}`,
+      '',
+      '当前消息：检查这个问题',
+    ].join('\n')
+    manager.send('chat-session-codex-1', groupInput, { systemPrompt: 'system prompt\nsecond line' })
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
@@ -147,13 +166,16 @@ describe('coding agent Windows process launch', () => {
     expect(testState.spawnCalls[0].args[3]).not.toContain('\n')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\r')
     expect(testState.spawnCalls[0].args[3]).toContain('^"--model^"')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"test^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"-^"')
+    expect(testState.spawnCalls[0].args[3]).not.toContain('群聊系统')
+    expect(testState.spawnCalls[0].args[3].length).toBeLessThan(8191)
     expect(testState.spawnCalls[0].args[3]).not.toContain('system^ prompt\r\n\r\ntest')
     expect(testState.spawnCalls[0].options).toMatchObject({
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsVerbatimArguments: true,
       windowsHide: true,
     })
+    expect(testState.spawnCalls[0].child.stdin.end).toHaveBeenCalledWith(`${groupInput}\n`)
 
     const run = (manager as any).runs.get('agent-session-codex-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
@@ -297,7 +319,10 @@ describe('coding agent Windows process launch', () => {
     const call = testState.spawnCalls[0]
     expect(call.args[3]).toContain('^"--image^"')
     expect(call.args[3]).toContain('C:\\Users\\Administrator\\Pictures\\sample^ image.png')
-    expect(call.options.stdio).toEqual(['ignore', 'pipe', 'pipe'])
+    expect(call.args[3]).toContain('^"-^"')
+    expect(call.args[3]).not.toContain('^"inspect^ this^ image^"')
+    expect(call.options.stdio).toEqual(['pipe', 'pipe', 'pipe'])
+    expect(call.child.stdin.end).toHaveBeenCalledWith('inspect this image\n')
 
     const run = (manager as any).runs.get('agent-session-codex-image-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
