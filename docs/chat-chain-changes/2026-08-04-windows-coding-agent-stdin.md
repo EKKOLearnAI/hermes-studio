@@ -1,6 +1,6 @@
 ---
 date: 2026-08-04
-pr: pending
+pr: 2354
 feature: Coding-agent stdin delivery
 impact: Codex and Claude Code turns now receive multiline and long user input through stdin on every platform, avoiding Windows command-line corruption and truncation.
 ---
