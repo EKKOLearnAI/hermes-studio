@@ -432,6 +432,18 @@ function writeActiveRuntimeManifest(active: ActiveRuntimeVersion): void {
   writeFileSync(file, JSON.stringify(active, null, 2) + '\n')
 }
 
+async function copyTreeForMigration(source: string, destination: string): Promise<void> {
+  // Hermes/uv can add directory symlinks after an update. Recreating them
+  // requires elevated Windows privileges, so make the migrated copy self-contained.
+  const materializeLinks = process.platform === 'win32'
+  await copyAsync(source, destination, {
+    recursive: true,
+    force: true,
+    dereference: materializeLinks,
+    verbatimSymlinks: !materializeLinks,
+  })
+}
+
 export async function migratePendingRuntimeRoot(
   onProgress?: RuntimeProgressHandler,
 ): Promise<{ migrated: boolean; error: string }> {
@@ -511,7 +523,7 @@ export async function migratePendingRuntimeRoot(
     if (shouldCopyRuntime) {
       await mkdirAsync(dirname(targetRuntime), { recursive: true })
       await removeAsync(tempRuntime, { recursive: true, force: true })
-      await copyAsync(sourceRuntime, tempRuntime, { recursive: true, force: true, verbatimSymlinks: true })
+      await copyTreeForMigration(sourceRuntime, tempRuntime)
       const relocation = repairMovedHermesRuntime(tempRuntime, sourceRuntime, targetRuntime)
       if (relocation.editableFilesRewritten || relocation.launchersRewritten) {
         console.log(
@@ -528,11 +540,7 @@ export async function migratePendingRuntimeRoot(
       await mkdirAsync(tempWebUiRoot, { recursive: true })
       for (const webUiVersion of webUiVersionsToCopy) {
         const stagedVersion = join(tempWebUiRoot, webUiVersion)
-        await copyAsync(join(sourceWebUiRoot, webUiVersion), stagedVersion, {
-          recursive: true,
-          force: true,
-          verbatimSymlinks: true,
-        })
+        await copyTreeForMigration(join(sourceWebUiRoot, webUiVersion), stagedVersion)
         validateWebUiVersion(stagedVersion, webUiVersion)
       }
       validateWebUiVersions(tempWebUiRoot)

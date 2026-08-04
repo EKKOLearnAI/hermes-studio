@@ -1,4 +1,14 @@
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  createReadStream,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -353,6 +363,62 @@ describe('desktop runtime manager', () => {
       stage: 'extract',
       detail: destination,
     }))
+  })
+
+  it('materializes updated Python symlinks during a Windows Runtime migration', async () => {
+    setPlatform('win32')
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const destination = tempDir('hermes-runtime-migration-windows-links-')
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const sourceRuntime = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    const generation = join(
+      sourceRuntime,
+      'python',
+      '.hermes-runtime',
+      'python',
+      'generation-test',
+    )
+    const installedPython = join(generation, 'cpython-3.12.13-windows-x86_64-none')
+    const pythonAlias = join(generation, 'cpython-3.12-windows-x86_64-none')
+    createRuntimeFiles(sourceRuntime, { standardWindowsVenv: true })
+    mkdirSync(installedPython, { recursive: true })
+    writeFileSync(join(installedPython, 'python.exe'), 'managed Python')
+    symlinkSync(installedPython, pythonAlias, 'dir')
+    writeFileSync(
+      join(sourceRuntime, 'python', 'venv', 'pyvenv.cfg'),
+      `home = ${pythonAlias}\nexecutable = ${join(pythonAlias, 'python.exe')}\n`,
+    )
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: sourceRuntime,
+      pendingRuntimeRootDirectory: destination,
+      platform: runtimePlatformKey(),
+    }))
+
+    const { migratePendingRuntimeRoot } = await import('../../packages/desktop/src/main/runtime-manager')
+    const result = await migratePendingRuntimeRoot()
+    const migratedRuntime = join(destination, 'hermes', '0.17.0', runtimePlatformKey())
+    const migratedAlias = join(
+      migratedRuntime,
+      'python',
+      '.hermes-runtime',
+      'python',
+      'generation-test',
+      'cpython-3.12-windows-x86_64-none',
+    )
+    const migratedConfig = readFileSync(
+      join(migratedRuntime, 'python', 'venv', 'pyvenv.cfg'),
+      'utf-8',
+    )
+
+    expect(result).toEqual({ migrated: true, error: '' })
+    expect(lstatSync(migratedAlias).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(migratedAlias, 'python.exe'), 'utf-8')).toBe('managed Python')
+    expect(migratedConfig).toContain(`home = ${migratedAlias}`)
+    expect(migratedConfig).toContain(`executable = ${join(migratedAlias, 'python.exe')}`)
+    expect(migratedConfig).not.toContain(sourceRuntime)
   })
 
   it('reuses valid Runtime and Web UI versions in a custom destination', async () => {

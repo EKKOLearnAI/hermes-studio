@@ -69,29 +69,28 @@ describe('Hermes Studio CLI shim', () => {
       'C:\\resources\\webui\\bin\\hermes-web-ui.mjs',
     )
 
-    expect(content).toContain('desktop-runtime\\hermes\\0.19.1\\win-x64')
-    expect(content).toContain('desktop-runtime\\active-version.json')
-    expect(content).toContain("$j.platform -eq 'win-x64'")
-    expect(content).toContain('[Console]::Out.Write($j.runtimeDirectory)')
+    expect(content).toContain("path.join(webUiHome,'desktop-runtime','hermes','0.19.1','win-x64')")
+    expect(content).toContain("path.join(webUiHome,'desktop-runtime','active-version.json')")
+    expect(content).toContain("active.platform==='win-x64'")
+    expect(content).toContain("fs.readFileSync(path.join(webUiHome,'desktop-runtime','active-version.json'),'utf8')")
     expect(content).toContain('set "NODE=C:\\runtime\\node\\node.exe"')
     expect(content).toContain('set "WEBUI_SCRIPT=C:\\resources\\webui\\bin\\hermes-web-ui.mjs"')
-    expect(content).toContain('set "VIRTUAL_ENV=%RUNTIME%\\python\\venv"')
-    expect(content).toContain('set "PYTHON=%VIRTUAL_ENV%\\Scripts\\python.exe"')
-    expect(content).toContain('if not exist "%PYTHON%" set "PYTHON=%VIRTUAL_ENV%\\python.exe"')
-    expect(content).toContain('if not exist "%PYTHON%" set "VIRTUAL_ENV=%RUNTIME%\\python"')
-    expect(content).toContain('set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"')
-    expect(content).toContain('set "UV_PYTHON=%PYTHON%"')
+    expect(content).toContain("let virtualEnv=path.join(runtime,'python','venv')")
+    expect(content).toContain("let python=path.join(virtualEnv,'Scripts','python.exe')")
+    expect(content).toContain('UV_PROJECT_ENVIRONMENT:virtualEnv')
+    expect(content).toContain('UV_PYTHON:python')
     expect(content).not.toContain('set "UV_SYSTEM_PYTHON=1"')
-    expect(content).toContain('set "HERMES_AGENT_ROOT=%RUNTIME%\\python"')
-    expect(content).toContain('set "AGENT_BROWSER_HOME=%RUNTIME%\\python\\agent-browser"')
-    expect(content).toContain('set "PATH=%RUNTIME%\\python\\venv\\Scripts;%RUNTIME%\\python\\node;%RUNTIME%\\node;%RUNTIME%\\git\\cmd;%PATH%"')
+    expect(content).toContain("HERMES_AGENT_ROOT:path.join(runtime,'python')")
+    expect(content).toContain("AGENT_BROWSER_HOME:path.join(runtime,'python','agent-browser')")
+    expect(content).toContain("path.join(runtime,'git','cmd'),inheritedPath")
     expect(content).toContain('if /I "%~1"=="cli" goto runCli')
     expect(content).toContain(':runCli')
-    expect(content).toContain('call :resolveRuntime')
     expect(content).toContain("if(args[0]&&args[0].toLowerCase()==='cli')args.shift()")
-    expect(content).toContain("cp.spawnSync(process.env.PYTHON,['-m','hermes_cli.main',...args]")
-    expect(content).toContain("{stdio:'inherit',windowsHide:true}")
-    expect(content).toContain('"%NODE%" -e "const cp=require')
+    expect(content).toContain("cp.spawnSync(python,['-m','hermes_cli.main',...args]")
+    expect(content).toContain("{stdio:'inherit',windowsHide:true,env}")
+    expect(content).toContain('"%NODE%" -e "const fs=require')
+    expect(content).not.toContain('powershell.exe')
+    expect(content).not.toContain('for /f')
     expect(content).toContain('if /I "%~1"=="web" goto runWeb')
     expect(content).toContain(':runWeb')
     expect(content).toContain("if(args[0]&&args[0].toLowerCase()==='web')args.shift()")
@@ -121,6 +120,25 @@ describe('Hermes Studio CLI shim', () => {
     expect(content).toContain('set "HERMES_WEB_UI_URL=http://127.0.0.1:8748"')
     expect(content).toContain('set "HERMES_WEB_UI_URL=http://127.0.0.1:%HERMES_DESKTOP_PORT%"')
     expect(content).toContain('if "%HERMES_MCP_SERVER_NAME%"=="" set "HERMES_MCP_SERVER_NAME=hermes-studio-mcp"')
+  })
+
+  it('refreshes packaged command shims after Runtime migration completes', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'packages', 'desktop', 'src', 'main', 'index.ts'),
+      'utf-8',
+    )
+    const bootstrap = source.slice(
+      source.indexOf('async function bootstrap('),
+      source.indexOf("ipcMain.handle('hermes-desktop:get-token'"),
+    )
+
+    expect(bootstrap.indexOf('await migratePendingRuntimeRoot(updateSplash)')).toBeGreaterThanOrEqual(0)
+    expect(bootstrap.indexOf('writeActiveRuntimeVersion()')).toBeGreaterThan(
+      bootstrap.indexOf('await migratePendingRuntimeRoot(updateSplash)'),
+    )
+    expect(bootstrap.indexOf('await installPackagedCommandShims()')).toBeGreaterThan(
+      bootstrap.indexOf('writeActiveRuntimeVersion()'),
+    )
   })
 
   it('detects user bin paths with platform-specific separators', () => {
@@ -173,13 +191,16 @@ describe('Hermes Studio CLI shim', () => {
       homeDir,
       platform: 'win32',
       executablePath: 'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
-      nodePath: 'C:\\Program Files\\Hermes Studio\\node.exe',
-      webUiScriptPath: 'C:\\Program Files\\Hermes Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
+      nodePath: 'D:\\新建文件夹\\hermes\\0.19.1\\win-x64\\node\\node.exe',
+      webUiScriptPath: 'D:\\新建文件夹\\webui\\bin\\hermes-web-ui.mjs',
       env: { Path: existingPath },
     })
 
+    const shim = readFileSync(result.shimPath)
     expect(result.status).toBe('installed')
     expect(result.pathUpdated).toBe(true)
+    expect([...shim.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    expect(shim.toString('utf-8')).toContain('D:\\新建文件夹\\hermes\\0.19.1\\win-x64\\node\\node.exe')
     expect(execFileMock).toHaveBeenCalledTimes(2)
     expect(execFileMock).not.toHaveBeenCalledWith('reg.exe', expect.anything(), expect.anything(), expect.anything())
     expect(writtenPath).toBe(`${join(homeDir, 'bin')};${existingPath}`)

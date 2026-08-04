@@ -87,9 +87,23 @@ describe('Hermes source runtime relocation', () => {
     const scriptsDir = join(stagedRuntime, 'python', 'venv', 'Scripts')
     mkdirSync(scriptsDir, { recursive: true })
     writeFileSync(join(scriptsDir, 'hermes.exe'), '')
+    const previousManagedPython = join(
+      previousRuntime,
+      'python',
+      '.hermes-runtime',
+      'python',
+      'generation',
+    )
+    const finalManagedPython = join(
+      finalRuntime,
+      'python',
+      '.hermes-runtime',
+      'python',
+      'generation',
+    )
     writeFileSync(
       join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
-      `home = ${join(previousRuntime, 'python', '.hermes-runtime', 'python', 'generation')}\n`,
+      `home = ${previousManagedPython}\nexecutable = ${join(previousManagedPython, 'python.exe')}\n`,
     )
 
     const repaired = repairMovedHermesRuntime(
@@ -104,7 +118,11 @@ describe('Hermes source runtime relocation', () => {
     expect(readFileSync(
       join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
       'utf-8',
-    )).toContain(`home = ${join(finalRuntime, 'python', 'base')}`)
+    )).toContain(`home = ${finalManagedPython}`)
+    expect(readFileSync(
+      join(stagedRuntime, 'python', 'venv', 'pyvenv.cfg'),
+      'utf-8',
+    )).toContain(`executable = ${join(finalManagedPython, 'python.exe')}`)
     expect(existsSync(join(scriptsDir, 'hermes.exe'))).toBe(false)
     expect(readFileSync(join(scriptsDir, 'hermes.cmd'), 'utf-8')).toContain(
       '"%PY%" -m hermes_cli.main %*',

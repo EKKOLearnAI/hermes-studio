@@ -86,6 +86,38 @@ function windowsRuntimePlatformKey(archName: string): string {
   return `win-${archName}`
 }
 
+function jsSingleQuoted(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
+
+function windowsCliForwarder(runtimePlatform: string, runtimeVersion: string): string {
+  const platform = jsSingleQuoted(runtimePlatform)
+  const version = jsSingleQuoted(runtimeVersion)
+  return [
+    "const fs=require('node:fs')",
+    "const path=require('node:path')",
+    "const cp=require('node:child_process')",
+    'const args=process.argv.slice(1)',
+    "if(args[0]&&args[0].toLowerCase()==='cli')args.shift()",
+    "const webUiHome=process.env.HERMES_WEB_UI_HOME||process.env.HERMES_WEBUI_STATE_DIR||path.join(process.env.USERPROFILE||'','.hermes-web-ui')",
+    "let runtime=(process.env.HERMES_DESKTOP_RUNTIME_DIR||'').trim()",
+    `if(!runtime){try{const active=JSON.parse(fs.readFileSync(path.join(webUiHome,'desktop-runtime','active-version.json'),'utf8'));if(active.platform===${platform}&&typeof active.runtimeDirectory==='string'&&active.runtimeDirectory.trim()&&fs.existsSync(active.runtimeDirectory))runtime=active.runtimeDirectory.trim()}catch{}}`,
+    `if(!runtime)runtime=path.join(webUiHome,'desktop-runtime','hermes',${version},${platform})`,
+    "let virtualEnv=path.join(runtime,'python','venv')",
+    "let python=path.join(virtualEnv,'Scripts','python.exe')",
+    "if(!fs.existsSync(python))python=path.join(virtualEnv,'python.exe')",
+    "if(!fs.existsSync(python)){virtualEnv=path.join(runtime,'python');python=path.join(virtualEnv,'python.exe')}",
+    "if(!fs.existsSync(python)){console.error('Hermes Studio Python runtime not found at '+python);console.error('Open Hermes Studio once to finish runtime setup, then retry hermes-studio cli.');process.exit(127)}",
+    "const inheritedPath=process.env.PATH||process.env.Path||''",
+    'const env={...process.env,VIRTUAL_ENV:virtualEnv,UV_PROJECT_ENVIRONMENT:virtualEnv,UV_PYTHON:python,HERMES_AGENT_ROOT:path.join(runtime,\'python\'),HERMES_AGENT_NODE:path.join(runtime,\'node\',\'node.exe\'),HERMES_AGENT_NODE_ROOT:path.join(runtime,\'node\'),AGENT_BROWSER_HOME:path.join(runtime,\'python\',\'agent-browser\'),PLAYWRIGHT_BROWSERS_PATH:path.join(runtime,\'python\',\'ms-playwright\')}',
+    "for(const key of Object.keys(env))if(key.toLowerCase()==='path')delete env[key]",
+    "env.PATH=[path.join(runtime,'python','venv','Scripts'),path.join(runtime,'python','node'),path.join(runtime,'node'),path.join(runtime,'git','cmd'),inheritedPath].filter(Boolean).join(';')",
+    "const result=cp.spawnSync(python,['-m','hermes_cli.main',...args],{stdio:'inherit',windowsHide:true,env})",
+    'if(result.error){console.error(result.error.message);process.exit(127)}',
+    'process.exit(result.status===null?(result.signal?1:0):result.status)',
+  ].join(';')
+}
+
 export function createShimContent(
   executablePath: string,
   platform: NodeJS.Platform = process.platform,
@@ -96,7 +128,7 @@ export function createShimContent(
 ): string {
   if (platform === 'win32') {
     const runtimePlatform = windowsRuntimePlatformKey(archName)
-    const cliForwarder = `const cp=require('node:child_process');const args=process.argv.slice(1);if(args[0]&&args[0].toLowerCase()==='cli')args.shift();const r=cp.spawnSync(process.env.PYTHON,['-m','hermes_cli.main',...args],{stdio:'inherit',windowsHide:true});if(r.error){console.error(r.error.message);process.exit(127)}process.exit(r.status===null?(r.signal?1:0):r.status)`
+    const cliForwarder = windowsCliForwarder(runtimePlatform, runtimeVersion)
     const webForwarder = `const cp=require('node:child_process');const args=process.argv.slice(1);if(args[0]&&args[0].toLowerCase()==='web')args.shift();const r=cp.spawnSync(process.env.NODE,[process.env.WEBUI_SCRIPT,...args],{stdio:'inherit'});if(r.error){console.error(r.error.message);process.exit(127)}process.exit(r.status===null?(r.signal?1:0):r.status)`
     return [
       '@echo off',
@@ -113,36 +145,7 @@ export function createShimContent(
       'echo Unknown Hermes Studio command: %~1 1>&2',
       'echo Run hermes-studio --help for usage. 1>&2',
       'exit /b 2',
-      ':resolveRuntime',
-      'set "WEBUI_HOME=%HERMES_WEB_UI_HOME%"',
-      'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%HERMES_WEBUI_STATE_DIR%"',
-      'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%USERPROFILE%\\.hermes-web-ui"',
-      'set "RUNTIME=%HERMES_DESKTOP_RUNTIME_DIR%"',
-      'if "%RUNTIME%"=="" if exist "%WEBUI_HOME%\\desktop-runtime\\active-version.json" (',
-      `  for /f "usebackq delims=" %%I in (\`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p = Join-Path $env:WEBUI_HOME 'desktop-runtime\\active-version.json'; try { $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json; if ($j.platform -eq '${runtimePlatform}' -and $j.runtimeDirectory -and (Test-Path -LiteralPath $j.runtimeDirectory)) { [Console]::Out.Write($j.runtimeDirectory) } } catch {}" 2^>nul\`) do set "RUNTIME=%%I"`,
-      ')',
-      `if "%RUNTIME%"=="" set "RUNTIME=%WEBUI_HOME%\\desktop-runtime\\hermes\\${runtimeVersion}\\${runtimePlatform}"`,
-      'set "VIRTUAL_ENV=%RUNTIME%\\python\\venv"',
-      'set "PYTHON=%VIRTUAL_ENV%\\Scripts\\python.exe"',
-      'if not exist "%PYTHON%" set "PYTHON=%VIRTUAL_ENV%\\python.exe"',
-      'if not exist "%PYTHON%" set "VIRTUAL_ENV=%RUNTIME%\\python"',
-      'if not exist "%PYTHON%" set "PYTHON=%VIRTUAL_ENV%\\python.exe"',
-      'set "UV_PROJECT_ENVIRONMENT=%VIRTUAL_ENV%"',
-      'set "UV_PYTHON=%PYTHON%"',
-      'set "HERMES_AGENT_ROOT=%RUNTIME%\\python"',
-      'set "HERMES_AGENT_NODE=%RUNTIME%\\node\\node.exe"',
-      'set "HERMES_AGENT_NODE_ROOT=%RUNTIME%\\node"',
-      'set "AGENT_BROWSER_HOME=%RUNTIME%\\python\\agent-browser"',
-      'set "PLAYWRIGHT_BROWSERS_PATH=%RUNTIME%\\python\\ms-playwright"',
-      'set "PATH=%RUNTIME%\\python\\venv\\Scripts;%RUNTIME%\\python\\node;%RUNTIME%\\node;%RUNTIME%\\git\\cmd;%PATH%"',
-      'exit /b 0',
       ':runCli',
-      'call :resolveRuntime',
-      'if not exist "%PYTHON%" (',
-      '  echo Hermes Studio Python runtime not found at "%PYTHON%" 1>&2',
-      '  echo Open Hermes Studio once to finish runtime setup, then retry hermes-studio cli. 1>&2',
-      '  exit /b 127',
-      ')',
       'if not exist "%NODE%" (',
       '  echo Hermes Studio Node runtime not found at "%NODE%" 1>&2',
       '  echo Open Hermes Studio once to finish runtime setup, then retry hermes-studio cli. 1>&2',
@@ -306,6 +309,9 @@ function isManagedShim(content: string, marker: string): boolean {
 }
 
 function writeShim(shimPath: string, content: string, platform: NodeJS.Platform, marker = SHIM_MARKER): ShimInstallStatus {
+  if (platform === 'win32' && !content.startsWith('\uFEFF')) {
+    content = `\uFEFF${content}`
+  }
   if (existsSync(shimPath)) {
     const existing = readFileSync(shimPath, 'utf-8')
     if (existing === content) return 'unchanged'

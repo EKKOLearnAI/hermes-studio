@@ -861,6 +861,36 @@ function updateSplash(progress: RuntimeProgress) {
   `).catch(() => undefined)
 }
 
+async function installPackagedCommandShims(): Promise<void> {
+  if (!app.isPackaged) return
+
+  const installs = [
+    installHermesStudioCliShim({
+      nodePath: bundledNode(),
+      runtimeVersion: desktopRuntimeVersion(),
+      webUiScriptPath: join(webuiDir(), 'bin', 'hermes-web-ui.mjs'),
+    }),
+    installHermesStudioMcpShim({
+      nodePath: bundledNode(),
+      scriptPath: join(webuiDir(), 'bin', 'hermes-studio-mcp.mjs'),
+      webUiUrl: `http://127.0.0.1:${PORT}`,
+    }),
+  ]
+  const results = await Promise.allSettled(installs)
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.warn(
+        `[cli-shim] failed to install Hermes Studio command: `
+        + `${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      )
+      continue
+    }
+    if (result.value.status === 'skipped') {
+      console.warn(`[cli-shim] ${result.value.reason}: ${result.value.shimPath}`)
+    }
+  }
+}
+
 async function bootstrap(source?: RuntimeDownloadSource) {
   if (isBootstrapping) return
   isBootstrapping = true
@@ -885,6 +915,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     }
     if (isDesktopRuntimeReady()) {
       writeActiveRuntimeVersion()
+      await installPackagedCommandShims()
     }
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)
@@ -1160,30 +1191,6 @@ function runDesktopApp() {
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
     installMicrophonePermissionHandler()
-    if (app.isPackaged) {
-      installHermesStudioCliShim({
-        nodePath: bundledNode(),
-        runtimeVersion: desktopRuntimeVersion(),
-        webUiScriptPath: join(webuiDir(), 'bin', 'hermes-web-ui.mjs'),
-      }).then(result => {
-        if (result.status === 'skipped') {
-          console.warn(`[cli-shim] ${result.reason}: ${result.shimPath}`)
-        }
-      }).catch(err => {
-        console.warn(`[cli-shim] failed to install hermes-studio command: ${err instanceof Error ? err.message : String(err)}`)
-      })
-      installHermesStudioMcpShim({
-        nodePath: bundledNode(),
-        scriptPath: join(webuiDir(), 'bin', 'hermes-studio-mcp.mjs'),
-        webUiUrl: `http://127.0.0.1:${PORT}`,
-      }).then(result => {
-        if (result.status === 'skipped') {
-          console.warn(`[cli-shim] ${result.reason}: ${result.shimPath}`)
-        }
-      }).catch(err => {
-        console.warn(`[cli-shim] failed to install hermes-studio-mcp command: ${err instanceof Error ? err.message : String(err)}`)
-      })
-    }
     createTray()
     await createWindow()
     await initializeDesktopBrowser().catch(error => {

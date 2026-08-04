@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export type RuntimeRelocationRepair = {
@@ -58,6 +58,44 @@ function rewriteTextFile(file: string, replacements: Array<[string, string]>): b
   return true
 }
 
+function isSameOrNestedPath(parent: string, candidate: string): boolean {
+  const rel = relative(resolve(parent), resolve(candidate))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+function rewriteWindowsVenvConfig(
+  file: string,
+  previousSourceRoot: string,
+  finalSourceRoot: string,
+): boolean {
+  const original = readFileSync(file, 'utf-8')
+  let updated = original
+  for (const [from, to] of pathReplacementPairs(previousSourceRoot, finalSourceRoot)) {
+    updated = updated.split(from).join(to)
+  }
+
+  const lines = updated.split(/\r?\n/)
+  const homeIndex = lines.findIndex(line => /^\s*home\s*=/.test(line))
+  const configuredHome = homeIndex >= 0
+    ? lines[homeIndex].replace(/^\s*home\s*=\s*/, '').trim()
+    : ''
+  const home = configuredHome
+    && isAbsolute(configuredHome)
+    && isSameOrNestedPath(finalSourceRoot, configuredHome)
+    ? configuredHome
+    : join(finalSourceRoot, 'base')
+  if (homeIndex >= 0) {
+    lines[homeIndex] = `home = ${home}`
+  } else {
+    lines.unshift(`home = ${home}`)
+  }
+
+  updated = lines.join('\r\n').replace(/(?:\r?\n)*$/, '\r\n')
+  if (updated === original) return false
+  writeFileSync(file, updated)
+  return true
+}
+
 function rewriteEditableReferences(
   stagedSourceRoot: string,
   previousSourceRoot: string,
@@ -70,20 +108,11 @@ function rewriteEditableReferences(
   const pyvenvConfig = join(stagedSourceRoot, 'venv', 'pyvenv.cfg')
   if (existsSync(pyvenvConfig)) {
     if (platform === 'win32') {
-      const original = readFileSync(pyvenvConfig, 'utf-8')
-      const home = join(finalSourceRoot, 'base')
-      const lines = original.split(/\r?\n/)
-      const homeIndex = lines.findIndex(line => /^\s*home\s*=/.test(line))
-      if (homeIndex >= 0) {
-        lines[homeIndex] = `home = ${home}`
-      } else {
-        lines.unshift(`home = ${home}`)
-      }
-      const updated = lines.join('\r\n').replace(/(?:\r?\n)*$/, '\r\n')
-      if (updated !== original) {
-        writeFileSync(pyvenvConfig, updated)
-        rewritten += 1
-      }
+      if (rewriteWindowsVenvConfig(
+        pyvenvConfig,
+        previousSourceRoot,
+        finalSourceRoot,
+      )) rewritten += 1
     } else if (rewriteTextFile(pyvenvConfig, replacements)) {
       rewritten += 1
     }
