@@ -49,11 +49,26 @@ interface SpeechQueueItem {
   options: SpeechOptions
 }
 
+type PreparedProfileSpeech =
+  | { ok: true; audio: Blob }
+  | { ok: false; error: unknown }
+
 interface ProfileSpeechQueueItem {
   messageId: string
   content: string
   profile: string
+  generation: number
+  synthesis: Promise<PreparedProfileSpeech>
 }
+
+interface ProfileSpeechSynthesisJob {
+  text: string
+  profile: string
+  generation: number
+  resolve: (result: PreparedProfileSpeech) => void
+}
+
+const MAX_CONCURRENT_PROFILE_TTS_SYNTHESIS = 5
 
 /**
  * 语音播放 Composable
@@ -76,7 +91,13 @@ export function useSpeech() {
   const speechQueue: SpeechQueueItem[] = []
   const profileSpeechQueue: ProfileSpeechQueueItem[] = []
   const queuedProfileMessageIds = new Set<string>()
-  let activeProfileQueueItem: ProfileSpeechQueueItem | null = null
+  const profileSynthesisControllers = new Set<AbortController>()
+  const profileSynthesisJobs: ProfileSpeechSynthesisJob[] = []
+  const activeProfileSynthesisProfiles = new Set<string>()
+  let activeProfileSynthesisCount = 0
+  let profilePlaybackGeneration = 0
+  let profileQueueRunning = false
+  let finishActiveProfileAudio: (() => void) | null = null
 
   // 自定义 TTS（OpenAI / Custom / Edge）播放状态
   const isCustomPlaying = ref(false)
@@ -148,14 +169,13 @@ export function useSpeech() {
   function stop(clearQueue = true) {
     playbackToken += 1
     if (clearQueue) {
+      profilePlaybackGeneration += 1
+      abortProfileSpeechSynthesis()
       speechQueue.length = 0
       profileSpeechQueue.length = 0
       queuedProfileMessageIds.clear()
     }
-    if (activeProfileQueueItem) {
-      queuedProfileMessageIds.delete(activeProfileQueueItem.messageId)
-      activeProfileQueueItem = null
-    }
+    cancelActiveProfileAudio()
     // Stop TTS audio
     if (currentAudio) {
       currentAudio.pause()
@@ -404,6 +424,7 @@ export function useSpeech() {
     onSettled?: () => void,
   ) {
     currentTtsAbort?.abort()
+    cancelActiveProfileAudio()
     stopCustomAudioPlayback()
 
     isCustomPlaying.value = true
@@ -462,42 +483,162 @@ export function useSpeech() {
       isCustomPaused.value
   }
 
-  function finishProfileQueueItem(item: ProfileSpeechQueueItem) {
-    if (activeProfileQueueItem !== item) return
-    queuedProfileMessageIds.delete(item.messageId)
-    activeProfileQueueItem = null
-    scheduleNextProfileSpeech()
+  function cancelActiveProfileAudio() {
+    const finish = finishActiveProfileAudio
+    finishActiveProfileAudio = null
+    finish?.()
+  }
+
+  function abortProfileSpeechSynthesis() {
+    for (const controller of profileSynthesisControllers) controller.abort()
+    profileSynthesisControllers.clear()
+    const error = new DOMException('Profile speech synthesis cancelled', 'AbortError')
+    while (profileSynthesisJobs.length > 0) {
+      profileSynthesisJobs.shift()?.resolve({ ok: false, error })
+    }
+  }
+
+  function pumpProfileSpeechSynthesis() {
+    while (
+      activeProfileSynthesisCount < MAX_CONCURRENT_PROFILE_TTS_SYNTHESIS &&
+      profileSynthesisJobs.length > 0
+    ) {
+      const jobIndex = profileSynthesisJobs.findIndex(job =>
+        job.generation !== profilePlaybackGeneration ||
+        !activeProfileSynthesisProfiles.has(job.profile)
+      )
+      if (jobIndex < 0) break
+      const [job] = profileSynthesisJobs.splice(jobIndex, 1)
+      if (!job) break
+      if (job.generation !== profilePlaybackGeneration) {
+        job.resolve({
+          ok: false,
+          error: new DOMException('Stale Profile speech synthesis', 'AbortError'),
+        })
+        continue
+      }
+
+      const controller = new AbortController()
+      activeProfileSynthesisCount += 1
+      activeProfileSynthesisProfiles.add(job.profile)
+      profileSynthesisControllers.add(controller)
+      void synthesizeSpeech({
+        profile: job.profile,
+        text: job.text,
+        signal: controller.signal,
+      })
+        .then(({ audio }) => job.resolve({ ok: true, audio }))
+        .catch(error => job.resolve({ ok: false, error }))
+        .finally(() => {
+          activeProfileSynthesisCount -= 1
+          activeProfileSynthesisProfiles.delete(job.profile)
+          profileSynthesisControllers.delete(controller)
+          pumpProfileSpeechSynthesis()
+        })
+    }
+  }
+
+  function prepareProfileSpeech(
+    text: string,
+    profile: string,
+    generation: number,
+  ): Promise<PreparedProfileSpeech> {
+    return new Promise((resolve) => {
+      profileSynthesisJobs.push({ text, profile, generation, resolve })
+      pumpProfileSpeechSynthesis()
+    })
+  }
+
+  function playPreparedProfileSpeech(item: ProfileSpeechQueueItem, audioBlob: Blob) {
+    const token = ++playbackToken
+    const url = URL.createObjectURL(audioBlob)
+    const audio = new Audio(url)
+    customAudio = audio
+    customAudioUrl = url
+    isCustomPlaying.value = true
+    isCustomPaused.value = false
+    currentCustomMessageId.value = item.messageId
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: unknown) => {
+        if (settled) return
+        settled = true
+        audio.onended = null
+        audio.onerror = null
+        if (customAudio === audio) customAudio = null
+        if (customAudioUrl === url) customAudioUrl = null
+        if (finishActiveProfileAudio === cancel) finishActiveProfileAudio = null
+        URL.revokeObjectURL(url)
+        if (
+          token === playbackToken &&
+          currentCustomMessageId.value === item.messageId
+        ) {
+          clearCustomPlaybackState()
+        }
+        if (error) reject(error)
+        else resolve()
+      }
+      const cancel = () => {
+        audio.pause()
+        audio.src = ''
+        finish()
+      }
+      finishActiveProfileAudio = cancel
+      audio.onended = () => finish()
+      audio.onerror = () => finish(new Error('Profile TTS audio playback failed'))
+      void audio.play().catch(finish)
+    })
   }
 
   function scheduleNextProfileSpeech() {
-    setTimeout(playNextProfileSpeech, 0)
+    setTimeout(() => {
+      void drainProfileSpeechQueue()
+    }, 0)
   }
 
-  function playNextProfileSpeech() {
-    if (activeProfileQueueItem || hasActivePlayback()) return
-    const next = profileSpeechQueue.shift()
-    if (!next) return
+  async function drainProfileSpeechQueue() {
+    if (profileQueueRunning || hasActivePlayback()) return
+    profileQueueRunning = true
+    try {
+      while (profileSpeechQueue.length > 0) {
+        const next = profileSpeechQueue.shift()
+        if (!next) continue
+        const prepared = await next.synthesis
+        if (next.generation !== profilePlaybackGeneration) {
+          queuedProfileMessageIds.delete(next.messageId)
+          continue
+        }
+        if (hasActivePlayback()) {
+          profileSpeechQueue.unshift(next)
+          return
+        }
+        if (!prepared.ok) {
+          queuedProfileMessageIds.delete(next.messageId)
+          if (!isAbortError(prepared.error)) {
+            console.warn('[useSpeech] Profile TTS autoplay failed:', prepared.error)
+          }
+          continue
+        }
 
-    const text = extractReadableText(next.content)
-    if (!text) {
-      queuedProfileMessageIds.delete(next.messageId)
-      scheduleNextProfileSpeech()
-      return
-    }
-
-    activeProfileQueueItem = next
-    void profilePlay(next.messageId, text, next.profile, () => {
-      finishProfileQueueItem(next)
-    }).catch((err) => {
-      if (!isAbortError(err)) {
-        console.warn('[useSpeech] Profile TTS autoplay failed:', err)
+        try {
+          await playPreparedProfileSpeech(next, prepared.audio)
+        } catch (error) {
+          console.warn('[useSpeech] Profile TTS autoplay failed:', error)
+        } finally {
+          queuedProfileMessageIds.delete(next.messageId)
+        }
       }
-    })
+    } finally {
+      profileQueueRunning = false
+      if (profileSpeechQueue.length > 0) scheduleNextProfileSpeech()
+    }
   }
 
   function enqueueProfileSpeech(messageId: string, content: string, profile: string) {
     const normalizedProfile = profile.trim()
-    if (!normalizedProfile || !extractReadableText(content)) return
+    const text = extractReadableText(content)
+    if (!normalizedProfile || !text) return
     if (
       queuedProfileMessageIds.has(messageId) ||
       currentCustomMessageId.value === messageId
@@ -505,24 +646,27 @@ export function useSpeech() {
       return
     }
 
-    const item = { messageId, content, profile: normalizedProfile }
+    const generation = profilePlaybackGeneration
+    const item = {
+      messageId,
+      content,
+      profile: normalizedProfile,
+      generation,
+      synthesis: prepareProfileSpeech(text, normalizedProfile, generation),
+    }
     queuedProfileMessageIds.add(messageId)
     profileSpeechQueue.push(item)
-    playNextProfileSpeech()
+    void drainProfileSpeechQueue()
   }
 
   async function profilePlay(
     messageId: string,
     content: string,
     profile: string,
-    onSettled?: () => void,
   ) {
     const text = extractReadableText(content)
     const normalizedProfile = profile.trim()
-    if (!text || !normalizedProfile) {
-      onSettled?.()
-      return
-    }
+    if (!text || !normalizedProfile) return
 
     const token = ++playbackToken
     await playUnifiedCustomTts(
@@ -533,7 +677,6 @@ export function useSpeech() {
       token,
       '[useSpeech] Profile TTS audio playback error',
       normalizedProfile,
-      onSettled,
     )
   }
 

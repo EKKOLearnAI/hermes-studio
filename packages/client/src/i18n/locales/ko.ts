@@ -2474,7 +2474,7 @@ export default {
 
   changelog: {
     new_0_6_37_1: '14개 PR을 담은 이번 릴리스의 핵심은 Group Chat 전면 재구축입니다. 각 Agent가 Profile, Provider, 모델, API 모드, 추론 강도, 정체성과 workspace를 독립적으로 선택할 수 있습니다(#2334)',
-    new_0_6_37_2: 'Group Chat은 매번 새로 격리된 실행을 시작하고 각 답변을 reasoning 및 도구 과정과 함께 묶어 표시합니다. 공유 편집형 롤링 요약, 상태와 경계, Agent mention, 방/workspace drawer 및 이전 방 마이그레이션 안내도 추가했습니다. 음성 자동 재생은 FIFO로 대기하며 응답한 Agent의 Profile TTS 설정을 사용하므로 새 답변이 재생 중인 음성을 덮어쓰지 않습니다(#2334)',
+    new_0_6_37_2: 'Group Chat은 매번 새로 격리된 실행을 시작하고 각 답변을 reasoning 및 도구 과정과 함께 묶어 표시합니다. 공유 편집형 롤링 요약, 상태와 경계, Agent mention, 방/workspace drawer 및 이전 방 마이그레이션 안내도 추가했습니다. 음성 자동 재생은 서로 다른 Profile의 TTS를 미리 생성하고 같은 Profile의 합성은 단일 동시 실행으로 제한한 뒤 FIFO로 재생하므로 새 답변이 재생 중인 음성을 덮어쓰지 않습니다(#2334)',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth가 Global 및 중국 리전을 지원하며 Codex, xAI, Anthropic, Nous, MiniMax 인증 정보는 영구 Runtime Bridge를 통해 자동 갱신됩니다(#2337)',
     new_0_6_37_4: 'ESP32-C3 v1/v2에 로컬 VAD, 프리롤 오디오, 무음 종료 및 재생 억제를 갖춘 선택형 자동 듣기 모드를 추가하고 기존 푸시투토크 조작을 유지했습니다(#2338)',
     new_0_6_37_5: 'MCU Global Agent는 간결한 Ekko 음성 모드를 사용하고 안전한 백그라운드 작업을 위임할 수 있습니다. 세션 기록과 workspace를 보존하며 큰 도구 결과를 장치로 전달하지 않습니다(#2326)',

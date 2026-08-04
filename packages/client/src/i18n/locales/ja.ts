@@ -2474,7 +2474,7 @@ export default {
 
   changelog: {
     new_0_6_37_1: '全 14 PR を含むこのリリースの中心は Group Chat の全面再構築です。各 Agent が Profile、Provider、モデル、API モード、推論強度、アイデンティティ、workspace を個別に選択できます（#2334）',
-    new_0_6_37_2: 'Group Chat は毎回新しく分離された実行を開始し、各返信と reasoning・ツール過程をまとめて表示します。共有の編集可能なローリング要約、状態と境界、Agent mention、ルーム/workspace ドロワー、旧ルームの移行案内も追加しました。音声の自動再生は FIFO で待機し、返信した Agent の Profile TTS 設定を使用するため、再生中の音声が新しい返信で置き換わりません（#2334）',
+    new_0_6_37_2: 'Group Chat は毎回新しく分離された実行を開始し、各返信と reasoning・ツール過程をまとめて表示します。共有の編集可能なローリング要約、状態と境界、Agent mention、ルーム/workspace ドロワー、旧ルームの移行案内も追加しました。音声自動再生は異なる Profile の TTS を先行生成し、同一 Profile 内の合成を単一並行に保ちながら FIFO で再生するため、新しい返信が再生中の音声を置き換えません（#2334）',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth が Global と中国リージョンに対応し、Codex、xAI、Anthropic、Nous、MiniMax の認証情報は永続 Runtime Bridge 経由で自動更新されます（#2337）',
     new_0_6_37_4: 'ESP32-C3 v1/v2 に、ローカル VAD、プリロール音声、無音終了、再生抑制を備えた任意の自動リスニングモードを追加し、プッシュトゥトーク操作も維持しました（#2338）',
     new_0_6_37_5: 'MCU Global Agent は簡潔な Ekko 音声モードを使用し、安全なバックグラウンド作業を委任できます。履歴と workspace を保持し、大きすぎるツール結果は端末へ転送しません（#2326）',

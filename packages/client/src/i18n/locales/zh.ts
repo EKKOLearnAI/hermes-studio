@@ -2874,7 +2874,7 @@ export default {
   // 更新日志
   changelog: {
     new_0_6_37_1: '本次涵盖 14 个 PR 的版本以群聊全面重构为核心：每个 Agent 可独立选择 Profile、Provider、模型、API 模式、推理强度、身份和 workspace（#2334）',
-    new_0_6_37_2: '群聊房间现在使用全新隔离运行，将每条回复与其 reasoning 和工具过程归组展示，并新增共享可编辑滚动摘要、摘要状态与边界、Agent mention、房间及 workspace 抽屉和旧房间迁移提示。语音自动播放会按消息顺序阻塞排队，并使用回复 Agent 所属 Profile 的 TTS 配置生成，新回复不会再覆盖正在播放的语音（#2334）',
+    new_0_6_37_2: '群聊房间现在使用全新隔离运行，将每条回复与其 reasoning 和工具过程归组展示，并新增共享可编辑滚动摘要、摘要状态与边界、Agent mention、房间及 workspace 抽屉和旧房间迁移提示。语音自动播放会提前生成不同 Profile 的 TTS，同一 Profile 保持单并发，并严格按消息顺序播放，新回复不会覆盖正在播放的语音（#2334）',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth 现已支持 Global 与中国区，Codex、xAI、Anthropic、Nous 和 MiniMax 的授权凭证会通过持久 Runtime Bridge 自动刷新（#2337）',
     new_0_6_37_4: 'ESP32-C3 v1 和 v2 新增可选自动聆听模式，支持本地 VAD、预录音、静音结束、播放抑制，并保留按键说话控制（#2338）',
     new_0_6_37_5: 'MCU Global Agent 现使用简洁的 Ekko 语音模式，可委派安全的后台任务，保留会话历史和 workspace，并不再向设备转发过大的工具结果（#2326）',
