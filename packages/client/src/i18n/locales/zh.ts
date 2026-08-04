@@ -2873,6 +2873,8 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_38_1: 'Windows 桌面端启动时会自动修复 Agent 更新后缓存 Runtime 中失效的 Python 相对路径，恢复更新、Runtime 切换或存储迁移后的 CLI、日志与 Gateway',
+    new_0_6_38_2: '官网兼容版本列表重新识别 Hermes 0.19.0，确保对应桌面端下载和兼容性检查继续可用（#2348）',
     new_0_6_37_1: '本次涵盖 14 个 PR 的版本以群聊全面重构为核心：每个 Agent 可独立选择 Profile、Provider、模型、API 模式、推理强度、身份和 workspace（#2334）',
     new_0_6_37_2: '群聊房间现在使用全新隔离运行，将每条回复与其 reasoning 和工具过程归组展示，并新增共享可编辑滚动摘要、摘要状态与边界、Agent mention、房间及 workspace 抽屉和旧房间迁移提示。语音自动播放会提前生成不同 Profile 的 TTS，同一 Profile 保持单并发，并严格按消息顺序播放，新回复不会覆盖正在播放的语音（#2334）',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth 现已支持 Global 与中国区，Codex、xAI、Anthropic、Nous 和 MiniMax 的授权凭证会通过持久 Runtime Bridge 自动刷新（#2337）',

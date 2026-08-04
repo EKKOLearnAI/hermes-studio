@@ -2474,6 +2474,8 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_6_38_1: 'Al iniciar, el escritorio de Windows repara las rutas relativas de Python no válidas que las actualizaciones del Agent dejan en entornos Hermes Runtime almacenados, y restaura CLI, registros y Gateway tras actualizar, cambiar de Runtime o migrar el almacenamiento',
+    new_0_6_38_2: 'El catálogo de compatibilidad del sitio web vuelve a reconocer Hermes 0.19.0 para mantener disponibles las descargas de escritorio y las comprobaciones correspondientes (#2348)',
     new_0_6_37_1: 'La prioridad de esta versión con 14 PR es la reconstrucción completa de Group Chat: cada Agent puede elegir de forma independiente su Profile, Provider, modelo, modo API, nivel de razonamiento, identidad y workspace (#2334)',
     new_0_6_37_2: 'Las salas ahora inician ejecuciones nuevas y aisladas y agrupan cada respuesta con su reasoning y herramientas. También incorporan un resumen progresivo compartido y editable con estado y límites, menciones de Agent, paneles de sala/workspace y guía de migración. La voz automática prepara por adelantado el TTS de distintos Profile, limita la síntesis a una tarea por Profile y reproduce en FIFO estricto, por lo que una respuesta nueva no sustituye el audio en curso (#2334)',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth admite las regiones Global y China, y las credenciales autorizadas de Codex, xAI, Anthropic, Nous y MiniMax se actualizan mediante el Runtime Bridge persistente (#2337)',

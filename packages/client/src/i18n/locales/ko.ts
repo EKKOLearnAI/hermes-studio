@@ -2473,6 +2473,8 @@ export default {
   },
 
   changelog: {
+    new_0_6_38_1: 'Windows 데스크톱 시작 시 Agent 업데이트가 캐시된 Hermes Runtime 환경에 남긴 잘못된 Python 상대 경로를 자동 복구해 업데이트, Runtime 전환 또는 저장소 마이그레이션 후 CLI, 로그와 Gateway를 정상화합니다',
+    new_0_6_38_2: '웹사이트 호환 버전 목록이 Hermes 0.19.0을 다시 인식해 해당 데스크톱 다운로드와 호환성 검사를 계속 사용할 수 있습니다(#2348)',
     new_0_6_37_1: '14개 PR을 담은 이번 릴리스의 핵심은 Group Chat 전면 재구축입니다. 각 Agent가 Profile, Provider, 모델, API 모드, 추론 강도, 정체성과 workspace를 독립적으로 선택할 수 있습니다(#2334)',
     new_0_6_37_2: 'Group Chat은 매번 새로 격리된 실행을 시작하고 각 답변을 reasoning 및 도구 과정과 함께 묶어 표시합니다. 공유 편집형 롤링 요약, 상태와 경계, Agent mention, 방/workspace drawer 및 이전 방 마이그레이션 안내도 추가했습니다. 음성 자동 재생은 서로 다른 Profile의 TTS를 미리 생성하고 같은 Profile의 합성은 단일 동시 실행으로 제한한 뒤 FIFO로 재생하므로 새 답변이 재생 중인 음성을 덮어쓰지 않습니다(#2334)',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth가 Global 및 중국 리전을 지원하며 Codex, xAI, Anthropic, Nous, MiniMax 인증 정보는 영구 Runtime Bridge를 통해 자동 갱신됩니다(#2337)',

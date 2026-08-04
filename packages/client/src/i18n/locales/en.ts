@@ -2871,6 +2871,8 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_38_1: 'Windows desktop startup now repairs invalid relative Python homes left in cached Hermes Runtime environments by Agent updates, restoring CLI, logs, and Gateway after an update, Runtime switch, or storage migration',
+    new_0_6_38_2: 'The website compatibility catalog recognizes Hermes 0.19.0 again so matching desktop downloads and compatibility checks remain available (#2348)',
     new_0_6_37_1: 'The headline of this 14-PR release is a complete Group Chat rebuild: every Agent can independently choose its Profile, provider, model, API mode, reasoning effort, identity, and workspace (#2334)',
     new_0_6_37_2: 'Group rooms now start fresh isolated runs, keep each reply together with its reasoning and tools, and use a shared editable rolling summary with status, boundaries, Agent mentions, room and workspace drawers, and legacy migration guidance. Voice autoplay prepares different Profile TTS jobs ahead, keeps synthesis single-flight within the same Profile, and plays FIFO so new replies never replace audio already playing (#2334)',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth supports Global and China regions, while authorized Codex, xAI, Anthropic, Nous, and MiniMax credentials now refresh through the persistent Runtime Bridge (#2337)',
