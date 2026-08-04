@@ -223,14 +223,48 @@ function runtimeReady(): boolean {
 function rootRuntimeReady(root: string): boolean {
   const pythonRoot = runtimePythonEnvironmentRoot(root)
   const gitPath = process.platform === 'win32' ? join(root, 'git', 'cmd', 'git.exe') : null
+  const hermesPath = process.platform === 'win32'
+    ? [
+        join(pythonRoot, 'Scripts', 'hermes.cmd'),
+        join(pythonRoot, 'Scripts', 'hermes.exe'),
+      ].find(existsSync)
+    : join(pythonRoot, 'bin', 'hermes')
   return existsSync(runtimePythonExecutable(pythonRoot))
-    && existsSync(process.platform === 'win32' ? join(pythonRoot, 'Scripts', 'hermes.cmd') : join(pythonRoot, 'bin', 'hermes'))
+    && Boolean(hermesPath)
     && existsSync(process.platform === 'win32' ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node'))
     && (!gitPath || existsSync(gitPath))
 }
 
 export function isDesktopRuntimeReady(): boolean {
   return runtimeReady()
+}
+
+export function repairUpdatedDesktopRuntimeLaunchers(): boolean {
+  if (process.platform !== 'win32') return false
+
+  const runtimeRoot = desktopRuntimeDir()
+  const pythonRoot = runtimePythonEnvironmentRoot(runtimeRoot)
+  const commandWrapper = join(pythonRoot, 'Scripts', 'hermes.cmd')
+  const executable = join(pythonRoot, 'Scripts', 'hermes.exe')
+  if (existsSync(commandWrapper) || !existsSync(executable)) return false
+
+  try {
+    const repair = repairMovedHermesRuntime(runtimeRoot, runtimeRoot, runtimeRoot)
+    const repaired = existsSync(commandWrapper)
+    if (repaired) {
+      console.log(
+        `[runtime] restored Windows Runtime launchers after Hermes CLI update: `
+        + `${repair.launchersRewritten} launcher(s)`,
+      )
+    }
+    return repaired
+  } catch (err) {
+    console.warn(
+      `[runtime] failed to restore Windows Runtime launchers after Hermes CLI update; `
+      + `using the locally generated executable: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return false
+  }
 }
 
 function releaseTagCandidates(): string[] {

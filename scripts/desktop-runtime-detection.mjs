@@ -50,7 +50,6 @@ export function runtimeReady(runtimeRoot, platformName = platform()) {
         sourceRuntime && existsSync(join(pythonRoot, 'Scripts', 'python.exe'))
           ? join(pythonRoot, 'Scripts', 'python.exe')
           : join(pythonRoot, 'python.exe'),
-        join(pythonRoot, 'Scripts', 'hermes.cmd'),
         join(runtimeRoot, 'node', 'node.exe'),
         join(runtimeRoot, 'git', 'cmd', 'git.exe'),
       ]
@@ -59,7 +58,10 @@ export function runtimeReady(runtimeRoot, platformName = platform()) {
         join(pythonRoot, 'bin', 'hermes'),
         join(runtimeRoot, 'node', 'bin', 'node'),
       ]
-  return required.every(existsSync)
+  if (!required.every(existsSync)) return false
+  return !isWin
+    || existsSync(join(pythonRoot, 'Scripts', 'hermes.cmd'))
+    || existsSync(join(pythonRoot, 'Scripts', 'hermes.exe'))
 }
 
 export function findCachedRuntime(webUiHome, platformName = platform(), archName = arch()) {
