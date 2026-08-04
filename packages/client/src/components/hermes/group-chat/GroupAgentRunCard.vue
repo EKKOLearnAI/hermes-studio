@@ -39,7 +39,6 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
         <div class="run-column">
             <div class="run-header">
                 <span class="run-agent-name">{{ message.senderName }}</span>
-                <span v-if="agentInfo?.description" class="run-agent-description">{{ agentInfo.description }}</span>
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
                 <GroupMessageItem
@@ -97,16 +96,6 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     color: $text-primary;
     font-size: 13px;
     font-weight: 600;
-}
-
-.run-agent-description {
-    min-width: 0;
-    overflow: hidden;
-    color: $text-muted;
-    font-size: 11px;
-    font-style: italic;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .run-card {

@@ -181,6 +181,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(avatarSource).toContain("@click.stop=\"emit('mention', agent)\"")
     expect(itemSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).toContain('<GroupAgentMessageAvatar')
+    expect(runCardSource).not.toContain('run-agent-description')
     expect(panelSource).toContain('@mention-agent="handleMentionAgent"')
     expect(panelSource).toContain('groupChatInputRef.value?.insertMention?.(agent.name)')
     expect(panelSource).not.toContain('class="agent-avatar-popover"')
