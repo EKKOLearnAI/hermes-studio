@@ -199,6 +199,35 @@ describe('desktop runtime manager', () => {
     )
   })
 
+  it('repairs a cached Windows venv home even when the command wrapper already exists', async () => {
+    setPlatform('win32')
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    const pyvenvConfig = join(runtimeRoot, 'python', 'venv', 'pyvenv.cfg')
+    createRuntimeFiles(runtimeRoot, { standardWindowsVenv: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: runtimeRoot,
+      platform: runtimePlatformKey(),
+    }))
+
+    const {
+      isDesktopRuntimeReady,
+      repairUpdatedDesktopRuntimeLaunchers,
+    } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    expect(isDesktopRuntimeReady()).toBe(true)
+    expect(readFileSync(pyvenvConfig, 'utf-8')).toContain('home = ../base')
+    expect(repairUpdatedDesktopRuntimeLaunchers()).toBe(true)
+    expect(readFileSync(pyvenvConfig, 'utf-8')).toContain(
+      `home = ${join(runtimeRoot, 'python', 'base')}`,
+    )
+    expect(repairUpdatedDesktopRuntimeLaunchers()).toBe(false)
+  })
+
   it('restores relocatable Windows launchers after Hermes CLI update replaces them with executables', async () => {
     setPlatform('win32')
     const home = process.env.HERMES_WEB_UI_HOME!
