@@ -74,6 +74,7 @@ const isSelf = computed(() => {
 const agentInfo = computed(() => {
     return props.agents.find(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
 })
+const messageTtsProfile = computed(() => agentInfo.value?.profile?.trim() || '')
 
 const timeStr = computed(() => formatChatTimestamp(props.message.timestamp))
 
@@ -247,17 +248,18 @@ function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: 
 const canPlaySpeech = computed(() => {
     if (props.message.role !== 'assistant') return false
     if (!assistantBody.value.trim()) return false
+    if (messageTtsProfile.value) return true
     if (isServerTtsProvider(voiceSettings.provider.value)) return true
     return speech.isSupported
 })
 const isPlayingThisMessage = computed(() => {
-    if (isServerTtsProvider(voiceSettings.provider.value)) {
+    if (messageTtsProfile.value || isServerTtsProvider(voiceSettings.provider.value)) {
         return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
     }
     return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
 })
 const isPausedThisMessage = computed(() => {
-    if (isServerTtsProvider(voiceSettings.provider.value)) {
+    if (messageTtsProfile.value || isServerTtsProvider(voiceSettings.provider.value)) {
         return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
     }
     return speech.currentMessageId.value === props.message.id && speech.isPaused.value
@@ -418,8 +420,14 @@ function handleAutoplayTtsError(err: unknown) {
     console.warn('[GroupMessageItem] TTS autoplay failed:', err)
 }
 
-function playSpeech(content: string, autoplay = false) {
+function playSpeech(content: string, autoplay = false, profileOverride = '') {
     if (!content.trim()) return
+    const profile = profileOverride.trim() || messageTtsProfile.value
+    if (profile) {
+        if (autoplay) speech.enqueueProfileSpeech(props.message.id, content, profile)
+        else speech.profileToggle(props.message.id, content, profile)
+        return
+    }
     if (voiceSettings.provider.value === 'openai') {
         if (!voiceSettings.openaiBaseUrl.value) return
         const options = {
@@ -568,9 +576,9 @@ let autoPlayHandler: ((e: Event) => void) | null = null
 
 onMounted(() => {
     autoPlayHandler = (e: Event) => {
-        const event = e as CustomEvent<{ messageId: string; content: string }>
+        const event = e as CustomEvent<{ messageId: string; content: string; profile?: string }>
         if (event.detail?.messageId === props.message.id && canPlaySpeech.value) {
-            playSpeech(event.detail.content || assistantBody.value, true)
+            playSpeech(event.detail.content || assistantBody.value, true, event.detail.profile)
         }
     }
     window.addEventListener('auto-play-speech', autoPlayHandler)

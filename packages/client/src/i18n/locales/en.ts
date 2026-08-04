@@ -2872,7 +2872,7 @@ export default {
   // Changelog
   changelog: {
     new_0_6_37_1: 'The headline of this 14-PR release is a complete Group Chat rebuild: every Agent can independently choose its Profile, provider, model, API mode, reasoning effort, identity, and workspace (#2334)',
-    new_0_6_37_2: 'Group rooms now start fresh isolated runs, keep each reply together with its reasoning and tools, and use a shared editable rolling summary with status, boundaries, Agent mentions, room and workspace drawers, and legacy migration guidance (#2334)',
+    new_0_6_37_2: 'Group rooms now start fresh isolated runs, keep each reply together with its reasoning and tools, and use a shared editable rolling summary with status, boundaries, Agent mentions, room and workspace drawers, and legacy migration guidance. Voice autoplay is FIFO and uses each responding Agent’s Profile TTS settings, so new replies no longer replace audio already playing (#2334)',
     new_0_6_37_3: 'MiniMax Coding Plan OAuth supports Global and China regions, while authorized Codex, xAI, Anthropic, Nous, and MiniMax credentials now refresh through the persistent Runtime Bridge (#2337)',
     new_0_6_37_4: 'ESP32-C3 v1 and v2 gain optional automatic listening with local VAD, pre-roll audio, silence completion, playback suppression, and preserved push-to-talk controls (#2338)',
     new_0_6_37_5: 'MCU Global Agent now uses concise Ekko voice mode, can delegate safe background work, preserves session history and workspaces, and no longer forwards oversized tool payloads (#2326)',

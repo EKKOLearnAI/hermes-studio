@@ -2475,7 +2475,7 @@ jobTriggered: 'Job acionado',
 
   changelog: {
     new_0_6_37_1: 'O destaque desta versão com 14 PRs é a reconstrução completa do Group Chat: cada Agent pode escolher de forma independente seu Profile, Provider, modelo, modo de API, nível de raciocínio, identidade e workspace (#2334)',
-    new_0_6_37_2: 'As salas agora iniciam execuções novas e isoladas e agrupam cada resposta com seu reasoning e ferramentas. Também incluem resumo contínuo compartilhado e editável com estado e limites, menções de Agent, drawers de sala/workspace e orientação de migração (#2334)',
+    new_0_6_37_2: 'As salas agora iniciam execuções novas e isoladas e agrupam cada resposta com seu reasoning e ferramentas. Também incluem resumo contínuo compartilhado e editável com estado e limites, menções de Agent, drawers de sala/workspace e orientação de migração. A reprodução automática de voz aguarda em ordem FIFO e usa as configurações TTS do Profile do Agent que respondeu, evitando que novas respostas substituam o áudio em reprodução (#2334)',
     new_0_6_37_3: 'O MiniMax Coding Plan OAuth oferece suporte às regiões Global e China, e as credenciais autorizadas de Codex, xAI, Anthropic, Nous e MiniMax são atualizadas pelo Runtime Bridge persistente (#2337)',
     new_0_6_37_4: 'ESP32-C3 v1/v2 recebem escuta automática opcional com VAD local, áudio de pré-gravação, conclusão por silêncio e bloqueio durante reprodução, preservando o push-to-talk (#2338)',
     new_0_6_37_5: 'O MCU Global Agent agora usa o modo de voz conciso do Ekko, pode delegar trabalho seguro em segundo plano, preserva histórico e workspaces e não envia resultados de ferramentas grandes demais ao dispositivo (#2326)',

@@ -49,6 +49,12 @@ interface SpeechQueueItem {
   options: SpeechOptions
 }
 
+interface ProfileSpeechQueueItem {
+  messageId: string
+  content: string
+  profile: string
+}
+
 /**
  * 语音播放 Composable
  * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
@@ -68,6 +74,9 @@ export function useSpeech() {
   let currentAudio: HTMLAudioElement | null = null
   let playbackToken = 0
   const speechQueue: SpeechQueueItem[] = []
+  const profileSpeechQueue: ProfileSpeechQueueItem[] = []
+  const queuedProfileMessageIds = new Set<string>()
+  let activeProfileQueueItem: ProfileSpeechQueueItem | null = null
 
   // 自定义 TTS（OpenAI / Custom / Edge）播放状态
   const isCustomPlaying = ref(false)
@@ -140,6 +149,12 @@ export function useSpeech() {
     playbackToken += 1
     if (clearQueue) {
       speechQueue.length = 0
+      profileSpeechQueue.length = 0
+      queuedProfileMessageIds.clear()
+    }
+    if (activeProfileQueueItem) {
+      queuedProfileMessageIds.delete(activeProfileQueueItem.messageId)
+      activeProfileQueueItem = null
     }
     // Stop TTS audio
     if (currentAudio) {
@@ -162,6 +177,9 @@ export function useSpeech() {
       currentMessageId: null,
       progress: 0,
       engine: 'none',
+    }
+    if (!clearQueue) {
+      scheduleNextProfileSpeech()
     }
   }
 
@@ -195,6 +213,7 @@ export function useSpeech() {
         if (speechQueue.length > 0) {
           setTimeout(playNextQueuedSpeech, 0)
         }
+        scheduleNextProfileSpeech()
       }
 
       currentAudio.onerror = () => {
@@ -222,6 +241,7 @@ export function useSpeech() {
         progress: 0,
         engine: 'none',
       }
+      scheduleNextProfileSpeech()
       return
     }
     utterance = new window.SpeechSynthesisUtterance(text)
@@ -272,6 +292,7 @@ export function useSpeech() {
       if (speechQueue.length > 0) {
         setTimeout(playNextQueuedSpeech, 0)
       }
+      scheduleNextProfileSpeech()
     }
 
     utterance.onerror = () => {
@@ -284,6 +305,7 @@ export function useSpeech() {
       if (speechQueue.length > 0) {
         setTimeout(playNextQueuedSpeech, 0)
       }
+      scheduleNextProfileSpeech()
     }
 
     synth.speak(utterance)
@@ -335,28 +357,51 @@ export function useSpeech() {
     return 'custom'
   }
 
-  function attachCustomAudioHandlers(audio: HTMLAudioElement, token: number, errorMessage: string) {
+  function attachCustomAudioHandlers(
+    audio: HTMLAudioElement,
+    token: number,
+    errorMessage: string,
+    onSettled?: () => void,
+  ) {
     audio.onended = () => {
-      if (token !== playbackToken) return
+      if (token !== playbackToken) {
+        onSettled?.()
+        return
+      }
       stopCustomAudioPlayback()
       clearCustomPlaybackState()
+      onSettled?.()
+      if (speechQueue.length > 0) {
+        setTimeout(playNextQueuedSpeech, 0)
+      }
+      scheduleNextProfileSpeech()
     }
 
     audio.onerror = () => {
-      if (token !== playbackToken) return
+      if (token !== playbackToken) {
+        onSettled?.()
+        return
+      }
       stopCustomAudioPlayback()
       console.warn(errorMessage)
       clearCustomPlaybackState()
+      onSettled?.()
+      if (speechQueue.length > 0) {
+        setTimeout(playNextQueuedSpeech, 0)
+      }
+      scheduleNextProfileSpeech()
     }
   }
 
   async function playUnifiedCustomTts(
     messageId: string,
     text: string,
-    provider: TtsProviderId,
+    provider: TtsProviderId | undefined,
     options: Record<string, unknown>,
     token: number,
     playbackErrorMessage: string,
+    profile?: string,
+    onSettled?: () => void,
   ) {
     currentTtsAbort?.abort()
     stopCustomAudioPlayback()
@@ -371,22 +416,34 @@ export function useSpeech() {
     try {
       const { audio } = await synthesizeSpeech({
         provider,
+        profile,
         text,
         options,
         signal: abortController.signal,
       })
 
-      if (token !== playbackToken) return
+      if (token !== playbackToken) {
+        onSettled?.()
+        return
+      }
 
       customAudioUrl = URL.createObjectURL(audio)
       const nextAudio = new Audio(customAudioUrl)
       customAudio = nextAudio
-      attachCustomAudioHandlers(nextAudio, token, playbackErrorMessage)
+      attachCustomAudioHandlers(nextAudio, token, playbackErrorMessage, onSettled)
       await nextAudio.play()
     } catch (err) {
-      if (token !== playbackToken) return
+      if (token !== playbackToken) {
+        onSettled?.()
+        return
+      }
       stopCustomAudioPlayback()
       clearCustomPlaybackState()
+      onSettled?.()
+      if (speechQueue.length > 0) {
+        setTimeout(playNextQueuedSpeech, 0)
+      }
+      scheduleNextProfileSpeech()
       if (isAbortError(err)) {
         return
       }
@@ -395,6 +452,101 @@ export function useSpeech() {
       if (currentTtsAbort === abortController) {
         currentTtsAbort = null
       }
+    }
+  }
+
+  function hasActivePlayback() {
+    return state.value.isPlaying ||
+      state.value.isPaused ||
+      isCustomPlaying.value ||
+      isCustomPaused.value
+  }
+
+  function finishProfileQueueItem(item: ProfileSpeechQueueItem) {
+    if (activeProfileQueueItem !== item) return
+    queuedProfileMessageIds.delete(item.messageId)
+    activeProfileQueueItem = null
+    scheduleNextProfileSpeech()
+  }
+
+  function scheduleNextProfileSpeech() {
+    setTimeout(playNextProfileSpeech, 0)
+  }
+
+  function playNextProfileSpeech() {
+    if (activeProfileQueueItem || hasActivePlayback()) return
+    const next = profileSpeechQueue.shift()
+    if (!next) return
+
+    const text = extractReadableText(next.content)
+    if (!text) {
+      queuedProfileMessageIds.delete(next.messageId)
+      scheduleNextProfileSpeech()
+      return
+    }
+
+    activeProfileQueueItem = next
+    void profilePlay(next.messageId, text, next.profile, () => {
+      finishProfileQueueItem(next)
+    }).catch((err) => {
+      if (!isAbortError(err)) {
+        console.warn('[useSpeech] Profile TTS autoplay failed:', err)
+      }
+    })
+  }
+
+  function enqueueProfileSpeech(messageId: string, content: string, profile: string) {
+    const normalizedProfile = profile.trim()
+    if (!normalizedProfile || !extractReadableText(content)) return
+    if (
+      queuedProfileMessageIds.has(messageId) ||
+      currentCustomMessageId.value === messageId
+    ) {
+      return
+    }
+
+    const item = { messageId, content, profile: normalizedProfile }
+    queuedProfileMessageIds.add(messageId)
+    profileSpeechQueue.push(item)
+    playNextProfileSpeech()
+  }
+
+  async function profilePlay(
+    messageId: string,
+    content: string,
+    profile: string,
+    onSettled?: () => void,
+  ) {
+    const text = extractReadableText(content)
+    const normalizedProfile = profile.trim()
+    if (!text || !normalizedProfile) {
+      onSettled?.()
+      return
+    }
+
+    const token = ++playbackToken
+    await playUnifiedCustomTts(
+      messageId,
+      text,
+      undefined,
+      {},
+      token,
+      '[useSpeech] Profile TTS audio playback error',
+      normalizedProfile,
+      onSettled,
+    )
+  }
+
+  function profileToggle(messageId: string, content: string, profile: string) {
+    if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
+      if (isCustomPaused.value) {
+        resumeCustomAudio()
+      } else {
+        pauseCustomAudio()
+      }
+    } else {
+      stop(false)
+      startCustomPlayback(profilePlay(messageId, content, profile))
     }
   }
 
@@ -514,7 +666,7 @@ export function useSpeech() {
   }
 
   function playNextQueuedSpeech() {
-    if (state.value.isPlaying || state.value.isPaused) return
+    if (hasActivePlayback()) return
     const next = speechQueue.shift()
     if (!next) return
 
@@ -643,6 +795,7 @@ export function useSpeech() {
     toggle,
     toggleBrowser,
     enqueue,
+    enqueueProfileSpeech,
     getDefaultVoice,
     extractReadableText,
 
@@ -653,6 +806,10 @@ export function useSpeech() {
     // MiMo TTS
     mimoPlay,
     mimoToggle,
+
+    // Profile-aware TTS
+    profilePlay,
+    profileToggle,
 
     // Browser WebSpeech (直接调用避免 Rolldown 树摇)
     speakViaBrowser,

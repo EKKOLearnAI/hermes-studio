@@ -177,6 +177,39 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
   })
 
+  it('binds autoplay events to the responding agent profile', async () => {
+    vi.useFakeTimers()
+    const store = await loadStore()
+    const autoplay = vi.fn()
+    window.addEventListener('auto-play-speech', autoplay)
+
+    try {
+      await store.connect()
+      store.currentRoomId = 'room-1'
+      store.agents = [{ ...agent, profile: 'voice-profile' }]
+      store.setAutoPlaySpeech(true)
+
+      emitSocket('message', userMessage({
+        id: 'assistant-voice',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        role: 'assistant',
+        content: 'Queued profile voice',
+      }))
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(autoplay).toHaveBeenCalledOnce()
+      expect((autoplay.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        messageId: 'assistant-voice',
+        content: 'Queued profile voice',
+        profile: 'voice-profile',
+      })
+    } finally {
+      window.removeEventListener('auto-play-speech', autoplay)
+      vi.useRealTimers()
+    }
+  })
+
   it('joins a room from REST detail and realtime ack state', async () => {
     const store = await loadStore()
     const detailMessage = userMessage({ id: 'msg-1' })

@@ -197,9 +197,9 @@ const currentUserAvatar = ref('')
         messageReferences.value = next
     }
 
-    function playMessageSpeech(messageId: string, content: string) {
+    function playMessageSpeech(messageId: string, content: string, profile: string) {
         window.dispatchEvent(new CustomEvent('auto-play-speech', {
-            detail: { messageId, content },
+            detail: { messageId, content, profile },
         }))
     }
 
@@ -461,7 +461,11 @@ const currentUserAvatar = ref('')
                     totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
                 }
                 if (autoPlaySpeechEnabled.value && resolvedMsg.role === 'assistant' && resolvedMsg.content?.trim()) {
-                    setTimeout(() => playMessageSpeech(resolvedMsg.id, resolvedMsg.content), 300)
+                    const messageAgent = agents.value.find(agent =>
+                        agent.agentId === resolvedMsg.senderId || agent.name === resolvedMsg.senderName
+                    )
+                    const profile = messageAgent?.profile || getActiveProfileName() || 'default'
+                    setTimeout(() => playMessageSpeech(resolvedMsg.id, resolvedMsg.content, profile), 300)
                 }
             }
         })

@@ -39,7 +39,8 @@ export function isServerTtsProvider(value: unknown): value is TtsProviderId {
 }
 
 export interface SynthesizeSpeechRequest {
-  provider: TtsProviderId
+  provider?: TtsProviderId
+  profile?: string
   text: string
   options?: Record<string, unknown>
   signal?: AbortSignal
@@ -57,7 +58,7 @@ async function readTtsError(res: Response): Promise<string> {
   }
 }
 
-function ttsHeaders(): Record<string, string> {
+function ttsHeaders(explicitProfile?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
@@ -65,7 +66,7 @@ function ttsHeaders(): Record<string, string> {
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`
   }
-  const profile = getActiveProfileName()
+  const profile = explicitProfile?.trim() || getActiveProfileName()
   if (profile) {
     headers['X-Hermes-Profile'] = profile
   }
@@ -98,7 +99,7 @@ export async function synthesizeSpeech(
     `${localStorage.getItem('hermes_server_url') || ''}/api/hermes/tts/synthesize`,
     {
       method: 'POST',
-      headers: ttsHeaders(),
+      headers: ttsHeaders(req.profile),
       body: JSON.stringify({
         provider: req.provider,
         text: req.text,
@@ -114,7 +115,7 @@ export async function synthesizeSpeech(
 
   const audio = await res.blob()
   const engine = res.headers.get('X-TTS-Engine') || 'unknown'
-  const provider = res.headers.get('X-TTS-Provider') || req.provider
+  const provider = res.headers.get('X-TTS-Provider') || req.provider || 'unknown'
   return { audio, engine, provider }
 }
 
