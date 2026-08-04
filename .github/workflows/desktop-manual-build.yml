@@ -128,6 +128,10 @@ jobs:
           npm ci --ignore-scripts
           npm rebuild node-pty
 
+      - name: Test Windows CLI shim
+        if: needs.validate.outputs.target_os == 'win32'
+        run: npm run test -- tests/desktop/cli-shim.test.ts
+
       - name: Build web UI
         run: npm run build
 

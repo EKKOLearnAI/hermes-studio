@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,9 +15,13 @@ import {
 
 const execFileMock = vi.hoisted(() => vi.fn())
 
-vi.mock('node:child_process', () => ({
-  execFile: execFileMock,
-}))
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...original,
+    execFile: execFileMock,
+  }
+})
 
 let tempDirs: string[] = []
 
@@ -98,10 +103,48 @@ describe('Hermes Studio CLI shim', () => {
     expect(forwarder).toContain("let virtualEnv=path.join(runtime,'python','venv')")
     expect(forwarder).toContain("cp.spawnSync(python,['-m','hermes_cli.main',...args]")
     expect(forwarder).toContain("{stdio:'inherit',windowsHide:true,env}")
+    expect(powershell).toContain('[string[]]$ForwardArgs = @()')
+    expect(powershell).toContain('$ForwardArgs = [string[]]$CommandArgs[1..($CommandArgs.Count - 1)]')
     expect(powershell).toContain('& $Node -e $CliForwarder @ForwardArgs')
     expect(powershell).toContain('& $Node $WebUiScript @ForwardArgs')
     expect(powershell).not.toContain('C:\\runtime')
     expect([...Buffer.from(powershell)].every(byte => byte < 0x80)).toBe(true)
+  })
+
+  const windowsIt = process.platform === 'win32' ? it : it.skip
+  windowsIt('preserves a single CLI argument when the PowerShell sidecar runs', () => {
+    const homeDir = tempHome()
+    const fakeNodePath = join(homeDir, 'fake-node.ps1')
+    const shimPath = join(homeDir, 'hermes-studio.ps1')
+    writeFileSync(fakeNodePath, [
+      '$args | ForEach-Object {',
+      '  [Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_)))',
+      '}',
+      '',
+    ].join('\r\n'), 'ascii')
+    writeFileSync(shimPath, createPowerShellShimContent(
+      'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
+      'x64',
+      '0.19.1',
+      fakeNodePath,
+      'C:\\Program Files\\Hermes Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
+    ), 'ascii')
+
+    const encodedArgs = execFileSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      shimPath,
+      'cli',
+      'version',
+    ], { encoding: 'utf-8' }).trim().split(/\r?\n/)
+    const forwardedArgs = encodedArgs.map(value => Buffer.from(value, 'base64').toString('utf-8'))
+
+    expect(forwardedArgs).toHaveLength(3)
+    expect(forwardedArgs[0]).toBe('-e')
+    expect(forwardedArgs[2]).toBe('version')
   })
 
   it('sets the desktop MCP URL from HERMES_DESKTOP_PORT when present', () => {
