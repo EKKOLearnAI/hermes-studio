@@ -284,6 +284,7 @@ describe('group chat agent workspace bridge runs', () => {
       profile: 'research',
       onEvent: expect.any(Function),
     }))
+    expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
     expect(String(runAndWait.mock.calls[0][0].input)).toContain('截至总结锚点的群聊总结')
     expect(String(runAndWait.mock.calls[0][0].input)).toContain('Keep single chat unchanged.')
     expect(runAndWait.mock.calls[0][0].instructions).toContain('你是"Coder"，群聊房间"Engineering Room"中的 AI 助手')
@@ -383,6 +384,7 @@ describe('group chat agent workspace bridge runs', () => {
     })
 
     const runData = runAndWait.mock.calls[0][0]
+    expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
     expect(runData.coding_agent_id).toBe(codingAgentId)
     expect(runData.instructions).toContain(`你是"${agent === 'ekko' ? 'Ekko' : 'Claude'}"，群聊房间"Runtime Room"中的 AI 助手`)
     expect(runData.instructions).toContain('- Human: Room owner')

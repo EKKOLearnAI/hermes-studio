@@ -835,7 +835,6 @@ class AgentClient {
                 context_compression_enabled: false,
             }, {
                 profile: this.profile,
-                timeoutMs: 120000,
                 onEvent: (event, payload = {}) => {
                     if (!isCurrent()) {
                         if (!abortRequested) {
