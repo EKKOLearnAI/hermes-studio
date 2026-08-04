@@ -189,6 +189,41 @@ describe('desktop runtime manager', () => {
     )
   })
 
+  it('restores relocatable Windows launchers after Hermes CLI update replaces them with executables', async () => {
+    setPlatform('win32')
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(runtimeRoot, { standardWindowsVenv: true })
+    const scriptsRoot = join(runtimeRoot, 'python', 'venv', 'Scripts')
+    rmSync(join(scriptsRoot, 'hermes.cmd'))
+    for (const name of ['hermes', 'hermes-agent', 'hermes-acp']) {
+      writeFileSync(join(scriptsRoot, `${name}.exe`), '')
+    }
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: runtimeRoot,
+      platform: runtimePlatformKey(),
+    }))
+
+    const {
+      isDesktopRuntimeReady,
+      repairUpdatedDesktopRuntimeLaunchers,
+    } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    expect(isDesktopRuntimeReady()).toBe(true)
+    expect(repairUpdatedDesktopRuntimeLaunchers()).toBe(true)
+    expect(isDesktopRuntimeReady()).toBe(true)
+    expect(readFileSync(join(scriptsRoot, 'hermes.cmd'), 'utf-8')).toContain(
+      '"%PY%" -m hermes_cli.main %*',
+    )
+    expect(existsSync(join(scriptsRoot, 'hermes.exe'))).toBe(false)
+    expect(existsSync(join(scriptsRoot, 'hermes-agent.cmd'))).toBe(true)
+    expect(existsSync(join(scriptsRoot, 'hermes-acp.cmd'))).toBe(true)
+  })
+
   it('rejects schema 2 runtime archives that omit the updateable Git checkout', async () => {
     const archive = await createRuntimeArchive({ invalidSchema2Source: true })
     process.env.HERMES_DESKTOP_RUNTIME_URL = await serveFile(archive)

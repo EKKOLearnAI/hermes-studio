@@ -91,6 +91,25 @@ describe('desktop development Runtime detection', () => {
     expect(runtimeReady(sourceRuntime, 'win32')).toBe(true)
   })
 
+  it('recognizes a Windows source Runtime after CLI update regenerates hermes.exe', () => {
+    const sourceRuntime = tempDir()
+    const pythonRoot = join(sourceRuntime, 'python', 'venv')
+    mkdirSync(join(pythonRoot, 'Scripts'), { recursive: true })
+    mkdirSync(join(sourceRuntime, 'node'), { recursive: true })
+    mkdirSync(join(sourceRuntime, 'git', 'cmd'), { recursive: true })
+    writeFileSync(join(pythonRoot, 'Scripts', 'python.exe'), '')
+    writeFileSync(join(pythonRoot, 'Scripts', 'hermes.exe'), '')
+    writeFileSync(join(sourceRuntime, 'node', 'node.exe'), '')
+    writeFileSync(join(sourceRuntime, 'git', 'cmd', 'git.exe'), '')
+    writeFileSync(join(sourceRuntime, 'runtime-manifest.json'), JSON.stringify({
+      schema: 2,
+      hermesAgentVersion: '0.20.0',
+      platform: runtimePlatformKey('win32', 'x64'),
+    }))
+
+    expect(runtimeReady(sourceRuntime, 'win32')).toBe(true)
+  })
+
   it('keeps the active source Runtime from a custom storage root', () => {
     const webUiHome = tempDir()
     const customRoot = tempDir()

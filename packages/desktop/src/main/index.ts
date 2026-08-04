@@ -29,6 +29,7 @@ import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
   migratePendingRuntimeRoot,
+  repairUpdatedDesktopRuntimeLaunchers,
   writeActiveRuntimeVersion,
   type RuntimeDownloadSource,
   type RuntimeProgress,
@@ -866,6 +867,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 
   try {
     await migratePendingRuntimeRoot(updateSplash)
+    repairUpdatedDesktopRuntimeLaunchers()
     const selectedSource = source || envRuntimeDownloadSource()
     const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
