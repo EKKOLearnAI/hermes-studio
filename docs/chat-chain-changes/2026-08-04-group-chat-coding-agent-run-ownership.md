@@ -1,6 +1,6 @@
 ---
 date: 2026-08-04
-pr: pending
+pr: 2357
 feature: Group Chat Coding Agent run ownership
 impact: Group Chat no longer imposes a fixed two-minute absolute deadline on Codex, Claude Code, or Ekko runs; runtime-owned request and execution controls remain authoritative.
 ---
