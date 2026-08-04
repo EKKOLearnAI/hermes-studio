@@ -270,6 +270,36 @@ describe('desktop runtime paths', () => {
     expect(desktopRuntimeDir()).toBe(runtime016)
   })
 
+  it('records why an incomplete selected Windows Runtime fell back', async () => {
+    setPlatform('win32')
+    const homeDir = tempDir()
+    process.env.HERMES_WEB_UI_HOME = homeDir
+
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const platformKey = runtimePlatformKey()
+    const fallbackRuntime = join(homeDir, 'desktop-runtime', 'hermes', '0.19.0', platformKey)
+    const selectedRuntime = join(homeDir, 'desktop-runtime', 'hermes', '0.20.0', platformKey)
+    const activeVersionPath = join(homeDir, 'desktop-runtime', 'active-version.json')
+    createRuntime(fallbackRuntime, '0.19.0')
+    createSourceRuntime(selectedRuntime, '0.20.0')
+    rmSync(join(selectedRuntime, 'node', 'node.exe'))
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.20.0',
+      runtimeDirectory: selectedRuntime,
+      platform: platformKey,
+    }))
+
+    const { desktopRuntimeDir } = await import('../../packages/desktop/src/main/paths')
+
+    expect(desktopRuntimeDir()).toBe(fallbackRuntime)
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+    expect(active.runtimeDirectory).toBe(selectedRuntime)
+    expect(active.runtimeActivationError).toContain('0.20.0')
+    expect(active.runtimeActivationError).toMatch(/node[\\/]node\.exe/)
+    expect(active.runtimeActivationError).toContain(fallbackRuntime)
+  })
+
   it('keeps using the active local runtime even when the packaged runtime version is newer', async () => {
     const homeDir = tempDir()
     process.env.HERMES_WEB_UI_HOME = homeDir

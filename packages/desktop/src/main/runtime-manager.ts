@@ -91,6 +91,7 @@ type ActiveRuntimeVersion = {
   runtimeRootDirectory?: string
   pendingRuntimeRootDirectory?: string
   runtimeMigrationError?: string
+  runtimeActivationError?: string
   webUiDirectory?: string
   platform?: string
   updatedAt?: string
@@ -604,7 +605,10 @@ export async function migratePendingRuntimeRoot(
   }
 }
 
-export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): void {
+export function writeActiveRuntimeVersion(
+  runtimeRoot = desktopRuntimeDir(),
+  options: { clearRuntimeActivationError?: boolean } = {},
+): void {
   const manifest = readCachedRuntimeManifest(runtimeRoot)
   const hermesRuntimeVersion = manifest?.hermesAgentVersion || desktopRuntimeVersion()
   const selectedWebUiDirectory = webuiDir()
@@ -648,6 +652,7 @@ export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): vo
     delete next.webUiVersion
   }
   delete next.webUiDirectory
+  if (options.clearRuntimeActivationError) delete next.runtimeActivationError
   writeActiveRuntimeManifest(next)
 }
 
@@ -793,6 +798,6 @@ export async function ensureDesktopRuntime(
     }, null, 2))
   }
   onProgress?.({ stage: 'ready', message: t('runtime.ready') })
-  writeActiveRuntimeVersion(runtimeRoot)
+  writeActiveRuntimeVersion(runtimeRoot, { clearRuntimeActivationError: true })
   console.log(`[runtime] Hermes runtime ready at ${runtimeRoot}`)
 }

@@ -352,6 +352,31 @@ describe('desktop runtime manager', () => {
     expect(active.webUiVersion).toBe('0.6.31')
   })
 
+  it('keeps the Runtime activation error when startup writes the fallback version', async () => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const fallbackRuntime = join(home, 'desktop-runtime', 'hermes', '0.16.0', runtimePlatformKey())
+    const selectedRuntime = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(fallbackRuntime)
+    mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      desktopAppVersion: '0.6.21',
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: selectedRuntime,
+      runtimeActivationError: 'Selected Runtime is incomplete; falling back.',
+      platform: runtimePlatformKey(),
+    }))
+
+    const { writeActiveRuntimeVersion } = await import('../../packages/desktop/src/main/runtime-manager')
+    writeActiveRuntimeVersion(fallbackRuntime)
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(active.runtimeDirectory).toBe(fallbackRuntime)
+    expect(active.runtimeActivationError).toBe('Selected Runtime is incomplete; falling back.')
+  })
+
   it('copies a pending Runtime migration before switching the active directory', async () => {
     const home = process.env.HERMES_WEB_UI_HOME!
     const destination = tempDir('hermes-runtime-migration-target-')

@@ -4,16 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NProgress, NSpin, NTag, useMessage } from 'naive-ui'
 import {
   activateRuntimeVersion,
-  activateWebUiVersion,
   deleteRuntimeVersion,
-  deleteWebUiVersion,
   downloadRuntimeVersion,
-  downloadWebUiVersion,
   fetchRuntimeVersionStatus,
   fetchVersionDownloadJobs,
   selectRuntimeRoot,
   type InstalledRuntimeVersion,
-  type InstalledWebUiVersion,
   type RuntimeVersionStatus,
   type VersionDownloadJob,
   type VersionDownloadJobStatus,
@@ -51,11 +47,7 @@ const runtimeVersions = computed(() => uniqueVersions([
   ...currentPlatformRuntime.value.map(item => item.version),
 ]))
 
-const webUiVersions = computed(() => uniqueVersions([
-  ...(status.value?.webui.remoteVersions || []),
-  ...(status.value?.webui.installed || []).map(item => item.version),
-  status.value?.webui.currentVersion || '',
-]))
+const runtimeJobs = computed(() => jobs.value.filter(job => job.kind === 'runtime'))
 
 watch(() => props.show, show => {
   if (show) {
@@ -127,15 +119,11 @@ function stopPolling() {
 }
 
 function hasRunningJobs(): boolean {
-  return jobs.value.some(job => job.status === 'queued' || job.status === 'running')
+  return runtimeJobs.value.some(job => job.status === 'queued' || job.status === 'running')
 }
 
 function runtimeFor(version: string): InstalledRuntimeVersion | undefined {
   return currentPlatformRuntime.value.find(item => item.version === version)
-}
-
-function webUiFor(version: string): InstalledWebUiVersion | undefined {
-  return status.value?.webui.installed.find(item => item.version === version)
 }
 
 function activeJob(kind: VersionDownloadKind, version: string): VersionDownloadJob | undefined {
@@ -216,15 +204,6 @@ async function startRuntimeDownload(version: string, source: VersionDownloadSour
   })
 }
 
-async function startWebUiDownload(version: string, source: VersionDownloadSource) {
-  await runAction(`download-webui-${source}-${version}`, async () => {
-    const response = await downloadWebUiVersion(version, source)
-    jobs.value = [response.job, ...jobs.value.filter(job => job.id !== response.job.id)]
-    message.success(t('runtimeVersions.downloadStarted'))
-    startPolling()
-  })
-}
-
 async function useRuntime(version: string) {
   await runAction(`activate-runtime-${version}`, async () => {
     await activateRuntimeVersion(version)
@@ -267,21 +246,6 @@ async function removeRuntime(version: string) {
   })
 }
 
-async function useWebUi(version: string) {
-  await runAction(`activate-webui-${version}`, async () => {
-    await activateWebUiVersion(version)
-    message.success(t('runtimeVersions.activateSuccess'))
-    await loadAll()
-  })
-}
-
-async function removeWebUi(version: string) {
-  await runAction(`delete-webui-${version}`, async () => {
-    await deleteWebUiVersion(version)
-    message.success(t('runtimeVersions.deleteWebUiSuccess'))
-    await loadAll()
-  })
-}
 </script>
 
 <template>
@@ -371,6 +335,14 @@ async function removeWebUi(version: string) {
           <NAlert v-if="status?.hermes.migrationError" type="error" :bordered="false">
             {{ t('runtimeVersions.runtimeMigrationFailed') }}: {{ status.hermes.migrationError }}
           </NAlert>
+          <NAlert
+            v-if="status?.hermes.activationError"
+            data-testid="runtime-activation-error"
+            type="error"
+            :bordered="false"
+          >
+            {{ t('runtimeVersions.runtimeActivationFailed') }}: {{ status.hermes.activationError }}
+          </NAlert>
           <div class="version-list">
             <div v-for="version in runtimeVersions" :key="`runtime-${version}`" class="version-row">
               <div class="version-main">
@@ -439,93 +411,14 @@ async function removeWebUi(version: string) {
           </div>
         </section>
 
-        <section class="version-section">
-          <div class="section-heading">
-            <div>
-              <h3>{{ t('runtimeVersions.webUiTitle') }}</h3>
-              <p>{{ t('runtimeVersions.currentWebUi') }}: {{ status?.webui.currentVersion || '-' }}</p>
-            </div>
-          </div>
-          <div class="active-path">
-            <span>{{ t('runtimeVersions.activeVersion') }}: {{ status?.webui.activeVersion || '-' }}</span>
-            <span :title="status?.webui.activeDirectory || ''">{{ status?.webui.activeDirectory || '-' }}</span>
-          </div>
-          <div class="version-list">
-            <div v-for="version in webUiVersions" :key="`webui-${version}`" class="version-row">
-              <div class="version-main">
-                <strong>{{ version }}</strong>
-                <NTag v-if="webUiFor(version)?.active || version === status?.webui.activeVersion" size="small" type="success" :bordered="false">
-                  {{ t('runtimeVersions.active') }}
-                </NTag>
-                <NTag v-else-if="webUiFor(version)" size="small" :bordered="false">
-                  {{ t('runtimeVersions.installed') }}
-                </NTag>
-                <NTag v-if="activeJob('webui', version)" size="small" :type="jobType(activeJob('webui', version)!.status)" :bordered="false">
-                  {{ jobLabel(activeJob('webui', version)!) }}
-                </NTag>
-              </div>
-              <div class="version-actions">
-                <NButton
-                  v-if="webUiFor(version) && !webUiFor(version)?.active && version !== status?.webui.activeVersion"
-                  size="small"
-                  secondary
-                  :loading="actionLoading[`activate-webui-${version}`]"
-                  @click="useWebUi(version)"
-                >
-                  {{ t('runtimeVersions.useVersion') }}
-                </NButton>
-                <NPopconfirm
-                  v-if="webUiFor(version) && !webUiFor(version)?.active && version !== status?.webui.activeVersion"
-                  @positive-click="removeWebUi(version)"
-                >
-                  <template #trigger>
-                    <NButton
-                      size="small"
-                      type="error"
-                      secondary
-                      :loading="actionLoading[`delete-webui-${version}`]"
-                    >
-                      {{ t('runtimeVersions.deleteVersion') }}
-                    </NButton>
-                  </template>
-                  {{ t('runtimeVersions.deleteWebUiConfirm', { version }) }}
-                </NPopconfirm>
-                <NButton
-                  v-if="!webUiFor(version) && version !== status?.webui.activeVersion"
-                  size="small"
-                  type="primary"
-                  secondary
-                  :disabled="!!activeJob('webui', version)"
-                  :loading="actionLoading[`download-webui-github-${version}`]"
-                  @click="startWebUiDownload(version, 'github')"
-                >
-                  {{ t('runtimeVersions.downloadGithub') }}
-                </NButton>
-                <NButton
-                  v-if="!webUiFor(version) && version !== status?.webui.activeVersion"
-                  size="small"
-                  type="primary"
-                  secondary
-                  :disabled="!!activeJob('webui', version)"
-                  :loading="actionLoading[`download-webui-cf-${version}`]"
-                  @click="startWebUiDownload(version, 'cf')"
-                >
-                  {{ t('runtimeVersions.downloadCf') }}
-                </NButton>
-              </div>
-            </div>
-            <div v-if="webUiVersions.length === 0" class="empty-row">{{ t('runtimeVersions.noVersions') }}</div>
-          </div>
-        </section>
-
-        <section class="version-section" v-if="jobs.length > 0">
+        <section class="version-section" v-if="runtimeJobs.length > 0">
           <div class="section-heading compact">
             <h3>{{ t('runtimeVersions.downloadTasks') }}</h3>
           </div>
           <div class="job-list">
-            <div v-for="job in jobs.slice(0, 6)" :key="job.id" class="job-row">
+            <div v-for="job in runtimeJobs.slice(0, 6)" :key="job.id" class="job-row">
               <div class="job-main">
-                <span>{{ job.kind === 'runtime' ? t('runtimeVersions.runtimeTitle') : t('runtimeVersions.webUiTitle') }} {{ job.version }} · {{ sourceLabel(job.source) }}</span>
+                <span>{{ t('runtimeVersions.runtimeTitle') }} {{ job.version }} · {{ sourceLabel(job.source) }}</span>
                 <div v-if="job.status === 'running' || job.status === 'queued'" class="job-progress">
                   <NProgress
                     type="line"
