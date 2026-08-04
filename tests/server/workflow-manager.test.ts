@@ -2098,7 +2098,12 @@ describe('workflow manager', () => {
   it('finalizes a loop exit target when its approval reaches the shared deadline', async () => {
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
     const manager = new WorkflowManager()
-    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'stop' })
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    chatRunMock.runAndWait.mockReset().mockImplementation(async () => {
+      now += 5
+      return { ok: true, output: 'stop' }
+    })
     const workflow = manager.create({
       name: `Exit approval deadline ${Date.now()}`, profile: 'default',
       nodes: [
@@ -2119,7 +2124,7 @@ describe('workflow manager', () => {
         ['header', 'completed', null], ['latch', 'completed', null], ['publish', 'failed', 'workflow run timed out after 20ms'],
       ])
       expect(manager.approveNode(workflow.id, result.run.id, 'publish', true)).toBe(false)
-    } finally { await manager.delete(workflow.id) }
+    } finally { nowSpy.mockRestore(); await manager.delete(workflow.id) }
   })
 
   it('keeps a canceled loop exit target canceled when its agent fails late', async () => {
