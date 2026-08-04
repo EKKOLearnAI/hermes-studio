@@ -1,6 +1,6 @@
 ---
 date: 2026-08-04
-pr: pending
+pr: 2359
 feature: Recent direct chats and group activity consistency
 impact: Adds a configurable Recent category, preserves categories across forks, mentions quoted senders, and orders group rooms by persisted activity.
 ---
