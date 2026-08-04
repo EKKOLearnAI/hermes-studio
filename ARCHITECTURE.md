@@ -90,6 +90,13 @@ Hermes runtime assets are built separately by
 pins an upstream Hermes version, Git ref, and full commit; version overrides
 must supply the ref and commit together.
 
+The portable Node.js included in runtime assets is pinned independently from
+the GitHub Actions runner. Manual runtime dispatches take a target release tag;
+when the release does not exist, the upload step creates it with the workflow's
+`GITHUB_TOKEN`. Do not pre-publish runtime-only releases with a user token,
+because that emits `release.published` and starts the normal Web UI and Docker
+release workflows.
+
 The published runtime keeps this updateable layout:
 
 ```text

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to attach runtime assets to"
+        description: "Runtime release tag to create or attach assets to (e.g. hermes-0.20.0-runtime)"
         required: true
       hermes_version:
         description: "Hermes Agent version to package (defaults to repository runtime config)"

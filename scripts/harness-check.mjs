@@ -253,6 +253,8 @@ const electronBuilderConfig = await readText('packages/desktop/electron-builder.
 const desktopMacEntitlements = await readText('packages/desktop/build/entitlements.mac.plist')
 const desktopMacInheritedEntitlements = await readText('packages/desktop/build/entitlements.mac.inherit.plist')
 const desktopPackageJson = await readText('packages/desktop/package.json')
+const desktopNodeRuntimeConfig = await readText('packages/desktop/scripts/node-runtime-config.mjs')
+const desktopFetchNode = await readText('packages/desktop/scripts/fetch-node.mjs')
 const desktopFetchPython = await readText('packages/desktop/scripts/fetch-python.mjs')
 const desktopFetchHermes = await readText('packages/desktop/scripts/fetch-hermes.mjs')
 const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
@@ -390,6 +392,21 @@ for (const phrase of [
 ]) {
   if (!desktopPackageJson.includes(phrase)) {
     fail(`packages/desktop/package.json must support runtime package publishing: ${phrase}`)
+  }
+}
+
+if (!desktopNodeRuntimeConfig.includes("DEFAULT_DESKTOP_NODE_VERSION = '22.22.0'")) {
+  fail('desktop runtime Node.js must stay pinned to the Hermes-compatible 22.22.0 release')
+}
+if (!desktopNodeRuntimeConfig.includes('HERMES_DESKTOP_NODE_VERSION')) {
+  fail('desktop runtime Node.js pin must keep an explicit environment override')
+}
+if (!desktopFetchNode.includes('desktopNodeVersion()')) {
+  fail('fetch-node.mjs must resolve the pinned desktop runtime Node.js version')
+}
+for (const inheritedVersion of ['process.env.NODE_VERSION', 'process.versions.node']) {
+  if (desktopFetchNode.includes(inheritedVersion)) {
+    fail(`fetch-node.mjs must not inherit the build runner Node.js version: ${inheritedVersion}`)
   }
 }
 
