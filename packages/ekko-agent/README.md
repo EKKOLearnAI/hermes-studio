@@ -21,10 +21,13 @@ First-class OAuth provider presets:
 - `openai-codex` — OpenAI Responses at the ChatGPT Codex backend
 - `xai-oauth` — OpenAI Responses at the xAI API
 - `qwen-oauth` — OpenAI Chat Completions at the Qwen Portal API
+- `claude-oauth` — Anthropic Messages at the Anthropic API
+- `minimax-oauth` — Anthropic Messages for the MiniMax Coding Plan
 
 Pass the current OAuth access token as `apiKey`. Login, token persistence, and
 refresh remain the caller's responsibility; the preset supplies the provider's
-default endpoint, request style, and required identity headers.
+default endpoint, request style, and required identity headers. MiniMax Coding
+Plan requests use Bearer-only authentication and do not send `x-api-key`.
 
 Default endpoints:
 
