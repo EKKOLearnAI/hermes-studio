@@ -1660,16 +1660,19 @@ export class GroupChatServer {
         content: string,
         rawMentions: unknown,
     ): { mentions?: StructuredMention[]; error?: string } {
-        const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
         const senderId = member?.userId || ''
         const senderIsAgent = member?.source === 'agent'
         if (rawMentions === undefined) {
+            const roomAgents = senderIsAgent && typeof this.storage.getRoomAgents === 'function'
+                ? this.storage.getRoomAgents(roomId) as RoomAgent[]
+                : []
             if (senderIsAgent && (isAllAgentsMentioned(content) || resolveMentionTargets(roomAgents, content, senderId).length > 0)) {
                 return { error: 'Agent mentions require structured metadata' }
             }
             return senderIsAgent ? { mentions: [] } : {}
         }
         if (!Array.isArray(rawMentions)) return { error: 'Invalid structured mentions' }
+        const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
 
         const normalized: StructuredMention[] = []
         const participantIds = new Set<string>()
