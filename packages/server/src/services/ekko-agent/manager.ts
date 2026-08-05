@@ -1,21 +1,20 @@
 import {
   AgentRuntime,
-  EkkoDatabaseManager,
-  EkkoDirectoryManager,
+  EkkoAgentSetup,
   EkkoFileLogger,
   MemoryService,
-  SqliteMemoryStore,
+  setupEkkoAgent,
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
   type AgentRuntimeContextEstimate,
   type AgentRuntimeOptions,
 } from '../../../../ekko-agent/src'
 import { config } from '../../config'
-import { getHermesBaseDir } from '../hermes/hermes-profile'
+import { getHermesBaseDir, listProfileNamesFromDisk } from '../hermes/hermes-profile'
 import { logger } from '../logger'
 
 export interface GlobalEkkoAgentOptions {
-  baseDirectory?: string
+  setup: EkkoAgentSetup
   profile?: string
   memory?: MemoryService | false
 }
@@ -25,29 +24,27 @@ export class GlobalEkkoAgent {
   lastUsedAt = this.createdAt
   runCount = 0
   private readonly options: GlobalEkkoAgentOptions
-  private readonly directories: EkkoDirectoryManager
+  private readonly setup: EkkoAgentSetup
   private readonly skillDirectory: string
   private readonly logDirectory: string
   private readonly workspaceDirectory: string
   private readonly fileLogger: EkkoFileLogger
   private runtime?: AgentRuntime
-  private memory?: MemoryService
-  private memoryDatabasePath?: string
+  private readonly memory?: MemoryService
+  private readonly memoryDatabasePath?: string
 
-  constructor(options: GlobalEkkoAgentOptions = {}) {
+  constructor(options: GlobalEkkoAgentOptions) {
     this.options = options
-    this.directories = new EkkoDirectoryManager(options.baseDirectory)
-    this.directories.initialize({ hermesRootDirectory: getHermesBaseDir() })
-    this.skillDirectory = this.directories.profileSkillsDirectory(options.profile)
-    this.logDirectory = this.directories.profileLogsDirectory(options.profile)
-    this.workspaceDirectory = this.directories.profileWorkspaceDirectory(options.profile)
+    this.setup = options.setup
+    const profileLayout = this.setup.profile(options.profile)
+    this.skillDirectory = profileLayout.skillDirectory
+    this.logDirectory = profileLayout.logDirectory
+    this.workspaceDirectory = profileLayout.workspaceDirectory
     this.fileLogger = new EkkoFileLogger({ directory: this.logDirectory })
-    if (this.directories.lastSkillImport) {
-      logger.info(
-        { import: this.directories.lastSkillImport },
-        '[ekko-agent] imported Hermes profile skills',
-      )
-    }
+    this.memory = options.memory === false ? undefined : options.memory ?? this.setup.memory
+    this.memoryDatabasePath = this.memory === this.setup.memory
+      ? this.setup.layout.databasePath
+      : undefined
   }
 
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
@@ -73,7 +70,7 @@ export class GlobalEkkoAgent {
   }
 
   sessionWorkspaceDirectory(sessionId: string): string {
-    return this.directories.sessionWorkspaceDirectory(this.options.profile || 'default', sessionId)
+    return this.setup.directories.sessionWorkspaceDirectory(this.options.profile || 'default', sessionId)
   }
 
   hasBackgroundTasks(sessionId?: string): boolean {
@@ -86,8 +83,6 @@ export class GlobalEkkoAgent {
 
   close(): void {
     void this.runtime?.abortBackgroundTasks()
-    this.memory?.close()
-    this.memory = undefined
     this.runtime = undefined
   }
 
@@ -98,7 +93,9 @@ export class GlobalEkkoAgent {
       runCount: this.runCount,
       memoryEnabled: this.memory?.isEnabled ?? false,
       memoryDatabasePath: this.memoryDatabasePath,
-      dataDirectory: this.directories.rootDirectory,
+      dataDirectory: this.setup.layout.rootDirectory,
+      configDirectory: this.setup.layout.configDirectory,
+      configPath: this.setup.layout.configPath,
       skillDirectory: this.skillDirectory,
       logDirectory: this.logDirectory,
       workspaceDirectory: this.workspaceDirectory,
@@ -109,29 +106,6 @@ export class GlobalEkkoAgent {
 
   private runtimeInstance(): AgentRuntime {
     if (this.runtime) return this.runtime
-    if (this.options.memory === false) {
-      this.runtime = new AgentRuntime({
-        skillDirectory: this.skillDirectory,
-        logWriter: this.fileLogger,
-        logProfile: this.options.profile || 'default',
-      })
-      return this.runtime
-    }
-    if (this.options.memory) {
-      this.memory = this.options.memory
-    } else {
-      try {
-        const database = new EkkoDatabaseManager({ databasePath: this.directories.databasePath })
-        // Opening the store recreates the current schema after an explicit memory reset.
-        const store = new SqliteMemoryStore(database)
-        this.memoryDatabasePath = store.databasePath
-        this.memory = new MemoryService({ store })
-      } catch (error) {
-        const warning = error instanceof Error ? error.message : String(error)
-        logger.warn({ err: error }, '[ekko-agent] memory database initialization failed; memory is disabled')
-        this.memory = new MemoryService({ enabled: false, warning })
-      }
-    }
     this.runtime = new AgentRuntime({
       memory: this.memory,
       skillDirectory: this.skillDirectory,
@@ -162,19 +136,53 @@ export class GlobalEkkoAgent {
 }
 
 export function createGlobalEkkoAgent(
-  options: GlobalEkkoAgentOptions = {},
+  options: GlobalEkkoAgentOptions,
 ): GlobalEkkoAgent {
   return new GlobalEkkoAgent(options)
 }
 
+export interface SetupGlobalEkkoAgentOptions {
+  baseDirectory?: string
+  profiles?: string[]
+  env?: Record<string, string | undefined>
+}
+
+let globalEkkoSetup: EkkoAgentSetup | undefined
 const globalEkkoAgents = new Map<string, GlobalEkkoAgent>()
+
+export function setupGlobalEkkoAgent(
+  options: SetupGlobalEkkoAgentOptions = {},
+): EkkoAgentSetup {
+  if (globalEkkoSetup) return globalEkkoSetup
+  globalEkkoSetup = setupEkkoAgent({
+    baseDirectory: options.baseDirectory ?? config.appHome,
+    hermesRootDirectory: getHermesBaseDir(),
+    profiles: options.profiles ?? listProfileNamesFromDisk(),
+    env: options.env,
+  })
+  if (globalEkkoSetup.skillImport) {
+    logger.info(
+      { import: globalEkkoSetup.skillImport },
+      '[ekko-agent] imported Hermes profile skills',
+    )
+  }
+  logger.info({
+    dataDirectory: globalEkkoSetup.layout.rootDirectory,
+    configPath: globalEkkoSetup.layout.configPath,
+    databasePath: globalEkkoSetup.layout.databasePath,
+    profiles: globalEkkoSetup.profiles().map(profile => profile.profile),
+  }, '[ekko-agent] setup complete')
+  return globalEkkoSetup
+}
 
 export function getGlobalEkkoAgent(profile = 'default'): GlobalEkkoAgent {
   const normalizedProfile = String(profile || '').trim() || 'default'
   let agent = globalEkkoAgents.get(normalizedProfile)
   if (!agent) {
+    const setup = setupGlobalEkkoAgent()
+    setup.ensureProfile(normalizedProfile)
     agent = createGlobalEkkoAgent({
-      baseDirectory: config.appHome,
+      setup,
       profile: normalizedProfile,
     })
     globalEkkoAgents.set(normalizedProfile, agent)
@@ -194,4 +202,11 @@ export async function abortGlobalEkkoBackgroundTasks(sessionId: string): Promise
     [...globalEkkoAgents.values()].map(agent => agent.abortBackgroundTasks(sessionId)),
   )
   return counts.reduce((sum, count) => sum + count, 0)
+}
+
+export function closeGlobalEkkoAgent(): void {
+  for (const agent of globalEkkoAgents.values()) agent.close()
+  globalEkkoAgents.clear()
+  globalEkkoSetup?.close()
+  globalEkkoSetup = undefined
 }

@@ -369,7 +369,6 @@ export class GroupRoomSummaryService {
         systemPrompt: GROUP_SUMMARY_SYSTEM_PROMPT,
         maxSteps: 1,
         maxModelRetries: 3,
-        toolDelayMs: 0,
         modelDefaults: { model: input.model },
       },
       {

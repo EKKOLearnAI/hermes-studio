@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io'
 import { createHash, randomUUID } from 'crypto'
 import {
   createModelClient,
+  DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
   resolveModelProviderConfigs,
   type AgentMessage,
   type AgentOutputMessage,
@@ -541,7 +542,7 @@ export async function handleEkkoAgentRun(
     apiKey,
     model: modelConfig.model,
     apiMode,
-    timeoutMs: 120_000,
+    timeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
   })
   const mcpServers = resolveEkkoMcpServers(profile, data.mcpServers || data.mcp_servers)
   const modelClient = createProviderModelClient(createModelClient(providerConfig), {

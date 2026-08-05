@@ -26,6 +26,7 @@ import { refreshConfiguredProviderModelCatalogsInBackground } from './services/h
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
+import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
 import { logger } from './services/logger'
@@ -278,6 +279,9 @@ export async function bootstrap() {
     logger.warn(err, '[bootstrap] failed to inject bundled MCP server')
     console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
   }
+
+  setupGlobalEkkoAgent()
+  console.log('[bootstrap] ekko-agent setup complete')
 
   if (!isDesktopRuntime()) {
     await startRuntimeServicesBeforeListen()

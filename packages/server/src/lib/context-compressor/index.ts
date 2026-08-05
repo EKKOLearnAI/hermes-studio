@@ -604,7 +604,6 @@ async function callEkkoSummarizer(
       systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,
       maxSteps: 1,
       maxModelRetries: 0,
-      toolDelayMs: 0,
       modelDefaults: {
         model,
       },

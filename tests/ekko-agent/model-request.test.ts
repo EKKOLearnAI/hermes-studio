@@ -537,6 +537,7 @@ describe('ekko-agent model requests', () => {
       baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
       apiKey: 'secret',
       defaultModel: 'glm-5.2',
+      timeoutMs: 300_000,
     })
     expect(resolved.fallbackProviderConfig).toMatchObject({
       requestStyle: 'openai-chat',

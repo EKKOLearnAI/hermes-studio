@@ -33,6 +33,20 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
+  it('keeps the latest 20 messages in automatic memory context by default', async () => {
+    const identity = { sessionId: 's1', profileId: 'default' }
+    await service.captureMessages(identity, Array.from({ length: 25 }, (_, index) => ({
+      role: 'user' as const,
+      content: `message-${index + 1}`,
+    })))
+
+    const context = await service.retrieve(identity)
+
+    expect(context.recentMessages).toHaveLength(20)
+    expect(context.recentMessages[0]?.content).toBe('message-6')
+    expect(context.recentMessages.at(-1)?.content).toBe('message-25')
+  })
+
   it('generates canonical keys on the server and stores one profile memory shape', async () => {
     const accepted = await service.proposeUpdate({
       operation: 'create',
@@ -200,7 +214,7 @@ describe('MemoryService', () => {
     expect(related.relevantNodes.map(node => node.key)).toContain('preference.general:interface_theme')
   })
 
-  it('clamps direct memory searches to 50 results at runtime', async () => {
+  it('defaults and clamps direct memory searches to 50 results at runtime', async () => {
     for (let index = 0; index < 60; index += 1) {
       await store.upsertNode(memoryNode(`search-${index}`, {
         key: `preference.general:search_${index}`,
@@ -211,7 +225,7 @@ describe('MemoryService', () => {
     const defaultResult = await service.search(identity, {})
     const result = await service.search(identity, { limit: 999 })
 
-    expect([...defaultResult.exact, ...defaultResult.relevant]).toHaveLength(12)
+    expect([...defaultResult.exact, ...defaultResult.relevant]).toHaveLength(50)
     expect([...result.exact, ...result.relevant]).toHaveLength(50)
   })
 
@@ -441,7 +455,7 @@ describe('MemoryService', () => {
       create,
       stream: vi.fn(),
     }
-    const runtime = new AgentRuntime({ modelClient: client, memory: service, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, memory: service })
 
     await runtime.run({
       messages: ['我现在常住贵阳'],

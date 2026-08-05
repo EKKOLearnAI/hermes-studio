@@ -5,6 +5,7 @@ import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopAppRelayClient } from './app-relay/client'
+import { closeGlobalEkkoAgent } from './ekko-agent/manager'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -135,6 +136,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
       logger.error(err, 'Shutdown error')
     }
 
+    closeGlobalEkkoAgent()
     closeDb()
     clearTimeout(forceExitTimer)
     process.exit(0)

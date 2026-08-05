@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { DEFAULT_EKKO_LOG_MAX_BYTES } from '../config'
 
 export type EkkoLogCategory =
   | 'run'
@@ -70,7 +71,6 @@ export interface EkkoLogQuery {
 }
 
 export const EKKO_LOG_FILE_NAME = 'ekko-agent.jsonl'
-export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
 const MAX_LOG_STRING_CHARS = 8_192
 const MAX_LOG_ARRAY_ITEMS = 100
 const MAX_LOG_OBJECT_KEYS = 100

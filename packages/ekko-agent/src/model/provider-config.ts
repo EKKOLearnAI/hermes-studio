@@ -1,5 +1,6 @@
 import type { ModelProviderConfig, ModelProviderType, ModelRequestStyle } from './types'
 import { authorizedModelProviderPreset } from './authorized-providers'
+import { DEFAULT_MODEL_REQUEST_TIMEOUT_MS } from '../config'
 
 export interface ResolveModelProviderConfigInput {
   provider: string
@@ -72,7 +73,7 @@ export function createProviderConfig(input: {
 
 export function resolveModelProviderConfigs(input: ResolveModelProviderConfigInput): ResolvedModelProviderConfigs {
   const baseUrl = input.baseUrl || ''
-  const timeoutMs = input.timeoutMs ?? 120_000
+  const timeoutMs = input.timeoutMs ?? DEFAULT_MODEL_REQUEST_TIMEOUT_MS
   const requestStyle = requestStyleForConfig(input.provider, baseUrl, input.apiMode)
   const inferredRequestStyle = inferredRequestStyleForConfig(input.provider, baseUrl)
   const providerConfig = createProviderConfig({

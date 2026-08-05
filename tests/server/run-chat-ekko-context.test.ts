@@ -62,6 +62,7 @@ vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => 
 }))
 
 vi.mock('../../packages/ekko-agent/src', () => ({
+  DEFAULT_MODEL_REQUEST_TIMEOUT_MS: 300_000,
   createModelClient: vi.fn(() => ({
     provider: 'test',
     requestStyle: 'custom-runtime',

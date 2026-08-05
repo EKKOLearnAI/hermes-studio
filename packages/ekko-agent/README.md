@@ -105,10 +105,14 @@ system, tool, message, and provider-context estimate needed for that external
 threshold decision without starting a model call. A standalone Ekko host can
 instead implement and own its internal compression lifecycle.
 
-Ekko owns one filesystem root through `EkkoDirectoryManager`. The manager takes
-one optional base directory (the user's home directory by default), creates
-`<base>/.ekko/skills` and `<base>/.ekko/workspace`, and keeps the SQLite database at
-`<base>/.ekko/ekko.db`. A running profile uses
+Call `setupEkkoAgent()` once during host startup, before accepting agent work.
+The setup entry owns `EkkoDirectoryManager`, creates
+`<base>/.ekko/config/config.json`, the skills, logs, and workspace directories,
+and opens and migrates the SQLite database at `<base>/.ekko/ekko.db`. It returns
+the shared database-backed memory service and closes that process-level resource
+through `setup.close()`. The global JSON file is initialized from Ekko's current
+runtime defaults and is not yet loaded as a user- or profile-configurable
+runtime input. A configured profile uses
 `<base>/.ekko/skills/<profile>` for its skills and
 `<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
 `<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied
@@ -121,24 +125,32 @@ the default profile from `<hermes>/skills` and every named profile from
 skills.
 
 ```ts
-import { AgentRuntime, EkkoDirectoryManager } from './src/index'
+import { AgentRuntime, setupEkkoAgent } from './src/index'
 
-const directories = new EkkoDirectoryManager('/path/to/base')
-directories.initialize()
+const setup = setupEkkoAgent({
+  baseDirectory: '/path/to/base',
+  profiles: ['default'],
+})
+const profile = setup.profile('default')
 const runtime = new AgentRuntime({
   modelClient: client,
-  skillDirectory: directories.profileSkillsDirectory('default'),
+  memory: setup.memory,
+  skillDirectory: profile.skillDirectory,
 })
 
-const result = await runtime.run({
-  messages: ['Read README.md and summarize it.'],
-  toolContext: {
-    workspaceRoot: process.cwd(),
-  },
-  onEvent(event) {
-    console.log(event.type)
-  },
-})
+try {
+  const result = await runtime.run({
+    messages: ['Read README.md and summarize it.'],
+    toolContext: {
+      workspaceRoot: process.cwd(),
+    },
+    onEvent(event) {
+      console.log(event.type)
+    },
+  })
+} finally {
+  setup.close()
+}
 ```
 
 Set `toolsEnabled: false` to omit all tool sources (built-ins, MCP, memory,

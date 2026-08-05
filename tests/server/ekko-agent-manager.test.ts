@@ -3,27 +3,56 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createGlobalEkkoAgent, GlobalEkkoAgent } from '../../packages/server/src/services/ekko-agent/manager'
-import { EkkoFileLogReader } from '../../packages/ekko-agent/src'
-import type { ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
+import {
+  closeGlobalEkkoAgent,
+  createGlobalEkkoAgent,
+  GlobalEkkoAgent,
+  setupGlobalEkkoAgent,
+} from '../../packages/server/src/services/ekko-agent/manager'
+import { EkkoFileLogReader, setupEkkoAgent } from '../../packages/ekko-agent/src'
+import type { EkkoAgentSetup, ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
 
 const getHermesBaseDirMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getHermesBaseDir: getHermesBaseDirMock,
+  listProfileNamesFromDisk: vi.fn(() => ['default']),
 }))
 
 let baseDirectory = ''
+let setups: EkkoAgentSetup[] = []
 
 beforeEach(async () => {
   baseDirectory = await mkdtemp(join(tmpdir(), 'global-ekko-agent-'))
+  setups = []
   getHermesBaseDirMock.mockReturnValue(join(baseDirectory, 'hermes'))
 })
 
 afterEach(async () => {
   vi.unstubAllEnvs()
+  closeGlobalEkkoAgent()
+  for (const setup of setups) setup.close()
   await rm(baseDirectory, { recursive: true, force: true })
 })
+
+function createTestSetup(profiles: string[] = []): EkkoAgentSetup {
+  const setup = setupEkkoAgent({
+    baseDirectory,
+    hermesRootDirectory: getHermesBaseDirMock(),
+    profiles,
+  })
+  setups.push(setup)
+  return setup
+}
+
+function createTestAgent(
+  options: Omit<ConstructorParameters<typeof GlobalEkkoAgent>[0], 'setup'> = {},
+): GlobalEkkoAgent {
+  return new GlobalEkkoAgent({
+    setup: createTestSetup(options.profile ? [options.profile] : []),
+    ...options,
+  })
+}
 
 function modelClient(content: string): ModelClient {
   return {
@@ -42,8 +71,23 @@ function modelClient(content: string): ModelClient {
 }
 
 describe('GlobalEkkoAgent', () => {
+  it('sets up global directories and the memory database before any agent run', () => {
+    const setup = setupGlobalEkkoAgent({
+      baseDirectory,
+      profiles: ['default', 'work'],
+      env: { NODE_ENV: 'test' },
+    })
+
+    expect(existsSync(join(baseDirectory, '.ekko', 'config', 'config.json'))).toBe(true)
+    expect(existsSync(join(baseDirectory, '.ekko', 'ekko.db'))).toBe(true)
+    expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work'))).toBe(true)
+    expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'work'))).toBe(true)
+    expect(existsSync(join(baseDirectory, '.ekko', 'workspace', 'work'))).toBe(true)
+    expect(setup.memory.isEnabled).toBe(true)
+  })
+
   it('is created once and handles repeated runs through the same runtime', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false })
+    const agent = createTestAgent({ memory: false })
     const firstClient = modelClient('first')
     const secondClient = modelClient('second')
 
@@ -65,7 +109,7 @@ describe('GlobalEkkoAgent', () => {
     await writeFile(join(hermesRoot, 'skills', 'default-skill', 'SKILL.md'), '# Default\n')
     await writeFile(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'SKILL.md'), '# Work\n')
 
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
+    const agent = createTestAgent({ memory: false, profile: 'work' })
     try {
       expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default', 'default-skill', 'SKILL.md'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work', 'work-skill', 'SKILL.md'))).toBe(true)
@@ -75,7 +119,7 @@ describe('GlobalEkkoAgent', () => {
   })
 
   it('estimates context without incrementing the completed run count', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false })
+    const agent = createTestAgent({ memory: false })
     const client = modelClient('unused')
 
     const estimate = await agent.estimateContext({
@@ -89,7 +133,7 @@ describe('GlobalEkkoAgent', () => {
   })
 
   it('passes per-run model defaults, metadata, and tool context', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false })
+    const agent = createTestAgent({ memory: false })
     const client = modelClient('ok')
 
     await agent.run({
@@ -113,7 +157,7 @@ describe('GlobalEkkoAgent', () => {
   })
 
   it('binds skill tools to the directory provided when the agent is created', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
+    const agent = createTestAgent({ memory: false, profile: 'work' })
     const skillDirectory = join(baseDirectory, '.ekko', 'skills', 'work')
     await mkdir(join(skillDirectory, 'demo-skill'), { recursive: true })
     await writeFile(join(skillDirectory, 'demo-skill', 'SKILL.md'), '# Demo\nInstance-bound instructions.\n')
@@ -141,7 +185,7 @@ describe('GlobalEkkoAgent', () => {
       stream: vi.fn(),
     }
     try {
-      const result = await agent.run({ messages: ['find skills'], modelClient: client, toolDelayMs: 0 })
+      const result = await agent.run({ messages: ['find skills'], modelClient: client })
 
       expect(result.messages.find(message => message.role === 'tool')?.content).toContain('demo-skill')
       expect(agent.status()).toMatchObject({ skillDirectory })
@@ -150,8 +194,8 @@ describe('GlobalEkkoAgent', () => {
     }
   })
 
-  it('owns a persistent Ekko database under the configured base directory', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory })
+  it('uses the persistent Ekko database initialized by setup', async () => {
+    const agent = createTestAgent()
     try {
       await agent.run({
         messages: ['hello'],
@@ -171,7 +215,7 @@ describe('GlobalEkkoAgent', () => {
 
   it('initializes persistent Ekko memory in production', async () => {
     vi.stubEnv('NODE_ENV', 'production')
-    const agent = createGlobalEkkoAgent({ baseDirectory })
+    const agent = createGlobalEkkoAgent({ setup: createTestSetup() })
     try {
       const result = await agent.run({
         messages: ['hello'],
@@ -184,11 +228,14 @@ describe('GlobalEkkoAgent', () => {
         memoryEnabled: true,
         memoryDatabasePath: join(baseDirectory, '.ekko', 'ekko.db'),
         dataDirectory: join(baseDirectory, '.ekko'),
+        configDirectory: join(baseDirectory, '.ekko', 'config'),
+        configPath: join(baseDirectory, '.ekko', 'config', 'config.json'),
         skillDirectory: join(baseDirectory, '.ekko', 'skills', 'default'),
         logDirectory: join(baseDirectory, '.ekko', 'logs', 'default'),
         workspaceDirectory: join(baseDirectory, '.ekko', 'workspace', 'default'),
         logFilePath: join(baseDirectory, '.ekko', 'logs', 'default', 'ekko-agent.jsonl'),
       })
+      expect(existsSync(join(baseDirectory, '.ekko', 'config', 'config.json'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'skills'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'workspace'))).toBe(true)
       expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'default', 'ekko-agent.jsonl'))).toBe(true)
@@ -199,7 +246,7 @@ describe('GlobalEkkoAgent', () => {
   })
 
   it('lets the runtime own compact model request logs', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
+    const agent = createTestAgent({ memory: false, profile: 'work' })
     try {
       await agent.run({
         messages: ['diagnose this'],
@@ -238,7 +285,7 @@ describe('GlobalEkkoAgent', () => {
   })
 
   it('injects compact request logging into isolated runtimes', async () => {
-    const agent = new GlobalEkkoAgent({ baseDirectory, memory: false, profile: 'work' })
+    const agent = createTestAgent({ memory: false, profile: 'work' })
     try {
       await agent.runIsolated(
         {

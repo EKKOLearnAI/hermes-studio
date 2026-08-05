@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   buildMemoryContextPrompt,
-  DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
   selectMemoryNodesByTokenBudget,
 } from './context'
+import {
+  DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
+  DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
+  DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
+  DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
+} from '../config'
 import { RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
 import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
@@ -75,15 +80,22 @@ export class MemoryService {
     this.store = options.store
     this.extractor = options.extractor ?? new RuleBasedMemoryExtractor()
     this.enabled = options.enabled ?? Boolean(options.store)
-    this.recentMessageLimit = options.recentMessageLimit ?? 6
+    this.recentMessageLimit = options.recentMessageLimit ?? DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT
     this.automaticRecallTokenBudget = positiveInteger(
       options.automaticRecallTokenBudget,
       DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
     )
-    this.searchResultLimit = memorySearchLimit(options.searchResultLimit ?? options.nodeLimit, 12)
+    this.searchResultLimit = memorySearchLimit(
+      options.searchResultLimit ?? options.nodeLimit,
+      DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
+    )
     this.reviewEveryUserMessages = Math.max(
       1,
-      Math.floor(options.reviewEveryUserMessages ?? options.summaryEveryMessages ?? 1),
+      Math.floor(
+        options.reviewEveryUserMessages
+        ?? options.summaryEveryMessages
+        ?? DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
+      ),
     )
     if (options.warning) this.warnings.add(options.warning)
   }

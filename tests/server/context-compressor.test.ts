@@ -130,7 +130,6 @@ describe('ChatContextCompressor', () => {
       skillsEnabled: false,
       maxSteps: 1,
       maxModelRetries: 0,
-      toolDelayMs: 0,
       modelDefaults: expect.objectContaining({
         model: 'summary-model',
       }),

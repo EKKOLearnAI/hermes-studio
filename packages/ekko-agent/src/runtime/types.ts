@@ -38,7 +38,6 @@ export interface AgentRuntimeOptions {
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number
-  toolDelayMs?: number
   toolContext?: AgentToolContext
   modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>
   contextKey?: string
@@ -56,7 +55,6 @@ export interface AgentRuntimeRunInput {
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number
-  toolDelayMs?: number
   toolContext?: AgentToolContext
   model?: string
   temperature?: number
