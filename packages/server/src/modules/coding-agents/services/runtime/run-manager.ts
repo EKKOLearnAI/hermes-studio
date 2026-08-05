@@ -6,7 +6,7 @@ import { createSession, addMessage, getSession, updateSession, updateSessionStat
 import type { ApiMode, CodingAgentImageInput } from '../../protocol/types'
 import { logger } from '../../../studio/public/logging'
 import { normalizeTokenUsage, recordSessionUsage } from '../../../studio/public/usage'
-import { getRecordedUsageByRun } from '../../../studio/public/usage-store'
+import { getRecordedUsageByRun } from '../../../studio/public/sessions'
 import {
   applyResponseStreamEvent,
   calcAndUpdateUsage,
