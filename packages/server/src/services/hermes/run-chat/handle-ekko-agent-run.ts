@@ -5,6 +5,7 @@ import {
   DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
   resolveModelProviderConfigs,
   type AgentMessage,
+  type AgentClarificationRequest,
   type AgentOutputMessage,
   type AgentToolCall,
   type AgentToolApprovalRequest,
@@ -19,6 +20,7 @@ import {
 } from '../../../../../ekko-agent/src'
 import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
 import { waitForEkkoToolApproval } from '../../ekko-agent/approvals'
+import { waitForEkkoClarification } from '../../ekko-agent/clarifications'
 import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
 import { resolveEkkoProviderRuntimeConfig } from '../../ekko-agent/provider-runtime'
 import {
@@ -1156,6 +1158,29 @@ export async function handleEkkoAgentRun(
             approval_id: request.approvalId,
             choice,
             resolved: true,
+          })
+        },
+      }),
+      requestUserClarification: (request: AgentClarificationRequest) => waitForEkkoClarification(request, {
+        sessionId,
+        signal: abortController.signal,
+        onRequested: pending => {
+          emit('clarify.requested', {
+            event: 'clarify.requested',
+            run_id: runId || turnId,
+            clarify_id: pending.clarifyId,
+            question: pending.question,
+            choices: pending.choices || null,
+            timeout_ms: pending.timeoutMs,
+          })
+        },
+        onResolved: resolution => {
+          emit('clarify.resolved', {
+            event: 'clarify.resolved',
+            run_id: runId || turnId,
+            clarify_id: request.clarifyId,
+            resolved: resolution.reason === 'response',
+            reason: resolution.reason,
           })
         },
       }),

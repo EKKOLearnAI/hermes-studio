@@ -483,6 +483,7 @@ export class AgentRuntime {
       runtimeInstructions: this.runtimeInstructions,
       userSystemMessages,
       memoryContext,
+      clarificationEnabled: this.toolsEnabled && !!this.tools.get('clarify'),
       skillDiscoveryEnabled: this.toolsEnabled &&
         !!this.tools.get('skill_list') &&
         !!this.tools.get('skill_view'),

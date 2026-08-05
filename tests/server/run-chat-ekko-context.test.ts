@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { respondToEkkoToolApproval } from '../../packages/server/src/services/ekko-agent/approvals'
+import { respondToEkkoClarification } from '../../packages/server/src/services/ekko-agent/clarifications'
 
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
@@ -233,6 +234,64 @@ describe('ekko-agent context usage events', () => {
         run_id: 'run-approval',
         approval_id: 'ekko-approval-1',
         choice: 'session',
+        session_id: 'session-1',
+      }),
+    })
+  })
+
+  it('bridges Ekko clarification requests through the existing chat events', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-clarify', maxSteps: 3 })
+      const responsePromise = input.toolContext.requestUserClarification({
+        clarifyId: 'ekko-clarify-1',
+        question: 'Which option should I use?',
+        choices: ['A', 'B'],
+        timeoutMs: 300_000,
+      })
+      expect(respondToEkkoClarification('session-1', 'ekko-clarify-1', 'B')).toEqual({
+        handled: true,
+        resolved: true,
+      })
+      await expect(responsePromise).resolves.toBe('B')
+      return {
+        runId: 'run-clarify',
+        output: { role: 'assistant', content: 'Using option B.' },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'clarify.requested',
+      payload: expect.objectContaining({
+        event: 'clarify.requested',
+        run_id: 'run-clarify',
+        clarify_id: 'ekko-clarify-1',
+        question: 'Which option should I use?',
+        choices: ['A', 'B'],
+        timeout_ms: 300_000,
+        session_id: 'session-1',
+      }),
+    })
+    expect(events).toContainEqual({
+      event: 'clarify.resolved',
+      payload: expect.objectContaining({
+        event: 'clarify.resolved',
+        run_id: 'run-clarify',
+        clarify_id: 'ekko-clarify-1',
+        resolved: true,
+        reason: 'response',
         session_id: 'session-1',
       }),
     })

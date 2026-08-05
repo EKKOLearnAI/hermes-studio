@@ -17,6 +17,17 @@ export type AgentToolApprovalRequester = (
   request: AgentToolApprovalRequest,
 ) => Promise<AgentToolApprovalChoice>
 
+export interface AgentClarificationRequest {
+  clarifyId: string
+  question: string
+  choices?: string[]
+  timeoutMs: number
+}
+
+export type AgentClarificationRequester = (
+  request: AgentClarificationRequest,
+) => Promise<string>
+
 export interface AgentToolAuthorizationDecision {
   approved: boolean
   scope: 'safe' | 'once' | 'session' | 'always' | 'denied'
@@ -45,6 +56,7 @@ export interface AgentToolContext {
   timeoutMs?: number
   signal?: AbortSignal
   requestToolApproval?: AgentToolApprovalRequester
+  requestUserClarification?: AgentClarificationRequester
   skillMutationSource?: 'foreground' | 'background-review'
   delegationDepth?: number
   delegateTask?: AgentTaskDelegate

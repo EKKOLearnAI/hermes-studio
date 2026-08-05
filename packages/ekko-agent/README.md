@@ -65,6 +65,8 @@ shape with `collectModelEvents()`.
 
 Built-in tools:
 
+- `clarify` asks one blocking user question, with optional answer choices, when
+  the host provides an interactive clarification handler.
 - `read_file` reads a text file.
 - `write_file` writes text content and creates parent directories by default.
 - `terminal_exec` runs a command with an argument array and `shell: false`.
@@ -133,6 +135,12 @@ these decisions into its UI.
 `AgentRuntime` ties messages, model requests, tools, skills, system prompt, and
 events together. The default `maxSteps` is `90`, matching Hermes' regular agent
 turn budget.
+
+The default registry exposes `clarify` only for a foreground run whose
+`AgentToolContext` provides `requestUserClarification`. Delegated subagents and
+non-interactive hosts do not receive the tool. When available, the runtime
+prompt requires blocking clarification questions to use the tool instead of
+being returned as an ordinary assistant response.
 
 When Ekko runs inside a host that owns conversation persistence, the host also
 owns context compression. `estimateContext()` exposes the provider-visible

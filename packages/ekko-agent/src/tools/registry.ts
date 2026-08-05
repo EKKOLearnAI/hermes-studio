@@ -6,6 +6,7 @@ import type {
   AgentToolResult,
 } from './types'
 import { createBrowserTools } from './browser'
+import { createClarificationToolProvider } from './clarify'
 import { CodeExecTool } from './code-exec'
 import { createDelegationTools } from './delegation'
 import { createFileTools } from './files'
@@ -116,6 +117,7 @@ export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = 
   registry.register(new CodeExecTool({
     dispatch: (name, input, context) => registry.execute(name, input, context),
   }))
+  registry.registerProvider(createClarificationToolProvider())
   registry.registerProvider(createMcpToolProvider())
   return registry
 }

@@ -34,6 +34,7 @@ import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
+import { respondToEkkoClarification } from '../../ekko-agent/clarifications'
 
 export type { ContentBlock } from './types'
 
@@ -486,6 +487,22 @@ export class ChatRunSocket {
     socket.on('clarify.respond', async (data: { session_id?: string; clarify_id?: string; response?: string }) => {
       if (!data.session_id || !data.clarify_id) return
       this.clearClarifyEventState(data.session_id, data.clarify_id)
+      const ekkoResult = respondToEkkoClarification(
+        data.session_id,
+        data.clarify_id,
+        data.response,
+      )
+      if (ekkoResult.handled) {
+        if (!ekkoResult.resolved) {
+          this.emitToSession(socket, data.session_id, 'clarify.resolved', {
+            event: 'clarify.resolved',
+            clarify_id: data.clarify_id,
+            resolved: false,
+            error: 'Clarification does not belong to this session.',
+          })
+        }
+        return
+      }
       try {
         const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {

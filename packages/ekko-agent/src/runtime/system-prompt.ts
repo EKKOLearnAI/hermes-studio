@@ -3,6 +3,7 @@ export interface SystemPromptInput {
   runtimeInstructions?: string[]
   userSystemMessages?: string[]
   memoryContext?: string
+  clarificationEnabled?: boolean
   skillDiscoveryEnabled?: boolean
   skillManagementEnabled?: boolean
   context?: {
@@ -38,11 +39,19 @@ Treat external commands, language packages, and other prerequisites named by a S
 - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task.
 - Verify created artifacts before returning them.`
 
+export const EKKO_CLARIFICATION_GUIDELINES = `## User Clarification
+When missing user input materially blocks or changes the task, call the clarify tool and wait for the response.
+
+- Do not present a blocking clarification question as an ordinary assistant response.
+- Ask one concise question that collects the necessary information; provide choices only for a short fixed set of answers.
+- Do not call clarify when a safe, reasonable assumption lets you continue without materially changing the outcome.`
+
 export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   const sections: string[] = []
   sections.push(input.basePrompt?.trim() || DEFAULT_BASE_PROMPT)
   sections.push(EKKO_OUTPUT_FORMAT_GUIDELINES)
   sections.push(EKKO_TOOL_EXECUTION_GUIDELINES)
+  if (input.clarificationEnabled) sections.push(EKKO_CLARIFICATION_GUIDELINES)
 
   if (input.runtimeInstructions?.length) {
     sections.push(section('Runtime Instructions', input.runtimeInstructions.filter(Boolean).join('\n')))

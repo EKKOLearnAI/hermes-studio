@@ -13,6 +13,7 @@ import { config } from '../../config'
 import { getHermesBaseDir, listProfileNamesFromDisk } from '../hermes/hermes-profile'
 import { logger } from '../logger'
 import { denyPendingEkkoToolApprovals } from './approvals'
+import { cancelPendingEkkoClarifications } from './clarifications'
 
 export interface GlobalEkkoAgentOptions {
   setup: EkkoAgentSetup
@@ -209,6 +210,7 @@ export async function abortGlobalEkkoBackgroundTasks(sessionId: string): Promise
 
 export function closeGlobalEkkoAgent(): void {
   denyPendingEkkoToolApprovals()
+  cancelPendingEkkoClarifications()
   for (const agent of globalEkkoAgents.values()) agent.close()
   globalEkkoAgents.clear()
   globalEkkoSetup?.close()
