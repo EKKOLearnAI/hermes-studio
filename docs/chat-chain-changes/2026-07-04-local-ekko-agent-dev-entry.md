@@ -36,6 +36,22 @@ SQLite database, and owns the shared memory service until server shutdown.
 Profile `GlobalEkkoAgent` instances remain lazy, but no longer initialize or
 close these process-level resources.
 
+Ekko also exposes a `code_exec` programmatic tool-calling runtime for one-shot
+Node.js and Python scripts. Both language bridges can call the allowlisted file
+and terminal tools through authenticated loopback RPC, keeping intermediate
+results outside model context. The executor applies the global tool timeout,
+nested-call and output limits, child-environment scrubbing, abort propagation,
+and rejects recursive or non-allowlisted tool calls.
+
+Ekko tool execution now shares the existing chat approval interaction. Arbitrary
+`code_exec` source and dangerous `terminal_exec` commands pause before execution
+and offer once, session, always, or deny. Session approvals remain process-local;
+always approvals are written to
+`<base>/.ekko/config/config.json` under
+`tools.approvals.permanentAllow`. Denied, timed-out, aborted, and non-interactive
+requests fail closed, and nested tool calls pass through the same authorization
+gate.
+
 Model text deltas are forwarded through the existing `message.delta` event when
 the provider supports streaming. Tool completion and failure events include
 runtime duration so the client can show elapsed tool time.

@@ -2,7 +2,7 @@ import type { AgentMessage, ModelClient, ModelRequest, ModelUsage } from '../mod
 import type { AgentMessageInput, AgentOutputMessage } from '../model/messages'
 import type { AgentSkill } from '../skills/types'
 import type { AgentToolRegistry } from '../tools/registry'
-import type { AgentToolContext, AgentToolResult } from '../tools/types'
+import type { AgentToolAuthorizer, AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
 import type { MemoryContext } from '../memory/types'
 import type { MemoryService } from '../memory/service'
@@ -26,6 +26,8 @@ export interface AgentRuntimeOptions {
   /** Disable every tool source, including built-ins, MCP, memory, and skill tools. */
   toolsEnabled?: boolean
   tools?: AgentToolRegistry
+  /** Optional human authorization gate applied before every registered tool executes. */
+  toolAuthorizer?: AgentToolAuthorizer
   /** Disable every skill source, including constructor and per-run skills. */
   skillsEnabled?: boolean
   skills?: AgentSkill[]

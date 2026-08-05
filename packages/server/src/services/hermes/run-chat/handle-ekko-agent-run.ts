@@ -7,6 +7,7 @@ import {
   type AgentMessage,
   type AgentOutputMessage,
   type AgentToolCall,
+  type AgentToolApprovalRequest,
   type AgentToolResult,
   type ModelClient,
   type ModelEvent,
@@ -17,6 +18,7 @@ import {
   type ModelResponse,
 } from '../../../../../ekko-agent/src'
 import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
+import { waitForEkkoToolApproval } from '../../ekko-agent/approvals'
 import { resolveEkkoMcpServers } from '../../ekko-agent/mcp'
 import { resolveEkkoProviderRuntimeConfig } from '../../ekko-agent/provider-runtime'
 import {
@@ -1130,6 +1132,33 @@ export async function handleEkkoAgentRun(
       mcpServers,
       timeoutMs: 120_000,
       signal: abortController.signal,
+      requestToolApproval: (request: AgentToolApprovalRequest) => waitForEkkoToolApproval(request, {
+        sessionId,
+        signal: abortController.signal,
+        onRequested: pending => {
+          emit('approval.requested', {
+            event: 'approval.requested',
+            run_id: runId || turnId,
+            approval_id: pending.approvalId,
+            command: pending.command,
+            description: pending.description,
+            choices: pending.choices,
+            allow_permanent: pending.allowPermanent,
+            timeout_ms: pending.timeoutMs,
+            tool: pending.toolName,
+            permission_key: pending.key,
+          })
+        },
+        onResolved: choice => {
+          emit('approval.resolved', {
+            event: 'approval.resolved',
+            run_id: runId || turnId,
+            approval_id: request.approvalId,
+            choice,
+            resolved: true,
+          })
+        },
+      }),
     }
     const metadata = {
       session_id: sessionId,

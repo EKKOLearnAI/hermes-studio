@@ -32,6 +32,9 @@ Treat external commands, language packages, and other prerequisites named by a S
 
 - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check.
 - Do not run the primary dependency-based approach merely to discover whether its dependency exists.
+- When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime.
+- Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables.
+- Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision.
 - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task.
 - Verify created artifacts before returning them.`
 

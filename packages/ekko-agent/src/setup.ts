@@ -7,6 +7,7 @@ import {
 } from './directories'
 import { MemoryService } from './memory/service'
 import { SqliteMemoryStore } from './memory/store'
+import { EkkoToolApprovalService } from './tools/approval'
 
 export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOptions {
   baseDirectory?: string
@@ -33,6 +34,7 @@ export class EkkoAgentSetup {
   readonly database: EkkoDatabaseManager
   readonly memoryStore: SqliteMemoryStore
   readonly memory: MemoryService
+  readonly toolApprovals: EkkoToolApprovalService
   readonly skillImport?: EkkoSkillImportResult
   private readonly profileLayouts = new Map<string, EkkoProfileDirectoryLayout>()
   private closed = false
@@ -43,6 +45,9 @@ export class EkkoAgentSetup {
       hermesRootDirectory: options.hermesRootDirectory,
     })
     this.skillImport = this.directories.lastSkillImport
+    this.toolApprovals = new EkkoToolApprovalService({
+      configPath: this.layout.configPath,
+    })
     this.database = new EkkoDatabaseManager({
       databasePath: this.layout.databasePath,
       env: options.env,

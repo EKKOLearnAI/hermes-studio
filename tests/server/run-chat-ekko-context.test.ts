@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { respondToEkkoToolApproval } from '../../packages/server/src/services/ekko-agent/approvals'
 
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
@@ -173,6 +174,68 @@ describe('ekko-agent context usage events', () => {
       },
     })
     completeWorkspaceRunCheckpointMock.mockReturnValue(null)
+  })
+
+  it('bridges Ekko tool approval requests through the existing chat events', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-approval', maxSteps: 3 })
+      const choicePromise = input.toolContext.requestToolApproval({
+        approvalId: 'ekko-approval-1',
+        toolName: 'terminal_exec',
+        key: 'terminal:delete',
+        command: 'rm -rf build',
+        description: 'deletes files or directories',
+        choices: ['once', 'session', 'always', 'deny'],
+        allowPermanent: true,
+        timeoutMs: 300_000,
+      })
+      expect(respondToEkkoToolApproval('session-1', 'ekko-approval-1', 'session')).toMatchObject({
+        handled: true,
+        resolved: true,
+      })
+      await expect(choicePromise).resolves.toBe('session')
+      return {
+        runId: 'run-approval',
+        output: { role: 'assistant', content: 'done' },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'remove the build directory',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'approval.requested',
+      payload: expect.objectContaining({
+        event: 'approval.requested',
+        run_id: 'run-approval',
+        approval_id: 'ekko-approval-1',
+        command: 'rm -rf build',
+        choices: ['once', 'session', 'always', 'deny'],
+        allow_permanent: true,
+        permission_key: 'terminal:delete',
+        session_id: 'session-1',
+      }),
+    })
+    expect(events).toContainEqual({
+      event: 'approval.resolved',
+      payload: expect.objectContaining({
+        event: 'approval.resolved',
+        run_id: 'run-approval',
+        approval_id: 'ekko-approval-1',
+        choice: 'session',
+        session_id: 'session-1',
+      }),
+    })
   })
 
   it('attaches a completed workspace diff to the persisted Ekko assistant message', async () => {

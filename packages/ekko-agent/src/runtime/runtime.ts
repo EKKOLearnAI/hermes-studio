@@ -101,8 +101,14 @@ export class AgentRuntime {
     this.modelClient = options.modelClient
     this.toolsEnabled = options.toolsEnabled !== false
     this.tools = this.toolsEnabled
-      ? options.tools ?? createDefaultToolRegistry({ skillDirectory: options.skillDirectory })
+      ? options.tools ?? createDefaultToolRegistry({
+          skillDirectory: options.skillDirectory,
+          authorizer: options.toolAuthorizer,
+        })
       : new AgentToolRegistry()
+    if (this.toolsEnabled && options.tools && options.toolAuthorizer) {
+      this.tools.setAuthorizer(options.toolAuthorizer)
+    }
     this.skillsEnabled = options.skillsEnabled !== false
     this.skills = this.skillsEnabled ? options.skills ?? [] : []
     this.systemPrompt = options.systemPrompt

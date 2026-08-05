@@ -12,6 +12,7 @@ import {
 import { config } from '../../config'
 import { getHermesBaseDir, listProfileNamesFromDisk } from '../hermes/hermes-profile'
 import { logger } from '../logger'
+import { denyPendingEkkoToolApprovals } from './approvals'
 
 export interface GlobalEkkoAgentOptions {
   setup: EkkoAgentSetup
@@ -59,6 +60,7 @@ export class GlobalEkkoAgent {
   ): Promise<AgentRuntimeRunResult> {
     const runtime = new AgentRuntime({
       ...options,
+      toolAuthorizer: options.toolAuthorizer ?? this.setup.toolApprovals.authorize,
       logWriter: this.fileLogger,
       logProfile: this.options.profile || 'default',
     })
@@ -109,6 +111,7 @@ export class GlobalEkkoAgent {
     this.runtime = new AgentRuntime({
       memory: this.memory,
       skillDirectory: this.skillDirectory,
+      toolAuthorizer: this.setup.toolApprovals.authorize,
       logWriter: this.fileLogger,
       logProfile: this.options.profile || 'default',
     })
@@ -205,6 +208,7 @@ export async function abortGlobalEkkoBackgroundTasks(sessionId: string): Promise
 }
 
 export function closeGlobalEkkoAgent(): void {
+  denyPendingEkkoToolApprovals()
   for (const agent of globalEkkoAgents.values()) agent.close()
   globalEkkoAgents.clear()
   globalEkkoSetup?.close()

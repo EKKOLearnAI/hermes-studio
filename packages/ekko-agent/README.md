@@ -65,6 +65,11 @@ Built-in tools:
 - `read_file` reads a text file.
 - `write_file` writes text content and creates parent directories by default.
 - `terminal_exec` runs a command with an argument array and `shell: false`.
+- `code_exec` runs a one-shot Node.js or Python script. Scripts can call the
+  allowed `read_file`, `write_file`, and `terminal_exec` tools through the
+  generated `ekko_tools.mjs` or `ekko_tools.py` RPC bridge. Intermediate tool
+  results remain inside the child script; only its reduced stdout is returned
+  to the model.
 - `skill_list` lists or searches skills under the agent's configured `skillDirectory`.
 - `skill_view` loads `SKILL.md` or an allowed support file for one skill in that directory.
 - `skill_manage` creates, patches, edits, archives, or manages support files when
@@ -91,7 +96,34 @@ const result = await tools.execute('terminal_exec', {
 }, {
   workspaceRoot: process.cwd(),
 })
+
+const batchResult = await tools.execute('code_exec', {
+  language: 'node',
+  code: `
+    import { read_file } from './ekko_tools.mjs'
+    const result = await read_file({ path: 'README.md' })
+    console.log(result.content.split('\\n').slice(0, 5).join('\\n'))
+  `,
+}, {
+  workspaceRoot: process.cwd(),
+})
 ```
+
+`code_exec` accepts `language: "node"` or `language: "python"`, runs for at
+most the configured tool execution timeout, permits at most 50 nested tool
+calls, caps stdout at 50KB, scrubs the child environment, and rejects recursive
+or non-allowlisted tool calls.
+
+Dangerous tools are authorized before execution. `code_exec` always requires
+authorization because ordinary Node.js and Python source can access the host;
+`terminal_exec` requires authorization for destructive, privileged,
+remote-shell, package-publishing, service-control, and similar commands. The
+available decisions are `once`, `session`, `always`, and `deny`. A session
+decision stays in process memory for the matching chat session. An always
+decision is stored in the global config under
+`tools.approvals.permanentAllow`; denial fails closed before the tool starts.
+The host supplies `requestToolApproval` in the per-run tool context to bridge
+these decisions into its UI.
 
 ## Runtime
 
@@ -111,8 +143,9 @@ The setup entry owns `EkkoDirectoryManager`, creates
 and opens and migrates the SQLite database at `<base>/.ekko/ekko.db`. It returns
 the shared database-backed memory service and closes that process-level resource
 through `setup.close()`. The global JSON file is initialized from Ekko's current
-runtime defaults and is not yet loaded as a user- or profile-configurable
-runtime input. A configured profile uses
+runtime defaults. General runtime settings are not yet loaded as user- or
+profile-configurable input; the permanent tool-approval allowlist is the current
+exception. A configured profile uses
 `<base>/.ekko/skills/<profile>` for its skills and
 `<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
 `<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied
@@ -136,6 +169,7 @@ const runtime = new AgentRuntime({
   modelClient: client,
   memory: setup.memory,
   skillDirectory: profile.skillDirectory,
+  toolAuthorizer: setup.toolApprovals.authorize,
 })
 
 try {

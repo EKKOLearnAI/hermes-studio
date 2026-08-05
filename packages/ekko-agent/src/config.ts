@@ -8,6 +8,12 @@ export const DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES = 6
 export const DEFAULT_AGENT_SUBTASK_MAX_STEPS = 30
 export const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
 export const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 120_000
+export const DEFAULT_TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1_000
+export const DEFAULT_CODE_EXEC_LANGUAGES = ['node', 'python'] as const
+export const DEFAULT_CODE_EXEC_MAX_TOOL_CALLS = 50
+export const DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES = 50_000
+export const DEFAULT_CODE_EXEC_MAX_STDERR_BYTES = 10_000
+export const DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES = 200_000
 export const DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET = 4_000
 export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20
 export const DEFAULT_MEMORY_SEARCH_RESULT_LIMIT = 50
@@ -18,9 +24,9 @@ export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
 /**
  * Initial global Ekko configuration written for every installation.
  *
- * Runtime configuration is intentionally fixed to these existing defaults for
- * now. The file establishes the future configuration boundary but is not yet a
- * user- or profile-configurable runtime input.
+ * General runtime configuration is intentionally fixed to these defaults for
+ * now. Permanent tool approvals are the sole runtime-owned exception: an
+ * `always` decision appends its capability key to this global JSON file.
  */
 export const DEFAULT_EKKO_CONFIG = {
   schemaVersion: EKKO_CONFIG_SCHEMA_VERSION,
@@ -37,6 +43,20 @@ export const DEFAULT_EKKO_CONFIG = {
   tools: {
     enabled: true,
     executionTimeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+    approvals: {
+      enabled: true,
+      timeoutMs: DEFAULT_TOOL_APPROVAL_TIMEOUT_MS,
+      permanentAllow: [],
+    },
+    codeExec: {
+      enabled: true,
+      languages: DEFAULT_CODE_EXEC_LANGUAGES,
+      timeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
+      maxToolCalls: DEFAULT_CODE_EXEC_MAX_TOOL_CALLS,
+      maxOutputBytes: DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES,
+      maxStderrBytes: DEFAULT_CODE_EXEC_MAX_STDERR_BYTES,
+      maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES,
+    },
   },
   delegation: {
     backgroundEnabled: true,
