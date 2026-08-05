@@ -152,20 +152,8 @@ function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
   const data: any = event.data || {}
   const item = data.item || data.output_item || data
   return event.type === 'response.function_call_arguments.delta' ||
-    ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') && item?.type === 'function_call')
-}
-
-function isCodexProxyExecToolEvent(event: CanonicalResponsesEvent): boolean {
-  const data: any = event.data || {}
-  const item = data.item || data.output_item || data
-  if (
-    (event.type !== 'response.output_item.added' && event.type !== 'response.output_item.done') ||
-    item?.type !== 'function_call'
-  ) {
-    return false
-  }
-  const name = String(item.name || item.function?.name || '').trim()
-  return name === 'exec_command' || name === 'functions.exec_command'
+    ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') &&
+      (item?.type === 'function_call' || item?.type === 'function_call_output'))
 }
 
 function truncateCodingAgentToolOutputForStorage(output: unknown): string {
@@ -663,13 +651,26 @@ export class CodingAgentRunManager {
     if (!agentSessionId) return
     const run = this.runs.get(agentSessionId)
     if (!run) return
-    if (run.launch.agentId === 'codex' && isCodexProxyExecToolEvent(event)) return
     const responseEvent = this.normalizeCodexChatTextEvent(run, event)
     if (!responseEvent) return
     const storageSafeResponseEvent = truncateCodingAgentToolOutputEvent(responseEvent)
     if (run.launch.agentId === 'claude-code' && !run.acceptingPrintEvent) {
       if (run.terminalEventHandled) return
-      if (run.currentChild && !isProxyToolEvent(event)) return
+      // Claude's stream-json process reports tool_use/tool_result itself.
+      // Proxy Responses events describe the same calls with different ids and
+      // may omit the matching function_call_output, so accepting both sources
+      // creates duplicate tool cards that remain pending until run completion.
+      if (run.currentChild) return
+    }
+    if (
+      run.launch.agentId === 'codex' &&
+      !run.acceptingPrintEvent &&
+      isProxyToolEvent(storageSafeResponseEvent)
+    ) {
+      // Keep proxy text deltas for responsive streaming, but use Codex JSONL as
+      // the sole source of tool lifecycle events. The two streams use different
+      // ids for the same call, so combining them creates duplicate tool cards.
+      return
     }
     if (storageSafeResponseEvent.type === 'response.created') {
       if (run.responseStartEmitted) return

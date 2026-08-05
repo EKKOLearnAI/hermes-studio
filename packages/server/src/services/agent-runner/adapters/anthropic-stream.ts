@@ -1,5 +1,11 @@
 import { readSseFrameTexts } from '../sse'
-import { mapStopReason, shouldPreserveReasoningContent, type AnthropicAdapterTarget } from './anthropic'
+import {
+  createAnthropicToolInputSchemas,
+  mapStopReason,
+  normalizeAnthropicToolArguments,
+  shouldPreserveReasoningContent,
+  type AnthropicAdapterTarget,
+} from './anthropic'
 
 export interface AnthropicStreamEvent {
   type: string
@@ -236,6 +242,7 @@ export async function* openAiChatSseToAnthropicEvents(
 export async function* openAiResponsesSseToAnthropicEvents(
   stream: AsyncIterable<Uint8Array>,
   target: AnthropicAdapterTarget,
+  anthropicTools?: unknown,
 ): AsyncGenerator<AnthropicStreamEvent> {
   const decoder = new TextDecoder()
   let messageId = `msg_${Date.now()}`
@@ -245,7 +252,18 @@ export async function* openAiResponsesSseToAnthropicEvents(
   let nextIndex = 0
   let stopReason: string | null = null
   let outputTokens = 0
-  const toolBlocks = new Map<string, { blockIndex: number; id: string; name: string; argsDeltaSeen: boolean; stopped: boolean }>()
+  const toolInputSchemas = createAnthropicToolInputSchemas(anthropicTools)
+  type ToolBlock = {
+    blockIndex: number
+    id: string
+    name: string
+    arguments: string
+    argumentsEmitted: boolean
+    started: boolean
+    stopped: boolean
+  }
+  const toolBlocks: ToolBlock[] = []
+  const toolAliases = new Map<string, ToolBlock>()
 
   yield {
     type: 'message_start',
@@ -279,30 +297,80 @@ export async function* openAiResponsesSseToAnthropicEvents(
     return textBlockIndex
   }
 
-  const ensureToolBlock = function* (key: string, id?: string, name?: string): Generator<AnthropicStreamEvent, { blockIndex: number; id: string; name: string; argsDeltaSeen: boolean; stopped: boolean }> {
-    let block = toolBlocks.get(key)
+  const toolAliasKeys = (values: unknown[], outputIndex?: unknown): string[] => {
+    const aliases = values
+      .filter(value => value !== undefined && value !== null && String(value) !== '')
+      .map(value => `id:${String(value)}`)
+    if (outputIndex !== undefined && outputIndex !== null && String(outputIndex) !== '') {
+      aliases.push(`index:${String(outputIndex)}`)
+    }
+    return [...new Set(aliases)]
+  }
+
+  const ensureToolBlock = (aliases: string[], id?: string, name?: string): ToolBlock => {
+    let block = aliases.map(alias => toolAliases.get(alias)).find(Boolean)
     if (!block) {
       block = {
         blockIndex: nextIndex++,
-        id: id || key || `toolu_${toolBlocks.size}`,
-        name: name || 'tool',
-        argsDeltaSeen: false,
+        id: id || `toolu_${toolBlocks.length}`,
+        name: name || '',
+        arguments: '',
+        argumentsEmitted: false,
+        started: false,
         stopped: false,
       }
-      toolBlocks.set(key, block)
-      yield {
-        type: 'content_block_start',
-        data: {
-          type: 'content_block_start',
-          index: block.blockIndex,
-          content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} },
-        },
-      }
+      toolBlocks.push(block)
     } else {
       if (id) block.id = id
-      if (name && block.name === 'tool') block.name = name
+      if (name) block.name = name
     }
+    for (const alias of aliases) toolAliases.set(alias, block)
     return block
+  }
+
+  const startToolBlock = function* (block: ToolBlock): Generator<AnthropicStreamEvent> {
+    if (block.started) return
+    block.started = true
+    if (!block.name) block.name = 'tool'
+    yield {
+      type: 'content_block_start',
+      data: {
+        type: 'content_block_start',
+        index: block.blockIndex,
+        content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} },
+      },
+    }
+  }
+
+  const emitToolArguments = function* (block: ToolBlock): Generator<AnthropicStreamEvent> {
+    if (block.argumentsEmitted) return
+    block.argumentsEmitted = true
+    if (!block.arguments) return
+    const normalized = normalizeAnthropicToolArguments(
+      block.arguments,
+      block.name || 'tool',
+      toolInputSchemas,
+    )
+    if (!normalized) return
+    yield {
+      type: 'content_block_delta',
+      data: {
+        type: 'content_block_delta',
+        index: block.blockIndex,
+        delta: { type: 'input_json_delta', partial_json: normalized },
+      },
+    }
+  }
+
+  const stopToolBlock = function* (block: ToolBlock): Generator<AnthropicStreamEvent> {
+    if (block.stopped) return
+    yield* startToolBlock(block)
+    yield* emitToolArguments(block)
+    block.stopped = true
+    yield {
+      type: 'content_block_stop',
+      data: { type: 'content_block_stop', index: block.blockIndex },
+    }
   }
 
   for await (const chunk of stream) {
@@ -346,51 +414,38 @@ export async function* openAiResponsesSseToAnthropicEvents(
         if (eventType === 'response.output_item.added') {
           const item = data?.item || data?.output_item
           if (item?.type === 'function_call') {
-            const key = String(item.call_id || item.id || data.output_index || toolBlocks.size)
-            yield* ensureToolBlock(key, String(item.call_id || item.id || key), item.name ? String(item.name) : undefined)
+            const aliases = toolAliasKeys([item.call_id, item.id], data.output_index)
+            const block = ensureToolBlock(
+              aliases,
+              item.call_id ? String(item.call_id) : item.id ? String(item.id) : undefined,
+              item.name ? String(item.name) : undefined,
+            )
+            if (block.name) yield* startToolBlock(block)
           }
         }
 
         if (eventType === 'response.function_call_arguments.delta') {
-          const key = String(data.call_id || data.item_id || data.output_index || toolBlocks.size)
-          const block = yield* ensureToolBlock(key)
+          const aliases = toolAliasKeys([data.call_id, data.item_id], data.output_index)
+          const block = ensureToolBlock(aliases)
           const argsDelta = String(data.delta || '')
-          if (argsDelta) {
-            block.argsDeltaSeen = true
-            yield {
-              type: 'content_block_delta',
-              data: {
-                type: 'content_block_delta',
-                index: block.blockIndex,
-                delta: { type: 'input_json_delta', partial_json: argsDelta },
-              },
-            }
-          }
+          if (argsDelta) block.arguments += argsDelta
         }
 
         if (eventType === 'response.output_item.done') {
           const item = data?.item || data?.output_item
           if (item?.type === 'function_call') {
-            const key = String(item.call_id || item.id || data.output_index || toolBlocks.size)
-            const block = yield* ensureToolBlock(key, String(item.call_id || item.id || key), item.name ? String(item.name) : undefined)
-            const args = String(item.arguments || '')
-            if (args && !block.argsDeltaSeen) {
-              yield {
-                type: 'content_block_delta',
-                data: {
-                  type: 'content_block_delta',
-                  index: block.blockIndex,
-                  delta: { type: 'input_json_delta', partial_json: args },
-                },
-              }
-            }
-            if (!block.stopped) {
-              block.stopped = true
-              yield {
-                type: 'content_block_stop',
-                data: { type: 'content_block_stop', index: block.blockIndex },
-              }
-            }
+            const aliases = toolAliasKeys(
+              [item.call_id, item.id, data.call_id, data.item_id],
+              data.output_index,
+            )
+            const block = ensureToolBlock(
+              aliases,
+              item.call_id ? String(item.call_id) : item.id ? String(item.id) : undefined,
+              item.name ? String(item.name) : undefined,
+            )
+            const completedArguments = typeof item.arguments === 'string' ? item.arguments : ''
+            if (completedArguments) block.arguments = completedArguments
+            yield* stopToolBlock(block)
           }
         }
 
@@ -409,19 +464,14 @@ export async function* openAiResponsesSseToAnthropicEvents(
       data: { type: 'content_block_stop', index: textBlockIndex },
     }
   }
-  for (const block of toolBlocks.values()) {
-    if (!block.stopped) {
-      yield {
-        type: 'content_block_stop',
-        data: { type: 'content_block_stop', index: block.blockIndex },
-      }
-    }
+  for (const block of toolBlocks) {
+    if (!block.stopped) yield* stopToolBlock(block)
   }
   yield {
     type: 'message_delta',
     data: {
       type: 'message_delta',
-      delta: { stop_reason: openAiFinishToAnthropic(stopReason, toolBlocks.size > 0), stop_sequence: null },
+      delta: { stop_reason: openAiFinishToAnthropic(stopReason, toolBlocks.length > 0), stop_sequence: null },
       usage: { output_tokens: outputTokens },
     },
   }

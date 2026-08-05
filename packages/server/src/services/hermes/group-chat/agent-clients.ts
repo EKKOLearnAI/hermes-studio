@@ -862,7 +862,7 @@ class AgentClient {
                             toolReasoning,
                         ))
                     } else if (event === 'tool.completed' || event === 'tool.failed') {
-                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, payload))
+                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, { ...payload, event }))
                     } else if (event === 'approval.requested') {
                         this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'approval.resolved') {
@@ -1328,6 +1328,10 @@ class AgentClient {
         this.pendingToolRunIds.delete(toolCallId)
         this.pendingToolNames.delete(toolCallId)
         const output = bridgeToolOutput(ev)
+        const failed = ev.event === 'tool.failed'
+            || ev.is_error === true
+            || ev.error === true
+            || (typeof ev.error === 'string' && ev.error.trim().length > 0)
         const timestamp = Date.now()
         const msg: MessageData & Record<string, any> = {
             id: `${runMessageId}_toolresult_${safeId(toolCallId)}_${Date.now()}`,
@@ -1340,12 +1344,14 @@ class AgentClient {
             role: 'tool',
             tool_call_id: toolCallId,
             tool_name: toolName || null,
+            finish_reason: failed ? 'error' : null,
         }
         return this.sendMessage(roomId, output, msg.id, {
             role: 'tool',
             run_id: responseRunId,
             tool_call_id: toolCallId,
             tool_name: toolName || null,
+            finish_reason: failed ? 'error' : null,
             timestamp,
         }, sessionId)
             .then(() => undefined)

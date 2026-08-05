@@ -335,6 +335,38 @@ describe('group chat store streaming merge', () => {
     ])
   })
 
+  it('projects a failed tool completion as an error', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-1',
+      run_id: 'run-1',
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'read_file', arguments: '{"path":"secret.txt"}' },
+      }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-1',
+      run_id: 'run-1',
+      role: 'tool',
+      tool_call_id: 'call-1',
+      tool_name: 'read_file',
+      content: 'permission denied',
+      finish_reason: 'error',
+    }))
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-1',
+        toolName: 'read_file',
+        toolResult: 'permission denied',
+        toolStatus: 'error',
+      }),
+    ])
+  })
+
   it('keeps reasoning split across consecutive tool calls in one agent run', async () => {
     const store = await createJoinedStore()
     const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')

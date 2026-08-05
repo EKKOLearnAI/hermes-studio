@@ -1301,7 +1301,7 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                     : placeholderIdx !== -1
                         ? result[placeholderIdx].reasoning
                         : undefined,
-                toolStatus: 'done',
+                toolStatus: msg.finish_reason === 'error' ? 'error' : 'done',
             }
             if (placeholderIdx !== -1) result[placeholderIdx] = merged
             else result.push(merged)
