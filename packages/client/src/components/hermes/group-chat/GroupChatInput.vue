@@ -26,7 +26,9 @@ const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
 const inputText = ref('')
-const mentions = ref<GroupChatMention[]>([])
+type TrackedMention = GroupChatMention & { start: number; end: number }
+const mentions = ref<TrackedMention[]>([])
+const previousInputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
@@ -295,9 +297,7 @@ function selectMention(option: MentionOption) {
     if (!el || mentionStartIndex.value === -1) return
 
     const before = inputText.value.slice(0, mentionStartIndex.value)
-    const after = inputText.value.slice(el.selectionStart)
-    inputText.value = `${before}@${option.name} ${after}`
-    addMentionMetadata(option)
+    replaceInputRange(mentionStartIndex.value, el.selectionStart, `@${option.name} `, option)
     mentionActive.value = false
 
     nextTick(() => {
@@ -322,11 +322,15 @@ function insertMention(name: string) {
     const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
     const trailingSpace = after && /^\s/.test(after) ? '' : ' '
     const inserted = `${leadingSpace}@${mentionName}${trailingSpace}`
-    inputText.value = `${before}${inserted}${after}`
     const matchingAgents = store.agents.filter(agent => agent.name === mentionName)
-    if (matchingAgents.length === 1) {
-        addMentionMetadata({ type: 'agent', participantId: matchingAgents[0].agentId, displayName: matchingAgents[0].name })
-    }
+    replaceInputRange(
+        selectionStart,
+        selectionEnd,
+        inserted,
+        matchingAgents.length === 1
+            ? { type: 'agent', participantId: matchingAgents[0].agentId, displayName: matchingAgents[0].name }
+            : undefined,
+    )
     mentionActive.value = false
     mentionStartIndex.value = -1
     mentionQuery.value = ''
@@ -342,7 +346,7 @@ function insertMention(name: string) {
     })
 }
 
-function addMentionMetadata(mention: GroupChatMention | MentionOption) {
+function normalizeMention(mention: GroupChatMention | MentionOption): GroupChatMention | null {
     const displayName = 'displayName' in mention ? mention.displayName : mention.name
     const normalized: GroupChatMention = mention.type === 'all'
         ? { type: 'all', displayName: 'all' }
@@ -351,27 +355,59 @@ function addMentionMetadata(mention: GroupChatMention | MentionOption) {
             participantId: mention.participantId,
             displayName,
         }
-    if (!normalized.displayName || (normalized.type === 'agent' && !normalized.participantId)) return
-    if (!mentions.value.some(candidate =>
-        candidate.type === normalized.type &&
-        candidate.participantId === normalized.participantId,
-    )) {
-        mentions.value.push(normalized)
+    if (!normalized.displayName || (normalized.type === 'agent' && !normalized.participantId)) return null
+    return normalized
+}
+
+function replaceInputRange(start: number, end: number, replacement: string, mention?: GroupChatMention | MentionOption) {
+    const before = inputText.value
+    const delta = replacement.length - (end - start)
+    mentions.value = mentions.value
+        .filter(candidate => candidate.end <= start || candidate.start >= end)
+        .map(candidate => candidate.start >= end
+            ? { ...candidate, start: candidate.start + delta, end: candidate.end + delta }
+            : candidate)
+    inputText.value = `${before.slice(0, start)}${replacement}${before.slice(end)}`
+    previousInputText.value = inputText.value
+
+    const normalized = mention ? normalizeMention(mention) : null
+    if (normalized) {
+        const tokenEnd = start + `@${normalized.displayName}`.length
+        mentions.value.push({ ...normalized, start, end: tokenEnd })
     }
 }
 
 function insertStructuredMention(mention: GroupChatMention) {
-    const escapedName = mention.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const alreadyMentioned = new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
-    if (!alreadyMentioned) inputText.value = `@${mention.displayName} ${inputText.value}`
-    addMentionMetadata(mention)
+    const normalized = normalizeMention(mention)
+    if (!normalized) return
+    if (mentions.value.some(candidate =>
+        candidate.type === normalized.type &&
+        candidate.participantId === normalized.participantId &&
+        inputText.value.slice(candidate.start, candidate.end) === `@${normalized.displayName}`,
+    )) return
+    replaceInputRange(0, 0, `@${normalized.displayName} `, normalized)
 }
 
 function syncMentionMetadata() {
-    mentions.value = mentions.value.filter(mention => {
-        const escapedName = mention.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        return new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
-    })
+    const current = inputText.value
+    const previous = previousInputText.value
+    let prefix = 0
+    while (prefix < previous.length && prefix < current.length && previous[prefix] === current[prefix]) prefix += 1
+    let suffix = 0
+    while (
+        suffix < previous.length - prefix &&
+        suffix < current.length - prefix &&
+        previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
+    ) suffix += 1
+    const previousChangedEnd = previous.length - suffix
+    const delta = current.length - previous.length
+    mentions.value = mentions.value
+        .filter(mention => mention.end <= prefix || mention.start >= previousChangedEnd)
+        .map(mention => mention.start >= previousChangedEnd
+            ? { ...mention, start: mention.start + delta, end: mention.end + delta }
+            : mention)
+        .filter(mention => current.slice(mention.start, mention.end) === `@${mention.displayName}`)
+    previousInputText.value = current
 }
 
 // ─── Event Handlers ──────────────────────────────────────
@@ -417,9 +453,11 @@ function handleSend() {
         return
     }
 
-    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions.value.length ? [...mentions.value] : undefined)
+    const structuredMentions = mentions.value.map(({ start: _start, end: _end, ...mention }) => mention)
+    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, structuredMentions.length ? structuredMentions : undefined)
     inputText.value = ''
     mentions.value = []
+    previousInputText.value = ''
     attachments.value = []
     mentionActive.value = false
     // 发送后重置到自定义高度（不清除拖拽状态）

@@ -177,6 +177,33 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
   })
 
+  it('uses server persisted activity time instead of an agent display timestamp for live room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'future-agent', createdAt: 1, lastActiveAt: 1 },
+      { ...room, id: 'recent-room', createdAt: 2, lastActiveAt: 2 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'future-agent-message',
+      roomId: 'future-agent',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'assistant',
+      timestamp: 9_999_999_999_999,
+      persistedAt: 3,
+    }))
+    emitSocket('message', userMessage({
+      id: 'recent-room-message',
+      roomId: 'recent-room',
+      timestamp: 4,
+      persistedAt: 4,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['recent-room', 'future-agent'])
+  })
+
   it('binds autoplay events to the responding agent profile', async () => {
     vi.useFakeTimers()
     const store = await loadStore()

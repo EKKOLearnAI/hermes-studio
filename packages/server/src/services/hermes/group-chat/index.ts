@@ -27,6 +27,7 @@ interface ChatMessage {
     senderName: string
     content: string
     timestamp: number
+    persistedAt?: number
     run_id?: string | null
     role?: string
     tool_call_id?: string | null
@@ -571,7 +572,8 @@ class ChatStorage {
         this.upsertMessage(msg)
     }
 
-    upsertMessage(msg: ChatMessage): void {
+    upsertMessage(msg: ChatMessage): ChatMessage {
+        const persistedAt = Date.now()
         const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
         this.db()?.prepare(
             `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content)
@@ -594,7 +596,7 @@ class ChatStorage {
                 reasoning_details = excluded.reasoning_details,
                 reasoning_content = excluded.reasoning_content`
         ).run(
-            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp, Date.now(),
+            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp, persistedAt,
             msg.mentions?.length ? JSON.stringify(msg.mentions) : null,
             msg.run_id ?? null,
             msg.role || 'user',
@@ -606,6 +608,7 @@ class ChatStorage {
             msg.reasoning_details ?? null,
             msg.reasoning_content ?? null,
         )
+        return { ...msg, persistedAt }
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
@@ -678,13 +681,13 @@ class ChatStorage {
                 tool_calls: null,
                 tool_name: 'workspace_diff',
             }
-            this.upsertMessage(message)
+            const persistedMessage = this.upsertMessage(message)
             this.pruneMessages(args.roomId)
             const messages = this.getMessagesForContext(args.roomId)
             const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
             this.updateRoomTotalTokens(args.roomId, totalTokens)
             db.exec('COMMIT')
-            return { message, totalTokens, change }
+            return { message: persistedMessage, totalTokens, change }
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err
@@ -707,13 +710,13 @@ class ChatStorage {
                 ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
                 : msg
             const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
-            this.upsertMessage(message)
+            const persistedMessage = this.upsertMessage(message)
             this.pruneMessages(msg.roomId)
             const messages = this.getMessagesForContext(msg.roomId)
             const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
             db.exec('COMMIT')
-            return { message, totalTokens }
+            return { message: persistedMessage, totalTokens }
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err

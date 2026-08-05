@@ -97,6 +97,8 @@ export interface ChatMessage {
     senderName: string
     content: string
     timestamp: number
+    /** Server-assigned persistence time used for room activity ordering. */
+    persistedAt?: number
     run_id?: string | null
     role?: string
     tool_call_id?: string | null

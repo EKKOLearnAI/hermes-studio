@@ -204,6 +204,51 @@ describe('GroupChatInput mentions', () => {
     expect(onSend).toHaveBeenCalledWith('please review', undefined, undefined)
   })
 
+  it('keeps same-name mention identities independent when one token is deleted', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.userId = 'human-1'
+    store.agents = [
+      { id: 'row-1', agentId: 'agent-1', profile: 'first', name: 'Alex', roomId: 'room-1', description: '', invited: 1 },
+      { id: 'row-2', agentId: 'agent-2', profile: 'second', name: 'Alex', roomId: 'room-1', description: '', invited: 1 },
+    ]
+    const onSend = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      props: { onSend },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    store.setMessageReference('room-1', {
+      id: 'first-alex',
+      role: 'assistant',
+      content: 'First',
+      sender: 'Alex',
+      senderId: 'agent-1',
+    })
+    await nextTick()
+    store.setMessageReference('room-1', {
+      id: 'second-alex',
+      role: 'assistant',
+      content: 'Second',
+      sender: 'Alex',
+      senderId: 'agent-2',
+    })
+    await nextTick()
+    const textarea = wrapper.get('textarea')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('@Alex @Alex ')
+
+    await textarea.setValue('@Alex ')
+    ;(wrapper.vm as any).handleSend()
+
+    expect(onSend).toHaveBeenCalledWith(
+      '@Alex',
+      undefined,
+      [{ type: 'agent', participantId: 'agent-2', displayName: 'Alex' }],
+    )
+  })
+
   it('does not auto-mention self or an invalid quoted sender', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
     const settingsStore = useSettingsStore()

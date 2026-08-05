@@ -16,6 +16,7 @@ import type { StoredMessage } from '../context-engine/types'
 import type { GroupRoomSummaryService, GroupRuntimeContext } from './room-summary'
 import {
     isAllAgentsMentioned,
+    isAgentMentioned,
     resolveStructuredMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
@@ -350,8 +351,18 @@ class AgentClient {
 
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
+        const mentions = extra?.role === 'assistant'
+            ? this.structuredMentionsForAgentReply(roomId, content)
+            : undefined
         return new Promise((resolve, reject) => {
-            this.socket!.emit('message', { roomId, content, id: messageId, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }, (res: { id?: string; error?: string }) => {
+            this.socket!.emit('message', {
+                roomId,
+                content,
+                id: messageId,
+                ...extra,
+                ...(mentions?.length ? { mentions } : {}),
+                ...(agentSessionId ? { agentSessionId } : {}),
+            }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     reject(new Error(res.error))
                 } else {
@@ -359,6 +370,28 @@ class AgentClient {
                 }
             })
         })
+    }
+
+    private structuredMentionsForAgentReply(roomId: string, content: string): Array<{ type: 'agent' | 'all'; participantId?: string }> {
+        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const roomAgents = Array.isArray(rawAgents) ? rawAgents : []
+        const mentions: Array<{ type: 'agent' | 'all'; participantId?: string }> = []
+        if (isAllAgentsMentioned(content)) return [{ type: 'all' }]
+
+        const agentsByName = new Map<string, any[]>()
+        for (const agent of roomAgents) {
+            const name = String(agent?.name || '').trim()
+            const participantId = String(agent?.agentId || '').trim()
+            if (!name || !participantId || participantId === this.agentId) continue
+            const matches = agentsByName.get(name) || []
+            matches.push(agent)
+            agentsByName.set(name, matches)
+        }
+        for (const [name, agents] of agentsByName) {
+            if (agents.length !== 1 || !isAgentMentioned(content, name)) continue
+            mentions.push({ type: 'agent', participantId: String(agents[0].agentId) })
+        }
+        return mentions
     }
 
     startTyping(roomId: string): void {

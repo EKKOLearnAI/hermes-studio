@@ -193,10 +193,11 @@ const currentUserAvatar = ref('')
         )
     }
 
-    function recordPersistedRoomActivity(roomId: string, timestamp: number) {
+    function recordPersistedRoomActivity(roomId: string, persistedAt: number | undefined) {
         const room = rooms.value.find(item => item.id === roomId)
-        if (!room || !Number.isFinite(timestamp)) return
-        room.lastActiveAt = Math.max(Number(room.lastActiveAt || room.createdAt || 0), timestamp)
+        const persisted = Number(persistedAt)
+        if (!room || !Number.isFinite(persisted)) return
+        room.lastActiveAt = Math.max(Number(room.lastActiveAt || room.createdAt || 0), persisted)
         sortRoomsByActivity()
     }
 
@@ -454,7 +455,7 @@ const currentUserAvatar = ref('')
         })
 
         socket.on('message', (msg: ChatMessage) => {
-            recordPersistedRoomActivity(msg.roomId, Number(msg.timestamp || 0))
+            recordPersistedRoomActivity(msg.roomId, Number(msg.persistedAt))
             if (msg.roomId === currentRoomId.value) {
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                     const responseRunId = inferredGroupResponseRunId(msg)
