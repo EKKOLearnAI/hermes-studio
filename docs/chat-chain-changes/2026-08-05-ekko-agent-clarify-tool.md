@@ -1,6 +1,6 @@
 ---
 date: 2026-08-05
-pr: pending
+pr: 2368
 feature: Ekko Agent clarification tool
 impact: Foreground Ekko chat runs can pause for one free-text or multiple-choice clarification using the existing Hermes chat interaction card and Socket.IO response path.
 ---
