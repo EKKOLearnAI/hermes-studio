@@ -30,10 +30,22 @@ describe('group chat room ordering', () => {
       role: 'user',
     } as any)
 
-    expect(storage.getAllRooms().map(room => [room.id, room.createdAt, room.lastActiveAt])).toEqual([
-      ['active', 200, 500],
-      ['new-empty', 400, 400],
-      ['older-empty', 100, 100],
-    ])
+    expect(storage.getAllRooms().map(room => room.id)).toEqual(['active', 'new-empty', 'older-empty'])
+  })
+
+  it('orders by server persistence time rather than an agent-supplied future display timestamp', () => {
+    const storage = harness.groupServer.getStorage()
+    storage.saveRoom('future-agent', 'Future agent', 'FUTURE')
+    storage.saveRoom('recent-human', 'Recent human', 'RECENT')
+    harness.db.prepare('UPDATE gc_rooms SET createdAt = ? WHERE id = ?').run(100, 'future-agent')
+    harness.db.prepare('UPDATE gc_rooms SET createdAt = ? WHERE id = ?').run(200, 'recent-human')
+    harness.db.prepare(
+      'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, persistedAt, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run('agent-future', 'future-agent', 'agent-1', 'Agent', 'future', 9_999_999_999_999, 300, 'assistant')
+    harness.db.prepare(
+      'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, persistedAt, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run('human-recent', 'recent-human', 'human-1', 'Human', 'recent', 400, 400, 'user')
+
+    expect(storage.getAllRooms().map(room => room.id)).toEqual(['recent-human', 'future-agent'])
   })
 })

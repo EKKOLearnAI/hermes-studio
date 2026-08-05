@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import { buildMentionOptions, type MentionOption } from './mention-options'
+import type { GroupChatMention } from '@/api/hermes/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 
@@ -17,7 +18,7 @@ const props = withDefaults(defineProps<{
     sendBlocked: false,
 })
 const emit = defineEmits<{
-    send: [content: string, attachments?: Attachment[]]
+    send: [content: string, attachments?: Attachment[], mentions?: GroupChatMention[]]
     'send-blocked': []
 }>()
 const store = useGroupChatStore()
@@ -25,6 +26,7 @@ const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
 const inputText = ref('')
+const mentions = ref<GroupChatMention[]>([])
 const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
@@ -104,21 +106,15 @@ watch(
     (id) => {
         if (!id) return
         const reference = activeMessageReference.value
-        const senderName = reference?.sender?.trim() || ''
         const senderId = reference?.senderId?.trim() || ''
-        const validAgent = store.agents.some(agent =>
-            (senderId && (agent.agentId === senderId || agent.id === senderId)) || agent.name === senderName,
-        )
-        const validMember = store.members.some(member =>
-            (senderId && member.userId === senderId) || member.name === senderName,
-        )
+        const agent = store.agents.find(candidate => senderId && (candidate.agentId === senderId || candidate.id === senderId))
         const isSelf = !!senderId && senderId === store.userId
-        const escapedName = senderName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const alreadyMentioned = senderName
-            ? new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
-            : false
-        if (senderName && !isSelf && (validAgent || validMember) && !alreadyMentioned) {
-            inputText.value = `@${senderName} ${inputText.value}`
+        if (agent && !isSelf && !mentions.value.some(mention => mention.type === 'agent' && mention.participantId === agent.agentId)) {
+            insertStructuredMention({
+                type: 'agent',
+                participantId: agent.agentId,
+                displayName: agent.name,
+            })
             store.emitTyping()
         }
         nextTick(() => textareaRef.value?.focus())
@@ -294,18 +290,19 @@ function updateMentionState() {
     mentionActive.value = filteredMentionOptions.value.length > 0
 }
 
-function selectMention(name: string) {
+function selectMention(option: MentionOption) {
     const el = textareaRef.value
     if (!el || mentionStartIndex.value === -1) return
 
     const before = inputText.value.slice(0, mentionStartIndex.value)
     const after = inputText.value.slice(el.selectionStart)
-    inputText.value = `${before}@${name} ${after}`
+    inputText.value = `${before}@${option.name} ${after}`
+    addMentionMetadata(option)
     mentionActive.value = false
 
     nextTick(() => {
         if (el) {
-            const newPos = before.length + name.length + 2
+            const newPos = before.length + option.name.length + 2
             el.setSelectionRange(newPos, newPos)
             el.focus()
             autoSizeTextarea(el)
@@ -326,6 +323,10 @@ function insertMention(name: string) {
     const trailingSpace = after && /^\s/.test(after) ? '' : ' '
     const inserted = `${leadingSpace}@${mentionName}${trailingSpace}`
     inputText.value = `${before}${inserted}${after}`
+    const matchingAgents = store.agents.filter(agent => agent.name === mentionName)
+    if (matchingAgents.length === 1) {
+        addMentionMetadata({ type: 'agent', participantId: matchingAgents[0].agentId, displayName: matchingAgents[0].name })
+    }
     mentionActive.value = false
     mentionStartIndex.value = -1
     mentionQuery.value = ''
@@ -338,6 +339,38 @@ function insertMention(name: string) {
         el.setSelectionRange(nextPosition, nextPosition)
         el.focus()
         autoSizeTextarea(el)
+    })
+}
+
+function addMentionMetadata(mention: GroupChatMention | MentionOption) {
+    const displayName = 'displayName' in mention ? mention.displayName : mention.name
+    const normalized: GroupChatMention = mention.type === 'all'
+        ? { type: 'all', displayName: 'all' }
+        : {
+            type: 'agent',
+            participantId: mention.participantId,
+            displayName,
+        }
+    if (!normalized.displayName || (normalized.type === 'agent' && !normalized.participantId)) return
+    if (!mentions.value.some(candidate =>
+        candidate.type === normalized.type &&
+        candidate.participantId === normalized.participantId,
+    )) {
+        mentions.value.push(normalized)
+    }
+}
+
+function insertStructuredMention(mention: GroupChatMention) {
+    const escapedName = mention.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const alreadyMentioned = new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
+    if (!alreadyMentioned) inputText.value = `@${mention.displayName} ${inputText.value}`
+    addMentionMetadata(mention)
+}
+
+function syncMentionMetadata() {
+    mentions.value = mentions.value.filter(mention => {
+        const escapedName = mention.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        return new RegExp(`(^|\\s)@${escapedName}(?=\\s|$|[.,!?;:，。！？；：])`, 'i').test(inputText.value)
     })
 }
 
@@ -360,7 +393,7 @@ function handleKeydown(e: KeyboardEvent) {
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
             e.preventDefault()
-            selectMention(filteredMentionOptions.value[activeIndex.value].name)
+            selectMention(filteredMentionOptions.value[activeIndex.value])
             return
         }
         if (e.key === 'Escape') {
@@ -384,8 +417,9 @@ function handleSend() {
         return
     }
 
-    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined)
+    emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, mentions.value.length ? [...mentions.value] : undefined)
     inputText.value = ''
+    mentions.value = []
     attachments.value = []
     mentionActive.value = false
     // 发送后重置到自定义高度（不清除拖拽状态）
@@ -393,6 +427,7 @@ function handleSend() {
 
 function handleInput(e: Event) {
     store.emitTyping()
+    syncMentionMetadata()
     if (!isComposing.value) {
         updateMentionState()
     }
@@ -404,7 +439,7 @@ function handleInput(e: Event) {
 }
 
 function handleMentionClick(option: MentionOption) {
-    selectMention(option.name)
+    selectMention(option)
 }
 
 function handleMentionHover(index: number) {
@@ -504,7 +539,7 @@ function handleDrop(e: DragEvent) {
     addFiles(Array.from(e.dataTransfer?.files || []))
 }
 
-defineExpose({ addFiles, insertMention })
+defineExpose({ addFiles, insertMention, handleSend })
 
 function removeAttachment(id: string) {
     const idx = attachments.value.findIndex(a => a.id === id)

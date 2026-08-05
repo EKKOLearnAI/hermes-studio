@@ -45,7 +45,7 @@ describe('group chat agent routing baseline', () => {
     return groupRuntimeSessionId('room-1', 'default', 'Worker')
   }
 
-  it('routes human messages through mention processing', async () => {
+  it('forwards only server-validated structured mentions to mention processing', async () => {
     const { human } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
@@ -55,6 +55,19 @@ describe('group chat agent routing baseline', () => {
       messageId: 'human-msg-1',
       role: 'user',
       mentionDepth: 0,
+      mentions: [],
+    }))
+
+    await emitAck(human, 'message', {
+      roomId: 'room-1',
+      id: 'human-msg-2',
+      content: '@Worker hello',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+    })
+
+    expect(processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
+      messageId: 'human-msg-2',
+      mentions: [{ type: 'agent', participantId: 'agent-worker' }],
     }))
   })
 

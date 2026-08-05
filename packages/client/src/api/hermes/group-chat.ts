@@ -106,6 +106,7 @@ export interface ChatMessage {
     reasoning?: string | null
     reasoning_details?: string | null
     reasoning_content?: string | null
+    mentions?: GroupChatMention[]
     isStreaming?: boolean
     toolName?: string
     toolCallId?: string
@@ -117,6 +118,12 @@ export interface ChatMessage {
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
     runItems?: ChatMessage[]
+}
+
+export interface GroupChatMention {
+    type: 'agent' | 'all'
+    participantId?: string
+    displayName: string
 }
 
 export interface GroupWorkspaceDiffFile {

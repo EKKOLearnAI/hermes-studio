@@ -16,6 +16,7 @@ import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type GroupMessageCursorCutoff } from './group-message-ordering'
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
+import { isAgentMentioned, isAllAgentsMentioned, type StructuredMention } from './mention-routing'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ interface ChatMessage {
     reasoning?: string | null
     reasoning_details?: string | null
     reasoning_content?: string | null
+    mentions?: StructuredMention[]
     mentionDepth?: number
     agentSessionId?: string
 }
@@ -151,7 +153,7 @@ const ROOM_SELECT_COLUMNS = ROOM_BASE_COLUMNS.join(', ')
 const ROOM_LIST_COLUMNS = [
     ...ROOM_BASE_COLUMNS.map(column => `r.${column}`),
     `COALESCE((
-        SELECT MAX(m.timestamp)
+        SELECT MAX(NULLIF(m.persistedAt, 0))
         FROM gc_messages m
         WHERE m.roomId = r.id
           AND m.role != 'tool'
@@ -263,6 +265,7 @@ class ChatStorage {
         return {
             ...row,
             tool_calls: parseJsonArray(row.tool_calls),
+            mentions: parseJsonArray(row.mentions),
         }
     }
 
@@ -272,7 +275,7 @@ class ChatStorage {
         if (!db) return
         // Tables are now created centrally in initAllHermesTables()
         // Only create indexes here
-        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
+        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, persistedAt)') } catch { /* ignore */ }
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
         try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_pending_session_deletes_profile ON gc_pending_session_deletes(profile_name, status, next_attempt_at, created_at)') } catch { /* ignore */ }
@@ -535,14 +538,14 @@ class ChatStorage {
 
     getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+            'SELECT id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
         ).all(roomId) || []) as any[]
         return paginateRecentGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), { limit, offset })
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            `SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+            `SELECT id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
              FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'`
         ).all(roomId) || []) as any[]
@@ -558,7 +561,7 @@ class ChatStorage {
 
     getMessage(messageId: string): ChatMessage | null {
         const row = this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
+            'SELECT id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
         ).get(messageId) as any
         if (!row) return null
         return this.mapStoredMessageRow(row)
@@ -571,14 +574,16 @@ class ChatStorage {
     upsertMessage(msg: ChatMessage): void {
         const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
         this.db()?.prepare(
-            `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             + ` ON CONFLICT(id) DO UPDATE SET
                 roomId = excluded.roomId,
                 senderId = excluded.senderId,
                 senderName = excluded.senderName,
                 content = excluded.content,
                 timestamp = excluded.timestamp,
+                persistedAt = excluded.persistedAt,
+                mentions = excluded.mentions,
                 run_id = excluded.run_id,
                 role = excluded.role,
                 tool_call_id = excluded.tool_call_id,
@@ -589,7 +594,8 @@ class ChatStorage {
                 reasoning_details = excluded.reasoning_details,
                 reasoning_content = excluded.reasoning_content`
         ).run(
-            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
+            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp, Date.now(),
+            msg.mentions?.length ? JSON.stringify(msg.mentions) : null,
             msg.run_id ?? null,
             msg.role || 'user',
             msg.tool_call_id ?? null,
@@ -1552,7 +1558,7 @@ export class GroupChatServer {
 
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
-        const agents = this.storage.getRoomAgents(roomId)
+        const agents = this.storage.getRoomAgents?.(roomId) || []
 
         ack?.({
             roomId,
@@ -1631,14 +1637,16 @@ export class GroupChatServer {
         const userId = member?.userId || socketId
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
         const role = normalizeMessageRole(data.role)
+        const content = contentToStorageString(data.content)
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
             roomId,
             senderId: userId,
             senderName: userName,
-            content: contentToStorageString(data.content),
+            content,
             timestamp: this.normalizeMessageTimestamp(data.timestamp, data.role),
+            mentions: this.normalizeStructuredMentions(data.mentions, roomId, contentToText(content), userId),
             run_id: member?.source === 'agent' && typeof data.run_id === 'string' && data.run_id.trim()
                 ? data.run_id.trim()
                 : null,
@@ -1678,6 +1686,7 @@ export class GroupChatServer {
                 senderId: savedMsg.senderId,
                 timestamp: savedMsg.timestamp,
                 role: savedMsg.role,
+                mentions: savedMsg.mentions,
                 mentionDepth,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
@@ -1982,6 +1991,36 @@ export class GroupChatServer {
         const cleaned = String(id || '').trim()
         if (!cleaned || cleaned.length > 160) return null
         return /^[a-zA-Z0-9_-]+$/.test(cleaned) ? cleaned : null
+    }
+
+    private normalizeStructuredMentions(rawMentions: unknown, roomId: string, content: string, senderId: string): StructuredMention[] {
+        if (!Array.isArray(rawMentions)) return []
+        const agents = this.storage.getRoomAgents(roomId)
+        const mentions: StructuredMention[] = []
+        for (const candidate of rawMentions) {
+            if (!candidate || typeof candidate !== 'object') continue
+            const type = (candidate as { type?: unknown }).type
+            const displayName = String((candidate as { displayName?: unknown }).displayName || '').trim()
+            if (type === 'all') {
+                if (displayName.toLowerCase() === 'all' && isAllAgentsMentioned(content) && !mentions.some(mention => mention.type === 'all')) {
+                    mentions.push({ type: 'all' })
+                }
+                continue
+            }
+            const participantId = String((candidate as { participantId?: unknown }).participantId || '').trim()
+            const agent = agents.find(entry => entry.agentId === participantId)
+            if (
+                type === 'agent' &&
+                agent &&
+                participantId !== senderId &&
+                displayName === agent.name &&
+                isAgentMentioned(content, agent.name) &&
+                !mentions.some(mention => mention.type === 'agent' && mention.participantId === participantId)
+            ) {
+                mentions.push({ type: 'agent', participantId })
+            }
+        }
+        return mentions
     }
 
     private normalizeMessageTimestamp(timestamp?: unknown, role?: unknown): number {

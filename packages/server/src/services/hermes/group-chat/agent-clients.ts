@@ -16,7 +16,7 @@ import type { StoredMessage } from '../context-engine/types'
 import type { GroupRoomSummaryService, GroupRuntimeContext } from './room-summary'
 import {
     isAllAgentsMentioned,
-    resolveMentionTargets,
+    resolveStructuredMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
 import { buildAgentInstructions } from '../context-engine/prompt'
@@ -59,6 +59,7 @@ type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    mentions?: Array<{ type: 'agent' | 'all'; participantId?: string }>
 }
 
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
@@ -1810,7 +1811,7 @@ export class AgentClients {
      */
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
         const agents = this.getAgents(roomId)
-        const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
+        const mentioned = resolveStructuredMentionTargets(agents, msg.mentions || [], msg.senderId)
         if (mentioned.length === 0 && msg.role !== 'user') return
 
         if (mentioned.length > 0) {

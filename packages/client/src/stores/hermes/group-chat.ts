@@ -18,6 +18,7 @@ import {
     type RoomSummaryState,
     type ChatMessage,
     type GroupWorkspaceDiffPayload,
+    type GroupChatMention,
     type MemberInfo,
     createRoom,
     listRooms,
@@ -773,7 +774,7 @@ const currentUserAvatar = ref('')
         }
     }
 
-    async function sendMessage(content: string, attachments?: Attachment[]) {
+    async function sendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
         const socket = getSocket()
         if (!socket || !currentRoomId.value) return
         const roomId = currentRoomId.value
@@ -806,7 +807,7 @@ const currentUserAvatar = ref('')
         }
 
         return new Promise<void>((resolve, reject) => {
-            socket!.emit('message', { roomId, id: messageId, content: finalContent }, (res: { id?: string; error?: string }) => {
+            socket!.emit('message', { roomId, id: messageId, content: finalContent, mentions }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)
                     reject(new Error(res.error))

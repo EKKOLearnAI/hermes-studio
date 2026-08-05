@@ -582,6 +582,8 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   senderName: 'TEXT NOT NULL',
   content: 'TEXT NOT NULL',
   timestamp: 'INTEGER NOT NULL',
+  persistedAt: 'INTEGER NOT NULL DEFAULT 0',
+  mentions: 'TEXT',
   run_id: 'TEXT',
   role: "TEXT NOT NULL DEFAULT 'user'",
   tool_call_id: 'TEXT',
