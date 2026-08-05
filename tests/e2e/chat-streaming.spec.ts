@@ -848,7 +848,7 @@ test('renders free-text and choice clarifications and sends responses over the c
 
   await expect(page.getByText('Agent has a question for you')).toBeVisible()
   await expect(page.getByText('Which directory should I update?')).toBeVisible()
-  const clarifyInput = page.getByPlaceholder('Type your response...')
+  const clarifyInput = page.getByPlaceholder('Type your answer...')
   await clarifyInput.fill('packages/client')
   await page.getByRole('button', { name: 'Reply' }).click()
 
