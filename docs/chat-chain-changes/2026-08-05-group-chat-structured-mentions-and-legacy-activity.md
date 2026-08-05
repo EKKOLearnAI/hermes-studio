@@ -1,6 +1,6 @@
 ---
 date: 2026-08-05
-pr: pending
+pr: 2370
 feature: Group-chat structured Agent mentions and legacy activity ordering
 impact: Agent handoffs preserve a verified structured routing identity, while legacy rooms retain only safely inferred compatibility activity ordering.
 ---
