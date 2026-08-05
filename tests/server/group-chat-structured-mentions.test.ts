@@ -44,6 +44,7 @@ describe('group chat structured agent mentions', () => {
 
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Author')
+    const forgedFutureTimestamp = Date.now() + 86_400_000
     await emitAck(author, 'message', {
       roomId: 'room-1',
       id: 'agent-handoff-1',
@@ -51,6 +52,7 @@ describe('group chat structured agent mentions', () => {
       role: 'assistant',
       mentionDepth: 1,
       agentSessionId,
+      timestamp: forgedFutureTimestamp,
       mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
@@ -61,5 +63,35 @@ describe('group chat structured agent mentions', () => {
     expect(harness.db.prepare('SELECT mentions FROM gc_messages WHERE id = ?').get('agent-handoff-1')).toEqual({
       mentions: JSON.stringify([{ type: 'agent', participantId: 'agent-reviewer' }]),
     })
+    expect((harness.db.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('agent-handoff-1') as { persistedAt: number }).persistedAt)
+      .toBeLessThan(forgedFutureTimestamp)
+  })
+
+  it('atomically rejects a forged display name instead of persisting or partially routing it', async () => {
+    const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const reviewer = await connectGroupChatClient(port, 'agent-reviewer', 'Reviewer', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(author, reviewer)
+    await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(reviewer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    const response = await emitAck<{ error?: string }>(author, 'message', {
+      roomId: 'room-1',
+      id: 'forged-handoff',
+      content: '@Reviewer please verify this.',
+      role: 'assistant',
+      agentSessionId: groupRuntimeSessionId('room-1', 'default', 'Author'),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Author' }],
+    })
+
+    expect(response.error).toBe('Invalid structured mentions')
+    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('forged-handoff')).toEqual({ count: 0 })
+    expect(processMentions).not.toHaveBeenCalled()
   })
 })

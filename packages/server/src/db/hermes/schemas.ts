@@ -558,6 +558,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   name: 'TEXT NOT NULL',
   inviteCode: 'TEXT UNIQUE',
+  createdAt: 'INTEGER NOT NULL DEFAULT 0',
   summaryProfile: "TEXT NOT NULL DEFAULT 'default'",
   summaryProvider: "TEXT NOT NULL DEFAULT ''",
   summaryModel: "TEXT NOT NULL DEFAULT ''",
@@ -581,6 +582,8 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   senderName: 'TEXT NOT NULL',
   content: 'TEXT NOT NULL',
   timestamp: 'INTEGER NOT NULL',
+  persistedAt: 'INTEGER NOT NULL DEFAULT 0',
+  mentions: "TEXT NOT NULL DEFAULT '[]'",
   run_id: 'TEXT',
   role: "TEXT NOT NULL DEFAULT 'user'",
   tool_call_id: 'TEXT',
@@ -737,6 +740,40 @@ function addMissingSafeColumns(
     }
     db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDef}`)
   }
+}
+
+function migrateGroupChatActivityTimes(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  migrationCutoff: number,
+): void {
+  if (!tableExists(db, GC_ROOMS_TABLE) || !tableExists(db, GC_MESSAGES_TABLE)) return
+
+  db.prepare(
+    `UPDATE ${quoteIdentifier(GC_MESSAGES_TABLE)}
+     SET persistedAt = timestamp
+     WHERE persistedAt = 0
+       AND timestamp > 0
+       AND timestamp <= ?
+       AND COALESCE(role, 'user') <> 'tool'
+       AND COALESCE(tool_name, '') = ''
+       AND COALESCE(finish_reason, '') <> 'streaming'`,
+  ).run(migrationCutoff)
+  db.prepare(
+    `UPDATE ${quoteIdentifier(GC_ROOMS_TABLE)}
+     SET createdAt = (
+       SELECT MIN(m.persistedAt)
+       FROM ${quoteIdentifier(GC_MESSAGES_TABLE)} m
+       WHERE m.roomId = ${quoteIdentifier(GC_ROOMS_TABLE)}.id
+         AND m.persistedAt > 0
+     )
+     WHERE createdAt = 0
+       AND EXISTS (
+         SELECT 1
+         FROM ${quoteIdentifier(GC_MESSAGES_TABLE)} m
+         WHERE m.roomId = ${quoteIdentifier(GC_ROOMS_TABLE)}.id
+           AND m.persistedAt > 0
+       )`,
+  ).run()
 }
 
 function createIndexes(
@@ -1183,6 +1220,7 @@ export function initAllHermesTables(): void {
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
     syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+    migrateGroupChatActivityTimes(db, Date.now())
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
     syncTable(GC_ROOM_SUMMARIES_TABLE, GC_ROOM_SUMMARIES_SCHEMA)
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
