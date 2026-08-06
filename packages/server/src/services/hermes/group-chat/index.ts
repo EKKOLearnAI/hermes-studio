@@ -513,7 +513,16 @@ class ChatStorage {
             .reduce((sum, m) => sum + countTokens(this.contentToUsageText(m.content)), 0)
         const outputTokens = messages
             .filter(m => m.role === 'assistant' || m.role === 'tool')
-            .reduce((sum, m) => sum + countTokens(this.contentToUsageText(m.content)) + countTokens(String(m.tool_calls || '')), 0)
+            .reduce((sum, m) => {
+                const reasoning = (m as { reasoning_content?: unknown; reasoning?: unknown }).reasoning_content
+                    ?? (m as { reasoning?: unknown }).reasoning
+                return (
+                    sum
+                    + countTokens(this.contentToUsageText(m.content))
+                    + countTokens(String(m.tool_calls || ''))
+                    + countTokens(String(reasoning || ''))
+                )
+            }, 0)
         return { inputTokens, outputTokens }
     }
 
