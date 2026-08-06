@@ -14,5 +14,6 @@ calling the target Agent.
 
 Legacy activity migration records its first cutoff transactionally. Values that
 were future or otherwise untrusted during that first upgrade remain untrusted on
-later initialization. Profile, authenticated-member, owner, and aggregated REST
-room lists use the same persisted-message/creation-time activity ordering.
+later initialization. Administrator, Profile, authenticated-member, owner, and
+aggregated REST room lists share one activity-time rule: tool and streaming
+messages do not promote room activity.

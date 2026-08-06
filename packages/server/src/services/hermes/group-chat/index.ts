@@ -163,6 +163,18 @@ const ROOM_SELECT_COLUMNS = [
     'createdAt',
 ].join(', ')
 
+function roomActivityAtSql(messageAlias: string): string {
+    return `COALESCE(
+        MAX(CASE
+            WHEN COALESCE(${messageAlias}.role, '') <> 'tool'
+             AND COALESCE(${messageAlias}.finish_reason, '') <> 'streaming'
+            THEN NULLIF(${messageAlias}.persistedAt, 0)
+        END),
+        NULLIF(r.createdAt, 0),
+        0
+    )`
+}
+
 export interface RoomSummaryConfig {
     summaryProfile?: string
     summaryProvider?: string
@@ -405,7 +417,7 @@ class ChatStorage {
              FROM gc_rooms r
              LEFT JOIN gc_messages m ON m.roomId = r.id
              GROUP BY r.id
-             ORDER BY COALESCE(MAX(NULLIF(m.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) DESC, r.id ASC`,
+             ORDER BY ${roomActivityAtSql('m')} DESC, r.id ASC`,
         ).all() || []) as any[]
     }
 
@@ -415,7 +427,7 @@ class ChatStorage {
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    COALESCE(MAX(NULLIF(m.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
+                    ${roomActivityAtSql('m')} AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              LEFT JOIN gc_messages m ON m.roomId = r.id
@@ -429,7 +441,7 @@ class ChatStorage {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    COALESCE(MAX(NULLIF(messages.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
+                    ${roomActivityAtSql('messages')} AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              LEFT JOIN gc_messages messages ON messages.roomId = r.id
@@ -443,7 +455,7 @@ class ChatStorage {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    COALESCE(MAX(NULLIF(m.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
+                    ${roomActivityAtSql('m')} AS _activityAt
              FROM gc_rooms r
              LEFT JOIN gc_messages m ON m.roomId = r.id
              WHERE r.ownerAuthUserId = ?
