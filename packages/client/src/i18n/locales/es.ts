@@ -2475,6 +2475,13 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_6_39_1: 'Ekko Agent ahora inicializa sus recursos de forma explícita, ejecuta código Node.js o Python limitado tras la aprobación de la herramienta y puede pausar una ejecución en primer plano para pedir aclaraciones de texto o de opción múltiple antes de continuar (#2362, #2368)',
+    new_0_6_39_2: 'Group Chat espera la confirmación de entrada a la sala antes de enviar, corrigiendo errores intermitentes «Not in room» al reconectar. La escritura se envía como heartbeat limitado y solo aparece como una luz de respiración sin texto en los avatares de otros miembros (#2373)',
+    new_0_6_39_3: 'Los eventos de herramientas de Coding Agent en Single Chat y Group Chat siguen ahora el ciclo del CLI nativo y emiten un único inicio cuando terminan los argumentos, eliminando tarjetas duplicadas o bloqueadas y el JSON mostrado carácter a carácter en salas grandes (#2366, #2372)',
+    new_0_6_39_4: 'Los prompts de Coding Agent se envían por stdin, conservando entradas multilínea e imágenes y evitando el límite de comandos de Windows. Group Chat tampoco interrumpe trabajos activos de Codex, Claude Code o Ekko tras dos minutos fijos (#2354, #2357)',
+    new_0_6_39_5: 'Codex usa el JSONL nativo y la salida del proceso como estado final durante desconexiones recuperables del proxy Provider, evitando que un trabajo terminado aparezca como fallo en Group Chat (#2375)',
+    new_0_6_39_6: 'Gestión de versiones valida que el Runtime esté completo y muestra el motivo del fallback de escritorio. Los Runtime inválidos no pueden activarse y se ocultan los controles de descarga o cambio del Web UI porque las actualizaciones siguen llegando con el instalador de escritorio (#2353)',
+    new_0_6_39_7: 'Los encabezados de ejecución de Group Chat muestran solo el nombre del Agent y eliminan descripciones repetidas para agrupar los mensajes con mayor claridad (#2352)',
     new_0_6_38_1: 'Al iniciar, el escritorio de Windows repara las rutas relativas de Python no válidas que las actualizaciones del Agent dejan en entornos Hermes Runtime almacenados, y restaura CLI, registros y Gateway tras actualizar, cambiar de Runtime o migrar el almacenamiento',
     new_0_6_38_2: 'El catálogo de compatibilidad del sitio web vuelve a reconocer Hermes 0.19.0 para mantener disponibles las descargas de escritorio y las comprobaciones correspondientes (#2348)',
     new_0_6_37_1: 'La prioridad de esta versión con 14 PR es la reconstrucción completa de Group Chat: cada Agent puede elegir de forma independiente su Profile, Provider, modelo, modo API, nivel de razonamiento, identidad y workspace (#2334)',

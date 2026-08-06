@@ -2872,6 +2872,13 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_39_1: 'Ekko Agent now initializes explicitly, runs bounded Node.js or Python code behind tool approvals, and can pause foreground runs for text or multiple-choice clarification before resuming (#2362, #2368)',
+    new_0_6_39_2: 'Group Chat waits for room-join acknowledgement before sending, fixing intermittent “Not in room” errors around reconnects. Typing is now a throttled heartbeat shown only as a text-free breathing light on other members’ avatars (#2373)',
+    new_0_6_39_3: 'Coding Agent tool events in Single Chat and Group Chat now follow the native CLI lifecycle and emit one start after arguments complete, removing duplicate or stranded tool cards and one-character-at-a-time tool JSON lag in large rooms (#2366, #2372)',
+    new_0_6_39_4: 'Coding Agent prompts now travel through stdin, preserving multiline and image input while avoiding Windows command-length limits. Group Chat also no longer interrupts active Codex, Claude Code, or Ekko work after a fixed two minutes (#2354, #2357)',
+    new_0_6_39_5: 'Codex now treats native JSONL and process exit as authoritative across recoverable Provider proxy disconnects, preventing completed work from being reported as a Group Chat failure (#2375)',
+    new_0_6_39_6: 'Version Management validates Runtime completeness and shows desktop fallback reasons. Invalid Runtimes cannot be activated, and Web UI download or switching controls are hidden because updates continue through the desktop installer (#2353)',
+    new_0_6_39_7: 'Group Chat run headers now keep only the Agent name, removing repeated descriptions for cleaner message groups (#2352)',
     new_0_6_38_1: 'Windows desktop startup now repairs invalid relative Python homes left in cached Hermes Runtime environments by Agent updates, restoring CLI, logs, and Gateway after an update, Runtime switch, or storage migration',
     new_0_6_38_2: 'The website compatibility catalog recognizes Hermes 0.19.0 again so matching desktop downloads and compatibility checks remain available (#2348)',
     new_0_6_37_1: 'The headline of this 14-PR release is a complete Group Chat rebuild: every Agent can independently choose its Profile, provider, model, API mode, reasoning effort, identity, and workspace (#2334)',

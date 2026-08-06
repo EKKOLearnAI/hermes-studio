@@ -2475,6 +2475,13 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_6_39_1: 'Ekko Agent initialise désormais explicitement ses ressources, exécute du code Node.js ou Python limité derrière une autorisation d’outil et peut suspendre une exécution au premier plan pour demander une précision libre ou à choix multiple avant de reprendre (#2362, #2368)',
+    new_0_6_39_2: 'Group Chat attend la confirmation d’entrée dans le salon avant d’envoyer, corrigeant les erreurs intermittentes « Not in room » lors des reconnexions. La saisie devient un heartbeat limité, visible uniquement comme une pulsation sans texte sur l’avatar des autres membres (#2373)',
+    new_0_6_39_3: 'Les événements d’outils Coding Agent de Single Chat et Group Chat suivent désormais le cycle de vie du CLI natif et n’émettent qu’un démarrage après la fin des arguments, supprimant les cartes dupliquées ou bloquées et le JSON affiché caractère par caractère dans les grands salons (#2366, #2372)',
+    new_0_6_39_4: 'Les prompts Coding Agent passent maintenant par stdin, préservant les entrées multilignes et les images tout en évitant la limite de commande Windows. Group Chat n’interrompt plus Codex, Claude Code ou Ekko après deux minutes fixes (#2354, #2357)',
+    new_0_6_39_5: 'Codex utilise le JSONL natif et la fin du processus comme état final lors des déconnexions récupérables du proxy Provider, évitant qu’un travail terminé soit signalé en échec dans Group Chat (#2375)',
+    new_0_6_39_6: 'La gestion des versions vérifie que le Runtime est complet et affiche la raison du fallback desktop. Un Runtime invalide ne peut pas être activé, et les contrôles de téléchargement ou changement du Web UI sont masqués puisque les mises à jour restent fournies par l’installateur desktop (#2353)',
+    new_0_6_39_7: 'Les en-têtes d’exécution Group Chat ne gardent que le nom de l’Agent, sans descriptions répétées, pour des groupes de messages plus clairs (#2352)',
     new_0_6_38_1: 'Au démarrage, le desktop Windows répare les chemins Python relatifs invalides laissés par les mises à jour de l’Agent dans les environnements Hermes Runtime en cache, restaurant le CLI, les journaux et le Gateway après une mise à jour, un changement de Runtime ou une migration du stockage',
     new_0_6_38_2: 'Le catalogue de compatibilité du site reconnaît à nouveau Hermes 0.19.0 afin de préserver les téléchargements desktop et les contrôles de compatibilité correspondants (#2348)',
     new_0_6_37_1: 'La priorité de cette version couvrant 14 PR est la refonte complète de Group Chat : chaque Agent choisit indépendamment son profil, provider, modèle, mode API, niveau de raisonnement, identité et workspace (#2334)',
