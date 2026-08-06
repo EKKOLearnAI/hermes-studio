@@ -7,8 +7,13 @@
  */
 
 import { initAllHermesTables } from './schemas'
+import { pruneChatRunInvocations, recoverOrphanedChatRunInvocations } from './chat-run-invocation-store'
+
+const CHAT_RUN_INVOCATION_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 export function initAllStores(): void {
   // Initialize all tables with centralized schema definitions and migrations
   initAllHermesTables()
+  recoverOrphanedChatRunInvocations()
+  pruneChatRunInvocations(Math.floor(Date.now() / 1000) - CHAT_RUN_INVOCATION_RETENTION_SECONDS)
 }

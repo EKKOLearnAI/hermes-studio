@@ -1,37 +1,14 @@
-import { EventEmitter } from 'events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const ioMock = vi.hoisted(() => vi.fn())
-const scenarioMock = vi.hoisted(() => ({
-  emitRunEvents: vi.fn(),
-}))
+const runAndWaitMock = vi.hoisted(() => vi.fn())
 
-vi.mock('socket.io-client', () => ({
-  io: ioMock,
+vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
+  getChatRunServer: vi.fn(() => ({ runAndWait: runAndWaitMock })),
 }))
-
-function makeSocket() {
-  const emitter = new EventEmitter() as EventEmitter & {
-    emit: ReturnType<typeof vi.fn>
-    disconnect: ReturnType<typeof vi.fn>
-    emitNative: (event: string, payload?: unknown) => boolean
-  }
-  const nativeEmit = EventEmitter.prototype.emit.bind(emitter)
-  emitter.emitNative = nativeEmit
-  emitter.emit = vi.fn((event: string, payload?: unknown) => {
-    if (event === 'run') {
-      process.nextTick(() => scenarioMock.emitRunEvents(nativeEmit, payload))
-    }
-    return true
-  }) as any
-  emitter.disconnect = vi.fn()
-  return emitter
-}
 
 function makeCtx(body: Record<string, unknown>) {
   return {
-    get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
-    state: { profile: { name: 'default' } },
+    state: { profile: { name: 'default' }, user: { id: 1, role: 'super_admin' } },
     request: { body },
     status: 200,
     body: undefined as any,
@@ -43,19 +20,22 @@ describe('chat-run action/event baseline', () => {
     vi.clearAllMocks()
   })
 
-  it('returns requires_action when approval is requested', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-    scenarioMock.emitRunEvents.mockImplementation((emitNative: Function) => {
-      emitNative('run.started', { run_id: 'run-1' })
-      emitNative('approval.requested', { run_id: 'run-1', approval_id: 'approval-1', command: 'touch file' })
+  it('returns requires_action without exposing the internal invocation id', async () => {
+    runAndWaitMock.mockImplementation(async (_data: any, options: any) => {
+      options.onEvent?.('run.started', { run_id: 'run-1' })
+      options.onEvent?.('approval.requested', { run_id: 'run-1', approval_id: 'approval-1', command: 'touch file' })
+      return {
+        ok: false,
+        event: 'action.required',
+        session_id: 'session-1',
+        run_id: 'run-1',
+        action: { event: 'approval.requested', run_id: 'run-1', approval_id: 'approval-1', command: 'touch file' },
+      }
     })
 
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
     const ctx = makeCtx({ session_id: 'session-1', input: 'needs approval', include_events: true })
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    await runOnce(ctx as any)
 
     expect(ctx.status).toBe(409)
     expect(ctx.body).toMatchObject({
@@ -64,51 +44,71 @@ describe('chat-run action/event baseline', () => {
       event: 'approval.requested',
       session_id: 'session-1',
       run_id: 'run-1',
-      action: { event: 'approval.requested', approval_id: 'approval-1' },
+      action: { approval_id: 'approval-1' },
     })
-    expect(ctx.body.events.map((event: any) => event.event)).toEqual(['run.started', 'approval.requested'])
+    expect(ctx.body).not.toHaveProperty('invocation_id')
+    expect(runAndWaitMock).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'session-1', input: 'needs approval' }),
+      expect.objectContaining({ profile: 'default', attachmentTimeoutMs: 300000, detachOnAction: true }),
+    )
+  })
+
+  it('strips caller-provided invocation ids from the internal run payload and response', async () => {
+    runAndWaitMock.mockResolvedValue({
+      ok: true,
+      event: 'run.completed',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      output: 'done',
+      invocation_id: 'internal-secret',
+    })
+    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const ctx = makeCtx({
+      session_id: 'session-1', input: 'hello', invocation_id: 'caller-controlled', include_events: true,
+    })
+
+    await runOnce(ctx as any)
+
+    expect(runAndWaitMock.mock.calls[0][0]).not.toHaveProperty('invocation_id')
+    expect(ctx.body).not.toHaveProperty('invocation_id')
   })
 
   it('returns requires_action when clarification is requested', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-    scenarioMock.emitRunEvents.mockImplementation((emitNative: Function) => {
-      emitNative('run.started', { run_id: 'run-1' })
-      emitNative('clarify.requested', { run_id: 'run-1', question: 'Which room?' })
+    runAndWaitMock.mockResolvedValue({
+      ok: false,
+      event: 'action.required',
+      session_id: 'session-1',
+      run_id: 'run-1',
+      action: { event: 'clarify.requested', run_id: 'run-1', question: 'Which room?' },
     })
 
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
     const ctx = makeCtx({ session_id: 'session-1', input: 'needs clarify', include_events: true })
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    await runOnce(ctx as any)
 
     expect(ctx.status).toBe(409)
     expect(ctx.body).toMatchObject({
       ok: false,
       status: 'requires_action',
       event: 'clarify.requested',
-      action: { event: 'clarify.requested', question: 'Which room?' },
+      action: { question: 'Which room?' },
     })
   })
 
-  it('records bounded event history and accumulates output/reasoning when include_events is true', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-    scenarioMock.emitRunEvents.mockImplementation((emitNative: Function) => {
-      emitNative('run.started', { run_id: 'run-1' })
-      emitNative('reasoning.delta', { run_id: 'run-1', delta: 'thought' })
-      emitNative('tool.started', { run_id: 'run-1', name: 'lookup' })
-      emitNative('tool.completed', { run_id: 'run-1', name: 'lookup' })
-      emitNative('message.delta', { run_id: 'run-1', delta: 'hello' })
-      emitNative('run.completed', { run_id: 'run-1' })
+  it('records bounded event history and returns the authoritative result', async () => {
+    runAndWaitMock.mockImplementation(async (_data: any, options: any) => {
+      options.onEvent?.('run.started', { run_id: 'run-1' })
+      options.onEvent?.('reasoning.delta', { run_id: 'run-1', delta: 'thought' })
+      options.onEvent?.('tool.started', { run_id: 'run-1', name: 'lookup' })
+      options.onEvent?.('tool.completed', { run_id: 'run-1', name: 'lookup' })
+      options.onEvent?.('message.delta', { run_id: 'run-1', delta: 'hello' })
+      options.onEvent?.('run.completed', { run_id: 'run-1', output: 'hello', reasoning: 'thought' })
+      return { ok: true, event: 'run.completed', session_id: 'session-1', run_id: 'run-1', output: 'hello', reasoning: 'thought' }
     })
 
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
-    const ctx = makeCtx({ session_id: 'session-1', input: 'hello', include_events: true })
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    const ctx = makeCtx({ session_id: 'session-1', input: 'hello', include_events: true, timeout_ms: 3600000 })
+    await runOnce(ctx as any)
 
     expect(ctx.status).toBe(200)
     expect(ctx.body).toMatchObject({
@@ -126,5 +126,22 @@ describe('chat-run action/event baseline', () => {
       'message.delta',
       'run.completed',
     ])
+    expect(runAndWaitMock.mock.calls[0][1].attachmentTimeoutMs).toBe(1800000)
+  })
+
+  it('maps attachment expiry to HTTP 504 without exposing internal state', async () => {
+    runAndWaitMock.mockResolvedValue({
+      ok: false,
+      event: 'wait.timed_out',
+      session_id: 'session-1',
+      error: 'chat-run attachment timed out after 25ms',
+    })
+    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const ctx = makeCtx({ session_id: 'session-1', input: 'slow', timeout_ms: 25 })
+    await runOnce(ctx as any)
+
+    expect(ctx.status).toBe(504)
+    expect(ctx.body).toMatchObject({ ok: false, status: 'timeout', session_id: 'session-1' })
+    expect(ctx.body).not.toHaveProperty('invocation_id')
   })
 })

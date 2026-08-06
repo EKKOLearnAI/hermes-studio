@@ -778,6 +778,7 @@ describe('coding agent run state', () => {
     const run = (manager as any).runs.get(agentSessionId)
     run.printResponseId = 'resp_codex_1'
     run.printMessageId = 'msg_resp_codex_1'
+    run.invocationId = 'inv-codex-jsonl'
     run.printTextStarted = false
     run.printText = ''
     run.printCompleted = false
@@ -813,6 +814,9 @@ describe('coding agent run state', () => {
     expect(emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload).toEqual(expect.objectContaining({
       contextTokens: expect.any(Number),
     }))
+    expect(emitted.find(event => event.event === 'run.completed')?.payload).toMatchObject({
+      invocation_id: 'inv-codex-jsonl',
+    })
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
     const eventNames = emitted.map(event => event.event)
     expect(eventNames.lastIndexOf('usage.updated')).toBeLessThan(eventNames.indexOf('run.completed'))
@@ -1625,6 +1629,41 @@ describe('coding agent run state', () => {
 
     expect(getSession(chatSessionId)?.agent_native_session_id).toBe('0199a213-81c0-7800-8aa1-bbab2a035a53')
     manager.shutdown()
+  })
+
+  it('tags cleanup failures with the immutable current invocation id', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-cleanup-invocation-${suffix}`
+    const chatSessionId = `chat-session-cleanup-invocation-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'codex',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-5-codex',
+      sessionId: chatSessionId,
+      command: 'codex',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+    run.invocationId = 'invocation-cleanup-1'
+    run.currentChild = { killed: false }
+
+    ;(manager as any).cleanupRun(run, { kill: false })
+
+    expect(emitted).toContainEqual({
+      event: 'run.failed',
+      payload: expect.objectContaining({ invocation_id: 'invocation-cleanup-1', error: 'Coding agent session closed' }),
+    })
   })
 
   it('does not report a completed idle coding-agent session cleanup as a run failure', () => {

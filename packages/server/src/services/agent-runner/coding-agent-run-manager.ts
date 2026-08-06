@@ -113,12 +113,14 @@ interface ManagedCodingAgentRun {
   pendingChatCompletionPayload?: Record<string, unknown>
   memoryExportStarted?: boolean
   assistantMessageId?: string
+  invocationId?: string
 }
 
 interface CodingAgentRunSendOptions {
   systemPrompt?: string
   images?: CodingAgentImageInput[]
   storageInput?: string
+  invocationId?: string
 }
 
 function nowSeconds(): number {
@@ -582,6 +584,7 @@ export class CodingAgentRunManager {
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
+    run.invocationId = String(options.invocationId || '').trim() || undefined
     this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
@@ -875,6 +878,7 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, 'run.failed', {
         event: 'run.failed',
         error: 'Coding agent session closed',
+        ...(run.invocationId ? { invocation_id: run.invocationId } : {}),
         workspace_run_change: workspaceRunChange,
       })
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
@@ -1859,6 +1863,7 @@ export class CodingAgentRunManager {
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
+      ...(run.invocationId ? { invocation_id: run.invocationId } : {}),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,
     })
@@ -1880,6 +1885,7 @@ export class CodingAgentRunManager {
     this.markChatRunCompleted(run.launch.sessionId, event)
     if (event === 'run.completed') this.startCodingAgentMemoryExport(run)
     run.runMarker = undefined
+    run.invocationId = undefined
   }
 
   private startCodingAgentMemoryExport(run: ManagedCodingAgentRun) {

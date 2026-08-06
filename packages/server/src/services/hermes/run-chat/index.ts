@@ -8,6 +8,7 @@
  */
 
 import type { Server, Socket } from 'socket.io'
+import { randomUUID } from 'crypto'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
@@ -35,6 +36,13 @@ import { observeRunChatPetEvent } from '../pet-state-socket'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { respondToEkkoClarification } from '../../ekko-agent/clarifications'
+import {
+  createChatRunInvocation,
+  getChatRunInvocation,
+  markChatRunInvocationRequiresAction,
+  settleChatRunInvocation,
+  type ChatRunInvocationRecord,
+} from '../../../db/hermes/chat-run-invocation-store'
 
 export type { ContentBlock } from './types'
 
@@ -173,12 +181,13 @@ function isEkkoAgentExecution(data?: { coding_agent_id?: string; agent_id?: stri
 
 export interface ChatRunAndWaitResult {
   ok: boolean
-  event: 'run.completed' | 'run.failed'
+  event: 'run.completed' | 'run.failed' | 'wait.timed_out' | 'action.required'
   session_id: string
   run_id?: string
   output?: string | null
   reasoning?: string | null
   error?: string
+  action?: Record<string, unknown>
 }
 
 type ChatRunAutoApprovalChoice = 'once' | 'session' | 'always'
@@ -191,6 +200,9 @@ export class ChatRunSocket {
   private sessionMap = new Map<string, SessionState>()
   private bridgeResumePolls = new Set<string>()
   private readonly runWaiters = new Map<string, Set<(event: string, payload: any) => void>>()
+  private readonly activeRunInvocations = new Map<string, string>()
+  private readonly runAttachmentDisposers = new Map<string, () => void>()
+  private readonly runExecutionTimers = new Map<string, NodeJS.Timeout>()
   private backgroundPollTimer?: NodeJS.Timeout
   private backgroundPollInFlight = false
   private backgroundRecoveryNeeded = true
@@ -198,6 +210,18 @@ export class ChatRunSocket {
   private backgroundPollRetryAt = 0
   private backgroundActivityGraceUntil = 0
   private closing = false
+
+  private clearRunExecutionTimer(invocationId: string): void {
+    const timer = this.runExecutionTimers.get(invocationId)
+    if (timer) clearTimeout(timer)
+    this.runExecutionTimers.delete(invocationId)
+  }
+
+  private releaseRunInvocation(sessionId: string, invocationId: string): void {
+    if (this.activeRunInvocations.get(sessionId) === invocationId) {
+      this.activeRunInvocations.delete(sessionId)
+    }
+  }
 
   constructor(io: Server) {
     this.nsp = io.of('/chat-run')
@@ -306,11 +330,12 @@ export class ChatRunSocket {
       try {
         runProfile = resolveRunProfile(data.session_id, data.profile)
       } catch (err) {
+        const error = err instanceof Error ? err.message : String(err)
         socket.emit('run.failed', {
           event: 'run.failed',
           session_id: data.session_id,
           queue_id: data.queue_id,
-          error: err instanceof Error ? err.message : String(err),
+          error,
         })
         return
       }
@@ -407,11 +432,12 @@ export class ChatRunSocket {
             state.profile = undefined
           }
         }
+        const error = err instanceof Error ? err.message : String(err)
         socket.emit('run.failed', {
           event: 'run.failed',
           session_id: data.session_id,
           queue_id: data.queue_id,
-          error: err instanceof Error ? err.message : String(err),
+          error,
         })
       }
     })
@@ -543,6 +569,7 @@ export class ChatRunSocket {
       source?: string
       session_source?: 'global_agent' | 'workflow'
       queue_id?: string
+      invocation_id?: string
       peerExcludeSocketId?: string
       coding_agent_id?: ChatCodingAgentId
       agent_id?: ChatCodingAgentId
@@ -606,7 +633,8 @@ export class ChatRunSocket {
           error: `Agent Bridge is not reachable: ${bridgeReady.error}`,
         }
         if (queueRemaining > 0) payload.queue_remaining = queueRemaining
-        socket.emit('run.failed', payload)
+        if (data.onEvent) data.onEvent('run.failed', payload)
+        else socket.emit('run.failed', payload)
         if (data.session_id && data.background_delegation_id && data.background_claim_id) {
           void this.bridge.releaseBackgroundNotification(
             data.session_id,
@@ -1099,14 +1127,31 @@ export class ChatRunSocket {
       profile?: string
       user?: AuthenticatedUser
       timeoutMs?: number
+      attachmentTimeoutMs?: number
+      detachOnAction?: boolean
       approvalChoice?: ChatRunAutoApprovalChoice
       onEvent?: (event: string, payload: any) => void
     } = {},
   ): Promise<ChatRunAndWaitResult> {
     const sessionId = String(data.session_id || '').trim()
     if (!sessionId) throw new Error('session_id is required')
-    const profile = options.profile || data.profile || getSession(sessionId)?.profile || getActiveProfileName() || 'default'
+    const storedSession = getSession(sessionId)
+    const requestedProfile = String(options.profile || data.profile || '').trim()
+    const storedProfile = String(storedSession?.profile || '').trim()
+    if (storedProfile && requestedProfile && requestedProfile !== storedProfile) {
+      throw new Error(`Requested profile "${requestedProfile}" does not match persisted session profile "${storedProfile}"`)
+    }
+    const profile = storedProfile || requestedProfile || getActiveProfileName() || 'default'
+    if (options.user && !this.canAccessProfile(options.user, profile)) {
+      throw new Error(`Profile "${profile}" is not available for this user`)
+    }
     const source = resolveRunSource(data.source, sessionId)
+    if (this.activeRunInvocations.has(sessionId)) {
+      throw new Error(`session ${sessionId} already has an active chat run invocation`)
+    }
+    const invocationId = randomUUID()
+    createChatRunInvocation({ id: invocationId, sessionId })
+    this.activeRunInvocations.set(sessionId, invocationId)
     const state = getOrCreateSession(this.sessionMap, sessionId)
     state.events = []
     state.isWorking = !isCodingAgentExecution(source, data)
@@ -1118,12 +1163,32 @@ export class ChatRunSocket {
       let output = ''
       let reasoning = ''
       let runId = ''
-      const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : null
+      const executionTimeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : null
+      const attachmentTimeoutMs = options.attachmentTimeoutMs && options.attachmentTimeoutMs > 0 ? options.attachmentTimeoutMs : null
       const waiters = this.runWaiters.get(sessionId) || new Set<(event: string, payload: any) => void>()
+      let reconcileTimer: NodeJS.Timeout | undefined
+      let executionTimer: NodeJS.Timeout | undefined
+      let attachmentTimer: NodeJS.Timeout | undefined
+      const resultFromRecord = (record: ChatRunInvocationRecord): Omit<ChatRunAndWaitResult, 'session_id'> | null => {
+        if (record.status === 'running' || record.status === 'requires_action') return null
+        return {
+          ok: record.status === 'completed',
+          event: record.status === 'completed' ? 'run.completed' : 'run.failed',
+          run_id: record.run_id,
+          output: record.output,
+          reasoning: record.reasoning,
+          ...(record.error ? { error: record.error } : {}),
+        }
+      }
       const finish = (result: Omit<ChatRunAndWaitResult, 'session_id'>) => {
         if (settled) return
         settled = true
-        if (timer) clearTimeout(timer)
+        if (result.event !== 'wait.timed_out' && result.event !== 'action.required') {
+          this.clearRunExecutionTimer(invocationId)
+        }
+        if (attachmentTimer) clearTimeout(attachmentTimer)
+        clearInterval(reconcileTimer)
+        this.runAttachmentDisposers.delete(invocationId)
         waiters.delete(onEvent)
         if (waiters.size === 0) this.runWaiters.delete(sessionId)
         resolve({
@@ -1134,6 +1199,15 @@ export class ChatRunSocket {
           ...result,
         })
       }
+      const failApproval = (error: string) => {
+        settleChatRunInvocation(invocationId, { status: 'failed', runId, output, reasoning, error })
+        this.releaseRunInvocation(sessionId, invocationId)
+        this.clearRunExecutionTimer(invocationId)
+        finish({ ok: false, event: 'run.failed', run_id: runId, output, reasoning, error })
+        void this.bridge.interrupt(sessionId, error, profile).catch(err => {
+          logger.warn(err, '[chat-run-socket] failed to interrupt approval-blocked session %s', sessionId)
+        })
+      }
       const respondToApproval = async (payload: any = {}) => {
         const choice = options.approvalChoice
         if (!choice || settled) return
@@ -1141,11 +1215,11 @@ export class ChatRunSocket {
         const rawChoices = Array.isArray(payload.choices) ? payload.choices.map((item: unknown) => String(item)) : []
         const choices = rawChoices.length > 0 ? rawChoices : ['once', 'session', 'deny']
         if (!approvalId) {
-          finish({ ok: false, event: 'run.failed', output, reasoning, error: 'approval required' })
+          failApproval('approval required')
           return
         }
         if (!choices.includes(choice)) {
-          finish({ ok: false, event: 'run.failed', output, reasoning, error: `approval choice "${choice}" is not available` })
+          failApproval(`approval choice "${choice}" is not available`)
           return
         }
         try {
@@ -1169,10 +1243,14 @@ export class ChatRunSocket {
             resolved: false,
             error,
           })
-          finish({ ok: false, event: 'run.failed', output, reasoning, error })
+          failApproval(error)
         }
       }
       const onEvent = (event: string, payload: any = {}) => {
+        const eventInvocationId = typeof payload.invocation_id === 'string' ? payload.invocation_id : ''
+        if ((event === 'run.completed' || event === 'run.failed') && eventInvocationId && eventInvocationId !== invocationId) {
+          return
+        }
         if (typeof payload.run_id === 'string' && payload.run_id) runId = payload.run_id
         if (event === 'message.delta' && typeof payload.delta === 'string') output += payload.delta
         if ((event === 'reasoning.delta' || event === 'thinking.delta') && typeof payload.delta === 'string') reasoning += payload.delta
@@ -1181,10 +1259,25 @@ export class ChatRunSocket {
         } catch (err) {
           logger.warn(err, '[chat-run-socket] runAndWait event observer failed for session %s', sessionId)
         }
-        if (event === 'approval.requested') {
+        if (event === 'approval.requested' && options.detachOnAction && !options.approvalChoice) {
+          markChatRunInvocationRequiresAction(invocationId, { ...payload, event })
+          finish({ ok: false, event: 'action.required', run_id: payload.run_id, output, reasoning, action: { ...payload, event } })
+        } else if (event === 'clarify.requested' && options.detachOnAction) {
+          markChatRunInvocationRequiresAction(invocationId, { ...payload, event })
+          finish({ ok: false, event: 'action.required', run_id: payload.run_id, output, reasoning, action: { ...payload, event } })
+        } else if (event === 'approval.requested') {
           void respondToApproval(payload)
         } else if (event === 'run.completed') {
-          finish({
+          settleChatRunInvocation(invocationId, {
+            status: 'completed',
+            runId: payload.run_id,
+            output: typeof payload.output === 'string' && payload.output ? payload.output : output,
+            reasoning: typeof payload.reasoning === 'string' && payload.reasoning ? payload.reasoning : reasoning,
+          })
+          this.releaseRunInvocation(sessionId, invocationId)
+          this.clearRunExecutionTimer(invocationId)
+          const persisted = getChatRunInvocation(invocationId)
+          finish(persisted ? resultFromRecord(persisted)! : {
             ok: true,
             event: 'run.completed',
             run_id: payload.run_id,
@@ -1192,7 +1285,17 @@ export class ChatRunSocket {
             reasoning: typeof payload.reasoning === 'string' && payload.reasoning ? payload.reasoning : reasoning,
           })
         } else if (event === 'run.failed') {
-          finish({
+          settleChatRunInvocation(invocationId, {
+            status: 'failed',
+            runId: payload.run_id,
+            output,
+            reasoning,
+            error: payload.error ? String(payload.error) : 'chat-run failed',
+          })
+          this.releaseRunInvocation(sessionId, invocationId)
+          this.clearRunExecutionTimer(invocationId)
+          const persisted = getChatRunInvocation(invocationId)
+          finish(persisted ? resultFromRecord(persisted)! : {
             ok: false,
             event: 'run.failed',
             run_id: payload.run_id,
@@ -1202,17 +1305,52 @@ export class ChatRunSocket {
           })
         }
       }
-      const timer = timeoutMs
+      executionTimer = executionTimeoutMs
         ? setTimeout(() => {
-            const error = `chat-run timed out after ${timeoutMs}ms`
-            finish({ ok: false, event: 'run.failed', error })
+            this.runExecutionTimers.delete(invocationId)
+            const error = `chat-run timed out after ${executionTimeoutMs}ms`
+            settleChatRunInvocation(invocationId, { status: 'failed', runId, output, reasoning, error })
+            this.releaseRunInvocation(sessionId, invocationId)
+            finish({ ok: false, event: 'run.failed', run_id: runId, output, reasoning, error })
             void this.abortSession(sessionId, error).catch(err => {
               logger.warn(err, '[chat-run-socket] failed to abort timed-out session %s', sessionId)
             })
-          }, timeoutMs)
-        : null
+          }, executionTimeoutMs)
+        : undefined
+      if (executionTimer) {
+        executionTimer.unref?.()
+        this.runExecutionTimers.set(invocationId, executionTimer)
+      }
+      attachmentTimer = attachmentTimeoutMs
+        ? setTimeout(() => {
+            const error = `chat-run attachment timed out after ${attachmentTimeoutMs}ms`
+            finish({ ok: false, event: 'wait.timed_out', error })
+          }, attachmentTimeoutMs)
+        : undefined
       waiters.add(onEvent)
       this.runWaiters.set(sessionId, waiters)
+      const reconcile = () => {
+        const record = getChatRunInvocation(invocationId)
+        if (!record) return
+        const result = resultFromRecord(record)
+        if (!result) return
+        this.releaseRunInvocation(sessionId, invocationId)
+        this.clearRunExecutionTimer(invocationId)
+        finish(result)
+      }
+      reconcileTimer = setInterval(reconcile, 1000)
+      reconcileTimer.unref?.()
+      this.runAttachmentDisposers.set(invocationId, () => {
+        settleChatRunInvocation(invocationId, { status: 'canceled', error: 'Chat run server closed' })
+        this.releaseRunInvocation(sessionId, invocationId)
+        const record = getChatRunInvocation(invocationId)
+        finish(record ? resultFromRecord(record)! : {
+          ok: false,
+          event: 'run.failed',
+          error: 'Chat run server closed',
+        })
+      })
+      reconcile()
 
       const fakeSocket = {
         id: `workflow-run-${sessionId}`,
@@ -1228,14 +1366,24 @@ export class ChatRunSocket {
         emit: (event: string, payload: any) => onEvent(event, payload),
       } as unknown as Socket
 
-      this.handleRun(fakeSocket, { ...data, onEvent }, profile)
-        .catch(err => finish({ ok: false, event: 'run.failed', error: err instanceof Error ? err.message : String(err) }))
+      const internalData = { ...data, invocation_id: invocationId, onEvent } as typeof data & {
+        invocation_id: string
+        onEvent: (event: string, payload: any) => void
+      }
+      this.handleRun(fakeSocket, internalData, profile)
+        .catch(err => onEvent('run.failed', { error: err instanceof Error ? err.message : String(err) }))
     })
   }
 
   async abortSession(sessionId: string, reason = 'Run canceled'): Promise<void> {
     const sid = String(sessionId || '').trim()
     if (!sid) return
+    const invocationId = this.activeRunInvocations.get(sid)
+    if (invocationId) {
+      settleChatRunInvocation(invocationId, { status: 'canceled', error: reason })
+      this.releaseRunInvocation(sid, invocationId)
+      this.clearRunExecutionTimer(invocationId)
+    }
     const fakeSocket = {
       id: `workflow-abort-${sid}`,
       connected: false,
@@ -1261,6 +1409,13 @@ export class ChatRunSocket {
   async disposeSession(sessionId: string): Promise<void> {
     const sid = String(sessionId || '').trim()
     if (!sid) return
+    const invocationId = this.activeRunInvocations.get(sid)
+    if (invocationId) {
+      settleChatRunInvocation(invocationId, { status: 'canceled', error: 'Session disposed' })
+      this.emitExternalEvent(sid, 'run.failed', { event: 'run.failed', error: 'Session disposed' })
+      this.releaseRunInvocation(sid, invocationId)
+      this.clearRunExecutionTimer(invocationId)
+    }
     codingAgentRunManager.stop(sid, { reportClosed: false })
     const state = this.sessionMap.get(sid)
     state?.abortController?.abort()
@@ -1271,6 +1426,25 @@ export class ChatRunSocket {
 
   emitExternalEvent(sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
+    const terminal = event === 'run.completed' || event === 'run.failed'
+    let deliverToInvocationWaiters = true
+    if (terminal) {
+      const invocationId = this.activeRunInvocations.get(sessionId)
+      const eventInvocationId = typeof tagged.invocation_id === 'string' ? tagged.invocation_id : ''
+      if (invocationId && eventInvocationId !== invocationId) {
+        deliverToInvocationWaiters = false
+      } else if (invocationId) {
+        settleChatRunInvocation(invocationId, {
+          status: event === 'run.completed' ? 'completed' : 'failed',
+          runId: tagged.run_id,
+          output: tagged.output,
+          reasoning: tagged.reasoning,
+          error: event === 'run.failed' ? String(tagged.error || 'chat-run failed') : null,
+        })
+        this.releaseRunInvocation(sessionId, invocationId)
+        this.clearRunExecutionTimer(invocationId)
+      }
+    }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
     this.observePetEvent(profile, event, tagged)
     const state = this.sessionMap.get(sessionId)
@@ -1280,7 +1454,7 @@ export class ChatRunSocket {
     }
     this.nsp.to(`session:${sessionId}`).emit(event, tagged)
     const waiters = this.runWaiters.get(sessionId)
-    if (waiters) {
+    if (waiters && deliverToInvocationWaiters) {
       for (const waiter of waiters) waiter(event, tagged)
     }
   }
@@ -1435,6 +1609,16 @@ export class ChatRunSocket {
       clearInterval(this.backgroundPollTimer)
       this.backgroundPollTimer = undefined
     }
+    for (const dispose of [...this.runAttachmentDisposers.values()]) dispose()
+    this.runAttachmentDisposers.clear()
+    for (const [sessionId, invocationId] of [...this.activeRunInvocations.entries()]) {
+      settleChatRunInvocation(invocationId, { status: 'canceled', error: 'Chat run server closed' })
+      this.releaseRunInvocation(sessionId, invocationId)
+      this.clearRunExecutionTimer(invocationId)
+    }
+    for (const timer of this.runExecutionTimers.values()) clearTimeout(timer)
+    this.runExecutionTimers.clear()
+    this.runWaiters.clear()
     const releaseClaims: Array<Promise<unknown>> = []
     for (const [sessionId, state] of this.sessionMap.entries()) {
       if (state.abortController) {

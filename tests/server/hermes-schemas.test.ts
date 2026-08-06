@@ -21,7 +21,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('initializes all tables with correct schemas', async () => {
-    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, CHAT_RUN_INVOCATIONS_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -32,6 +32,7 @@ describe('Hermes schema initialization', () => {
     expect(tables.map(t => t.name)).toContain(SESSIONS_TABLE)
     expect(tables.map(t => t.name)).toContain(SESSION_CATEGORIES_TABLE)
     expect(tables.map(t => t.name)).toContain(MESSAGES_TABLE)
+    expect(tables.map(t => t.name)).toContain(CHAT_RUN_INVOCATIONS_TABLE)
     expect(tables.map(t => t.name)).toContain(GC_ROOMS_TABLE)
     expect(tables.map(t => t.name)).toContain(GC_MESSAGES_TABLE)
     expect(tables.map(t => t.name)).toContain(GC_ROOM_AGENTS_TABLE)

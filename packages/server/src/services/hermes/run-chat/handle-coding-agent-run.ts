@@ -35,6 +35,7 @@ export interface CodingAgentRunSocketData {
   api_mode?: any
   reasoning_effort?: string
   session_source?: 'global_agent' | 'workflow'
+  invocation_id?: string
   group_system_prompt?: string
   group_room_id?: string
   group_agent_id?: string
@@ -133,13 +134,17 @@ export async function handleCodingAgentRun(
       groupSystemPrompt || (includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : ''),
     ].filter(Boolean).join('\n')
     if (Array.isArray(data.input)) {
-      await sendCodingAgentRunInput(
+      const args: Parameters<typeof sendCodingAgentRunInput> = [
         sessionId,
         codingInput.text,
         runPrompt,
         codingInput.images,
         contentBlocksToString(data.input),
-      )
+      ]
+      if (data.invocation_id) args.push(data.invocation_id)
+      await sendCodingAgentRunInput(...args)
+    } else if (data.invocation_id) {
+      await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt, [], undefined, data.invocation_id)
     } else {
       await sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt)
     }

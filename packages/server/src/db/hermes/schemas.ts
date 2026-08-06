@@ -115,6 +115,26 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
+export const CHAT_RUN_INVOCATIONS_TABLE = 'chat_run_invocations'
+
+export const CHAT_RUN_INVOCATIONS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  session_id: 'TEXT NOT NULL',
+  run_id: "TEXT NOT NULL DEFAULT ''",
+  status: "TEXT NOT NULL DEFAULT 'running'",
+  output: 'TEXT',
+  reasoning: 'TEXT',
+  error: 'TEXT',
+  action: 'TEXT',
+  started_at: 'INTEGER NOT NULL',
+  finished_at: 'INTEGER',
+}
+
+export const CHAT_RUN_INVOCATIONS_INDEXES = {
+  idx_chat_run_invocations_session: 'CREATE INDEX IF NOT EXISTS idx_chat_run_invocations_session ON chat_run_invocations(session_id, started_at)',
+  idx_chat_run_invocations_status: 'CREATE INDEX IF NOT EXISTS idx_chat_run_invocations_status ON chat_run_invocations(status)',
+}
+
 // ============================================================================
 // Workspace Run Changes
 // ============================================================================
@@ -1091,6 +1111,9 @@ export function initAllHermesTables(): void {
     createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(CHAT_RUN_INVOCATIONS_TABLE, CHAT_RUN_INVOCATIONS_SCHEMA, {
+      indexes: CHAT_RUN_INVOCATIONS_INDEXES,
+    })
     syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
       indexes: WORKSPACE_RUN_CHANGES_INDEXES,
     })

@@ -1,7 +1,6 @@
 import type { Context } from 'koa'
 import { randomUUID } from 'crypto'
-import { io, type Socket } from 'socket.io-client'
-import { config } from '../config'
+import type { ChatRunSocket } from '../services/hermes/run-chat'
 
 type ChatRunPayload = Record<string, unknown> & {
   input?: unknown
@@ -11,56 +10,9 @@ type ChatRunPayload = Record<string, unknown> & {
   include_events?: unknown
 }
 
-type ChatRunEvent = Record<string, unknown> & {
-  event?: string
-  session_id?: string
-  run_id?: string
-  delta?: string
-  text?: string
-  output?: string | null
-  reasoning?: string | null
-  error?: unknown
-}
-
-const CHAT_RUN_EVENTS = [
-  'run.started',
-  'message.delta',
-  'message.interim',
-  'reasoning.delta',
-  'thinking.delta',
-  'reasoning.available',
-  'tool.started',
-  'tool.completed',
-  'tool.failed',
-  'workspace.diff.completed',
-  'run.completed',
-  'run.failed',
-  'compression.started',
-  'compression.completed',
-  'abort.started',
-  'abort.timeout',
-  'abort.completed',
-  'usage.updated',
-  'agent.event',
-  'subagent.event',
-  'session.command',
-  'session.title.updated',
-  'run.queued',
-  'approval.requested',
-  'approval.resolved',
-  'clarify.requested',
-  'clarify.resolved',
-  'peer.user.message',
-]
-
 const DEFAULT_TIMEOUT_MS = 300_000
 const MAX_TIMEOUT_MS = 1_800_000
 const MAX_RECORDED_EVENTS = 1000
-
-function bearerToken(ctx: Context): string {
-  const match = ctx.get('authorization').match(/^Bearer\s+(.+)$/i)
-  return match?.[1]?.trim() || ''
-}
 
 function requestTimeoutMs(value: unknown): number {
   const numeric = Number(value)
@@ -68,26 +20,24 @@ function requestTimeoutMs(value: unknown): number {
   return Math.min(Math.floor(numeric), MAX_TIMEOUT_MS)
 }
 
-function chatRunBaseUrl(): string {
-  return (process.env.HERMES_WEB_UI_URL || `http://127.0.0.1:${config.port}`).replace(/\/$/, '')
-}
-
 function profileFrom(ctx: Context, body: ChatRunPayload): string {
   return String(body.profile || ctx.state.profile?.name || 'default').trim() || 'default'
 }
 
 function userBody(body: ChatRunPayload): Record<string, unknown> {
-  const { timeout_ms: _timeoutMs, include_events: _includeEvents, ...payload } = body
+  const {
+    timeout_ms: _timeoutMs,
+    include_events: _includeEvents,
+    invocation_id: _invocationId,
+    ...payload
+  } = body
   return payload
 }
 
-function generatedSessionId(): string {
-  return randomUUID()
-}
-
-function needsGeneratedSessionId(payload: Record<string, unknown>): boolean {
-  const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : ''
-  return !sessionId
+async function currentChatRunServer(): Promise<ChatRunSocket | null> {
+  // Dynamic import avoids a controller/route initialization cycle.
+  const routes = await import('../routes/hermes/chat-run')
+  return routes.getChatRunServer?.() || null
 }
 
 export async function runOnce(ctx: Context) {
@@ -98,106 +48,71 @@ export async function runOnce(ctx: Context) {
     return
   }
 
-  const timeoutMs = requestTimeoutMs(body.timeout_ms)
-  const includeEvents = body.include_events === true
-  const token = bearerToken(ctx)
+  const chatRun = await currentChatRunServer()
+  if (!chatRun?.runAndWait) {
+    ctx.status = 503
+    ctx.body = { ok: false, status: 'unavailable', error: 'chat-run server is not available' }
+    return
+  }
+
   const profile = profileFrom(ctx, body)
   const payload: Record<string, unknown> = { ...userBody(body), profile }
-  if (needsGeneratedSessionId(payload)) payload.session_id = generatedSessionId()
+  const sessionId = String(payload.session_id || '').trim() || randomUUID()
+  payload.session_id = sessionId
+  const includeEvents = body.include_events === true
+  const events: Array<Record<string, unknown>> = []
+  const record = (event: string, data: Record<string, unknown> = {}) => {
+    if (!includeEvents) return
+    if (events.length >= MAX_RECORDED_EVENTS) events.shift()
+    events.push({ ...data, event: typeof data.event === 'string' ? data.event : event })
+  }
 
-  ctx.body = await new Promise((resolve) => {
-    const events: ChatRunEvent[] = []
-    let output = ''
-    let reasoning = ''
-    let runId = ''
-    let settled = false
-
-    const socket: Socket = io(`${chatRunBaseUrl()}/chat-run`, {
-      auth: token ? { token } : {},
-      query: { profile },
-      transports: ['websocket', 'polling'],
-      reconnection: false,
-      timeout: 30_000,
+  try {
+    const result = await chatRun.runAndWait(payload as any, {
+      profile,
+      user: ctx.state.user,
+      attachmentTimeoutMs: requestTimeoutMs(body.timeout_ms),
+      detachOnAction: true,
+      onEvent: record,
     })
-
-    const cleanup = () => {
-      clearTimeout(timer)
-      socket.removeAllListeners()
-      socket.disconnect()
+    const common = {
+      session_id: sessionId,
+      run_id: result.run_id || undefined,
+      output: result.output || '',
+      ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+      ...(includeEvents ? { events } : {}),
     }
-
-    const finish = (status: number, response: Record<string, unknown>) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      ctx.status = status
-      resolve({
-        ...response,
-        session_id: typeof payload.session_id === 'string' ? payload.session_id : undefined,
-        run_id: runId || undefined,
-        output,
-        ...(reasoning ? { reasoning } : {}),
-        ...(includeEvents ? { events } : {}),
-      })
+    if (result.event === 'run.completed' && result.ok) {
+      ctx.status = 200
+      ctx.body = { ok: true, status: 'completed', event: result.event, ...common }
+      return
     }
-
-    const record = (event: ChatRunEvent) => {
-      if (!includeEvents) return
-      if (events.length >= MAX_RECORDED_EVENTS) events.shift()
-      events.push(event)
-    }
-
-    const timer = setTimeout(() => {
-      finish(504, {
+    if (result.event === 'action.required') {
+      ctx.status = 409
+      ctx.body = {
         ok: false,
-        status: 'timeout',
-        error: `chat-run timed out after ${timeoutMs}ms`,
-      })
-    }, timeoutMs)
-
-    socket.on('connect_error', (err: Error) => {
-      finish(503, {
-        ok: false,
-        status: 'connect_error',
-        error: err.message,
-      })
-    })
-
-    socket.on('connect', () => {
-      socket.emit('run', payload)
-    })
-
-    for (const eventName of CHAT_RUN_EVENTS) {
-      socket.on(eventName, (event: ChatRunEvent = {}) => {
-        const tagged = { ...event, event: event.event || eventName }
-        record(tagged)
-        if (typeof tagged.run_id === 'string' && tagged.run_id) runId = tagged.run_id
-        if (eventName === 'message.delta' && typeof tagged.delta === 'string') output += tagged.delta
-        if ((eventName === 'reasoning.delta' || eventName === 'thinking.delta') && typeof tagged.delta === 'string') reasoning += tagged.delta
-        if (eventName === 'run.completed') {
-          if (typeof tagged.output === 'string' && tagged.output) output = tagged.output
-          if (typeof tagged.reasoning === 'string' && tagged.reasoning) reasoning = tagged.reasoning
-          finish(200, { ok: true, status: 'completed', event: eventName })
-          return
-        }
-        if (eventName === 'run.failed') {
-          finish(500, {
-            ok: false,
-            status: 'failed',
-            event: eventName,
-            error: tagged.error || 'chat-run failed',
-          })
-          return
-        }
-        if (eventName === 'approval.requested' || eventName === 'clarify.requested') {
-          finish(409, {
-            ok: false,
-            status: 'requires_action',
-            event: eventName,
-            action: tagged,
-          })
-        }
-      })
+        status: 'requires_action',
+        event: typeof result.action?.event === 'string' ? result.action.event : 'action.required',
+        action: result.action,
+        ...common,
+      }
+      return
     }
-  })
+    if (result.event === 'wait.timed_out') {
+      ctx.status = 504
+      ctx.body = { ok: false, status: 'timeout', event: result.event, error: result.error, ...common }
+      return
+    }
+    ctx.status = 500
+    ctx.body = { ok: false, status: 'failed', event: result.event, error: result.error || 'chat-run failed', ...common }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = {
+      ok: false,
+      status: 'failed',
+      session_id: sessionId,
+      error: err instanceof Error ? err.message : String(err),
+      ...(includeEvents ? { events } : {}),
+    }
+  }
 }

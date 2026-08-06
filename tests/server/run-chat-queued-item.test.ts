@@ -15,10 +15,56 @@ const bridgeMock = vi.hoisted(() => ({
   statusIfLoaded: vi.fn(),
   interrupt: vi.fn(),
   approvalRespond: vi.fn(),
+  close: vi.fn(),
 }))
 const sessionStoreMocks = vi.hoisted(() => ({
   clearSessionMessages: vi.fn(),
+  getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
 }))
+const userCanAccessProfileMock = vi.hoisted(() => vi.fn(() => true))
+const invocationStoreMocks = vi.hoisted(() => {
+  const records = new Map<string, any>()
+  return {
+    records,
+    create: vi.fn((input: any) => {
+      const record = {
+        id: input.id,
+        session_id: input.sessionId,
+        run_id: '',
+        status: 'running',
+        output: null,
+        reasoning: null,
+        error: null,
+        action: null,
+        started_at: input.startedAt || 1,
+        finished_at: null,
+      }
+      records.set(input.id, record)
+      return record
+    }),
+    get: vi.fn((id: string) => records.get(id) || null),
+    markAction: vi.fn((id: string, action: any) => {
+      const record = records.get(id)
+      if (!record || record.status !== 'running') return false
+      Object.assign(record, { status: 'requires_action', action })
+      return true
+    }),
+    settle: vi.fn((id: string, terminal: any) => {
+      const record = records.get(id)
+      if (!record || !['running', 'requires_action'].includes(record.status)) return false
+      Object.assign(record, {
+        run_id: terminal.runId || '',
+        status: terminal.status,
+        output: terminal.output ?? null,
+        reasoning: terminal.reasoning ?? null,
+        error: terminal.error ?? null,
+        action: null,
+        finished_at: terminal.finishedAt || 2,
+      })
+      return true
+    }),
+  }
+})
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
   handleBridgeRun: handleBridgeRunMock,
@@ -56,9 +102,17 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   clearSessionMessages: sessionStoreMocks.clearSessionMessages,
-  getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
+  deleteSession: vi.fn(),
+  getSession: sessionStoreMocks.getSession,
   getSessionMetadata: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
   getSessionDetail: vi.fn(() => null),
+}))
+
+vi.mock('../../packages/server/src/db/hermes/chat-run-invocation-store', () => ({
+  createChatRunInvocation: invocationStoreMocks.create,
+  getChatRunInvocation: invocationStoreMocks.get,
+  markChatRunInvocationRequiresAction: invocationStoreMocks.markAction,
+  settleChatRunInvocation: invocationStoreMocks.settle,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -73,7 +127,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
-  userCanAccessProfile: vi.fn(() => true),
+  userCanAccessProfile: userCanAccessProfileMock,
 }))
 
 function makeServerHarness() {
@@ -107,6 +161,7 @@ function makeServerHarness() {
 describe('ChatRunSocket queued bridge runs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    invocationStoreMocks.records.clear()
     ensureReadyMock.mockResolvedValue({
       reachable: true,
       status: 'ready',
@@ -115,6 +170,8 @@ describe('ChatRunSocket queued bridge runs', () => {
     bridgeMock.statusIfLoaded.mockResolvedValue({ ok: true, exists: false, running: false, loaded: false })
     bridgeMock.interrupt.mockResolvedValue({ ok: true })
     bridgeMock.approvalRespond.mockResolvedValue({ resolved: true })
+    sessionStoreMocks.getSession.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
+    userCanAccessProfileMock.mockReturnValue(true)
     sessionStoreMocks.clearSessionMessages.mockReturnValue(2)
     loadSessionStateFromDbMock.mockResolvedValue({
       messages: [],
@@ -175,6 +232,55 @@ describe('ChatRunSocket queued bridge runs', () => {
       queue_id: 'queue-normal',
     }))
     expect(call[6]).toBe(false)
+  })
+
+  it('persists requires_action while detaching the HTTP-style attachment', async () => {
+    handleBridgeRunMock.mockImplementationOnce((async (...args: any[]) => {
+      const data = args[2]
+      data.onEvent?.('approval.requested', {
+        run_id: 'run-action', approval_id: 'approval-1', choices: ['once', 'deny'],
+      })
+    }) as any)
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    const result = await server.runAndWait({
+      session_id: 'session-1', input: 'needs approval', source: 'workflow',
+    }, { profile: 'default', detachOnAction: true })
+
+    expect(result).toMatchObject({
+      ok: false, event: 'action.required', action: { event: 'approval.requested', approval_id: 'approval-1' },
+    })
+    expect([...invocationStoreMocks.records.values()]).toEqual([
+      expect.objectContaining({ status: 'requires_action', action: expect.objectContaining({ approval_id: 'approval-1' }) }),
+    ])
+    expect((server as any).activeRunInvocations.has('session-1')).toBe(true)
+  })
+
+  it('rejects a requested profile that differs from the persisted session profile', async () => {
+    sessionStoreMocks.getSession.mockReturnValue({ id: 'session-1', profile: 'private', source: 'cli' })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    await expect(server.runAndWait({
+      session_id: 'session-1', input: 'cross-profile attempt', source: 'workflow',
+    }, { profile: 'default' })).rejects.toThrow('does not match persisted session profile')
+    expect(handleBridgeRunMock).not.toHaveBeenCalled()
+  })
+
+  it('enforces user access to the persisted session profile', async () => {
+    sessionStoreMocks.getSession.mockReturnValue({ id: 'session-1', profile: 'private', source: 'cli' })
+    userCanAccessProfileMock.mockReturnValueOnce(false)
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    await expect(server.runAndWait({
+      session_id: 'session-1', input: 'unauthorized attempt', source: 'workflow',
+    }, { user: { id: 'user-1', role: 'user' } as any })).rejects.toThrow('is not available for this user')
+    expect(handleBridgeRunMock).not.toHaveBeenCalled()
   })
 
   it('supports bridge peer broadcasts during runAndWait workflow runs', async () => {
@@ -271,6 +377,53 @@ describe('ChatRunSocket queued bridge runs', () => {
     })
     expect(bridgeMock.approvalRespond).toHaveBeenCalledWith('approval-1', 'once')
     expect(namespace.to).toHaveBeenCalledWith('session:session-1')
+  })
+
+  it.each([
+    ['missing approval id', { choices: ['once'] }, 'approval required'],
+    ['unavailable approval choice', { approval_id: 'approval-1', choices: ['deny'] }, 'is not available'],
+  ])('durably fails and releases the invocation for %s', async (_name, approval, errorText) => {
+    handleBridgeRunMock.mockImplementationOnce((async (_nsp: any, _socket: any, data: any) => {
+      data.onEvent?.('approval.requested', { run_id: 'run-approval-error', ...approval })
+    }) as any)
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    const result = await server.runAndWait({
+      session_id: 'session-1', input: 'workflow node', source: 'workflow', session_source: 'workflow',
+    }, { profile: 'default', approvalChoice: 'once' })
+
+    expect(result).toMatchObject({ ok: false, event: 'run.failed' })
+    expect(result.error).toContain(errorText)
+    expect([...invocationStoreMocks.records.values()]).toEqual([
+      expect.objectContaining({ status: 'failed', error: expect.stringContaining(errorText) }),
+    ])
+    expect((server as any).activeRunInvocations.has('session-1')).toBe(false)
+    await vi.waitFor(() => expect(bridgeMock.interrupt).toHaveBeenCalled())
+  })
+
+  it('durably fails and releases the invocation when the approval bridge rejects', async () => {
+    bridgeMock.approvalRespond.mockRejectedValueOnce(new Error('approval bridge unavailable'))
+    handleBridgeRunMock.mockImplementationOnce((async (_nsp: any, _socket: any, data: any) => {
+      data.onEvent?.('approval.requested', {
+        run_id: 'run-approval-reject', approval_id: 'approval-1', choices: ['once'],
+      })
+    }) as any)
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    const result = await server.runAndWait({
+      session_id: 'session-1', input: 'workflow node', source: 'workflow', session_source: 'workflow',
+    }, { profile: 'default', approvalChoice: 'once' })
+
+    expect(result).toMatchObject({ ok: false, event: 'run.failed', error: 'approval bridge unavailable' })
+    expect([...invocationStoreMocks.records.values()]).toEqual([
+      expect.objectContaining({ status: 'failed', error: 'approval bridge unavailable' }),
+    ])
+    expect((server as any).activeRunInvocations.has('session-1')).toBe(false)
+    await vi.waitFor(() => expect(bridgeMock.interrupt).toHaveBeenCalled())
   })
 
   it('does not auto-respond to approvals for normal runAndWait calls', async () => {
@@ -501,7 +654,7 @@ describe('ChatRunSocket queued bridge runs', () => {
       queueLength: 0,
     }))
   })
-  it('aborts the underlying runner when runAndWait reaches its timeout', async () => {
+  it('detaches without aborting the underlying runner when runAndWait reaches its timeout', async () => {
     vi.useFakeTimers()
     handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
@@ -511,11 +664,232 @@ describe('ChatRunSocket queued bridge runs', () => {
     try {
       const resultPromise = server.runAndWait({
         session_id: 'session-1', input: 'slow workflow node', source: 'workflow', session_source: 'workflow',
+      }, { profile: 'default', attachmentTimeoutMs: 25 })
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(resultPromise).resolves.toMatchObject({ ok: false, error: 'chat-run attachment timed out after 25ms' })
+      expect(abortSpy).not.toHaveBeenCalled()
+      expect([...invocationStoreMocks.records.values()]).toEqual([
+        expect.objectContaining({ status: 'running', finished_at: null }),
+      ])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps the execution deadline active after the attachment detaches', async () => {
+    vi.useFakeTimers()
+    handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const abortSpy = vi.spyOn(server, 'abortSession').mockResolvedValue(undefined)
+    try {
+      const resultPromise = server.runAndWait({
+        session_id: 'session-1', input: 'bounded detached run', source: 'workflow',
+      }, { profile: 'default', attachmentTimeoutMs: 25, timeoutMs: 50 })
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(resultPromise).resolves.toMatchObject({ event: 'wait.timed_out' })
+      expect(abortSpy).not.toHaveBeenCalled()
+      expect((server as any).runExecutionTimers.size).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(25)
+      expect(abortSpy).toHaveBeenCalledWith('session-1', 'chat-run timed out after 50ms')
+      expect((server as any).runExecutionTimers.size).toBe(0)
+      expect([...invocationStoreMocks.records.values()]).toEqual([
+        expect.objectContaining({ status: 'failed', error: 'chat-run timed out after 50ms' }),
+      ])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('aborts the underlying runner when the execution deadline expires', async () => {
+    vi.useFakeTimers()
+    handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const abortSpy = vi.spyOn(server, 'abortSession').mockResolvedValue(undefined)
+    try {
+      const resultPromise = server.runAndWait({
+        session_id: 'session-1', input: 'bounded workflow node', source: 'workflow', session_source: 'workflow',
       }, { profile: 'default', timeoutMs: 25 })
       await vi.advanceTimersByTimeAsync(25)
-      await expect(resultPromise).resolves.toMatchObject({ ok: false, error: 'chat-run timed out after 25ms' })
+      await expect(resultPromise).resolves.toMatchObject({ ok: false, event: 'run.failed', error: 'chat-run timed out after 25ms' })
       expect(abortSpy).toHaveBeenCalledWith('session-1', 'chat-run timed out after 25ms')
+      expect([...invocationStoreMocks.records.values()]).toEqual([
+        expect.objectContaining({ status: 'failed', error: 'chat-run timed out after 25ms' }),
+      ])
     } finally { vi.useRealTimers() }
+  })
+
+  it('reconciles a missed terminal notification from the durable invocation record', async () => {
+    vi.useFakeTimers()
+    handleBridgeRunMock.mockImplementationOnce(async () => {})
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    try {
+      const resultPromise = server.runAndWait({
+        session_id: 'session-1', input: 'durable workflow node', source: 'workflow', session_source: 'workflow',
+      }, { profile: 'default', timeoutMs: 5000 })
+      const invocation = [...invocationStoreMocks.records.values()][0]
+      Object.assign(invocation, {
+        status: 'completed', run_id: 'run-durable', output: 'durable result', reasoning: 'checked', finished_at: 2,
+      })
+      await vi.advanceTimersByTimeAsync(1000)
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true, run_id: 'run-durable', output: 'durable result', reasoning: 'checked',
+      })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('persists a late external terminal event after the caller detached', async () => {
+    vi.useFakeTimers()
+    handleCodingAgentRunMock.mockImplementationOnce(async () => {})
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    try {
+      const resultPromise = server.runAndWait({
+        session_id: 'session-1', input: 'slow coding turn', source: 'coding_agent', coding_agent_id: 'codex',
+      }, { profile: 'default', attachmentTimeoutMs: 25 })
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(resultPromise).resolves.toMatchObject({ event: 'wait.timed_out' })
+
+      const invocation = [...invocationStoreMocks.records.values()][0]
+      server.emitExternalEvent('session-1', 'run.completed', {
+        invocation_id: invocation.id,
+        run_id: 'run-late', output: 'late durable result', reasoning: 'finished',
+      })
+
+      expect([...invocationStoreMocks.records.values()]).toEqual([
+        expect.objectContaining({
+          status: 'completed', run_id: 'run-late', output: 'late durable result', reasoning: 'finished',
+        }),
+      ])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('ignores a stale coding-agent terminal event from another invocation', async () => {
+    vi.useFakeTimers()
+    handleCodingAgentRunMock.mockImplementationOnce(async () => {})
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    try {
+      const resultPromise = server.runAndWait({
+        session_id: 'session-1', input: 'current coding turn', source: 'coding_agent', coding_agent_id: 'codex',
+      }, { profile: 'default', attachmentTimeoutMs: 25 })
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(resultPromise).resolves.toMatchObject({ event: 'wait.timed_out' })
+
+      server.emitExternalEvent('session-1', 'run.completed', {
+        invocation_id: 'stale-invocation', run_id: 'stale-run', output: 'wrong result',
+      })
+
+      expect([...invocationStoreMocks.records.values()]).toEqual([
+        expect.objectContaining({ status: 'running', output: null }),
+      ])
+      expect((server as any).activeRunInvocations.get('session-1')).toBe([...invocationStoreMocks.records.keys()][0])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('ignores an untagged stale coding-agent terminal event', async () => {
+    handleCodingAgentRunMock.mockImplementationOnce(async () => {})
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    let settled = false
+    const resultPromise = server.runAndWait({
+      session_id: 'session-1', input: 'current attached turn', source: 'coding_agent', coding_agent_id: 'codex',
+    }, { profile: 'default' }).then(result => {
+      settled = true
+      return result
+    })
+    const invocationId = [...invocationStoreMocks.records.keys()][0]
+
+    server.emitExternalEvent('session-1', 'run.failed', { error: 'stale untagged failure' })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(invocationStoreMocks.records.get(invocationId)).toMatchObject({ status: 'running' })
+
+    server.emitExternalEvent('session-1', 'run.completed', {
+      invocation_id: invocationId, run_id: 'current-run', output: 'correct',
+    })
+    await expect(resultPromise).resolves.toMatchObject({ ok: true, run_id: 'current-run', output: 'correct' })
+  })
+
+  it('does not let a stale terminal event settle the currently attached invocation', async () => {
+    handleCodingAgentRunMock.mockImplementationOnce(async () => {})
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    let settled = false
+    const resultPromise = server.runAndWait({
+      session_id: 'session-1', input: 'current attached turn', source: 'coding_agent', coding_agent_id: 'codex',
+    }, { profile: 'default' }).then(result => {
+      settled = true
+      return result
+    })
+    const invocationId = [...invocationStoreMocks.records.keys()][0]
+
+    server.emitExternalEvent('session-1', 'run.completed', {
+      invocation_id: 'stale-invocation', run_id: 'stale-run', output: 'wrong',
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(invocationStoreMocks.records.get(invocationId)).toMatchObject({ status: 'running' })
+
+    server.emitExternalEvent('session-1', 'run.completed', {
+      invocation_id: invocationId, run_id: 'current-run', output: 'correct',
+    })
+    await expect(resultPromise).resolves.toMatchObject({ ok: true, run_id: 'current-run', output: 'correct' })
+  })
+
+  it('rejects a second invocation while the first turn in the session remains active', async () => {
+    handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    void server.runAndWait({ session_id: 'session-1', input: 'first', source: 'workflow' }, { profile: 'default' })
+    await expect(server.runAndWait({
+      session_id: 'session-1', input: 'second', source: 'workflow',
+    }, { profile: 'default' })).rejects.toThrow('already has an active chat run invocation')
+    expect(handleBridgeRunMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('settles and disposes an active invocation when its session is disposed', async () => {
+    handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const resultPromise = server.runAndWait({
+      session_id: 'session-1', input: 'pending', source: 'workflow',
+    }, { profile: 'default' })
+
+    await server.disposeSession('session-1')
+
+    await expect(resultPromise).resolves.toMatchObject({ ok: false, event: 'run.failed', error: 'Session disposed' })
+    expect([...invocationStoreMocks.records.values()]).toEqual([
+      expect.objectContaining({ status: 'canceled', error: 'Session disposed' }),
+    ])
+    expect((server as any).runWaiters.has('session-1')).toBe(false)
+    expect((server as any).activeRunInvocations.has('session-1')).toBe(false)
+  })
+
+  it('settles attachments and clears waiter state when the server closes', async () => {
+    handleBridgeRunMock.mockImplementationOnce(async () => new Promise(() => {}))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const resultPromise = server.runAndWait({
+      session_id: 'session-1', input: 'pending on close', source: 'workflow',
+    }, { profile: 'default' })
+
+    await server.close()
+
+    await expect(resultPromise).resolves.toMatchObject({ ok: false, event: 'run.failed', error: 'Chat run server closed' })
+    expect((server as any).runWaiters.size).toBe(0)
+    expect((server as any).runAttachmentDisposers.size).toBe(0)
+    expect((server as any).activeRunInvocations.size).toBe(0)
   })
 
 })

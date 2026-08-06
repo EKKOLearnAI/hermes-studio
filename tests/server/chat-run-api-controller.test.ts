@@ -1,71 +1,51 @@
-import { EventEmitter } from 'events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const runAndWaitMock = vi.hoisted(() => vi.fn())
 const ioMock = vi.hoisted(() => vi.fn())
 
-vi.mock('socket.io-client', () => ({
-  io: ioMock,
+vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
+  getChatRunServer: vi.fn(() => ({ runAndWait: runAndWaitMock })),
 }))
 
-function makeSocket() {
-  const emitter = new EventEmitter() as EventEmitter & {
-    emit: ReturnType<typeof vi.fn>
-    disconnect: ReturnType<typeof vi.fn>
-    emitNative: (event: string, payload?: unknown) => boolean
+vi.mock('socket.io-client', () => ({ io: ioMock }))
+
+function makeCtx(body: Record<string, unknown>) {
+  return {
+    state: { profile: { name: 'default' }, user: { id: 1, role: 'super_admin' } },
+    request: { body },
+    status: 200,
+    body: undefined as any,
   }
-  const nativeEmit = EventEmitter.prototype.emit.bind(emitter)
-  emitter.emitNative = nativeEmit
-  emitter.emit = vi.fn((event: string, payload?: unknown) => {
-    if (event === 'run') {
-      process.nextTick(() => {
-        nativeEmit('run.started', { event: 'run.started', run_id: 'run-1' })
-        nativeEmit('message.delta', { event: 'message.delta', run_id: 'run-1', delta: 'hello' })
-        nativeEmit('run.completed', { event: 'run.completed', run_id: 'run-1' })
-      })
-    }
-    return true
-  }) as any
-  emitter.disconnect = vi.fn()
-  return emitter
 }
 
 describe('chat-run HTTP API controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    runAndWaitMock.mockImplementation(async (data: any, options: any) => {
+      options.onEvent?.('run.started', { event: 'run.started', run_id: 'run-1' })
+      options.onEvent?.('message.delta', { event: 'message.delta', run_id: 'run-1', delta: 'hello' })
+      options.onEvent?.('run.completed', { event: 'run.completed', run_id: 'run-1', output: 'hello' })
+      return {
+        ok: true,
+        event: 'run.completed',
+        session_id: data.session_id,
+        run_id: 'run-1',
+        output: 'hello',
+      }
+    })
   })
 
-  it('runs chat-run through Socket.IO and returns a completed HTTP response', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-
+  it('runs chat-run through the in-process server and returns a completed HTTP response', async () => {
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
-    const ctx = {
-      get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
-      state: { profile: { name: 'default' } },
-      request: {
-        body: {
-          session_id: 'session-1',
-          input: 'hello',
-          include_events: true,
-        },
-      },
-      status: 200,
-      body: undefined as any,
-    }
+    const ctx = makeCtx({ session_id: 'session-1', input: 'hello', include_events: true })
 
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    await runOnce(ctx as any)
 
-    expect(ioMock).toHaveBeenCalledWith(expect.stringContaining('/chat-run'), expect.objectContaining({
-      auth: { token: 'token-1' },
-      query: { profile: 'default' },
-    }))
-    expect(socket.emit).toHaveBeenCalledWith('run', expect.objectContaining({
-      session_id: 'session-1',
-      input: 'hello',
-      profile: 'default',
-    }))
+    expect(ioMock).not.toHaveBeenCalled()
+    expect(runAndWaitMock).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'session-1', input: 'hello', profile: 'default' }),
+      expect.objectContaining({ profile: 'default', user: ctx.state.user, detachOnAction: true }),
+    )
     expect(ctx.status).toBe(200)
     expect(ctx.body).toMatchObject({
       ok: true,
@@ -78,75 +58,27 @@ describe('chat-run HTTP API controller', () => {
   })
 
   it('generates a session id when none is provided', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
-    const ctx = {
-      get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
-      state: { profile: { name: 'default' } },
-      request: {
-        body: {
-          source: 'cli',
-          input: 'start a new chat',
-        },
-      },
-      status: 200,
-      body: undefined as any,
-    }
+    const ctx = makeCtx({ source: 'cli', input: 'start a new chat' })
 
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    await runOnce(ctx as any)
 
-    const emittedPayload = socket.emit.mock.calls.find(call => call[0] === 'run')?.[1] as Record<string, unknown>
-    expect(emittedPayload.session_id).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
-    expect(emittedPayload).toMatchObject({
-      source: 'cli',
-      input: 'start a new chat',
-      profile: 'default',
-    })
+    const payload = runAndWaitMock.mock.calls[0][0] as Record<string, unknown>
+    expect(payload.session_id).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
+    expect(payload).toMatchObject({ source: 'cli', input: 'start a new chat', profile: 'default' })
     expect(ctx.status).toBe(200)
-    expect(ctx.body).toMatchObject({
-      ok: true,
-      status: 'completed',
-      session_id: emittedPayload.session_id,
-    })
+    expect(ctx.body).toMatchObject({ ok: true, status: 'completed', session_id: payload.session_id })
   })
 
   it('generates a session id for global-agent runs when none is provided', async () => {
-    const socket = makeSocket()
-    ioMock.mockReturnValue(socket)
-
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
-    const ctx = {
-      get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
-      state: { profile: { name: 'default' } },
-      request: {
-        body: {
-          source: 'global_agent',
-          input: 'start a global run',
-        },
-      },
-      status: 200,
-      body: undefined as any,
-    }
+    const ctx = makeCtx({ source: 'global_agent', input: 'start a global run' })
 
-    const pending = runOnce(ctx as any)
-    socket.emitNative('connect')
-    await pending
+    await runOnce(ctx as any)
 
-    const emittedPayload = socket.emit.mock.calls.find(call => call[0] === 'run')?.[1] as Record<string, unknown>
-    expect(emittedPayload.session_id).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
-    expect(emittedPayload).toMatchObject({
-      source: 'global_agent',
-      input: 'start a global run',
-      profile: 'default',
-    })
-    expect(ctx.body).toMatchObject({
-      ok: true,
-      status: 'completed',
-      session_id: emittedPayload.session_id,
-    })
+    const payload = runAndWaitMock.mock.calls[0][0] as Record<string, unknown>
+    expect(payload.session_id).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
+    expect(payload).toMatchObject({ source: 'global_agent', input: 'start a global run', profile: 'default' })
+    expect(ctx.body).toMatchObject({ ok: true, status: 'completed', session_id: payload.session_id })
   })
 })
