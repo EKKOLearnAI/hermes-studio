@@ -53,14 +53,21 @@ describe('chat-run action/event baseline', () => {
     )
   })
 
-  it('strips caller-provided invocation ids from the internal run payload and response', async () => {
-    runAndWaitMock.mockResolvedValue({
-      ok: true,
-      event: 'run.completed',
-      session_id: 'session-1',
-      run_id: 'run-1',
-      output: 'done',
-      invocation_id: 'internal-secret',
+  it('strips caller-provided and internal invocation ids from the internal run payload and full response', async () => {
+    runAndWaitMock.mockImplementation(async (_data: any, options: any) => {
+      options.onEvent?.('run.completed', {
+        run_id: 'run-1',
+        output: 'done',
+        invocation_id: 'internal-event-secret',
+      })
+      return {
+        ok: true,
+        event: 'run.completed',
+        session_id: 'session-1',
+        run_id: 'run-1',
+        output: 'done',
+        invocation_id: 'internal-result-secret',
+      }
     })
     const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
     const ctx = makeCtx({
@@ -71,6 +78,9 @@ describe('chat-run action/event baseline', () => {
 
     expect(runAndWaitMock.mock.calls[0][0]).not.toHaveProperty('invocation_id')
     expect(ctx.body).not.toHaveProperty('invocation_id')
+    expect(JSON.stringify(ctx.body)).not.toContain('invocation_id')
+    expect(JSON.stringify(ctx.body)).not.toContain('internal-event-secret')
+    expect(JSON.stringify(ctx.body)).not.toContain('internal-result-secret')
   })
 
   it('returns requires_action when clarification is requested', async () => {

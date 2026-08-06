@@ -64,7 +64,8 @@ export async function runOnce(ctx: Context) {
   const record = (event: string, data: Record<string, unknown> = {}) => {
     if (!includeEvents) return
     if (events.length >= MAX_RECORDED_EVENTS) events.shift()
-    events.push({ ...data, event: typeof data.event === 'string' ? data.event : event })
+    const { invocation_id: _invocationId, ...publicData } = data
+    events.push({ ...publicData, event: typeof publicData.event === 'string' ? publicData.event : event })
   }
 
   try {
