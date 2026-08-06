@@ -960,7 +960,7 @@ function claudeMcpConfigJson(profile: string, ...existingContents: Array<string 
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
 
-function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefined>): string[] {
+export function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefined>): string[] {
   const blockByServer = new Map<string, string>()
 
   for (const content of contents) {
@@ -1004,8 +1004,63 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
   return Array.from(blockByServer.values()).filter(Boolean)
 }
 
-function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
-  const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
+/**
+ * 保留 codex config.toml 中用户自定义的顶层 TOML 段（[features] 等），
+ * 排除由 hermes-web-ui 管理的段：
+ * - `mcp_servers.*` —— 外部段由 parseCodexExternalMcpBlocks 处理，hermes-studio-*
+ *   段由 codexMcpConfigToml 重新生成；
+ * - `model_providers.*` —— 每次启动由 hermes-web-ui 依据当前 provider 重建，
+ *   用户 config 中的陈旧 provider 段不应混入。
+ *
+ * hermes-web-ui 每次启动 Codex 会话都会重建 config.toml。若只保留
+ * `[mcp_servers.*]` 段，用户写入的 `[features]`（例如 `apps = false`，
+ * 用于禁用 codex_apps 内置 MCP，规避 openai/codex#29396）会在下次
+ * 启动时被静默丢弃，导致 Codex 每次新会话重新出现 30s 启动超时警告。
+ */
+export function parseCodexExternalTomlBlocks(...contents: Array<string | null | undefined>): string[] {
+  const blocks: string[] = []
+
+  for (const content of contents) {
+    if (!content?.trim()) continue
+    let currentHeader = ''
+    let currentLines: string[] = []
+    const flush = () => {
+      if (!currentHeader || currentLines.length === 0) return
+      const block = currentLines.join('\n').trim()
+      const topLevel = currentHeader.split('.')[0]
+      // mcp_servers.* 由 parseCodexExternalMcpBlocks / codexMcpConfigToml 处理
+      // model_providers.* 由 hermes-web-ui 依据当前 provider 重建，不继承
+      if (topLevel === 'mcp_servers' || topLevel === 'model_providers') {
+        currentHeader = ''
+        currentLines = []
+        return
+      }
+      blocks.push(block)
+      currentHeader = ''
+      currentLines = []
+    }
+
+    for (const line of content.split(/\r?\n/)) {
+      const headerMatch = line.match(/^\s*\[([^\]]+)\]\s*$/)
+      if (headerMatch) {
+        flush()
+        currentHeader = headerMatch[1].trim()
+        currentLines = [line]
+        continue
+      }
+      if (currentHeader) currentLines.push(line)
+    }
+    flush()
+  }
+
+  return blocks
+}
+
+export function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
+  const blocks: string[] = [
+    ...parseCodexExternalMcpBlocks(...externalContents),
+    ...parseCodexExternalTomlBlocks(...externalContents),
+  ]
   for (const item of HERMES_MCP_SERVERS) {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const lines = [
