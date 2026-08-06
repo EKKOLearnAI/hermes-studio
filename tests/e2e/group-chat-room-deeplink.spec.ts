@@ -254,6 +254,7 @@ test.describe('group chat room deep links', () => {
     const panel = page.locator('.group-workspace-panel')
     const handle = page.locator('.group-workspace-resize-handle')
     await expect(panel).toBeVisible()
+    await expect(panel).not.toHaveClass(/tool-panel-enter-active/)
 
     const geometry = async () => {
       const [wrapperBox, panelBox, handleBox] = await Promise.all([

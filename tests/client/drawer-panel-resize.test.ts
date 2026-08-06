@@ -54,6 +54,31 @@ describe('ChatPanel tool drawer resizing support', () => {
     expect(source).toMatch(/\.chat-tool-content\s*\{\s*order: 1;[\s\S]*background: \$bg-main-surface;/)
   })
 
+  it('animates the single and group chat tool panels without exposing the native browser mid-transition', () => {
+    const chatSource = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+    const groupSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const browserSource = readFileSync('packages/client/src/components/hermes/chat/DesktopBrowserPanel.vue', 'utf8')
+
+    for (const source of [chatSource, groupSource]) {
+      expect(source).toContain('<Transition')
+      expect(source).toContain('name="tool-panel"')
+      expect(source).toContain('@before-enter="handleToolPanelBeforeEnter"')
+      expect(source).toContain('@after-enter="handleToolPanelAfterEnter"')
+      expect(source).toContain('@before-leave="handleToolPanelBeforeLeave"')
+      expect(source).toContain('@leave-cancelled="handleToolPanelLeaveCancelled"')
+      expect(source).toContain('@media (prefers-reduced-motion: reduce)')
+    }
+
+    expect(chatSource).toContain(':visible="toolPanelTransitionReady"')
+    expect(groupSource).toContain(':visible="toolPanelTransitionReady"')
+    expect(chatSource).toMatch(/\.tool-panel-enter-active,[\s\S]*transition:[\s\S]*width 0\.25s/)
+    expect(groupSource).toMatch(/\.tool-panel-enter-active,[\s\S]*transition:[\s\S]*width 0\.25s/)
+    expect(chatSource).toMatch(/\.tool-panel-enter-from,[\s\S]*width: 0 !important;[\s\S]*min-width: 0;/)
+    expect(groupSource).toMatch(/\.tool-panel-enter-from,[\s\S]*width: 0 !important;[\s\S]*min-width: 0;/)
+    expect(browserSource).toContain('visible?: boolean')
+    expect(browserSource).toContain('props.visible && !externalOverlayOpen.value')
+  })
+
   it('uses the drawer content surface for the conversation outline', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/OutlinePanel.vue', 'utf8')
 

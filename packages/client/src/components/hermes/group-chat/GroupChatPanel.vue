@@ -116,6 +116,7 @@ const groupChatContentWrapperRef = ref<HTMLElement | null>(null)
 const groupChatSurfaceRef = ref<HTMLElement | null>(null)
 let roomFadeAnimation: Animation | null = null
 const showWorkspacePanel = ref(false)
+const toolPanelTransitionReady = ref(false)
 const activeWorkspacePanel = ref<'files' | 'terminal' | 'browser'>('files')
 const desktopBrowserAvailable = hasDesktopBrowserBridge()
 const workspacePanelMobile = ref(window.innerWidth <= 768)
@@ -528,6 +529,22 @@ function toggleWorkspacePanel(): void {
         return
     }
     showWorkspacePanel.value = true
+}
+
+function handleToolPanelBeforeEnter(): void {
+    toolPanelTransitionReady.value = false
+}
+
+function handleToolPanelAfterEnter(): void {
+    toolPanelTransitionReady.value = true
+}
+
+function handleToolPanelBeforeLeave(): void {
+    toolPanelTransitionReady.value = false
+}
+
+function handleToolPanelLeaveCancelled(): void {
+    toolPanelTransitionReady.value = true
 }
 
 function openWorkspaceFilesPanel(): void {
@@ -1601,110 +1618,119 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         @send-blocked="handleSummaryConfigurationRequired"
                     />
                 </div>
-                <aside
-                    v-if="showWorkspacePanel && (
-                        activeWorkspacePanel === 'files'
-                        || activeWorkspacePanel === 'terminal'
-                        || (activeWorkspacePanel === 'browser' && desktopBrowserAvailable)
-                        || toolPanelStore.workspaceDiff
-                        || currentRoom?.workspace
-                        || filesStore.previewFile?.workspaceRoomId === store.currentRoomId
-                    )"
-                    class="group-workspace-panel"
-                    :style="workspacePanelStyle"
+                <Transition
+                    name="tool-panel"
+                    @before-enter="handleToolPanelBeforeEnter"
+                    @after-enter="handleToolPanelAfterEnter"
+                    @before-leave="handleToolPanelBeforeLeave"
+                    @leave-cancelled="handleToolPanelLeaveCancelled"
                 >
-                    <div class="group-workspace-resize-handle" @pointerdown="startWorkspaceResize" />
-                    <div class="group-workspace-panel-inner">
-                        <WorkspaceDiffPreview
-                            v-if="toolPanelStore.workspaceDiff"
-                            :custom-close="closeWorkspacePanel"
-                        />
-                        <FilePreview
-                            v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
-                            :custom-close="closeWorkspacePanel"
-                        />
-                        <template v-else>
-                            <div class="group-tool-tabs" role="tablist">
-                                <button
-                                    class="group-tool-tab"
-                                    :class="{ active: activeWorkspacePanel === 'files' }"
-                                    type="button"
-                                    role="tab"
-                                    :title="t('drawer.files')"
-                                    :aria-label="t('drawer.files')"
-                                    :aria-selected="activeWorkspacePanel === 'files'"
-                                    @click="selectWorkspacePanel('files')"
-                                >
-                                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
-                                    </svg>
-                                </button>
-                                <button
-                                    class="group-tool-tab"
-                                    :class="{ active: activeWorkspacePanel === 'terminal' }"
-                                    type="button"
-                                    role="tab"
-                                    :title="t('drawer.terminal')"
-                                    :aria-label="t('drawer.terminal')"
-                                    :aria-selected="activeWorkspacePanel === 'terminal'"
-                                    @click="selectWorkspacePanel('terminal')"
-                                >
-                                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <rect x="3" y="4" width="18" height="16" rx="2" />
-                                        <path d="m7 9 3 3-3 3M13 15h4" />
-                                    </svg>
-                                </button>
-                                <button
-                                    v-if="desktopBrowserAvailable"
-                                    class="group-tool-tab"
-                                    :class="{ active: activeWorkspacePanel === 'browser' }"
-                                    type="button"
-                                    role="tab"
-                                    :title="t('browser.title')"
-                                    :aria-label="t('browser.title')"
-                                    :aria-selected="activeWorkspacePanel === 'browser'"
-                                    @click="selectWorkspacePanel('browser')"
-                                >
-                                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <rect x="3" y="4" width="18" height="16" rx="2" />
-                                        <path d="M3 9h18" />
-                                        <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
-                                        <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
-                                    </svg>
-                                </button>
-                            </div>
-                            <div class="group-tool-content">
-                                <template v-if="currentRoom?.workspace">
-                                    <FilesPanel
-                                        v-show="activeWorkspacePanel === 'files'"
-                                        :workspace-room-id="store.currentRoomId"
-                                        :workspace="currentRoom.workspace"
-                                        @attach="handleWorkspaceFileAttach"
-                                    />
-                                </template>
-                                <div v-else-if="activeWorkspacePanel === 'files'" class="group-workspace-empty">
-                                    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-                                        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                                    </svg>
-                                    <span>{{ t('chat.setWorkspaceTitle') }}</span>
-                                    <NButton type="primary" size="small" @click="handleOpenWorkspacePicker()">
-                                        {{ t('chat.setWorkspace') }}
-                                    </NButton>
+                    <aside
+                        v-if="showWorkspacePanel && (
+                            activeWorkspacePanel === 'files'
+                            || activeWorkspacePanel === 'terminal'
+                            || (activeWorkspacePanel === 'browser' && desktopBrowserAvailable)
+                            || toolPanelStore.workspaceDiff
+                            || currentRoom?.workspace
+                            || filesStore.previewFile?.workspaceRoomId === store.currentRoomId
+                        )"
+                        class="group-workspace-panel"
+                        :style="workspacePanelStyle"
+                    >
+                        <div class="group-workspace-resize-handle" @pointerdown="startWorkspaceResize" />
+                        <div class="group-workspace-panel-inner">
+                            <WorkspaceDiffPreview
+                                v-if="toolPanelStore.workspaceDiff"
+                                :custom-close="closeWorkspacePanel"
+                            />
+                            <FilePreview
+                                v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
+                                :custom-close="closeWorkspacePanel"
+                            />
+                            <template v-else>
+                                <div class="group-tool-tabs" role="tablist">
+                                    <button
+                                        class="group-tool-tab"
+                                        :class="{ active: activeWorkspacePanel === 'files' }"
+                                        type="button"
+                                        role="tab"
+                                        :title="t('drawer.files')"
+                                        :aria-label="t('drawer.files')"
+                                        :aria-selected="activeWorkspacePanel === 'files'"
+                                        @click="selectWorkspacePanel('files')"
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        class="group-tool-tab"
+                                        :class="{ active: activeWorkspacePanel === 'terminal' }"
+                                        type="button"
+                                        role="tab"
+                                        :title="t('drawer.terminal')"
+                                        :aria-label="t('drawer.terminal')"
+                                        :aria-selected="activeWorkspacePanel === 'terminal'"
+                                        @click="selectWorkspacePanel('terminal')"
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <rect x="3" y="4" width="18" height="16" rx="2" />
+                                            <path d="m7 9 3 3-3 3M13 15h4" />
+                                        </svg>
+                                    </button>
+                                    <button
+                                        v-if="desktopBrowserAvailable"
+                                        class="group-tool-tab"
+                                        :class="{ active: activeWorkspacePanel === 'browser' }"
+                                        type="button"
+                                        role="tab"
+                                        :title="t('browser.title')"
+                                        :aria-label="t('browser.title')"
+                                        :aria-selected="activeWorkspacePanel === 'browser'"
+                                        @click="selectWorkspacePanel('browser')"
+                                    >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <rect x="3" y="4" width="18" height="16" rx="2" />
+                                            <path d="M3 9h18" />
+                                            <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                                            <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                                        </svg>
+                                    </button>
                                 </div>
-                                <TerminalPanel
-                                    v-show="activeWorkspacePanel === 'terminal'"
-                                    class="group-terminal-panel"
-                                    :visible="showWorkspacePanel && activeWorkspacePanel === 'terminal'"
-                                />
-                                <DesktopBrowserPanel
-                                    v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
-                                    class="group-browser-panel"
-                                    @attach="handleBrowserAttachment"
-                                />
-                            </div>
-                        </template>
-                    </div>
-                </aside>
+                                <div class="group-tool-content">
+                                    <template v-if="currentRoom?.workspace">
+                                        <FilesPanel
+                                            v-show="activeWorkspacePanel === 'files'"
+                                            :workspace-room-id="store.currentRoomId"
+                                            :workspace="currentRoom.workspace"
+                                            @attach="handleWorkspaceFileAttach"
+                                        />
+                                    </template>
+                                    <div v-else-if="activeWorkspacePanel === 'files'" class="group-workspace-empty">
+                                        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                        </svg>
+                                        <span>{{ t('chat.setWorkspaceTitle') }}</span>
+                                        <NButton type="primary" size="small" @click="handleOpenWorkspacePicker()">
+                                            {{ t('chat.setWorkspace') }}
+                                        </NButton>
+                                    </div>
+                                    <TerminalPanel
+                                        v-show="activeWorkspacePanel === 'terminal'"
+                                        class="group-terminal-panel"
+                                        :visible="showWorkspacePanel && activeWorkspacePanel === 'terminal'"
+                                    />
+                                    <DesktopBrowserPanel
+                                        v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
+                                        class="group-browser-panel"
+                                        :visible="toolPanelTransitionReady"
+                                        @attach="handleBrowserAttachment"
+                                    />
+                                </div>
+                            </template>
+                        </div>
+                    </aside>
+                </Transition>
             </div>
 
             <div v-else class="no-room">
@@ -2885,6 +2911,26 @@ export default defineComponent({ components: { CreateRoomForm } })
     border-inline-start: 1px solid $border-color;
 }
 
+.tool-panel-enter-active,
+.tool-panel-leave-active {
+    overflow: hidden;
+    pointer-events: none;
+    will-change: width, min-width, opacity;
+    transition:
+        width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+        min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.16s ease,
+        border-color 0.16s ease;
+}
+
+.tool-panel-enter-from,
+.tool-panel-leave-to {
+    width: 0 !important;
+    min-width: 0;
+    opacity: 0;
+    border-inline-start-color: transparent;
+}
+
 .group-workspace-resize-handle {
     position: absolute;
     inset-inline-start: -7px;
@@ -3051,6 +3097,33 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     .group-workspace-resize-handle {
         display: none;
+    }
+
+    .tool-panel-enter-active,
+    .tool-panel-leave-active {
+        transition:
+            transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+            opacity 0.16s ease;
+    }
+
+    .tool-panel-enter-from,
+    .tool-panel-leave-to {
+        width: 100% !important;
+        transform: translateX(100%);
+    }
+
+    :global([dir='rtl']) {
+        .tool-panel-enter-from,
+        .tool-panel-leave-to {
+            transform: translateX(-100%);
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tool-panel-enter-active,
+    .tool-panel-leave-active {
+        transition-duration: 0.01ms;
     }
 }
 

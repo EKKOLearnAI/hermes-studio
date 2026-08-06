@@ -387,6 +387,7 @@ test('keeps the chat tool drawer unchanged in LTR and mirrors its resize seam in
   const panel = page.locator('.chat-tool-panel')
   const handle = page.locator('.chat-tool-resize-handle')
   await expect(panel).toBeVisible()
+  await expect(panel).not.toHaveClass(/tool-panel-enter-active/)
 
   const geometry = async () => {
     const [wrapperBox, panelBox, handleBox] = await Promise.all([
