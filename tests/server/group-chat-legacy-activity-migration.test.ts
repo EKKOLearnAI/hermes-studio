@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, type Server as HttpServer } from 'node:http'
 
 const dbState = vi.hoisted(() => ({
@@ -92,34 +95,49 @@ describe('group chat legacy activity migration', () => {
     server.getIO().close()
   })
 
-  it('keeps timestamps rejected as future values untrusted across later initializations', async () => {
-    dbState.db?.exec(`
-      CREATE TABLE gc_rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, inviteCode TEXT UNIQUE);
-      CREATE TABLE gc_messages (
-        id TEXT PRIMARY KEY, roomId TEXT NOT NULL, senderId TEXT NOT NULL, senderName TEXT NOT NULL,
-        content TEXT NOT NULL, timestamp INTEGER NOT NULL, role TEXT NOT NULL DEFAULT 'user'
-      );
-    `)
-    dbState.db?.prepare('INSERT INTO gc_rooms (id, name) VALUES (?, ?)').run('room-1', 'Room')
-    dbState.db?.prepare(
-      'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run('future-on-first-upgrade', 'room-1', 'user-1', 'User', 'future', 1_000_001)
+  it('persists the migration boundary across a database restart so future timestamps never become trusted later', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'group-chat-activity-'))
+    const path = join(dir, 'legacy.sqlite')
+    dbState.db?.close()
+    dbState.db = new DatabaseSync(path)
+    try {
+      dbState.db.exec(`
+        CREATE TABLE gc_rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, inviteCode TEXT UNIQUE);
+        CREATE TABLE gc_messages (
+          id TEXT PRIMARY KEY, roomId TEXT NOT NULL, senderId TEXT NOT NULL, senderName TEXT NOT NULL,
+          content TEXT NOT NULL, timestamp INTEGER NOT NULL, role TEXT NOT NULL DEFAULT 'user'
+        );
+      `)
+      dbState.db.prepare('INSERT INTO gc_rooms (id, name) VALUES (?, ?)').run('room-1', 'Room')
+      dbState.db.prepare(
+        'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run('future-on-first-upgrade', 'room-1', 'user-1', 'User', 'future', 1_000_001)
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
-    vi.useFakeTimers()
-    vi.setSystemTime(1_000_000)
-    initAllHermesTables()
-    expect(dbState.db?.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
-      persistedAt: 0,
-    })
+      const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+      vi.useFakeTimers()
+      vi.setSystemTime(1_000_000)
+      initAllHermesTables()
+      expect(dbState.db.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
+        persistedAt: 0,
+      })
+      expect(dbState.db.prepare('SELECT migrationCutoff FROM gc_activity_migrations WHERE id = ?').get('legacy-activity-times-v1')).toEqual({
+        migrationCutoff: 1_000_000,
+      })
 
-    vi.setSystemTime(1_000_002)
-    initAllHermesTables()
-    expect(dbState.db?.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
-      persistedAt: 0,
-    })
-    vi.useRealTimers()
-  })
+      dbState.db.close()
+      dbState.db = new DatabaseSync(path)
+      vi.setSystemTime(1_000_002)
+      initAllHermesTables()
+      expect(dbState.db.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
+        persistedAt: 0,
+      })
+    } finally {
+      vi.useRealTimers()
+      dbState.db?.close()
+      dbState.db = null
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 15_000)
 
   it('orders profile, authenticated-member, and owner room lists by activity', async () => {
     const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')

@@ -34,15 +34,14 @@ describe('group chat structured agent mentions', () => {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
-    const reviewer = await connectGroupChatClient(port, 'agent-reviewer', 'Reviewer', {
-      source: 'agent',
-      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
-    })
-    harness.sockets.push(author, reviewer)
+    harness.sockets.push(author)
     await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
-    await emitAck(reviewer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
-    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    const replyToMention = vi.fn(async () => {})
+    ;(groupServer.agentClients as any).rooms.set('room-1', new Map([[
+      'agent-reviewer',
+      { id: 'agent-reviewer', agentId: 'agent-reviewer', name: 'Reviewer', replyToMention },
+    ]]))
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Author')
     const forgedFutureTimestamp = Date.now() + 86_400_000
     await emitAck(author, 'message', {
@@ -56,10 +55,10 @@ describe('group chat structured agent mentions', () => {
       mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
-    expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
+    await vi.waitFor(() => expect(replyToMention).toHaveBeenCalledWith('room-1', expect.objectContaining({
       messageId: 'agent-handoff-1',
       mentions: [{ type: 'agent', participantId: 'agent-reviewer' }],
-    }))
+    }), expect.anything(), expect.any(Function)))
     expect(harness.db.prepare('SELECT mentions FROM gc_messages WHERE id = ?').get('agent-handoff-1')).toEqual({
       mentions: JSON.stringify([{ type: 'agent', participantId: 'agent-reviewer' }]),
     })
@@ -174,6 +173,10 @@ describe('group chat structured agent mentions', () => {
         { type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' },
       ] },
       { id: 'invalid-all', content: '@all verify', mentions: [{ type: 'all', displayName: 'ALL' }] },
+      { id: 'incomplete-agent', content: '@Reviewer verify', mentions: [{ type: 'agent', participantId: 'agent-reviewer' }] },
+      { id: 'invalid-type', content: '@Reviewer verify', mentions: [{ type: 'human', participantId: 'agent-reviewer', displayName: 'Reviewer' }] },
+      { id: 'inconsistent-content', content: 'please verify', mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }] },
+      { id: 'all-with-explicit-agent', content: '@all @Reviewer verify', mentions: [{ type: 'all', displayName: 'all' }] },
     ]
 
     for (const testCase of cases) {
