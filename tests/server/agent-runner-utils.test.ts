@@ -442,6 +442,52 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('ignores proxy terminal failures while a native Codex process is still running', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-retry',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-codex-retry',
+      command: 'codex',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get('agent-session-codex-retry')
+    run.currentChild = { exitCode: null, signalCode: null, killed: false }
+
+    manager.handleResponseEvent('agent-session-codex-retry', {
+      type: 'response.failed',
+      data: {
+        response: {
+          id: 'provider-attempt-1',
+          status: 'failed',
+          error: {
+            message: 'Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)',
+          },
+          output: [],
+        },
+      },
+    })
+
+    expect(run.terminalEventHandled).not.toBe(true)
+    expect(run.pendingChatCompletionEvent).toBeUndefined()
+    expect(emitted).not.toHaveBeenCalledWith('chat-session-codex-retry', 'run.failed', expect.anything())
+    manager.shutdown()
+  })
+
   it('clears shared chat session run state when a print turn completes', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()

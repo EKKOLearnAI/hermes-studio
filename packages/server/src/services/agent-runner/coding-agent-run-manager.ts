@@ -679,11 +679,13 @@ export class CodingAgentRunManager {
     const isTerminalEvent = storageSafeResponseEvent.type === 'response.completed' || storageSafeResponseEvent.type === 'response.failed'
     if (
       run.launch.agentId === 'codex' &&
-      storageSafeResponseEvent.type === 'response.completed' &&
+      isTerminalEvent &&
       childIsRunning(run.currentChild)
     ) {
-      const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
-      run.codexPendingUsage = final?.usage ?? run.codexPendingUsage
+      if (storageSafeResponseEvent.type === 'response.completed') {
+        const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
+        run.codexPendingUsage = final?.usage ?? run.codexPendingUsage
+      }
       return
     }
     if (isTerminalEvent) {
