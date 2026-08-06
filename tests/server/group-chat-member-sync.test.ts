@@ -42,6 +42,54 @@ describe('Group Chat member/agent identity sync', () => {
     socketHandlers.clear()
   })
 
+  it('broadcasts typing only for a socket that is currently joined to the room', () => {
+    const broadcast = vi.fn()
+    const onlineMember = {
+      id: 'member-1',
+      userId: 'human-1',
+      name: 'Human',
+      description: '',
+      joinedAt: 1,
+      online: true,
+      socketId: 'socket-1',
+      source: 'human',
+      avatar: '',
+    }
+    const roomState = {
+      getOnlineMemberBySocketId: vi.fn((socketId: string) => (
+        socketId === 'socket-1' ? onlineMember : undefined
+      )),
+    }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', roomState]])
+    server.typingState = new Map()
+    const socket = {
+      id: 'socket-1',
+      to: vi.fn(() => ({ emit: broadcast })),
+    }
+
+    server.handleTyping(socket, { roomId: 'room-1' })
+
+    expect(broadcast).toHaveBeenCalledWith('typing', {
+      roomId: 'room-1',
+      userId: 'human-1',
+      userName: 'Human',
+    })
+    expect(server.typingState.get('room-1').has('human-1')).toBe(true)
+
+    server.handleStopTyping(socket, { roomId: 'room-1' })
+    expect(broadcast).toHaveBeenCalledWith('stop_typing', {
+      roomId: 'room-1',
+      userId: 'human-1',
+    })
+    expect(server.typingState.has('room-1')).toBe(false)
+
+    broadcast.mockClear()
+    server.handleTyping({ ...socket, id: 'outsider-socket' }, { roomId: 'room-1' })
+    server.handleStopTyping({ ...socket, id: 'outsider-socket' }, { roomId: 'room-1' })
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+
   it('uses the persisted group-chat agent id as the runtime agent id and socket user id', async () => {
     const clients = new AgentClients()
 

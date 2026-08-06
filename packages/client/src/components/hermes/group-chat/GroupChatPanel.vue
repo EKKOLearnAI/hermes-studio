@@ -1433,7 +1433,10 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             :key="member.id"
                             type="button"
                             class="agent-avatar-rail-item agent-avatar-rail-user"
-                            :class="{ 'agent-avatar-rail-current-user': member.userId === store.userId }"
+                            :class="{
+                                'agent-avatar-rail-current-user': member.userId === store.userId,
+                                'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId),
+                            }"
                             :title="member.userId === store.userId ? t('groupChat.yourName') : member.name"
                             :aria-label="member.userId === store.userId ? t('groupChat.yourName') : member.name"
                             :disabled="member.userId !== store.userId"
@@ -2629,6 +2632,11 @@ export default defineComponent({ components: { CreateRoomForm } })
     border-color: rgba(var(--accent-primary-rgb), 0.28);
 }
 
+.agent-avatar-rail-typing {
+    border-color: rgba(var(--accent-primary-rgb), 0.72);
+    animation: member-avatar-typing-breathe 1.6s ease-in-out infinite;
+}
+
 .agent-avatar-rail-active {
     border-color: transparent;
     animation: agent-avatar-rainbow-glow 4s linear infinite;
@@ -2722,6 +2730,21 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+@keyframes member-avatar-typing-breathe {
+    0%,
+    100% {
+        box-shadow:
+            0 0 0 1px rgba(var(--accent-primary-rgb), 0.18),
+            0 0 5px rgba(var(--accent-primary-rgb), 0.12);
+    }
+
+    50% {
+        box-shadow:
+            0 0 0 3px rgba(var(--accent-primary-rgb), 0.28),
+            0 0 14px rgba(var(--accent-primary-rgb), 0.42);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .agent-avatar-rail-active {
         animation: none;
@@ -2729,6 +2752,11 @@ export default defineComponent({ components: { CreateRoomForm } })
             0 0 0 2px #ff6b6b,
             0 0 10px rgba(255, 107, 107, 0.4),
             0 0 20px rgba(255, 107, 107, 0.2);
+    }
+
+    .agent-avatar-rail-typing {
+        animation: none;
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.24);
     }
 }
 

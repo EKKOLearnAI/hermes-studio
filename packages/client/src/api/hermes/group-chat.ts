@@ -169,7 +169,10 @@ export interface JoinResult {
 let socket: ReturnType<typeof io> | null = null
 
 export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
-    if (socket?.connected) return socket
+    // Keep one Socket.IO instance while it reconnects. Replacing a disconnected
+    // instance leaves the old reconnection loop alive and can split join/message
+    // events across different socket ids.
+    if (socket) return socket
 
     const token = getApiKey()
     const userId = opts?.userId || localStorage.getItem('gc_user_id') || generateUUID()

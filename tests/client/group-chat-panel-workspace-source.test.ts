@@ -138,6 +138,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(rail).toContain('v-for="agent in store.agents"')
     expect(rail).toContain('class="agent-avatar-rail-item"')
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
+    expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
     expect(rail).toContain('@click="handleRoomMemberClick(member)"')
     expect(rail).toContain('@click="handleEditAgent(agent)"')
     expect(rail).toContain('class="agent-avatar-rail-add"')
@@ -147,6 +148,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('const showMemberRail = ref(true)')
     expect(source).toContain('@click="showMemberRail = !showMemberRail"')
     expect(source).toContain('overflow-y: auto')
+    expect(source).toContain('animation: member-avatar-typing-breathe 1.6s ease-in-out infinite')
+    expect(source).toContain('@keyframes member-avatar-typing-breathe')
   })
 
   it('moves active agent status and interruption from the input status bar to the avatar rail', () => {

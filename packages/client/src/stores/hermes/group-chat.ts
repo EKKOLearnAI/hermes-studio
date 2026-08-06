@@ -88,6 +88,10 @@ function uid(): string {
 const STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS = 300
 export const GROUP_CHAT_MESSAGE_PAGE_SIZE = 150
 export const GROUP_CHAT_MAX_DISPLAY_MESSAGES = 600
+const GROUP_CHAT_JOIN_TIMEOUT_MS = 30000
+const GROUP_CHAT_TYPING_HEARTBEAT_MS = 2500
+const GROUP_CHAT_TYPING_IDLE_MS = 4000
+const GROUP_CHAT_REMOTE_TYPING_TTL_MS = 5000
 
 function normalizeLocalFilePath(path: string): string {
     return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
@@ -154,6 +158,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const isJoining = ref(false)
     const error = ref<string | null>(null)
     const typingUsers = ref<Map<string, { name: string; timer: ReturnType<typeof setTimeout> }>>(new Map())
+    const realtimeJoinedRoomId = ref<string | null>(null)
+    const realtimeJoinedSocketId = ref<string | null>(null)
     const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
     const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
@@ -165,7 +171,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const hasReachedMessageDisplayLimit = computed(() =>
         hasMoreBefore.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
     )
-const currentUserAvatar = ref('')
+    const currentUserAvatar = ref('')
 
     function resetMessagePaging() {
         totalMessages.value = 0
@@ -270,6 +276,26 @@ const currentUserAvatar = ref('')
         else rooms.value.push(room)
     }
 
+    function clearRemoteTypingState() {
+        for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
+        typingUsers.value = new Map()
+    }
+
+    function refreshRemoteTypingUser(userId: string, userName: string) {
+        const existing = typingUsers.value.get(userId)
+        if (existing) clearTimeout(existing.timer)
+        const timer = setTimeout(() => {
+            typingUsers.value.delete(userId)
+            typingUsers.value = new Map(typingUsers.value)
+        }, GROUP_CHAT_REMOTE_TYPING_TTL_MS)
+        typingUsers.value.set(userId, { name: userName, timer })
+        typingUsers.value = new Map(typingUsers.value)
+    }
+
+    function isUserTyping(memberUserId: string) {
+        return typingUsers.value.has(memberUserId)
+    }
+
     function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
         members.value = res.members || []
         if (res.agents) agents.value = res.agents
@@ -294,12 +320,10 @@ const currentUserAvatar = ref('')
 
         // Restore typing state from server. Replace the local transient map so
         // a reconnect cannot leave stale typers from the pre-reconnect socket.
-        for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
-        typingUsers.value.clear()
+        clearRemoteTypingState()
         if (res.typingUsers) {
             for (const u of res.typingUsers) {
-                const timer = setTimeout(() => typingUsers.value.delete(u.userId), 5000)
-                typingUsers.value.set(u.userId, { name: u.userName, timer })
+                refreshRemoteTypingUser(u.userId, u.userName)
             }
         }
 
@@ -313,6 +337,11 @@ const currentUserAvatar = ref('')
         }
     }
 
+    let connectPromise: Promise<void> | null = null
+    let boundSocket: GroupChatSocket | null = null
+    let connectionGeneration = 0
+    let pendingRealtimeJoin: { key: string; promise: Promise<void> } | null = null
+
     async function waitForRealtimeSocket(socket: GroupChatSocket): Promise<void> {
         if (socket.connected) return
         await new Promise<void>((resolve, reject) => {
@@ -321,7 +350,6 @@ const currentUserAvatar = ref('')
             const cleanup = () => {
                 if (timeout) clearTimeout(timeout)
                 socket.off?.('connect', onConnect)
-                socket.off?.('connect_error', onError)
             }
             const finish = (fn: () => void) => {
                 if (settled) return
@@ -330,10 +358,8 @@ const currentUserAvatar = ref('')
                 fn()
             }
             const onConnect = () => finish(resolve)
-            const onError = (err: Error) => finish(() => reject(err))
-            timeout = setTimeout(() => finish(() => reject(new Error('Group chat socket connection timed out'))), 30000)
+            timeout = setTimeout(() => finish(() => reject(new Error('Group chat socket connection timed out'))), GROUP_CHAT_JOIN_TIMEOUT_MS)
             socket.once('connect', onConnect)
-            socket.once('connect_error', onError)
         })
     }
 
@@ -351,12 +377,39 @@ const currentUserAvatar = ref('')
 
     async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean; inviteCode?: string } = {}) {
         const socket = await ensureRealtimeSocket()
+        const socketId = socket.id
+        if (!socketId) throw new Error('Group chat socket not connected')
+        if (
+            realtimeJoinedRoomId.value === roomId &&
+            realtimeJoinedSocketId.value === socketId
+        ) return
+
+        const joinKey = `${socketId}:${roomId}`
+        if (pendingRealtimeJoin?.key === joinKey) {
+            await pendingRealtimeJoin.promise
+            return
+        }
+
         // Browser storage is only a first-join default. Once the member row
         // exists, the server keeps the room-specific profile authoritative.
         const storedName = getStoredGroupUserName()
         const storedDescription = localStorage.getItem('gc_user_description')
 
-        await new Promise<void>((resolve) => {
+        const joinGeneration = connectionGeneration
+        const joinPromise = new Promise<void>((resolve, reject) => {
+            let settled = false
+            const timeout = setTimeout(() => {
+                if (settled) return
+                settled = true
+                reject(new Error('Group chat room join timed out'))
+            }, GROUP_CHAT_JOIN_TIMEOUT_MS)
+            const finish = (fn: () => void) => {
+                if (settled) return
+                settled = true
+                clearTimeout(timeout)
+                fn()
+            }
+
             socket.emit('join', {
                 roomId,
                 inviteCode: options.inviteCode,
@@ -364,17 +417,49 @@ const currentUserAvatar = ref('')
                 description: storedDescription || undefined,
             }, (res: any) => {
                 if (currentRoomId.value !== roomId) {
-                    resolve()
+                    finish(resolve)
                     return
                 }
-                if (!res?.error) {
-                    applyRealtimeJoinState(res, options)
-                } else {
-                    error.value = res.error
+                if (
+                    connectionGeneration !== joinGeneration ||
+                    !socket.connected ||
+                    socket.id !== socketId
+                ) {
+                    finish(() => reject(new Error('Group chat socket changed while joining room')))
+                    return
                 }
-                resolve()
+                if (res?.error) {
+                    error.value = res.error
+                    finish(() => reject(new Error(res.error)))
+                    return
+                }
+                applyRealtimeJoinState(res, options)
+                realtimeJoinedRoomId.value = roomId
+                realtimeJoinedSocketId.value = socketId
+                finish(resolve)
             })
         })
+
+        pendingRealtimeJoin = { key: joinKey, promise: joinPromise }
+        try {
+            await joinPromise
+        } finally {
+            if (pendingRealtimeJoin?.promise === joinPromise) pendingRealtimeJoin = null
+        }
+    }
+
+    async function ensureRealtimeRoomReady(roomId: string): Promise<GroupChatSocket> {
+        await joinRealtimeRoom(roomId)
+        const socket = getSocket()
+        if (
+            !socket ||
+            currentRoomId.value !== roomId ||
+            realtimeJoinedRoomId.value !== roomId ||
+            realtimeJoinedSocketId.value !== socket.id
+        ) {
+            throw new Error('Group chat room changed before the realtime join completed')
+        }
+        return socket
     }
 
     // ─── Computed ───────────────────────────────────────────
@@ -398,6 +483,17 @@ const currentUserAvatar = ref('')
 
     // ─── Connection ────────────────────────────────────────
     async function connect() {
+        if (connectPromise) return connectPromise
+        const promise = connectOnce()
+        connectPromise = promise
+        try {
+            await promise
+        } finally {
+            if (connectPromise === promise) connectPromise = null
+        }
+    }
+
+    async function connectOnce() {
         let authUserId: number | undefined
         const connectionName = getStoredGroupUserName()
         try {
@@ -414,9 +510,18 @@ const currentUserAvatar = ref('')
         })
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })
 
-        socket.on('connect', () => {
+        if (boundSocket === socket) {
+            connected.value = socket.connected
+            return
+        }
+        boundSocket = socket
+
+        const handleConnected = () => {
             console.log('[GroupChat] connected, socket id:', socket.id)
+            connectionGeneration += 1
             connected.value = true
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
             error.value = null
             const roomId = currentRoomId.value
             if (roomId) {
@@ -424,17 +529,26 @@ const currentUserAvatar = ref('')
                     error.value = err.message
                 })
             }
-        })
+        }
+
+        socket.on('connect', handleConnected)
 
         socket.on('disconnect', (reason) => {
             console.log('[GroupChat] disconnected:', reason)
+            connectionGeneration += 1
             connected.value = false
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
+            pendingRealtimeJoin = null
+            resetLocalTypingState()
         })
 
         socket.on('connect_error', (err: Error) => {
             console.error('[GroupChat] connect_error:', err.message)
             error.value = err.message
             connected.value = false
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
         })
 
         socket.on('message', (msg: ChatMessage) => {
@@ -570,10 +684,8 @@ const currentUserAvatar = ref('')
         })
 
         socket.on('typing', (data: { roomId: string; userId: string; userName: string }) => {
-            if (data.roomId === currentRoomId.value && !typingUsers.value.has(data.userId)) {
-                const timer = setTimeout(() => typingUsers.value.delete(data.userId), 5000)
-                typingUsers.value.set(data.userId, { name: data.userName, timer })
-            }
+            if (data.roomId !== currentRoomId.value || data.userId === userId.value) return
+            refreshRemoteTypingUser(data.userId, data.userName)
         })
 
         socket.on('stop_typing', (data: { roomId: string; userId: string }) => {
@@ -581,6 +693,7 @@ const currentUserAvatar = ref('')
                 const entry = typingUsers.value.get(data.userId)!
                 clearTimeout(entry.timer)
                 typingUsers.value.delete(data.userId)
+                typingUsers.value = new Map(typingUsers.value)
             }
         })
 
@@ -653,23 +766,32 @@ const currentUserAvatar = ref('')
             if (data.roomId === currentRoomId.value) {
                 messages.value = []
                 resetMessagePaging()
-                typingUsers.value.clear()
+                clearRemoteTypingState()
                 contextStatuses.value.clear()
                 pendingApprovals.value.clear()
             }
         })
+
+        if (socket.connected) handleConnected()
     }
 
     function disconnect() {
+        connectionGeneration += 1
+        resetLocalTypingState()
+        clearRemoteTypingState()
         disconnectGroupChat()
+        boundSocket = null
+        connectPromise = null
+        pendingRealtimeJoin = null
         connected.value = false
+        realtimeJoinedRoomId.value = null
+        realtimeJoinedSocketId.value = null
         currentRoomId.value = null
         messages.value = []
         resetMessagePaging()
         members.value = []
         agents.value = []
         roomName.value = ''
-        typingUsers.value.clear()
         contextStatuses.value.clear()
         roomSummaryStates.value.clear()
         pendingApprovals.value.clear()
@@ -683,11 +805,11 @@ const currentUserAvatar = ref('')
 
     async function updateCurrentMemberProfile(name: string, description = '') {
         const roomId = currentRoomId.value
-        const socket = getSocket()
         const normalizedName = name.trim()
         const normalizedDescription = description.trim()
-        if (!roomId || !socket) throw new Error('Join a room before updating your profile')
+        if (!roomId) throw new Error('Join a room before updating your profile')
         if (!normalizedName) throw new Error('Name is required')
+        const socket = await ensureRealtimeRoomReady(roomId)
 
         await new Promise<void>((resolve, reject) => {
             socket.emit('update_member_profile', {
@@ -714,23 +836,25 @@ const currentUserAvatar = ref('')
 
         try {
             const res = await getRoomDetail(roomId)
+            const previousRoomId = currentRoomId.value
+            if (previousRoomId && previousRoomId !== res.room.id) emitStopTyping(previousRoomId)
             upsertRoom(res.room)
             currentRoomId.value = res.room.id
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
+            if (previousRoomId !== res.room.id) clearRemoteTypingState()
             roomName.value = res.room.name
             messages.value = res.messages
             applyMessagePaging(res)
             agents.value = res.agents
             members.value = res.members || []
+            await joinRealtimeRoom(res.room.id)
         } catch (err: any) {
             error.value = err.message
             throw err
         } finally {
             isJoining.value = false
         }
-
-        // Join via socket for real-time updates. Reconnect uses the same path
-        // so the browser socket is a room member before the next send.
-        await joinRealtimeRoom(roomId)
     }
 
     async function loadOlderMessages(): Promise<boolean> {
@@ -758,10 +882,8 @@ const currentUserAvatar = ref('')
     }
 
     async function sendMessage(content: string, attachments?: Attachment[]) {
-        const socket = getSocket()
-        if (!socket || !currentRoomId.value) return
+        if (!currentRoomId.value) return
         const roomId = currentRoomId.value
-        emitStopTyping()
         const messageId = uid()
         const messageReference = messageReferences.value.get(roomId) || null
         const submittedContent = messageReference
@@ -769,13 +891,14 @@ const currentUserAvatar = ref('')
             : content.trim()
         clearMessageReference(roomId)
         let finalContent: string | ContentBlock[] = submittedContent
+        let optimisticMessage: ChatMessage | null = null
         if (attachments?.length) {
             const uploaded = await uploadGroupFiles(attachments)
             finalContent = buildGroupContentBlocks(submittedContent, attachments, uploaded)
             const urlMap = new Map(uploaded.map(f => {
                 return [f.name, getDownloadUrl(normalizeLocalFilePath(f.path), f.name)]
             }))
-            messages.value.push({
+            optimisticMessage = {
                 id: messageId,
                 roomId,
                 senderId: userId.value,
@@ -784,13 +907,19 @@ const currentUserAvatar = ref('')
                 timestamp: Date.now(),
                 role: 'user',
                 attachments: attachments.map(att => ({ ...att, url: urlMap.get(att.name) || att.url, file: undefined })),
-            })
+            }
+        }
+
+        const socket = await ensureRealtimeRoomReady(roomId)
+        if (optimisticMessage) {
+            messages.value.push(optimisticMessage)
             loadedMessageCount.value += 1
             totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
         }
 
+        emitStopTyping(roomId)
         return new Promise<void>((resolve, reject) => {
-            socket!.emit('message', { roomId, id: messageId, content: finalContent }, (res: { id?: string; error?: string }) => {
+            socket.emit('message', { roomId, id: messageId, content: finalContent }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)
                     reject(new Error(res.error))
@@ -866,7 +995,11 @@ const currentUserAvatar = ref('')
             roomSummaryStates.value = new Map(roomSummaryStates.value)
             clearMessageReference(roomId)
             if (currentRoomId.value === roomId) {
+                resetLocalTypingState()
+                clearRemoteTypingState()
                 currentRoomId.value = null
+                realtimeJoinedRoomId.value = null
+                realtimeJoinedSocketId.value = null
                 messages.value = []
                 resetMessagePaging()
                 members.value = []
@@ -898,7 +1031,7 @@ const currentUserAvatar = ref('')
             messages.value = []
             clearMessageReference(roomId)
             resetMessagePaging()
-            typingUsers.value.clear()
+            clearRemoteTypingState()
             contextStatuses.value.clear()
             roomSummaryStates.value.delete(roomId)
             roomSummaryStates.value = new Map(roomSummaryStates.value)
@@ -988,27 +1121,59 @@ const currentUserAvatar = ref('')
 
     // ─── Typing ────────────────────────────────────────────
     let _typingTimer: ReturnType<typeof setTimeout> | null = null
+    let _typingRoomId: string | null = null
+    let _lastTypingEmitAt = 0
+
+    function resetLocalTypingState() {
+        if (_typingTimer) clearTimeout(_typingTimer)
+        _typingTimer = null
+        _typingRoomId = null
+        _lastTypingEmitAt = 0
+    }
 
     function emitTyping() {
         const socket = getSocket()
-        if (!socket || !currentRoomId.value) return
-        socket.emit('typing', { roomId: currentRoomId.value })
+        const roomId = currentRoomId.value
+        if (
+            !socket ||
+            !roomId ||
+            realtimeJoinedRoomId.value !== roomId ||
+            realtimeJoinedSocketId.value !== socket.id
+        ) return
+
+        const now = Date.now()
+        if (
+            _typingRoomId !== roomId ||
+            now - _lastTypingEmitAt >= GROUP_CHAT_TYPING_HEARTBEAT_MS
+        ) {
+            socket.emit('typing', { roomId })
+            _typingRoomId = roomId
+            _lastTypingEmitAt = now
+        }
         if (_typingTimer) clearTimeout(_typingTimer)
-        _typingTimer = setTimeout(() => emitStopTyping(), 4000)
+        _typingTimer = setTimeout(() => emitStopTyping(roomId), GROUP_CHAT_TYPING_IDLE_MS)
     }
 
-    function emitStopTyping() {
+    function emitStopTyping(roomId = _typingRoomId || currentRoomId.value || '') {
+        const wasTyping = Boolean(roomId) && _typingRoomId === roomId
+        resetLocalTypingState()
         const socket = getSocket()
-        if (!socket || !currentRoomId.value) return
-        socket.emit('stop_typing', { roomId: currentRoomId.value })
-        if (_typingTimer) { clearTimeout(_typingTimer); _typingTimer = null }
+        if (
+            !socket ||
+            !roomId ||
+            !wasTyping ||
+            realtimeJoinedRoomId.value !== roomId ||
+            realtimeJoinedSocketId.value !== socket.id
+        ) return
+        socket.emit('stop_typing', { roomId })
     }
 
     async function interruptAgent(agentName: string) {
-        const socket = getSocket()
-        if (!socket || !currentRoomId.value) return
+        const roomId = currentRoomId.value
+        if (!roomId) return
+        const socket = await ensureRealtimeRoomReady(roomId)
         await new Promise<void>((resolve, reject) => {
-            socket.emit('interrupt_agent', { roomId: currentRoomId.value, agentName }, (res: any) => {
+            socket.emit('interrupt_agent', { roomId, agentName }, (res: any) => {
                 if (res?.error) reject(new Error(res.error))
                 else {
                     // The server also broadcasts ready. Clear optimistically on
@@ -1022,9 +1187,9 @@ const currentUserAvatar = ref('')
     }
 
     async function respondApproval(choice: GroupPendingApproval['choices'][number]) {
-        const socket = getSocket()
         const pending = activePendingApproval.value
-        if (!socket || !pending) return
+        if (!pending) return
+        const socket = await ensureRealtimeRoomReady(pending.roomId)
         await new Promise<void>((resolve, reject) => {
             socket.emit('approval.respond', {
                 roomId: pending.roomId,
@@ -1070,6 +1235,7 @@ const currentUserAvatar = ref('')
         memberNames,
         typingNames,
         typingText,
+        isUserTyping,
         // Actions
         connect,
         disconnect,

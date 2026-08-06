@@ -149,6 +149,7 @@ describe('group chat store baseline lifecycle', () => {
     authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
     fetchMock.mockReset()
     groupChatApiMock.socket.connected = true
+    groupChatApiMock.socket.id = 'socket-1'
     groupChatApiMock.socket.on.mockClear()
     groupChatApiMock.socket.once.mockClear()
     groupChatApiMock.socket.off.mockClear()
@@ -400,6 +401,97 @@ describe('group chat store baseline lifecycle', () => {
       content: 'hello room',
     }), expect.any(Function))
     expect(store.error).toBeNull()
+  })
+
+  it('waits for a reconnect room join before sending the next message', async () => {
+    const store = await loadStore()
+    let reconnectJoinAck: Function | undefined
+    groupChatApiMock.getSocket.mockImplementation((options?: { requireConnected?: boolean }) => (
+      groupChatApiMock.socket.connected || options?.requireConnected === false ? groupChatApiMock.socket : null
+    ))
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        if (groupChatApiMock.socket.id === 'socket-1') {
+          ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+        } else {
+          reconnectJoinAck = ack
+        }
+      }
+      if (event === 'message' && ack) ack({ id: data?.id })
+      return groupChatApiMock.socket
+    })
+
+    await store.connect()
+    await store.joinRoom('room-1')
+    groupChatApiMock.socket.emit.mockClear()
+
+    groupChatApiMock.socket.connected = false
+    emitSocket('disconnect', 'transport close')
+    groupChatApiMock.socket.id = 'socket-2'
+    groupChatApiMock.socket.connected = true
+    emitSocket('connect', undefined)
+
+    const sending = store.sendMessage('after reconnect')
+    await Promise.resolve()
+
+    expect(reconnectJoinAck).toEqual(expect.any(Function))
+    expect(groupChatApiMock.socket.emit).not.toHaveBeenCalledWith(
+      'message',
+      expect.anything(),
+      expect.any(Function),
+    )
+
+    reconnectJoinAck?.({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+    await sending
+
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({ roomId: 'room-1', content: 'after reconnect' }),
+      expect.any(Function),
+    )
+  })
+
+  it('throttles typing heartbeats and stops after the input becomes idle', async () => {
+    vi.useFakeTimers()
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+    groupChatApiMock.socket.emit.mockClear()
+
+    store.emitTyping()
+    store.emitTyping()
+    store.emitTyping()
+
+    expect(groupChatApiMock.socket.emit.mock.calls.filter(call => call[0] === 'typing')).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(2499)
+    store.emitTyping()
+    expect(groupChatApiMock.socket.emit.mock.calls.filter(call => call[0] === 'typing')).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1)
+    store.emitTyping()
+    expect(groupChatApiMock.socket.emit.mock.calls.filter(call => call[0] === 'typing')).toHaveLength(2)
+
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(groupChatApiMock.socket.emit.mock.calls.filter(call => call[0] === 'stop_typing')).toHaveLength(1)
+  })
+
+  it('refreshes and expires the remote avatar typing state', async () => {
+    vi.useFakeTimers()
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    emitSocket('typing', { roomId: 'room-1', userId: 'user-2', userName: 'Bob' })
+    expect(store.isUserTyping('user-2')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(4000)
+    emitSocket('typing', { roomId: 'room-1', userId: 'user-2', userName: 'Bob' })
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(store.isUserTyping('user-2')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.isUserTyping('user-2')).toBe(false)
   })
 
   it('sends a group reference with explicit agent markup and clears the draft reference', async () => {

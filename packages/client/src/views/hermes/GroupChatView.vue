@@ -35,7 +35,7 @@ async function syncRouteRoom() {
 }
 
 onMounted(async () => {
-    store.connect()
+    await store.connect()
     await Promise.all([
         store.loadRooms(),
         settingsStore.fetchSettings(),
