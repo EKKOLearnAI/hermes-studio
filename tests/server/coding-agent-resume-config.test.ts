@@ -381,4 +381,40 @@ describe('coding agent resumed session config', () => {
     expect(startRunMock).toHaveBeenCalled()
     expect(home).toBeTruthy()
   })
+
+  it('resolves Profile credentials for a new session from an explicit execution identity', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue(null)
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-codex',
+        base_url: 'https://provider.example/v1',
+        api_key: 'test-only',
+        model: 'gpt-5.6-terra',
+        api_mode: 'codex_responses',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await expect(startCodingAgentRun('codex', {
+      sessionId: 'new-session',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:corp-codex',
+      model: 'gpt-5.6-terra',
+      apiMode: 'codex_responses',
+    })).resolves.toEqual(expect.objectContaining({
+      provider: 'custom:corp-codex',
+      model: 'gpt-5.6-terra',
+      apiMode: 'codex_responses',
+    }))
+
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'new-session',
+      provider: 'custom:corp-codex',
+      model: 'gpt-5.6-terra',
+      apiMode: 'codex_responses',
+    }))
+  })
 })

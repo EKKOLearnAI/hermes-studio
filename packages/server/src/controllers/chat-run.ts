@@ -2,6 +2,7 @@ import type { Context } from 'koa'
 import { randomUUID } from 'crypto'
 import { io, type Socket } from 'socket.io-client'
 import { config } from '../config'
+import { resolveModelExecutionIdentity } from '../services/model-execution-identity'
 
 type ChatRunPayload = Record<string, unknown> & {
   input?: unknown
@@ -103,6 +104,29 @@ export async function runOnce(ctx: Context) {
   const token = bearerToken(ctx)
   const profile = profileFrom(ctx, body)
   const payload: Record<string, unknown> = { ...userBody(body), profile }
+  const isCodingAgentRun = body.source === 'coding_agent' || body.coding_agent_id != null || body.agent_id != null
+  if (isCodingAgentRun) {
+    try {
+      const identity = await resolveModelExecutionIdentity({
+        profile,
+        provider: body.provider,
+        model: body.model,
+        apiMode: body.apiMode ?? body.api_mode,
+      })
+      payload.provider = identity.provider
+      payload.model = identity.model
+      payload.apiMode = identity.apiMode
+      delete payload.api_mode
+      delete payload.apiKey
+      delete payload.api_key
+      delete payload.baseUrl
+      delete payload.base_url
+    } catch (error: any) {
+      ctx.status = Number(error?.status) || 400
+      ctx.body = { ok: false, error: error?.message || 'Invalid execution identity' }
+      return
+    }
+  }
   if (needsGeneratedSessionId(payload)) payload.session_id = generatedSessionId()
 
   ctx.body = await new Promise((resolve) => {
