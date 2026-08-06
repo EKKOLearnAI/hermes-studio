@@ -1727,13 +1727,13 @@ describe('coding agent chat event mapper', () => {
 })
 
 describe('response stream tool detail events', () => {
-  it('emits updated tool.started payloads as function-call arguments stream in', () => {
+  it('buffers function-call argument deltas and emits tool.started once arguments are complete', () => {
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
       response: { id: 'resp-1', status: 'in_progress' },
     })
     const started = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.added', {
-      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '' },
+      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{}' },
     })
     const withCommand = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.function_call_arguments.delta', {
       item_id: 'call-1',
@@ -1743,26 +1743,48 @@ describe('response stream tool detail events', () => {
       item_id: 'call-1',
       delta: '}',
     })
+    const completedArguments = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+    })
+    const duplicateDone = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+    })
+
+    expect(started).toBeNull()
+    expect(withCommand).toBeNull()
+    expect(withFinalArgs).toBeNull()
+    expect(completedArguments).toEqual(expect.objectContaining({
+      event: 'tool.started',
+      payload: expect.objectContaining({
+        tool_call_id: 'call-1',
+        tool: 'Bash',
+        arguments: '{"command":"pwd"}',
+      }),
+    }))
+    expect(duplicateDone).toBeNull()
+  })
+
+  it('emits tool.started immediately when an added function call already has complete arguments', () => {
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
+      response: { id: 'resp-1', status: 'in_progress' },
+    })
+    const started = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.added', {
+      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+    })
+    const done = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+      item: { type: 'function_call', call_id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' },
+    })
 
     expect(started).toEqual(expect.objectContaining({
       event: 'tool.started',
       payload: expect.objectContaining({
         tool_call_id: 'call-1',
         tool: 'Bash',
-      }),
-    }))
-    expect(withCommand).toEqual(expect.objectContaining({
-      event: 'tool.started',
-      payload: expect.objectContaining({
-        arguments: '{"command":"pwd"',
-      }),
-    }))
-    expect(withFinalArgs).toEqual(expect.objectContaining({
-      event: 'tool.started',
-      payload: expect.objectContaining({
         arguments: '{"command":"pwd"}',
       }),
     }))
+    expect(done).toBeNull()
   })
 
   it('emits completed tool events with duration', () => {
