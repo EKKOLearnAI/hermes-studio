@@ -24,11 +24,14 @@ describe('group chat legacy activity migration', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     dbState.db?.close()
     dbState.db = null
   })
 
   it('backfills only valid historical compatibility times, derives a missing room creation time, orders by activity, and is idempotent', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
     const cutoff = Date.now()
     dbState.db?.exec(`
       CREATE TABLE gc_rooms (
