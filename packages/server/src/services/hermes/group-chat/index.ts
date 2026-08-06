@@ -9,6 +9,7 @@ import { AgentClients, GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId, typ
 import { SessionDeleter } from '../session-deleter'
 import { countTokens } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
+import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { insertWorkspaceRunChange, deleteWorkspaceRunChangesForRoom, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
@@ -37,6 +38,12 @@ interface ChatMessage {
     reasoning_content?: string | null
     mentionDepth?: number
     agentSessionId?: string
+}
+
+interface PendingGroupApprovalRoute {
+    roomId: string
+    agentName: string
+    agentSessionId: string
 }
 
 function contentToStorageString(content: unknown): string {
@@ -1064,6 +1071,8 @@ export class GroupChatServer {
         status: string
         agentSessionId?: string
     }>>()
+    /** approval id -> validated room and runtime session that requested it. */
+    private pendingApprovalRoutes = new Map<string, PendingGroupApprovalRoute>()
     /** roomId -> blocked Bridge session ids from room-level interrupts/rotations. */
     private fencedRoomAgentSessions = new Map<string, Set<string>>()
 
@@ -1217,6 +1226,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearPendingApprovalRoutes(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
         try {
             await this.agentClients.interruptRoom(roomId)
@@ -1236,6 +1246,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearPendingApprovalRoutes(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
         try {
             await this.agentClients.interruptRoom(roomId)
@@ -1347,8 +1358,8 @@ export class GroupChatServer {
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
-        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => this.handleApprovalRequested(socket, data))
-        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string }) => this.handleApprovalResolved(socket, data))
+        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
+        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
         socket.on('disconnect', () => this.handleDisconnect(socket))
     }
@@ -1857,6 +1868,11 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
+        this.pendingApprovalRoutes.set(data.approval_id, {
+            roomId,
+            agentName,
+            agentSessionId: String(data.agentSessionId || '').trim(),
+        })
         this.emitToRoomManagers(roomId, 'approval.requested', {
             event: 'approval.requested',
             roomId,
@@ -1873,6 +1889,10 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
+        const pendingRoute = this.pendingApprovalRoutes.get(data.approval_id)
+        if (pendingRoute?.roomId === roomId && pendingRoute.agentName === agentName) {
+            this.pendingApprovalRoutes.delete(data.approval_id)
+        }
         this.emitToRoomManagers(roomId, 'approval.resolved', {
             event: 'approval.resolved',
             roomId,
@@ -1897,12 +1917,43 @@ export class GroupChatServer {
             ack?.({ error: 'Access denied' })
             return
         }
+        const pendingRoute = this.pendingApprovalRoutes.get(data.approval_id)
+        if (!pendingRoute || pendingRoute.roomId !== roomId) {
+            ack?.({ error: 'Approval is not pending in this room' })
+            return
+        }
+        const ekkoResult = pendingRoute.agentSessionId
+            ? respondToEkkoToolApproval(
+                pendingRoute.agentSessionId,
+                data.approval_id,
+                data.choice,
+            )
+            : null
+        if (ekkoResult?.handled) {
+            if (!ekkoResult.resolved) {
+                ack?.({ error: 'Approval does not belong to the active Agent session' })
+                return
+            }
+            this.pendingApprovalRoutes.delete(data.approval_id)
+            ack?.({ ok: true, resolved: true })
+            return
+        }
         try {
             const result = await new AgentBridgeClient().approvalRespond(data.approval_id, data.choice || 'deny')
-            ack?.({ ok: true, resolved: Boolean((result as any)?.resolved) })
+            const resolved = Boolean((result as any)?.resolved)
+            if (resolved) this.pendingApprovalRoutes.delete(data.approval_id)
+            ack?.({ ok: true, resolved })
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to respond approval ${data.approval_id}: ${err.message}`)
             ack?.({ error: err.message || 'approval response failed' })
+        }
+    }
+
+    private clearPendingApprovalRoutes(roomId: string): void {
+        const pendingRoutes = this.pendingApprovalRoutes
+        if (!pendingRoutes) return
+        for (const [approvalId, route] of pendingRoutes) {
+            if (route.roomId === roomId) pendingRoutes.delete(approvalId)
         }
     }
 

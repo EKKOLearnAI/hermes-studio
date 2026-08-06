@@ -1532,9 +1532,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
                                         {{ t('chat.approvalAllowOnce') }}
                                     </NButton>
-                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
-                                        {{ t('chat.approvalAllowSession') }}
-                                    </NButton>
                                     <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
                                         {{ t('chat.approvalAlways') }}
                                     </NButton>
