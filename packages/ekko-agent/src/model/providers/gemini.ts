@@ -13,6 +13,7 @@ import type {
   ModelUsage,
 } from '../types'
 import { isPlainRecord, postJson, postStream, readServerSentEvents, parseJson } from '../http'
+import { agentReasoningText, normalizeAgentReasoning } from '../messages'
 
 interface GeminiPayload {
   contents: Array<{
@@ -35,11 +36,15 @@ interface GeminiPayload {
   }>
 }
 
-type GeminiPart =
-  | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
-  | { functionResponse: { name: string; response: Record<string, unknown> } }
-  | { inlineData: { mimeType: string; data: string } }
+interface GeminiPart {
+  text?: string
+  functionCall?: { name: string; args: Record<string, unknown> }
+  functionResponse?: { name: string; response: Record<string, unknown> }
+  inlineData?: { mimeType: string; data: string }
+  thought?: boolean
+  thoughtSignature?: string
+  [key: string]: unknown
+}
 
 interface GeminiResponse {
   candidates?: Array<{
@@ -106,15 +111,27 @@ export class GeminiContentsModelClient implements ModelClient {
       request.signal,
     )
 
+    const streamedParts: GeminiPart[] = []
     for await (const event of readServerSentEvents(response)) {
       const chunk = parseJson<GeminiResponse>(event)
       if (!chunk) continue
+      streamedParts.push(...(chunk.candidates?.[0]?.content?.parts ?? []))
       const normalized = normalizeGeminiResponse(chunk, request.model ?? this.config.defaultModel)
       if (normalized.content) yield { type: 'text-delta', text: normalized.content }
+      const reasoningText = agentReasoningText(normalized.reasoning)
+      if (reasoningText) yield { type: 'reasoning-delta', text: reasoningText }
       for (const toolCall of normalized.toolCalls ?? []) yield { type: 'tool-call', toolCall }
       if (normalized.usage) yield { type: 'usage', usage: normalized.usage }
     }
-    yield { type: 'done' }
+    yield {
+      type: 'done',
+      response: {
+        reasoning: normalizeAgentReasoning(
+          undefined,
+          geminiReasoningDetails(streamedParts),
+        ),
+      },
+    }
   }
 }
 
@@ -135,7 +152,11 @@ export function normalizeGeminiResponse(response: GeminiResponse, model?: string
   const parts = response.candidates?.[0]?.content?.parts ?? []
   return {
     model,
-    content: parts.filter(hasTextPart).map(part => part.text).join(''),
+    content: parts.filter(hasTextPart).filter(part => part.thought !== true).map(part => part.text).join(''),
+    reasoning: normalizeAgentReasoning(
+      parts.filter(hasTextPart).filter(part => part.thought === true).map(part => part.text).join('') || undefined,
+      geminiReasoningDetails(parts),
+    ),
     toolCalls: parts.filter(hasFunctionCallPart).map((part, index) => ({
       id: `gemini_call_${index}`,
       name: part.functionCall.name,
@@ -150,6 +171,13 @@ export function normalizeGeminiResponse(response: GeminiResponse, model?: string
 
 function toGeminiContent(message: AgentMessage): GeminiPayload['contents'][number] {
   if (message.role === 'assistant') {
+    const nativeParts = geminiReasoningParts(message)
+    if (nativeParts) {
+      return {
+        role: 'model',
+        parts: nativeParts,
+      }
+    }
     return {
       role: 'model',
       parts: [
@@ -185,6 +213,21 @@ function toGeminiContent(message: AgentMessage): GeminiPayload['contents'][numbe
   }
 }
 
+function geminiReasoningParts(message: AgentMessage): GeminiPart[] | undefined {
+  if (message.reasoning?.native?.format !== 'gemini-content-parts') return undefined
+  if (!Array.isArray(message.reasoning.native.data)) return undefined
+  const parts = message.reasoning.native.data.filter(isGeminiPart)
+  return parts.length ? parts : undefined
+}
+
+function geminiReasoningDetails(parts: GeminiPart[]) {
+  if (!parts.some(part => part.thought === true || typeof part.thoughtSignature === 'string')) return undefined
+  return {
+    format: 'gemini-content-parts' as const,
+    data: parts,
+  }
+}
+
 function toGeminiTool(tool: AgentToolDefinition): NonNullable<NonNullable<GeminiPayload['tools']>[number]['functionDeclarations']>[number] {
   return {
     name: tool.name,
@@ -212,10 +255,19 @@ function geminiUrl(config: ModelProviderConfig, model: string | undefined, strea
   return `${baseUrl}/models/${encodeURIComponent(model ?? config.defaultModel)}:${method}${key}`
 }
 
-function hasTextPart(part: GeminiPart): part is { text: string } {
+function hasTextPart(part: GeminiPart): part is GeminiPart & { text: string } {
   return 'text' in part && typeof part.text === 'string'
 }
 
 function hasFunctionCallPart(part: GeminiPart): part is { functionCall: { name: string; args: Record<string, unknown> } } {
   return 'functionCall' in part && isPlainRecord(part.functionCall) && typeof part.functionCall.name === 'string' && isPlainRecord(part.functionCall.args)
+}
+
+function isGeminiPart(value: unknown): value is GeminiPart {
+  if (!isPlainRecord(value)) return false
+  return typeof value.thoughtSignature === 'string' ||
+    typeof value.text === 'string' ||
+    (isPlainRecord(value.functionCall) && typeof value.functionCall.name === 'string' && isPlainRecord(value.functionCall.args)) ||
+    (isPlainRecord(value.functionResponse) && typeof value.functionResponse.name === 'string' && isPlainRecord(value.functionResponse.response)) ||
+    (isPlainRecord(value.inlineData) && typeof value.inlineData.mimeType === 'string' && typeof value.inlineData.data === 'string')
 }

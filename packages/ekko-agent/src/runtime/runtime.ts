@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
+  agentReasoningEstimatedTokens,
+  agentReasoningText,
   createSystemMessage,
   createToolResultMessage,
   collectModelEvents,
@@ -261,8 +263,9 @@ export class AgentRuntime {
         output = assistantMessage
         messages.push(assistantMessage)
         steps.push({ type: 'model', step, message: assistantMessage })
-        if (assistantMessage.reasoning && !modelResult.emittedReasoning) {
-          emit({ type: 'model.reasoning', runId, step, text: assistantMessage.reasoning })
+        const reasoningText = agentReasoningText(assistantMessage.reasoning)
+        if (reasoningText && !modelResult.emittedReasoning) {
+          emit({ type: 'model.reasoning', runId, step, text: reasoningText })
         }
         if (assistantMessage.context !== undefined) {
           if (contextKey) this.modelContexts.set(contextKey, assistantMessage.context)
@@ -991,10 +994,10 @@ function subtaskSummary(output: string, status: 'completed' | 'failed' | 'interr
   return 'Subtask completed.'
 }
 
-function isEmptyModelResponse(response: ModelResponse): boolean {
+function isEmptyModelResponse(response: ModelResponse | AgentOutputMessage): boolean {
   return (
     !response.content?.trim() &&
-    !response.reasoning?.trim() &&
+    !agentReasoningText(response.reasoning).trim() &&
     !(response.toolCalls?.length)
   )
 }
@@ -1005,7 +1008,14 @@ function estimateModelRequestContext(request: ModelRequest): AgentRuntimeContext
   const systemPrompt = systemMessages.map(message => message.content || '').join('\n\n')
   const systemPromptTokens = countTextTokens(systemPrompt)
   const messageTokens = nonSystemMessages.reduce((sum, message) => {
-    return sum + countTextTokens(message.content || '') + countTextTokens(JSON.stringify(message.toolCalls || ''))
+    const estimatedReasoningTokens = agentReasoningEstimatedTokens(message.reasoning)
+    const reasoningTokens = estimatedReasoningTokens !== undefined && estimatedReasoningTokens > 0
+      ? estimatedReasoningTokens
+      : countTextTokens(agentReasoningText(message.reasoning))
+    return sum +
+      countTextTokens(message.content || '') +
+      reasoningTokens +
+      countTextTokens(JSON.stringify(message.toolCalls || ''))
   }, 0)
   const toolTokens = countTextTokens(JSON.stringify(request.tools || []))
   const modelContextTokens = request.context == null ? 0 : countTextTokens(JSON.stringify(request.context))

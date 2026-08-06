@@ -141,6 +141,63 @@ describe('ekko-agent runtime', () => {
     expect(client.stream).not.toHaveBeenCalled()
   })
 
+  it('includes assistant reasoning in provider-visible context estimates', async () => {
+    const client = modelClient(() => ({ content: 'must not run' }))
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      tools: new AgentToolRegistry(),
+      systemPrompt: '',
+    })
+    const withoutReasoning = await runtime.estimateContext({
+      messages: [
+        { role: 'assistant', content: 'Previous answer.' },
+        { role: 'user', content: 'Continue.' },
+      ],
+    })
+    const withReasoning = await runtime.estimateContext({
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Previous answer.',
+          reasoning: { text: 'A long hidden reasoning trace that is replayed to the provider.' },
+        },
+        { role: 'user', content: 'Continue.' },
+      ],
+    })
+
+    expect(withReasoning.messageTokens).toBeGreaterThan(withoutReasoning.messageTokens)
+    expect(withReasoning.contextTokens - withoutReasoning.contextTokens)
+      .toBe(withReasoning.messageTokens - withoutReasoning.messageTokens)
+  })
+
+  it('uses one provider reasoning-token estimate instead of counting text and native metadata again', async () => {
+    const client = modelClient(() => ({ content: 'must not run' }))
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      tools: new AgentToolRegistry(),
+      systemPrompt: '',
+    })
+    const base = await runtime.estimateContext({
+      messages: [{ role: 'assistant', content: 'Previous answer.' }],
+    })
+    const withReasoning = await runtime.estimateContext({
+      messages: [{
+        role: 'assistant',
+        content: 'Previous answer.',
+        reasoning: {
+          text: 'Visible summary that must not be counted a second time.',
+          estimatedTokens: 123,
+          native: {
+            format: 'openai-responses-items',
+            data: [{ type: 'reasoning', encrypted_content: 'opaque-native-data' }],
+          },
+        },
+      }],
+    })
+
+    expect(withReasoning.messageTokens - base.messageTokens).toBe(123)
+  })
+
   it('emits one model usage event for each completed non-streaming model call', async () => {
     const client = modelClient(() => ({
       content: 'hello',
@@ -215,7 +272,7 @@ describe('ekko-agent runtime', () => {
       },
     })
 
-    expect(result.output.reasoning).toBe('thinking path')
+    expect(result.output.reasoning).toEqual({ text: 'thinking path' })
     expect(reasoning).toEqual(['thinking path'])
     expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.reasoning', 'model.message', 'run.completed'])
   })

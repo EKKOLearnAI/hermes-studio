@@ -1412,6 +1412,18 @@ describe('ekko-agent context usage events', () => {
         message: {
           role: 'assistant',
           content: '',
+          reasoning: {
+            text: 'I need to find the image skill.',
+            estimatedTokens: 29,
+            native: {
+              format: 'openai-reasoning-details',
+              data: [{
+                type: 'reasoning.text',
+                text: 'I need to find the image skill.',
+                signature: 'provider-signature',
+              }],
+            },
+          },
           toolCalls: [{
             id: 'call-search',
             name: 'skill_list',
@@ -1455,6 +1467,20 @@ describe('ekko-agent context usage events', () => {
           },
         }],
         finish_reason: 'tool_calls',
+        reasoning: 'I need to find the image skill.',
+        reasoning_content: 'I need to find the image skill.',
+        reasoning_details: JSON.stringify({
+          version: 1,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to find the image skill.',
+              signature: 'provider-signature',
+            }],
+          },
+          estimatedTokens: 29,
+        }),
       }),
       expect.objectContaining({
         role: 'tool',
@@ -1609,6 +1635,19 @@ describe('ekko-agent context usage events', () => {
         session_id: 'session-1',
         role: 'assistant',
         content: '',
+        reasoning_content: 'I need to inspect both tool results.',
+        reasoning_details: JSON.stringify({
+          version: 1,
+          estimatedTokens: 17,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to inspect both tool results.',
+              signature: 'provider-signature',
+            }],
+          },
+        }),
         tool_calls: [{
           id: 'call_weather',
           type: 'function',
@@ -1667,6 +1706,18 @@ describe('ekko-agent context usage events', () => {
       {
         role: 'assistant',
         content: '',
+        reasoning: {
+          text: 'I need to inspect both tool results.',
+          estimatedTokens: 17,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to inspect both tool results.',
+              signature: 'provider-signature',
+            }],
+          },
+        },
         toolCalls: [{
           id: 'call_weather',
           name: 'browser_navigate',

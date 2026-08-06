@@ -51,6 +51,7 @@ export interface ChatMessage {
   tool_call_id?: string
   name?: string
   reasoning_content?: string | null
+  reasoning_details?: string | null
 }
 
 export interface CompressionConfig {

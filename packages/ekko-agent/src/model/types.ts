@@ -16,11 +16,28 @@ export type ModelProviderType =
 
 export type AgentMessageRole = 'system' | 'user' | 'assistant' | 'tool'
 
+export type AgentReasoningFormat =
+  | 'openai-reasoning-details'
+  | 'openai-responses-items'
+  | 'anthropic-thinking-blocks'
+  | 'gemini-content-parts'
+
+export interface AgentReasoningNative {
+  format: AgentReasoningFormat
+  data: unknown
+}
+
+export interface AgentReasoning {
+  text?: string
+  native?: AgentReasoningNative
+  estimatedTokens?: number
+}
+
 export interface AgentMessage {
   role: AgentMessageRole
   content: string
   contentParts?: AgentMessageContentPart[]
-  reasoning?: string
+  reasoning?: AgentReasoning
   name?: string
   toolCallId?: string
   toolCalls?: AgentToolCall[]
@@ -82,7 +99,7 @@ export interface ModelResponse {
   id?: string
   model?: string
   content: string
-  reasoning?: string
+  reasoning?: string | AgentReasoning
   toolCalls?: AgentToolCall[]
   usage?: ModelUsage
   finishReason?: string

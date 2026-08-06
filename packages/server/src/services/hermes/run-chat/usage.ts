@@ -21,6 +21,7 @@ type UsageTokenMessage = {
   /** DeepSeek/Kimi thinking-mode payload echoed back on subsequent turns. */
   reasoning_content?: unknown
   reasoning?: unknown
+  reasoning_details?: unknown
 }
 
 function contentToUsageText(content: unknown): string {
@@ -48,14 +49,32 @@ export function estimateUsageTokensFromMessages(messages: UsageTokenMessage[]): 
       // hundreds of K tokens and skips compression until the upstream 400
       // (NousResearch/hermes-agent#80246).
       const reasoning = m.reasoning_content ?? m.reasoning
+      const estimatedReasoningTokens = storedReasoningTokenEstimate(m.reasoning_details)
       return (
         sum
         + countTokens(contentToUsageText(m.content))
         + countTokens(String(m.tool_calls || ''))
-        + countTokens(String(reasoning || ''))
+        + (estimatedReasoningTokens ?? countTokens(String(reasoning || '')))
       )
     }, 0)
   return { inputTokens, outputTokens }
+}
+
+function storedReasoningTokenEstimate(details: unknown): number | undefined {
+  let parsed = details
+  if (typeof parsed === 'string') {
+    if (!parsed.trim()) return undefined
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return undefined
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const value = (parsed as Record<string, unknown>).estimatedTokens
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined
 }
 
 export async function calcAndUpdateUsage(
