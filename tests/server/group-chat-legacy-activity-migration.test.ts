@@ -91,4 +91,54 @@ describe('group chat legacy activity migration', () => {
     })
     server.getIO().close()
   })
+
+  it('keeps timestamps rejected as future values untrusted across later initializations', async () => {
+    dbState.db?.exec(`
+      CREATE TABLE gc_rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, inviteCode TEXT UNIQUE);
+      CREATE TABLE gc_messages (
+        id TEXT PRIMARY KEY, roomId TEXT NOT NULL, senderId TEXT NOT NULL, senderName TEXT NOT NULL,
+        content TEXT NOT NULL, timestamp INTEGER NOT NULL, role TEXT NOT NULL DEFAULT 'user'
+      );
+    `)
+    dbState.db?.prepare('INSERT INTO gc_rooms (id, name) VALUES (?, ?)').run('room-1', 'Room')
+    dbState.db?.prepare(
+      'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('future-on-first-upgrade', 'room-1', 'user-1', 'User', 'future', 1_000_001)
+
+    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    initAllHermesTables()
+    expect(dbState.db?.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
+      persistedAt: 0,
+    })
+
+    vi.setSystemTime(1_000_002)
+    initAllHermesTables()
+    expect(dbState.db?.prepare('SELECT persistedAt FROM gc_messages WHERE id = ?').get('future-on-first-upgrade')).toEqual({
+      persistedAt: 0,
+    })
+    vi.useRealTimers()
+  })
+
+  it('orders profile, authenticated-member, and owner room lists by activity', async () => {
+    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    initAllHermesTables()
+    const server = new GroupChatServer(httpServer)
+    const storage = server.getStorage()
+    storage.saveRoom('room-a', 'Older', 'ROOMA', { ownerAuthUserId: 7 })
+    storage.saveRoom('room-z', 'Newer', 'ROOMZ', { ownerAuthUserId: 7 })
+    storage.addRoomAgent('room-a', 'agent-a', 'default', 'Agent A', '', 0)
+    storage.addRoomAgent('room-z', 'agent-z', 'default', 'Agent Z', '', 0)
+    storage.addRoomMember('room-a', 'auth:7', 'User', '', '', 7)
+    storage.addRoomMember('room-z', 'auth:7', 'User', '', '', 7)
+    storage.addMessage({ id: 'old', roomId: 'room-a', senderId: 'user', senderName: 'User', content: 'old', timestamp: 10, persistedAt: 10 })
+    storage.addMessage({ id: 'new', roomId: 'room-z', senderId: 'user', senderName: 'User', content: 'new', timestamp: 20, persistedAt: 20 })
+
+    expect(storage.getRoomsForProfiles(['default']).map(room => room.id)).toEqual(['room-z', 'room-a'])
+    expect(storage.getRoomsForAuthUser(7).map(room => room.id)).toEqual(['room-z', 'room-a'])
+    expect(storage.getOwnedRoomsForAuthUser(7).map(room => room.id)).toEqual(['room-z', 'room-a'])
+    server.getIO().close()
+  })
 })

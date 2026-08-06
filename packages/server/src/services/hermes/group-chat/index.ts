@@ -414,32 +414,41 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    COALESCE(MAX(NULLIF(m.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
+             LEFT JOIN gc_messages m ON m.roomId = r.id
              WHERE a.profile IN (${placeholders})
-             ORDER BY r.id`
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(...uniqueProfiles) || []) as any[]
     }
 
     getRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    COALESCE(MAX(NULLIF(messages.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
+             LEFT JOIN gc_messages messages ON messages.roomId = r.id
              WHERE m.authUserId = ?
-             ORDER BY r.id`
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 
     getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT ${ROOM_SELECT_COLUMNS}
-             FROM gc_rooms
-             WHERE ownerAuthUserId = ?
-             ORDER BY id`
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    COALESCE(MAX(NULLIF(m.persistedAt, 0)), NULLIF(r.createdAt, 0), 0) AS _activityAt
+             FROM gc_rooms r
+             LEFT JOIN gc_messages m ON m.roomId = r.id
+             WHERE r.ownerAuthUserId = ?
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 
@@ -1673,6 +1682,12 @@ export class GroupChatServer {
         }
         if (!Array.isArray(rawMentions)) return { error: 'Invalid structured mentions' }
         const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
+        const visibleAllMention = isAllAgentsMentioned(content)
+        const visibleParticipantIds = new Set(
+            roomAgents
+                .filter(agent => isAgentMentioned(content, agent.name))
+                .map(agent => agent.agentId),
+        )
 
         const normalized: StructuredMention[] = []
         const participantIds = new Set<string>()
@@ -1683,7 +1698,7 @@ export class GroupChatServer {
             }
             const mention = rawMention as Record<string, unknown>
             if (mention.type === 'all') {
-                if (allSeen || normalized.length > 0 || mention.displayName !== 'all' || !isAllAgentsMentioned(content) || senderIsAgent) {
+                if (allSeen || normalized.length > 0 || mention.displayName !== 'all' || !visibleAllMention) {
                     return { error: 'Invalid structured mentions' }
                 }
                 allSeen = true
@@ -1704,6 +1719,18 @@ export class GroupChatServer {
             }
             participantIds.add(target.agentId)
             normalized.push({ type: 'agent', participantId: target.agentId })
+        }
+
+        if (senderIsAgent) {
+            const structuredAll = normalized.length === 1 && normalized[0].type === 'all'
+            const visibleAgentMentionIds = [...visibleParticipantIds]
+            if (visibleAllMention
+                ? !structuredAll || visibleAgentMentionIds.length > 0
+                : structuredAll
+                    || participantIds.size !== visibleAgentMentionIds.length
+                    || visibleAgentMentionIds.some(participantId => !participantIds.has(participantId))) {
+                return { error: 'Invalid structured mentions' }
+            }
         }
         return { mentions: normalized }
     }
