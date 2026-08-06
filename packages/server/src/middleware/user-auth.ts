@@ -70,6 +70,10 @@ export function getUserJwtExpiresSeconds(env: Record<string, string | undefined>
   return parseJwtExpirySeconds(env.HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN) ?? DEFAULT_EXPIRES_SECONDS
 }
 
+export function getModelRunJwtExpiresSeconds(env: Record<string, string | undefined> = process.env): number {
+  return parseJwtExpirySeconds(env.HERMES_WEB_UI_MODEL_RUN_JWT_EXPIRES_IN) ?? MODEL_RUN_EXPIRES_SECONDS
+}
+
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
 }
@@ -184,7 +188,7 @@ export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'r
 
 export async function issueModelRunJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
   const secret = await getJwtSecret()
-  return signUserJwt(user, secret, Date.now(), MODEL_RUN_EXPIRES_SECONDS)
+  return signUserJwt(user, secret, Date.now(), getModelRunJwtExpiresSeconds())
 }
 
 export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | 'role'>): AuthenticatedUser {

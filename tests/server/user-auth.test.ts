@@ -88,6 +88,24 @@ describe('user auth tables and middleware', () => {
     expect(auth.parseJwtExpirySeconds(value)).toBe(seconds)
   })
 
+  it('allows configuring the model-run JWT lifetime independently', async () => {
+    vi.stubEnv('HERMES_WEB_UI_MODEL_RUN_JWT_EXPIRES_IN', '12h')
+    const { auth } = await initUsers()
+    vi.setSystemTime(new Date('2026-06-30T00:00:00Z'))
+
+    const token = await auth.issueModelRunJwt({ id: 1, username: 'admin', role: 'super_admin' })
+    const payload = jwtPayload(token)
+
+    expect(payload.exp - payload.iat).toBe(12 * 60 * 60)
+  })
+
+  it('falls back to the one-hour model-run JWT lifetime for invalid overrides', async () => {
+    vi.stubEnv('HERMES_WEB_UI_MODEL_RUN_JWT_EXPIRES_IN', 'forever')
+    const { auth } = await initUsers()
+
+    expect(auth.getModelRunJwtExpiresSeconds()).toBe(60 * 60)
+  })
+
   it('creates the default super admin without profile bindings', async () => {
     const { schemas, users } = await initUsers()
 
