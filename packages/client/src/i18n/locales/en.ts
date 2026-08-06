@@ -2879,6 +2879,7 @@ export default {
     new_0_6_39_5: 'Codex now treats native JSONL and process exit as authoritative across recoverable Provider proxy disconnects, preventing completed work from being reported as a Group Chat failure (#2375)',
     new_0_6_39_6: 'Version Management validates Runtime completeness and shows desktop fallback reasons. Invalid Runtimes cannot be activated, and Web UI download or switching controls are hidden because updates continue through the desktop installer (#2353)',
     new_0_6_39_7: 'Group Chat run headers now keep only the Agent name, removing repeated descriptions for cleaner message groups (#2352)',
+    new_0_6_39_8: 'ESP32-C3 remote connections now keep Socket.IO alive during discovery, reuse bounded voice buffers, reconnect with backoff, and preserve login across transient Studio disconnects, making remote scans and voice turns faster and more reliable (#2383)',
     new_0_6_38_1: 'Windows desktop startup now repairs invalid relative Python homes left in cached Hermes Runtime environments by Agent updates, restoring CLI, logs, and Gateway after an update, Runtime switch, or storage migration',
     new_0_6_38_2: 'The website compatibility catalog recognizes Hermes 0.19.0 again so matching desktop downloads and compatibility checks remain available (#2348)',
     new_0_6_37_1: 'The headline of this 14-PR release is a complete Group Chat rebuild: every Agent can independently choose its Profile, provider, model, API mode, reasoning effort, identity, and workspace (#2334)',
