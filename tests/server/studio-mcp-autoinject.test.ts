@@ -148,12 +148,16 @@ describe('studio MCP autoinject', () => {
     expect(injectedDefault.data.mcp_servers['hermes-studio-use']).toMatchObject({
       command: process.execPath,
       args: [stableLauncher, 'use'],
+      timeout: 1860,
       env: {
         HERMES_MCP_SERVER_NAME: 'hermes-studio-use',
         HERMES_MCP_TOOLSET: 'use',
       },
       enabled: true,
     })
+    expect(injectedDefault.data.mcp_servers['hermes-studio-api']).not.toHaveProperty('timeout')
+    expect(injectedDefault.data.mcp_servers['hermes-studio-browser']).not.toHaveProperty('timeout')
+    expect(injectedDefault.data.mcp_servers['hermes-studio-devices']).not.toHaveProperty('timeout')
     const injectedWork = await updateConfigYamlForProfileMock.mock.calls[1][1]({})
     expect(injectedWork.data.mcp_servers['hermes-studio-api'].env.HERMES_WEB_UI_PROFILE).toBe('work')
     expect(result.serverNames).toEqual([
@@ -163,6 +167,39 @@ describe('studio MCP autoinject', () => {
       'hermes-studio-use',
     ])
     expect(result.command).toBe(process.execPath)
+  })
+
+  it('migrates an existing managed use server from the default MCP timeout', async () => {
+    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    await injectBundledMcpServer()
+
+    const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
+    const initial = await updater({})
+    const stale = structuredClone(initial.data)
+    delete stale.mcp_servers['hermes-studio-use'].timeout
+
+    const migrated = await updater(stale)
+
+    expect(migrated.result.status).toBe('updated')
+    expect(migrated.data.mcp_servers['hermes-studio-use'].timeout).toBe(1860)
+    expect(migrated.data.mcp_servers['hermes-studio-api']).not.toHaveProperty('timeout')
+  })
+
+  it('preserves an existing timeout on an unrelated managed server during config resync', async () => {
+    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    await injectBundledMcpServer()
+
+    const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
+    const initial = await updater({})
+    const configured = structuredClone(initial.data)
+    configured.mcp_servers['hermes-studio-api'].timeout = 42
+    configured.mcp_servers['hermes-studio-api'].env.HERMES_WEB_UI_URL = 'http://127.0.0.1:9999'
+
+    const resynced = await updater(configured)
+
+    expect(resynced.result.status).toBe('updated')
+    expect(resynced.data.mcp_servers['hermes-studio-api'].env.HERMES_WEB_UI_URL).toBe('http://127.0.0.1:8648')
+    expect(resynced.data.mcp_servers['hermes-studio-api'].timeout).toBe(42)
   })
 
   it('skips autoinject for transient preview homes by default', async () => {
