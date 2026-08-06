@@ -80,6 +80,12 @@ export type ModelReasoningEffort =
 
 export type ModelReasoningSummary = 'auto' | 'concise' | 'detailed'
 
+export type OpenAIChatReasoningReplayFormat =
+  | 'reasoning'
+  | 'reasoning_content'
+  | 'reasoning_details'
+  | 'none'
+
 export interface ModelRequest {
   model?: string
   messages: AgentMessage[]
@@ -128,6 +134,11 @@ export interface ModelProviderConfig {
   id: string
   type: ModelProviderType
   requestStyle?: ModelRequestStyle
+  /**
+   * Provider-specific assistant reasoning field used only by the OpenAI Chat
+   * Completions adapter. Other request styles use their native replay shape.
+   */
+  openAIChatReasoningReplayFormat?: OpenAIChatReasoningReplayFormat
   apiKey?: string
   baseUrl?: string
   endpointPath?: string

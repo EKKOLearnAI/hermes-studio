@@ -710,6 +710,16 @@ describe('ekko-agent model requests', () => {
       baseUrl: 'https://api.xiaomimimo.com/v1',
       model: 'mimo-v2-flash',
     },
+    {
+      id: 'qwen-oauth',
+      baseUrl: 'https://portal.qwen.ai/v1',
+      model: 'qwen3.7-plus',
+    },
+    {
+      id: 'glm',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model: 'glm-5.2',
+    },
   ])('maps unified reasoning to reasoning_content for $model', ({ id, baseUrl, model }) => {
     const payload = toOpenAIChatPayload({
       id,
@@ -730,10 +740,42 @@ describe('ekko-agent model requests', () => {
     })
 
     expect(payload.messages[0]).toMatchObject({
-      content: '',
       reasoning_content: 'Previous analysis.',
     })
+    expect(payload.messages[0]?.content).not.toBeNull()
     expect(payload.messages[0]).not.toHaveProperty('reasoning')
+  })
+
+  it('allows an OpenAI Chat provider to override its reasoning replay format', () => {
+    const message = {
+      role: 'assistant' as const,
+      content: 'Previous answer.',
+      reasoning: { text: 'Previous analysis.' },
+    }
+    const reasoningContentPayload = toOpenAIChatPayload({
+      id: 'custom:reasoning-content',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      openAIChatReasoningReplayFormat: 'reasoning_content',
+      baseUrl: 'https://chat.example/v1',
+      defaultModel: 'custom-model',
+    }, { messages: [message] })
+    const disabledPayload = toOpenAIChatPayload({
+      id: 'custom:no-reasoning-replay',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      openAIChatReasoningReplayFormat: 'none',
+      baseUrl: 'https://strict.example/v1',
+      defaultModel: 'strict-chat',
+    }, { messages: [message] })
+
+    expect(reasoningContentPayload.messages[0]).toMatchObject({
+      reasoning_content: 'Previous analysis.',
+    })
+    expect(reasoningContentPayload.messages[0]).not.toHaveProperty('reasoning')
+    expect(disabledPayload.messages[0]).not.toHaveProperty('reasoning')
+    expect(disabledPayload.messages[0]).not.toHaveProperty('reasoning_content')
+    expect(disabledPayload.messages[0]).not.toHaveProperty('reasoning_details')
   })
 
   it('uses one reasoning field for OpenRouter fallback and other compatible endpoints', () => {

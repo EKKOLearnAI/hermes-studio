@@ -23,6 +23,7 @@ import type {
   ModelRequest,
   ModelResponse,
   ModelUsage,
+  OpenAIChatReasoningReplayFormat,
 } from '../types'
 
 interface OpenAIChatMessage {
@@ -343,12 +344,10 @@ function normalizeReasoning(message: OpenAIChatResponseMessage | undefined): str
   return reasoningDetailsText(message.reasoning_details)
 }
 
-type OpenAIReasoningReplayField = 'reasoning' | 'reasoning_content' | 'reasoning_details'
-
 function toOpenAIChatMessages(
   message: AgentMessage,
   qwenOAuth = false,
-  reasoningReplayField?: OpenAIReasoningReplayField,
+  reasoningReplayField?: OpenAIChatReasoningReplayFormat,
   requiresAssistantContent = false,
 ): OpenAIChatMessage[] {
   const plainContent = message.role === 'assistant' && message.toolCalls?.length
@@ -405,11 +404,14 @@ function toOpenAIChatMessages(
 function openAIReasoningReplayField(
   config: ModelProviderConfig,
   model: string,
-): OpenAIReasoningReplayField {
+): OpenAIChatReasoningReplayFormat {
+  if (config.openAIChatReasoningReplayFormat) {
+    return config.openAIChatReasoningReplayFormat
+  }
   const identifier = `${config.id} ${config.baseUrl || ''} ${model}`.toLowerCase()
   // OpenRouter preserves provider-native signatures in `reasoning_details`.
-  // DeepSeek-family protocols use `reasoning_content`; the remaining
-  // OpenAI-compatible adapters receive the common `reasoning` field.
+  // Several Chat Completions dialects use `reasoning_content`; the remaining
+  // OpenAI-compatible Chat adapters receive the common `reasoning` field.
   if (identifier.includes('openrouter')) return 'reasoning_details'
   if (usesReasoningContentProtocol(identifier)) return 'reasoning_content'
   return 'reasoning'
@@ -419,8 +421,7 @@ function requiresNonNullAssistantContent(
   config: ModelProviderConfig,
   model: string,
 ): boolean {
-  const identifier = `${config.id} ${config.baseUrl || ''} ${model}`.toLowerCase()
-  return usesReasoningContentProtocol(identifier)
+  return openAIReasoningReplayField(config, model) === 'reasoning_content'
 }
 
 function usesReasoningContentProtocol(identifier: string): boolean {
@@ -430,6 +431,12 @@ function usesReasoningContentProtocol(identifier: string): boolean {
     'kimi',
     'mimo',
     'xiaomimimo',
+    'qwen',
+    'qwq',
+    'dashscope',
+    'glm',
+    'z.ai',
+    'bigmodel',
   ].some(part => identifier.includes(part))
 }
 
