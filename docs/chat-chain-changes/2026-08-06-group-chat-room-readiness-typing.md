@@ -1,6 +1,6 @@
 ---
 date: 2026-08-06
-pr: pending
+pr: 2373
 feature: Group chat room readiness and typing presence
 impact: Group messages now wait for the active socket to rejoin before sending, while throttled typing presence appears only as a breathing light on other members' avatars.
 ---
