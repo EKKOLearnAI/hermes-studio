@@ -33,6 +33,8 @@ const getSessionCategoryMock = vi.fn()
 const renameSessionCategoryMock = vi.fn()
 const setSessionCategoryMock = vi.fn()
 const getGroupChatServerMock = vi.fn()
+const disposeChatRunSessionMock = vi.fn()
+const getChatRunServerMock = vi.fn()
 const getLocalUsageStatsMock = vi.fn()
 const getRecordedUsageSessionIdsMock = vi.fn()
 const getActiveProfileNameMock = vi.fn()
@@ -125,6 +127,10 @@ vi.mock('../../packages/server/src/routes/hermes/group-chat', () => ({
   getGroupChatServer: getGroupChatServerMock,
 }))
 
+vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
+  getChatRunServer: getChatRunServerMock,
+}))
+
 vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
   getModelContextLength: vi.fn(),
 }))
@@ -207,6 +213,10 @@ describe('session conversations controller', () => {
     setSessionCategoryMock.mockReturnValue(true)
     getGroupChatServerMock.mockReset()
     getGroupChatServerMock.mockReturnValue(null)
+    disposeChatRunSessionMock.mockReset()
+    disposeChatRunSessionMock.mockResolvedValue(undefined)
+    getChatRunServerMock.mockReset()
+    getChatRunServerMock.mockReturnValue({ disposeSession: disposeChatRunSessionMock })
     getLocalUsageStatsMock.mockReset()
     getLocalUsageStatsMock.mockReturnValue({
       input_tokens: 0,
@@ -1818,7 +1828,9 @@ describe('session conversations controller', () => {
     const ctx: any = { params: { id: 'codex-session' }, body: null }
     await mod.remove(ctx)
 
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(disposeChatRunSessionMock).toHaveBeenCalledWith('codex-session', { deletePersistedSession: false })
+    expect(disposeChatRunSessionMock.mock.invocationCallOrder[0]).toBeLessThan(localDeleteSessionMock.mock.invocationCallOrder[0])
+    expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()
     expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
     expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
     expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
@@ -1884,11 +1896,38 @@ describe('session conversations controller', () => {
     }
     await mod.batchRemove(ctx)
 
-    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(disposeChatRunSessionMock).toHaveBeenCalledWith('codex-session', { deletePersistedSession: false })
+    expect(disposeChatRunSessionMock.mock.invocationCallOrder[0]).toBeLessThan(localDeleteSessionMock.mock.invocationCallOrder[0])
+    expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()
     expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
     expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
     expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
     expect(ctx.body).toMatchObject({ ok: true, deleted: 1, failed: 0, hermesDeleted: 0 })
+  })
+
+  it('waits for active Bridge chat-run disposal before deleting session persistence', async () => {
+    getSessionMock.mockReturnValue({ id: 'bridge-session', profile: 'default', source: 'cli' })
+    getExactSessionDetailFromDbWithProfileMock.mockResolvedValue({ id: 'bridge-session', messages: [] })
+    deleteHermesSessionForProfileMock.mockResolvedValue(true)
+    localDeleteSessionMock.mockReturnValue(true)
+    let finishDisposal!: () => void
+    disposeChatRunSessionMock.mockImplementationOnce(() => new Promise<void>(resolve => { finishDisposal = resolve }))
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'bridge-session' }, body: null }
+    const removal = mod.remove(ctx)
+    await vi.waitFor(() => expect(disposeChatRunSessionMock).toHaveBeenCalledWith(
+      'bridge-session',
+      { deletePersistedSession: false },
+    ))
+    expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
+    expect(localDeleteSessionMock).not.toHaveBeenCalled()
+
+    finishDisposal()
+    await removal
+
+    expect(deleteHermesSessionForProfileMock).toHaveBeenCalledWith('bridge-session', 'default')
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('bridge-session')
   })
 
   it('imports a Hermes session into the local Web UI store', async () => {

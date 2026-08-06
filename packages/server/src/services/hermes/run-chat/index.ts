@@ -1406,22 +1406,18 @@ export class ChatRunSocket {
     })
   }
 
-  async disposeSession(sessionId: string): Promise<void> {
+  async disposeSession(
+    sessionId: string,
+    options: { deletePersistedSession?: boolean } = {},
+  ): Promise<void> {
     const sid = String(sessionId || '').trim()
     if (!sid) return
-    const invocationId = this.activeRunInvocations.get(sid)
-    if (invocationId) {
-      settleChatRunInvocation(invocationId, { status: 'canceled', error: 'Session disposed' })
-      this.emitExternalEvent(sid, 'run.failed', { event: 'run.failed', error: 'Session disposed' })
-      this.releaseRunInvocation(sid, invocationId)
-      this.clearRunExecutionTimer(invocationId)
-    }
-    codingAgentRunManager.stop(sid, { reportClosed: false })
+    await this.abortSession(sid, 'Session disposed')
     const state = this.sessionMap.get(sid)
     state?.abortController?.abort()
     this.sessionMap.delete(sid)
     this.runWaiters.delete(sid)
-    deleteSession(sid)
+    if (options.deletePersistedSession !== false) deleteSession(sid)
   }
 
   emitExternalEvent(sessionId: string, event: string, payload: any) {

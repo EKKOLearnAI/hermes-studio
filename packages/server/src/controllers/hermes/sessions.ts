@@ -38,6 +38,7 @@ import {
   workspaceBaseOverride,
 } from '../../services/hermes/workspace-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
+import { getChatRunServer } from '../../routes/hermes/chat-run'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
@@ -52,6 +53,17 @@ import { relative, normalize as pathNormalize, resolve as pathResolve } from 'pa
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
+}
+
+async function disposeChatRunBeforeDelete(sessionId: string, codingAgentSession: boolean): Promise<void> {
+  const chatRunServer = getChatRunServer()
+  if (chatRunServer) {
+    await chatRunServer.disposeSession(sessionId, { deletePersistedSession: false })
+    return
+  }
+  // Routes are normally initialized after ChatRunSocket. Preserve the previous
+  // controller-only fallback for tests or startup/shutdown edge cases.
+  if (codingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
 }
 
 function filterPendingDeletedSessions<T extends { id: string }>(items: T[]): T[] {
@@ -1192,7 +1204,7 @@ export async function remove(ctx: any) {
   if (denySessionAccess(ctx, existing)) return
   const hermesProfile = requestedProfile(ctx) || existing?.profile || getActiveProfileName()
   const codingAgentSession = isCodingAgentSession(existing)
-  if (codingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
+  if (existing) await disposeChatRunBeforeDelete(sessionId, codingAgentSession)
   const hermes = codingAgentSession
     ? { attempted: false, deleted: false, profile: hermesProfile }
     : await deleteHermesSessionIfPresent(sessionId, hermesProfile)
@@ -1262,7 +1274,7 @@ export async function batchRemove(ctx: any) {
     }
 
     const codingAgentSession = isCodingAgentSession(existing)
-    if (codingAgentSession) codingAgentRunManager.stop(id, { reportClosed: false })
+    if (existing) await disposeChatRunBeforeDelete(id, codingAgentSession)
     const hermes = codingAgentSession
       ? { attempted: false, deleted: false, profile: targetProfile || 'default' }
       : await deleteHermesSessionIfPresent(id, targetProfile)
