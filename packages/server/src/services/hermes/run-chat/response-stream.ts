@@ -235,7 +235,16 @@ export function applyResponseStreamEvent(
     if (!callId) return null
     captureToolBoundaryReasoning(state, run, callId)
     const toolCall = responseFunctionCallToToolCall(item)
-    run.toolCalls.set(callId, { ...toolCall, startedAt: Date.now() })
+    const existing = run.toolCalls.get(callId)
+    const rawArguments = item.arguments ?? item.function?.arguments
+    const hasCompleteArguments = rawArguments != null &&
+      (typeof rawArguments !== 'string' || !['', '{}'].includes(rawArguments.trim()))
+    const startedAt = existing?.startedAt ?? (hasCompleteArguments ? Date.now() : undefined)
+    run.toolCalls.set(callId, {
+      ...toolCall,
+      ...(startedAt != null ? { startedAt } : {}),
+    })
+    if (!hasCompleteArguments || existing?.startedAt != null) return null
     return {
       event: 'tool.started',
       payload: {
@@ -268,19 +277,7 @@ export function applyResponseStreamEvent(
       },
     }
     run.toolCalls.set(callId, nextToolCall)
-    return {
-      event: 'tool.started',
-      payload: {
-        event: 'tool.started',
-        run_id: run.responseId,
-        response_id: run.responseId,
-        tool_call_id: callId,
-        tool: nextToolCall.function.name,
-        name: nextToolCall.function.name,
-        arguments: nextToolCall.function.arguments,
-        preview: summarizeToolArguments(nextToolCall.function.arguments),
-      },
-    }
+    return null
   }
 
   if (eventType === 'response.output_item.done') {
@@ -290,7 +287,7 @@ export function applyResponseStreamEvent(
       if (!callId) return null
       const toolCall = responseFunctionCallToToolCall(item)
       const existing = run.toolCalls.get(callId)
-      run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt || Date.now() })
+      run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt ?? Date.now() })
       const toolReasoning = captureToolBoundaryReasoning(state, run, callId)
 
       const key = `assistant:${callId}`
@@ -318,7 +315,20 @@ export function applyResponseStreamEvent(
           toolCallMessage.reasoning_content = toolReasoning
         }
       }
-      return null
+      if (existing?.startedAt != null) return null
+      return {
+        event: 'tool.started',
+        payload: {
+          event: 'tool.started',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          tool_call_id: callId,
+          tool: toolCall.function.name,
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+          preview: summarizeToolArguments(toolCall.function.arguments),
+        },
+      }
     }
 
     if (item.type === 'function_call_output') {
