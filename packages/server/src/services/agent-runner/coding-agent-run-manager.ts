@@ -677,9 +677,11 @@ export class CodingAgentRunManager {
       run.responseStartEmitted = true
     }
     const isTerminalEvent = storageSafeResponseEvent.type === 'response.completed' || storageSafeResponseEvent.type === 'response.failed'
+    const deferCodexProxyTerminal = storageSafeResponseEvent.type === 'response.completed' ||
+      (storageSafeResponseEvent.type === 'response.failed' && !run.acceptingPrintEvent)
     if (
       run.launch.agentId === 'codex' &&
-      isTerminalEvent &&
+      deferCodexProxyTerminal &&
       childIsRunning(run.currentChild)
     ) {
       if (storageSafeResponseEvent.type === 'response.completed') {

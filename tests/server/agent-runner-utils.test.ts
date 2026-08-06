@@ -488,6 +488,45 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('keeps native Codex turn failures authoritative while the child is still running', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-native-failure',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-codex-native-failure',
+      command: 'codex',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get('agent-session-codex-native-failure')
+    run.currentChild = { exitCode: null, signalCode: null, killed: false }
+
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'turn.failed',
+      error: { message: 'native Codex failure' },
+    }))
+
+    expect(run.terminalEventHandled).toBe(true)
+    expect(run.pendingChatCompletionEvent).toBe('run.failed')
+    expect(run.pendingChatCompletionPayload).toEqual(expect.objectContaining({
+      error: 'native Codex failure',
+    }))
+    manager.shutdown()
+  })
+
   it('clears shared chat session run state when a print turn completes', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()

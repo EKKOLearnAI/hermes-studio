@@ -87,7 +87,10 @@ Codex 原生进程运行期间：
 
 - 代理层 `response.completed`：只采集 usage，不裁决整个 Run；
 - 代理层 `response.failed`：不裁决整个 Run；
+- Codex 原生 JSONL `turn.failed` / `error`：必须立即保留为权威失败；
 - 最终成功或失败由 Codex 原生 JSONL 和子进程退出状态决定。
+
+代码通过 `acceptingPrintEvent` 区分事件来源：原生 JSONL 事件由 `handleClaudePrintResponseEvent()` 包装，处理期间该标志为 `true`；Provider Proxy 事件则为 `false`。`response.completed` 无论来源都需等待活跃 Codex 子进程退出，以免提前刷出工具边界；只有 `response.failed` 需要按来源区分。
 
 Claude Code 和没有活跃原生 Codex 子进程的路径保持原语义。
 
@@ -112,36 +115,36 @@ if (
 
 ## TDD 证据
 
-新增回归测试模拟：
+新增双向回归测试：
 
-1. Codex 原生子进程仍在运行；
-2. Provider Proxy 发出 `response.failed`，错误为缺少 `response.completed`；
-3. 断言代理失败不得设置 `terminalEventHandled`；
-4. 断言不得缓存 `pendingChatCompletionEvent='run.failed'`；
-5. 断言不得提前发出群聊 `run.failed`。
+1. **Proxy 可恢复断流**：Codex 原生子进程仍在运行时，Provider Proxy 发出 `response.failed`；断言不得设置 `terminalEventHandled`、不得缓存 `pendingChatCompletionEvent='run.failed'`、不得提前发出群聊 `run.failed`。
+2. **原生失败**：Codex 原生 JSONL 在 child 仍运行时发出 `turn.failed`；断言必须设置 `terminalEventHandled`、缓存 `run.failed`，并保留原生错误。
+3. **完成时序回归**：`response.completed` 在 child 仍运行时不得提前刷出工具消息或 `run.completed`，继续等待进程退出。
 
 ### RED
 
-修复前测试按预期失败：
+第一条修复前测试按预期失败：
 
 ```text
 expected true not to be true
 run.terminalEventHandled === true
 ```
 
-### GREEN
-
-最小修复后：
+独立复审发现最初修复会吞掉原生失败后，第二条测试也按预期失败：
 
 ```text
-1 passed
+expected undefined to be true
+run.terminalEventHandled === undefined
 ```
 
-相关回归：
+### GREEN
+
+按事件来源收紧仲裁后：
 
 ```text
-agent-runner-utils.test.ts: 51 passed
-agent-runner-utils.test.ts + coding-agents-launch.test.ts: 89 passed
+双向与完成时序定向测试：3 passed
+agent-runner-utils.test.ts: 52 passed
+agent-runner-utils.test.ts + coding-agents-launch.test.ts: 90 passed
 ```
 
 ## 验收要求
