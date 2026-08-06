@@ -10,6 +10,7 @@
 #include <U8g2lib.h>
 #include <math.h>
 #include <memory>
+#include <new>
 #include <vector>
 #include "driver/i2s.h"
 #include "esp_system.h"
@@ -116,6 +117,7 @@ constexpr int kMaxManualDevices = 8;
 constexpr uint32_t kMcuLoginTimeoutMs = 8000;
 constexpr uint32_t kMcuRemoteTlsHandshakeTimeoutSec = 5;
 constexpr uint32_t kMcuSocketReconnectMs = 3000;
+constexpr uint32_t kMcuSocketReconnectMaxMs = 30000;
 const char kRemoteDeviceLookupUrl[] = "https://api.hermes-studio.ai";
 constexpr int kMaxProfiles = 8;
 constexpr int kMaxMcuAudioQueue = 4;
@@ -155,7 +157,8 @@ constexpr uint32_t kListeningSilenceStopMs = 1000;
 constexpr uint32_t kListeningMaxRecordMs = 30000;
 constexpr uint32_t kListeningRetriggerDelayMs = 1200;
 constexpr uint32_t kListeningAfterCompletionDelayMs = 1000;
-constexpr size_t kListeningPreRollFrames = 12800;
+// Keep enough free heap for the remote TLS/WebSocket transport while listening.
+constexpr size_t kListeningPreRollFrames = 4096;
 constexpr uint32_t kListeningVadRmsStart = 420;
 constexpr uint32_t kListeningVadPeakStart = 1200;
 constexpr uint32_t kListeningVadActiveThreshold = 520;
@@ -167,7 +170,8 @@ constexpr int kVoiceInputGainPermille = 1800;
 constexpr int kAudioSampleRate = 24000;
 constexpr int kVoiceInputSampleRate = 16000;
 constexpr int kMcuAudioDefaultSampleRate = 24000;
-constexpr size_t kVoiceStreamChunkFrames = 4096;
+// Keep the reusable ADPCM chunk small enough to avoid fragmented-heap failures.
+constexpr size_t kVoiceStreamChunkFrames = 1024;
 constexpr size_t kVoiceStreamAdpcmMaxBytes = kMcuAdpcmHeaderBytes + ((kVoiceStreamChunkFrames + 1) / 2);
 constexpr size_t kVoiceRecordMaxFrames = (kVoiceInputSampleRate * kVoiceRecordMs) / 1000UL;
 constexpr size_t kVoiceRecordBufferBytes = 44 + kVoiceRecordMaxFrames * sizeof(int16_t);
@@ -217,6 +221,8 @@ uint32_t restartAtMs = 0;
 uint32_t lastLanDiscoveryAtMs = 0;
 uint32_t lastMcuLoginAtMs = 0;
 uint32_t lastMcuSocketConnectAtMs = 0;
+uint32_t nextMcuSocketReconnectAtMs = 0;
+uint32_t mcuSocketReconnectDelayMs = kMcuSocketReconnectMs;
 uint32_t lastBootButtonAtMs = 0;
 uint32_t bootPressedAtMs = 0;
 uint32_t bootClickPendingAtMs = 0;
@@ -242,7 +248,13 @@ String mcuAuthToken;
 String mcuSocketRelayUrl;
 String mcuSocketTargetKey;
 String mcuRemoteDiscoveryToken;
+String pendingMcuReauthReason;
+String pendingMcuReauthMachineId;
+String pendingMcuReauthInteractionId;
+String pendingMcuReauthPromptUrl;
 bool mcuSocketReconnectBlocked = false;
+bool pendingMcuReauth = false;
+bool pendingMcuReauthAuthInvalid = false;
 String mcuInteractionId;
 String mcuInteractionStatus = "idle";
 String mcuInteractionText;
@@ -302,16 +314,25 @@ McuAudioSegment mcuAudioQueue[kMaxMcuAudioQueue];
 int mcuAudioHead = 0;
 int mcuAudioCount = 0;
 McuAudioSegment mcuCurrentAudio;
+VoiceStreamChunk voiceStreamScratch;
 
 void markMcuInteraction(const String &interactionId, const String &status, const String &text);
 void triggerBootVoiceTurn();
 bool broadcastMcuInterrupt(const String &interactionId, const String &reason);
+void broadcastMcuStatus();
 void clearMcuAudioQueue();
 void finishMcuAudio(bool interrupted);
 void clearMcuSessionByButton();
 void disconnectMcuSocketClient();
 void connectMcuSocketClient();
 void mcuSocketLoop();
+void closeMcuSocketTransport(const __FlashStringHelper *reason);
+void scheduleMcuSocketReconnect();
+void resetMcuSocketReconnect();
+void tickMcuSocketReconnect();
+void queueMcuReauth(bool authInvalid, const String &reason, const String &machineId = "",
+                    const String &interactionId = "", const String &promptUrl = "");
+void tickMcuReauth();
 void noteMcuActivity();
 void tickIdlePowerSave();
 void tickListeningMode();
@@ -2523,14 +2544,12 @@ void queueRelayUrl(String urls[], int *count, const String &url) {
 }
 
 void fetchRemoteDevicesFromRelay() {
-  String endpoint = String(kRemoteDeviceLookupUrl) + F("/global-agent/device/") + mcuDeviceCode();
-  bool restoreRelaySocket = mcuSocketRelayUrl.length() > 0 && (wsReady || mcuSocketConnected);
-  if (restoreRelaySocket) {
-    Serial.printf("Remote discovery releasing Socket.IO heap=%lu\n", static_cast<unsigned long>(ESP.getFreeHeap()));
-    disconnectMcuSocketClient();
-    delay(20);
-    yield();
+  if (mcuSocketRelayUrl.length() > 0 && (wsReady || mcuSocketConnected)) {
+    Serial.println(F("Remote discovery using active Socket.IO machine cache"));
+    return;
   }
+
+  String endpoint = String(kRemoteDeviceLookupUrl) + F("/global-agent/device/") + mcuDeviceCode();
 
   int code = -1;
   String body;
@@ -2557,16 +2576,52 @@ void fetchRemoteDevicesFromRelay() {
   } else {
     rememberRemoteMachineList(body);
   }
-
-  if (restoreRelaySocket && activeDeviceUrl.length() > 0 && mcuAuthToken.length() > 0) {
-    Serial.printf("Remote discovery reconnecting Socket.IO heap=%lu\n", static_cast<unsigned long>(ESP.getFreeHeap()));
-    connectMcuSocketClient();
-  }
 }
 
 void refreshRemoteDevices() {
   if (!wifiReady || WiFi.status() != WL_CONNECTED) return;
   fetchRemoteDevicesFromRelay();
+}
+
+bool restorePersistedActiveRemoteDevice() {
+  if (mcuSocketRelayUrl.length() == 0 || activeDeviceKey.length() == 0 ||
+      activeDeviceUrl.length() == 0 || lanDeviceCount >= kMaxLanDevices) {
+    return false;
+  }
+  for (int i = 0; i < lanDeviceCount; ++i) {
+    if (isActiveLanDevice(lanDevices[i])) return true;
+  }
+
+  int portSeparator = activeDeviceKey.lastIndexOf('|');
+  int kindSeparator = portSeparator > 0 ? activeDeviceKey.lastIndexOf('|', portSeparator - 1) : -1;
+  if (kindSeparator <= 0 || portSeparator <= kindSeparator + 1) return false;
+  int portValue = activeDeviceKey.substring(portSeparator + 1).toInt();
+  if (portValue <= 0 || portValue > 65535) return false;
+
+  prefs.begin("mcu", true);
+  String activeAddress = prefs.getString("active_addr", "");
+  prefs.end();
+  int addressSeparator = activeAddress.indexOf('|');
+
+  LanDevice device;
+  device.id = activeDeviceKey.substring(0, kindSeparator);
+  device.name = device.id;
+  device.ip = addressSeparator > 0 ? activeAddress.substring(0, addressSeparator) : "";
+  device.httpPort = static_cast<uint16_t>(portValue);
+  device.endpointKind = activeDeviceKey.substring(kindSeparator + 1, portSeparator);
+  device.url = activeDeviceUrl;
+  device.relayUrl = normalizedRelayBaseUrl(mcuSocketRelayUrl);
+  device.displayUrl = device.relayUrl;
+  device.responseMs = 0;
+  device.lastSeenMs = millis();
+  device.remoteSource = true;
+  device.remoteLogin = true;
+  device.loggedIn = selectedProfile.length() > 0;
+  device.profile = selectedProfile;
+  lanDevices[lanDeviceCount++] = device;
+  Serial.printf("Restored active remote machine cache id=%s url=%s\n",
+                device.id.c_str(), device.displayUrl.c_str());
+  return true;
 }
 
 IPAddress lanBroadcastIp() {
@@ -2648,6 +2703,7 @@ void refreshDeviceDiscovery() {
       lanDevices[lanDeviceCount++] = activeSnapshot;
     }
   }
+  restorePersistedActiveRemoteDevice();
 }
 
 bool ssidAlreadyScanned(const String &ssid) {
@@ -3236,23 +3292,74 @@ bool reauthActiveDevice(const String &reason = "", const String &machineId = "")
   Serial.printf("Reauth active MCU device reason=%s machine=%s active=%s\n",
                 reason.c_str(), machineId.c_str(), activeDeviceUrl.c_str());
   setOledStatus(OledMode::Think, F("LOGIN"), F("REAUTH"), 35);
-  refreshDeviceDiscovery();
 
+  int activeIndex = -1;
   for (int i = 0; i < lanDeviceCount; ++i) {
-    if (!isActiveLanDevice(lanDevices[i])) continue;
-    if (machineId.length() > 0 && lanDevices[i].id != machineId) {
-      Serial.printf("Skip reauth for non-active machine event=%s active=%s\n",
-                    machineId.c_str(), lanDevices[i].id.c_str());
-      if (wasBlocked) persistRelayReplaced(true);
-      return false;
+    if (isActiveLanDevice(lanDevices[i])) {
+      activeIndex = i;
+      break;
     }
-    bool ok = autoLoginDevice(lanDevices[i]);
-    if (!ok && wasBlocked) persistRelayReplaced(true);
-    return ok;
+  }
+  if (activeIndex < 0) {
+    refreshDeviceDiscovery();
+    for (int i = 0; i < lanDeviceCount; ++i) {
+      if (isActiveLanDevice(lanDevices[i])) {
+        activeIndex = i;
+        break;
+      }
+    }
   }
 
-  if (wasBlocked) persistRelayReplaced(true);
-  return false;
+  if (activeIndex < 0) {
+    if (wasBlocked) persistRelayReplaced(true);
+    return false;
+  }
+  if (machineId.length() > 0 && lanDevices[activeIndex].id != machineId) {
+    Serial.printf("Skip reauth for non-active machine event=%s active=%s\n",
+                  machineId.c_str(), lanDevices[activeIndex].id.c_str());
+    if (wasBlocked) persistRelayReplaced(true);
+    return false;
+  }
+  bool ok = autoLoginDevice(lanDevices[activeIndex]);
+  if (!ok && wasBlocked) persistRelayReplaced(true);
+  return ok;
+}
+
+void queueMcuReauth(bool authInvalid, const String &reason, const String &machineId,
+                    const String &interactionId, const String &promptUrl) {
+  if (pendingMcuReauth && pendingMcuReauthAuthInvalid && !authInvalid) return;
+  pendingMcuReauth = true;
+  pendingMcuReauthAuthInvalid = authInvalid;
+  pendingMcuReauthReason = reason;
+  pendingMcuReauthMachineId = machineId;
+  pendingMcuReauthInteractionId = interactionId;
+  pendingMcuReauthPromptUrl = promptUrl;
+}
+
+void tickMcuReauth() {
+  if (!pendingMcuReauth) return;
+  bool authInvalid = pendingMcuReauthAuthInvalid;
+  String reason = pendingMcuReauthReason;
+  String machineId = pendingMcuReauthMachineId;
+  String interactionId = pendingMcuReauthInteractionId;
+  String promptUrl = pendingMcuReauthPromptUrl;
+  pendingMcuReauth = false;
+  pendingMcuReauthAuthInvalid = false;
+  pendingMcuReauthReason = "";
+  pendingMcuReauthMachineId = "";
+  pendingMcuReauthInteractionId = "";
+  pendingMcuReauthPromptUrl = "";
+
+  if (reauthActiveDevice(reason, machineId)) {
+    broadcastMcuStatus();
+    return;
+  }
+  if (authInvalid) {
+    enqueueTokenInvalidPromptAndClearActive(interactionId, promptUrl);
+    return;
+  }
+  lastAudioDetail = F("远程重登失败");
+  setOledStatus(OledMode::Error, F("LOGIN"), F("REAUTH FAIL"), 0);
 }
 
 void autoLoginSavedDevice() {
@@ -3599,7 +3706,7 @@ bool prebufferPcmStream(WiFiClient *stream, int *remaining, size_t frameBytes, u
   size_t target = mcuAudioPrebufferTargetBytes(*remaining, sampleRate, channels, frameBytes);
   if (target == 0) return true;
 
-  uint8_t *buffer = new uint8_t[target];
+  uint8_t *buffer = new (std::nothrow) uint8_t[target];
   if (!buffer) return true;
 
   uint32_t startedAt = millis();
@@ -4532,6 +4639,20 @@ void handleMcuInteractionStatus(uint8_t clientId, const String &message) {
   String status = jsonStringValue(message, F("status"));
   String text = jsonStringValue(message, F("text"));
   if (status.length() == 0) status = F("thinking");
+  bool sameInteraction = interactionId.length() > 0 && interactionId == mcuInteractionId;
+  bool currentTerminal = mcuInteractionStatus == F("failed") ||
+                         mcuInteractionStatus == F("completed") ||
+                         mcuInteractionStatus == F("aborted");
+  bool incomingTerminal = status == F("failed") ||
+                          status == F("completed") ||
+                          status == F("aborted");
+  if (sameInteraction && currentTerminal && !incomingTerminal) {
+    Serial.printf("Ignoring stale interaction status id=%s current=%s incoming=%s\n",
+                  interactionId.c_str(), mcuInteractionStatus.c_str(), status.c_str());
+    sendWsJson(clientId, String(F("{\"type\":\"interaction.status.ack\",\"ok\":true,\"status\":\"")) +
+                           escapeJson(mcuInteractionStatus) + F("\"}"));
+    return;
+  }
   if (status == F("speaking") && shouldPreserveMcuToolStatus(interactionId)) {
     touchMcuInteraction(interactionId);
   } else {
@@ -4701,10 +4822,7 @@ void handleMcuWebSocketText(uint8_t clientId, const String &message) {
   if (type == F("mcu.reauth.required")) {
     String machineId = jsonStringValue(message, F("machineId"));
     String reason = jsonStringValue(message, F("reason"));
-    if (!reauthActiveDevice(reason.length() > 0 ? reason : String(F("remote")), machineId)) {
-      lastAudioDetail = F("远程重登失败");
-      setOledStatus(OledMode::Error, F("LOGIN"), F("REAUTH FAIL"), 0);
-    }
+    queueMcuReauth(false, reason.length() > 0 ? reason : String(F("remote")), machineId);
     return;
   }
   if (type == F("mcu.remote.disconnected")) {
@@ -4720,18 +4838,14 @@ void handleMcuWebSocketText(uint8_t clientId, const String &message) {
     } else {
       setOledStatus(OledMode::Error, F("REMOTE"), F("OFFLINE"), 0);
     }
-    Serial.printf("Remote MCU target disconnected machine=%s\n", machineId.c_str());
-    clearActiveDeviceState();
+    Serial.printf("Remote MCU target disconnected machine=%s; preserving login for reconnect\n",
+                  machineId.c_str());
     return;
   }
   if (type == F("auth.invalid")) {
     String interactionId = jsonStringValue(message, F("interactionId"));
     String url = jsonStringValue(message, F("url"));
-    if (reauthActiveDevice(F("auth.invalid"))) {
-      broadcastMcuStatus();
-      return;
-    }
-    enqueueTokenInvalidPromptAndClearActive(interactionId, url);
+    queueMcuReauth(true, F("auth.invalid"), "", interactionId, url);
     return;
   }
   if (type == F("audio.enqueue")) {
@@ -5133,6 +5247,8 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
     setOledStatus(OledMode::Error, F("AUDIO"), F("INPUT OFF"), 0);
     return false;
   }
+  VoiceStreamChunk *pcmChunk = &voiceStreamScratch;
+  memset(pcmChunk, 0, sizeof(VoiceStreamChunk));
   if (!broadcastMcuVoiceStreamStart(interactionId)) {
     lastAudioDetail = F("voice stream start failed");
     return false;
@@ -5163,15 +5279,6 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
   auto abortVoiceStream = [&](const String &reason) {
     broadcastMcuVoiceStreamAbort(interactionId, reason, queuedBytes);
   };
-  VoiceStreamChunk *pcmChunk = static_cast<VoiceStreamChunk *>(malloc(sizeof(VoiceStreamChunk)));
-  if (!pcmChunk) {
-    audioBusy = false;
-    lastAudioDetail = String(F("voice stream chunk alloc failed heap=")) + String(ESP.getFreeHeap());
-    abortVoiceStream(F("chunk_alloc"));
-    setOledStatus(OledMode::Error, F("VOICE"), F("MEMORY"), 0);
-    return false;
-  }
-  memset(pcmChunk, 0, sizeof(VoiceStreamChunk));
   const char *stopReason = "max";
   Serial.printf("Voice stream direct mode chunkFrames=%u heap=%lu\n",
                 static_cast<unsigned>(kVoiceStreamChunkFrames),
@@ -5222,7 +5329,6 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
       ++framesDone;
       if (pcmChunkFrames >= kVoiceStreamChunkFrames && !queueVoiceChunk()) {
         audioBusy = false;
-        free(pcmChunk);
         lastAudioDetail = F("voice stream seed send failed");
         abortVoiceStream(F("seed_send"));
         return false;
@@ -5253,7 +5359,6 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
     esp_err_t err = i2s_read(kI2sPort, readBuffer, sizeof(readBuffer), &bytesRead, pdMS_TO_TICKS(40));
     if (err != ESP_OK) {
       audioBusy = false;
-      free(pcmChunk);
       lastAudioDetail = String(F("I2S stream read failed err=")) + String(static_cast<int>(err));
       setOledStatus(OledMode::Error, F("I2S"), F("READ FAIL"), 0);
       abortVoiceStream(F("i2s_read"));
@@ -5295,7 +5400,6 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
 
       if (pcmChunkFrames >= kVoiceStreamChunkFrames && !queueVoiceChunk()) {
         audioBusy = false;
-        free(pcmChunk);
         lastAudioDetail = F("voice stream chunk send failed");
         abortVoiceStream(F("chunk_send"));
         return false;
@@ -5331,14 +5435,12 @@ bool recordAndBroadcastMcuVoiceStream(const String &interactionId,
 
   if (!queueVoiceChunk()) {
     audioBusy = false;
-    free(pcmChunk);
     lastAudioDetail = F("voice stream final send failed");
     abortVoiceStream(F("final_send"));
     return false;
   }
 
   audioBusy = false;
-  free(pcmChunk);
   if (queuedBytes == 0) {
     lastAudioDetail = String(F("voice stream empty, i2s empty reads=")) + String(emptyReads);
     abortVoiceStream(F("empty"));
@@ -5839,6 +5941,7 @@ void handleSocketIoText(const String &message) {
   }
   if (message.startsWith(F("40/global-agent"))) {
     mcuSocketNamespaceReady = true;
+    resetMcuSocketReconnect();
     Serial.println(F("Socket.IO namespace /global-agent connected"));
     sendMcuReady();
     return;
@@ -5846,6 +5949,7 @@ void handleSocketIoText(const String &message) {
   if (message.startsWith(F("44/global-agent"))) {
     mcuSocketNamespaceReady = false;
     Serial.printf("Socket.IO namespace error: %s\n", message.c_str());
+    closeMcuSocketTransport(F("namespace error"));
     return;
   }
   if (message.startsWith(F("42"))) {
@@ -5888,6 +5992,24 @@ bool readMcuWsBytes(uint8_t *buffer, size_t length, uint32_t timeoutMs = 100) {
   return read == length;
 }
 
+void resetMcuSocketReconnect() {
+  nextMcuSocketReconnectAtMs = 0;
+  mcuSocketReconnectDelayMs = kMcuSocketReconnectMs;
+}
+
+void scheduleMcuSocketReconnect() {
+  if (!wifiReady || WiFi.status() != WL_CONNECTED ||
+      activeDeviceUrl.length() == 0 || mcuAuthToken.length() == 0 ||
+      mcuSocketReconnectBlocked) {
+    nextMcuSocketReconnectAtMs = 0;
+    return;
+  }
+  uint32_t delayMs = max<uint32_t>(mcuSocketReconnectDelayMs, kMcuSocketReconnectMs);
+  nextMcuSocketReconnectAtMs = millis() + delayMs;
+  mcuSocketReconnectDelayMs = min<uint32_t>(delayMs * 2, kMcuSocketReconnectMaxMs);
+  Serial.printf("Socket.IO reconnect scheduled in %lu ms\n", static_cast<unsigned long>(delayMs));
+}
+
 void closeMcuSocketTransport(const __FlashStringHelper *reason) {
   if (mcuWsClient->connected()) mcuWsClient->stop();
   wsReady = false;
@@ -5899,6 +6021,7 @@ void closeMcuSocketTransport(const __FlashStringHelper *reason) {
     Serial.print(reason);
   }
   Serial.println();
+  scheduleMcuSocketReconnect();
 }
 
 void mcuSocketLoop() {
@@ -5930,8 +6053,14 @@ void mcuSocketLoop() {
     }
     uint8_t mask[4] = {0, 0, 0, 0};
     if (masked && !readMcuWsBytes(mask, 4)) return;
-    std::unique_ptr<uint8_t[]> payload(new uint8_t[static_cast<size_t>(length) + 1]);
-    if (!payload || !readMcuWsBytes(payload.get(), static_cast<size_t>(length), 500)) return;
+    std::unique_ptr<uint8_t[]> payload(new (std::nothrow) uint8_t[static_cast<size_t>(length) + 1]);
+    if (!payload) {
+      Serial.printf("Socket.IO frame allocation failed len=%u heap=%lu\n",
+                    static_cast<unsigned>(length), static_cast<unsigned long>(ESP.getFreeHeap()));
+      closeMcuSocketTransport(F("frame allocation failed"));
+      return;
+    }
+    if (!readMcuWsBytes(payload.get(), static_cast<size_t>(length), 500)) return;
     for (size_t i = 0; masked && i < static_cast<size_t>(length); ++i) payload[i] ^= mask[i & 3];
     payload[static_cast<size_t>(length)] = 0;
 
@@ -5956,6 +6085,23 @@ void disconnectMcuSocketClient() {
   mcuSocketConnected = false;
   mcuSocketNamespaceReady = false;
   mcuSocketTargetKey = "";
+}
+
+void tickMcuSocketReconnect() {
+  if (wsReady || mcuSocketConnected || mcuSocketNamespaceReady) return;
+  if (!wifiReady || WiFi.status() != WL_CONNECTED ||
+      activeDeviceUrl.length() == 0 || mcuAuthToken.length() == 0 ||
+      mcuSocketReconnectBlocked) {
+    nextMcuSocketReconnectAtMs = 0;
+    return;
+  }
+  if (nextMcuSocketReconnectAtMs == 0) {
+    scheduleMcuSocketReconnect();
+    return;
+  }
+  if (static_cast<int32_t>(millis() - nextMcuSocketReconnectAtMs) < 0) return;
+  nextMcuSocketReconnectAtMs = 0;
+  connectMcuSocketClient();
 }
 
 String activeMcuSocketUrl() {
@@ -5984,9 +6130,11 @@ bool mcuSocketMatchesActiveTarget() {
 void connectMcuSocketClient() {
   if (!wifiReady || WiFi.status() != WL_CONNECTED || activeDeviceUrl.length() == 0 || mcuAuthToken.length() == 0) {
     disconnectMcuSocketClient();
+    resetMcuSocketReconnect();
     return;
   }
   if (mcuSocketReconnectBlocked && mcuSocketRelayUrl.length() > 0) {
+    nextMcuSocketReconnectAtMs = 0;
     Serial.println(F("Socket.IO reconnect blocked after relay replacement"));
     return;
   }
@@ -5998,6 +6146,7 @@ void connectMcuSocketClient() {
   String socketUrl = activeMcuSocketUrl();
   if (!parseAudioUrl(socketUrl, &scheme, &host, &port, &path)) {
     disconnectMcuSocketClient();
+    scheduleMcuSocketReconnect();
     return;
   }
 
@@ -6007,6 +6156,7 @@ void connectMcuSocketClient() {
 
   if (scheme != F("http") && scheme != F("https")) {
     Serial.printf("Socket.IO client unsupported scheme=%s\n", scheme.c_str());
+    scheduleMcuSocketReconnect();
     return;
   }
 
@@ -6019,6 +6169,7 @@ void connectMcuSocketClient() {
   mcuWsClient->setTimeout(5);
   if (!mcuWsClient->connect(host.c_str(), port, 5000)) {
     Serial.printf("Socket.IO tcp connect failed host=%s port=%u\n", host.c_str(), port);
+    scheduleMcuSocketReconnect();
     return;
   }
   mcuWsClient->setNoDelay(true);
@@ -6043,6 +6194,7 @@ void connectMcuSocketClient() {
   if (!statusLine.startsWith(F("HTTP/1.1 101")) && !statusLine.startsWith(F("HTTP/1.0 101"))) {
     Serial.printf("Socket.IO websocket upgrade failed: %s\n", statusLine.c_str());
     mcuWsClient->stop();
+    scheduleMcuSocketReconnect();
     return;
   }
   uint32_t headerStartedAt = millis();
@@ -6056,6 +6208,7 @@ void connectMcuSocketClient() {
   mcuSocketNamespaceReady = false;
   mcuSocketTargetKey = targetKey;
   lastMcuSocketConnectAtMs = millis();
+  nextMcuSocketReconnectAtMs = 0;
   Serial.printf("Socket.IO client connecting host=%s port=%u profile=%s relay=%d\n",
                 host.c_str(), port, selectedProfile.c_str(), mcuSocketRelayUrl.length() > 0 ? 1 : 0);
   mcuSocketLoop();
@@ -6412,6 +6565,8 @@ void loop() {
 
   server.handleClient();
   if (wsReady) mcuSocketLoop();
+  tickMcuReauth();
+  tickMcuSocketReconnect();
   tickMcuInteraction();
   tickOledStatusReturn();
   handleBootButton();

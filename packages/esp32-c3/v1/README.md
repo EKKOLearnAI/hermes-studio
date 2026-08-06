@@ -46,7 +46,7 @@ rows are sent over I²C when the page changes.
 
 The device page can switch between the existing push-to-talk mode and an
 automatic listening mode. Automatic listening runs a lightweight VAD entirely
-on the ESP32-C3 while the device is idle. It keeps about 800 ms of local
+on the ESP32-C3 while the device is idle. It keeps about 250 ms of local
 pre-roll, opens the existing ADPCM voice stream only after sustained
 speech-like activity, and ends the turn after one second of silence.
 
