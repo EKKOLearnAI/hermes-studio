@@ -3774,11 +3774,9 @@ async function handleSessionModelCustomSubmit() {
     transform: translateX(100%);
   }
 
-  :global([dir="rtl"]) {
-    .tool-panel-enter-from,
-    .tool-panel-leave-to {
-      transform: translateX(-100%);
-    }
+  .tool-panel-enter-from:dir(rtl),
+  .tool-panel-leave-to:dir(rtl) {
+    transform: translateX(-100%);
   }
 }
 

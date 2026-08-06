@@ -13,3 +13,7 @@ during the transition so resize geometry cannot be changed mid-animation.
 The Electron browser viewport remains hidden while its containing drawer is
 animating and resynchronizes after visibility changes, avoiding native-view
 content appearing outside the expanding panel.
+
+RTL mobile transitions use the transitioning panel's inherited direction
+instead of a scoped global root selector. This keeps the slide direction
+mirrored without applying the transition transform to the document root.

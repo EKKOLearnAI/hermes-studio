@@ -67,6 +67,8 @@ describe('ChatPanel tool drawer resizing support', () => {
       expect(source).toContain('@before-leave="handleToolPanelBeforeLeave"')
       expect(source).toContain('@leave-cancelled="handleToolPanelLeaveCancelled"')
       expect(source).toContain('@media (prefers-reduced-motion: reduce)')
+      expect(source).toContain('.tool-panel-enter-from:dir(rtl)')
+      expect(source).not.toMatch(/:global\(\[dir=['"]rtl['"]\]\)/)
     }
 
     expect(chatSource).toContain(':visible="toolPanelTransitionReady"')
