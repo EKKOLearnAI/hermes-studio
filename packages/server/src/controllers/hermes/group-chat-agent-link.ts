@@ -11,6 +11,7 @@ import {
   getGroupAgentConnector,
   getGroupAgentPairingRequest,
   getGroupAgentPairingRequestForRequester,
+  GROUP_AGENT_PAIRING_REQUEST_TTL_MS,
   listPendingGroupAgentPairingRequests,
   normalizeGroupAgentTargetOrigin,
   normalizeRemoteGroupAgentDescriptor,
@@ -52,8 +53,24 @@ function publicPairingRequest(request: any) {
   }
 }
 
-const localHandoffJobs = new Map<string, Promise<void>>()
+const MAX_CLOUD_RESPONSE_BYTES = 256_000
+const HANDOFF_EXPIRY_CLOCK_SKEW_MS = 30_000
+const MAX_LOCAL_HANDOFF_JOBS = 32
+const MAX_LOCAL_HANDOFF_JOBS_PER_PRINCIPAL = 4
+const MAX_LOCAL_HANDOFF_JOBS_PER_ORIGIN = 8
+
+type LocalHandoffJob = {
+  cloudOrigin: string
+  principal: string
+  promise: Promise<void> | null
+}
+
+const localHandoffJobs = new Map<string, LocalHandoffJob>()
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+class LocalHandoffLimitError extends Error {
+  readonly code = 'GROUP_AGENT_HANDOFF_LIMIT'
+}
 
 function boundedCredential(value: unknown, field: string): string {
   const text = String(value || '').trim()
@@ -73,6 +90,28 @@ function boundedInviteCode(value: unknown): string {
   return text
 }
 
+async function limitedResponseText(response: Response): Promise<string> {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const chunks: Buffer[] = []
+  let totalBytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > MAX_CLOUD_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        throw new Error('Remote group chat response is too large')
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, totalBytes).toString('utf8')
+}
+
 async function cloudJson(
   url: string,
   options: RequestInit,
@@ -83,11 +122,11 @@ async function cloudJson(
     signal: AbortSignal.timeout(10_000),
   })
   const declaredLength = Number(response.headers.get('content-length') || 0)
-  if (Number.isFinite(declaredLength) && declaredLength > 256_000) {
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_CLOUD_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined)
     throw new Error('Remote group chat response is too large')
   }
-  const text = await response.text()
-  if (Buffer.byteLength(text, 'utf8') > 256_000) throw new Error('Remote group chat response is too large')
+  const text = await limitedResponseText(response)
   let body: Record<string, any> = {}
   if (text) {
     try {
@@ -97,6 +136,25 @@ async function cloudJson(
     }
   }
   return { response, body }
+}
+
+function localHandoffPrincipal(ctx: Context): string {
+  const userId = Number(ctx.state.user?.id || 0)
+  if (Number.isSafeInteger(userId) && userId > 0) return `auth:${userId}`
+  return `ip:${ctx.ip || 'unknown'}`
+}
+
+function reserveLocalHandoffJob(jobKey: string, cloudOrigin: string, principal: string): LocalHandoffJob {
+  if (
+    localHandoffJobs.size >= MAX_LOCAL_HANDOFF_JOBS
+    || [...localHandoffJobs.values()].filter(job => job.principal === principal).length >= MAX_LOCAL_HANDOFF_JOBS_PER_PRINCIPAL
+    || [...localHandoffJobs.values()].filter(job => job.cloudOrigin === cloudOrigin).length >= MAX_LOCAL_HANDOFF_JOBS_PER_ORIGIN
+  ) {
+    throw new LocalHandoffLimitError('Too many Agent handoff requests are already in progress')
+  }
+  const entry: LocalHandoffJob = { cloudOrigin, principal, promise: null }
+  localHandoffJobs.set(jobKey, entry)
+  return entry
 }
 
 function handoffCloudUrl(cloudOrigin: string, inviteCode: string, requestId: string, suffix = ''): string {
@@ -324,50 +382,69 @@ export async function connectLocalAgentHandoff(ctx: Context): Promise<void> {
       ctx.body = { ok: true, accepted: true }
       return
     }
+    const jobEntry = reserveLocalHandoffJob(jobKey, cloudOrigin, localHandoffPrincipal(ctx))
 
-    const submitted = await cloudJson(
-      handoffCloudUrl(cloudOrigin, inviteCode, requestId, '/submit'),
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Group-Agent-Request-Secret': requestSecret,
+    try {
+      const submitted = await cloudJson(
+        handoffCloudUrl(cloudOrigin, inviteCode, requestId, '/submit'),
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Group-Agent-Request-Secret': requestSecret,
+          },
+          body: JSON.stringify({ targetOrigin, agent }),
         },
-        body: JSON.stringify({ targetOrigin, agent }),
-      },
-    )
-    if (!submitted.response.ok) {
-      throw new Error(String(submitted.body.error || `Pairing request failed (${submitted.response.status})`))
-    }
-    const expiresAt = Number(submitted.body.request?.expiresAt || 0)
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      throw new Error('Pairing request is already expired')
-    }
-    const input = {
-      cloudOrigin,
-      targetOrigin,
-      inviteCode,
-      requestId,
-      requestSecret,
-      pairingTicket,
-      agent,
-      expiresAt,
-    }
-    const job = waitForHandoffApproval(input)
-      .catch(async (error) => {
-        const reason = sanitizedHandoffFailure(error instanceof Error ? error.message : error)
-        await reportLocalHandoffFailure(input, reason)
-      })
-      .finally(() => {
+      )
+      if (!submitted.response.ok) {
+        throw new Error(String(submitted.body.error || `Pairing request failed (${submitted.response.status})`))
+      }
+      const now = Date.now()
+      const remoteExpiresAt = Number(submitted.body.request?.expiresAt || 0)
+      if (!Number.isSafeInteger(remoteExpiresAt) || remoteExpiresAt <= now) {
+        throw new Error('Pairing request is already expired')
+      }
+      if (remoteExpiresAt > now + GROUP_AGENT_PAIRING_REQUEST_TTL_MS + HANDOFF_EXPIRY_CLOCK_SKEW_MS) {
+        throw new Error('Pairing request expiry exceeds the allowed handoff lifetime')
+      }
+      const input = {
+        cloudOrigin,
+        targetOrigin,
+        inviteCode,
+        requestId,
+        requestSecret,
+        pairingTicket,
+        agent,
+        expiresAt: Math.min(remoteExpiresAt, now + GROUP_AGENT_PAIRING_REQUEST_TTL_MS),
+      }
+      const job = waitForHandoffApproval(input)
+        .catch(async (error) => {
+          const reason = sanitizedHandoffFailure(error instanceof Error ? error.message : error)
+          await reportLocalHandoffFailure(input, reason)
+        })
+        .finally(() => {
+          if (localHandoffJobs.get(jobKey) === jobEntry) localHandoffJobs.delete(jobKey)
+        })
+      jobEntry.promise = job
+    } catch (error) {
+      if (localHandoffJobs.get(jobKey) === jobEntry) {
         localHandoffJobs.delete(jobKey)
-      })
-    localHandoffJobs.set(jobKey, job)
+      }
+      throw error
+    }
     ctx.status = 202
     ctx.body = { ok: true, accepted: true }
   } catch (error) {
-    ctx.status = 400
-    ctx.body = { error: error instanceof Error ? error.message : 'Could not start Agent handoff' }
+    const limited = error instanceof LocalHandoffLimitError
+    ctx.status = limited ? 429 : 400
+    if (limited) ctx.set('Retry-After', '5')
+    const message = error instanceof Error ? error.message : 'Could not start Agent handoff'
+    ctx.body = limited ? { code: error.code, error: message } : { error: message }
   }
+}
+
+export function resetLocalHandoffJobsForTest(): void {
+  localHandoffJobs.clear()
 }
 
 export async function createPairingHandoff(ctx: Context): Promise<void> {
