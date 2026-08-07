@@ -34,6 +34,7 @@ const groupChatApiMock = vi.hoisted(() => {
     emit: vi.fn((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack(joinAck)
       if (event === 'message' && ack) ack({ id: data?.id })
+      if (event === 'approval.respond' && ack) ack({ ok: true, resolved: true })
       return socket
     }),
     disconnect: vi.fn(),
@@ -647,6 +648,46 @@ describe('group chat store baseline lifecycle', () => {
     })
     emitSocket('approval.resolved', { approval_id: 'approval-1' })
     expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('responds to an approval from an inactive room without joining or switching rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.currentRoomId = 'room-a'
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockClear()
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'approval.respond') ack?.({ ok: true, resolved: true })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondApprovalFor('room-b', 'approval-b', 'once')
+
+    expect(store.currentRoomId).toBe('room-a')
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('approval.respond', {
+      roomId: 'room-b', approval_id: 'approval-b', choice: 'once',
+    }, expect.any(Function))
+    expect(groupChatApiMock.socket.emit).not.toHaveBeenCalledWith('join', expect.anything(), expect.anything())
+  })
+
+  it('keeps an inactive-room approval pending when the authoritative response is unresolved', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'approval.respond') ack?.({ ok: true, resolved: false })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondApprovalFor('room-b', 'approval-b', 'once')
+
+    expect(store.pendingApprovals.has('approval-b')).toBe(true)
   })
 
   it('updates the current room name and token display on room_updated', async () => {

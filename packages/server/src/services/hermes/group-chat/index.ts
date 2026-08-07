@@ -1413,13 +1413,9 @@ export class GroupChatServer {
     }
 
     private emitToRoomManagers(roomId: string, event: string, payload: Record<string, unknown>): void {
-        const room = this.rooms.get(roomId)
-        if (!room) return
         const emitted = new Set<string>()
-        for (const member of room.members.values()) {
-            if (!member.online || member.source === 'agent') continue
-            const socket = this.nsp.sockets.get(member.socketId)
-            if (!socket || emitted.has(socket.id)) continue
+        for (const socket of this.nsp.sockets.values()) {
+            if (emitted.has(socket.id) || this.socketRequestedSourceMap?.get(socket.id) === 'agent') continue
             if (!this.canSocketManageRoom(socket, roomId)) continue
             socket.emit(event, payload)
             emitted.add(socket.id)
@@ -1918,7 +1914,7 @@ export class GroupChatServer {
             return
         }
         const room = this.rooms.get(roomId)
-        if (!room?.hasOnlineMember(socket.id)) {
+        if (!room) {
             ack?.({ error: 'Not in room' })
             return
         }

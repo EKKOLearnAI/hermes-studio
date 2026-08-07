@@ -529,6 +529,7 @@ function globalApprovalRequestedHandler(event: RunEvent): void {
   if (handlers?.onApprovalRequested) {
     handlers.onApprovalRequested(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalApprovalResolvedHandler(event: RunEvent): void {
@@ -539,6 +540,7 @@ function globalApprovalResolvedHandler(event: RunEvent): void {
   if (handlers?.onApprovalResolved) {
     handlers.onApprovalResolved(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalPeerUserMessageHandler(event: RunEvent): void {
@@ -563,6 +565,7 @@ function globalClarifyRequestedHandler(event: RunEvent): void {
   if (handlers?.onClarifyRequested) {
     handlers.onClarifyRequested(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalClarifyResolvedHandler(event: RunEvent): void {
@@ -573,6 +576,7 @@ function globalClarifyResolvedHandler(event: RunEvent): void {
   if (handlers?.onClarifyResolved) {
     handlers.onClarifyResolved(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 /**

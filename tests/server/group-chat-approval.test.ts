@@ -129,6 +129,50 @@ describe('group chat approval and context baseline', () => {
     ])
   })
 
+  it('delivers and handles approval globally for a manager who has not joined the source room', async () => {
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
+    const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const manager = await connectGroupChatClient(port, 'manager-1', 'Manager')
+    harness.sockets.push(agent, manager)
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+
+    const approval = waitForEkkoToolApproval({
+      approvalId: 'approval-global',
+      toolName: 'terminal_exec',
+      key: 'terminal:write',
+      command: 'touch global.txt',
+      description: 'writes a file',
+      choices: ['once', 'deny'],
+      allowPermanent: false,
+      timeoutMs: 300_000,
+    }, {
+      sessionId: agentSessionId,
+      onRequested: pending => agent.emit('approval.requested', {
+        roomId: 'room-1',
+        agentName: 'Agent',
+        agentSessionId,
+        approval_id: pending.approvalId,
+        command: pending.command,
+        description: pending.description,
+        choices: pending.choices,
+      }),
+    })
+
+    await expect(once<any>(manager, 'approval.requested')).resolves.toMatchObject({
+      roomId: 'room-1',
+      approval_id: 'approval-global',
+    })
+    await expect(emitAck(manager, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-global',
+      choice: 'once',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    await expect(approval).resolves.toBe('once')
+  })
+
   it('relays approval requested with default choices', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const requested = once<any>(human, 'approval.requested')

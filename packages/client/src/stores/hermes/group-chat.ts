@@ -1186,10 +1186,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
     }
 
-    async function respondApproval(choice: GroupPendingApproval['choices'][number]) {
-        const pending = activePendingApproval.value
-        if (!pending) return
-        const socket = await ensureRealtimeRoomReady(pending.roomId)
+    async function respondApprovalFor(roomId: string, approvalId: string, choice: GroupPendingApproval['choices'][number]) {
+        const pending = pendingApprovals.value.get(approvalId)
+        if (!pending || pending.roomId !== roomId) return
+        const socket = await ensureRealtimeSocket()
+        let resolved = false
         await new Promise<void>((resolve, reject) => {
             socket.emit('approval.respond', {
                 roomId: pending.roomId,
@@ -1197,11 +1198,22 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 choice,
             }, (res: any) => {
                 if (res?.error) reject(new Error(res.error))
-                else resolve()
+                else {
+                    resolved = res?.resolved !== false
+                    resolve()
+                }
             })
         })
-        pendingApprovals.value.delete(pending.approvalId)
-        pendingApprovals.value = new Map(pendingApprovals.value)
+        if (resolved) {
+            pendingApprovals.value.delete(pending.approvalId)
+            pendingApprovals.value = new Map(pendingApprovals.value)
+        }
+    }
+
+    async function respondApproval(choice: GroupPendingApproval['choices'][number]) {
+        const pending = activePendingApproval.value
+        if (!pending) return
+        await respondApprovalFor(pending.roomId, pending.approvalId, choice)
     }
 
     return {
@@ -1252,6 +1264,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         emitStopTyping,
         interruptAgent,
         respondApproval,
+        respondApprovalFor,
         createNewRoom,
         joinByCode,
         deleteRoom,

@@ -6,6 +6,7 @@ const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(),
   resumeSession: vi.fn(),
   registerSessionHandlers: vi.fn(),
+  globalPendingHandler: undefined as undefined | ((event: any) => void),
   unregisterSessionHandlers: vi.fn(),
 }))
 
@@ -17,7 +18,11 @@ vi.mock('@/api/hermes/chat', () => ({
   getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
   respondToolApproval: vi.fn(),
   respondClarify: vi.fn(),
-  onPeerUserMessage: vi.fn(() => vi.fn()),
+  onPeerUserMessage: vi.fn((handler: (event: any) => void) => { chatApi.globalPendingHandler = handler; return vi.fn() }),
+  onApprovalRequested: vi.fn(() => vi.fn()),
+  onApprovalResolved: vi.fn(() => vi.fn()),
+  onClarifyRequested: vi.fn(() => vi.fn()),
+  onClarifyResolved: vi.fn(() => vi.fn()),
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
   onSessionWorkspaceUpdated: vi.fn(() => vi.fn()),
@@ -74,6 +79,7 @@ describe('chat store error handling - #1644', () => {
 
   beforeEach(() => {
     handlers = undefined
+    chatApi.globalPendingHandler = undefined
     vi.resetAllMocks()
     setActivePinia(createPinia())
     chatApi.startRunViaSocket.mockReturnValue({ abort: vi.fn() })
@@ -90,6 +96,26 @@ describe('chat store error handling - #1644', () => {
       handlers = registeredHandlers
       return vi.fn()
     })
+  })
+
+  it('tracks an approval request from an inactive session through the global socket listener', () => {
+    const store = useChatStore()
+    const sessionA = makeSession('session-a')
+    store.sessions = [sessionA, makeSession('session-b')]
+    store.activeSessionId = 'session-a'
+    store.activeSession = sessionA
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested',
+      session_id: 'session-b',
+      approval_id: 'approval-b',
+      command: 'pwd',
+      description: 'Run command',
+      choices: ['once', 'deny'],
+    })
+
+    expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b', command: 'pwd' })
+    expect(store.activePendingApproval).toBeNull()
   })
 
   it('preserves assistant content when run.failed fires during streaming with substantial content', async () => {
