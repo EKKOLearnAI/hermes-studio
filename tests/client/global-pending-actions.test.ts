@@ -247,6 +247,40 @@ describe('GlobalPendingActions', () => {
     wrapper.unmount()
   })
 
+  it('sounds for new in-context chat requests without duplicating their notifications', async () => {
+    settingsState.display.approval_bell = true
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.pendingApprovals = new Map([['session-a', {
+      sessionId: 'session-a', approvalId: 'approval-a', description: 'Run', command: 'pwd', choices: ['once'],
+    }]])
+    chatState.pendingClarifies = new Map([['session-a', {
+      sessionId: 'session-a', clarifyId: 'clarify-a', question: 'Continue?', choices: ['yes', 'no'],
+    }]])
+    await nextTick()
+
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    expect(created).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('sounds for a new in-context group approval without duplicating its notification', async () => {
+    settingsState.display.approval_bell = true
+    routeState.name = 'hermes.groupChatRoom'
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    groupState.pendingApprovals = new Map([['room-a:approval-a', {
+      roomId: 'room-a', approvalId: 'approval-a', description: 'Deploy', command: 'deploy', choices: ['once'],
+    }]])
+    await nextTick()
+
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    expect(created).toHaveLength(0)
+    wrapper.unmount()
+  })
+
   it('does not duplicate the existing in-context approval for the active session', async () => {
     chatState.pendingApprovals = new Map([['session-a', {
       sessionId: 'session-a', approvalId: 'approval-a', description: 'Run', command: 'pwd', choices: ['once'],

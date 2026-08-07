@@ -95,6 +95,26 @@ function roomTitle(roomId: string): string {
   return groupChatStore.rooms.find(room => room.id === roomId)?.name || roomId
 }
 
+function pendingSoundActionKeys(): string[] {
+  const keys: string[] = []
+  for (const pending of chatStore.pendingApprovals.values()) {
+    keys.push(`chat-approval:${pending.sessionId}:${pending.approvalId}`)
+  }
+  for (const pending of chatStore.pendingClarifies.values()) {
+    keys.push(`chat-clarify:${pending.sessionId}:${pending.clarifyId}`)
+  }
+  for (const pending of groupChatStore.pendingApprovals.values()) {
+    keys.push(`group-approval:${pending.roomId}:${pending.approvalId}`)
+  }
+  for (const status of Object.values(workflowStatuses)) {
+    if (!status.runId) continue
+    for (const { nodeId, executionId } of status.pendingApprovals || []) {
+      keys.push(`workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`)
+    }
+  }
+  return keys
+}
+
 function pendingActions(): GlobalPendingAction[] {
   const actions: GlobalPendingAction[] = []
   const visibleChatSessionId = ['hermes.chat', 'hermes.session', 'hermes.globalAgent', 'hermes.globalAgentSession'].includes(String(route.name || ''))
@@ -239,31 +259,38 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
   })
 }
 
-watch(pendingActions, actions => {
-  const liveKeys = new Set(actions.map(action => action.key))
+watch(pendingSoundActionKeys, keys => {
+  const liveKeys = new Set(keys)
   const shouldAnnounce = pendingBaselineEstablished
   let hasNewAction = false
+  for (const key of pendingSoundKeys) {
+    if (!liveKeys.has(key)) pendingSoundKeys.delete(key)
+  }
+  for (const key of keys) {
+    if (announcedKeys.has(key)) continue
+    announcedKeys.add(key)
+    if (shouldAnnounce) {
+      hasNewAction = true
+      if (!approvalSoundArmed) pendingSoundKeys.add(key)
+    }
+  }
+  pendingBaselineEstablished = true
+  if (hasNewAction && approvalSoundArmed && settingsStore.display.approval_bell) void playCompletionSound()
+}, { immediate: true })
+
+watch(pendingActions, actions => {
+  const liveKeys = new Set(actions.map(action => action.key))
   for (const [key, handle] of handles) {
     if (liveKeys.has(key)) continue
     handle.destroy()
     handles.delete(key)
-    pendingSoundKeys.delete(key)
     delete clarifyDrafts[key]
     delete submitting[key]
   }
   for (const action of actions) {
-    if (!announcedKeys.has(action.key)) {
-      announcedKeys.add(action.key)
-      if (shouldAnnounce) {
-        hasNewAction = true
-        if (!approvalSoundArmed) pendingSoundKeys.add(action.key)
-      }
-    }
     if (handles.has(action.key)) continue
     handles.set(action.key, createGlobalNotification(action))
   }
-  pendingBaselineEstablished = true
-  if (hasNewAction && approvalSoundArmed && settingsStore.display.approval_bell) void playCompletionSound()
 }, { deep: true, immediate: true })
 
 onMounted(() => {

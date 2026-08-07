@@ -17,6 +17,6 @@ impact: Existing direct-chat approval and clarify prompts, group-chat approvals,
 - Keys Group Chat approvals by Room plus approval ID so concurrent same-ID requests cannot overwrite or resolve each other.
 - Publishes Workflow's authoritative pending approval locators, including the exact `executionId`, instead of inferring the waiter from node-session history.
 - Uses an authenticated Profile-scoped Direct Chat audience so inactive Sessions receive approval/clarify lifecycle events without subscribing to every Session room.
-- Adds an independent persisted `approval_bell` display setting. When enabled, newly surfaced global approval or clarification keys play the existing short Web Audio tone once per reactive batch; restored pending actions, duplicate events, re-renders, and re-entry of an already announced key stay silent. Playback failure never blocks the notification.
+- Adds an independent persisted `approval_bell` display setting. When enabled, every newly received authoritative approval or clarification key plays the existing short Web Audio tone once per reactive batch in each connected client, including when that client is currently viewing the source Session or Room. In-context cards still suppress only the duplicate global notification UI, not the sound. Restored pending actions, duplicate events, re-renders, and re-entry of an already announced key stay silent. Playback failure never blocks the notification or in-context action.
 
 Closes #2403.
