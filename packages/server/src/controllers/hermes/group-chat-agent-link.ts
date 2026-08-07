@@ -256,11 +256,6 @@ function normalizeCloudOrigin(value: unknown): string {
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new Error('Cloud URL must use HTTP or HTTPS')
   }
-  const host = url.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1'
-  if (url.protocol === 'http:' && !loopback) {
-    throw new Error('Remote group chat server must use HTTPS')
-  }
   return url.origin
 }
 

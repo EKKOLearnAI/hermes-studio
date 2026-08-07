@@ -119,17 +119,12 @@ function relayError(message: string, code = 'GROUP_AGENT_RELAY_ERROR'): Error {
   return error
 }
 
-function normalizeOrigin(value: unknown, options: { allowHttpPrivate?: boolean } = {}): string {
+function normalizeOrigin(value: unknown): string {
   const raw = String(value || '').trim()
   const url = new URL(raw)
   if (url.username || url.password || url.search || url.hash) throw new Error('Connection URL must not contain credentials, query, or fragment')
   if (url.pathname !== '/' && url.pathname !== '') throw new Error('Connection URL must be an origin without a path')
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Connection URL must use HTTP or HTTPS')
-  if (url.protocol === 'http:' && !options.allowHttpPrivate) {
-    const host = url.hostname.toLowerCase()
-    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1'
-    if (!loopback) throw new Error('Remote group chat server must use HTTPS')
-  }
   return url.origin
 }
 
@@ -926,7 +921,7 @@ export class GroupAgentRelayServer {
         next(relayError('Unsupported group Agent relay protocol', 'GROUP_AGENT_PROTOCOL_VERSION'))
         return
       }
-      const targetOrigin = normalizeOrigin(auth.targetOrigin, { allowHttpPrivate: true })
+      const targetOrigin = normalizeOrigin(auth.targetOrigin)
       const pairingTicket = String(auth.pairingTicket || '').trim()
       if (pairingTicket) {
         const request = claimGroupAgentPairingTicket(pairingTicket)
@@ -1631,7 +1626,7 @@ export class GroupAgentOutboundRelayManager {
     agent: RemoteGroupAgentDescriptor
   }): Promise<{ connectorId: string; roomId?: string }> {
     const cloudOrigin = normalizeOrigin(input.cloudOrigin)
-    const targetOrigin = normalizeOrigin(input.targetOrigin, { allowHttpPrivate: true })
+    const targetOrigin = normalizeOrigin(input.targetOrigin)
     const ticket = String(input.pairingTicket || '').trim()
     if (!ticket) throw new Error('pairingTicket is required')
     const key = `pairing:${ticket.slice(0, 12)}`
@@ -1795,7 +1790,7 @@ export class GroupAgentOutboundRelayManager {
           if (!UUID_PATTERN.test(connectorId) || !/^[a-zA-Z0-9_-]{40,128}$/.test(credential)) continue
           links.push({
             cloudOrigin: normalizeOrigin(link.cloudOrigin),
-            targetOrigin: normalizeOrigin(link.targetOrigin, { allowHttpPrivate: true }),
+            targetOrigin: normalizeOrigin(link.targetOrigin),
             connectorId,
             credential,
             agent: normalizeRemoteGroupAgentDescriptor(link.agent),

@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
+import { resolveLoginRedirect } from '@/utils/login-redirect'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -231,7 +232,7 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.public) {
     // Already has key, skip login
     if (to.name === 'login' && hasApiKey() && !isDesktopShell()) {
-      next({ path: '/hermes/chat' })
+      next(resolveLoginRedirect(to.query.redirect))
       return
     }
     next()

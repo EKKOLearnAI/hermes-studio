@@ -204,6 +204,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(sharedView).toContain('/?groupChatAgentLink=1#/group-chat-link')
     expect(sharedView).toContain('v-model:value="targetOriginDraft"')
     expect(sharedView).toContain("const targetOriginDraft = ref('http://127.0.0.1:8748')")
+    expect(sharedView).toContain("import { generateClientUuid } from '@/utils/client-random'")
+    expect(sharedView).not.toContain('crypto.randomUUID')
     expect(sharedView).not.toContain('probeTargets')
     expect(sharedView).not.toContain('detectedTargetOrigins')
     expect(sharedView).not.toContain('class="agent-link-launcher"')
