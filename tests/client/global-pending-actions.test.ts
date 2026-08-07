@@ -366,6 +366,34 @@ describe('GlobalPendingActions', () => {
     expect(instance.destroy).toHaveBeenCalledOnce()
   })
 
+  it('sounds for a visible workflow approval without duplicating its in-context notification', async () => {
+    settingsState.display.approval_bell = true
+    routeState.name = 'hermes.workflow'
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    window.dispatchEvent(new CustomEvent('hermes:workflow-approval-visible', {
+      detail: { key: 'workflow-approval:workflow-b:run-b:build:exec-b' },
+    }))
+    workflowMock.statusHandlers[0]?.({
+      workflowId: 'workflow-b', runId: 'run-b', status: 'running',
+      nodeStatuses: { build: 'pending_approval' },
+      pendingApprovals: [{ nodeId: 'build', executionId: 'exec-b' }],
+    })
+    await nextTick()
+
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    expect(created).toHaveLength(0)
+
+    window.dispatchEvent(new CustomEvent('hermes:workflow-approval-visible', {
+      detail: { key: 'workflow-approval:workflow-b:run-b:build:exec-b', visible: false },
+    }))
+    await nextTick()
+    expect(created).toHaveLength(1)
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
   it('directly approves a pending workflow node from the global notification', async () => {
     mount(GlobalPendingActions)
     await nextTick()

@@ -8,6 +8,7 @@ import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/gr
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { playCompletionSound } from '@/utils/completion-sound'
+import { workflowApprovalKey } from '@/utils/workflow-approval-key'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
 
@@ -27,6 +28,7 @@ const clarifyDrafts = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const workflows = ref<WorkflowRecord[]>([])
 const workflowStatuses = reactive<Record<string, WorkflowRuntimeStatus>>({})
+const visibleWorkflowApprovalKeys = reactive(new Set<string>())
 let stopWorkflowStatus: (() => void) | null = null
 let workflowSubscriptionGeneration = 0
 let pendingBaselineEstablished = false
@@ -72,7 +74,7 @@ function resetWorkflowSubscriptions(profile?: string | null) {
     for (const status of statuses) {
       if (status.runId) {
         for (const { nodeId, executionId } of status.pendingApprovals || []) {
-          announcedKeys.add(`workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`)
+          announcedKeys.add(workflowApprovalKey(status.workflowId, status.runId, nodeId, executionId))
         }
       }
       workflowStatuses[status.workflowId] = status
@@ -95,6 +97,14 @@ function roomTitle(roomId: string): string {
   return groupChatStore.rooms.find(room => room.id === roomId)?.name || roomId
 }
 
+function handleVisibleWorkflowApproval(event: Event) {
+  const detail = (event as CustomEvent<{ key?: string; visible?: boolean }>).detail
+  const key = detail?.key
+  if (!key) return
+  if (detail.visible === false) visibleWorkflowApprovalKeys.delete(key)
+  else visibleWorkflowApprovalKeys.add(key)
+}
+
 function pendingSoundActionKeys(): string[] {
   const keys: string[] = []
   for (const pending of chatStore.pendingApprovals.values()) {
@@ -109,7 +119,7 @@ function pendingSoundActionKeys(): string[] {
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
     for (const { nodeId, executionId } of status.pendingApprovals || []) {
-      keys.push(`workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`)
+      keys.push(workflowApprovalKey(status.workflowId, status.runId, nodeId, executionId))
     }
   }
   return keys
@@ -136,8 +146,10 @@ function pendingActions(): GlobalPendingAction[] {
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
     for (const { nodeId, executionId } of status.pendingApprovals || []) {
+      const key = workflowApprovalKey(status.workflowId, status.runId, nodeId, executionId)
+      if (visibleWorkflowApprovalKeys.has(key)) continue
       actions.push({
-        key: `workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`,
+        key,
         kind: 'workflow-approval',
         title: workflows.value.find(workflow => workflow.id === status.workflowId)?.name || status.workflowId,
         workflowId: status.workflowId,
@@ -294,6 +306,7 @@ watch(pendingActions, actions => {
 }, { deep: true, immediate: true })
 
 onMounted(() => {
+  window.addEventListener('hermes:workflow-approval-visible', handleVisibleWorkflowApproval)
   resetWorkflowSubscriptions(profilesStore.activeProfileName)
   void groupChatStore.connect().catch(() => undefined)
   loadApprovalSoundSetting()
@@ -305,6 +318,8 @@ watch(() => profilesStore.activeProfileName, profile => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('hermes:workflow-approval-visible', handleVisibleWorkflowApproval)
+  visibleWorkflowApprovalKeys.clear()
   settingsLoadGeneration++
   pendingSoundKeys.clear()
   stopWorkflowStatus?.()
