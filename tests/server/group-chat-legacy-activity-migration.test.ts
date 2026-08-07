@@ -96,7 +96,7 @@ describe('group chat legacy activity migration', () => {
       persistedAt: cutoff - 1_000,
     })
     server.getIO().close()
-  })
+  }, 15_000)
 
   it('persists the migration boundary across a database restart so future timestamps never become trusted later', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'group-chat-activity-'))

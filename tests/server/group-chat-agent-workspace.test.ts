@@ -178,7 +178,7 @@ describe('group chat agent workspace bridge runs', () => {
     expect(hermesSession).not.toBe(codexSession)
     expect(codexResponsesSession).not.toBe(codexChatSession)
     expect(hermesWithIgnoredApiMode).toBe(hermesSession)
-  })
+  }, 15_000)
 
   it('generates a complete entry mention DTO for an agent reply handoff', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')

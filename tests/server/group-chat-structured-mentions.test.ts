@@ -120,7 +120,7 @@ describe('group chat structured agent mentions', () => {
     expect(replyToMention).not.toHaveBeenCalled()
   })
 
-  it('normalizes an agent @all broadcast, persists it, and dispatches every other room agent', async () => {
+  it('keeps the latest main policy that only a room owner may broadcast with @all', async () => {
     const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
@@ -144,11 +144,9 @@ describe('group chat structured agent mentions', () => {
       mentions: [{ type: 'all', displayName: 'all' }],
     })
 
-    expect(response.error).toBeUndefined()
-    await vi.waitFor(() => expect(replyToMention).toHaveBeenCalledOnce())
-    expect(harness.db.prepare('SELECT mentions FROM gc_messages WHERE id = ?').get('agent-all-handoff')).toEqual({
-      mentions: JSON.stringify([{ type: 'all' }]),
-    })
+    expect(response.error).toBe('Only the room owner can mention @all')
+    expect(replyToMention).not.toHaveBeenCalled()
+    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('agent-all-handoff')).toEqual({ count: 0 })
   })
 
   it('atomically rejects an agent visible mention paired with an empty structured mention list', async () => {
@@ -198,16 +196,19 @@ describe('group chat structured agent mentions', () => {
         { type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' },
         { type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' },
       ] },
-      { id: 'invalid-all', content: '@all verify', mentions: [{ type: 'all', displayName: 'ALL' }] },
+      { id: 'invalid-all', content: '@all verify', mentions: [{ type: 'all', displayName: 'ALL' }], expectedError: 'Only the room owner can mention @all' },
       { id: 'incomplete-agent', content: '@Reviewer verify', mentions: [{ type: 'agent', participantId: 'agent-reviewer' }] },
       { id: 'invalid-type', content: '@Reviewer verify', mentions: [{ type: 'human', participantId: 'agent-reviewer', displayName: 'Reviewer' }] },
       { id: 'inconsistent-content', content: 'please verify', mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }] },
-      { id: 'all-with-explicit-agent', content: '@all @Reviewer verify', mentions: [{ type: 'all', displayName: 'all' }] },
+      { id: 'all-with-explicit-agent', content: '@all @Reviewer verify', mentions: [{ type: 'all', displayName: 'all' }], expectedError: 'Only the room owner can mention @all' },
     ]
 
     for (const testCase of cases) {
       const response = await emitAck<{ error?: string }>(author, 'message', { ...base, ...testCase })
-      expect(response.error).toBe('Invalid structured mentions')
+      const expectedError = 'expectedError' in testCase
+        ? testCase.expectedError
+        : 'Invalid structured mentions'
+      expect(response.error).toBe(expectedError)
       expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get(testCase.id)).toEqual({ count: 0 })
     }
     expect(processMentions).not.toHaveBeenCalled()

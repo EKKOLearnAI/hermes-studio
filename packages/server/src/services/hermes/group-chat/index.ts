@@ -458,6 +458,9 @@ class ChatStorage {
                     ? authenticatedGroupUserId(Number(room?.ownerAuthUserId))
                     : ''
             )
+        const storedMentions = Object.prototype.hasOwnProperty.call(row, 'mentions')
+            ? { mentions: parseStructuredMentions(row.mentions) }
+            : {}
         return {
             ...row,
             senderType: agent || mayBeAgent ? 'agent' : 'member',
@@ -472,7 +475,7 @@ class ChatStorage {
                 senderOwnerMemberId: ownerMemberId,
             } : {}),
             tool_calls: parseJsonArray(row.tool_calls),
-            mentions: parseStructuredMentions(row.mentions),
+            ...storedMentions,
         }
     }
 
@@ -2489,7 +2492,7 @@ export class GroupChatServer {
             content,
             timestamp: this.normalizeMessageTimestamp(data.timestamp, role),
             persistedAt: Date.now(),
-            mentions: mentionResult.mentions,
+            ...(mentionResult.mentions !== undefined ? { mentions: mentionResult.mentions } : {}),
             run_id: !isHumanMessage && typeof data.run_id === 'string' && data.run_id.trim()
                 ? data.run_id.trim()
                 : null,
