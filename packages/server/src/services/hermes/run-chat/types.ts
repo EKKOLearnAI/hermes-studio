@@ -94,6 +94,10 @@ export interface SessionState {
   contextTokens?: number
   bridgeContext?: BridgeContextState
   isAborting?: boolean
+  /** [preempt patch] 幂等保护:同一轮 abort 的 markAbortCompleted 只执行一次。
+   *  handleAbort 与 bridge terminal chunk 的 markAbortCompleted 会并发触发,
+   *  不加保护会把刚启动的下一条 run 的 activeRunMarker/runId 清掉。 */
+  abortFinalized?: boolean
   queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource

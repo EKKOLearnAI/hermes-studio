@@ -87,6 +87,8 @@ export async function handleAbort(
 
   const runId = activeState.runId
   activeState.isAborting = true
+  // [preempt patch] 新一轮 abort 重置幂等标志,使本轮 markAbortCompleted 只生效一次
+  activeState.abortFinalized = false
   replaceState(sessionMap, sessionId, 'abort.started', {
     event: 'abort.started',
     run_id: runId,
@@ -197,6 +199,15 @@ export async function markAbortCompleted(
 ) {
   const state = sessionMap.get(sessionId)
   if (!state) return
+  // [preempt patch] 幂等保护:handleAbort 和 bridge terminal chunk 都会被触发
+  // markAbortCompleted。重复执行会清掉刚启动的下一条 run 的状态(activeRunMarker/
+  // runId),使 bridge 端 run 悬空,后续新消息撞 "already running"。标记为事务性:
+  // 在第一个 await 之前原子置位,并发第二次调用直接跳过。
+  if (state.abortFinalized) {
+    logger.info({ sessionId, runId }, '[chat-run-socket][abort] markAbortCompleted skipped, already finalized')
+    return
+  }
+  state.abortFinalized = true
 
   const profile = state.profile
   updateSessionStats(sessionId)
@@ -236,6 +247,7 @@ export async function markAbortCompleted(
     emitToSession(nsp, socket, sessionId, 'run.queued', {
       event: 'run.queued',
       queue_length: state.queue.length,
+      dequeued_queue_id: next.queue_id,
     })
     state.events = []
     runQueuedItem(socket, sessionId, next, profile || 'default')
