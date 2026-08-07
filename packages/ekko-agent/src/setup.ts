@@ -6,6 +6,7 @@ import {
   type EkkoSkillImportResult,
 } from './directories'
 import { MemoryService } from './memory/service'
+import { resolveEkkoDatabasePath } from './memory/paths'
 import { SqliteMemoryStore } from './memory/store'
 import { EkkoToolApprovalService } from './tools/approval'
 
@@ -13,6 +14,7 @@ export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOption
   baseDirectory?: string
   profiles?: string[]
   env?: Record<string, string | undefined>
+  packageRoot?: string
 }
 
 export interface EkkoProfileDirectoryLayout {
@@ -41,9 +43,16 @@ export class EkkoAgentSetup {
 
   constructor(options: SetupEkkoAgentOptions = {}) {
     this.directories = new EkkoDirectoryManager(options.baseDirectory)
-    this.layout = this.directories.initialize({
-      hermesRootDirectory: options.hermesRootDirectory,
-    })
+    this.layout = {
+      ...this.directories.initialize({
+        hermesRootDirectory: options.hermesRootDirectory,
+      }),
+      databasePath: resolveEkkoDatabasePath({
+        baseDirectory: options.baseDirectory,
+        env: options.env,
+        packageRoot: options.packageRoot,
+      }),
+    }
     this.skillImport = this.directories.lastSkillImport
     this.toolApprovals = new EkkoToolApprovalService({
       configPath: this.layout.configPath,
