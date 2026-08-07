@@ -20,6 +20,7 @@ const groupState = reactive({
   disconnect: vi.fn(),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
+const settingsState = reactive({ display: { approval_bell: false }, fetchSettings: vi.fn(async () => undefined) })
 const routeState = reactive({ name: 'hermes.chat' as string })
 const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
@@ -32,6 +33,8 @@ const workflowMock = vi.hoisted(() => ({
 vi.mock('@/stores/hermes/chat', () => ({ useChatStore: () => chatState }))
 vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupState }))
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
+vi.mock('@/stores/hermes/settings', () => ({ useSettingsStore: () => settingsState }))
+vi.mock('@/utils/completion-sound', () => ({ playCompletionSound: vi.fn(async () => true) }))
 vi.mock('vue-router', () => ({ useRoute: () => routeState }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
 vi.mock('@/api/hermes/workflow-socket', () => ({
@@ -59,6 +62,7 @@ vi.mock('naive-ui', async () => {
 })
 
 import GlobalPendingActions from '@/components/layout/GlobalPendingActions.vue'
+import { playCompletionSound } from '@/utils/completion-sound'
 
 async function render(node: (() => any) | undefined) {
   const component = defineComponent({ setup: () => () => node?.() })
@@ -76,9 +80,69 @@ describe('GlobalPendingActions', () => {
     groupState.rooms = []
     groupState.currentRoomId = 'room-a'
     profileState.activeProfileName = 'default'
+    settingsState.display.approval_bell = false
     routeState.name = 'hermes.chat'
     vi.clearAllMocks()
     workflowMock.statusHandlers.splice(0)
+  })
+
+  it('loads persisted display settings when mounted globally', async () => {
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+    expect(settingsState.fetchSettings).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('plays the independent approval sound once for each newly surfaced pending action', async () => {
+    settingsState.display.approval_bell = true
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Read config', command: 'read config', choices: ['once', 'deny'],
+    }]])
+    await nextTick()
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+
+    chatState.pendingApprovals = new Map(chatState.pendingApprovals)
+    await nextTick()
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+
+    groupState.pendingApprovals = new Map([['room-b:approval-b', {
+      roomId: 'room-b', approvalId: 'approval-b', description: 'Deploy', command: 'deploy', choices: ['once', 'deny'],
+    }]])
+    await nextTick()
+    expect(playCompletionSound).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('does not sound for restored pending actions and coalesces a new batch into one sound', async () => {
+    settingsState.display.approval_bell = true
+    chatState.pendingApprovals = new Map([['restored', {
+      sessionId: 'restored', approvalId: 'approval-old', description: 'Old', command: 'old', choices: ['once'],
+    }]])
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+    expect(playCompletionSound).not.toHaveBeenCalled()
+
+    chatState.pendingApprovals = new Map([
+      ...chatState.pendingApprovals,
+      ['new-a', { sessionId: 'new-a', approvalId: 'approval-a', description: 'A', command: 'a', choices: ['once'] }],
+      ['new-b', { sessionId: 'new-b', approvalId: 'approval-b', description: 'B', command: 'b', choices: ['once'] }],
+    ])
+    await nextTick()
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keeps approval sound independent from completion sound and disabled by default', async () => {
+    const wrapper = mount(GlobalPendingActions)
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Read config', command: 'read config', choices: ['once', 'deny'],
+    }]])
+    await nextTick()
+    expect(playCompletionSound).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('does not duplicate the existing in-context approval for the active session', async () => {

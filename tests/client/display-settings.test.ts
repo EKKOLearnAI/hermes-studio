@@ -13,6 +13,7 @@ const mockSettingsStore = vi.hoisted(() => ({
     inline_diffs: true,
     chat_input_height: 160,
     bell_on_complete: false,
+    approval_bell: false,
     notify_on_complete: false,
     busy_input_mode: 'interrupt',
   },
@@ -79,6 +80,31 @@ describe('DisplaySettings', () => {
     vi.clearAllMocks()
     mockSettingsStore.display.chat_input_height = 160
     mockSettingsStore.saveSection.mockResolvedValue(undefined)
+  })
+
+  it('exposes and saves an approval sound toggle separately from completion sound', async () => {
+    const wrapper = mount(DisplaySettings, {
+      global: {
+        stubs: {
+          SettingRow: {
+            props: ['label', 'hint'],
+            template: '<div class="setting-row"><div>{{ label }}</div><div>{{ hint }}</div><slot /></div>',
+          },
+          NSwitch: defineComponent({
+            props: ['value'], emits: ['update:value'],
+            template: '<button class="setting-switch" @click="$emit(\'update:value\', !value)"><slot /></button>',
+          }),
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('settings.display.approvalBell')
+    const approvalRow = wrapper.findAll('.setting-row').find(row => row.text().includes('settings.display.approvalBell'))
+    expect(approvalRow).toBeTruthy()
+    await approvalRow!.get('[role="switch"]').trigger('click')
+    await flushPromises()
+    expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('display', { approval_bell: true })
+    expect(mockSettingsStore.saveSection).not.toHaveBeenCalledWith('display', expect.objectContaining({ bell_on_complete: true }))
   })
 
   it('does not expose the unwired busy input mode toggle', () => {

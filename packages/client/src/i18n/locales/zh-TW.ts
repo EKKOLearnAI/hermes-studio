@@ -1897,6 +1897,8 @@ export default {
       inlineDiffsHint: '程式碼變更以內嵌方式顯示',
       bellOnComplete: '完成提示音',
       bellOnCompleteHint: 'AI 回覆完成時播放提示音',
+      approvalBell: '審批提示音',
+      approvalBellHint: '出現新的待處理審批或澄清時播放提示音',
       notifyOnComplete: '完成彈窗通知',
       notifyOnCompleteHint: 'AI 回覆完成時顯示系統通知',
       notifyOnCompleteMacHint: 'macOS 需要在系統設定中允許瀏覽器通知。',

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { NButton, NSwitch, NInputNumber, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import { primeCompletionSound } from '@/utils/completion-sound'
 import { requestCompletionNotificationPermission, showCompletionNotification, type CompletionNotificationPermissionResult } from '@/utils/completion-notification'
 import { clampChatInputHeight, MAX_CHAT_INPUT_HEIGHT, MIN_CHAT_INPUT_HEIGHT } from '@/utils/chat-input-height'
 import SettingRow from './SettingRow.vue'
@@ -33,6 +34,11 @@ function notificationPermissionErrorKey(result: CompletionNotificationPermission
   if (result.reason === 'insecure') return 'settings.display.notifyOnCompleteInsecure'
   if (result.reason === 'unsupported') return 'settings.display.notifyOnCompleteUnsupported'
   return 'settings.display.notifyOnCompleteDenied'
+}
+
+function handleApprovalBellChange(value: boolean) {
+  if (value) primeCompletionSound()
+  return save({ approval_bell: value })
 }
 
 async function handleNotifyOnCompleteChange(value: boolean) {
@@ -93,6 +99,9 @@ async function testCompletionNotification() {
     </SettingRow>
     <SettingRow :label="t('settings.display.bellOnComplete')" :hint="t('settings.display.bellOnCompleteHint')">
       <NSwitch :value="settingsStore.display.bell_on_complete" @update:value="v => save({ bell_on_complete: v })" />
+    </SettingRow>
+    <SettingRow :label="t('settings.display.approvalBell')" :hint="t('settings.display.approvalBellHint')">
+      <NSwitch :value="settingsStore.display.approval_bell" @update:value="handleApprovalBellChange" />
     </SettingRow>
     <SettingRow :label="t('settings.display.notifyOnComplete')" :hint="`${t('settings.display.notifyOnCompleteHint')} ${t('settings.display.notifyOnCompleteMacHint')}`">
       <div class="notify-controls">

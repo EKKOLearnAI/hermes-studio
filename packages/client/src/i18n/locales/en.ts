@@ -1948,6 +1948,8 @@ export default {
       inlineDiffsHint: 'Show code changes inline',
       bellOnComplete: 'Completion Sound',
       bellOnCompleteHint: 'Play sound when AI finishes',
+      approvalBell: 'Approval Sound',
+      approvalBellHint: 'Play a sound when a new approval or clarification needs attention',
       notifyOnComplete: 'Completion Notification',
       notifyOnCompleteHint: 'Show a system notification when AI finishes',
       notifyOnCompleteMacHint: 'On macOS, allow browser notifications in System Settings.',

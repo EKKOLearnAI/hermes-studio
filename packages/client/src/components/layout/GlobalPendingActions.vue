@@ -6,24 +6,30 @@ import { useRoute } from 'vue-router'
 import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useSettingsStore } from '@/stores/hermes/settings'
+import { playCompletionSound } from '@/utils/completion-sound'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
 
 const chatStore = useChatStore()
 const groupChatStore = useGroupChatStore()
 const profilesStore = useProfilesStore()
+const settingsStore = useSettingsStore()
 const notification = useNotification()
 const message = useMessage()
 const { t } = useI18n()
 const route = useRoute()
 
 const handles = new Map<string, NotificationReactive>()
+const announcedKeys = new Set<string>()
 const clarifyDrafts = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const workflows = ref<WorkflowRecord[]>([])
 const workflowStatuses = reactive<Record<string, WorkflowRuntimeStatus>>({})
 let stopWorkflowStatus: (() => void) | null = null
 let workflowSubscriptionGeneration = 0
+let pendingBaselineEstablished = false
+let approvalSoundArmed = false
 
 function resetWorkflowSubscriptions(profile?: string | null) {
   const generation = ++workflowSubscriptionGeneration
@@ -38,7 +44,14 @@ function resetWorkflowSubscriptions(profile?: string | null) {
   }).catch(() => undefined)
   void subscribeWorkflowStatuses(undefined, profile).then(statuses => {
     if (generation !== workflowSubscriptionGeneration) return
-    for (const status of statuses) workflowStatuses[status.workflowId] = status
+    for (const status of statuses) {
+      if (status.runId) {
+        for (const { nodeId, executionId } of status.pendingApprovals || []) {
+          announcedKeys.add(`workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`)
+        }
+      }
+      workflowStatuses[status.workflowId] = status
+    }
   }).catch(() => undefined)
 }
 
@@ -203,6 +216,8 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
 
 watch(pendingActions, actions => {
   const liveKeys = new Set(actions.map(action => action.key))
+  const shouldAnnounce = pendingBaselineEstablished
+  let hasNewAction = false
   for (const [key, handle] of handles) {
     if (liveKeys.has(key)) continue
     handle.destroy()
@@ -211,16 +226,28 @@ watch(pendingActions, actions => {
     delete submitting[key]
   }
   for (const action of actions) {
-    if (!handles.has(action.key)) handles.set(action.key, createGlobalNotification(action))
+    if (!announcedKeys.has(action.key)) {
+      announcedKeys.add(action.key)
+      if (shouldAnnounce) hasNewAction = true
+    }
+    if (handles.has(action.key)) continue
+    handles.set(action.key, createGlobalNotification(action))
   }
+  pendingBaselineEstablished = true
+  if (hasNewAction && approvalSoundArmed && settingsStore.display.approval_bell) void playCompletionSound()
 }, { deep: true, immediate: true })
 
 onMounted(() => {
-  void groupChatStore.connect().catch(() => undefined)
   resetWorkflowSubscriptions(profilesStore.activeProfileName)
+  void groupChatStore.connect().catch(() => undefined)
+  void settingsStore.fetchSettings().finally(() => { approvalSoundArmed = true })
 })
 
-watch(() => profilesStore.activeProfileName, profile => resetWorkflowSubscriptions(profile))
+watch(() => profilesStore.activeProfileName, profile => {
+  approvalSoundArmed = false
+  resetWorkflowSubscriptions(profile)
+  void settingsStore.fetchSettings().finally(() => { approvalSoundArmed = true })
+})
 
 onUnmounted(() => {
   stopWorkflowStatus?.()

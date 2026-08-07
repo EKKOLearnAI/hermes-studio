@@ -1940,6 +1940,8 @@ export default {
       inlineDiffsHint: '代码变更以内联方式显示',
       bellOnComplete: '完成提示音',
       bellOnCompleteHint: 'AI 回复完成时播放提示音',
+      approvalBell: '审批提示音',
+      approvalBellHint: '出现新的待处理审批或澄清时播放提示音',
       notifyOnComplete: '完成弹窗通知',
       notifyOnCompleteHint: 'AI 回复完成时显示系统通知',
       notifyOnCompleteMacHint: 'macOS 需要在系统设置里允许浏览器通知。',
