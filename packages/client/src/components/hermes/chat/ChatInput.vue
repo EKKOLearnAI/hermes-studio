@@ -1148,6 +1148,31 @@ function handleKeydown(e: KeyboardEvent) {
     }
   }
 
+  // 队列里有排队消息时,按一次 ESC 放行队首一条(打断当前回复立即执行)。
+  // 与 Claude Code 桌面版"ESC 中断"不同:这里 ESC 不打断当前回复,
+  // 只把排队中的下一条消息插入执行;队列为空时 ESC 无操作。
+  if (e.key === 'Escape') {
+    const sid = chatStore.activeSessionId
+    const queue = sid ? (chatStore.queuedUserMessages.get(sid) || []) : []
+    if (sid && queue.length > 0) {
+      e.preventDefault()
+      chatStore.promoteQueuedMessage(sid, queue[0].id)
+    }
+    return
+  }
+
+  // Ctrl+Enter: 与 ESC 相同，放行队首一条排队消息。
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    const sid = chatStore.activeSessionId
+    const queue = sid ? (chatStore.queuedUserMessages.get(sid) || []) : []
+    if (sid && queue.length > 0) {
+      e.preventDefault()
+      chatStore.promoteQueuedMessage(sid, queue[0].id)
+      return
+    }
+    // 队列为空时 Ctrl+Enter 不做特殊操作，允许后续 Enter 逻辑处理
+  }
+
   if (e.key !== 'Enter' || e.shiftKey) return
   if (isImeEnter(e)) return
 

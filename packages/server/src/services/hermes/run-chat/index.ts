@@ -302,6 +302,9 @@ export class ChatRunSocket {
       allow_command_passthrough?: boolean
       // Local patch (reasoning-effort): per-session reasoning effort override.
       reasoning_effort?: string
+      // Local patch (user-controlled queue): true = 用户主动放行(打断当前、
+      // 插队到队首立即执行);缺省/false = 普通发送,仅入队尾排队等待。
+      preempt?: boolean
     }) => {
       let runProfile: string
       try {
@@ -351,8 +354,10 @@ export class ChatRunSocket {
           return
         }
         if (state.isWorking) {
+          logger.info('[chat-run-socket][preempt] new run during active session %s (isWorking=%s isAborting=%s runId=%s qlen=%d)',
+            data.session_id, state.isWorking, state.isAborting, state.runId, state.queue.length)
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-          state.queue.push({
+          const queuedRun: QueuedRun = {
             queue_id: queueId,
             input: data.input,
             displayInput: data.display_input,
@@ -383,14 +388,42 @@ export class ChatRunSocket {
             commandPassthrough: data.allow_command_passthrough,
             reasoningEffort: data.reasoning_effort,
             originSocketId: socket.id,
-          })
+          }
+          // [user-controlled patch] 两种行为:
+          //  - data.preempt === true(用户通过"立即发送"按钮 / ESC 显式放行):
+          //    插队到队首并打断当前 run,让该消息立即开始回复。
+          //  - 缺省(普通发送):只 push 到队尾排队等待,不打断当前生成,
+          //    当前 run 完成后的 dequeueNextQueuedRun 会按序自动拾取。
+          if (data.preempt === true) {
+            state.queue.unshift(queuedRun)
+            if (state.isAborting) {
+              this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
+                event: 'run.queued',
+                session_id: data.session_id,
+                queue_length: state.queue.length,
+                queued_messages: this.serializeQueuedMessages(state.queue),
+              })
+              logger.info('[chat-run-socket] preempt queued run while already aborting for session %s (queue: %d)', data.session_id, state.queue.length)
+              return
+            }
+            logger.info('[chat-run-socket] preempting running session %s with new run (queue: %d)', data.session_id, state.queue.length)
+            await handleAbort(this.nsp, socket, data.session_id, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
+            // 兜底:handleAbort 若因"无活动 run"被忽略,手动出队队首(新消息)
+            const preempted = this.sessionMap.get(data.session_id)
+            if (preempted && !preempted.isWorking && preempted.queue.length > 0) {
+              this.dequeueNextQueuedRun(socket, data.session_id, runProfile)
+            }
+            return
+          }
+          // 默认:排队等待,不打断当前回复
+          state.queue.push(queuedRun)
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
             event: 'run.queued',
             session_id: data.session_id,
             queue_length: state.queue.length,
             queued_messages: this.serializeQueuedMessages(state.queue),
           })
-          logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
+          logger.info('[chat-run-socket] queued run %s for busy session %s (queue: %d, preempt=off)', queueId, data.session_id, state.queue.length)
           return
         }
         state.events = []
@@ -432,6 +465,28 @@ export class ChatRunSocket {
       })
       logger.info('[chat-run-socket] cancelled queued run %s for session %s (queue: %d)',
         data.queue_id, data.session_id, state.queue.length)
+    })
+
+    // [user-controlled patch] 立即发送:把指定排队消息提升到队首并打断当前 run,
+    // 使其马上开始回复(markAbortCompleted 出队队首即该消息)。前端"立即发送"
+    // 按钮与 ESC 放行都走这个事件。
+    socket.on('run.promote', async (data: { session_id?: string; queue_id?: string }) => {
+      if (!data.session_id || !data.queue_id) return
+      const state = this.sessionMap.get(data.session_id)
+      if (!state || !state.queue.length) return
+      const targetIndex = state.queue.findIndex(item => item.queue_id === data.queue_id)
+      if (targetIndex === -1) {
+        logger.info('[chat-run-socket] promote miss %s for session %s (queue: %d)', data.queue_id, data.session_id, state.queue.length)
+        return
+      }
+      const [target] = state.queue.splice(targetIndex, 1)
+      state.queue.unshift(target)
+      logger.info('[chat-run-socket] promote %s to head for session %s (queue: %d)', data.queue_id, data.session_id, state.queue.length)
+      await handleAbort(this.nsp, socket, data.session_id, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
+      const after = this.sessionMap.get(data.session_id)
+      if (after && !after.isWorking && after.queue.length > 0) {
+        this.dequeueNextQueuedRun(socket, data.session_id, target.profile || 'default')
+      }
     })
 
     socket.on('resume', async (data: { session_id?: string }) => {
