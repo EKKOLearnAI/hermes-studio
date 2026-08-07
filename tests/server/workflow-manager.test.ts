@@ -1200,9 +1200,15 @@ describe('workflow manager', () => {
     try {
       const runPromise = manager.runNow(workflow.id)
       await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).nodeStatuses.header).toBe('pending_approval'))
+      expect(manager.getRuntimeStatus(workflow.id).pendingApprovals).toEqual([
+        { nodeId: 'header', executionId: 'header@loop:retry:0' },
+      ])
       const runId = manager.getRuntimeStatus(workflow.id).runId!
       expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:0')).toBe(true)
-      await vi.waitFor(() => expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:1')).toBe(true))
+      await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).pendingApprovals).toEqual([
+        { nodeId: 'header', executionId: 'header@loop:retry:1' },
+      ]))
+      expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:1')).toBe(true)
       expect((await runPromise).run.status).toBe('completed')
     } finally { await manager.delete(workflow.id) }
   })

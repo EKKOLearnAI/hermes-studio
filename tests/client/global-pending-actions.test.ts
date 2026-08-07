@@ -172,7 +172,7 @@ describe('GlobalPendingActions', () => {
     workflowMock.statusHandlers[0]({
       workflowId: 'workflow-b', runId: 'run-b', status: 'pending_approval',
       nodeStatuses: { build: 'pending_approval' },
-      run: { node_sessions: [{ node_id: 'build', execution_id: 'exec-b', status: 'blocked' }] },
+      pendingApprovals: [{ nodeId: 'build', executionId: 'exec-b' }],
     })
     await nextTick()
 
@@ -182,6 +182,27 @@ describe('GlobalPendingActions', () => {
     const buttons = action.findAll('button')
     await buttons[buttons.length - 1].trigger('click')
     expect(workflowMock.approveWorkflowNode).toHaveBeenCalledWith('workflow-b', 'run-b', 'build', true, 'exec-b')
+  })
+
+  it('renders every authoritative pending workflow execution without guessing from node sessions', async () => {
+    mount(GlobalPendingActions)
+    await nextTick()
+    workflowMock.statusHandlers[0]?.({
+      workflowId: 'workflow-b', runId: 'run-b', status: 'running', nodeStatuses: { build: 'pending_approval' },
+      pendingApprovals: [
+        { nodeId: 'build', executionId: 'exec-1' },
+        { nodeId: 'build', executionId: 'exec-2' },
+      ],
+      run: { node_sessions: [{ node_id: 'build', sequence: 99, execution_id: 'wrong-exec' }] },
+    })
+    await nextTick()
+
+    const workflowNotifications = created.filter(entry => String(entry.options.title).includes('Workflow B'))
+    expect(workflowNotifications).toHaveLength(2)
+    const secondAction = await render(workflowNotifications[1].options.action)
+    const buttons = secondAction.findAll('button')
+    await buttons[buttons.length - 1].trigger('click')
+    expect(workflowMock.approveWorkflowNode).toHaveBeenCalledWith('workflow-b', 'run-b', 'build', true, 'exec-2')
   })
 
   it('resubscribes workflow approvals when the active profile changes', async () => {

@@ -640,14 +640,33 @@ describe('group chat store baseline lifecycle', () => {
       choices: ['once', 'session', 'deny'],
     })
 
-    expect(store.pendingApprovals.get('approval-1')).toMatchObject({
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({
       roomId: 'room-1',
       agentName: 'Agent',
       approvalId: 'approval-1',
       choices: ['once', 'session', 'deny'],
-    })
-    emitSocket('approval.resolved', { approval_id: 'approval-1' })
+    }))
+    emitSocket('approval.resolved', { roomId: 'room-1', approval_id: 'approval-1' })
     expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('keeps same-id approvals isolated across rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-a', agentName: 'Agent A', approval_id: 'approval-shared',
+      command: 'touch a', description: 'room a', choices: ['once', 'deny'],
+    })
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent B', approval_id: 'approval-shared',
+      command: 'touch b', description: 'room b', choices: ['once', 'deny'],
+    })
+
+    expect([...store.pendingApprovals.values()].map(item => item.roomId).sort()).toEqual(['room-a', 'room-b'])
+    emitSocket('approval.resolved', { roomId: 'room-a', approval_id: 'approval-shared' })
+    expect([...store.pendingApprovals.values()]).toEqual([
+      expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-shared' }),
+    ])
   })
 
   it('responds to an approval from an inactive room without joining or switching rooms', async () => {
@@ -687,7 +706,7 @@ describe('group chat store baseline lifecycle', () => {
 
     await store.respondApprovalFor('room-b', 'approval-b', 'once')
 
-    expect(store.pendingApprovals.has('approval-b')).toBe(true)
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-b' }))
   })
 
   it('updates the current room name and token display on room_updated', async () => {

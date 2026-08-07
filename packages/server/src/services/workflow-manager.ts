@@ -64,6 +64,7 @@ export interface WorkflowRuntimeStatus {
   completedAt: number | null
   error: string | null
   nodeStatuses: Record<string, WorkflowRuntimeState>
+  pendingApprovals: Array<{ nodeId: string; executionId: string }>
 }
 
 export interface WorkflowExecutionPreflightResult {
@@ -217,6 +218,7 @@ function idleStatus(workflowId: string): WorkflowRuntimeStatus {
     completedAt: null,
     error: null,
     nodeStatuses: {},
+    pendingApprovals: [],
   }
 }
 
@@ -1181,6 +1183,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       ...previous,
       ...patch,
       nodeStatuses: patch.nodeStatuses || previous.nodeStatuses || {},
+      pendingApprovals: [...this.pendingNodeApprovals.values()]
+        .filter(pending => pending.workflowId === workflowId && (!patch.runId || pending.runId === patch.runId))
+        .map(({ nodeId, executionId }) => ({ nodeId, executionId })),
       workflowId,
       updatedAt: Date.now(),
     }
@@ -1238,6 +1243,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       executionId,
       resolve: resolveApproval,
     })
+    this.setRuntimeStatus(args.workflowId, {
+      status: 'running', runId: args.runId, nodeStatuses: { ...args.nodeStatuses },
+    })
 
     let timer: ReturnType<typeof setTimeout> | null = null
     try {
@@ -1253,6 +1261,9 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     } finally {
       if (timer) clearTimeout(timer)
       this.pendingNodeApprovals.delete(key)
+      this.setRuntimeStatus(args.workflowId, {
+        status: 'running', runId: args.runId, nodeStatuses: { ...args.nodeStatuses },
+      })
     }
   }
 

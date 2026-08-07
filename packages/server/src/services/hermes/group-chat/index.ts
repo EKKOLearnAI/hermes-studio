@@ -1080,8 +1080,12 @@ export class GroupChatServer {
         status: string
         agentSessionId?: string
     }>>()
-    /** approval id -> validated room and runtime session that requested it. */
+    /** room-scoped approval locator -> validated room and runtime session that requested it. */
     private pendingApprovalRoutes = new Map<string, PendingGroupApprovalRoute>()
+
+    private pendingApprovalRouteKey(roomId: string, approvalId: string): string {
+        return `${roomId}:${approvalId}`
+    }
     /** roomId -> blocked Bridge session ids from room-level interrupts/rotations. */
     private fencedRoomAgentSessions = new Map<string, Set<string>>()
 
@@ -1873,7 +1877,7 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        this.pendingApprovalRoutes.set(data.approval_id, {
+        this.pendingApprovalRoutes.set(this.pendingApprovalRouteKey(roomId, data.approval_id), {
             roomId,
             agentName,
             agentSessionId: String(data.agentSessionId || '').trim(),
@@ -1894,9 +1898,10 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        const pendingRoute = this.pendingApprovalRoutes.get(data.approval_id)
+        const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
+        const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
         if (pendingRoute?.roomId === roomId && pendingRoute.agentName === agentName) {
-            this.pendingApprovalRoutes.delete(data.approval_id)
+            this.pendingApprovalRoutes.delete(routeKey)
         }
         this.emitToRoomManagers(roomId, 'approval.resolved', {
             event: 'approval.resolved',
@@ -1922,7 +1927,8 @@ export class GroupChatServer {
             ack?.({ error: 'Access denied' })
             return
         }
-        const pendingRoute = this.pendingApprovalRoutes.get(data.approval_id)
+        const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
+        const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
         if (!pendingRoute || pendingRoute.roomId !== roomId) {
             ack?.({ error: 'Approval is not pending in this room' })
             return
@@ -1939,14 +1945,14 @@ export class GroupChatServer {
                 ack?.({ error: 'Approval does not belong to the active Agent session' })
                 return
             }
-            this.pendingApprovalRoutes.delete(data.approval_id)
+            this.pendingApprovalRoutes.delete(routeKey)
             ack?.({ ok: true, resolved: true })
             return
         }
         try {
             const result = await new AgentBridgeClient().approvalRespond(data.approval_id, data.choice || 'deny')
             const resolved = Boolean((result as any)?.resolved)
-            if (resolved) this.pendingApprovalRoutes.delete(data.approval_id)
+            if (resolved) this.pendingApprovalRoutes.delete(routeKey)
             ack?.({ ok: true, resolved })
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to respond approval ${data.approval_id}: ${err.message}`)
@@ -1957,8 +1963,8 @@ export class GroupChatServer {
     private clearPendingApprovalRoutes(roomId: string): void {
         const pendingRoutes = this.pendingApprovalRoutes
         if (!pendingRoutes) return
-        for (const [approvalId, route] of pendingRoutes) {
-            if (route.roomId === roomId) pendingRoutes.delete(approvalId)
+        for (const [routeKey, route] of pendingRoutes) {
+            if (route.roomId === roomId) pendingRoutes.delete(routeKey)
         }
     }
 

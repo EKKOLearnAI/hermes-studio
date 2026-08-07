@@ -13,6 +13,7 @@ export interface WorkflowRuntimeStatus {
   completedAt: number | null
   error: string | null
   nodeStatuses?: Record<string, WorkflowRuntimeState>
+  pendingApprovals?: Array<{ nodeId: string; executionId: string }>
   run?: WorkflowRunRecord | null
 }
 

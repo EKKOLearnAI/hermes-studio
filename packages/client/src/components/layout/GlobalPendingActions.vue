@@ -70,11 +70,7 @@ function pendingActions(): GlobalPendingAction[] {
   }
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
-    for (const [nodeId, nodeStatus] of Object.entries(status.nodeStatuses || {})) {
-      if (nodeStatus !== 'pending_approval') continue
-      const executionId = status.run?.node_sessions
-        ?.filter(session => session.node_id === nodeId)
-        .sort((a, b) => b.sequence - a.sequence)[0]?.execution_id
+    for (const { nodeId, executionId } of status.pendingApprovals || []) {
       actions.push({
         key: `workflow-approval:${status.workflowId}:${status.runId}:${nodeId}:${executionId || ''}`,
         kind: 'workflow-approval',

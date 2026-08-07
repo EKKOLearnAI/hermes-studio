@@ -164,6 +164,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
+
+    function pendingApprovalKey(roomId: string, approvalId: string): string {
+        return `${roomId}:${approvalId}`
+    }
     const totalMessages = ref(0)
     const loadedMessageCount = ref(0)
     const hasMoreBefore = ref(false)
@@ -727,7 +731,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
                 .filter((choice): choice is GroupPendingApproval['choices'][number] =>
                     choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
-            pendingApprovals.value.set(data.approval_id, {
+            pendingApprovals.value.set(pendingApprovalKey(data.roomId, data.approval_id), {
                 roomId: data.roomId,
                 agentName: data.agentName || '',
                 approvalId: data.approval_id,
@@ -741,9 +745,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
-        socket.on('approval.resolved', (data: { approval_id?: string }) => {
-            if (!data.approval_id) return
-            pendingApprovals.value.delete(data.approval_id)
+        socket.on('approval.resolved', (data: { roomId?: string; approval_id?: string; resolved?: boolean }) => {
+            if (!data.roomId || !data.approval_id || data.resolved === false) return
+            pendingApprovals.value.delete(pendingApprovalKey(data.roomId, data.approval_id))
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
@@ -1187,8 +1191,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     async function respondApprovalFor(roomId: string, approvalId: string, choice: GroupPendingApproval['choices'][number]) {
-        const pending = pendingApprovals.value.get(approvalId)
-        if (!pending || pending.roomId !== roomId) return
+        const key = pendingApprovalKey(roomId, approvalId)
+        const pending = pendingApprovals.value.get(key)
+        if (!pending) return
         const socket = await ensureRealtimeSocket()
         let resolved = false
         await new Promise<void>((resolve, reject) => {
@@ -1205,7 +1210,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             })
         })
         if (resolved) {
-            pendingApprovals.value.delete(pending.approvalId)
+            pendingApprovals.value.delete(key)
             pendingApprovals.value = new Map(pendingApprovals.value)
         }
     }
