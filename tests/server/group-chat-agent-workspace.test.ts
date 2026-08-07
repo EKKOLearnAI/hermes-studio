@@ -229,7 +229,17 @@ describe('group chat agent workspace bridge runs', () => {
       backgroundDelegationEnabled: false,
     } as any) as any
     client.setStorage({
-      getRoom: vi.fn(() => ({ name: 'Engineering Room', sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getRoom: vi.fn(() => ({
+        name: 'Engineering Room',
+        sessionSeed: 'seed-1',
+        workspace: '',
+        maxHistoryTokens: 32000,
+        remoteWorkspaceApi: {
+          endpoint: 'https://group.example/api/hermes/group-chat/remote-workspace/v1',
+          token: 'a'.repeat(43),
+          access: 'read-write',
+        },
+      })),
       getRoomMembers: vi.fn(() => [
         { id: 'member-1', userId: 'human-1', name: 'Human', description: 'Product owner' },
       ]),
@@ -297,6 +307,11 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runAndWait.mock.calls[0][0].instructions).toContain('- [真人成员] Human: Product owner')
     expect(runAndWait.mock.calls[0][0].instructions).toContain('- [AI Agent] Reviewer: Reviews changes')
     expect(runAndWait.mock.calls[0][0].instructions).not.toContain('Sleeping')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain(
+      'https://group.example/api/hermes/group-chat/remote-workspace/v1',
+    )
+    expect(runAndWait.mock.calls[0][0].instructions).toContain(`Bearer ${'a'.repeat(43)}`)
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('"action":"read"')
     expect(runAndWait.mock.calls[0][0].group_system_prompt).toBe(runAndWait.mock.calls[0][0].instructions)
     expect(bridgeMock.chat).not.toHaveBeenCalled()
     expect(mockSocket.emit).toHaveBeenCalledWith(

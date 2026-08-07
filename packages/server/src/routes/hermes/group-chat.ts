@@ -18,6 +18,7 @@ import { setGroupChatRuntimeServer } from '../../services/hermes/group-chat/runt
 import * as inviteCtrl from '../../controllers/hermes/group-chat-invite'
 import * as workspaceCtrl from '../../controllers/hermes/group-chat-workspace'
 import * as agentLinkCtrl from '../../controllers/hermes/group-chat-agent-link'
+import * as remoteWorkspaceCtrl from '../../controllers/hermes/group-chat-remote-workspace'
 
 export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
@@ -42,6 +43,7 @@ groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:re
 groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:requestId/failure', agentLinkCtrl.failPairingHandoff)
 groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links', agentLinkCtrl.requestPairing)
 groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/agent-links/:requestId', agentLinkCtrl.pairingStatus)
+groupChatPublicRoutes.post('/api/hermes/group-chat/remote-workspace/v1', remoteWorkspaceCtrl.remoteWorkspaceAction)
 
 groupChatRoutes.get('/api/hermes/group-chat-link/v1/agents', agentLinkCtrl.localAgents)
 groupChatRoutes.get('/api/hermes/group-chat-link/v1/connections', agentLinkCtrl.localConnections)

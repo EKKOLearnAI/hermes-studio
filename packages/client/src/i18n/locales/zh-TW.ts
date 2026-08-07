@@ -2644,6 +2644,8 @@ export default {
     allowGuestAgents: '允許成員帶自己的 Agent 入群',
     maxGuestAgentsPerMember: '每位成員最多接入 Agent 數',
     ownerApprovalHint: '每個 Agent 仍然必須經過群主明確批准。',
+    allowRemoteWorkspaceAccess: '允許遠端 Agent 讀寫群聊工作區',
+    remoteWorkspaceAccessHint: '開啟後，已批准的遠端 Agent 會在每次執行期間取得短期存取權；敏感檔案和群聊工作區以外的路徑仍會被封鎖。',
     agentPairingRequestTitle: 'Agent 接入申請',
     agentPairingRequestDescription: '{user} 想從 {origin} 接入一個 Agent。',
     approveAgent: '批准 Agent',

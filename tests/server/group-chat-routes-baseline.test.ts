@@ -1,8 +1,16 @@
 import Koa from 'koa'
 import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'http'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import {
+  issueRemoteWorkspaceGrant,
+  resetRemoteWorkspaceGrantsForTest,
+  revokeRemoteWorkspaceGrantsForRun,
+} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
 
 function listen(server: HttpServer): Promise<string> {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
@@ -22,6 +30,7 @@ describe('group chat REST route baseline', () => {
   let broadcastRoomAgents: ReturnType<typeof vi.fn>
   let removeLiveRoomMember: ReturnType<typeof vi.fn>
   let roomSummaryService: any
+  const temporaryDirectories: string[] = []
 
   beforeEach(async () => {
     storage = {
@@ -72,6 +81,7 @@ describe('group chat REST route baseline', () => {
             allowGuestAgents: policy.allowGuestAgents ? 1 : 0,
             guestAgentApproval: 'owner',
             maxGuestAgentsPerMember: policy.maxGuestAgentsPerMember,
+            allowRemoteWorkspaceAccess: policy.allowGuestAgents && policy.allowRemoteWorkspaceAccess ? 1 : 0,
           })
         }
         return room || null
@@ -148,9 +158,11 @@ describe('group chat REST route baseline', () => {
     baseUrl = await listen(httpServer)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     httpServer.close()
     setGroupChatServer(null as any)
+    resetRemoteWorkspaceGrantsForTest()
+    await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })))
   })
 
   it('requires name and inviteCode when creating a room', async () => {
@@ -219,6 +231,7 @@ describe('group chat REST route baseline', () => {
       body: JSON.stringify({
         allowGuestAgents: true,
         maxGuestAgentsPerMember: 2,
+        allowRemoteWorkspaceAccess: true,
       }),
     })
 
@@ -228,8 +241,62 @@ describe('group chat REST route baseline', () => {
         allowGuestAgents: 1,
         guestAgentApproval: 'owner',
         maxGuestAgentsPerMember: 2,
+        allowRemoteWorkspaceAccess: 1,
       },
     })
+  })
+
+  it('serves the remote workspace API only with an active run-bound grant', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'group-chat-remote-route-'))
+    temporaryDirectories.push(workspace)
+    await writeFile(join(workspace, 'shared.txt'), 'shared content')
+    storage.rooms.set('room-remote', {
+      id: 'room-remote',
+      name: 'Remote Room',
+      workspace,
+      allowRemoteWorkspaceAccess: 1,
+    })
+    const { token } = issueRemoteWorkspaceGrant({
+      runId: 'run-route',
+      roomId: 'room-remote',
+      agentId: 'agent-route',
+      workspace,
+    })
+    const endpoint = `${baseUrl}/api/hermes/group-chat/remote-workspace/v1`
+
+    const unauthorized = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', path: 'shared.txt' }),
+    })
+    expect(unauthorized.status).toBe(401)
+
+    const authorized = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'read', path: 'shared.txt' }),
+    })
+    expect(authorized.status).toBe(200)
+    await expect(authorized.json()).resolves.toMatchObject({
+      ok: true,
+      path: 'shared.txt',
+      content: 'shared content',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+
+    revokeRemoteWorkspaceGrantsForRun('run-route')
+    const revoked = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'list', path: '' }),
+    })
+    expect(revoked.status).toBe(401)
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {

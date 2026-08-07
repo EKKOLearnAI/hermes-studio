@@ -432,7 +432,7 @@ describe('group chat room workspace', () => {
 
     const row = dbState.db?.prepare(
       `SELECT workspace, summaryProfile, summaryProvider, summaryModel,
-              summaryApiMode, summaryEveryTurns
+              summaryApiMode, summaryEveryTurns, allowRemoteWorkspaceAccess
        FROM gc_rooms WHERE id = ?`,
     ).get('old-room') as Record<string, unknown>
     expect(row).toMatchObject({
@@ -442,6 +442,7 @@ describe('group chat room workspace', () => {
       summaryModel: '',
       summaryApiMode: '',
       summaryEveryTurns: 20,
+      allowRemoteWorkspaceAccess: 0,
     })
     expect(dbState.db?.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gc_room_summaries'`,

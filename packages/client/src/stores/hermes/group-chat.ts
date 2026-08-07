@@ -888,6 +888,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             allowGuestAgents?: number
             guestAgentApproval?: 'owner'
             maxGuestAgentsPerMember?: number
+            allowRemoteWorkspaceAccess?: number
         }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (!room) return
@@ -896,6 +897,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (data.guestAgentApproval === 'owner') room.guestAgentApproval = data.guestAgentApproval
             if (typeof data.maxGuestAgentsPerMember === 'number') {
                 room.maxGuestAgentsPerMember = data.maxGuestAgentsPerMember
+            }
+            if (typeof data.allowRemoteWorkspaceAccess === 'number') {
+                room.allowRemoteWorkspaceAccess = data.allowRemoteWorkspaceAccess
             }
             if (typeof data.name === 'string' && data.name.trim()) {
                 room.name = data.name.trim()

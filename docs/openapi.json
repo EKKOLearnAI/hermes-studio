@@ -5153,6 +5153,44 @@
         ]
       }
     },
+    "/api/hermes/group-chat/remote-workspace/v1": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create v1",
+        "description": "POST /api/hermes/group-chat/remote-workspace/v1",
+        "operationId": "remoteWorkspaceAction",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/group-chat/rooms": {
       "post": {
         "tags": [

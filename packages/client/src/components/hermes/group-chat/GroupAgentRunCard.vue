@@ -115,7 +115,7 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 .run-column {
     display: flex;
     flex-direction: column;
-    min-width: 0;
+    min-width: min(260px, calc(100% - 46px));
     width: fit-content;
     max-width: min(85%, 920px);
 }
@@ -171,6 +171,7 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 
 @media (max-width: 768px) {
     .run-column {
+        min-width: min(260px, calc(100% - 46px));
         width: fit-content;
         max-width: calc(100% - 46px);
     }

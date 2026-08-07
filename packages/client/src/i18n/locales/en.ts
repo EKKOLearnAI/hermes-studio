@@ -2684,6 +2684,8 @@ export default {
     allowGuestAgents: 'Allow members to bring their own Agents',
     maxGuestAgentsPerMember: 'Maximum Agents per member',
     ownerApprovalHint: 'Every Agent still requires explicit room-owner approval.',
+    allowRemoteWorkspaceAccess: 'Allow remote Agents to read and write the group workspace',
+    remoteWorkspaceAccessHint: 'When enabled, approved remote Agents receive short-lived access for each run. Sensitive files and paths outside the room workspace remain blocked.',
     agentPairingRequestTitle: 'Agent connection request',
     agentPairingRequestDescription: '{user} wants to connect an Agent from {origin}.',
     approveAgent: 'Approve Agent',

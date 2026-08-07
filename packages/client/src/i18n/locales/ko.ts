@@ -2405,6 +2405,8 @@ export default {
     allowGuestAgents: '멤버가 자신의 Agent를 참여시키도록 허용',
     maxGuestAgentsPerMember: '멤버당 최대 Agent 수',
     ownerApprovalHint: '각 Agent는 여전히 방 소유자의 명시적인 승인이 필요합니다.',
+    allowRemoteWorkspaceAccess: '원격 Agent의 그룹 작업 공간 읽기 및 쓰기 허용',
+    remoteWorkspaceAccessHint: '활성화하면 승인된 원격 Agent가 실행할 때마다 단기 접근 권한을 받습니다. 민감한 파일과 방 작업 공간 외부 경로는 계속 차단됩니다.',
     agentPairingRequestTitle: 'Agent 연결 요청',
     agentPairingRequestDescription: '{user} 님이 {origin}에서 Agent를 연결하려고 합니다.',
     approveAgent: 'Agent 승인',

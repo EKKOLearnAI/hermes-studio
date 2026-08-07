@@ -21,6 +21,7 @@ export interface RoomInfo {
     allowGuestAgents?: number
     guestAgentApproval?: 'owner'
     maxGuestAgentsPerMember?: number
+    allowRemoteWorkspaceAccess?: number
 }
 
 export interface RoomSummaryConfig {

@@ -573,6 +573,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   allowGuestAgents: 'INTEGER NOT NULL DEFAULT 0',
   guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
   maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
+  allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_MESSAGES_TABLE = 'gc_messages'

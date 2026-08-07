@@ -83,7 +83,7 @@ export type GroupAgentSessionConfig = {
     reasoningEffort?: string
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
-type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
+export type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
 type AgentActivityBroadcaster = (
     roomId: string,
     agentName: string,
@@ -831,13 +831,38 @@ export class AgentClient implements GroupAgentExecutor {
                 kind: 'agent' as const,
             })),
         ].filter(member => member.name)
-        return buildAgentInstructions({
+        const instructions = buildAgentInstructions({
             agentName: this.name,
             roomName: String(room?.name || roomId),
             agentDescription: this.description,
             memberNames: members.map(member => member.name),
             members,
         })
+        const remoteWorkspaceApi = room?.remoteWorkspaceApi
+        if (
+            !remoteWorkspaceApi
+            || remoteWorkspaceApi.access !== 'read-write'
+            || typeof remoteWorkspaceApi.endpoint !== 'string'
+            || typeof remoteWorkspaceApi.token !== 'string'
+        ) {
+            return instructions
+        }
+        const workspaceInstructions = [
+            'This run may access the sharing host\'s group-chat workspace through a short-lived HTTP JSON API.',
+            'Your current local working directory is separate; use this API only when files must be shared with the room owner or other Agents.',
+            `Endpoint: ${remoteWorkspaceApi.endpoint}`,
+            `Authorization header: Bearer ${remoteWorkspaceApi.token}`,
+            'Send POST requests with Content-Type: application/json.',
+            'Supported request bodies:',
+            '{"action":"list","path":""}',
+            '{"action":"read","path":"relative/file.txt"}',
+            '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
+            '{"action":"mkdir","path":"relative/directory"}',
+            '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
+            'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
+            'The authorization expires when this run finishes. Never repeat the token in chat output.',
+        ].join('\n')
+        return `${instructions}\n\n${workspaceInstructions}`
     }
 
     private groupConversationHistory(runtimeContext: GroupRuntimeContext): Array<{ role: 'user' | 'assistant'; content: string }> {

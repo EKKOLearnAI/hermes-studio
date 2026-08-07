@@ -186,6 +186,31 @@ temporary group-relay attachment directory, and deleted after the run. The
 cloud never fetches a user-supplied target URL and never receives access to the
 target Agent's local workspace.
 
+For each remote run, the cloud sends only the room ID and summary profile. The
+target derives and creates its own stable workspace at
+`HERMES_WEB_UI_HOME/group-chat/<summaryProfile>/<roomId>`, so repeated runs in
+the same room reuse one local directory without exposing an absolute path
+through the Relay.
+
+Room owners can separately enable remote access to the sharing host's group-chat
+workspace. This does not inject provider-specific tools. Instead, an enabled
+remote run receives one common HTTP JSON API description in its group system
+prompt, so Hermes, Ekko, Codex, and Claude can use their existing terminal
+capabilities. The bearer grant is random, bound to the room, Agent, workspace,
+and run, capped at 200 requests, expires after the Relay run timeout, and is
+revoked immediately when the run ends.
+The target Relay recursively redacts the grant from messages, tool arguments,
+approval payloads, streamed events, and run errors before forwarding them to
+the room.
+
+The remote workspace API accepts only relative paths and text files up to 1 MiB.
+It rejects traversal, symbolic links, sensitive `.env` and `auth.json` path
+segments, and paths outside the room workspace. Existing files must be read
+first; writes and deletes require the returned SHA-256 to prevent silent
+concurrent overwrites. Writes use a same-directory temporary file plus atomic
+rename, and audit logs include only the room, Agent, run, action, and bounded
+relative path.
+
 Group Chat runs now use the independent `group_chat` session source rather than
 being recorded as workflow runs. Ordinary session history continues to hide
 these ephemeral orchestration sessions, while explicit source filtering can

@@ -108,6 +108,7 @@ const pendingAgentPairings = ref<GroupAgentPairingRequest[]>([])
 const isDecidingAgentPairing = ref(false)
 const allowGuestAgentsDraft = ref(false)
 const maxGuestAgentsPerMemberDraft = ref(1)
+const allowRemoteWorkspaceAccessDraft = ref(false)
 const isSavingGuestAgentPolicy = ref(false)
 let agentPairingRefreshTimer: ReturnType<typeof setInterval> | null = null
 const selectedAgentType = ref<GroupAgentType>('hermes')
@@ -1292,6 +1293,7 @@ async function handleOpenRoomSettings() {
         workspaceValue.value = room.workspace || ''
         allowGuestAgentsDraft.value = Number(room.allowGuestAgents || 0) === 1
         maxGuestAgentsPerMemberDraft.value = Math.max(1, Number(room.maxGuestAgentsPerMember || 1))
+        allowRemoteWorkspaceAccessDraft.value = Number(room.allowRemoteWorkspaceAccess || 0) === 1
         summaryConfig.value = {
             summaryProfile: room.summaryProfile || profilesStore.activeProfileName || 'default',
             summaryProvider: room.summaryProvider || '',
@@ -1359,6 +1361,7 @@ async function handleSaveGuestAgentPolicy(): Promise<void> {
         const result = await updateGuestAgentPolicy(roomId, {
             allowGuestAgents: allowGuestAgentsDraft.value,
             maxGuestAgentsPerMember: maxGuestAgentsPerMemberDraft.value,
+            allowRemoteWorkspaceAccess: allowGuestAgentsDraft.value && allowRemoteWorkspaceAccessDraft.value,
         })
         const index = store.rooms.findIndex(room => room.id === roomId)
         if (index >= 0) store.rooms[index] = {
@@ -2401,6 +2404,16 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     :step="1"
                                     :disabled="!allowGuestAgentsDraft"
                                     style="width: 100%"
+                                />
+                            </div>
+                            <div class="guest-agent-policy-row">
+                                <div>
+                                    <strong>{{ t('groupChat.allowRemoteWorkspaceAccess') }}</strong>
+                                    <p class="form-hint">{{ t('groupChat.remoteWorkspaceAccessHint') }}</p>
+                                </div>
+                                <NSwitch
+                                    v-model:value="allowRemoteWorkspaceAccessDraft"
+                                    :disabled="!allowGuestAgentsDraft"
                                 />
                             </div>
                             <NButton

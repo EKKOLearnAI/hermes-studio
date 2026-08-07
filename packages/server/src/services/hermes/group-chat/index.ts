@@ -87,7 +87,8 @@ function humanStructuredContent(content: unknown): Array<Record<string, unknown>
 }
 
 function safeGroupChatWorkspaceSegment(value: string, fallback: string): string {
-    return String(value || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || fallback
+    const segment = String(value || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim()
+    return !segment || segment === '.' || segment === '..' ? fallback : segment
 }
 
 export function defaultGroupChatWorkspace(profile: string, roomId: string): string {
@@ -220,6 +221,7 @@ export interface RoomInfo {
     allowGuestAgents: number
     guestAgentApproval: 'owner'
     maxGuestAgentsPerMember: number
+    allowRemoteWorkspaceAccess: number
 }
 
 const ROOM_SELECT_COLUMNS = [
@@ -241,6 +243,7 @@ const ROOM_SELECT_COLUMNS = [
     'allowGuestAgents',
     'guestAgentApproval',
     'maxGuestAgentsPerMember',
+    'allowRemoteWorkspaceAccess',
 ].join(', ')
 
 const ROOM_AGENT_SELECT_COLUMNS = [
@@ -689,14 +692,20 @@ class ChatStorage {
 
     updateRoomGuestAgentPolicy(
         roomId: string,
-        policy: { allowGuestAgents: boolean; maxGuestAgentsPerMember: number },
+        policy: {
+            allowGuestAgents: boolean
+            maxGuestAgentsPerMember: number
+            allowRemoteWorkspaceAccess: boolean
+        },
     ): RoomInfo | null {
         const maxAgents = Math.min(5, Math.max(1, Math.floor(policy.maxGuestAgentsPerMember || 1)))
+        const allowRemoteWorkspaceAccess = policy.allowGuestAgents && policy.allowRemoteWorkspaceAccess
         this.db()?.prepare(
             `UPDATE gc_rooms
-             SET allowGuestAgents = ?, guestAgentApproval = 'owner', maxGuestAgentsPerMember = ?
+             SET allowGuestAgents = ?, guestAgentApproval = 'owner',
+                 maxGuestAgentsPerMember = ?, allowRemoteWorkspaceAccess = ?
              WHERE id = ?`,
-        ).run(policy.allowGuestAgents ? 1 : 0, maxAgents, roomId)
+        ).run(policy.allowGuestAgents ? 1 : 0, maxAgents, allowRemoteWorkspaceAccess ? 1 : 0, roomId)
         return this.getRoom(roomId) || null
     }
 
@@ -1583,6 +1592,7 @@ export class GroupChatServer {
             allowGuestAgents: Number(room.allowGuestAgents || 0),
             guestAgentApproval: 'owner',
             maxGuestAgentsPerMember: Math.max(1, Number(room.maxGuestAgentsPerMember || 1)),
+            allowRemoteWorkspaceAccess: Number(room.allowRemoteWorkspaceAccess || 0),
         })
     }
 

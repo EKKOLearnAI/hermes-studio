@@ -1052,7 +1052,7 @@ onBeforeUnmount(() => {
 .msg-body {
     display: flex;
     flex-direction: column;
-    min-width: 0;
+    min-width: min(260px, 85%);
     max-width: 85%;
     box-sizing: border-box;
 }

@@ -2405,6 +2405,8 @@ export default {
     allowGuestAgents: 'メンバーが自分の Agent を参加させることを許可',
     maxGuestAgentsPerMember: 'メンバーごとの Agent 上限',
     ownerApprovalHint: '各 Agent の接続には、ルームオーナーによる明示的な承認が必要です。',
+    allowRemoteWorkspaceAccess: 'リモート Agent にグループワークスペースの読み書きを許可',
+    remoteWorkspaceAccessHint: '有効にすると、承認済みのリモート Agent は実行ごとに短時間だけアクセスできます。機密ファイルとルーム外のパスは引き続き拒否されます。',
     agentPairingRequestTitle: 'Agent 接続申請',
     agentPairingRequestDescription: '{user} が {origin} から Agent を接続しようとしています。',
     approveAgent: 'Agent を承認',

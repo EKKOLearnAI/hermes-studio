@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { io as socketIo } from 'socket.io-client'
 import {
   connectGroupChatClient,
@@ -7,15 +10,28 @@ import {
   once,
   rejectGroupChatClient,
 } from './group-chat-test-helpers'
-import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { GroupAgentRelayServer } from '../../packages/server/src/services/hermes/group-chat/agent-relay'
+import {
+  defaultGroupChatWorkspace,
+  type GroupChatServer,
+} from '../../packages/server/src/services/hermes/group-chat'
+import {
+  GroupAgentRelayServer,
+  redactRelaySecrets,
+  relayRoomWorkspace,
+} from '../../packages/server/src/services/hermes/group-chat/agent-relay'
 import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import {
+  authenticateRemoteWorkspaceGrant,
+  resetRemoteWorkspaceGrantsForTest,
+} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
+import { performRemoteWorkspaceAction } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
 
 describe('group chat baseline behavior', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
   let groupServer: GroupChatServer
   let port: number
   let originalPort: string | undefined
+  const temporaryDirectories: string[] = []
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -27,9 +43,36 @@ describe('group chat baseline behavior', () => {
 
   afterEach(() => {
     harness?.cleanup()
+    resetRemoteWorkspaceGrantsForTest()
+    for (const path of temporaryDirectories.splice(0)) {
+      rmSync(path, { recursive: true, force: true })
+    }
     vi.restoreAllMocks()
     if (originalPort === undefined) delete process.env.PORT
     else process.env.PORT = originalPort
+  })
+
+  it('derives a stable local workspace for remote room runs', () => {
+    const room = { id: 'room-1', summaryProfile: 'research' }
+
+    expect(relayRoomWorkspace(room)).toBe(defaultGroupChatWorkspace('research', 'room-1'))
+    expect(relayRoomWorkspace(room)).toBe(relayRoomWorkspace(room))
+    expect(() => relayRoomWorkspace({ id: '..', summaryProfile: 'research' })).toThrow('Invalid Relay room id')
+    expect(() => relayRoomWorkspace({ id: 'room-1', summaryProfile: '..' })).toThrow(
+      'Invalid Relay room summary profile',
+    )
+  })
+
+  it('redacts short-lived workspace grants from nested relay events', () => {
+    const secret = 'a'.repeat(43)
+
+    expect(redactRelaySecrets({
+      command: `curl -H "Authorization: Bearer ${secret}" https://group.example`,
+      tool_calls: [{ arguments: JSON.stringify({ token: secret }) }],
+    }, [secret])).toEqual({
+      command: 'curl -H "Authorization: Bearer [REDACTED]" https://group.example',
+      tool_calls: [{ arguments: JSON.stringify({ token: '[REDACTED]' }) }],
+    })
   })
 
   it('joins an existing room and returns room-level history and membership', async () => {
@@ -268,6 +311,7 @@ describe('group chat baseline behavior', () => {
     storage.updateRoomGuestAgentPolicy('room-1', {
       allowGuestAgents: true,
       maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: false,
     })
     const roomAgent = storage.addRoomAgent('room-1', 'remote-agent', 'default', 'Remote', '', 1, {
       executorType: 'remote',
@@ -381,10 +425,15 @@ describe('group chat baseline behavior', () => {
   it('releases a pairing claim after an origin mismatch and accepts the intended target once', async () => {
     const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
     const storage = groupServer.getStorage()
-    storage.saveRoom('room-relay', 'Relay Room', 'RELAY1')
+    const relayWorkspace = mkdtempSync(join(tmpdir(), 'group-chat-relay-diff-'))
+    temporaryDirectories.push(relayWorkspace)
+    storage.saveRoom('room-relay', 'Relay Room', 'RELAY1', {
+      workspace: relayWorkspace,
+    })
     storage.updateRoomGuestAgentPolicy('room-relay', {
       allowGuestAgents: true,
       maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: true,
     })
     storage.addRoomMember('room-relay', 'guest-relay', 'Relay Guest', '')
     const created = relayStore.createGroupAgentPairingRequest({
@@ -484,6 +533,28 @@ describe('group chat baseline behavior', () => {
       role: 'user',
     })
     const run = await runRequested
+    expect(run.room).toMatchObject({
+      id: 'room-relay',
+      name: 'Relay Room',
+      summaryProfile: 'default',
+    })
+    expect(run.workspaceApi).toMatchObject({
+      access: 'read-write',
+      token: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/),
+    })
+    const workspaceToken = run.workspaceApi.token
+    expect(authenticateRemoteWorkspaceGrant(workspaceToken)).toMatchObject({
+      roomId: 'room-relay',
+      agentId: expect.any(String),
+    })
+    await expect(performRemoteWorkspaceAction(relayWorkspace, {
+      action: 'write',
+      path: 'remote-notes.txt',
+      content: 'changed by the remote Agent',
+    })).resolves.toMatchObject({
+      ok: true,
+      path: 'remote-notes.txt',
+    })
     intendedTarget.emit('run.accepted', { runId: run.runId })
     const eventResult = await emitAck<any>(intendedTarget as any, 'agent.event', {
       runId: run.runId,
@@ -505,6 +576,7 @@ describe('group chat baseline behavior', () => {
     expect(eventResult).toEqual({ ok: true })
     intendedTarget.emit('run.completed', { runId: run.runId })
     await reply
+    expect(authenticateRemoteWorkspaceGrant(workspaceToken)).toBeNull()
     expect(proxySendMessage).toHaveBeenCalledWith(
       'room-relay',
       'safe remote reply',
@@ -512,6 +584,20 @@ describe('group chat baseline behavior', () => {
       { role: 'assistant' },
       'remote-session',
     )
+    const workspaceDiffMessage = storage.getRecentMessagesForUI('room-relay')
+      .find(message => message.tool_name === 'workspace_diff')
+    expect(workspaceDiffMessage).toBeTruthy()
+    expect(JSON.parse(workspaceDiffMessage!.content)).toMatchObject({
+      kind: 'workspace_diff',
+      status: 'completed',
+      parent_message_id: 'cloud-message',
+      files: [
+        expect.objectContaining({
+          path: 'remote-notes.txt',
+          change_type: 'added',
+        }),
+      ],
+    })
 
     const nameConflict = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
       agent: 'codex',

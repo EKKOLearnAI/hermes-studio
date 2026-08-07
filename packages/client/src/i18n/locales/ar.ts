@@ -2684,6 +2684,8 @@ export default {
     allowGuestAgents: 'السماح للأعضاء بإضافة Agents الخاصين بهم',
     maxGuestAgentsPerMember: 'الحد الأقصى من Agents لكل عضو',
     ownerApprovalHint: 'لا يزال كل Agent يتطلب موافقة صريحة من مالك الغرفة.',
+    allowRemoteWorkspaceAccess: 'السماح للـ Agents البعيدة بقراءة مساحة عمل المجموعة والكتابة فيها',
+    remoteWorkspaceAccessHint: 'عند التفعيل، تحصل الـ Agents البعيدة المعتمدة على وصول قصير المدة لكل تشغيل. تظل الملفات الحساسة والمسارات خارج مساحة الغرفة محظورة.',
     agentPairingRequestTitle: 'طلب توصيل Agent',
     agentPairingRequestDescription: 'يريد {user} توصيل Agent من {origin}.',
     approveAgent: 'الموافقة على Agent',

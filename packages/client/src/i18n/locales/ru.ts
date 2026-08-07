@@ -2340,6 +2340,8 @@ export default {
     allowGuestAgents: 'Разрешить участникам добавлять своих Agents',
     maxGuestAgentsPerMember: 'Максимум Agents на участника',
     ownerApprovalHint: 'Каждый Agent по-прежнему требует явного одобрения владельца комнаты.',
+    allowRemoteWorkspaceAccess: 'Разрешить удалённым Agents чтение и запись в рабочей области группы',
+    remoteWorkspaceAccessHint: 'После включения одобренные удалённые Agents получают краткосрочный доступ на время каждого запуска. Секретные файлы и внешние пути остаются заблокированы.',
     agentPairingRequestTitle: 'Запрос на подключение Agent',
     agentPairingRequestDescription: '{user} хочет подключить Agent из {origin}.',
     approveAgent: 'Одобрить Agent',

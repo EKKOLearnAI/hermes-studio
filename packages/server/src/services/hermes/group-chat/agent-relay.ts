@@ -15,8 +15,9 @@ import {
   type GroupAgentExecutor,
   type GroupChatRunService,
   type MentionMessage,
+  type WorkspaceDiffBroadcaster,
 } from './agent-clients'
-import type { GroupChatServer } from './index'
+import { defaultGroupChatWorkspace, type GroupChatServer } from './index'
 import type { GroupRuntimeContext } from './room-summary'
 import { getGroupChatAttachmentDir } from './attachments'
 import { isPathWithin } from '../hermes-path'
@@ -34,6 +35,16 @@ import {
   type GroupAgentConnector,
   type RemoteGroupAgentDescriptor,
 } from './agent-relay-store'
+import {
+  issueRemoteWorkspaceGrant,
+  revokeRemoteWorkspaceGrantsForRun,
+  waitForRemoteWorkspaceGrantOperations,
+} from './remote-workspace-auth'
+import {
+  completeWorkspaceRunCheckpointDraft,
+  discardWorkspaceRunCheckpoint,
+  startWorkspaceRunCheckpoint,
+} from '../run-chat/workspace-diff-tracker'
 
 export const GROUP_AGENT_RELAY_PROTOCOL_VERSION = 1
 const RELAY_ACCEPT_TIMEOUT_MS = 10_000
@@ -63,12 +74,16 @@ type RelayAttachmentSource = RelayAttachment & {
 type RelayRunRequest = {
   protocolVersion: 1
   runId: string
-  room: { id: string; name: string }
+  room: { id: string; name: string; summaryProfile?: string }
   members: Array<{ userId?: string; id?: string; name: string; description?: string }>
   agents: Array<{ agentId?: string; id?: string; name: string; description?: string }>
   message: MentionMessage
   runtimeContext: GroupRuntimeContext
   attachments: RelayAttachment[]
+  workspaceApi?: {
+    token: string
+    access: 'read-write'
+  }
 }
 
 type RelayAgentEvent = {
@@ -88,9 +103,15 @@ type PendingRelayRun = {
   attachments: Map<string, RelayAttachmentSource>
   messageIds: Map<string, string>
   approvalIds: Map<string, string>
+  result: {
+    parentMessageId?: string
+    responseRunId?: string
+  }
   resolve: () => void
   reject: (error: Error) => void
 }
+
+type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
 
 function relayError(message: string, code = 'GROUP_AGENT_RELAY_ERROR'): Error {
   const error = new Error(message) as Error & { code?: string }
@@ -121,6 +142,53 @@ function boundedRelayText(value: unknown, maxLength: number, field: string, requ
   return text
 }
 
+export function redactRelaySecrets(value: unknown, secrets: string[], depth = 0): unknown {
+  if (depth > 20) return '[REDACTED:DEPTH]'
+  const activeSecrets = secrets.filter(secret => secret.length >= 16)
+  if (!activeSecrets.length) return value
+  if (typeof value === 'string') {
+    return activeSecrets.reduce(
+      (text, secret) => text.split(secret).join('[REDACTED]'),
+      value,
+    )
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => redactRelaySecrets(item, activeSecrets, depth + 1))
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      String(redactRelaySecrets(key, activeSecrets, depth + 1)),
+      redactRelaySecrets(item, activeSecrets, depth + 1),
+    ]))
+  }
+  return value
+}
+
+export function relayRoomWorkspace(
+  room: { id: string; summaryProfile?: string },
+  fallbackProfile = 'default',
+): string {
+  const roomId = boundedRelayText(room?.id, 160, 'room id', true)
+  if (roomId === '.' || roomId === '..' || !/^[a-zA-Z0-9_-]+$/.test(roomId)) {
+    throw relayError('Invalid Relay room id', 'GROUP_AGENT_RUN_INVALID')
+  }
+  const summaryProfile = boundedRelayText(
+    room?.summaryProfile || fallbackProfile || 'default',
+    120,
+    'room summary profile',
+    true,
+  )
+  if (summaryProfile === '.' || summaryProfile === '..') {
+    throw relayError('Invalid Relay room summary profile', 'GROUP_AGENT_RUN_INVALID')
+  }
+  const workspaceRoot = join(config.appHome, 'group-chat')
+  const workspace = defaultGroupChatWorkspace(summaryProfile, roomId)
+  if (!isPathWithin(workspace, workspaceRoot) || resolve(workspace) === resolve(workspaceRoot)) {
+    throw relayError('Invalid Relay room workspace', 'GROUP_AGENT_RUN_INVALID')
+  }
+  return workspace
+}
+
 function validateRelayRunRequest(value: unknown): asserts value is RelayRunRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw relayError('Invalid Relay run request', 'GROUP_AGENT_RUN_INVALID')
@@ -134,6 +202,10 @@ function validateRelayRunRequest(value: unknown): asserts value is RelayRunReque
   }
   boundedRelayText(request.room?.id, 160, 'room id', true)
   boundedRelayText(request.room?.name, 120, 'room name', true)
+  if (request.room?.summaryProfile !== undefined) {
+    boundedRelayText(request.room.summaryProfile, 120, 'room summary profile', true)
+  }
+  relayRoomWorkspace(request.room)
   if (!Array.isArray(request.members) || request.members.length > 500) {
     throw relayError('Invalid Relay member roster', 'GROUP_AGENT_RUN_INVALID')
   }
@@ -232,6 +304,16 @@ function validateRelayRunRequest(value: unknown): asserts value is RelayRunReque
     boundedRelayText(attachment.name, 255, 'attachment name', true)
     boundedRelayText(attachment.mediaType, 200, 'attachment media type')
   }
+  if (request.workspaceApi !== undefined) {
+    if (
+      !request.workspaceApi
+      || typeof request.workspaceApi !== 'object'
+      || request.workspaceApi.access !== 'read-write'
+      || !/^[a-zA-Z0-9_-]{43}$/.test(String(request.workspaceApi.token || ''))
+    ) {
+      throw relayError('Invalid Relay workspace API grant', 'GROUP_AGENT_RUN_INVALID')
+    }
+  }
   let serialized = ''
   try {
     serialized = JSON.stringify(request)
@@ -264,6 +346,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   private pendingRun: PendingRelayRun | null = null
   private detached = false
   private eventQueue: Promise<void> = Promise.resolve()
+  private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
 
   constructor(
     private readonly relaySocket: ServerSocket,
@@ -292,7 +375,9 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   }
 
   setStorage(_storage: any): void {}
-  setWorkspaceDiffBroadcaster(_broadcaster: any): void {}
+  setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void {
+    this.workspaceDiffBroadcaster = broadcaster
+  }
   setChatRunService(_service: GroupChatRunService | null): void {}
 
   sendMessage(
@@ -325,10 +410,26 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     if (!room) throw relayError('Room no longer exists', 'GROUP_AGENT_ROOM_MISSING')
     const runId = randomUUID()
     const prepared = await this.prepareMessageAttachments(roomId, message)
+    const sharedWorkspace = Number(room.allowRemoteWorkspaceAccess || 0) === 1
+      ? String(room.workspace || '').trim()
+      : ''
+    if (sharedWorkspace) await mkdir(sharedWorkspace, { recursive: true, mode: 0o700 })
+    const workspaceGrant = sharedWorkspace
+      ? issueRemoteWorkspaceGrant({
+          runId,
+          roomId,
+          agentId: this.agentId,
+          workspace: sharedWorkspace,
+        })
+      : null
     const request: RelayRunRequest = {
       protocolVersion: GROUP_AGENT_RELAY_PROTOCOL_VERSION,
       runId,
-      room: { id: roomId, name: String(room.name || roomId) },
+      room: {
+        id: roomId,
+        name: String(room.name || roomId),
+        summaryProfile: String(room.summaryProfile || 'default'),
+      },
       members: this.storage.getRoomMembers(roomId),
       agents: (
         this.storage.getMentionableRoomAgents?.(roomId)
@@ -347,9 +448,36 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         mediaType: attachment.mediaType,
         size: attachment.size,
       })),
+      ...(workspaceGrant
+        ? {
+            workspaceApi: {
+              token: workspaceGrant.token,
+              access: workspaceGrant.grant.access,
+            },
+          }
+        : {}),
     }
     onStatus?.('replying')
+    const workspaceSessionId = `group-relay:${this.connector.id}`
+    let workspaceCheckpointStarted = false
+    let workspaceDiffStatus: WorkspaceDiffTerminalStatus = 'completed'
+    const relayResult: PendingRelayRun['result'] = {}
     try {
+      if (workspaceGrant) {
+        try {
+          startWorkspaceRunCheckpoint({
+            sessionId: workspaceSessionId,
+            runId,
+            workspace: workspaceGrant.grant.workspace,
+          })
+          workspaceCheckpointStarted = true
+        } catch (error) {
+          logger.warn(
+            { error, roomId, runId, agentId: this.agentId },
+            '[GroupChat] failed to start remote workspace diff checkpoint',
+          )
+        }
+      }
       await new Promise<void>((resolve, reject) => {
         const acceptedTimer = setTimeout(() => {
           this.finishRun(runId, relayError('Remote Agent did not accept the run in time', 'GROUP_AGENT_ACCEPT_TIMEOUT'))
@@ -368,13 +496,86 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
           attachments: new Map(prepared.attachments.map(attachment => [attachment.id, attachment])),
           messageIds: new Map(),
           approvalIds: new Map(),
+          result: relayResult,
           resolve,
           reject,
         }
         this.relaySocket.emit('run.request', request)
       })
+    } catch (error: any) {
+      workspaceDiffStatus = error?.code === 'GROUP_AGENT_INTERRUPTED' ? 'aborted' : 'failed'
+      throw error
     } finally {
+      revokeRemoteWorkspaceGrantsForRun(runId)
+      await waitForRemoteWorkspaceGrantOperations(runId)
+      if (workspaceCheckpointStarted && workspaceGrant) {
+        this.finalizeRemoteWorkspaceDiff({
+          roomId,
+          sessionId: workspaceSessionId,
+          runId,
+          workspace: workspaceGrant.grant.workspace,
+          status: workspaceDiffStatus,
+          responseRunId: relayResult.responseRunId || runId,
+          parentMessageId: relayResult.parentMessageId || null,
+        })
+      }
       onStatus?.('ready')
+    }
+  }
+
+  private finalizeRemoteWorkspaceDiff(args: {
+    roomId: string
+    sessionId: string
+    runId: string
+    workspace: string
+    status: WorkspaceDiffTerminalStatus
+    responseRunId: string
+    parentMessageId: string | null
+  }): void {
+    const currentRoom = this.storage.getRoom(args.roomId)
+    if (!currentRoom || String(currentRoom.workspace || '').trim() !== args.workspace) {
+      discardWorkspaceRunCheckpoint({
+        sessionId: args.sessionId,
+        runId: args.runId,
+      })
+      return
+    }
+    let draft
+    try {
+      draft = completeWorkspaceRunCheckpointDraft({
+        sessionId: args.sessionId,
+        runId: args.runId,
+        workspace: args.workspace,
+      })
+    } catch (error) {
+      logger.warn(
+        { error, roomId: args.roomId, runId: args.runId, agentId: this.agentId },
+        '[GroupChat] failed to complete remote workspace diff draft',
+      )
+      return
+    }
+    if (!draft) return
+    try {
+      const saved = this.storage.saveWorkspaceDiffMessageForRun?.({
+        roomId: args.roomId,
+        senderId: this.agentId,
+        senderName: this.name,
+        sessionId: args.sessionId,
+        runId: args.runId,
+        responseRunId: args.responseRunId,
+        status: args.status,
+        workspace: args.workspace,
+        draft,
+        parentMessageId: args.parentMessageId,
+      })
+      if (saved?.message) {
+        this.workspaceDiffBroadcaster?.(args.roomId, saved.message, saved.totalTokens)
+      }
+    } catch (error) {
+      logger.warn(
+        { error, roomId: args.roomId, runId: args.runId, agentId: this.agentId },
+        '[GroupChat] failed to persist remote workspace diff message',
+      )
     }
   }
 
@@ -504,13 +705,21 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
       case 'message': {
         const content = String(data.content || '')
         if (content.length > 1_000_000) throw relayError('Remote Agent message is too large', 'GROUP_AGENT_EVENT_INVALID')
-        await this.proxy.sendMessage(
+        const messageId = this.remoteMessageId(pending, data.id, true)
+        const extra = this.sanitizeRemoteMessageExtra(data.extra)
+        const persistedMessageId = await this.proxy.sendMessage(
           pending.roomId,
           content,
-          this.remoteMessageId(pending, data.id, true),
-          this.sanitizeRemoteMessageExtra(data.extra),
+          messageId,
+          extra,
           sessionId || undefined,
         )
+        if (extra.role === 'assistant') {
+          pending.result.parentMessageId = persistedMessageId || messageId
+          if (typeof extra.run_id === 'string' && extra.run_id) {
+            pending.result.responseRunId = extra.run_id
+          }
+        }
         break
       }
       case 'typing':
@@ -528,6 +737,9 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         )
         break
       case 'message_stream_start':
+        if (typeof data.run_id === 'string' && data.run_id.trim()) {
+          pending.result.responseRunId = data.run_id.slice(0, 500)
+        }
         this.proxy.emitMessageStreamStart(
           pending.roomId,
           this.remoteMessageId(pending, data.id, true),
@@ -960,6 +1172,7 @@ export class GroupAgentRelayServer {
 class OutboundRelayEventSink implements GroupAgentEventSink {
   private runId = ''
   private sequence = 0
+  private secrets: string[] = []
 
   constructor(private readonly socket: ClientSocket) {}
 
@@ -971,9 +1184,17 @@ class OutboundRelayEventSink implements GroupAgentEventSink {
     return this.socket.id
   }
 
-  begin(runId: string): void {
+  begin(runId: string, secrets: string[] = []): void {
     this.runId = runId
     this.sequence = 0
+    this.secrets = secrets.filter(Boolean)
+  }
+
+  end(runId: string): void {
+    if (this.runId !== runId) return
+    this.runId = ''
+    this.sequence = 0
+    this.secrets = []
   }
 
   sendMessage(
@@ -1011,7 +1232,7 @@ class OutboundRelayEventSink implements GroupAgentEventSink {
       runId: this.runId,
       seq: this.sequence,
       event,
-      data,
+      data: redactRelaySecrets(data, this.secrets),
     }, ack)
   }
 }
@@ -1210,15 +1431,29 @@ class OutboundRelayConnection {
       return
     }
     this.activeRequest = request
-    sink.begin(request.runId)
+    sink.begin(request.runId, request.workspaceApi?.token ? [request.workspaceApi.token] : [])
     socket.emit('run.accepted', { runId: request.runId })
     let attachmentRunDir = ''
-    const roomState = {
-      room: { ...request.room, workspace: '' },
-      members: request.members,
-      agents: request.agents,
-    }
     try {
+      const workspace = relayRoomWorkspace(request.room, this.link.agent.profile)
+      await mkdir(workspace, { recursive: true, mode: 0o700 })
+      const roomState = {
+        room: {
+          ...request.room,
+          workspace,
+          ...(request.workspaceApi
+            ? {
+                remoteWorkspaceApi: {
+                  endpoint: `${this.link.cloudOrigin}/api/hermes/group-chat/remote-workspace/v1`,
+                  token: request.workspaceApi.token,
+                  access: request.workspaceApi.access,
+                },
+              }
+            : {}),
+        },
+        members: request.members,
+        agents: request.agents,
+      }
       const materialized = await this.materializeAttachments(request)
       attachmentRunDir = materialized.runDir
       if (!this.runner) {
@@ -1245,11 +1480,16 @@ class OutboundRelayConnection {
       })
       socket.emit('run.completed', { runId: request.runId })
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Remote Agent run failed'
       socket.emit('run.failed', {
         runId: request.runId,
-        error: error instanceof Error ? error.message : 'Remote Agent run failed',
+        error: String(redactRelaySecrets(
+          errorMessage,
+          request.workspaceApi?.token ? [request.workspaceApi.token] : [],
+        )),
       })
     } finally {
+      sink.end(request.runId)
       this.activeRequest = null
       if (attachmentRunDir) await rm(attachmentRunDir, { recursive: true, force: true }).catch(() => undefined)
     }

@@ -660,6 +660,7 @@ export async function updateGuestAgentPolicy(ctx: Context): Promise<void> {
   const room = storage.updateRoomGuestAgentPolicy(roomId, {
     allowGuestAgents: body.allowGuestAgents === true,
     maxGuestAgentsPerMember: maxAgents,
+    allowRemoteWorkspaceAccess: body.allowRemoteWorkspaceAccess === true,
   })
   if (!room) {
     ctx.status = 404
@@ -672,6 +673,7 @@ export async function updateGuestAgentPolicy(ctx: Context): Promise<void> {
       allowGuestAgents: Number(room.allowGuestAgents || 0),
       guestAgentApproval: 'owner',
       maxGuestAgentsPerMember: Math.max(1, Number(room.maxGuestAgentsPerMember || 1)),
+      allowRemoteWorkspaceAccess: Number(room.allowRemoteWorkspaceAccess || 0),
     },
   }
 }
