@@ -562,6 +562,7 @@ function referenceBubbleContent() {
         role,
         content,
         sender: props.message.senderName || props.message.senderId,
+        senderId: props.message.senderId,
     })
 }
 

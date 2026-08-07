@@ -266,6 +266,22 @@ describe('branch session command', () => {
     expect(sessionMap.has(branchEvent.newSessionId)).toBe(false)
   })
 
+  it('copies the parent real category once when forking', async () => {
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { nsp, socket } = makeSocketHarness()
+    const sessionMap = new Map<string, any>([
+      ['session-1', { messages: [], isWorking: false, events: [], queue: [] }],
+    ])
+    getSessionMock.mockReturnValue(makeParentSession({ category_id: 42 }))
+
+    await handleSessionCommand('session-1', parseSessionCommand('/fork categorized')!, makeCtx(sessionMap, nsp, socket))
+
+    expect(createBranchedSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      parent_session_id: 'session-1',
+      category_id: 42,
+    }))
+  })
+
   it('preserves api_server source when forking non-bridge chat sessions', async () => {
     const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
     const { nsp, socket, namespaceEmit } = makeSocketHarness()

@@ -689,6 +689,8 @@ export default {
     hermesHistory: 'سجل Hermes',
     historyScopeHint: 'جلسات سجل Hermes للقراءة فقط للبروفايل الحالي، مجمّعة حسب المصدر.',
     noSessions: 'لا توجد جلسات',
+    recent: 'الأخيرة',
+    recentCount: 'عدد الجلسات الأخيرة',
     loadMoreSessions: 'تحميل جلسات أكثر',
     searchTitle: 'البحث في الجلسات',
     searchSubtitle: 'ابحث بالعنوان أو بمحتوى الرسالة',

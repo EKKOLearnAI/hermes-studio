@@ -6,7 +6,13 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
-import { AgentClients, GROUP_CHAT_AGENT_SOCKET_SECRET, groupBridgeSessionId, type GroupChatRunService } from './agent-clients'
+import {
+    AgentClients,
+    GROUP_CHAT_AGENT_SOCKET_SECRET,
+    groupBridgeSessionId,
+    type GroupChatRunService,
+    type StructuredMention,
+} from './agent-clients'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
@@ -18,7 +24,7 @@ import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type GroupMessageCursorCutoff } from './group-message-ordering'
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
-import { isAllAgentsMentioned, isReservedMentionName } from './mention-routing'
+import { isAgentMentioned, isAllAgentsMentioned, isReservedMentionName, resolveMentionTargets } from './mention-routing'
 import { isGroupChatRoomOwner } from './access'
 import { normalizeHumanGroupChatContent } from './attachments'
 import { revokeGroupAgentConnector } from './agent-relay-store'
@@ -51,6 +57,8 @@ interface ChatMessage {
     reasoning?: string | null
     reasoning_details?: string | null
     reasoning_content?: string | null
+    persistedAt?: number
+    mentions?: StructuredMention[]
     mentionDepth?: number
     agentSessionId?: string
 }
@@ -222,6 +230,7 @@ export interface RoomInfo {
     guestAgentApproval: 'owner'
     maxGuestAgentsPerMember: number
     allowRemoteWorkspaceAccess: number
+    createdAt: number
 }
 
 const ROOM_SELECT_COLUMNS = [
@@ -244,6 +253,7 @@ const ROOM_SELECT_COLUMNS = [
     'guestAgentApproval',
     'maxGuestAgentsPerMember',
     'allowRemoteWorkspaceAccess',
+    'createdAt',
 ].join(', ')
 
 const ROOM_AGENT_SELECT_COLUMNS = [
@@ -275,6 +285,8 @@ const MESSAGE_SELECT_COLUMNS = [
     'senderAgentRecordId',
     'content',
     'timestamp',
+    'persistedAt',
+    'mentions',
     'run_id',
     'role',
     'tool_call_id',
@@ -285,6 +297,18 @@ const MESSAGE_SELECT_COLUMNS = [
     'reasoning_details',
     'reasoning_content',
 ].join(', ')
+
+function roomActivityAtSql(messageAlias: string): string {
+    return `COALESCE(
+        MAX(CASE
+            WHEN COALESCE(${messageAlias}.role, '') <> 'tool'
+             AND COALESCE(${messageAlias}.finish_reason, '') <> 'streaming'
+            THEN NULLIF(${messageAlias}.persistedAt, 0)
+        END),
+        NULLIF(r.createdAt, 0),
+        0
+    )`
+}
 
 export interface RoomSummaryConfig {
     summaryProfile?: string
@@ -368,6 +392,19 @@ function parseJsonArray(value: unknown): any[] | null {
     }
 }
 
+function parseStructuredMentions(value: unknown): StructuredMention[] {
+    const parsed = parseJsonArray(value)
+    if (!parsed) return []
+    return parsed.flatMap((mention): StructuredMention[] => {
+        if (!mention || typeof mention !== 'object') return []
+        if (mention.type === 'all') return [{ type: 'all' }]
+        if (mention.type === 'agent' && typeof mention.participantId === 'string' && mention.participantId) {
+            return [{ type: 'agent', participantId: mention.participantId }]
+        }
+        return []
+    })
+}
+
 function normalizeMessageRole(role: unknown): string {
     const value = String(role || '').trim()
     return ['user', 'assistant', 'tool', 'command'].includes(value) ? value : 'user'
@@ -434,6 +471,7 @@ class ChatStorage {
                 senderOwnerMemberId: ownerMemberId,
             } : {}),
             tool_calls: parseJsonArray(row.tool_calls),
+            mentions: parseStructuredMentions(row.mentions),
         }
     }
 
@@ -624,7 +662,14 @@ class ChatStorage {
     }
 
     getAllRooms(): RoomInfo[] {
-        return (this.db()?.prepare(`SELECT ${ROOM_SELECT_COLUMNS} FROM gc_rooms ORDER BY id`).all() || []) as any[]
+        return (this.db()?.prepare(
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    ${roomActivityAtSql('m')} AS _activityAt
+             FROM gc_rooms r
+             LEFT JOIN gc_messages m ON m.roomId = r.id
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`,
+        ).all() || []) as any[]
     }
 
     getRoomsForProfiles(profiles: string[]): RoomInfo[] {
@@ -632,34 +677,43 @@ class ChatStorage {
         if (!uniqueProfiles.length) return []
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    ${roomActivityAtSql('m')} AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
+             LEFT JOIN gc_messages m ON m.roomId = r.id
              WHERE a.removedAt = 0
                AND a.executorType = 'server'
                AND a.profile IN (${placeholders})
-             ORDER BY r.id`
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(...uniqueProfiles) || []) as any[]
     }
 
     getRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    ${roomActivityAtSql('messages')} AS _activityAt
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
+             LEFT JOIN gc_messages messages ON messages.roomId = r.id
              WHERE m.authUserId = ?
-             ORDER BY r.id`
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 
     getOwnedRoomsForAuthUser(authUserId: number): RoomInfo[] {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
-            `SELECT ${ROOM_SELECT_COLUMNS}
-             FROM gc_rooms
-             WHERE ownerAuthUserId = ?
-             ORDER BY id`
+            `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
+                    ${roomActivityAtSql('m')} AS _activityAt
+             FROM gc_rooms r
+             LEFT JOIN gc_messages m ON m.roomId = r.id
+             WHERE r.ownerAuthUserId = ?
+             GROUP BY r.id
+             ORDER BY _activityAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 
@@ -669,8 +723,8 @@ class ChatStorage {
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
                 id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
-                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
@@ -682,6 +736,7 @@ class ChatStorage {
             Math.max(1, Math.floor(Number(config?.summaryEveryTurns || 20))),
             config?.workspace || '',
             ownerAuthUserId,
+            Date.now(),
         )
     }
 
@@ -851,12 +906,13 @@ class ChatStorage {
     upsertMessage(msg: ChatMessage, existing?: ChatMessage | null): ChatMessage {
         const storedMessage = this.snapshotMessageSender(msg, existing ?? this.getMessage(msg.id))
         const toolCallsJson = storedMessage.tool_calls ? JSON.stringify(storedMessage.tool_calls) : null
+        const mentionsJson = JSON.stringify(storedMessage.mentions || [])
         this.db()?.prepare(
             `INSERT INTO gc_messages (
                 id, roomId, senderId, senderName, senderType, senderAgentRecordId,
-                content, timestamp, run_id, role, tool_call_id, tool_calls,
-                tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                content, timestamp, persistedAt, mentions, run_id, role, tool_call_id,
+                tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             + ` ON CONFLICT(id) DO UPDATE SET
                 roomId = excluded.roomId,
                 senderId = excluded.senderId,
@@ -865,6 +921,8 @@ class ChatStorage {
                 senderAgentRecordId = excluded.senderAgentRecordId,
                 content = excluded.content,
                 timestamp = excluded.timestamp,
+                persistedAt = excluded.persistedAt,
+                mentions = excluded.mentions,
                 run_id = excluded.run_id,
                 role = excluded.role,
                 tool_call_id = excluded.tool_call_id,
@@ -883,6 +941,8 @@ class ChatStorage {
             storedMessage.senderAgentRecordId || '',
             messageContentForStorage(storedMessage.role, storedMessage.content),
             storedMessage.timestamp,
+            storedMessage.persistedAt ?? Date.now(),
+            mentionsJson,
             storedMessage.run_id ?? null,
             storedMessage.role || 'user',
             storedMessage.tool_call_id ?? null,
@@ -2290,6 +2350,78 @@ export class GroupChatServer {
         }
     }
 
+    private normalizeStructuredMentions(
+        roomId: string,
+        member: Member | undefined,
+        content: string,
+        rawMentions: unknown,
+    ): { mentions?: StructuredMention[]; error?: string } {
+        const senderId = member?.userId || ''
+        const senderIsAgent = member?.source === 'agent'
+        if (rawMentions === undefined) {
+            const roomAgents = senderIsAgent && typeof this.storage.getRoomAgents === 'function'
+                ? this.storage.getRoomAgents(roomId) as RoomAgent[]
+                : []
+            if (senderIsAgent && (isAllAgentsMentioned(content) || resolveMentionTargets(roomAgents, content, senderId).length > 0)) {
+                return { error: 'Agent mentions require structured metadata' }
+            }
+            return senderIsAgent ? { mentions: [] } : {}
+        }
+        if (!Array.isArray(rawMentions)) return { error: 'Invalid structured mentions' }
+        const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
+        const visibleAllMention = isAllAgentsMentioned(content)
+        const visibleParticipantIds = new Set(
+            roomAgents
+                .filter(agent => isAgentMentioned(content, agent.name))
+                .map(agent => agent.agentId),
+        )
+
+        const normalized: StructuredMention[] = []
+        const participantIds = new Set<string>()
+        let allSeen = false
+        for (const rawMention of rawMentions) {
+            if (!rawMention || typeof rawMention !== 'object' || Array.isArray(rawMention)) {
+                return { error: 'Invalid structured mentions' }
+            }
+            const mention = rawMention as Record<string, unknown>
+            if (mention.type === 'all') {
+                if (allSeen || normalized.length > 0 || mention.displayName !== 'all' || !visibleAllMention) {
+                    return { error: 'Invalid structured mentions' }
+                }
+                allSeen = true
+                normalized.push({ type: 'all' })
+                continue
+            }
+            if (mention.type !== 'agent'
+                || typeof mention.participantId !== 'string'
+                || typeof mention.displayName !== 'string'
+                || allSeen
+                || participantIds.has(mention.participantId)
+                || mention.participantId === senderId) {
+                return { error: 'Invalid structured mentions' }
+            }
+            const target = roomAgents.find(agent => agent.agentId === mention.participantId)
+            if (!target || target.name !== mention.displayName || !isAgentMentioned(content, target.name)) {
+                return { error: 'Invalid structured mentions' }
+            }
+            participantIds.add(target.agentId)
+            normalized.push({ type: 'agent', participantId: target.agentId })
+        }
+
+        if (senderIsAgent) {
+            const structuredAll = normalized.length === 1 && normalized[0].type === 'all'
+            const visibleAgentMentionIds = [...visibleParticipantIds]
+            if (visibleAllMention
+                ? !structuredAll || visibleAgentMentionIds.length > 0
+                : structuredAll
+                    || participantIds.size !== visibleAgentMentionIds.length
+                    || visibleAgentMentionIds.some(participantId => !participantIds.has(participantId))) {
+                return { error: 'Invalid structured mentions' }
+            }
+        }
+        return { mentions: normalized }
+    }
+
     private handleMessage(socket: Socket, data: IncomingGroupChatMessage, ack?: (res: any) => void): void {
         if (!data || (typeof data.content !== 'string' && !Array.isArray(data.content))) {
             ack?.({ error: 'Invalid message content' })
@@ -2341,14 +2473,22 @@ export class GroupChatServer {
             })
             return
         }
+        const content = contentToStorageString(messageContent)
+        const mentionResult = this.normalizeStructuredMentions(roomId, member, contentToText(messageContent), data.mentions)
+        if (mentionResult.error) {
+            ack?.({ error: mentionResult.error })
+            return
+        }
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
             roomId,
             senderId: userId,
             senderName: userName,
-            content: contentToStorageString(messageContent),
+            content,
             timestamp: this.normalizeMessageTimestamp(data.timestamp, role),
+            persistedAt: Date.now(),
+            mentions: mentionResult.mentions,
             run_id: !isHumanMessage && typeof data.run_id === 'string' && data.run_id.trim()
                 ? data.run_id.trim()
                 : null,
@@ -2393,6 +2533,7 @@ export class GroupChatServer {
                 timestamp: savedMsg.timestamp,
                 role: savedMsg.role,
                 mentionDepth,
+                mentions: savedMsg.mentions,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
             })

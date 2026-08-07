@@ -1186,6 +1186,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     title,
     parent_session_id: parentSessionId,
     workspace: parent.workspace || undefined,
+    category_id: parent.category_id ?? null,
     ended_at: nowSeconds,
     last_active: nowSeconds,
     messages: sourceMessages.map(message => ({

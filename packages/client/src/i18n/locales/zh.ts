@@ -689,6 +689,8 @@ export default {
     hermesHistory: 'Hermes 历史',
     historyScopeHint: '这里按来源只读查看当前 profile 的 Hermes 历史会话。',
     noSessions: '暂无会话',
+    recent: '最近',
+    recentCount: '最近会话数量',
     loadMoreSessions: '加载更多会话',
     searchTitle: '搜索会话',
     searchSubtitle: '按标题或消息内容搜索',
