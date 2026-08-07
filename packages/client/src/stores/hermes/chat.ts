@@ -2879,6 +2879,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearPendingApproval(evt: RunEvent) {
+    if ((evt as any).resolved === false) return
     const sid = evt.session_id
     if (!sid) return
     const current = pendingApprovals.value.get(sid)
@@ -2905,6 +2906,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearPendingClarify(evt: RunEvent) {
+    if ((evt as any).resolved === false) return
     const sid = evt.session_id
     if (!sid) return
     const current = pendingClarifies.value.get(sid)

@@ -7,7 +7,7 @@ import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
-import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
+import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
 
 const chatStore = useChatStore()
 const groupChatStore = useGroupChatStore()
@@ -188,7 +188,7 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
         }, { default: () => t('chat.clarifySubmit') })
       : action.kind === 'workflow-approval'
         ? () => h('div', { class: 'global-pending-actions' }, [
-            h(NButton, { size: 'small', secondary: true, loading: submitting[action.key], onClick: () => void submitWorkflowApproval(action, false) }, { default: () => t('common.cancel') }),
+            h(NButton, { size: 'small', type: 'error', secondary: true, loading: submitting[action.key], onClick: () => void submitWorkflowApproval(action, false) }, { default: () => t('chat.approvalDeny') }),
             h(NButton, { size: 'small', type: 'primary', loading: submitting[action.key], onClick: () => void submitWorkflowApproval(action, true) }, { default: () => t('common.confirm') }),
           ])
         : () => approvalButtons(action),
@@ -219,7 +219,13 @@ onMounted(() => {
 
 watch(() => profilesStore.activeProfileName, profile => resetWorkflowSubscriptions(profile))
 
-onUnmounted(() => stopWorkflowStatus?.())
+onUnmounted(() => {
+  stopWorkflowStatus?.()
+  disconnectWorkflowSocket()
+  groupChatStore.disconnect()
+  for (const handle of handles.values()) handle.destroy()
+  handles.clear()
+})
 </script>
 
 <template><span class="global-pending-actions-host" aria-hidden="true" /></template>

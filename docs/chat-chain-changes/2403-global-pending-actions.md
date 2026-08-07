@@ -13,5 +13,6 @@ impact: Existing direct-chat approval and clarify prompts, group-chat approvals,
 - Delivers group-chat approval events to authorized managers even when they have not joined the source Room, and permits direct responses without changing the active Room.
 - Subscribes to existing Workflow runtime status events and exposes approve/reject actions for nodes in `pending_approval`.
 - Keeps unresolved responses pending and removes notifications when authoritative runtime state resolves them.
+- Uses an authenticated Profile-scoped Direct Chat audience so inactive Sessions receive approval/clarify lifecycle events without subscribing to every Session room.
 
 Closes #2403.

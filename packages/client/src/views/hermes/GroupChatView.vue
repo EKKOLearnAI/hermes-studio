@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
@@ -46,10 +46,6 @@ onMounted(async () => {
 watch(routeRoomId, async () => {
     if (store.rooms.length === 0) return
     await syncRouteRoom()
-})
-
-onUnmounted(() => {
-    store.disconnect()
 })
 </script>
 

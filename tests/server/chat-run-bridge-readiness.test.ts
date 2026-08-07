@@ -103,6 +103,32 @@ function makeServerHarness() {
   return { emitted, handlers, io, namespace, socket }
 }
 
+describe('ChatRunSocket global pending interactions', () => {
+  it('publishes approval and clarify lifecycle events to the authenticated profile audience', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    ;(server as any).emitToSession(socket, 'session-b', 'approval.requested', {
+      event: 'approval.requested', approval_id: 'approval-b',
+    })
+    ;(server as any).emitToSession(socket, 'session-b', 'clarify.resolved', {
+      event: 'clarify.resolved', clarify_id: 'clarify-b', resolved: true,
+    })
+
+    expect(socket.join).toHaveBeenCalledWith('pending-interactions:default')
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'approval.requested',
+      payload: expect.objectContaining({ session_id: 'session-b', approval_id: 'approval-b' }),
+    }))
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'clarify.resolved',
+      payload: expect.objectContaining({ session_id: 'session-b', clarify_id: 'clarify-b' }),
+    }))
+  })
+})
+
 describe('ensureBridgeReadyForChatRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()

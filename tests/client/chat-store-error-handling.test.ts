@@ -118,6 +118,20 @@ describe('chat store error handling - #1644', () => {
     expect(store.activePendingApproval).toBeNull()
   })
 
+  it('keeps a pending approval when the authoritative response is unresolved', () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-a'), makeSession('session-b')]
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-b', approval_id: 'approval-b', choices: ['once', 'deny'],
+    })
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved', session_id: 'session-b', approval_id: 'approval-b', resolved: false, error: 'stale',
+    })
+
+    expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b' })
+  })
+
   it('preserves assistant content when run.failed fires during streaming with substantial content', async () => {
     const store = useChatStore()
     const session = makeSession('session-1')

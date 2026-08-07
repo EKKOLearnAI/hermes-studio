@@ -240,6 +240,7 @@ export class ChatRunSocket {
     const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
+    socket.join(`pending-interactions:${currentProfile()}`)
     const profileExists = (profile: string) => {
       if (!profile || profile === 'default') return true
       return listProfileNamesFromDisk().includes(profile)
@@ -625,8 +626,12 @@ export class ChatRunSocket {
         ? `${getSystemPrompt(undefined, { source })}\n${data.instructions}`
         : getSystemPrompt(undefined, { source })
 
+      const onEvent = (event: string, payload: any) => {
+        data.onEvent?.(event, payload)
+        this.emitPendingInteraction(profile, event, payload)
+      }
       await handleBridgeRun(
-        this.nsp, socket, { ...data, instructions: fullInstructions }, profile,
+        this.nsp, socket, { ...data, instructions: fullInstructions, onEvent }, profile,
         this.sessionMap, this.bridge,
         skipUserMessage,
         loadSessionStateFromDb,
@@ -636,10 +641,14 @@ export class ChatRunSocket {
     }
 
     if (isEkkoAgentExecution(data)) {
+      const onEvent = (event: string, payload: any) => {
+        data.onEvent?.(event, payload)
+        this.emitPendingInteraction(profile, event, payload)
+      }
       await handleEkkoAgentRun(
         this.nsp,
         socket,
-        data,
+        { ...data, onEvent },
         profile,
         this.sessionMap,
         this.dequeueNextQueuedRun.bind(this),
@@ -1407,10 +1416,17 @@ export class ChatRunSocket {
     const tagged = { ...payload, session_id: sessionId }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
     this.observePetEvent(profile, event, tagged)
+    this.emitPendingInteraction(profile, event, tagged)
     this.nsp.to(`session:${sessionId}`).emit(event, tagged)
     if (!this.nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
       socket.emit(event, tagged)
     }
+  }
+
+  private emitPendingInteraction(profile: string, event: string, payload: any) {
+    if (event !== 'approval.requested' && event !== 'approval.resolved'
+      && event !== 'clarify.requested' && event !== 'clarify.resolved') return
+    this.nsp.to(`pending-interactions:${profile}`).emit(event, payload)
   }
 
   private serializeQueuedMessages(queue: QueuedRun[]) {

@@ -17,6 +17,7 @@ const groupState = reactive({
   rooms: [] as any[],
   respondApprovalFor: vi.fn(),
   connect: vi.fn(async () => undefined),
+  disconnect: vi.fn(),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
 const routeState = reactive({ name: 'hermes.chat' as string })
@@ -36,6 +37,7 @@ vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.app
 vi.mock('@/api/hermes/workflow-socket', () => ({
   listWorkflowsSocket: workflowMock.listWorkflowsSocket,
   subscribeWorkflowStatuses: workflowMock.subscribeWorkflowStatuses,
+  disconnectWorkflowSocket: vi.fn(),
   onWorkflowStatusUpdated: vi.fn((handler: (status: any) => void) => { workflowMock.statusHandlers.push(handler); return () => undefined }),
 }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
