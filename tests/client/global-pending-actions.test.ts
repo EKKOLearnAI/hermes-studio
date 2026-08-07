@@ -113,6 +113,24 @@ describe('GlobalPendingActions', () => {
     wrapper.unmount()
   })
 
+  it('does not play queued approval sounds when persisted settings fail to load', async () => {
+    let rejectSettings!: (reason?: unknown) => void
+    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { rejectSettings = reject }))
+    settingsState.display.approval_bell = true
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Read config', command: 'read config', choices: ['once'],
+    }]])
+    await nextTick()
+    rejectSettings(new Error('settings unavailable'))
+    await Promise.resolve()
+    await nextTick()
+    expect(playCompletionSound).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('does not play a queued sound when the approval resolves before settings load', async () => {
     let resolveSettings!: () => void
     settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>(resolve => { resolveSettings = () => resolve(undefined) }))

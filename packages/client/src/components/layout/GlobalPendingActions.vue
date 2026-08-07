@@ -37,10 +37,14 @@ function loadApprovalSoundSetting() {
   const generation = ++settingsLoadGeneration
   approvalSoundArmed = false
   pendingSoundKeys.clear()
-  void settingsStore.fetchSettings().finally(() => {
+  void settingsStore.fetchSettings().then(() => {
     if (generation !== settingsLoadGeneration) return
     approvalSoundArmed = true
     if (pendingSoundKeys.size > 0 && settingsStore.display.approval_bell) void playCompletionSound()
+    pendingSoundKeys.clear()
+  }).catch(() => {
+    if (generation !== settingsLoadGeneration) return
+    approvalSoundArmed = false
     pendingSoundKeys.clear()
   })
 }
