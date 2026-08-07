@@ -109,6 +109,32 @@ describe('GroupChatInput mentions', () => {
     wrapper.unmount()
   })
 
+  it('uses the avatar agent id when historical agents have the same name', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.agents = [
+      { id: 'row-1', agentId: 'agent-1', profile: 'first', name: 'Alex', roomId: 'room-1', description: '', invited: 1 },
+      { id: 'row-2', agentId: 'agent-2', profile: 'second', name: 'Alex', roomId: 'room-1', description: '', invited: 1 },
+    ]
+    store.emitTyping = vi.fn()
+    const onSend = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      props: { onSend },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    ;(wrapper.vm as any).insertMention('Alex', 'agent-2')
+    ;(wrapper.vm as any).handleSend()
+
+    expect(onSend).toHaveBeenCalledWith(
+      '@Alex',
+      undefined,
+      [{ type: 'agent', participantId: 'agent-2', displayName: 'Alex' }],
+    )
+  })
+
   it('shows the active room reference outside the input and can cancel it', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
     const settingsStore = useSettingsStore()

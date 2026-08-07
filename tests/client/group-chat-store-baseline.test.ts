@@ -209,6 +209,41 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['recent-room', 'future-agent'])
   })
 
+  it('does not let live tool or streaming messages change room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'visible-room', createdAt: 2, lastActiveAt: 2 },
+      { ...room, id: 'internal-room', createdAt: 1, lastActiveAt: 1 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'tool-message',
+      roomId: 'internal-room',
+      role: 'tool',
+      persistedAt: 100,
+    }))
+    emitSocket('message', userMessage({
+      id: 'streaming-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'streaming',
+      persistedAt: 101,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['visible-room', 'internal-room'])
+    expect(store.rooms.find((item: RoomInfo) => item.id === 'internal-room')?.lastActiveAt).toBe(1)
+
+    emitSocket('message', userMessage({
+      id: 'visible-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'stop',
+      persistedAt: 102,
+    }))
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['internal-room', 'visible-room'])
+  })
+
   it('keeps the REST room order based on the server public lastActiveAt instead of createdAt', async () => {
     const store = await loadStore()
     groupChatApiMock.listRooms.mockResolvedValue({

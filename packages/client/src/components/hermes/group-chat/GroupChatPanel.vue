@@ -130,7 +130,7 @@ const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
     addFiles?: (files: File[]) => void
-    insertMention?: (name: string) => void
+    insertMention?: (name: string, participantId?: string) => void
 }) | null>(null)
 const summarySettingsSectionRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
@@ -410,7 +410,7 @@ function canRemoveAgent(agent: RoomAgent): boolean {
 
 function handleMentionAgent(agent: RoomAgent) {
     if (agent.connectionStatus === 'offline') return
-    groupChatInputRef.value?.insertMention?.(agent.name)
+    groupChatInputRef.value?.insertMention?.(agent.name, agent.agentId)
 }
 
 function handleAgentRailAdd() {

@@ -654,7 +654,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
 
         socket.on('message', (msg: ChatMessage) => {
-            recordPersistedRoomActivity(msg.roomId, Number(msg.persistedAt || msg.timestamp || 0))
+            if (msg.role !== 'tool' && msg.finish_reason !== 'streaming') {
+                recordPersistedRoomActivity(msg.roomId, Number(msg.persistedAt || msg.timestamp || 0))
+            }
             if (msg.roomId === currentRoomId.value) {
                 captureHistoricalMessageAgents([msg])
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {

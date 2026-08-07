@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRecentSessionCategoryGroup,
   buildVisibleSessionCategoryGroups,
+  partitionRecentSessions,
 } from '../../packages/client/src/components/hermes/chat/session-category-groups'
 
 describe('session category groups', () => {
@@ -60,5 +61,28 @@ describe('session category groups', () => {
       sessions: [sessions[1], sessions[2]],
     })
     expect(sessions.map(session => session.categoryId)).toEqual([1, null, 2])
+  })
+
+  it('excludes recent sessions from every other sidebar category', () => {
+    const sessions = [
+      { id: 'older-pinned', categoryId: 1, updatedAt: 100 },
+      { id: 'newest-categorized', categoryId: 1, updatedAt: 300 },
+      { id: 'middle-uncategorized', categoryId: null, updatedAt: 200 },
+    ]
+
+    const partition = partitionRecentSessions(sessions, 2, 'Recent')
+    const otherGroups = buildVisibleSessionCategoryGroups(
+      [{ id: 1, name: 'Work' }],
+      partition.remaining,
+      'Uncategorized',
+    )
+
+    expect(partition.group.sessions.map(session => session.id)).toEqual([
+      'newest-categorized',
+      'middle-uncategorized',
+    ])
+    expect(otherGroups.flatMap(group => group.sessions.map(session => session.id))).toEqual([
+      'older-pinned',
+    ])
   })
 })

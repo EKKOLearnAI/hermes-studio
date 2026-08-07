@@ -49,7 +49,7 @@ import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
-import { buildRecentSessionCategoryGroup, buildVisibleSessionCategoryGroups } from "./session-category-groups";
+import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
@@ -555,9 +555,17 @@ function sortSessionsForSidebar(items: Session[]): Session[] {
   });
 }
 
+const recentSessionPartition = computed(() => partitionRecentSessions(
+  chatStore.sessions,
+  sessionBrowserPrefsStore.recentCount,
+  t("chat.recent"),
+));
+const recentSessions = computed(() => recentSessionPartition.value.group);
+const nonRecentSessions = computed(() => recentSessionPartition.value.remaining);
+
 const pinnedSessions = computed(() =>
   sortSessionsForSidebar(
-    chatStore.sessions.filter((session) =>
+    nonRecentSessions.value.filter((session) =>
       sessionBrowserPrefsStore.isPinned(session.id),
     ),
   ),
@@ -565,7 +573,7 @@ const pinnedSessions = computed(() =>
 
 const unpinnedSessions = computed(() =>
   sortSessionsForSidebar(
-    chatStore.sessions.filter(
+    nonRecentSessions.value.filter(
       (session) => !sessionBrowserPrefsStore.isPinned(session.id),
     ),
   ),
@@ -575,11 +583,6 @@ const categorizedSessions = computed(() => buildVisibleSessionCategoryGroups(
   sessionCategories.value,
   unpinnedSessions.value,
   t("chat.uncategorized"),
-));
-const recentSessions = computed(() => buildRecentSessionCategoryGroup(
-  chatStore.sessions,
-  sessionBrowserPrefsStore.recentCount,
-  t("chat.recent"),
 ));
 
 function openRecentCountModal(event: MouseEvent) {

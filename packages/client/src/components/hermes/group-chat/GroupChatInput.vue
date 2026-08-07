@@ -326,7 +326,7 @@ function selectMention(option: MentionOption) {
     })
 }
 
-function insertMention(name: string) {
+function insertMention(name: string, participantId?: string) {
     const mentionName = String(name || '').trim()
     if (!mentionName) return
 
@@ -339,12 +339,17 @@ function insertMention(name: string) {
     const trailingSpace = after && /^\s/.test(after) ? '' : ' '
     const inserted = `${leadingSpace}@${mentionName}${trailingSpace}`
     const matchingAgents = store.agents.filter(agent => agent.name === mentionName)
+    const identifiedAgent = participantId
+        ? matchingAgents.find(agent => agent.agentId === participantId)
+        : matchingAgents.length === 1
+            ? matchingAgents[0]
+            : undefined
     replaceInputRange(
         selectionStart,
         selectionEnd,
         inserted,
-        matchingAgents.length === 1
-            ? { type: 'agent', participantId: matchingAgents[0].agentId, displayName: matchingAgents[0].name }
+        identifiedAgent
+            ? { type: 'agent', participantId: identifiedAgent.agentId, displayName: identifiedAgent.name }
             : undefined,
     )
     mentionActive.value = false
