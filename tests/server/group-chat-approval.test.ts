@@ -139,6 +139,9 @@ describe('group chat approval and context baseline', () => {
     harness.sockets.push(agent, manager)
     await emitAck(agent, 'join', { roomId: 'room-1' })
     groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
+    groupServer.getIO().of('/group-chat').sockets.get(manager.id!)!.data.authUser = {
+      id: 1, role: 'super_admin', profiles: ['default'],
+    }
 
     const approval = waitForEkkoToolApproval({
       approvalId: 'approval-global',
@@ -185,6 +188,7 @@ describe('group chat approval and context baseline', () => {
     harness.sockets.push(agent, manager, stranger)
     await emitAck(agent, 'join', { roomId: 'room-1' })
     groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
+    await emitAck(manager, 'join', { roomId: 'room-1' })
 
     let leaked: unknown = null
     stranger.on('approval.requested', payload => { leaked = payload })
@@ -225,6 +229,37 @@ describe('group chat approval and context baseline', () => {
       choice: 'deny',
     })).resolves.toEqual({ ok: true, resolved: true })
     await expect(approval).resolves.toBe('deny')
+  })
+
+  it('does not trust a claimed persisted member identity for off-room approvals when authentication is disabled', async () => {
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
+    const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const impostor = await connectGroupChatClient(port, 'manager-1', 'Impostor')
+    harness.sockets.push(agent, impostor)
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+    groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
+
+    let leaked: unknown = null
+    impostor.on('approval.requested', payload => { leaked = payload })
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-impersonation',
+      command: 'cat /private/workspace/secret',
+      description: 'reads a private file',
+    })
+    await wait()
+
+    expect(leaked).toBeNull()
+    await expect(emitAck(impostor, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-impersonation',
+      choice: 'once',
+    })).resolves.toEqual({ error: 'Access denied' })
   })
 
   it('relays approval requested with default choices', async () => {

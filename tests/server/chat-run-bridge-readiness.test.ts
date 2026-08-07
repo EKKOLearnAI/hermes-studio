@@ -144,6 +144,11 @@ describe('ChatRunSocket global pending interactions', () => {
     bridgeMock.approvalRespond.mockClear()
     bridgeMock.clarifyRespond.mockClear()
     const server = new ChatRunSocket(io as any)
+    const state = {
+      messages: [], isWorking: true, queue: [],
+      events: [{ event: 'clarify.requested', data: { clarify_id: 'clarify-default' } }],
+    }
+    ;(server as any).sessionMap.set('default-session', state)
 
     ;(server as any).onConnection(socket)
     socket.join.mockClear()
@@ -154,11 +159,21 @@ describe('ChatRunSocket global pending interactions', () => {
     await handlers.get('clarify.respond')?.({
       session_id: 'research-session', clarify_id: 'clarify-research', response: 'secret',
     })
+    await handlers.get('cancel_queued_run')?.({ session_id: 'research-session', queue_id: 'queue-research' })
+    await handlers.get('abort')?.({ session_id: 'research-session' })
+
+    bridgeMock.clarifyRespond.mockResolvedValueOnce({ resolved: false })
+    await handlers.get('clarify.respond')?.({
+      session_id: 'default-session', clarify_id: 'clarify-default', response: 'retry me',
+    })
 
     expect(socket.join).not.toHaveBeenCalled()
     expect(resumeBridgeRunMock).not.toHaveBeenCalled()
     expect(bridgeMock.approvalRespond).not.toHaveBeenCalled()
-    expect(bridgeMock.clarifyRespond).not.toHaveBeenCalled()
+    expect(bridgeMock.clarifyRespond).toHaveBeenCalledTimes(1)
+    expect(state.events).toEqual([
+      { event: 'clarify.requested', data: { clarify_id: 'clarify-default' } },
+    ])
     expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({
       session_id: 'research-session', error: expect.stringContaining('not available'),
     }))

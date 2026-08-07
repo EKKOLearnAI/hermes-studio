@@ -435,6 +435,11 @@ export class ChatRunSocket {
 
     socket.on('cancel_queued_run', (data: { session_id?: string; queue_id?: string }) => {
       if (!data.session_id || !data.queue_id) return
+      try {
+        requireSocketSessionAccess(data.session_id)
+      } catch {
+        return
+      }
       const state = this.sessionMap.get(data.session_id)
       if (!state?.queue.length) return
       const before = state.queue.length
@@ -469,6 +474,11 @@ export class ChatRunSocket {
 
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
+        try {
+          requireSocketSessionAccess(data.session_id)
+        } catch {
+          return
+        }
         void handleAbort(this.nsp, socket, data.session_id, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
       }
     })
@@ -538,7 +548,6 @@ export class ChatRunSocket {
         })
         return
       }
-      this.clearClarifyEventState(data.session_id, data.clarify_id)
       const ekkoResult = respondToEkkoClarification(
         data.session_id,
         data.clarify_id,
@@ -552,6 +561,8 @@ export class ChatRunSocket {
             resolved: false,
             error: 'Clarification does not belong to this session.',
           })
+        } else {
+          this.clearClarifyEventState(data.session_id, data.clarify_id)
         }
         return
       }
@@ -562,6 +573,9 @@ export class ChatRunSocket {
           clarify_id: data.clarify_id,
           resolved: Boolean((result as any)?.resolved),
         })
+        if ((result as any)?.resolved) {
+          this.clearClarifyEventState(data.session_id, data.clarify_id)
+        }
       } catch (err) {
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {
           event: 'clarify.resolved',

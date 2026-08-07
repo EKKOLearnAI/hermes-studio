@@ -2137,6 +2137,11 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       ;(err as any).status = 503
       throw err
     }
+    if (listActiveWorkflowRuns().some(run => run.workflow_id === workflowId)) {
+      const err = new Error('workflow is already running')
+      ;(err as any).status = 409
+      throw err
+    }
 
     const profile = input.profile?.trim() || workflow.profile || 'default'
     const executionPreflight = await preflightWorkflowExecutionDefinition(workflow.nodes, workflow.edges, profile, input.startNodeIds || [])

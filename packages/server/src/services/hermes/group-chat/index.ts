@@ -1398,8 +1398,11 @@ export class GroupChatServer {
         if (!room) return false
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
         if (!authUser) {
-            const userId = this.socketUserMap.get(socket.id)
-            return Boolean(userId && typeof this.storage.getMemberByUserId === 'function' && this.storage.getMemberByUserId(roomId, userId))
+            // With authentication disabled, handshake userId/authUserId values are client-controlled.
+            // They may identify a joined in-context member, but must never grant off-room global
+            // approval visibility or authority based on persisted membership alone.
+            const joined = this.getOnlineRoomMember(socket, roomId)
+            return Boolean(joined && joined.member.source === 'human')
         }
         if (authUser.role === 'super_admin') return true
         if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true

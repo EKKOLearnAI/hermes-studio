@@ -1213,6 +1213,36 @@ describe('workflow manager', () => {
     } finally { await manager.delete(workflow.id) }
   })
 
+  it('rejects a concurrent run of the same workflow before it can overwrite pending approval status', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'review' })
+    const workflow = manager.create({
+      name: `Concurrent approval ${Date.now()}`, profile: 'default',
+      nodes: [{ id: 'review', type: 'agent', data: { title: 'Review', agent: 'hermes', input: 'review', approvalRequired: true } }],
+      edges: [],
+    })
+    try {
+      const firstRun = manager.runNow(workflow.id)
+      await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).nodeStatuses.review).toBe('pending_approval'))
+      const firstRunId = manager.getRuntimeStatus(workflow.id).runId!
+
+      await expect(manager.runNow(workflow.id)).rejects.toMatchObject({
+        message: 'workflow is already running', status: 409,
+      })
+      expect(manager.getRuntimeStatus(workflow.id)).toMatchObject({
+        runId: firstRunId,
+        nodeStatuses: { review: 'pending_approval' },
+        pendingApprovals: [{ nodeId: 'review', executionId: 'review' }],
+      })
+
+      expect(manager.approveNode(workflow.id, firstRunId, 'review', true, 'review')).toBe(true)
+      expect((await firstRun).run.status).toBe('completed')
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('times out and removes a pending loop approval at the run deadline', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1000)
