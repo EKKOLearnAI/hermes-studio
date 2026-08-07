@@ -2,6 +2,7 @@
 import { h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { NButton, NInput, useMessage, useNotification, type NotificationReactive } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -14,6 +15,7 @@ const profilesStore = useProfilesStore()
 const notification = useNotification()
 const message = useMessage()
 const { t } = useI18n()
+const route = useRoute()
 
 const handles = new Map<string, NotificationReactive>()
 const clarifyDrafts = reactive<Record<string, string>>({})
@@ -50,16 +52,20 @@ function roomTitle(roomId: string): string {
 
 function pendingActions(): GlobalPendingAction[] {
   const actions: GlobalPendingAction[] = []
+  const visibleChatSessionId = ['hermes.chat', 'hermes.session', 'hermes.globalAgent', 'hermes.globalAgentSession'].includes(String(route.name || ''))
+    ? chatStore.activeSessionId
+    : null
+  const visibleGroupRoomId = route.name === 'hermes.groupChatRoom' ? groupChatStore.currentRoomId : null
   for (const pending of chatStore.pendingApprovals.values()) {
-    if (pending.sessionId === chatStore.activeSessionId) continue
+    if (pending.sessionId === visibleChatSessionId) continue
     actions.push({ key: `chat-approval:${pending.sessionId}:${pending.approvalId}`, kind: 'chat-approval', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of chatStore.pendingClarifies.values()) {
-    if (pending.sessionId === chatStore.activeSessionId) continue
+    if (pending.sessionId === visibleChatSessionId) continue
     actions.push({ key: `chat-clarify:${pending.sessionId}:${pending.clarifyId}`, kind: 'chat-clarify', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of groupChatStore.pendingApprovals.values()) {
-    if (pending.roomId === groupChatStore.currentRoomId) continue
+    if (pending.roomId === visibleGroupRoomId) continue
     actions.push({ key: `group-approval:${pending.roomId}:${pending.approvalId}`, kind: 'group-approval', title: roomTitle(pending.roomId), pending })
   }
   for (const status of Object.values(workflowStatuses)) {

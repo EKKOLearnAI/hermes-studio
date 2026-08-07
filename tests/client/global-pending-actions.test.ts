@@ -19,6 +19,7 @@ const groupState = reactive({
   connect: vi.fn(async () => undefined),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
+const routeState = reactive({ name: 'hermes.chat' as string })
 const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
@@ -30,6 +31,7 @@ const workflowMock = vi.hoisted(() => ({
 vi.mock('@/stores/hermes/chat', () => ({ useChatStore: () => chatState }))
 vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupState }))
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
+vi.mock('vue-router', () => ({ useRoute: () => routeState }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
 vi.mock('@/api/hermes/workflow-socket', () => ({
   listWorkflowsSocket: workflowMock.listWorkflowsSocket,
@@ -72,6 +74,7 @@ describe('GlobalPendingActions', () => {
     groupState.rooms = []
     groupState.currentRoomId = 'room-a'
     profileState.activeProfileName = 'default'
+    routeState.name = 'hermes.chat'
     vi.clearAllMocks()
     workflowMock.statusHandlers.splice(0)
   })
@@ -85,6 +88,18 @@ describe('GlobalPendingActions', () => {
     await nextTick()
 
     expect(created).toHaveLength(0)
+  })
+
+  it('shows a stored active-session approval globally when the chat route is not visible', async () => {
+    routeState.name = 'hermes.workflow'
+    chatState.pendingApprovals = new Map([['session-a', {
+      sessionId: 'session-a', approvalId: 'approval-a', description: 'Run', command: 'pwd', choices: ['once'],
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    expect(created.some(entry => String(entry.options.title).includes('session-a'))).toBe(true)
   })
 
   it('shows and directly handles an approval from an inactive chat session', async () => {
