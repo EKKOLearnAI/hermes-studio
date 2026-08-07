@@ -6,6 +6,7 @@ const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
 const getRuntimeStateMock = vi.hoisted(() => vi.fn())
+const userCanAccessProfileMock = vi.hoisted(() => vi.fn((_user: unknown, _profile: string) => true))
 const getSessionMock = vi.hoisted(() => vi.fn((sessionId?: string) => sessionId
   ? { id: sessionId, profile: 'default', source: 'cli', model: 'gpt-test', provider: 'openai' }
   : undefined))
@@ -14,6 +15,8 @@ const bridgeMock = vi.hoisted(() => ({
   statusIfLoaded: vi.fn(),
   releaseBackgroundNotification: vi.fn(async () => ({ ok: true, released: true })),
   close: vi.fn(async () => {}),
+  approvalRespond: vi.fn(async () => ({ resolved: true })),
+  clarifyRespond: vi.fn(async () => ({ resolved: true })),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
@@ -64,7 +67,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
   getProfileDir: vi.fn(() => '/tmp/hermes-default'),
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+  listProfileNamesFromDisk: vi.fn(() => ['default', 'research']),
 }))
 
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
@@ -73,7 +76,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
-  userCanAccessProfile: vi.fn(() => true),
+  userCanAccessProfile: userCanAccessProfileMock,
 }))
 
 function makeServerHarness() {
@@ -125,6 +128,45 @@ describe('ChatRunSocket global pending interactions', () => {
     expect(emitted).toContainEqual(expect.objectContaining({
       room: 'pending-interactions:default', event: 'clarify.resolved',
       payload: expect.objectContaining({ session_id: 'session-b', clarify_id: 'clarify-b' }),
+    }))
+  })
+
+  it('rejects cross-profile resume, approval, and clarify requests before joining or calling the bridge', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    ;(socket.data as any).user = { id: 7, username: 'limited-user', role: 'user' }
+    userCanAccessProfileMock.mockImplementation((_user: unknown, profile: string) => profile === 'default')
+    getSessionMock.mockImplementation((sessionId?: string) => sessionId === 'research-session'
+      ? { id: sessionId, profile: 'research', source: 'cli', model: 'gpt-test', provider: 'openai' }
+      : sessionId
+        ? { id: sessionId, profile: 'default', source: 'cli', model: 'gpt-test', provider: 'openai' }
+        : undefined)
+    bridgeMock.approvalRespond.mockClear()
+    bridgeMock.clarifyRespond.mockClear()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    socket.join.mockClear()
+    await handlers.get('resume')?.({ session_id: 'research-session' })
+    await handlers.get('approval.respond')?.({
+      session_id: 'research-session', approval_id: 'approval-research', choice: 'once',
+    })
+    await handlers.get('clarify.respond')?.({
+      session_id: 'research-session', clarify_id: 'clarify-research', response: 'secret',
+    })
+
+    expect(socket.join).not.toHaveBeenCalled()
+    expect(resumeBridgeRunMock).not.toHaveBeenCalled()
+    expect(bridgeMock.approvalRespond).not.toHaveBeenCalled()
+    expect(bridgeMock.clarifyRespond).not.toHaveBeenCalled()
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({
+      session_id: 'research-session', error: expect.stringContaining('not available'),
+    }))
+    expect(socket.emit).toHaveBeenCalledWith('approval.resolved', expect.objectContaining({
+      approval_id: 'approval-research', resolved: false,
+    }))
+    expect(socket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
+      clarify_id: 'clarify-research', resolved: false,
     }))
   })
 })
