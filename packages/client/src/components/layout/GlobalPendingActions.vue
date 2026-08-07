@@ -22,6 +22,7 @@ const route = useRoute()
 
 const handles = new Map<string, NotificationReactive>()
 const announcedKeys = new Set<string>()
+const pendingSoundKeys = new Set<string>()
 const clarifyDrafts = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const workflows = ref<WorkflowRecord[]>([])
@@ -30,6 +31,19 @@ let stopWorkflowStatus: (() => void) | null = null
 let workflowSubscriptionGeneration = 0
 let pendingBaselineEstablished = false
 let approvalSoundArmed = false
+let settingsLoadGeneration = 0
+
+function loadApprovalSoundSetting() {
+  const generation = ++settingsLoadGeneration
+  approvalSoundArmed = false
+  pendingSoundKeys.clear()
+  void settingsStore.fetchSettings().finally(() => {
+    if (generation !== settingsLoadGeneration) return
+    approvalSoundArmed = true
+    if (pendingSoundKeys.size > 0 && settingsStore.display.approval_bell) void playCompletionSound()
+    pendingSoundKeys.clear()
+  })
+}
 
 function resetWorkflowSubscriptions(profile?: string | null) {
   const generation = ++workflowSubscriptionGeneration
@@ -228,7 +242,10 @@ watch(pendingActions, actions => {
   for (const action of actions) {
     if (!announcedKeys.has(action.key)) {
       announcedKeys.add(action.key)
-      if (shouldAnnounce) hasNewAction = true
+      if (shouldAnnounce) {
+        hasNewAction = true
+        if (!approvalSoundArmed) pendingSoundKeys.add(action.key)
+      }
     }
     if (handles.has(action.key)) continue
     handles.set(action.key, createGlobalNotification(action))
@@ -240,16 +257,17 @@ watch(pendingActions, actions => {
 onMounted(() => {
   resetWorkflowSubscriptions(profilesStore.activeProfileName)
   void groupChatStore.connect().catch(() => undefined)
-  void settingsStore.fetchSettings().finally(() => { approvalSoundArmed = true })
+  loadApprovalSoundSetting()
 })
 
 watch(() => profilesStore.activeProfileName, profile => {
-  approvalSoundArmed = false
   resetWorkflowSubscriptions(profile)
-  void settingsStore.fetchSettings().finally(() => { approvalSoundArmed = true })
+  loadApprovalSoundSetting()
 })
 
 onUnmounted(() => {
+  settingsLoadGeneration++
+  pendingSoundKeys.clear()
   stopWorkflowStatus?.()
   disconnectWorkflowSocket()
   groupChatStore.disconnect()

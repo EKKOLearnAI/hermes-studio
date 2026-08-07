@@ -93,6 +93,26 @@ describe('GlobalPendingActions', () => {
     wrapper.unmount()
   })
 
+  it('plays a pending new approval after persisted settings finish loading', async () => {
+    let resolveSettings!: () => void
+    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>(resolve => { resolveSettings = () => resolve(undefined) }))
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Read config', command: 'read config', choices: ['once'],
+    }]])
+    await nextTick()
+    expect(playCompletionSound).not.toHaveBeenCalled()
+
+    settingsState.display.approval_bell = true
+    resolveSettings()
+    await Promise.resolve()
+    await nextTick()
+    expect(playCompletionSound).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
   it('plays the independent approval sound once for each newly surfaced pending action', async () => {
     settingsState.display.approval_bell = true
     const wrapper = mount(GlobalPendingActions)
