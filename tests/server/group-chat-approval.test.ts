@@ -138,6 +138,7 @@ describe('group chat approval and context baseline', () => {
     const manager = await connectGroupChatClient(port, 'manager-1', 'Manager')
     harness.sockets.push(agent, manager)
     await emitAck(agent, 'join', { roomId: 'room-1' })
+    groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
 
     const approval = waitForEkkoToolApproval({
       approvalId: 'approval-global',
@@ -171,6 +172,59 @@ describe('group chat approval and context baseline', () => {
       choice: 'once',
     })).resolves.toEqual({ ok: true, resolved: true })
     await expect(approval).resolves.toBe('once')
+  })
+
+  it('does not expose or resolve approvals for a non-member socket when authentication is disabled', async () => {
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
+    const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const manager = await connectGroupChatClient(port, 'manager-1', 'Manager')
+    const stranger = await connectGroupChatClient(port, 'stranger-1', 'Stranger')
+    harness.sockets.push(agent, manager, stranger)
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+    groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
+
+    let leaked: unknown = null
+    stranger.on('approval.requested', payload => { leaked = payload })
+    const managerRequest = once<any>(manager, 'approval.requested')
+    const approval = waitForEkkoToolApproval({
+      approvalId: 'approval-private-global',
+      toolName: 'terminal_exec',
+      key: 'terminal:write',
+      command: 'cat /private/workspace/secret',
+      description: 'reads a private file',
+      choices: ['once', 'deny'],
+      allowPermanent: false,
+      timeoutMs: 300_000,
+    }, {
+      sessionId: agentSessionId,
+      onRequested: pending => agent.emit('approval.requested', {
+        roomId: 'room-1',
+        agentName: 'Agent',
+        agentSessionId,
+        approval_id: pending.approvalId,
+        command: pending.command,
+        description: pending.description,
+        choices: pending.choices,
+      }),
+    })
+
+    await expect(managerRequest).resolves.toMatchObject({ approval_id: 'approval-private-global' })
+    await wait()
+    expect(leaked).toBeNull()
+    await expect(emitAck(stranger, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-private-global',
+      choice: 'once',
+    })).resolves.toEqual({ error: 'Access denied' })
+    await expect(emitAck(manager, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-private-global',
+      choice: 'deny',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    await expect(approval).resolves.toBe('deny')
   })
 
   it('relays approval requested with default choices', async () => {

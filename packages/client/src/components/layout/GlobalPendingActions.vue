@@ -23,14 +23,21 @@ const submitting = reactive<Record<string, boolean>>({})
 const workflows = ref<WorkflowRecord[]>([])
 const workflowStatuses = reactive<Record<string, WorkflowRuntimeStatus>>({})
 let stopWorkflowStatus: (() => void) | null = null
+let workflowSubscriptionGeneration = 0
 
 function resetWorkflowSubscriptions(profile?: string | null) {
+  const generation = ++workflowSubscriptionGeneration
   stopWorkflowStatus?.()
-  stopWorkflowStatus = onWorkflowStatusUpdated(status => { workflowStatuses[status.workflowId] = status }, profile)
+  stopWorkflowStatus = onWorkflowStatusUpdated(status => {
+    if (generation === workflowSubscriptionGeneration) workflowStatuses[status.workflowId] = status
+  }, profile)
   workflows.value = []
   for (const key of Object.keys(workflowStatuses)) delete workflowStatuses[key]
-  void listWorkflowsSocket(profile).then(records => { workflows.value = records }).catch(() => undefined)
+  void listWorkflowsSocket(profile).then(records => {
+    if (generation === workflowSubscriptionGeneration) workflows.value = records
+  }).catch(() => undefined)
   void subscribeWorkflowStatuses(undefined, profile).then(statuses => {
+    if (generation !== workflowSubscriptionGeneration) return
     for (const status of statuses) workflowStatuses[status.workflowId] = status
   }).catch(() => undefined)
 }

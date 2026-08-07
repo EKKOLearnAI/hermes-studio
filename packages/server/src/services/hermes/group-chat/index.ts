@@ -1397,7 +1397,10 @@ export class GroupChatServer {
         const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
         if (!room) return false
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
-        if (!authUser) return true
+        if (!authUser) {
+            const userId = this.socketUserMap.get(socket.id)
+            return Boolean(userId && typeof this.storage.getMemberByUserId === 'function' && this.storage.getMemberByUserId(roomId, userId))
+        }
         if (authUser.role === 'super_admin') return true
         if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
         const profiles = authenticatedUserProfiles(authUser)

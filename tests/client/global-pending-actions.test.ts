@@ -25,8 +25,8 @@ const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
   approveWorkflowNode: vi.fn(),
-  listWorkflowsSocket: vi.fn(async () => [{ id: 'workflow-b', name: 'Workflow B' }]),
-  subscribeWorkflowStatuses: vi.fn(async () => []),
+  listWorkflowsSocket: vi.fn(async (_profile?: string) => [{ id: 'workflow-b', name: 'Workflow B' }]),
+  subscribeWorkflowStatuses: vi.fn(async (_ids?: string[], _profile?: string) => [] as any[]),
 }))
 
 vi.mock('@/stores/hermes/chat', () => ({ useChatStore: () => chatState }))
@@ -214,5 +214,31 @@ describe('GlobalPendingActions', () => {
     await nextTick()
 
     expect(workflowMock.subscribeWorkflowStatuses).toHaveBeenCalledWith(undefined, 'research')
+  })
+
+  it('ignores delayed workflow results from the previous profile', async () => {
+    let resolveOldList!: (records: any[]) => void
+    let resolveOldStatuses!: (statuses: any[]) => void
+    const oldList = new Promise<any[]>(resolve => { resolveOldList = resolve })
+    const oldStatuses = new Promise<any[]>(resolve => { resolveOldStatuses = resolve })
+    workflowMock.listWorkflowsSocket.mockImplementation((profile?: string) => profile === 'default'
+      ? oldList
+      : Promise.resolve([{ id: 'workflow-new', name: 'New Workflow' }]))
+    workflowMock.subscribeWorkflowStatuses.mockImplementation((_ids?: string[], profile?: string) => profile === 'default'
+      ? oldStatuses
+      : Promise.resolve([{ workflowId: 'workflow-new', runId: 'run-new', status: 'pending_approval', pendingApprovals: [{ nodeId: 'new-node', executionId: 'new-exec' }] }]))
+
+    mount(GlobalPendingActions)
+    await nextTick()
+    profileState.activeProfileName = 'research'
+    await nextTick()
+    await Promise.resolve()
+    resolveOldList([{ id: 'workflow-old', name: 'Old Workflow' }])
+    resolveOldStatuses([{ workflowId: 'workflow-old', runId: 'run-old', status: 'pending_approval', pendingApprovals: [{ nodeId: 'old-node', executionId: 'old-exec' }] }])
+    await Promise.resolve()
+    await nextTick()
+
+    expect(created.some(entry => String(entry.options.title).includes('Old Workflow'))).toBe(false)
+    expect(created.some(entry => String(entry.options.title).includes('New Workflow'))).toBe(true)
   })
 })
