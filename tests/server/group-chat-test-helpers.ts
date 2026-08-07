@@ -4,11 +4,15 @@ import { io as clientIo, type Socket as ClientSocket } from 'socket.io-client'
 import { vi } from 'vitest'
 
 const groupChatDbMock = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
+const groupChatAuthMock = vi.hoisted(() => ({
+  enabled: false,
+  user: null as any,
+}))
 
 vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => groupChatDbMock.current }))
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
-  isAuthEnabled: vi.fn(async () => false),
-  authenticateUserToken: vi.fn(),
+  isAuthEnabled: vi.fn(async () => groupChatAuthMock.enabled),
+  authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
 }))
 
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
@@ -53,7 +57,24 @@ export async function connectGroupChatClient(
   return await once<ClientSocket>(socket as any, 'connect').then(() => socket)
 }
 
-export async function createTestGroupChatServer(): Promise<{
+export async function rejectGroupChatClient(
+  port: number,
+  auth: Record<string, unknown>,
+): Promise<string> {
+  const socket = clientIo(`http://127.0.0.1:${port}/group-chat`, {
+    transports: ['websocket'],
+    forceNew: true,
+    reconnection: false,
+    auth,
+  })
+  try {
+    return await once<Error>(socket as any, 'connect_error').then(error => error.message)
+  } finally {
+    socket.disconnect()
+  }
+}
+
+export async function createTestGroupChatServer(options: { authEnabled?: boolean } = {}): Promise<{
   db: DatabaseSync
   httpServer: HttpServer
   groupServer: GroupChatServer
@@ -61,6 +82,8 @@ export async function createTestGroupChatServer(): Promise<{
   sockets: ClientSocket[]
   cleanup: () => void
 }> {
+  groupChatAuthMock.enabled = options.authEnabled === true
+  groupChatAuthMock.user = null
   const db = new DatabaseSync(':memory:')
   groupChatDbMock.current = db
   initAllHermesTables()
@@ -80,6 +103,8 @@ export async function createTestGroupChatServer(): Promise<{
       httpServer.close()
       db.close()
       groupChatDbMock.current = null
+      groupChatAuthMock.enabled = false
+      groupChatAuthMock.user = null
       sockets.length = 0
     },
   }

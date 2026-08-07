@@ -1,6 +1,11 @@
 import Router from '@koa/router'
-import type { GroupChatServer } from '../../services/hermes/group-chat'
+import { randomBytes } from 'node:crypto'
+import {
+    ROOM_PARTICIPANT_NAME_CONFLICT,
+    type GroupChatServer,
+} from '../../services/hermes/group-chat'
 import { isReservedMentionName } from '../../services/hermes/group-chat/mention-routing'
+import { deleteGroupChatAttachments } from '../../services/hermes/group-chat/attachments'
 import { assertAllowedWorkspaceFolder } from '../../services/hermes/workspace-path'
 import {
     canManageGroupChatRoom as canManageRoom,
@@ -8,8 +13,10 @@ import {
     groupChatUserProfiles as userProfiles,
 } from '../../services/hermes/group-chat/access'
 import { setGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
-import * as ctrl from '../../controllers/hermes/group-chat-workspace'
+import * as inviteCtrl from '../../controllers/hermes/group-chat-invite'
+import * as workspaceCtrl from '../../controllers/hermes/group-chat-workspace'
 
+export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
@@ -23,17 +30,48 @@ export function getGroupChatServer(): GroupChatServer | null {
     return chatServer
 }
 
+groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/attachments', inviteCtrl.uploadInviteAttachment)
+groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/attachments/:file', inviteCtrl.readInviteAttachment)
+
+async function authorizedAttachmentRoom(ctx: any): Promise<any | null> {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return null
+    }
+    const roomId = String(ctx.params.roomId || '').trim()
+    const storage = chatServer.getStorage()
+    const room = roomId ? storage.getRoom(roomId) : null
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return null
+    }
+    if (!canReadRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return null
+    }
+    return room
+}
+
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachments', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await inviteCtrl.uploadRoomAttachment(ctx, room)
+})
+
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/attachments/:file', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await inviteCtrl.readRoomAttachment(ctx, room)
+})
+
 function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
 function generateInviteCode(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    let code = ''
-    for (let i = 0; i < 6; i++) {
-        code += chars[Math.floor(Math.random() * chars.length)]
-    }
-    return code
+    return Array.from(randomBytes(16), byte => chars[byte & 31]).join('')
 }
 
 function contentPreview(content: unknown): string {
@@ -109,6 +147,13 @@ function agentConnectFailureBody(profile: string, err: any) {
     }
 }
 
+function applyParticipantNameConflict(ctx: any, err: any): boolean {
+    if (err?.code !== ROOM_PARTICIPANT_NAME_CONFLICT) return false
+    ctx.status = 409
+    ctx.body = { code: ROOM_PARTICIPANT_NAME_CONFLICT, error: err.message }
+    return true
+}
+
 async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: string, input: AgentInput) {
     const agent = String(input.agent || 'hermes').trim() as AgentInput['agent']
     const profile = input.profile.trim()
@@ -139,6 +184,11 @@ function serializeRoom(room: any, includeManageFields: boolean) {
     }
     return serialized
 }
+
+// Resolve an invite before the normal user-auth middleware. The response is
+// intentionally stripped of workspace and management fields; the invite is
+// validated again by Socket.IO before any room history is returned.
+groupChatPublicRoutes.get('/api/hermes/group-chat/rooms/join/:code', inviteCtrl.resolveInvite)
 
 function persistRoomCreator(
     storage: ReturnType<GroupChatServer['getStorage']>,
@@ -187,9 +237,10 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
     const description = input.description || ''
     const avatar = normalizeRoomAgentAvatar(input.avatar)
     const invited = input.invited ? 1 : 0
+    const storage = server.getStorage()
+    storage.assertParticipantNameAvailable?.(roomId, name)
     const client = await createRoomAgentRuntimeClient(server, agentId, input)
 
-    const storage = server.getStorage()
     let persisted: any
     try {
         persisted = storage.addRoomAgent(roomId, agentId, profile, name, description, invited, {
@@ -440,14 +491,14 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     ctx.body = { room: serializeRoom(room, canManage), messages, agents, members, total, offset, limit, hasMore: offset + messages.length < total }
 })
 
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', ctrl.listWorkspaceFiles)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', ctrl.readWorkspaceFile)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/content', ctrl.readWorkspaceFileContent)
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', ctrl.writeWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/mkdir', ctrl.mkdirWorkspaceFile)
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/workspace-file/delete', ctrl.deleteWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/rename', ctrl.renameWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/copy', ctrl.copyWorkspaceFile)
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', workspaceCtrl.listWorkspaceFiles)
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', workspaceCtrl.readWorkspaceFile)
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/content', workspaceCtrl.readWorkspaceFileContent)
+groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', workspaceCtrl.writeWorkspaceFile)
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/mkdir', workspaceCtrl.mkdirWorkspaceFile)
+groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/workspace-file/delete', workspaceCtrl.deleteWorkspaceFile)
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/rename', workspaceCtrl.renameWorkspaceFile)
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/copy', workspaceCtrl.copyWorkspaceFile)
 
 // List rooms
 groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
@@ -461,28 +512,6 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
     const storage = chatServer.getStorage()
     const rooms = visibleRoomsForUser(storage, user)
     ctx.body = { rooms }
-})
-
-function roomWithoutWorkspace(room: any) {
-    return serializeRoom(room, false)
-}
-
-// Get room by invite code
-groupChatRoutes.get('/api/hermes/group-chat/rooms/join/:code', async (ctx) => {
-    if (!chatServer) {
-        ctx.status = 503
-        ctx.body = { error: 'Group chat not initialized' }
-        return
-    }
-
-    const room = chatServer.getStorage().getRoomByInviteCode(ctx.params.code)
-    if (!room) {
-        ctx.status = 404
-        ctx.body = { error: 'Room not found' }
-        return
-    }
-
-    ctx.body = { room: roomWithoutWorkspace(room) }
 })
 
 // Update room invite code
@@ -609,8 +638,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
             avatar: normalizedAvatar,
             invited,
         })
+        chatServer.broadcastRoomAgents(ctx.params.roomId)
         ctx.body = { agent }
     } catch (err: any) {
+        if (applyParticipantNameConflict(ctx, err)) return
         console.error(`[GroupChat] Failed to connect agent ${normalizedProfile} to room ${ctx.params.roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
@@ -717,6 +748,16 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         avatar: normalizedAvatar,
         invited: previous.invited,
     }
+    try {
+        storage.assertParticipantNameAvailable?.(roomId, nextInput.name || nextInput.profile, {
+            excludeAgentRef: previous.id,
+        })
+    } catch (err: any) {
+        if (applyParticipantNameConflict(ctx, err)) return
+        ctx.status = 500
+        ctx.body = { error: 'Failed to validate participant name' }
+        return
+    }
     let replacement: Awaited<ReturnType<typeof createRoomAgentRuntimeClient>> | null = null
     let runtimeSwapped = false
     try {
@@ -741,9 +782,10 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
             },
         )
         if (!updated) throw new Error('Agent persistence update failed')
+        const agents = chatServer.broadcastRoomAgents(roomId)
         ctx.body = {
             agent: updated,
-            agents: storage.getRoomAgents(roomId),
+            agents,
             members: storage.getRoomMembers(roomId),
         }
     } catch (err: any) {
@@ -758,6 +800,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         } else {
             replacement?.disconnect?.()
         }
+        if (applyParticipantNameConflict(ctx, err)) return
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
@@ -814,9 +857,10 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
     storage.removeRoomMembersForAgent(roomId, agent)
     storage.removeRoomAgent(roomId, requestedAgentId)
     chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+    const agents = chatServer.broadcastRoomAgents(roomId)
     ctx.body = {
         success: true,
-        agents: storage.getRoomAgents(roomId),
+        agents,
         members: storage.getRoomMembers(roomId),
     }
 })
@@ -845,6 +889,7 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     try {
         await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
             await chatServer!.deleteRoomRuntimeState(roomId)
+            await deleteGroupChatAttachments(roomId)
             storage.deleteRoom(roomId)
         })
     } catch (err: any) {

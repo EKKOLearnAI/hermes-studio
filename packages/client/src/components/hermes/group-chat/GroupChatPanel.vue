@@ -32,6 +32,7 @@ import {
     groupAgentAvatar,
     parseStoredAvatar,
 } from '@/utils/group-agent-avatar'
+import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -39,6 +40,11 @@ const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/c
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/DesktopBrowserPanel.vue')).default)
 const TerminalPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/TerminalPanel.vue')).default)
 
+const props = withDefaults(defineProps<{
+    standalone?: boolean
+}>(), {
+    standalone: false,
+})
 const { t } = useI18n()
 const router = useRouter()
 const message = useMessage()
@@ -48,7 +54,7 @@ const profilesStore = useProfilesStore()
 const filesStore = useFilesStore()
 const toolPanelStore = useToolPanelStore()
 
-const showSidebar = ref(window.innerWidth > 768)
+const showSidebar = ref(!props.standalone && window.innerWidth > 768)
 watch(
     showSidebar,
     expanded => appStore.setPageSidebarExpanded(expanded),
@@ -373,14 +379,23 @@ function handleMentionAgent(agent: RoomAgent) {
     groupChatInputRef.value?.insertMention?.(agent.name)
 }
 
+function handleAgentRailClick(agent: RoomAgent) {
+    if (currentRoomCanManage.value) {
+        void handleEditAgent(agent)
+        return
+    }
+    handleMentionAgent(agent)
+}
+
 const hasRoom = computed(() => !!store.currentRoomId)
 const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
 const contextRoom = computed(() => store.rooms.find(room => room.id === contextRoomId.value) || null)
 function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): boolean {
     return room?.canManage === true
 }
-const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))
+const currentRoomCanManage = computed(() => !props.standalone && canManageRoom(currentRoom.value))
 const currentRoomNeedsSummaryConfiguration = computed(() => {
+    if (props.standalone) return false
     const room = currentRoom.value
     if (!room) return false
     return !String(room.summaryProfile || '').trim()
@@ -454,6 +469,7 @@ function workspaceBasename(path: string): string {
 }
 
 function toggleSidebar() {
+    if (props.standalone) return
     showSidebar.value = !showSidebar.value
 }
 
@@ -609,6 +625,7 @@ function handleWorkspaceFilePreviewRequest(event: Event): void {
 }
 
 function openPageSidebar() {
+    if (props.standalone) return
     showSidebar.value = true
 }
 
@@ -635,12 +652,14 @@ function resetChatDropState() {
 }
 
 function handleChatDragOver(event: DragEvent) {
+    if (props.standalone) return
     if (!hasRoom.value || !hasDraggedFiles(event)) return
     event.preventDefault()
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 }
 
 function handleChatDragEnter(event: DragEvent) {
+    if (props.standalone) return
     if (!hasRoom.value || !hasDraggedFiles(event)) return
     event.preventDefault()
     chatDropCounter.value += 1
@@ -648,12 +667,14 @@ function handleChatDragEnter(event: DragEvent) {
 }
 
 function handleChatDragLeave(event: DragEvent) {
+    if (props.standalone) return
     if (!hasRoom.value || !hasDraggedFiles(event)) return
     chatDropCounter.value -= 1
     if (chatDropCounter.value <= 0) resetChatDropState()
 }
 
 function handleChatDrop(event: DragEvent) {
+    if (props.standalone) return
     if (!hasRoom.value || !hasDraggedFiles(event)) return
     event.preventDefault()
     const files = Array.from(event.dataTransfer?.files || [])
@@ -665,15 +686,6 @@ function handleChatDrop(event: DragEvent) {
 
 function handleWorkspaceFileAttach(file: File) {
     groupChatInputRef.value?.addFiles?.([file])
-}
-
-function generateCode(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    let code = ''
-    for (let i = 0; i < 6; i++) {
-        code += chars[Math.floor(Math.random() * chars.length)]
-    }
-    return code
 }
 
 function formatAgentFailures(results?: Array<{ ok: boolean; profile: string; error?: string; reason?: string }>): string | null {
@@ -734,7 +746,10 @@ async function handleDeleteRoom(roomId: string) {
 }
 
 function buildRoomUrl(roomId: string) {
-    const href = router.resolve({ name: 'hermes.groupChatRoom', params: { roomId } }).href
+    const room = store.rooms.find(candidate => candidate.id === roomId)
+    const href = room?.inviteCode
+        ? router.resolve({ name: 'share.groupChat', params: { inviteCode: room.inviteCode } }).href
+        : router.resolve({ name: 'hermes.groupChatRoom', params: { roomId } }).href
     return `${window.location.origin}${window.location.pathname}${href}`
 }
 
@@ -742,6 +757,10 @@ async function copyRoomLink(roomId: string) {
     const ok = await copyToClipboard(buildRoomUrl(roomId))
     if (ok) message.success(t('common.copied'))
     else message.error(t('chat.copyFailed'))
+}
+
+function copyCurrentRoomLink() {
+    if (store.currentRoomId) void copyRoomLink(store.currentRoomId)
 }
 
 const roomContextMenuOptions = computed<DropdownOption[]>(() => {
@@ -785,7 +804,7 @@ function handleOpenCloneRoom(roomId: string) {
     if (!canManageRoom(room)) return
     cloneSourceRoomId.value = roomId
     cloneRoomName.value = room?.name ? `${room.name} Copy` : ''
-    cloneInviteCode.value = generateCode()
+    cloneInviteCode.value = generateGroupChatInviteCode()
     showCloneModal.value = true
 }
 
@@ -954,17 +973,19 @@ async function handleEditAgent(agent: RoomAgent) {
 }
 
 onMounted(() => {
-    try {
-        showGroupChatRefactorNotice.value = window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'
-    } catch {
-        showGroupChatRefactorNotice.value = true
+    if (!props.standalone) {
+        try {
+            showGroupChatRefactorNotice.value = window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'
+        } catch {
+            showGroupChatRefactorNotice.value = true
+        }
     }
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
     handleWorkspacePanelResize()
-    if (profilesStore.profiles.length === 0) {
+    if (!props.standalone && profilesStore.profiles.length === 0) {
         void profilesStore.fetchProfiles()
     }
 })
@@ -1005,7 +1026,7 @@ watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     roomSummaryAnchor.value = null
     roomSummaryDraft.value = ''
     if (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value) closeWorkspacePanel()
-    if (roomId) void loadRoomSummaryState(roomId)
+    if (roomId && !props.standalone) void loadRoomSummaryState(roomId)
 }, { immediate: true })
 
 watch(
@@ -1296,9 +1317,9 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
 <template>
     <div class="group-chat-panel">
         <!-- Mobile backdrop -->
-        <div class="sidebar-backdrop" :class="{ active: showSidebar }" @click="showSidebar = false" />
+        <div v-if="!props.standalone" class="sidebar-backdrop" :class="{ active: showSidebar }" @click="showSidebar = false" />
         <!-- Room sidebar -->
-        <div v-if="showSidebar" class="room-sidebar">
+        <div v-if="!props.standalone && showSidebar" class="room-sidebar">
             <div class="sidebar-header">
                 <PageSidebarNav
                     active="group"
@@ -1349,6 +1370,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         </div>
 
         <NDropdown
+            v-if="!props.standalone"
             placement="bottom-start"
             trigger="manual"
             :x="roomContextMenuX"
@@ -1370,7 +1392,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         >
             <div class="chat-header">
                 <div class="header-left">
-                    <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
+                    <button v-if="!props.standalone" class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
                         </svg>
@@ -1447,7 +1469,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <div class="agent-avatar-rail-trigger">
                         <button
                             v-for="member in railMembers"
-                            :key="member.id"
+                            :key="member.userId"
                             type="button"
                             class="agent-avatar-rail-item agent-avatar-rail-user"
                             :class="{
@@ -1482,8 +1504,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     :class="{ 'agent-avatar-rail-active': !!agentContextStatus(agent) }"
                                     :aria-label="agent.name"
                                     :aria-busy="!!agentContextStatus(agent)"
-                                    :disabled="!currentRoomCanManage"
-                                    @click="handleEditAgent(agent)"
+                                    @click="handleAgentRailClick(agent)"
                                 >
                                     <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="groupAgentAvatar(agent)" :size="32" />
                                 </button>
@@ -1524,6 +1545,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 <div ref="groupChatSurfaceRef" class="group-chat-surface">
                     <div class="group-message-shell">
                         <GroupMessageList
+                            :allow-speech="!props.standalone"
                             @mention-agent="handleMentionAgent"
                         />
                         <Transition name="approval-float">
@@ -1611,6 +1633,8 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <GroupChatInput
                         ref="groupChatInputRef"
                         :send-blocked="currentRoomNeedsSummaryConfiguration"
+                        :allow-attachments="true"
+                        :show-settings="!props.standalone"
                         @send="handleSendMessage"
                         @send-blocked="handleSummaryConfigurationRequired"
                     />
@@ -1893,7 +1917,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                 :placeholder="t('groupChat.autoGenerate')"
                                 @keyup.enter="confirmCloneRoom"
                             />
-                            <NButton size="small" @click="cloneInviteCode = generateCode()">
+                            <NButton size="small" @click="cloneInviteCode = generateGroupChatInviteCode()">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                     <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                                 </svg>
@@ -2019,7 +2043,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                         :disabled="isSavingInviteCode"
                                         @keyup.enter="handleSaveInviteCode"
                                     />
-                                    <NButton size="small" :disabled="isSavingInviteCode" :title="t('groupChat.generateInviteCode')" @click="inviteCodeDraft = generateCode()">
+                                    <NButton size="small" :disabled="isSavingInviteCode" :title="t('groupChat.generateInviteCode')" @click="inviteCodeDraft = generateGroupChatInviteCode()">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                             <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                                         </svg>
@@ -2034,6 +2058,15 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     </NButton>
                                 </div>
                                 <p class="form-hint">{{ t('groupChat.inviteCodeRotateHint') }}</p>
+                                <NButton
+                                    class="share-link-button"
+                                    secondary
+                                    block
+                                    :disabled="!currentRoom?.inviteCode"
+                                    @click="copyCurrentRoomLink"
+                                >
+                                    {{ t('groupChat.copyRoomLink') }}
+                                </NButton>
                             </div>
                         </section>
                         <section class="settings-section">
@@ -3538,6 +3571,10 @@ export default defineComponent({ components: { CreateRoomForm } })
     font-size: 11px;
     color: $text-muted;
     margin: 4px 0 0;
+}
+
+.share-link-button {
+    margin-top: 12px;
 }
 
 // ─── Connection Dot ──────────────────────────────────────

@@ -1,9 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getActiveProfileName, getApiKey, getStoredUsername } from '@/api/client'
+import { getActiveProfileName, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
-import { getDownloadUrl } from '@/api/hermes/download'
-import { responseErrorMessage } from '@/utils/http-error'
 import { formatMessageWithReference, type Attachment, type ContentBlock, type MessageReference } from './chat'
 import {
     connectGroupChat,
@@ -33,27 +31,19 @@ import {
     updateInviteCode as updateInviteCodeApi,
     updateRoomWorkspace as updateRoomWorkspaceApi,
 } from '@/api/hermes/group-chat'
+import {
+    getGroupChatAttachmentUrl,
+    uploadGroupChatAttachments,
+} from '@/api/hermes/group-chat-attachments'
 
 type GroupChatSocket = ReturnType<typeof connectGroupChat>
 
-async function uploadGroupFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
-    const formData = new FormData()
-    for (const att of attachments) {
-        if (att.file) formData.append('file', att.file, att.name)
-    }
-    const token = getApiKey()
-    const profileName = getActiveProfileName()
-    const headers: Record<string, string> = {}
-    if (token) headers.Authorization = `Bearer ${token}`
-    if (profileName) headers['X-Hermes-Profile'] = profileName
-    const res = await fetch('/upload', {
-        method: 'POST',
-        body: formData,
-        headers,
-    })
-    if (!res.ok) throw new Error(await responseErrorMessage(res, 'Upload failed'))
-    const data = await res.json() as { files: { name: string; path: string }[] }
-    return data.files
+async function uploadGroupFiles(
+    attachments: Attachment[],
+    roomId: string,
+    inviteCode = '',
+): Promise<{ name: string; path: string }[]> {
+    return uploadGroupChatAttachments({ roomId, inviteCode: inviteCode || undefined }, attachments)
 }
 
 function buildGroupContentBlocks(content: string, attachments: Attachment[], files: { name: string; path: string }[]): ContentBlock[] {
@@ -107,6 +97,10 @@ function authenticatedGroupUserId(authUserId: number): string {
 
 function getStoredGroupUserName(): string {
     return getStoredUserName()?.trim() || ''
+}
+
+function getStoredGroupUserAvatar(): string {
+    return localStorage.getItem('gc_user_avatar')?.trim() || ''
 }
 
 function hasToolCalls(message: ChatMessage): boolean {
@@ -172,6 +166,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         hasMoreBefore.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
     )
     const currentUserAvatar = ref('')
+    const inviteGuest = ref(false)
+    const activeInviteCode = ref('')
 
     function resetMessagePaging() {
         totalMessages.value = 0
@@ -210,6 +206,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     async function recoverMissingFinalContent(roomId: string, messageId: string) {
+        if (inviteGuest.value) return
         if (currentRoomId.value !== roomId) return
         const idx = messages.value.findIndex(m => m.id === messageId)
         if (idx < 0 || !needsFinalContentRecovery(messages.value[idx])) return
@@ -394,6 +391,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         // exists, the server keeps the room-specific profile authoritative.
         const storedName = getStoredGroupUserName()
         const storedDescription = localStorage.getItem('gc_user_description')
+        const storedAvatar = getStoredGroupUserAvatar()
 
         const joinGeneration = connectionGeneration
         const joinPromise = new Promise<void>((resolve, reject) => {
@@ -415,6 +413,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 inviteCode: options.inviteCode,
                 name: storedName || undefined,
                 description: storedDescription || undefined,
+                avatar: storedAvatar || undefined,
             }, (res: any) => {
                 if (currentRoomId.value !== roomId) {
                     finish(resolve)
@@ -430,7 +429,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 }
                 if (res?.error) {
                     error.value = res.error
-                    finish(() => reject(new Error(res.error)))
+                    const joinError = Object.assign(new Error(res.error), {
+                        code: typeof res.code === 'string' ? res.code : undefined,
+                    })
+                    finish(() => reject(joinError))
                     return
                 }
                 applyRealtimeJoinState(res, options)
@@ -482,7 +484,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     })
 
     // ─── Connection ────────────────────────────────────────
-    async function connect() {
+    async function connect(options: { inviteCode?: string; guest?: boolean } = {}) {
+        if (options.guest) {
+            inviteGuest.value = true
+            // A store that previously connected as an authenticated account may
+            // still hold auth:<id> in memory. Invite guests always use the
+            // browser-persisted UUID so navigation, refreshes, and reconnects
+            // keep the same guest identity.
+            userId.value = getStoredUserId()
+            currentUserAvatar.value = getStoredGroupUserAvatar()
+        }
+        if (options.inviteCode?.trim()) activeInviteCode.value = options.inviteCode.trim()
         if (connectPromise) return connectPromise
         const promise = connectOnce()
         connectPromise = promise
@@ -496,17 +508,20 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function connectOnce() {
         let authUserId: number | undefined
         const connectionName = getStoredGroupUserName()
-        try {
-            const user = await fetchCurrentUser()
-            authUserId = user.id
-            userId.value = authenticatedGroupUserId(user.id)
-            if (!connectionName) userName.value = user.username
-            currentUserAvatar.value = user.avatar || ''
-        } catch { /* non-critical: avatar fallback handles missing id */ }
+        if (!inviteGuest.value) {
+            try {
+                const user = await fetchCurrentUser()
+                authUserId = user.id
+                userId.value = authenticatedGroupUserId(user.id)
+                if (!connectionName) userName.value = user.username
+                currentUserAvatar.value = user.avatar || ''
+            } catch { /* non-critical: avatar fallback handles missing id */ }
+        }
         const socket = connectGroupChat({
             userId: userId.value,
             userName: connectionName || undefined,
             authUserId,
+            inviteCode: inviteGuest.value ? activeInviteCode.value : undefined,
         })
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })
 
@@ -525,7 +540,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             error.value = null
             const roomId = currentRoomId.value
             if (roomId) {
-                void joinRealtimeRoom(roomId, { syncMessages: true }).catch((err: any) => {
+                void joinRealtimeRoom(roomId, {
+                    syncMessages: true,
+                    inviteCode: activeInviteCode.value || undefined,
+                }).catch((err: any) => {
                     error.value = err.message
                 })
             }
@@ -683,6 +701,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
         })
 
+        socket.on('agents_updated', (data: { roomId: string; agents: RoomAgent[] }) => {
+            if (data.roomId === currentRoomId.value) {
+                agents.value = Array.isArray(data.agents) ? data.agents : []
+            }
+        })
+
         socket.on('typing', (data: { roomId: string; userId: string; userName: string }) => {
             if (data.roomId !== currentRoomId.value || data.userId === userId.value) return
             refreshRemoteTypingUser(data.userId, data.userName)
@@ -795,12 +819,19 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         contextStatuses.value.clear()
         roomSummaryStates.value.clear()
         pendingApprovals.value.clear()
+        inviteGuest.value = false
+        activeInviteCode.value = ''
     }
 
-    function setUserInfo(name: string, description: string) {
+    function setUserInfo(name: string, description: string, avatar?: string) {
         userName.value = name
         localStorage.setItem('gc_user_name', name)
         localStorage.setItem('gc_user_description', description)
+        if (avatar !== undefined) {
+            currentUserAvatar.value = avatar
+            if (avatar) localStorage.setItem('gc_user_avatar', avatar)
+            else localStorage.removeItem('gc_user_avatar')
+        }
     }
 
     async function updateCurrentMemberProfile(name: string, description = '') {
@@ -865,7 +896,23 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         isLoadingOlderMessages.value = true
         try {
             const limit = Math.min(GROUP_CHAT_MESSAGE_PAGE_SIZE, GROUP_CHAT_MAX_DISPLAY_MESSAGES - offset)
-            const res = await getRoomDetail(roomId, { offset, limit })
+            const res = inviteGuest.value
+                ? await new Promise<{
+                    messages: ChatMessage[]
+                    total?: number
+                    hasMore?: boolean
+                }>((resolve, reject) => {
+                    const socket = getSocket()
+                    if (!socket) {
+                        reject(new Error('Group chat socket not connected'))
+                        return
+                    }
+                    socket.emit('load_messages', { roomId, offset, limit }, (response: any) => {
+                        if (response?.error) reject(new Error(response.error))
+                        else resolve(response)
+                    })
+                })
+                : await getRoomDetail(roomId, { offset, limit })
             const existingIds = new Set(messages.value.map(message => message.id))
             const olderMessages = res.messages.filter(message => !existingIds.has(message.id))
             messages.value = [...olderMessages, ...messages.value]
@@ -893,10 +940,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         let finalContent: string | ContentBlock[] = submittedContent
         let optimisticMessage: ChatMessage | null = null
         if (attachments?.length) {
-            const uploaded = await uploadGroupFiles(attachments)
+            const guestInviteCode = inviteGuest.value ? activeInviteCode.value : ''
+            const uploaded = await uploadGroupFiles(attachments, roomId, guestInviteCode)
             finalContent = buildGroupContentBlocks(submittedContent, attachments, uploaded)
             const urlMap = new Map(uploaded.map(f => {
-                return [f.name, getDownloadUrl(normalizeLocalFilePath(f.path), f.name)]
+                const path = normalizeLocalFilePath(f.path)
+                const url = getGroupChatAttachmentUrl({
+                    roomId,
+                    inviteCode: guestInviteCode || undefined,
+                }, path, f.name)
+                return [f.name, url]
             }))
             optimisticMessage = {
                 id: messageId,
@@ -971,15 +1024,20 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
-    async function joinByCode(code: string) {
+    async function joinByCode(code: string, options: { guest?: boolean } = {}) {
         try {
-            const res = await joinRoomByCode(code)
+            const normalizedCode = code.trim()
+            if (!normalizedCode) throw new Error('Invite code is required')
+            const res = await joinRoomByCode(normalizedCode)
+            inviteGuest.value = options.guest === true
+            activeInviteCode.value = normalizedCode
             upsertRoom(res.room)
-            await ensureRealtimeSocket()
             currentRoomId.value = res.room.id
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
             roomName.value = res.room.name
-            await joinRealtimeRoom(res.room.id, { syncMessages: true, inviteCode: code })
-            await joinRoom(res.room.id)
+            await connect({ inviteCode: normalizedCode, guest: options.guest })
+            await joinRealtimeRoom(res.room.id, { syncMessages: true, inviteCode: normalizedCode })
             return res.room
         } catch (err: any) {
             error.value = err.message
@@ -1086,7 +1144,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function addAgentToRoom(roomId: string, data: RoomAgentInput) {
         try {
             const res = await addAgent(roomId, data)
-            agents.value.push(res.agent)
+            const index = agents.value.findIndex(agent =>
+                agent.id === res.agent.id || agent.agentId === res.agent.agentId
+            )
+            if (index >= 0) {
+                agents.value[index] = res.agent
+                agents.value = [...agents.value]
+            } else {
+                agents.value = [...agents.value, res.agent]
+            }
             return res.agent
         } catch (err: any) {
             error.value = err.message
@@ -1230,6 +1296,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         userId,
         userName,
         currentUserAvatar,
+        inviteGuest,
+        activeInviteCode,
         // Computed
         sortedMessages,
         memberNames,

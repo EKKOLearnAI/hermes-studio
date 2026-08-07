@@ -31,3 +31,19 @@ export function canReadGroupChatRoom(storage: GroupChatStorage, roomId: string, 
 export function groupChatUserProfiles(user: any): string[] {
     return userProfiles(user)
 }
+
+export function publicGroupChatInviteRoom(room: any) {
+    return {
+        id: String(room.id || ''),
+        name: String(room.name || ''),
+        inviteCode: null,
+        canManage: false,
+        summaryProfile: '',
+        summaryProvider: '',
+        summaryModel: '',
+        summaryApiMode: '',
+        summaryEveryTurns: 0,
+        totalTokens: 0,
+        workspace: '',
+    }
+}

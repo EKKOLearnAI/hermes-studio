@@ -12,11 +12,14 @@ import { AgentBridgeClient } from '../agent-bridge'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { insertWorkspaceRunChange, deleteWorkspaceRunChangesForRoom, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
-import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
+import { getUserAvatar } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type GroupMessageCursorCutoff } from './group-message-ordering'
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
+import { isReservedMentionName } from './mention-routing'
+import { normalizeHumanGroupChatContent } from './attachments'
+import type { ContentBlock } from '../run-chat/types'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -40,6 +43,13 @@ interface ChatMessage {
     agentSessionId?: string
 }
 
+type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
+    roomId?: string
+    content: string | Array<Record<string, unknown>>
+    id?: string
+    mentionDepth?: number
+}
+
 interface PendingGroupApprovalRoute {
     roomId: string
     agentName: string
@@ -49,6 +59,19 @@ interface PendingGroupApprovalRoute {
 function contentToStorageString(content: unknown): string {
     if (typeof content === 'string') return content
     return JSON.stringify(content ?? '')
+}
+
+function humanStructuredContent(content: unknown): Array<Record<string, unknown>> | null {
+    if (Array.isArray(content)) return content
+    if (typeof content !== 'string') return null
+    const trimmed = content.trim()
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null
+    try {
+        const parsed = JSON.parse(trimmed)
+        return Array.isArray(parsed) ? parsed : null
+    } catch {
+        return null
+    }
 }
 
 function safeGroupChatWorkspaceSegment(value: string, fallback: string): string {
@@ -114,6 +137,48 @@ interface RoomAgentMetadata {
     apiMode?: string
     reasoningEffort?: string
     avatar?: string
+}
+
+export const ROOM_PARTICIPANT_NAME_CONFLICT = 'ROOM_PARTICIPANT_NAME_CONFLICT'
+
+export class RoomParticipantNameConflictError extends Error {
+    readonly code = ROOM_PARTICIPANT_NAME_CONFLICT
+
+    constructor() {
+        super('Name is already in use in this room')
+        this.name = 'RoomParticipantNameConflictError'
+    }
+}
+
+function canonicalParticipantName(name: string): string {
+    return name.trim().normalize('NFKC').toLocaleLowerCase()
+}
+
+const GROUP_MEMBER_AVATAR_MAX_LENGTH = 1_500_000
+
+function normalizeRoomMemberAvatar(value: unknown): string {
+    if (value === undefined || value === null || value === '') return ''
+    if (typeof value !== 'string' || value.length > GROUP_MEMBER_AVATAR_MAX_LENGTH) {
+        throw new Error('Invalid member avatar')
+    }
+    let parsed: any
+    try {
+        parsed = JSON.parse(value)
+    } catch {
+        throw new Error('Invalid member avatar')
+    }
+    if (parsed?.type === 'generated' && typeof parsed.seed === 'string' && parsed.seed.trim() && parsed.seed.length <= 200) {
+        return JSON.stringify({ type: 'generated', seed: parsed.seed.trim() })
+    }
+    if (
+        parsed?.type === 'image' &&
+        typeof parsed.dataUrl === 'string' &&
+        /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(parsed.dataUrl) &&
+        parsed.dataUrl.length <= GROUP_MEMBER_AVATAR_MAX_LENGTH
+    ) {
+        return JSON.stringify({ type: 'image', dataUrl: parsed.dataUrl })
+    }
+    throw new Error('Invalid member avatar')
 }
 
 export interface RoomInfo {
@@ -773,6 +838,28 @@ class ChatStorage {
         ).all(roomId) || []) as unknown as RoomAgent[]
     }
 
+    assertParticipantNameAvailable(
+        roomId: string,
+        name: string,
+        options: { excludeAgentRef?: string; excludeMemberId?: string } = {},
+    ): void {
+        const canonicalName = canonicalParticipantName(name)
+        if (!canonicalName) return
+
+        const conflictingAgent = this.getRoomAgents(roomId).find(agent =>
+            agent.id !== options.excludeAgentRef &&
+            agent.agentId !== options.excludeAgentRef &&
+            canonicalParticipantName(agent.name) === canonicalName
+        )
+        if (conflictingAgent) throw new RoomParticipantNameConflictError()
+
+        const conflictingMember = this.getRoomMembers(roomId).find(member =>
+            member.id !== options.excludeMemberId &&
+            canonicalParticipantName(member.name) === canonicalName
+        )
+        if (conflictingMember) throw new RoomParticipantNameConflictError()
+    }
+
     addRoomAgent(
         roomId: string,
         agentId: string,
@@ -782,6 +869,7 @@ class ChatStorage {
         invited: number,
         metadata: RoomAgentMetadata = {},
     ): RoomAgent {
+        this.assertParticipantNameAvailable(roomId, name)
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const agent = metadata.agent || 'hermes'
         const provider = String(metadata.provider || '').trim()
@@ -815,6 +903,9 @@ class ChatStorage {
         description: string,
         metadata: RoomAgentMetadata = {},
     ): RoomAgent | null {
+        const existing = this.getRoomAgent(roomId, agentRef)
+        if (!existing) return null
+        this.assertParticipantNameAvailable(roomId, name, { excludeAgentRef: existing.id })
         const agent = metadata.agent || 'hermes'
         const provider = String(metadata.provider || '').trim()
         const model = String(metadata.model || '').trim()
@@ -912,9 +1003,6 @@ class ChatStorage {
             try {
                 if (typeof member.authUserId === 'number' && member.authUserId > 0) {
                     member.avatar = getUserAvatar(member.authUserId) || member.avatar || ''
-                } else if (member.name) {
-                    const user = findUserByUsername(member.name)
-                    if (user?.avatar) member.avatar = user.avatar
                 }
             } catch {
                 // ignore individual lookup failures
@@ -932,6 +1020,10 @@ class ChatStorage {
     }
 
     addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = '', authUserId?: number): void {
+        const existing = this.getMemberByUserId(roomId, userId) ||
+            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
+        this.assertParticipantNameAvailable(roomId, userName, { excludeMemberId: existing?.id })
+
         let resolvedAvatar = avatar
         if (!resolvedAvatar && typeof authUserId === 'number' && authUserId > 0) {
             try {
@@ -940,17 +1032,6 @@ class ChatStorage {
                 // ignore lookup failures
             }
         }
-        if (!resolvedAvatar && userName) {
-            try {
-                const user = findUserByUsername(userName)
-                if (user) resolvedAvatar = user.avatar || ''
-            } catch {
-                // ignore lookup failures
-            }
-        }
-
-        const existing = this.getMemberByUserId(roomId, userId) ||
-            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
         if (existing) {
             const nextAvatar = resolvedAvatar || existing.avatar || ''
             const nextAuthUserId = typeof authUserId === 'number' && authUserId > 0
@@ -1092,6 +1173,7 @@ export class GroupChatServer {
 
         this.io = new Server(servers[0], {
             cors: { origin: createSocketIoCorsOrigin(config.corsOrigins) },
+            maxHttpBufferSize: 2_000_000,
             allowRequest: (req, callback) => {
                 if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
                     callback('origin not allowed', false)
@@ -1178,6 +1260,12 @@ export class GroupChatServer {
             })
         }
         return room
+    }
+
+    broadcastRoomAgents(roomId: string): RoomAgent[] {
+        const agents = this.storage.getRoomAgents(roomId)
+        this.nsp.to(roomId).emit('agents_updated', { roomId, agents })
+        return agents
     }
 
     setChatRunService(service: GroupChatRunService | null): void {
@@ -1318,9 +1406,23 @@ export class GroupChatServer {
     // ─── Auth ───────────────────────────────────────────────────
 
     private async authMiddleware(socket: Socket, next: (err?: Error) => void): Promise<void> {
-        const auth = socket.handshake.auth as { source?: string; agentSocketSecret?: string; token?: string }
+        const auth = socket.handshake.auth as {
+            source?: string
+            agentSocketSecret?: string
+            token?: string
+            inviteCode?: string
+        }
         const isAgentSocket = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET
         if (isAgentSocket) {
+            next()
+            return
+        }
+
+        const inviteCode = typeof auth.inviteCode === 'string' ? auth.inviteCode.trim() : ''
+        if (inviteCode) {
+            const invitedRoom = inviteCode ? this.storage.getRoomByInviteCode(inviteCode) : null
+            if (!invitedRoom) return next(new Error('Unauthorized'))
+            socket.data.inviteGuestRoomId = invitedRoom.id
             next()
             return
         }
@@ -1357,8 +1459,9 @@ export class GroupChatServer {
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
         socket.on('join', (data: { roomId?: string; name?: string }, ack?: (response?: unknown) => void) => this.handleJoin(socket, data, ack))
+        socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
         socket.on('update_member_profile', (data: { roomId?: string; name?: string; description?: string } | undefined, ack?: (response?: unknown) => void) => this.handleUpdateMemberProfile(socket, data, ack))
-        socket.on('message', (data: Partial<ChatMessage> & { roomId?: string; content: string | Array<Record<string, unknown>>; id?: string; mentionDepth?: number }, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
+        socket.on('message', (data: IncomingGroupChatMessage, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
         socket.on('message_stream_start', (data: { roomId?: string; id?: string; senderId?: string; senderName?: string; timestamp?: number; run_id?: string; agentSessionId?: string }) => this.handleMessageStreamStart(socket, data))
         socket.on('message_stream_delta', (data: { roomId?: string; id?: string; delta?: string }) => this.handleMessageStreamDelta(socket, data))
         socket.on('message_reasoning_delta', (data: { roomId?: string; id?: string; delta?: string }) => this.handleMessageReasoningDelta(socket, data))
@@ -1377,6 +1480,8 @@ export class GroupChatServer {
 
     private canSocketJoinRoom(socket: Socket, roomId: string, room: RoomInfo | undefined, existingMember: Member | null, inviteCode?: string): boolean {
         if (!room) return typeof this.storage.getRoom !== 'function'
+        const inviteGuestRoomId = socket.data?.inviteGuestRoomId
+        if (typeof inviteGuestRoomId === 'string') return inviteGuestRoomId === roomId
         const requested = typeof inviteCode === 'string' ? inviteCode.trim() : ''
         if (requested && room.inviteCode && requested === room.inviteCode) return true
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
@@ -1390,6 +1495,7 @@ export class GroupChatServer {
 
     private canSocketManageRoom(socket: Socket, roomId: string): boolean {
         if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        if (typeof socket.data?.inviteGuestRoomId === 'string') return false
         const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
         if (!room) return false
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
@@ -1446,7 +1552,11 @@ export class GroupChatServer {
         return sessionId === expected && !this.isRoomAgentSessionFenced(roomId, sessionId)
     }
 
-    private canPersistAgentMessageForCurrentSession(roomId: string, member: Member | undefined, data: Partial<ChatMessage>): boolean {
+    private canPersistAgentMessageForCurrentSession(
+        roomId: string,
+        member: Member | undefined,
+        data: Pick<IncomingGroupChatMessage, 'role' | 'tool_calls' | 'tool_call_id' | 'agentSessionId'>,
+    ): boolean {
         if (member?.source !== 'agent') return true
         const role = normalizeMessageRole(data.role)
         const isRunTrace = role === 'assistant' || role === 'tool' || Array.isArray(data.tool_calls) || Boolean(data.tool_call_id)
@@ -1462,7 +1572,7 @@ export class GroupChatServer {
         return joined.member
     }
 
-    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; inviteCode?: string }, ack?: (res: any) => void): void {
+    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; avatar?: string; inviteCode?: string }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
         const requestedSource = this.socketRequestedSourceMap.get(socketId) || 'human'
@@ -1491,12 +1601,32 @@ export class GroupChatServer {
         }
         const requestedName = typeof data.name === 'string' ? data.name.trim() : ''
         const requestedDescription = typeof data.description === 'string' ? data.description.trim() : ''
+        const isInviteGuest = typeof socket.data?.inviteGuestRoomId === 'string'
+        if (isInviteGuest && !requestedName) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_REQUIRED', error: 'Name is required' })
+            return
+        }
         // On rejoin, prefer the per-room DB record over the join-request name
         // so switching rooms doesn't overwrite a member's per-room identity.
-        // The DB is authoritative for existing members; requestedName only
-        // applies on first join (when there's no DB record yet).
-        const userName = existingMember?.name || requestedName || userInfo.name
+        // Invite guests explicitly confirm their name before every entry, so
+        // their requested name may update the persisted browser identity.
+        const userName = isInviteGuest && requestedName
+            ? requestedName
+            : existingMember?.name || requestedName || userInfo.name
         const description = existingMember?.description || requestedDescription || userInfo.description
+        if (isReservedMentionName(userName)) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_RESERVED', error: '`all` is reserved for @all mentions' })
+            return
+        }
+        let requestedAvatar = ''
+        if (isInviteGuest) {
+            try {
+                requestedAvatar = normalizeRoomMemberAvatar(data.avatar)
+            } catch {
+                ack?.({ code: 'ROOM_PARTICIPANT_AVATAR_INVALID', error: 'Invalid member avatar' })
+                return
+            }
+        }
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })
@@ -1514,7 +1644,9 @@ export class GroupChatServer {
 
         // Look up the user's avatar via their numeric users.id from the web UI session.
         // Falls back to name-based lookup for clients that don't pass authUserId.
-        let userAvatar = ''
+        let userAvatar = isInviteGuest
+            ? requestedAvatar || existingMember?.avatar || ''
+            : existingMember?.avatar || ''
         let authUserId: number | undefined
         if (source !== 'agent') {
             authUserId = this.socketAuthUserIdMap.get(socket.id)
@@ -1524,13 +1656,6 @@ export class GroupChatServer {
                 } catch (err) {
                     logger.info(`[GroupChat] avatar lookup by id=${authUserId} failed: ${(err as Error).message}`)
                 }
-            } else if (userName) {
-                try {
-                    const matched = findUserByUsername(userName)
-                    if (matched) userAvatar = matched.avatar || ''
-                } catch (err) {
-                    logger.info(`[GroupChat] avatar lookup by name '${userName}' failed: ${(err as Error).message}`)
-                }
             }
         }
 
@@ -1538,7 +1663,17 @@ export class GroupChatServer {
         // tracked through gc_room_agents and AgentClients; storing them in
         // gc_room_members makes member counts grow on reconnect/restore.
         if (source !== 'agent') {
-            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
+            try {
+                this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
+            } catch (err: any) {
+                if (err?.code === ROOM_PARTICIPANT_NAME_CONFLICT) {
+                    ack?.({ code: err.code, error: err.message })
+                    return
+                }
+                logger.error(`[GroupChat] Failed to persist room member: ${err?.message || err}`)
+                ack?.({ error: 'Failed to join room' })
+                return
+            }
         }
 
         // Add to in-memory online participants (keyed by userId)
@@ -1556,6 +1691,7 @@ export class GroupChatServer {
 
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
         const agents = this.storage.getRoomAgents(roomId)
 
         ack?.({
@@ -1564,12 +1700,40 @@ export class GroupChatServer {
             members: room.getMembersList(),
             messages,
             agents,
-            rooms: this.getRoomIds(),
+            rooms: typeof socket.data?.inviteGuestRoomId === 'string' ? [roomId] : this.getRoomIds(),
+            total,
+            offset: 0,
+            limit: messages.length,
+            hasMore: messages.length < total,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
         })
 
         logger.debug(`[GroupChat] ${userName} (user=${userId}) joined room: ${roomId}`)
+    }
+
+    private handleLoadMessages(
+        socket: Socket,
+        data: { roomId?: string; offset?: number; limit?: number } | undefined,
+        ack?: (res: any) => void,
+    ): void {
+        const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
+        if (!roomId || !this.getOnlineRoomMember(socket, roomId)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+
+        const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
+        const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
+        const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
+        ack?.({
+            messages,
+            total,
+            offset,
+            limit,
+            hasMore: offset + messages.length < total,
+        })
     }
 
     private handleUpdateMemberProfile(
@@ -1582,6 +1746,10 @@ export class GroupChatServer {
         const description = typeof data?.description === 'string' ? data.description.trim() : ''
         if (!roomId || !name) {
             ack?.({ error: 'roomId and name are required' })
+            return
+        }
+        if (isReservedMentionName(name)) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_RESERVED', error: '`all` is reserved for @all mentions' })
             return
         }
         if (name.length > 120 || description.length > 2000) {
@@ -1612,12 +1780,20 @@ export class GroupChatServer {
             })
             ack?.({ member: joined.room.getOnlineMemberBySocketId(socket.id), members })
         } catch (err) {
+            if ((err as any)?.code === ROOM_PARTICIPANT_NAME_CONFLICT) {
+                ack?.({ code: ROOM_PARTICIPANT_NAME_CONFLICT, error: (err as Error).message })
+                return
+            }
             logger.error(`[GroupChat] Failed to update member profile: ${(err as Error).message}`)
             ack?.({ error: 'Failed to update member profile' })
         }
     }
 
-    private handleMessage(socket: Socket, data: Partial<ChatMessage> & { roomId?: string; content: string | Array<Record<string, unknown>>; id?: string; mentionDepth?: number }, ack?: (res: any) => void): void {
+    private handleMessage(socket: Socket, data: IncomingGroupChatMessage, ack?: (res: any) => void): void {
+        if (!data || (typeof data.content !== 'string' && !Array.isArray(data.content))) {
+            ack?.({ error: 'Invalid message content' })
+            return
+        }
         const socketId = socket.id
         const roomId = data.roomId || 'general'
         const room = this.rooms.get(roomId)
@@ -1634,26 +1810,45 @@ export class GroupChatServer {
         }
         const userId = member?.userId || socketId
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
-        const role = normalizeMessageRole(data.role)
+        const isHumanMessage = member?.source === 'human'
+        const role = isHumanMessage ? 'user' : normalizeMessageRole(data.role)
+        let messageContent: unknown = data.content
+        let runtimeInput: ContentBlock[] | undefined = Array.isArray(data.content)
+            ? data.content as ContentBlock[]
+            : undefined
+        const structuredHumanContent = isHumanMessage ? humanStructuredContent(data.content) : null
+        if (structuredHumanContent) {
+            try {
+                const normalized = normalizeHumanGroupChatContent(roomId, structuredHumanContent)
+                messageContent = normalized.storageContent
+                runtimeInput = normalized.runtimeInput
+            } catch (error) {
+                ack?.({
+                    code: 'GROUP_CHAT_ATTACHMENT_INVALID',
+                    error: error instanceof Error ? error.message : 'Invalid group chat attachment',
+                })
+                return
+            }
+        }
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
             roomId,
             senderId: userId,
             senderName: userName,
-            content: contentToStorageString(data.content),
-            timestamp: this.normalizeMessageTimestamp(data.timestamp, data.role),
-            run_id: member?.source === 'agent' && typeof data.run_id === 'string' && data.run_id.trim()
+            content: contentToStorageString(messageContent),
+            timestamp: this.normalizeMessageTimestamp(data.timestamp, role),
+            run_id: !isHumanMessage && typeof data.run_id === 'string' && data.run_id.trim()
                 ? data.run_id.trim()
                 : null,
             role,
-            tool_call_id: data.tool_call_id ?? null,
-            tool_calls: Array.isArray(data.tool_calls) ? data.tool_calls : null,
-            tool_name: data.tool_name ?? null,
-            finish_reason: data.finish_reason ?? null,
-            reasoning: data.reasoning ?? null,
-            reasoning_details: data.reasoning_details ?? null,
-            reasoning_content: data.reasoning_content ?? null,
+            tool_call_id: !isHumanMessage ? data.tool_call_id ?? null : null,
+            tool_calls: !isHumanMessage && Array.isArray(data.tool_calls) ? data.tool_calls : null,
+            tool_name: !isHumanMessage ? data.tool_name ?? null : null,
+            finish_reason: !isHumanMessage ? data.finish_reason ?? null : null,
+            reasoning: !isHumanMessage ? data.reasoning ?? null : null,
+            reasoning_details: !isHumanMessage ? data.reasoning_details ?? null : null,
+            reasoning_content: !isHumanMessage ? data.reasoning_content ?? null : null,
         }
 
         const saved = this.storage.saveMessageAndRefreshRoom(msg)
@@ -1666,7 +1861,11 @@ export class GroupChatServer {
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
-        const canRouteHumanMentions = savedMsg.role === 'user' && this.canSocketManageRoom(socket, roomId)
+        // Any human who has successfully joined the room may interact with its
+        // Agents. Room management remains separately protected by
+        // canSocketManageRoom, so invite guests cannot mutate settings, approve
+        // tools, or interrupt an Agent.
+        const canRouteHumanMentions = savedMsg.role === 'user' && member?.source === 'human'
         const shouldRouteMentions = canRouteHumanMentions ||
             (isAgentReply && mentionDepth < maxAgentMentionDepth())
 
@@ -1677,7 +1876,7 @@ export class GroupChatServer {
             this.agentClients.processMentions(roomId, {
                 messageId: savedMsg.id,
                 content: contentToText(savedMsg.content),
-                input: Array.isArray(data.content) ? data.content : undefined,
+                input: runtimeInput,
                 senderName: savedMsg.senderName,
                 senderId: savedMsg.senderId,
                 timestamp: savedMsg.timestamp,

@@ -6,12 +6,15 @@ import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/hermes/group-chat
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     message: ChatMessage
     agents: RoomAgent[]
     members?: MemberInfo[]
     currentUserId?: string
-}>()
+    allowSpeech?: boolean
+}>(), {
+    allowSpeech: true,
+})
 
 const emit = defineEmits<{
     mentionAgent: [agent: RoomAgent]
@@ -48,6 +51,7 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
                     :agents="agents"
                     :members="members"
                     :current-user-id="currentUserId"
+                    :allow-speech="props.allowSpeech"
                     embedded
                 />
             </div>

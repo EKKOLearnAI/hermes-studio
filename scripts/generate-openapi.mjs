@@ -121,14 +121,21 @@ function scanRoutes() {
 
 function scanRouteFile(filePath, tagInfo, paths) {
   const content = readFileSync(filePath, 'utf-8')
-  const controllerContent = readControllerContent(filePath, content)
+  const controllerContents = readControllerContents(filePath, content)
+  const controllerAliases = [...controllerContents.keys()]
 
   // Pattern 1: controller functions - sessionRoutes.get('/path', middleware, ctrl.method)
-  const ctrlRouteRegex = /\w+Routes?\.(get|post|put|delete|patch)\(\s*['"]([^'"]+)['"]\s*,[^\n]*?\bctrl\.(\w+)/g
+  const ctrlRouteRegex = controllerAliases.length
+    ? new RegExp(
+        `\\w+Routes?\\.(get|post|put|delete|patch)\\(\\s*['"]([^'"]+)['"]\\s*,[^\\n]*?\\b(${controllerAliases.map(escapeRegExp).join('|')})\\.(\\w+)`,
+        'g',
+      )
+    : null
 
   let match
-  while ((match = ctrlRouteRegex.exec(content)) !== null) {
-    const [, method, path, controllerMethod] = match
+  while (ctrlRouteRegex && (match = ctrlRouteRegex.exec(content)) !== null) {
+    const [, method, path, controllerAlias, controllerMethod] = match
+    const controllerContent = controllerContents.get(controllerAlias)
     const controllerSource = controllerContent
       ? extractFunctionSource(controllerContent, controllerMethod)
       : ''
@@ -145,16 +152,18 @@ function scanRouteFile(filePath, tagInfo, paths) {
   }
 }
 
-function readControllerContent(routeFilePath, routeContent) {
-  const importMatch = routeContent.match(/import\s+\*\s+as\s+ctrl\s+from\s+['"]([^'"]+)['"]/)
-  if (!importMatch) return ''
-
-  const controllerPath = resolve(dirname(routeFilePath), `${importMatch[1]}.ts`)
-  try {
-    return readFileSync(controllerPath, 'utf-8')
-  } catch {
-    return ''
+function readControllerContents(routeFilePath, routeContent) {
+  const contents = new Map()
+  for (const match of routeContent.matchAll(/import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g)) {
+    const [, alias, importPath] = match
+    const controllerPath = resolve(dirname(routeFilePath), `${importPath}.ts`)
+    try {
+      contents.set(alias, readFileSync(controllerPath, 'utf-8'))
+    } catch {
+      // Non-controller namespace imports are ignored by the route scanner.
+    }
   }
+  return contents
 }
 
 function extractFunctionSource(content, functionName) {

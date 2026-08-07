@@ -14,9 +14,15 @@ import { parseThinking, countThinkingChars } from '@/utils/thinking-parser'
 import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
-import { getDownloadUrl } from '@/api/hermes/download'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
-import type { ChatMessage, GroupWorkspaceDiffFile, GroupWorkspaceDiffPayload, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
+import {
+    type ChatMessage,
+    type GroupWorkspaceDiffFile,
+    type GroupWorkspaceDiffPayload,
+    type RoomAgent,
+    type MemberInfo,
+} from '@/api/hermes/group-chat'
+import { getGroupChatAttachmentUrl } from '@/api/hermes/group-chat-attachments'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { formatReferencedContentForDisplay, parseMessageReference } from '@/stores/hermes/chat'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
@@ -37,13 +43,17 @@ const JSON_MAX_KEYS_PER_OBJECT = 50
 const JSON_MAX_ITEMS_PER_ARRAY = 50
 const JSON_TRUNCATED_KEY = '__truncated__'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     message: ChatMessage
     agents: RoomAgent[]
     members?: MemberInfo[]
     currentUserId?: string
     embedded?: boolean
-}>()
+    allowSpeech?: boolean
+}>(), {
+    embedded: false,
+    allowSpeech: true,
+})
 
 const emit = defineEmits<{
     mentionAgent: [agent: RoomAgent]
@@ -155,13 +165,20 @@ const renderedAttachments = computed(() => {
         const path = String(block.path || '')
         if (!path) return []
         const name = String(block.name || `${block.type}-${index + 1}`)
+        const normalizedPath = normalizeLocalFilePath(path)
+        const attachmentUrl = getGroupChatAttachmentUrl({
+            roomId: props.message.roomId || groupChatStore.currentRoomId || '',
+            inviteCode: groupChatStore.inviteGuest
+                ? groupChatStore.activeInviteCode || undefined
+                : undefined,
+        }, normalizedPath, name)
         return [{
             id: `${props.message.id}_attachment_${index}`,
             name,
             type: block.type === 'image' ? String(block.media_type || 'image/*') : String(block.media_type || 'application/octet-stream'),
             size: 0,
-            url: getDownloadUrl(normalizeLocalFilePath(path), name),
-            path: normalizeLocalFilePath(path),
+            url: attachmentUrl,
+            path: normalizedPath,
         }]
     })
 })
@@ -246,6 +263,7 @@ function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: 
 }
 
 const canPlaySpeech = computed(() => {
+    if (!props.allowSpeech) return false
     if (props.message.role !== 'assistant') return false
     if (!assistantBody.value.trim()) return false
     if (messageTtsProfile.value) return true
@@ -421,6 +439,7 @@ function handleAutoplayTtsError(err: unknown) {
 }
 
 function playSpeech(content: string, autoplay = false, profileOverride = '') {
+    if (!props.allowSpeech) return
     if (!content.trim()) return
     const profile = profileOverride.trim() || messageTtsProfile.value
     if (profile) {
@@ -575,6 +594,7 @@ function formatSize(bytes: number): string {
 let autoPlayHandler: ((e: Event) => void) | null = null
 
 onMounted(() => {
+    if (!props.allowSpeech) return
     autoPlayHandler = (e: Event) => {
         const event = e as CustomEvent<{ messageId: string; content: string; profile?: string }>
         if (event.detail?.messageId === props.message.id && canPlaySpeech.value) {

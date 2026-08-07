@@ -2,7 +2,7 @@ import Koa from 'koa'
 import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
 
 function listen(server: HttpServer): Promise<string> {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
@@ -19,6 +19,7 @@ describe('group chat REST route baseline', () => {
   let agentClients: any
   let clearRoomRuntimeState: ReturnType<typeof vi.fn>
   let updateRoomName: ReturnType<typeof vi.fn>
+  let broadcastRoomAgents: ReturnType<typeof vi.fn>
   let roomSummaryService: any
 
   beforeEach(async () => {
@@ -75,6 +76,7 @@ describe('group chat REST route baseline', () => {
       if (room) room.name = name
       return room || null
     })
+    broadcastRoomAgents = vi.fn((roomId: string) => storage.getRoomAgents(roomId))
     roomSummaryService = {
       runExclusive: vi.fn(async (_roomId: string, task: () => unknown) => task()),
       getState: vi.fn((roomId: string) => ({
@@ -106,10 +108,12 @@ describe('group chat REST route baseline', () => {
       agentClients,
       clearRoomRuntimeState,
       updateRoomName,
+      broadcastRoomAgents,
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
     const app = new Koa()
     app.use(bodyParser())
+    app.use(groupChatPublicRoutes.routes())
     app.use(groupChatRoutes.routes())
     httpServer = createServer(app.callback())
     baseUrl = await listen(httpServer)
@@ -129,6 +133,35 @@ describe('group chat REST route baseline', () => {
 
     expect(res.status).toBe(400)
     await expect(res.json()).resolves.toEqual({ error: 'name and inviteCode are required' })
+  })
+
+  it('resolves invite-only room metadata without exposing management fields', async () => {
+    storage.rooms.set('room-1', {
+      id: 'room-1',
+      name: 'Shared Room',
+      inviteCode: 'ROOM1',
+      workspace: '/private/workspace',
+      summaryProfile: 'default',
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/join/ROOM1`)
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({
+      room: {
+        id: 'room-1',
+        name: 'Shared Room',
+        inviteCode: null,
+        canManage: false,
+        summaryProfile: '',
+        summaryProvider: '',
+        summaryModel: '',
+        summaryApiMode: '',
+        summaryEveryTurns: 0,
+        totalTokens: 0,
+        workspace: '',
+      },
+    })
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {
@@ -404,6 +437,7 @@ describe('group chat REST route baseline', () => {
       reasoningEffort: 'high',
       avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
     })
+    expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
   it('rejects incomplete or invalid room agent runtime configuration', async () => {
@@ -570,6 +604,7 @@ describe('group chat REST route baseline', () => {
       profile: 'research',
       name: 'Reviewer',
     })
+    expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {
@@ -584,6 +619,7 @@ describe('group chat REST route baseline', () => {
     expect(storage.removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-agent')
     expect(agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-1')
     expect(body).toMatchObject({ success: true, agents: [], members: [] })
+    expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
   it('clears room context and runtime state while returning the updated room', async () => {

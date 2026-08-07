@@ -128,6 +128,7 @@ describe('Group Chat member/agent identity sync', () => {
         addRoomAgent,
         removeRoomAgent: vi.fn(),
       }),
+      broadcastRoomAgents: vi.fn(() => []),
       agentClients: {
         createAgent: vi.fn(async () => ({ agentId: 'runtime-agent' })),
         addAgentToRoom: vi.fn(async () => { calls.push('join-room') }),
@@ -304,6 +305,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     const chatServer = {
       getStorage: () => storage,
+      broadcastRoomAgents: vi.fn(() => []),
       agentClients: { removeAgentFromRoom: vi.fn() },
     }
     setGroupChatServer(chatServer as any)
@@ -319,6 +321,7 @@ describe('Group Chat member/agent identity sync', () => {
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(storage.removeRoomMembersForAgent).toHaveBeenCalledWith('room-1', agentsBefore[0])
     expect(storage.removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
+    expect(chatServer.broadcastRoomAgents).toHaveBeenCalledWith('room-1')
     expect(ctx.body).toEqual({
       success: true,
       agents: [],
@@ -673,6 +676,68 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Access denied' })
     expect(server.storage.addRoomMember).not.toHaveBeenCalled()
     expect(socket.join).not.toHaveBeenCalled()
+  })
+
+  it('scopes invite guests to one room and denies realtime management', () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.socketRequestedSourceMap = new Map([['guest-socket', 'human']])
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Shared Room', inviteCode: 'secret' })),
+    }
+    const socket = {
+      id: 'guest-socket',
+      data: { inviteGuestRoomId: 'room-1' },
+    }
+
+    expect(server.canSocketJoinRoom(socket, 'room-1', { id: 'room-1' }, null)).toBe(true)
+    expect(server.canSocketJoinRoom(socket, 'room-2', { id: 'room-2' }, null)).toBe(false)
+    expect(server.canSocketManageRoom(socket, 'room-1')).toBe(false)
+  })
+
+  it('loads paged history only for a socket already joined to the room', () => {
+    const member = { source: 'human' }
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', {
+      getOnlineMemberBySocketId: vi.fn(() => member),
+    }]])
+    server.storage = {
+      getRecentMessagesForUI: vi.fn(() => [{ id: 'older-1' }]),
+      getMessageCount: vi.fn(() => 3),
+    }
+    const ack = vi.fn()
+
+    server.handleLoadMessages(
+      { id: 'guest-socket' },
+      { roomId: 'room-1', offset: 1, limit: 1 },
+      ack,
+    )
+
+    expect(server.storage.getRecentMessagesForUI).toHaveBeenCalledWith('room-1', 1, 1)
+    expect(ack).toHaveBeenCalledWith({
+      messages: [{ id: 'older-1' }],
+      total: 3,
+      offset: 1,
+      limit: 1,
+      hasMore: true,
+    })
+  })
+
+  it('broadcasts the complete room agent roster after mutations', () => {
+    const agents = [{ id: 'row-agent', agentId: 'agent-1', name: 'Agent' }]
+    const emit = vi.fn()
+    const to = vi.fn(() => ({ emit }))
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      getRoomAgents: vi.fn(() => agents),
+    }
+    server.nsp = { to }
+
+    expect(server.broadcastRoomAgents('room-1')).toEqual(agents)
+    expect(to).toHaveBeenCalledWith('room-1')
+    expect(emit).toHaveBeenCalledWith('agents_updated', {
+      roomId: 'room-1',
+      agents,
+    })
   })
 
   it('denies read-only room members realtime management actions', async () => {

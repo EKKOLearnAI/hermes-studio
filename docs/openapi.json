@@ -4569,6 +4569,86 @@
         }
       }
     },
+    "/api/hermes/group-chat/invites/{code}/attachments": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create attachments",
+        "description": "POST /api/hermes/group-chat/invites/:code/attachments",
+        "operationId": "uploadInviteAttachment",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/invites/{code}/attachments/{file}": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get :file",
+        "description": "GET /api/hermes/group-chat/invites/:code/attachments/:file",
+        "operationId": "readInviteAttachment",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms": {
       "post": {
         "tags": [
@@ -4664,7 +4744,7 @@
         ],
         "summary": "Get :code",
         "description": "GET /api/hermes/group-chat/rooms/join/:code",
-        "operationId": "getJoin",
+        "operationId": "resolveInvite",
         "security": [
           {
             "BearerAuth": []
@@ -5007,6 +5087,86 @@
           },
           {
             "name": "agentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachments": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create attachments",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/attachments",
+        "operationId": "createAttachments",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachments/{file}": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get :file",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/attachments/:file",
+        "operationId": "getAttachments",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
             "in": "path",
             "required": true,
             "schema": {

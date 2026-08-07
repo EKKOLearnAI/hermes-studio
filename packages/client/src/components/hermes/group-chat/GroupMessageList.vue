@@ -8,6 +8,11 @@ import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
 
 const store = useGroupChatStore()
+const props = withDefaults(defineProps<{
+    allowSpeech?: boolean
+}>(), {
+    allowSpeech: true,
+})
 const emit = defineEmits<{
     mentionAgent: [agent: import('@/api/hermes/group-chat').RoomAgent]
 }>()
@@ -158,6 +163,7 @@ defineExpose({ scrollToBottom })
                         :agents="store.agents"
                         :members="store.members"
                         :current-user-id="store.userId"
+                        :allow-speech="props.allowSpeech"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <GroupMessageItem
@@ -166,6 +172,7 @@ defineExpose({ scrollToBottom })
                         :agents="store.agents"
                         :members="store.members"
                         :current-user-id="store.userId"
+                        :allow-speech="props.allowSpeech"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <div

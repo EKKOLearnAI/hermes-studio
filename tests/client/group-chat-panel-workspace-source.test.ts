@@ -12,7 +12,7 @@ describe('GroupChatPanel workspace save handling', () => {
   it('gates workspace mutation controls to rooms the server marks manageable', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
-    expect(source).toContain('const currentRoomCanManage = computed(() => canManageRoom(currentRoom.value))')
+    expect(source).toContain('const currentRoomCanManage = computed(() => !props.standalone && canManageRoom(currentRoom.value))')
     expect(source).toContain('const visibleApproval = computed(() => currentRoomCanManage.value ? store.activePendingApproval : null)')
     expect(source).toContain('if (!currentRoomCanManage.value) return')
     expect(source).toContain('if (!canManageRoom(room)) return')
@@ -135,12 +135,14 @@ describe('GroupChatPanel workspace save handling', () => {
 
     expect(headerInfo).not.toContain('avatar-stack-trigger')
     expect(rail).toContain('v-for="member in railMembers"')
+    expect(rail).toContain(':key="member.userId"')
     expect(rail).toContain('v-for="agent in store.agents"')
     expect(rail).toContain('class="agent-avatar-rail-item"')
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
     expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
     expect(rail).toContain('@click="handleRoomMemberClick(member)"')
-    expect(rail).toContain('@click="handleEditAgent(agent)"')
+    expect(rail).toContain('@click="handleAgentRailClick(agent)"')
+    expect(rail).not.toContain(':disabled="!currentRoomCanManage"')
     expect(rail).toContain('class="agent-avatar-rail-add"')
     expect(rail).not.toContain('avatar-stack-more')
     expect(source).not.toContain('transform: translateY(-1px)')
@@ -150,6 +152,19 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('overflow-y: auto')
     expect(source).toContain('animation: member-avatar-typing-breathe 1.6s ease-in-out infinite')
     expect(source).toContain('@keyframes member-avatar-typing-breathe')
+  })
+
+  it('keeps invite-only chat free of settings and speech controls', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const input = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatInput.vue', 'utf8')
+    const message = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
+
+    expect(panel).toContain(':show-settings="!props.standalone"')
+    expect(panel).toContain(':allow-speech="!props.standalone"')
+    expect(input).toContain('v-if="props.showSettings"')
+    expect(input).toContain('store.setAutoPlaySpeech(false)')
+    expect(message).toContain('if (!props.allowSpeech) return false')
+    expect(message).toContain('v-if="canPlaySpeech"')
   })
 
   it('moves active agent status and interruption from the input status bar to the avatar rail', () => {
@@ -194,7 +209,7 @@ describe('GroupChatPanel workspace save handling', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
     expect(source).toContain('async function loadRoomSummaryState(roomId: string)')
-    expect(source).toContain('if (roomId) void loadRoomSummaryState(roomId)')
+    expect(source).toContain('if (roomId && !props.standalone) void loadRoomSummaryState(roomId)')
     expect(source).not.toContain('handleLocateSummaryAnchor')
     expect(source).not.toContain('@click="handleLocateSummaryAnchor"')
   })

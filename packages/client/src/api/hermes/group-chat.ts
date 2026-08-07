@@ -168,13 +168,20 @@ export interface JoinResult {
 
 let socket: ReturnType<typeof io> | null = null
 
-export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
+export function connectGroupChat(opts?: {
+    userId?: string
+    userName?: string
+    description?: string
+    authUserId?: number
+    inviteCode?: string
+}): ReturnType<typeof io> {
     // Keep one Socket.IO instance while it reconnects. Replacing a disconnected
     // instance leaves the old reconnection loop alive and can split join/message
     // events across different socket ids.
     if (socket) return socket
 
-    const token = getApiKey()
+    const inviteCode = opts?.inviteCode?.trim() || ''
+    const token = inviteCode ? '' : getApiKey()
     const userId = opts?.userId || localStorage.getItem('gc_user_id') || generateUUID()
     if (!opts?.userId) localStorage.setItem('gc_user_id', userId)
 
@@ -185,6 +192,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
             name: opts?.userName || localStorage.getItem('gc_user_name') || undefined,
             description: opts?.description || localStorage.getItem('gc_user_description') || undefined,
             authUserId: opts?.authUserId,
+            inviteCode: inviteCode || undefined,
         },
         transports: ['websocket', 'polling'],
         reconnection: true,
@@ -280,7 +288,7 @@ export async function getRoomDetail(
 }
 
 export async function joinRoomByCode(code: string): Promise<{ room: RoomInfo }> {
-    return request(`/api/hermes/group-chat/rooms/join/${code}`)
+    return request(`/api/hermes/group-chat/rooms/join/${encodeURIComponent(code)}`)
 }
 
 export async function updateInviteCode(roomId: string, inviteCode: string): Promise<{ success: boolean }> {

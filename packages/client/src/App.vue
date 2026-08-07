@@ -39,6 +39,7 @@ const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')
 const isStandaloneChatPage = computed(() => route.meta?.standaloneChat === true)
+const isInviteOnlyPage = computed(() => route.meta?.inviteOnly === true)
 const usesPageSidebar = computed(() =>
   ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
 )
@@ -75,8 +76,8 @@ function handleMobileMenuClick() {
   appStore.toggleSidebar()
 }
 
-watch(isLoginPage, (loginPage) => {
-  if (loginPage) {
+watch([isLoginPage, isInviteOnlyPage], ([loginPage, inviteOnlyPage]) => {
+  if (loginPage || inviteOnlyPage) {
     appStore.stopHealthPolling()
     return
   }
@@ -87,7 +88,9 @@ watch(isLoginPage, (loginPage) => {
 })
 
 onMounted(() => {
-  void syncThemeFromServer().catch(() => undefined)
+  if (!isInviteOnlyPage.value) {
+    void syncThemeFromServer().catch(() => undefined)
+  }
   const bridge = desktopBridge()
   if (!bridge?.isDesktop || (desktopPlatform.value !== 'win32' && bridge.windowKind !== 'chat')) return
   bridge.getWindowState?.()

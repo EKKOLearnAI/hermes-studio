@@ -18,6 +18,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/share/group-chat/:inviteCode?',
+      name: 'share.groupChat',
+      component: () => import('@/views/hermes/SharedGroupChatView.vue'),
+      meta: { public: true, standaloneChat: true, inviteOnly: true },
+    },
+    {
       path: '/hermes/chat',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
