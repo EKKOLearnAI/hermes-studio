@@ -2649,7 +2649,7 @@ export default {
     agentLinkTitle: 'Bring an Agent into this room',
     agentLinkDescription: 'Connect to your own Hermes service. The service makes an outbound encrypted connection; the room never receives its login credential or workspace access.',
     agentLinkTargetUrl: 'Your Hermes service URL',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 or https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 or https://your-hermes.example.com',
     agentLinkTargetRequired: 'Enter a Hermes service URL.',
     agentLinkInvalidTarget: 'Enter an HTTP or HTTPS origin without credentials, a path, query, or fragment.',
     agentLinkOpenTarget: 'Sign in and choose Agent',

@@ -2649,7 +2649,7 @@ export default {
     agentLinkTitle: 'إضافة Agent إلى هذه الغرفة',
     agentLinkDescription: 'اتصل بخدمة Hermes الخاصة بك. تنشئ الخدمة اتصالًا صادرًا ومشفّرًا، ولا تتلقى الغرفة بيانات تسجيل الدخول أو صلاحية الوصول إلى مساحة عملك.',
     agentLinkTargetUrl: 'عنوان URL لخدمة Hermes الخاصة بك',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 or https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 or https://your-hermes.example.com',
     agentLinkTargetRequired: 'أدخل عنوان URL لخدمة Hermes.',
     agentLinkInvalidTarget: 'أدخل أصل HTTP أو HTTPS من دون بيانات اعتماد أو مسار أو استعلام أو جزء.',
     agentLinkOpenTarget: 'تسجيل الدخول واختيار Agent',

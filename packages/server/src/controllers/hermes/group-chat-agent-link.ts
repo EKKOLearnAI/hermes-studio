@@ -661,8 +661,19 @@ export async function updateGuestAgentPolicy(ctx: Context): Promise<void> {
     allowGuestAgents: body.allowGuestAgents === true,
     maxGuestAgentsPerMember: maxAgents,
   })
-  if (room) server.broadcastGuestAgentPolicy(roomId, room)
-  ctx.body = { room }
+  if (!room) {
+    ctx.status = 404
+    ctx.body = { error: 'Room not found' }
+    return
+  }
+  server.broadcastGuestAgentPolicy(roomId, room)
+  ctx.body = {
+    policy: {
+      allowGuestAgents: Number(room.allowGuestAgents || 0),
+      guestAgentApproval: 'owner',
+      maxGuestAgentsPerMember: Math.max(1, Number(room.maxGuestAgentsPerMember || 1)),
+    },
+  }
 }
 
 export async function revokeConnector(ctx: Context): Promise<void> {

@@ -2305,7 +2305,7 @@ export default {
     agentLinkTitle: 'Добавить Agent в эту комнату',
     agentLinkDescription: 'Подключите собственный сервис Hermes. Сервис устанавливает исходящее зашифрованное соединение; комната не получает данные для входа или доступ к рабочей области.',
     agentLinkTargetUrl: 'URL вашего сервиса Hermes',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 or https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 or https://your-hermes.example.com',
     agentLinkTargetRequired: 'Введите URL сервиса Hermes.',
     agentLinkInvalidTarget: 'Введите источник HTTP или HTTPS без учётных данных, пути, параметров запроса и фрагмента.',
     agentLinkOpenTarget: 'Войти и выбрать Agent',

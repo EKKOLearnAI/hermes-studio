@@ -2370,7 +2370,7 @@ export default {
     agentLinkTitle: '이 방에 Agent 참여시키기',
     agentLinkDescription: '자신의 Hermes 서비스에 연결합니다. 서비스가 암호화된 아웃바운드 연결을 만들며, 방은 로그인 자격 증명이나 작업 공간 접근 권한을 받지 않습니다.',
     agentLinkTargetUrl: 'Hermes 서비스 URL',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 or https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 or https://your-hermes.example.com',
     agentLinkTargetRequired: 'Hermes 서비스 URL을 입력하세요.',
     agentLinkInvalidTarget: '자격 증명, 경로, 쿼리 또는 프래그먼트가 없는 HTTP 또는 HTTPS 오리진을 입력하세요.',
     agentLinkOpenTarget: '로그인하고 Agent 선택',

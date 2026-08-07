@@ -1361,7 +1361,10 @@ async function handleSaveGuestAgentPolicy(): Promise<void> {
             maxGuestAgentsPerMember: maxGuestAgentsPerMemberDraft.value,
         })
         const index = store.rooms.findIndex(room => room.id === roomId)
-        if (index >= 0) store.rooms[index] = result.room
+        if (index >= 0) store.rooms[index] = {
+            ...store.rooms[index],
+            ...result.policy,
+        }
         message.success(t('common.saved'))
     } catch (error: any) {
         message.error(error?.message || t('common.saveFailed'))

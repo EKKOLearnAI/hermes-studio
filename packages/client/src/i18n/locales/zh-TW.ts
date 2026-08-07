@@ -2609,7 +2609,7 @@ export default {
     agentLinkTitle: '把你的 Agent 加入房間',
     agentLinkDescription: '連接你自己的 Hermes 服務。服務會主動建立加密的連線，群聊不會取得登入憑證，也不能瀏覽你的本機工作區。',
     agentLinkTargetUrl: '你的 Hermes 服務位址',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 或 https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 或 https://your-hermes.example.com',
     agentLinkTargetRequired: '請輸入 Hermes 服務位址。',
     agentLinkInvalidTarget: '請輸入不含帳號、路徑、查詢參數或片段的 HTTP/HTTPS 服務位址。',
     agentLinkOpenTarget: '登入並選擇 Agent',

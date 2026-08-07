@@ -65,6 +65,17 @@ describe('group chat REST route baseline', () => {
         if (room) Object.assign(room, config)
         return room
       }),
+      updateRoomGuestAgentPolicy: vi.fn((roomId, policy) => {
+        const room = storage.rooms.get(roomId)
+        if (room) {
+          Object.assign(room, {
+            allowGuestAgents: policy.allowGuestAgents ? 1 : 0,
+            guestAgentApproval: 'owner',
+            maxGuestAgentsPerMember: policy.maxGuestAgentsPerMember,
+          })
+        }
+        return room || null
+      }),
       deleteRoom: vi.fn((roomId) => storage.rooms.delete(roomId)),
     }
     agentClients = {
@@ -119,6 +130,7 @@ describe('group chat REST route baseline', () => {
       clearRoomRuntimeState,
       updateRoomName,
       broadcastRoomAgents,
+      broadcastGuestAgentPolicy: vi.fn(),
       removeRoomMember: removeLiveRoomMember,
       getRoomAgentViews: (roomId: string) => storage.getRoomAgents(roomId),
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
@@ -182,6 +194,40 @@ describe('group chat REST route baseline', () => {
         allowGuestAgents: 0,
         guestAgentApproval: 'owner',
         maxGuestAgentsPerMember: 1,
+      },
+    })
+  })
+
+  it('updates guest Agent policy without returning internal room ownership fields', async () => {
+    storage.rooms.set('room-1', {
+      id: 'room-1',
+      name: 'Owner Room',
+      ownerAuthUserId: 7,
+      inviteCode: 'SECRET',
+      workspace: '/private/workspace',
+      allowGuestAgents: 0,
+      guestAgentApproval: 'owner',
+      maxGuestAgentsPerMember: 1,
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/guest-agent-policy`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user-id': '7',
+      },
+      body: JSON.stringify({
+        allowGuestAgents: true,
+        maxGuestAgentsPerMember: 2,
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({
+      policy: {
+        allowGuestAgents: 1,
+        guestAgentApproval: 'owner',
+        maxGuestAgentsPerMember: 2,
       },
     })
   })

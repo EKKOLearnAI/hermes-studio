@@ -2651,7 +2651,7 @@ export default {
     agentLinkTitle: '把你的 Agent 加入房间',
     agentLinkDescription: '连接你自己的 Hermes 服务。服务会主动建立加密的出站连接，群聊不会获得你的登录凭据，也不能浏览你的本地工作区。',
     agentLinkTargetUrl: '你的 Hermes 服务地址',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 或 https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 或 https://your-hermes.example.com',
     agentLinkTargetRequired: '请输入 Hermes 服务地址。',
     agentLinkInvalidTarget: '请输入不含账号、路径、查询参数或片段的 HTTP/HTTPS 服务地址。',
     agentLinkOpenTarget: '登录并选择 Agent',

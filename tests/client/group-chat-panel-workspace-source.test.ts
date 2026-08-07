@@ -22,6 +22,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('v-if="currentRoomCanManage"')
     expect(source).toContain(':allow-all-mention="currentRoomCanMentionAll"')
     expect(source).toContain('class="agent-avatar-stop"')
+    expect(source).toContain('...result.policy')
+    expect(source).not.toContain('store.rooms[index] = result.room')
   })
 
   it('renders the active room workspace badge beside the room title like single chat', () => {
@@ -201,9 +203,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(sharedView).toContain(':mask-closable="false"')
     expect(sharedView).toContain('/?groupChatAgentLink=1#/group-chat-link')
     expect(sharedView).toContain('v-model:value="targetOriginDraft"')
+    expect(sharedView).toContain("const targetOriginDraft = ref('http://127.0.0.1:8748')")
     expect(sharedView).not.toContain('probeTargets')
     expect(sharedView).not.toContain('detectedTargetOrigins')
-    expect(sharedView).not.toContain('127.0.0.1:8748')
     expect(sharedView).not.toContain('class="agent-link-launcher"')
     expect(linkView).not.toContain('disconnectLocalGroupAgent')
     expect(linkView).not.toContain('disconnectConnection')

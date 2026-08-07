@@ -157,7 +157,13 @@ export function decideGroupAgentPairing(
 export function updateGuestAgentPolicy(
   roomId: string,
   input: { allowGuestAgents: boolean; maxGuestAgentsPerMember: number },
-): Promise<{ room: import('./group-chat').RoomInfo }> {
+): Promise<{
+  policy: {
+    allowGuestAgents: number
+    guestAgentApproval: 'owner'
+    maxGuestAgentsPerMember: number
+  }
+}> {
   return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/guest-agent-policy`, {
     method: 'PUT',
     body: JSON.stringify(input),

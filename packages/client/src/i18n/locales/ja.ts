@@ -2370,7 +2370,7 @@ export default {
     agentLinkTitle: 'Agent をこのルームに参加させる',
     agentLinkDescription: '自分の Hermes サービスに接続します。サービスから暗号化された接続が確立され、ルームがログイン情報やワークスペースへのアクセス権を受け取ることはありません。',
     agentLinkTargetUrl: 'Hermes サービスの URL',
-    agentLinkTargetPlaceholder: 'http://127.0.0.1:8648 or https://your-hermes.example.com',
+    agentLinkTargetPlaceholder: 'http://127.0.0.1:8748 or https://your-hermes.example.com',
     agentLinkTargetRequired: 'Hermes サービスの URL を入力してください。',
     agentLinkInvalidTarget: '認証情報、パス、クエリ、フラグメントを含まない HTTP または HTTPS のオリジンを入力してください。',
     agentLinkOpenTarget: 'ログインして Agent を選択',
