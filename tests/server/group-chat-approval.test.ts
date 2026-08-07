@@ -383,6 +383,38 @@ describe('group chat approval and context baseline', () => {
     expect(bridgeApproval).not.toHaveBeenCalled()
   })
 
+  it('removes a resolved remote approval locator so it cannot be submitted twice', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const respondApproval = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      respondApproval,
+    } as any])
+    const requested = once<any>(human, 'approval.requested')
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-remote-once',
+      command: 'touch file',
+      description: 'needs approval',
+    })
+    await expect(requested).resolves.toMatchObject({ approval_id: 'approval-remote-once' })
+
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-remote-once',
+      choice: 'once',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-remote-once',
+      choice: 'once',
+    })).resolves.toEqual({ error: 'Approval is not pending in this room' })
+    expect(respondApproval).toHaveBeenCalledOnce()
+  })
+
   it('keeps Hermes approval responses routed through the Agent Bridge', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const bridgeApproval = vi.spyOn(AgentBridgeClient.prototype, 'approvalRespond')

@@ -2841,7 +2841,7 @@ export class GroupChatServer {
         if (remoteExecutor?.respondApproval) {
             try {
                 const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
-                if (resolved) this.pendingApprovalRoutes.delete(data.approval_id)
+                if (resolved) this.pendingApprovalRoutes.delete(routeKey)
                 ack?.({ ok: true, resolved })
             } catch (err: any) {
                 ack?.({ error: err.message || 'approval response failed' })
