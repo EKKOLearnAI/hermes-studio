@@ -44,6 +44,8 @@ groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:re
 groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links', agentLinkCtrl.requestPairing)
 groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/agent-links/:requestId', agentLinkCtrl.pairingStatus)
 groupChatPublicRoutes.post('/api/hermes/group-chat/remote-workspace/v1', remoteWorkspaceCtrl.remoteWorkspaceAction)
+groupChatPublicRoutes.get('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.downloadRemoteWorkspaceFile)
+groupChatPublicRoutes.put('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.uploadRemoteWorkspaceFileContent)
 
 groupChatRoutes.get('/api/hermes/group-chat-link/v1/agents', agentLinkCtrl.localAgents)
 groupChatRoutes.get('/api/hermes/group-chat-link/v1/connections', agentLinkCtrl.localConnections)

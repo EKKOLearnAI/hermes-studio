@@ -5191,6 +5191,76 @@
         }
       }
     },
+    "/api/hermes/group-chat/remote-workspace/v1/file": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get file",
+        "description": "GET /api/hermes/group-chat/remote-workspace/v1/file",
+        "operationId": "downloadRemoteWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update file",
+        "description": "PUT /api/hermes/group-chat/remote-workspace/v1/file",
+        "operationId": "uploadRemoteWorkspaceFileContent",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms": {
       "post": {
         "tags": [

@@ -312,6 +312,10 @@ describe('group chat agent workspace bridge runs', () => {
     )
     expect(runAndWait.mock.calls[0][0].instructions).toContain(`Bearer ${'a'.repeat(43)}`)
     expect(runAndWait.mock.calls[0][0].instructions).toContain('"action":"read"')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain(
+      'https://group.example/api/hermes/group-chat/remote-workspace/v1/file',
+    )
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('X-Expected-SHA256')
     expect(runAndWait.mock.calls[0][0].group_system_prompt).toBe(runAndWait.mock.calls[0][0].instructions)
     expect(bridgeMock.chat).not.toHaveBeenCalled()
     expect(mockSocket.emit).toHaveBeenCalledWith(

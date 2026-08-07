@@ -1,7 +1,7 @@
 import Koa from 'koa'
 import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'http'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -286,6 +286,53 @@ describe('group chat REST route baseline', () => {
       content: 'shared content',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
+
+    const binary = Buffer.from([0x00, 0xff, 0x10, 0x20])
+    const upload = await fetch(`${endpoint}/file?path=${encodeURIComponent('artifacts/data.bin')}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: binary,
+    })
+    expect(upload.status).toBe(200)
+    const uploaded = await upload.json() as { sha256: string }
+    expect(uploaded.sha256).toMatch(/^[a-f0-9]{64}$/)
+
+    const download = await fetch(`${endpoint}/file?path=${encodeURIComponent('artifacts/data.bin')}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('x-content-sha256')).toBe(uploaded.sha256)
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(binary)
+
+    const overwriteWithoutHash = await fetch(
+      `${endpoint}/file?path=${encodeURIComponent('artifacts/data.bin')}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: Buffer.from('replacement'),
+      },
+    )
+    expect(overwriteWithoutHash.status).toBe(409)
+    await expect(overwriteWithoutHash.json()).resolves.toMatchObject({ code: 'workspace_conflict' })
+
+    const replacement = Buffer.from([0x11, 0x22])
+    const overwrite = await fetch(`${endpoint}/file?path=${encodeURIComponent('artifacts/data.bin')}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+        'X-Expected-SHA256': uploaded.sha256,
+      },
+      body: replacement,
+    })
+    expect(overwrite.status).toBe(200)
+    expect(await readFile(join(workspace, 'artifacts/data.bin'))).toEqual(replacement)
 
     revokeRemoteWorkspaceGrantsForRun('run-route')
     const revoked = await fetch(endpoint, {

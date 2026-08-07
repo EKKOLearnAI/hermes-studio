@@ -859,6 +859,10 @@ export class AgentClient implements GroupAgentExecutor {
             '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
             '{"action":"mkdir","path":"relative/directory"}',
             '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
+            `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
+            `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
+            'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
+            'Binary uploads and downloads are limited to 20 MiB per file.',
             'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
             'The authorization expires when this run finishes. Never repeat the token in chat output.',
         ].join('\n')
