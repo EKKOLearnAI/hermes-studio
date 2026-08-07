@@ -2744,6 +2744,7 @@ export default {
     roomCloned: 'Room cloned',
     cloneRoom: 'Clone room',
     copyRoomLink: 'Copy Room Link',
+    manualCopyRoomLinkHint: 'The browser could not copy automatically. Select the link and copy it manually.',
     deleteRoomConfirm: 'Delete this room?',
     clearContext: 'Clear context',
     clearContextConfirm: 'Clear this room context? Messages and compression snapshots will be removed, but agents and members stay.',

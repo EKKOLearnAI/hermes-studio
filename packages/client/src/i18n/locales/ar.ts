@@ -2744,6 +2744,7 @@ export default {
     roomCloned: 'تم استنساخ الغرفة',
     cloneRoom: 'استنساخ الغرفة',
     copyRoomLink: 'نسخ رابط الغرفة',
+    manualCopyRoomLinkHint: 'تعذّر على المتصفح النسخ تلقائيًا. حدّد الرابط وانسخه يدويًا.',
     deleteRoomConfirm: 'حذف هذه الغرفة؟',
     clearContext: 'مسح السياق',
     clearContextConfirm: 'مسح سياق هذه الغرفة؟ ستُحذف الرسائل ولقطات الضغط، لكن يبقى الوكلاء والأعضاء.',

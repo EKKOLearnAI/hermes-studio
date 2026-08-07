@@ -74,6 +74,9 @@ const showCreateModal = ref(false)
 const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
 const showGroupChatRefactorNotice = ref(false)
+const showManualRoomLinkModal = ref(false)
+const manualRoomLink = ref('')
+const manualRoomLinkInput = ref<HTMLInputElement | null>(null)
 const showMemberRail = ref(true)
 const editingAgent = ref<RoomAgent | null>(null)
 const isSavingAgent = ref(false)
@@ -844,9 +847,22 @@ function buildRoomUrl(roomId: string) {
 }
 
 async function copyRoomLink(roomId: string) {
-    const ok = await copyToClipboard(buildRoomUrl(roomId))
-    if (ok) message.success(t('common.copied'))
-    else message.error(t('chat.copyFailed'))
+    const roomLink = buildRoomUrl(roomId)
+    const ok = await copyToClipboard(roomLink)
+    if (ok) {
+        message.success(t('common.copied'))
+        return
+    }
+
+    manualRoomLink.value = roomLink
+    showManualRoomLinkModal.value = true
+}
+
+function selectManualRoomLink() {
+    void nextTick(() => {
+        manualRoomLinkInput.value?.focus()
+        manualRoomLinkInput.value?.select()
+    })
 }
 
 function copyCurrentRoomLink() {
@@ -2215,6 +2231,31 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 </div>
             </div>
             <NModal
+                v-model:show="showManualRoomLinkModal"
+                preset="dialog"
+                :title="t('groupChat.copyRoomLink')"
+                style="width: 560px; max-width: 92vw"
+                @after-enter="selectManualRoomLink"
+            >
+                <p class="manual-room-link-hint">
+                    {{ t('groupChat.manualCopyRoomLinkHint') }}
+                </p>
+                <input
+                    ref="manualRoomLinkInput"
+                    class="manual-room-link-input"
+                    type="text"
+                    :value="manualRoomLink"
+                    :aria-label="t('groupChat.copyRoomLink')"
+                    readonly
+                    @click="selectManualRoomLink"
+                >
+                <template #action>
+                    <NButton type="primary" @click="showManualRoomLinkModal = false">
+                        {{ t('common.ok') }}
+                    </NButton>
+                </template>
+            </NModal>
+            <NModal
                 v-model:show="showGroupChatRefactorNotice"
                 preset="dialog"
                 :title="t('groupChat.refactorNoticeTitle')"
@@ -2801,6 +2842,30 @@ export default defineComponent({ components: { CreateRoomForm } })
         color: $text-primary;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
     }
+}
+
+.manual-room-link-hint {
+    margin: 0 0 12px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.manual-room-link-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    outline: none;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.manual-room-link-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 18%, transparent);
 }
 
 .room-list {

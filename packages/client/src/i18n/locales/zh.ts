@@ -2746,6 +2746,7 @@ export default {
     roomCloned: '房间已克隆',
     cloneRoom: '克隆房间',
     copyRoomLink: '复制房间链接',
+    manualCopyRoomLinkHint: '浏览器无法自动复制，请选中链接后手动复制。',
     deleteRoomConfirm: '确定删除这个房间吗？',
     clearContext: '清理上下文',
     clearContextConfirm: '确定清理当前房间上下文吗？消息和压缩快照会被删除，智能体和成员会保留。',

@@ -2459,6 +2459,7 @@ export default {
     roomCloned: '방이 복제되었습니다',
     cloneRoom: '방 복제',
     copyRoomLink: '방 링크 복사',
+    manualCopyRoomLinkHint: '브라우저에서 자동으로 복사하지 못했습니다. 링크를 선택해 직접 복사하세요.',
     deleteRoomConfirm: '이 방을 삭제할까요?',
     clearContext: '컨텍스트 지우기',
     clearContextConfirm: '이 방의 컨텍스트를 지울까요? 메시지와 압축 스냅샷은 삭제되지만 에이전트와 멤버는 유지됩니다.',

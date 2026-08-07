@@ -37,6 +37,18 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain("currentWorkspaceLabel || t('chat.setWorkspace')")
   })
 
+  it('offers a selected manual room link when browser clipboard access fails', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain('const roomLink = buildRoomUrl(roomId)')
+    expect(source).toContain('manualRoomLink.value = roomLink')
+    expect(source).toContain('showManualRoomLinkModal.value = true')
+    expect(source).toContain('manualRoomLinkInput.value?.select()')
+    expect(source).toContain('v-model:show="showManualRoomLinkModal"')
+    expect(source).toContain("t('groupChat.manualCopyRoomLinkHint')")
+    expect(source).toContain('ref="manualRoomLinkInput"')
+  })
+
   it('shows rolling-summary progress above the input like a single-chat tool call', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const headerLeft = source.slice(

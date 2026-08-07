@@ -2459,6 +2459,7 @@ export default {
     roomCloned: 'ルームを複製しました',
     cloneRoom: 'ルームを複製',
     copyRoomLink: 'ルームリンクをコピー',
+    manualCopyRoomLinkHint: 'ブラウザーで自動コピーできませんでした。リンクを選択して手動でコピーしてください。',
     deleteRoomConfirm: 'このルームを削除しますか？',
     clearContext: 'コンテキストを消去',
     clearContextConfirm: 'このルームのコンテキストを消去しますか？メッセージと圧縮スナップショットは削除されますが、エージェントとメンバーは残ります。',

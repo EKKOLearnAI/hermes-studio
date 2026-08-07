@@ -253,6 +253,39 @@ test.describe('group chat room deep links', () => {
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
   })
 
+  test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'isSecureContext', {
+        configurable: true,
+        value: false,
+      })
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: undefined,
+      })
+      Object.defineProperty(Document.prototype, 'execCommand', {
+        configurable: true,
+        value: () => false,
+      })
+    })
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await page.locator('.room-item', { hasText: 'Alpha Room' }).click({ button: 'right' })
+    await page.getByText('Copy Room Link', { exact: true }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Copy Room Link' })
+    const input = dialog.getByRole('textbox', { name: 'Copy Room Link' })
+    const origin = await page.evaluate(() => window.location.origin)
+    const expectedLink = `${origin}/#/share/group-chat/ALPHA1`
+
+    await expect(dialog).toContainText('The browser could not copy automatically')
+    await expect(input).toHaveValue(expectedLink)
+    await expect.poll(async () => input.evaluate((element: HTMLInputElement) => ({
+      start: element.selectionStart,
+      end: element.selectionEnd,
+    }))).toEqual({ start: 0, end: expectedLink.length })
+  })
+
   test('previewable room files open in the group workspace panel instead of downloading', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
     const fileCard = page.locator('.markdown-file-card', { hasText: 'package.json' })
