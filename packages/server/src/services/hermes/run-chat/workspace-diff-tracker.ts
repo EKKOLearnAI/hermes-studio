@@ -169,6 +169,7 @@ interface WorkspaceRunCheckpoint {
   kind: 'git' | 'filesystem'
   startedAt: number
   files: Map<string, SnapshotFile>
+  touchedPaths: Set<string>
   truncated: boolean
 }
 
@@ -191,6 +192,60 @@ interface SnapshotComparison {
 }
 
 const checkpoints = new Map<string, WorkspaceRunCheckpoint>()
+
+/**
+ * Cross-run claim registry for physical workspace changes.
+ *
+ * A workspace diff can only see *what* changed, not *who* wrote it. When two
+ * runs from different sessions share one workspace directory and overlap in
+ * time, both diffs see the same file change and both attribute it to their own
+ * session — polluting the other session's "Changes this turn" and run-change
+ * history (see issue #2404).
+ *
+ * To fix that, each recorded change is claimed here with a signature of its
+ * final physical state (change type, size after, mtime). A later run whose
+ * diff observes the *same* physical change skips it instead of recording a
+ * duplicate. Runs that explicitly wrote the path via write_file/patch are
+ * preferred as the owner (noteWorkspaceRunTouchedPaths); changes with an
+ * unknown writer are deferred while another run is still active in the same
+ * workspace, so the change is attributed exactly once.
+ */
+interface ClaimedWorkspaceChange {
+  changeType: 'added' | 'modified' | 'deleted'
+  sizeAfter: number | null
+  mtimeMs: number | null
+  sessionId: string
+  runId: string
+  claimedAt: number
+}
+
+const MAX_CLAIM_AGE_MS = 30 * 60 * 1000
+const MAX_CLAIMED_CHANGES = 10_000
+const claimedChanges = new Map<string, ClaimedWorkspaceChange>()
+
+function claimKey(root: string, relPath: string): string {
+  return `${root}\u0000${relPath}`
+}
+
+function changeSignature(changeType: string, sizeAfter: number | null, mtimeMs: number | null): string {
+  return `${changeType}\u0000${sizeAfter ?? ''}\u0000${mtimeMs ?? ''}`
+}
+
+function pruneExpiredClaims(): void {
+  if (claimedChanges.size <= MAX_CLAIMED_CHANGES) {
+    const now = Date.now()
+    for (const [key, claim] of claimedChanges) {
+      if (now - claim.claimedAt > MAX_CLAIM_AGE_MS) claimedChanges.delete(key)
+    }
+    return
+  }
+  // Cap exceeded: drop the oldest claims until back under the cap.
+  const sorted = [...claimedChanges.entries()].sort((left, right) => left[1].claimedAt - right[1].claimedAt)
+  const excess = claimedChanges.size - MAX_CLAIMED_CHANGES
+  for (let index = 0; index < excess; index += 1) {
+    claimedChanges.delete(sorted[index][0])
+  }
+}
 
 function createRunChangeId(runId: string): string {
   return `run:${runId || 'unknown'}:${Date.now().toString(36)}:${randomUUID()}`
@@ -593,6 +648,7 @@ export function startWorkspaceRunCheckpoint(args: {
       kind: 'git',
       startedAt: nowSeconds(),
       files,
+      touchedPaths: new Set<string>(),
       truncated: status.truncated,
     })
     return
@@ -611,8 +667,37 @@ export function startWorkspaceRunCheckpoint(args: {
     kind: 'filesystem',
     startedAt: nowSeconds(),
     files: snapshot.files,
+    touchedPaths: new Set<string>(),
     truncated: scan.truncated || snapshot.truncated,
   })
+}
+
+/**
+ * Record paths this run explicitly wrote via file-writing tool calls
+ * (write_file / patch). The workspace diff itself cannot tell who wrote a
+ * file; this gives the attribution logic a writer signal so the session that
+ * actually performed the write owns the change even when another session's run
+ * completes first.
+ */
+export function noteWorkspaceRunTouchedPaths(args: {
+  sessionId: string
+  runId?: string | null
+  paths: string[]
+}): void {
+  const runId = args.runId || ''
+  if (!runId || args.paths.length === 0) return
+  const checkpoint = checkpoints.get(checkpointKey(args.sessionId, runId))
+  if (!checkpoint) return
+  for (const candidate of args.paths) {
+    let absPath: string
+    try {
+      absPath = resolve(candidate)
+    } catch {
+      continue
+    }
+    if (!isPathInside(checkpoint.root, absPath)) continue
+    checkpoint.touchedPaths.add(relative(checkpoint.root, absPath))
+  }
 }
 
 export function discardWorkspaceRunCheckpoint(args: {
@@ -623,6 +708,16 @@ export function discardWorkspaceRunCheckpoint(args: {
   if (!runId) return
   const key = checkpointKey(args.sessionId, runId)
   checkpoints.delete(key)
+}
+
+function hasActiveOverlappingCheckpoint(checkpoint: WorkspaceRunCheckpoint): boolean {
+  for (const other of checkpoints.values()) {
+    if (other === checkpoint) continue
+    if (other.runId === checkpoint.runId) continue
+    if (other.root !== checkpoint.root) continue
+    return true
+  }
+  return false
 }
 
 export function completeWorkspaceRunCheckpointDraft(args: {
@@ -637,6 +732,7 @@ export function completeWorkspaceRunCheckpointDraft(args: {
   const checkpoint = checkpoints.get(key)
   checkpoints.delete(key)
   if (!checkpoint) return null
+  pruneExpiredClaims()
 
   const status = checkpoint.kind === 'git'
     ? getGitStatusPaths(checkpoint.root)
@@ -669,6 +765,36 @@ export function completeWorkspaceRunCheckpointDraft(args: {
     )
     if (!comparison.changed) continue
     if (isZeroLineDiff(comparison)) continue
+    // Cross-run attribution (see issue #2404): the directory diff cannot tell
+    // who wrote a file, so when several runs share one workspace and overlap,
+    // the same physical change would otherwise be recorded for every run.
+    // 1. A change already claimed by another run with the same final physical
+    //    state (type + size + mtime) is not recorded again.
+    // 2. A change whose writer is unknown to this run is deferred while any
+    //    other run is still active in the same workspace; the still-active run
+    //    will claim it (or the last active run does) so it is attributed once.
+    const finalMtimeMs = after.exists ? after.mtimeMs : (before?.mtimeMs ?? null)
+    const signature = changeSignature(comparison.changeType, comparison.sizeAfter, finalMtimeMs)
+    const claimKeyForPath = claimKey(checkpoint.root, relPath)
+    const existingClaim = claimedChanges.get(claimKeyForPath)
+    if (
+      existingClaim &&
+      existingClaim.runId !== runId &&
+      changeSignature(existingClaim.changeType, existingClaim.sizeAfter, existingClaim.mtimeMs) === signature
+    ) {
+      continue
+    }
+    if (!checkpoint.touchedPaths.has(relPath) && hasActiveOverlappingCheckpoint(checkpoint)) {
+      continue
+    }
+    claimedChanges.set(claimKeyForPath, {
+      changeType: comparison.changeType,
+      sizeAfter: comparison.sizeAfter,
+      mtimeMs: finalMtimeMs,
+      sessionId: checkpoint.sessionId,
+      runId,
+      claimedAt: Date.now(),
+    })
     if (files.length >= MAX_CHANGED_FILES) {
       truncated = true
       break

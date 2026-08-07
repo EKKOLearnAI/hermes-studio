@@ -530,4 +530,105 @@ describe('workspace diff tracker', () => {
     expect(change).not.toBeNull()
     expect(change?.files.map(file => file.path)).toEqual(['src/app.py'])
   })
+
+  it('attributes a shared-workspace file to the session that wrote it, not to a concurrently running session (issue #2404)', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      noteWorkspaceRunTouchedPaths,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'shared-workspace')
+    mkdirSync(workspace)
+
+    // Session A (bystander) is still running while session B writes the file.
+    startWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    startWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+
+    // Session B writes via write_file (its tool call is tracked); session A never touches it.
+    noteWorkspaceRunTouchedPaths({ sessionId: 'session-b', runId: 'run-b', paths: [join(workspace, 'notes.md')] })
+    writeFileSync(join(workspace, 'notes.md'), '# migration checklist\n')
+
+    // The writer's run completes first and claims the change...
+    const writerChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+    expect(writerChange).not.toBeNull()
+    expect(writerChange?.files.map(file => file.path)).toEqual(['notes.md'])
+
+    // ...the bystander finishing later must not record the same physical change.
+    const bystanderChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    expect(bystanderChange).toBeNull()
+
+    const { listWorkspaceRunChangesForSession } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    expect(listWorkspaceRunChangesForSession('session-a')).toHaveLength(0)
+    expect(listWorkspaceRunChangesForSession('session-b')).toHaveLength(1)
+  })
+
+  it('prefers the real writer even when the bystander run completes first', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      noteWorkspaceRunTouchedPaths,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'shared-workspace-writer-last')
+    mkdirSync(workspace)
+
+    startWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    startWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+    noteWorkspaceRunTouchedPaths({ sessionId: 'session-b', runId: 'run-b', paths: [join(workspace, 'notes.md')] })
+    writeFileSync(join(workspace, 'notes.md'), 'content\n')
+
+    // Bystander completes while the writer is still active: writer unknown to it -> defer.
+    const bystanderChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    expect(bystanderChange).toBeNull()
+
+    const writerChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+    expect(writerChange).not.toBeNull()
+    expect(writerChange?.files.map(file => file.path)).toEqual(['notes.md'])
+  })
+
+  it('records an unknown-writer change exactly once across overlapping runs', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'shared-workspace-unknown-writer')
+    mkdirSync(workspace)
+
+    startWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    startWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+
+    // Written by a terminal command — no touched path is recorded for either run.
+    writeFileSync(join(workspace, 'generated.json'), '{}\n')
+
+    // The first run to finish defers while the other is still active...
+    const firstChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-a', runId: 'run-a', workspace })
+    expect(firstChange).toBeNull()
+
+    // ...so the change is attributed exactly once, to the last active run.
+    const secondChange = completeWorkspaceRunCheckpoint({ sessionId: 'session-b', runId: 'run-b', workspace })
+    expect(secondChange).not.toBeNull()
+    expect(secondChange?.files.map(file => file.path)).toEqual(['generated.json'])
+  })
+
+  it('ignores touched paths outside the workspace root', async () => {
+    const {
+      completeWorkspaceRunCheckpoint,
+      noteWorkspaceRunTouchedPaths,
+      startWorkspaceRunCheckpoint,
+    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+
+    const workspace = join(root, 'workspace-outside-touch')
+    mkdirSync(workspace)
+    const outsidePath = join(root, 'outside.txt')
+    writeFileSync(outsidePath, 'x\n')
+
+    startWorkspaceRunCheckpoint({ sessionId: 'session-outside', runId: 'run-outside', workspace })
+    noteWorkspaceRunTouchedPaths({ sessionId: 'session-outside', runId: 'run-outside', paths: [outsidePath] })
+    writeFileSync(join(workspace, 'real.txt'), 'y\n')
+    const change = completeWorkspaceRunCheckpoint({ sessionId: 'session-outside', runId: 'run-outside', workspace })
+    expect(change).not.toBeNull()
+    expect(change?.files.map(file => file.path)).toEqual(['real.txt'])
+  })
 })

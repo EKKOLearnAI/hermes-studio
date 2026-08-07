@@ -36,7 +36,7 @@ import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
 import { observeRunChatPetEvent } from '../pet-state-socket'
-import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
+import { completeWorkspaceRunCheckpoint, noteWorkspaceRunTouchedPaths, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
@@ -44,6 +44,30 @@ const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 120_000
 
 type BridgeRunSource = Extract<ChatRunSource, 'cli' | 'global_agent' | 'workflow'>
+
+/**
+ * File-writing tools whose `path` argument tells us which workspace files a
+ * run actually wrote. Used to prefer the real writer when attributing
+ * workspace diffs across concurrent runs sharing one workspace.
+ */
+const WORKSPACE_WRITE_TOOL_NAMES = new Set(['write_file', 'patch'])
+
+function extractWorkspaceWrittenPaths(toolName: string, args?: Record<string, unknown> | null): string[] {
+  if (!args || !WORKSPACE_WRITE_TOOL_NAMES.has(toolName)) return []
+  const paths: string[] = []
+  const pathArg = args.path
+  if (typeof pathArg === 'string' && pathArg.trim()) paths.push(pathArg)
+  if (toolName === 'patch' && args.mode === 'patch') {
+    const patchText = args.patch
+    if (typeof patchText === 'string') {
+      for (const match of patchText.matchAll(/^\*\*\* (?:Update|Add|Delete|Rename) File: (.+)$/gm)) {
+        const path = match[1]?.trim()
+        if (path) paths.push(path)
+      }
+    }
+  }
+  return paths
+}
 
 function normalizeBridgeRunSource(source?: string | null, sessionSource?: string | null): BridgeRunSource {
   if (sessionSource === 'global_agent' || source === 'global_agent') return 'global_agent'
@@ -1204,6 +1228,14 @@ async function applyBridgeChunkAsync(
       const toolName = (ev.tool_name as string) || ''
       const args = ev.args as Record<string, unknown> | undefined
       const tool = recordBridgeToolStarted(state, sessionId, runMarker, toolName, args, ev.tool_call_id)
+      try {
+        const writtenPaths = extractWorkspaceWrittenPaths(toolName, args)
+        if (writtenPaths.length > 0) {
+          noteWorkspaceRunTouchedPaths({ sessionId, runId: chunk.run_id, paths: writtenPaths })
+        }
+      } catch (err) {
+        bridgeLogger.warn({ err, sessionId, runId: chunk.run_id }, '[workspace-diff] failed to note touched paths')
+      }
       const payload = {
         event: 'tool.started',
         run_id: chunk.run_id,
