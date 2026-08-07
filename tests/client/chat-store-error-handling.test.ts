@@ -10,6 +10,11 @@ const chatApi = vi.hoisted(() => ({
   unregisterSessionHandlers: vi.fn(),
 }))
 
+const completionSoundMock = vi.hoisted(() => ({
+  primeCompletionSound: vi.fn(),
+  playCompletionSound: vi.fn(),
+}))
+
 vi.mock('@/api/hermes/chat', () => ({
   startRunViaSocket: chatApi.startRunViaSocket,
   resumeSession: chatApi.resumeSession,
@@ -58,11 +63,12 @@ vi.mock('@/api/hermes/system', () => ({
 }))
 
 vi.mock('@/utils/completion-sound', () => ({
-  primeCompletionSound: vi.fn(),
-  playCompletionSound: vi.fn(),
+  primeCompletionSound: completionSoundMock.primeCompletionSound,
+  playCompletionSound: completionSoundMock.playCompletionSound,
 }))
 
 import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
+import { useSettingsStore } from '@/stores/hermes/settings'
 
 function makeSession(id: string): Session {
   return {
@@ -96,6 +102,36 @@ describe('chat store error handling - #1644', () => {
       handlers = registeredHandlers
       return vi.fn()
     })
+  })
+
+  it('primes approval sound on direct send when completion sound is disabled', async () => {
+    const store = useChatStore()
+    const settingsStore = useSettingsStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    settingsStore.display.bell_on_complete = false
+    settingsStore.display.approval_bell = true
+
+    await store.sendMessage('request approval')
+
+    expect(completionSoundMock.primeCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('does not prime notification sound on direct send when both sound settings are disabled', async () => {
+    const store = useChatStore()
+    const settingsStore = useSettingsStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    settingsStore.display.bell_on_complete = false
+    settingsStore.display.approval_bell = false
+
+    await store.sendMessage('silent request')
+
+    expect(completionSoundMock.primeCompletionSound).not.toHaveBeenCalled()
   })
 
   it('tracks an approval request from an inactive session through the global socket listener', () => {

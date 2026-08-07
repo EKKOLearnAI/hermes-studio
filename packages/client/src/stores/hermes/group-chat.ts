@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useSettingsStore } from './settings'
+import { primeCompletionSound } from '@/utils/completion-sound'
 import { getActiveProfileName, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
 import { formatMessageWithReference, type Attachment, type ContentBlock, type MessageReference } from './chat'
@@ -1085,6 +1087,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
     async function sendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
         if (!currentRoomId.value) return
+        const { display } = useSettingsStore()
+        if (display.bell_on_complete || display.approval_bell) primeCompletionSound()
         const roomId = currentRoomId.value
         const messageId = uid()
         const messageReference = messageReferences.value.get(roomId) || null

@@ -72,11 +72,26 @@ const authApiMock = vi.hoisted(() => ({
   fetchCurrentUser: vi.fn(),
 }))
 const fetchMock = vi.hoisted(() => vi.fn())
+const completionSoundMock = vi.hoisted(() => ({
+  primeCompletionSound: vi.fn(),
+}))
+const settingsStoreMock = vi.hoisted(() => ({
+  display: {
+    bell_on_complete: false,
+    approval_bell: true,
+  },
+}))
 
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => clientApiMock)
 vi.mock('@/api/auth', () => authApiMock)
 vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/utils/completion-sound', () => ({
+  primeCompletionSound: completionSoundMock.primeCompletionSound,
+}))
+vi.mock('@/stores/hermes/settings', () => ({
+  useSettingsStore: () => settingsStoreMock,
+}))
 vi.stubGlobal('fetch', fetchMock)
 
 function emitSocket(event: string, payload: unknown) {
@@ -132,6 +147,7 @@ describe('group chat store baseline lifecycle', () => {
     vi.useRealTimers()
     setActivePinia(createPinia())
     localStorage.clear()
+    completionSoundMock.primeCompletionSound.mockClear()
     groupChatApiMock.handlers.clear()
     groupChatApiMock.setJoinAck({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
     for (const key of Object.keys(groupChatApiMock)) {
@@ -601,6 +617,30 @@ describe('group chat store baseline lifecycle', () => {
       content: 'hello room',
     }), expect.any(Function))
     expect(store.error).toBeNull()
+  })
+
+  it('primes approval sound on group send when completion sound is disabled', async () => {
+    const store = await loadStore()
+    settingsStoreMock.display.bell_on_complete = false
+    settingsStoreMock.display.approval_bell = true
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    await store.sendMessage('request approval')
+
+    expect(completionSoundMock.primeCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('does not prime notification sound on group send when both sound settings are disabled', async () => {
+    const store = await loadStore()
+    settingsStoreMock.display.bell_on_complete = false
+    settingsStoreMock.display.approval_bell = false
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    await store.sendMessage('silent request')
+
+    expect(completionSoundMock.primeCompletionSound).not.toHaveBeenCalled()
   })
 
   it('waits for a reconnect room join before sending the next message', async () => {

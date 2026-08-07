@@ -3007,8 +3007,9 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function primeCompletionBellIfEnabled() {
-    if (useSettingsStore().display.bell_on_complete) {
+  function primeNotificationSoundIfEnabled() {
+    const { display } = useSettingsStore()
+    if (display.bell_on_complete || display.approval_bell) {
       primeCompletionSound()
     }
   }
@@ -3066,7 +3067,7 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(content: string, attachments?: Attachment[]) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
-    primeCompletionBellIfEnabled()
+    primeNotificationSoundIfEnabled()
 
     const trimmedContent = content.trim()
 
