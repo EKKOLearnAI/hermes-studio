@@ -179,6 +179,27 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body).toEqual({ error: 'Profile is required' })
   })
 
+  it('defaults regular admins to their bound default profile when none is requested', async () => {
+    const { schemas, users, auth } = await initUsers()
+    const now = Date.now()
+    db.prepare(
+      `INSERT INTO ${schemas.USERS_TABLE} (username, password_hash, role, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('ops', users.hashPassword('secret'), 'admin', 'active', now, now)
+    const admin = users.findUserByUsername('ops')!
+    db.prepare(
+      `INSERT INTO ${schemas.USER_PROFILES_TABLE} (user_id, profile_name, is_default, created_at)
+       VALUES (?, ?, 1, ?)`
+    ).run(admin.id, 'research', now)
+    const ctx = makeCtx({ id: admin.id, username: 'ops', role: 'admin' }, '')
+    const next = vi.fn(async () => {})
+
+    await auth.resolveUserProfile(ctx, next)
+
+    expect(ctx.state.profile).toEqual({ name: 'research' })
+    expect(next).toHaveBeenCalledOnce()
+  })
+
   it.each([
     '/api/devices/peer-connections',
     '/api/devices/peer-connections/conn-1/terminals',
