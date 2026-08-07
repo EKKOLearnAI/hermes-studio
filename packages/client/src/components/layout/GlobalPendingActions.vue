@@ -236,6 +236,7 @@ watch(pendingActions, actions => {
     if (liveKeys.has(key)) continue
     handle.destroy()
     handles.delete(key)
+    pendingSoundKeys.delete(key)
     delete clarifyDrafts[key]
     delete submitting[key]
   }
