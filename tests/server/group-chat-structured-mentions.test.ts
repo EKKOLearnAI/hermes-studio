@@ -94,6 +94,32 @@ describe('group chat structured agent mentions', () => {
     expect(processMentions).not.toHaveBeenCalled()
   })
 
+  it('persists an agent reply that only names itself without dispatching itself', async () => {
+    const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(author)
+    await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    const replyToMention = vi.fn(async () => {})
+    ;(groupServer.agentClients as any).rooms.set('room-1', new Map([[
+      'agent-reviewer',
+      { id: 'agent-reviewer', agentId: 'agent-reviewer', name: 'Reviewer', replyToMention },
+    ]]))
+
+    const response = await emitAck<{ id?: string; error?: string }>(author, 'message', {
+      roomId: 'room-1',
+      id: 'self-named-reply',
+      content: '@Author status: waiting for the next task.',
+      role: 'assistant',
+      agentSessionId: groupRuntimeSessionId('room-1', 'default', 'Author'),
+    })
+
+    expect(response).toEqual({ id: 'self-named-reply' })
+    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('self-named-reply')).toEqual({ count: 1 })
+    expect(replyToMention).not.toHaveBeenCalled()
+  })
+
   it('normalizes an agent @all broadcast, persists it, and dispatches every other room agent', async () => {
     const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
       source: 'agent',

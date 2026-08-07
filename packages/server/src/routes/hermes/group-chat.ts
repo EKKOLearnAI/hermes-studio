@@ -171,7 +171,7 @@ function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>,
         }
     }
     return [...byId.values()]
-        .sort((a, b) => Number(b.room._activityAt || 0) - Number(a.room._activityAt || 0) || a.room.id.localeCompare(b.room.id))
+        .sort((a, b) => Number(b.room.lastActiveAt || 0) - Number(a.room.lastActiveAt || 0) || a.room.id.localeCompare(b.room.id))
         .map(({ room, includeWorkspace }) => serializeRoom(room, includeWorkspace))
 }
 

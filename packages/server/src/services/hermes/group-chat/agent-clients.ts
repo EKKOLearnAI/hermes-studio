@@ -1584,7 +1584,7 @@ export class AgentClients {
      */
     async createAgent(config: AgentConfig, handlers?: AgentEventHandler, port?: number): Promise<AgentClient> {
         const client = new AgentClient(config, handlers)
-        client.setMentionBuilder((roomId, content) => this.buildAgentReplyMentions(roomId, content))
+        client.setMentionBuilder((roomId, content) => this.buildAgentReplyMentions(roomId, content, client.agentId))
         await client.connect(port)
 
         // Auto-apply stored references (fixes propagation for agents created after set*)
@@ -1607,7 +1607,7 @@ export class AgentClients {
         }
 
         if (typeof (client as any).setMentionBuilder === 'function') {
-            client.setMentionBuilder((targetRoomId, content) => this.buildAgentReplyMentions(targetRoomId, content))
+            client.setMentionBuilder((targetRoomId, content) => this.buildAgentReplyMentions(targetRoomId, content, client.agentId))
         }
         room.set(client.agentId, client)
         try {
@@ -1650,11 +1650,11 @@ export class AgentClients {
         return room ? Array.from(room.values()) : []
     }
 
-    private buildAgentReplyMentions(roomId: string, content: string): StructuredMentionEntry[] {
+    private buildAgentReplyMentions(roomId: string, content: string, senderParticipantId: string): StructuredMentionEntry[] {
         const agents = this.getAgents(roomId)
         if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
         return agents
-            .filter(agent => isAgentMentioned(content, agent.name))
+            .filter(agent => agent.agentId !== senderParticipantId && isAgentMentioned(content, agent.name))
             .map(agent => ({
                 type: 'agent' as const,
                 participantId: agent.agentId,

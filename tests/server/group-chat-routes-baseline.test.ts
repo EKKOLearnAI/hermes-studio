@@ -139,12 +139,12 @@ describe('group chat REST route baseline', () => {
     await expect(res.json()).resolves.toEqual({ error: 'name and inviteCode are required' })
   })
 
-  it('keeps the aggregated authenticated room list ordered by activity instead of room id', async () => {
+  it('returns public lastActiveAt and keeps the aggregated authenticated room list ordered by activity instead of room id', async () => {
     storage.getRoomsForProfiles.mockReturnValue([
-      { id: 'room-z', name: 'Newest', inviteCode: 'Z', _activityAt: 20 },
+      { id: 'room-old-active', name: 'Old but active', inviteCode: 'Z', createdAt: 100, lastActiveAt: 300 },
     ])
     storage.getRoomsForAuthUser.mockReturnValue([
-      { id: 'room-a', name: 'Older', inviteCode: 'A', _activityAt: 10 },
+      { id: 'room-new-created', name: 'New but inactive', inviteCode: 'A', createdAt: 200, lastActiveAt: 200 },
     ])
     storage.getOwnedRoomsForAuthUser.mockReturnValue([])
 
@@ -154,7 +154,10 @@ describe('group chat REST route baseline', () => {
 
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toMatchObject({
-      rooms: [{ id: 'room-z' }, { id: 'room-a' }],
+      rooms: [
+        { id: 'room-old-active', lastActiveAt: 300 },
+        { id: 'room-new-created', lastActiveAt: 200 },
+      ],
     })
   })
 
