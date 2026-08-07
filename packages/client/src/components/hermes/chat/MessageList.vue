@@ -371,6 +371,13 @@ function queueInsertionTitle(messageId: string): string {
   return t("chat.queueInsertionStopping");
 }
 
+// [user-controlled patch] 立即发送:把排队消息提到队首并打断当前 run
+function promoteQueuedMessage(messageId: string) {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return;
+  chatStore.promoteQueuedMessage(sid, messageId);
+}
+
 function queuedPreview(content: string): string {
   const reference = parseMessageReference(content);
   const visibleContent = reference?.reply || reference?.content || content;
@@ -978,18 +985,58 @@ defineExpose({
         </div>
       </Transition>
       <Transition name="queue-float">
-        <MessageQueueFloatPanel
-          :items="queuedFloatItems"
-          :can-insert="canInsertQueuedMessages"
-          :active-insert-id="activeQueueInsertion?.queueId"
-          :insert-title="item => queueInsertionTitle(item.id)"
-          @insert="insertQueuedMessage"
-          @remove="removeQueuedMessage"
-        />
-      </Transition>
-    </div>
-  </div>
-</template>
+              <MessageQueueFloatPanel
+                v-if="canInsertQueuedMessages"
+                :items="queuedFloatItems"
+                :can-insert="canInsertQueuedMessages"
+                :active-insert-id="activeQueueInsertion?.queueId"
+                :insert-title="item => queueInsertionTitle(item.id)"
+                @insert="insertQueuedMessage"
+                @remove="removeQueuedMessage"
+              />
+              <div v-else-if="queuedMessages.length > 0" class="queue-float-panel">
+          <div class="queue-float-header">
+            <span class="queue-orbit" aria-hidden="true">
+              <span></span>
+            </span>
+            <span>{{ t('chat.messageQueue') }}</span>
+            <strong>{{ queuedMessages.length }}</strong>
+          </div>
+          <div class="queue-float-list">
+            <div
+              v-for="(message, index) in queuedMessages"
+              :key="message.id"
+              class="queue-float-item"
+            >
+              <span class="queue-index">{{ index + 1 }}</span>
+              <span class="queue-text">{{ queuedPreview(message.content) }}</span>
+              <button
+                type="button"
+                class="queue-promote"
+                @click="promoteQueuedMessage(message.id)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <line x1="12" y1="19" x2="12" y2="6" />
+                  <polyline points="5 11 12 4 19 11" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="queue-remove"
+                :title="t('chat.removeQueuedMessage')"
+                @click="removeQueuedMessage(message.id)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+                    </div>
+                  </Transition>
+                </div>
+              </div>
+            </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
@@ -1303,6 +1350,26 @@ defineExpose({
   }
 }
 
+.queue-promote {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-muted;
+  background: transparent;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $success;
+    background: rgba($success, 0.1);
+  }
+}
+
 @media (max-width: 640px) {
   .message-float-stack {
     left: 8px;
@@ -1369,6 +1436,11 @@ defineExpose({
 
   .queue-insert,
   .queue-remove {
+    width: 22px;
+    height: 22px;
+  }
+
+  .queue-promote {
     width: 22px;
     height: 22px;
   }

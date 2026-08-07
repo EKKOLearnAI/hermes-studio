@@ -42,6 +42,9 @@ export interface StartRunRequest {
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  /** true = 用户主动放行(打断当前回复并插队到队首立即执行)。
+   * false/缺省 = 普通发送,仅入队尾排队等待。 */
+  preempt?: boolean
 }
 
 export interface StartRunResponse {

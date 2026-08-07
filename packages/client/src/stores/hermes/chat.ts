@@ -2753,9 +2753,18 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  function insertQueuedMessage(sessionId: string, messageId: string) {
+function insertQueuedMessage(sessionId: string, messageId: string) {
     if (!(queuedUserMessages.value.get(sessionId) || []).some(message => message.id === messageId)) return
     getChatRunSocket(runtimeTransport())?.emit('insert_queued_run', {
+      session_id: sessionId,
+      queue_id: messageId,
+    })
+  }
+
+  // [user-controlled patch] 立即发送:把排队消息提到队首并打断当前 run
+  function promoteQueuedMessage(sessionId: string, messageId: string) {
+    if (!(queuedUserMessages.value.get(sessionId) || []).some(message => message.id === messageId)) return
+    getChatRunSocket(runtimeTransport())?.emit('run.promote', {
       session_id: sessionId,
       queue_id: messageId,
     })
@@ -3290,6 +3299,9 @@ export const useChatStore = defineStore('chat', () => {
           models: group.models,
         })),
         queue_id: userMsg.id,
+        // 普通发送默认排队不打断;只有用户通过"立即发送"/ESC 显式放行时
+        // (promoteQueuedMessage 走 run.promote)才打断当前回复。
+        preempt: false,
         workspace: activeSession.value?.workspace || undefined,
         category_id: activeSession.value?.categoryId ?? null,
         source: sessionSource,
@@ -5123,8 +5135,9 @@ export const useChatStore = defineStore('chat', () => {
     subagentStreams,
     getSubagentStream,
     removeQueuedMessage,
-    insertQueuedMessage,
-    setMessageReference,
+        insertQueuedMessage,
+        promoteQueuedMessage,
+        setMessageReference,
     clearMessageReference,
     isLoadingSessions,
     sessionsLoaded,
