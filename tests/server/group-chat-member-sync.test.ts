@@ -28,6 +28,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 
 import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/services/hermes/group-chat/access'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
 
 function routeHandler(path: string, method: string) {
@@ -40,6 +41,20 @@ describe('Group Chat member/agent identity sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     socketHandlers.clear()
+  })
+
+  it('distinguishes profile-based room managers from the room owner for @all', () => {
+    const room = { id: 'room-1', ownerAuthUserId: 7 }
+    const storage = {
+      getRoom: vi.fn(() => room),
+      getRoomsForProfiles: vi.fn(() => [room]),
+    } as any
+    const profileManager = { id: 8, role: 'admin', profiles: ['default'] }
+    const owner = { id: 7, role: 'admin', profiles: [] }
+
+    expect(canManageGroupChatRoom(storage, room.id, profileManager)).toBe(true)
+    expect(isGroupChatRoomOwner(storage, room.id, profileManager)).toBe(false)
+    expect(isGroupChatRoomOwner(storage, room.id, owner)).toBe(true)
   })
 
   it('broadcasts typing only for a socket that is currently joined to the room', () => {
@@ -730,13 +745,15 @@ describe('Group Chat member/agent identity sync', () => {
     server.storage = {
       getRoomAgents: vi.fn(() => agents),
     }
+    server.agentClients = { getAgent: vi.fn(() => ({ connected: true })) }
+    server.rooms = new Map()
     server.nsp = { to }
 
     expect(server.broadcastRoomAgents('room-1')).toEqual(agents)
     expect(to).toHaveBeenCalledWith('room-1')
     expect(emit).toHaveBeenCalledWith('agents_updated', {
       roomId: 'room-1',
-      agents,
+      agents: [{ ...agents[0], connectionStatus: 'online' }],
     })
   })
 
@@ -795,6 +812,49 @@ describe('Group Chat member/agent identity sync', () => {
       status: 'ready',
     })
     expect(ack).toHaveBeenCalledWith({ ok: true })
+  })
+
+  it('allows a member to interrupt only their own remote Agent', async () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', { hasOnlineMember: vi.fn(() => true) }]])
+    server.contextStatusState = new Map()
+    server.canSocketManageRoom = vi.fn(() => false)
+    server.socketRequestedSourceMap = new Map()
+    server.socketUserMap = new Map([['owner-socket', 'guest-owner']])
+    server.storage = {
+      getRoomAgents: vi.fn(() => [
+        {
+          name: 'Owned Remote',
+          executorType: 'remote',
+          ownerMemberId: 'guest-owner',
+        },
+        {
+          name: 'Other Remote',
+          executorType: 'remote',
+          ownerMemberId: 'guest-other',
+        },
+      ]),
+    }
+    server.agentClients = { interruptAgent: vi.fn(async () => {}) }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    const socket = { id: 'owner-socket' }
+    const ownedAck = vi.fn()
+    const otherAck = vi.fn()
+
+    await server.handleInterruptAgent(socket, {
+      roomId: 'room-1',
+      agentName: 'Owned Remote',
+    }, ownedAck)
+    await server.handleInterruptAgent(socket, {
+      roomId: 'room-1',
+      agentName: 'Other Remote',
+    }, otherAck)
+
+    expect(ownedAck).toHaveBeenCalledWith({ ok: true })
+    expect(otherAck).toHaveBeenCalledWith({ error: 'Access denied' })
+    expect(server.agentClients.interruptAgent).toHaveBeenCalledTimes(1)
+    expect(server.agentClients.interruptAgent).toHaveBeenCalledWith('room-1', 'Owned Remote')
   })
 
   it('denies runtime agent sockets realtime management actions even after they join the room', async () => {
@@ -1135,10 +1195,10 @@ describe('Group Chat member/agent identity sync', () => {
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@Helper agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
     expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
     expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
-      content: '@all agent says hi',
+      content: '@Helper agent says hi',
       senderId: 'agent-1',
       mentionDepth: 1,
     }))

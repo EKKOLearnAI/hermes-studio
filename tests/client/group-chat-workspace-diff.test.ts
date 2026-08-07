@@ -55,6 +55,7 @@ const groupChatApiMock = vi.hoisted(() => {
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => ({
   getApiKey: vi.fn(() => 'token'),
+  getBaseUrlValue: vi.fn(() => ''),
   getActiveProfileName: vi.fn(() => 'default'),
   getStoredUsername: vi.fn(() => null),
 }))

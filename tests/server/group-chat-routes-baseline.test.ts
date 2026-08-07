@@ -20,6 +20,7 @@ describe('group chat REST route baseline', () => {
   let clearRoomRuntimeState: ReturnType<typeof vi.fn>
   let updateRoomName: ReturnType<typeof vi.fn>
   let broadcastRoomAgents: ReturnType<typeof vi.fn>
+  let removeLiveRoomMember: ReturnType<typeof vi.fn>
   let roomSummaryService: any
 
   beforeEach(async () => {
@@ -37,6 +38,11 @@ describe('group chat REST route baseline', () => {
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
+      getMemberByUserId: vi.fn((roomId, userId) => (storage.members.get(roomId) || []).find((member: any) => member.userId === userId) || null),
+      removeRoomMember: vi.fn((roomId, userId) => storage.members.set(
+        roomId,
+        (storage.members.get(roomId) || []).filter((member: any) => member.userId !== userId),
+      )),
       getRoomByInviteCode: vi.fn((code) => [...storage.rooms.values()].find((r: any) => r.inviteCode === code)),
       addRoomAgent: vi.fn((roomId, agentId, profile, name, description, invited, metadata = {}) => {
         const row = { id: `row-${agentId}`, roomId, agentId, profile, name, description, invited, ...metadata }
@@ -77,6 +83,10 @@ describe('group chat REST route baseline', () => {
       return room || null
     })
     broadcastRoomAgents = vi.fn((roomId: string) => storage.getRoomAgents(roomId))
+    removeLiveRoomMember = vi.fn((roomId: string, userId: string) => {
+      storage.removeRoomMember(roomId, userId)
+      return storage.getRoomMembers(roomId)
+    })
     roomSummaryService = {
       runExclusive: vi.fn(async (_roomId: string, task: () => unknown) => task()),
       getState: vi.fn((roomId: string) => ({
@@ -109,10 +119,17 @@ describe('group chat REST route baseline', () => {
       clearRoomRuntimeState,
       updateRoomName,
       broadcastRoomAgents,
+      removeRoomMember: removeLiveRoomMember,
+      getRoomAgentViews: (roomId: string) => storage.getRoomAgents(roomId),
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
     const app = new Koa()
     app.use(bodyParser())
+    app.use(async (ctx, next) => {
+      const userId = Number(ctx.get('x-test-user-id') || 0)
+      if (userId > 0) ctx.state.user = { id: userId, role: 'user', profiles: [] }
+      await next()
+    })
     app.use(groupChatPublicRoutes.routes())
     app.use(groupChatRoutes.routes())
     httpServer = createServer(app.callback())
@@ -153,6 +170,8 @@ describe('group chat REST route baseline', () => {
         name: 'Shared Room',
         inviteCode: null,
         canManage: false,
+        canMentionAll: false,
+        ownerMemberId: '',
         summaryProfile: '',
         summaryProvider: '',
         summaryModel: '',
@@ -160,6 +179,9 @@ describe('group chat REST route baseline', () => {
         summaryEveryTurns: 0,
         totalTokens: 0,
         workspace: '',
+        allowGuestAgents: 0,
+        guestAgentApproval: 'owner',
+        maxGuestAgentsPerMember: 1,
       },
     })
   })
@@ -379,6 +401,48 @@ describe('group chat REST route baseline', () => {
       },
     })
     expect(storage.getRoomAgents('room-1')).toHaveLength(2)
+  })
+
+  it('allows only the room owner to remove a member and removes that member remote Agents', async () => {
+    storage.rooms.set('room-1', {
+      id: 'room-1',
+      name: 'Room',
+      inviteCode: 'ROOM1',
+      ownerAuthUserId: 1,
+    })
+    storage.members.set('room-1', [
+      { id: 'owner-row', userId: 'auth:1', name: 'Owner' },
+      { id: 'guest-row', userId: 'guest-1', name: 'Guest' },
+    ])
+    storage.agents.set('room-1', [{
+      id: 'remote-row',
+      agentId: 'remote-agent',
+      profile: 'default',
+      name: 'Remote Agent',
+      executorType: 'remote',
+      ownerMemberId: 'guest-1',
+      connectorId: '',
+    }])
+
+    const denied = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/members/guest-1`, {
+      method: 'DELETE',
+      headers: { 'x-test-user-id': '2' },
+    })
+    expect(denied.status).toBe(403)
+
+    const removed = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/members/guest-1`, {
+      method: 'DELETE',
+      headers: { 'x-test-user-id': '1' },
+    })
+    expect(removed.status).toBe(200)
+    await expect(removed.json()).resolves.toMatchObject({
+      success: true,
+      members: [{ userId: 'auth:1' }],
+      agents: [],
+    })
+    expect(removeLiveRoomMember).toHaveBeenCalledWith('room-1', 'guest-1')
+    expect(storage.removeRoomAgent).toHaveBeenCalledWith('room-1', 'remote-row')
+    expect(agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'remote-agent')
   })
 
   it('persists the selected provider, model, api mode, and reasoning effort for a room agent', async () => {

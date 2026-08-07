@@ -2,18 +2,27 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NInput } from 'naive-ui'
+import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import { getStoredUserId } from '@/api/hermes/group-chat'
+import { getStoredUserId, type RoomAgent } from '@/api/hermes/group-chat'
 import type { ProfileAvatar as ProfileAvatarData } from '@/api/hermes/profiles'
-import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import {
+    createGuestAgentHandoff,
+    getGuestAgentPairingStatus,
+    requestGuestAgentPairing,
+    type GroupAgentPairingRequest,
+    type RemoteGroupAgentDescriptor,
+} from '@/api/hermes/group-chat-agent-link'
+import { GROUP_CHAT_MEMBER_REMOVED, useGroupChatStore } from '@/stores/hermes/group-chat'
+import { copyToClipboard } from '@/utils/clipboard'
 import { parseStoredAvatar } from '@/utils/group-agent-avatar'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useGroupChatStore()
+const message = useMessage()
 
 const inviteCodeDraft = ref('')
 const guestNameDraft = ref(localStorage.getItem('gc_user_name')?.trim() || '')
@@ -28,7 +37,19 @@ const guestAvatarDraft = ref<ProfileAvatarData>(
 )
 const joinedInviteCode = ref('')
 const joining = ref(false)
-const joinError = ref<'' | 'invite' | 'name-conflict' | 'name-reserved'>('')
+const joinError = ref<'' | 'invite' | 'name-conflict' | 'name-reserved' | 'removed'>('')
+const showAgentLinkModal = ref(false)
+const targetOriginDraft = ref('http://127.0.0.1:8648')
+const agentLinkStage = ref<'idle' | 'selecting' | 'pending' | 'approved' | 'connecting' | 'connected' | 'error'>('idle')
+const agentLinkError = ref('')
+const pairingCode = ref('')
+const selectedTargetOrigin = ref('')
+const pairingRequest = ref<GroupAgentPairingRequest | null>(null)
+const popupState = ref('')
+let targetPopup: Window | null = null
+let pairingRequestSecret = ''
+let pairingTicket = ''
+let pairingPollTimer: ReturnType<typeof setTimeout> | null = null
 let joinGeneration = 0
 
 const routeInviteCode = computed(() => {
@@ -37,6 +58,328 @@ const routeInviteCode = computed(() => {
 })
 const joined = computed(() => !!joinedInviteCode.value && !!store.currentRoomId)
 const collectingGuestName = computed(() => !!routeInviteCode.value && joinError.value !== 'invite')
+const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
+const guestAgentsAllowed = computed(() => Number(currentRoom.value?.allowGuestAgents || 0) === 1)
+const agentLinkStatusText = computed(() => {
+    if (agentLinkStage.value === 'pending') return t('groupChat.agentLinkWaitingApproval')
+    if (agentLinkStage.value === 'approved' || agentLinkStage.value === 'connecting') {
+        return t('groupChat.agentLinkApproved')
+    }
+    if (agentLinkStage.value === 'connected') return t('groupChat.agentLinkConnected')
+    return ''
+})
+
+function randomState(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function randomSecret(): string {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+    let binary = ''
+    bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function randomRequestId(): string {
+    return crypto.randomUUID()
+}
+
+function normalizeTargetOrigin(value: string): string {
+    let raw = value.trim()
+    if (!raw) throw new Error(t('groupChat.agentLinkTargetRequired'))
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = `http://${raw}`
+    const url = new URL(raw)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error(t('groupChat.agentLinkInvalidTarget'))
+    }
+    if (url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) {
+        throw new Error(t('groupChat.agentLinkInvalidTarget'))
+    }
+    return url.origin
+}
+
+function encodePairingCode(agent: RemoteGroupAgentDescriptor): string {
+    const json = JSON.stringify({
+        protocolVersion: 1,
+        cloudOrigin: window.location.origin,
+        pairingTicket,
+        agent,
+    })
+    const bytes = new TextEncoder().encode(json)
+    let binary = ''
+    bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+    return `HGC1.${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`
+}
+
+function clearPairingPoll(): void {
+    if (pairingPollTimer) clearTimeout(pairingPollTimer)
+    pairingPollTimer = null
+}
+
+function reportPairingFailureToTarget(errorMessage: string): boolean {
+    agentLinkStage.value = 'error'
+    agentLinkError.value = errorMessage
+    if (!targetPopup || targetPopup.closed || !selectedTargetOrigin.value || !popupState.value) return false
+    try {
+        targetPopup.postMessage({
+            type: 'hermes.group-chat.pairing-failed',
+            state: popupState.value,
+            error: errorMessage,
+        }, selectedTargetOrigin.value)
+        return true
+    } catch {
+        return false
+    }
+}
+
+function pairingErrorMessage(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error || '')
+    if (
+        raw.includes('ROOM_PARTICIPANT_NAME_CONFLICT')
+        || raw.toLowerCase().includes('name is already in use')
+    ) {
+        return t('groupChat.shareNameConflict')
+    }
+    return raw || t('groupChat.agentLinkError')
+}
+
+function resetAgentLinkAttempt(): void {
+    clearPairingPoll()
+    pairingRequest.value = null
+    pairingRequestSecret = ''
+    pairingTicket = ''
+    pairingCode.value = ''
+    popupState.value = ''
+    agentLinkError.value = ''
+    agentLinkStage.value = 'idle'
+}
+
+function openAgentLinkModal(): void {
+    resetAgentLinkAttempt()
+    showAgentLinkModal.value = true
+}
+
+function openOwnedAgentEditor(agent: RoomAgent): void {
+    if (
+        agent.executorType !== 'remote'
+        || agent.ownerMemberId !== store.userId
+        || !agent.connectorId
+        || !agent.remoteOrigin
+    ) return
+    try {
+        const origin = normalizeTargetOrigin(agent.remoteOrigin)
+        const query = new URLSearchParams({
+            parentOrigin: window.location.origin,
+            state: randomState(),
+            editConnectorId: agent.connectorId,
+        })
+        const popup = window.open(
+            `${origin}/?groupChatAgentLink=1#/group-chat-link?${query}`,
+            'hermes-group-chat-agent-link',
+            'popup=yes,width=540,height=720',
+        )
+        if (!popup) {
+            message.error(t('groupChat.agentLinkPopupBlocked'))
+            return
+        }
+        targetPopup = popup
+    } catch {
+        message.error(t('groupChat.agentLinkInvalidTarget'))
+    }
+}
+
+function openTargetAuthorization(): void {
+    if (!guestAgentsAllowed.value) {
+        agentLinkError.value = t('groupChat.guestAgentsDisabled')
+        agentLinkStage.value = 'error'
+        return
+    }
+    try {
+        const origin = normalizeTargetOrigin(targetOriginDraft.value)
+        selectedTargetOrigin.value = origin
+        targetOriginDraft.value = origin
+        popupState.value = randomState()
+        const requestId = randomRequestId()
+        pairingRequestSecret = randomSecret()
+        pairingTicket = randomSecret()
+        agentLinkError.value = ''
+        agentLinkStage.value = 'selecting'
+        const query = new URLSearchParams({
+            parentOrigin: window.location.origin,
+            state: popupState.value,
+            cloudOrigin: window.location.origin,
+            inviteCode: joinedInviteCode.value,
+            requestId,
+            requestSecret: pairingRequestSecret,
+            pairingTicket,
+        })
+        targetPopup = window.open(
+            `${origin}/?groupChatAgentLink=1#/group-chat-link?${query}`,
+            'hermes-group-chat-agent-link',
+            'popup=yes,width=540,height=720',
+        )
+        if (!targetPopup) {
+            agentLinkStage.value = 'error'
+            agentLinkError.value = t('groupChat.agentLinkPopupBlocked')
+            return
+        }
+        void createGuestAgentHandoff(joinedInviteCode.value, {
+            requestId,
+            requestSecret: pairingRequestSecret,
+            pairingTicket,
+            ownerMemberId: store.userId,
+            membershipToken: store.agentLinkToken,
+            targetOrigin: origin,
+        }).then((result) => {
+            pairingRequest.value = result.request
+            clearPairingPoll()
+            pairingPollTimer = setTimeout(() => void pollPairingStatus(), 300)
+        }).catch((handoffError) => {
+            const errorMessage = pairingErrorMessage(handoffError)
+            agentLinkStage.value = 'error'
+            agentLinkError.value = errorMessage
+            reportPairingFailureToTarget(errorMessage)
+        })
+    } catch (error) {
+        agentLinkStage.value = 'error'
+        agentLinkError.value = error instanceof Error ? error.message : t('groupChat.agentLinkInvalidTarget')
+    }
+}
+
+async function pollPairingStatus(agent?: RemoteGroupAgentDescriptor): Promise<void> {
+    if (!pairingRequest.value || !pairingRequestSecret || !joinedInviteCode.value) return
+    try {
+        const result = await getGuestAgentPairingStatus(
+            joinedInviteCode.value,
+            pairingRequest.value.id,
+            pairingRequestSecret,
+        )
+        pairingRequest.value = result.request
+        if (result.request.status === 'draft') {
+            agentLinkStage.value = 'selecting'
+        } else if (result.request.status === 'pending') {
+            agentLinkStage.value = 'pending'
+        } else if (result.request.status === 'approved') {
+            if (agent) pairingCode.value = encodePairingCode(agent)
+            agentLinkStage.value = 'approved'
+            if (agent && targetPopup && !targetPopup.closed) {
+                targetPopup.postMessage({
+                    type: 'hermes.group-chat.connect',
+                    state: popupState.value,
+                    cloudOrigin: window.location.origin,
+                    pairingTicket,
+                    agent,
+                }, selectedTargetOrigin.value)
+                agentLinkStage.value = 'connecting'
+            } else {
+                agentLinkStage.value = 'connecting'
+            }
+        } else if (result.request.status === 'connecting') {
+            if (agent) pairingCode.value = encodePairingCode(agent)
+            agentLinkStage.value = 'connecting'
+        } else if (result.request.status === 'consumed') {
+            agentLinkStage.value = 'connected'
+            clearPairingPoll()
+            return
+        } else if (
+            result.request.status === 'rejected'
+            || result.request.status === 'expired'
+            || result.request.status === 'failed'
+        ) {
+            const errorMessage = result.request.status === 'rejected'
+                ? t('groupChat.agentLinkRejected')
+                : result.request.status === 'failed'
+                    ? result.request.failureReason || t('groupChat.agentLinkConnectFailed')
+                    : t('groupChat.agentLinkExpired')
+            if (!reportPairingFailureToTarget(errorMessage)) {
+                agentLinkStage.value = 'error'
+                agentLinkError.value = errorMessage
+            }
+            clearPairingPoll()
+            return
+        }
+    } catch (error) {
+        const errorMessage = pairingErrorMessage(error)
+        if (!reportPairingFailureToTarget(errorMessage)) {
+            agentLinkStage.value = 'error'
+            agentLinkError.value = errorMessage
+        }
+        clearPairingPoll()
+        return
+    }
+    pairingPollTimer = setTimeout(() => void pollPairingStatus(agent), 1_200)
+}
+
+async function createPairingRequest(agent: RemoteGroupAgentDescriptor): Promise<void> {
+    try {
+        agentLinkStage.value = 'pending'
+        agentLinkError.value = ''
+        const result = await requestGuestAgentPairing(joinedInviteCode.value, {
+            ownerMemberId: store.userId,
+            membershipToken: store.agentLinkToken,
+            targetOrigin: selectedTargetOrigin.value,
+            agent,
+        })
+        pairingRequest.value = result.request
+        pairingRequestSecret = result.requestSecret
+        pairingTicket = result.pairingTicket
+        clearPairingPoll()
+        pairingPollTimer = setTimeout(() => void pollPairingStatus(agent), 600)
+    } catch (error) {
+        const errorMessage = pairingErrorMessage(error)
+        if (!reportPairingFailureToTarget(errorMessage)) {
+            agentLinkStage.value = 'error'
+            agentLinkError.value = errorMessage
+        }
+    }
+}
+
+function handleTargetMessage(event: MessageEvent): void {
+    if (
+        !targetPopup
+        || event.source !== targetPopup
+        || !popupState.value
+    ) return
+    if (!event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return
+    const data = event.data as Record<string, unknown>
+    if (data?.state !== popupState.value) return
+    if (data.type === 'hermes.group-chat.link-ready') {
+        try {
+            const actualOrigin = normalizeTargetOrigin(String(data.targetOrigin || ''))
+            if (actualOrigin !== event.origin) return
+            selectedTargetOrigin.value = actualOrigin
+            targetOriginDraft.value = actualOrigin
+            targetPopup.postMessage({
+                type: 'hermes.group-chat.parent-ready',
+                state: popupState.value,
+            }, actualOrigin)
+        } catch {
+            return
+        }
+        return
+    }
+    if (event.origin !== selectedTargetOrigin.value) return
+    if (data.type === 'hermes.group-chat.agent-selected') {
+        targetPopup.postMessage({
+            type: 'hermes.group-chat.selection-received',
+            state: popupState.value,
+        }, selectedTargetOrigin.value)
+        void createPairingRequest(data.agent as RemoteGroupAgentDescriptor)
+    } else if (data.type === 'hermes.group-chat.connected') {
+        agentLinkStage.value = 'connected'
+        clearPairingPoll()
+    } else if (data.type === 'hermes.group-chat.connect-failed') {
+        agentLinkStage.value = 'error'
+        agentLinkError.value = String(data.error || t('groupChat.agentLinkConnectFailed'))
+    }
+}
+
+async function copyPairingCode(): Promise<void> {
+    if (pairingCode.value) await copyToClipboard(pairingCode.value)
+}
 
 async function joinInvite(code: string): Promise<void> {
     const normalizedCode = code.trim()
@@ -129,15 +472,80 @@ watch(routeInviteCode, (code) => {
     joining.value = false
 }, { immediate: true })
 
+watch(() => store.error, (error) => {
+    if (error !== GROUP_CHAT_MEMBER_REMOVED) return
+    joinedInviteCode.value = ''
+    joinError.value = 'removed'
+    showAgentLinkModal.value = false
+    clearPairingPoll()
+})
+
+window.addEventListener('message', handleTargetMessage)
+
 onUnmounted(() => {
     joinGeneration += 1
+    clearPairingPoll()
+    window.removeEventListener('message', handleTargetMessage)
+    if (targetPopup && !targetPopup.closed) targetPopup.close()
     store.disconnect()
 })
 </script>
 
 <template>
     <div class="shared-group-chat-view">
-        <GroupChatPanel v-if="joined" standalone />
+        <template v-if="joined">
+            <GroupChatPanel
+                standalone
+                @request-agent-link="openAgentLinkModal"
+                @request-agent-edit="openOwnedAgentEditor"
+            />
+            <NModal
+                v-model:show="showAgentLinkModal"
+                preset="card"
+                class="agent-link-modal"
+                :title="t('groupChat.agentLinkTitle')"
+                :bordered="false"
+                :mask-closable="false"
+            >
+                <p class="agent-link-description">{{ t('groupChat.agentLinkDescription') }}</p>
+                <div v-if="!guestAgentsAllowed" class="agent-link-warning">
+                    {{ t('groupChat.guestAgentsDisabled') }}
+                </div>
+                <div class="agent-link-form">
+                    <label for="group-chat-target-origin">{{ t('groupChat.agentLinkTargetUrl') }}</label>
+                    <NInput
+                        id="group-chat-target-origin"
+                        v-model:value="targetOriginDraft"
+                        :placeholder="t('groupChat.agentLinkTargetPlaceholder')"
+                        :disabled="agentLinkStage === 'pending' || agentLinkStage === 'connecting'"
+                        @keyup.enter="openTargetAuthorization"
+                    />
+                    <div class="agent-link-actions">
+                        <NButton
+                            type="primary"
+                            :disabled="!guestAgentsAllowed || agentLinkStage === 'pending' || agentLinkStage === 'connecting'"
+                            @click="openTargetAuthorization"
+                        >
+                            {{ t('groupChat.agentLinkOpenTarget') }}
+                        </NButton>
+                    </div>
+                </div>
+
+                <div v-if="agentLinkStatusText" class="agent-link-status" :class="`is-${agentLinkStage}`">
+                    {{ agentLinkStatusText }}
+                </div>
+                <p v-if="agentLinkError" class="agent-link-error" role="alert">{{ agentLinkError }}</p>
+
+                <div v-if="pairingCode" class="agent-link-code">
+                    <label>{{ t('groupChat.agentLinkPairingCode') }}</label>
+                    <NInput :value="pairingCode" type="textarea" :rows="4" readonly />
+                    <p>{{ t('groupChat.agentLinkPairingCodeHint') }}</p>
+                    <NButton secondary block @click="copyPairingCode">
+                        {{ t('groupChat.agentLinkCopyCode') }}
+                    </NButton>
+                </div>
+            </NModal>
+        </template>
 
         <main
             v-else-if="joining"
@@ -204,7 +612,10 @@ onUnmounted(() => {
                         clearable
                         :maxlength="120"
                     />
-                    <p v-if="joinError === 'name-conflict'" class="invite-error" role="alert">
+                    <p v-if="joinError === 'removed'" class="invite-error" role="alert">
+                        {{ t('groupChat.memberRemovedNotice') }}
+                    </p>
+                    <p v-else-if="joinError === 'name-conflict'" class="invite-error" role="alert">
                         {{ t('groupChat.shareNameConflict') }}
                     </p>
                     <p v-else-if="joinError === 'name-reserved'" class="invite-error" role="alert">
@@ -262,6 +673,72 @@ onUnmounted(() => {
     width: 100%;
     height: calc(100 * var(--vh));
     min-height: 0;
+}
+
+:global(.agent-link-modal) {
+    width: min(92vw, 560px);
+}
+
+.agent-link-description {
+    margin: 0 0 18px;
+    color: $text-secondary;
+    line-height: 1.6;
+}
+
+.agent-link-warning,
+.agent-link-status,
+.agent-link-error {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.agent-link-warning,
+.agent-link-error {
+    color: $error;
+    background: rgba(208, 48, 80, 0.1);
+}
+
+.agent-link-status {
+    margin-top: 16px;
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.1);
+
+    &.is-connected {
+        color: $success;
+        background: rgba(54, 173, 106, 0.1);
+    }
+}
+
+.agent-link-form,
+.agent-link-code {
+    display: grid;
+    gap: 10px;
+
+    label {
+        color: $text-primary;
+        font-size: 13px;
+        font-weight: 600;
+    }
+}
+
+.agent-link-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.agent-link-code {
+    margin-top: 18px;
+
+    p {
+        margin: 0;
+        color: $text-muted;
+        font-size: 12px;
+        line-height: 1.5;
+    }
 }
 
 .invite-loading {

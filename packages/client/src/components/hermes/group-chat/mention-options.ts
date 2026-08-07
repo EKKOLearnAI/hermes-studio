@@ -9,27 +9,34 @@ export type MentionOption = {
 type MentionAgent = {
     name: string
     profile?: string
+    connectionStatus?: 'online' | 'offline'
 }
 
 function isReservedMentionName(name: string): boolean {
     return name.trim().toLowerCase() === 'all'
 }
 
-export function buildMentionOptions(agents: MentionAgent[], query: string): MentionOption[] {
+export function buildMentionOptions(
+    agents: MentionAgent[],
+    query: string,
+    allowAll = true,
+    allDescription = '',
+): MentionOption[] {
     const normalizedQuery = query.trim().toLowerCase()
     const options: MentionOption[] = []
 
-    if (!normalizedQuery || 'all'.includes(normalizedQuery)) {
+    if (allowAll && (!normalizedQuery || 'all'.includes(normalizedQuery))) {
         options.push({
             key: 'special:all',
             type: 'all',
             name: 'all',
             label: '@all',
-            description: 'All agents',
+            description: allDescription,
         })
     }
 
     for (const agent of agents) {
+        if (agent.connectionStatus === 'offline') continue
         const agentName = agent.name || ''
         if (isReservedMentionName(agentName)) continue
         if (!agentName.toLowerCase().includes(normalizedQuery)) continue

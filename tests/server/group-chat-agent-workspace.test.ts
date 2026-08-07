@@ -236,6 +236,11 @@ describe('group chat agent workspace bridge runs', () => {
       getRoomAgents: vi.fn(() => [
         { id: 'room-agent-1', agentId: 'agent-codex', name: 'Coder', description: 'Writes code' },
         { id: 'room-agent-2', agentId: 'agent-reviewer', name: 'Reviewer', description: 'Reviews changes' },
+        { id: 'room-agent-3', agentId: 'agent-sleeping', name: 'Sleeping', description: 'Offline Agent' },
+      ]),
+      getMentionableRoomAgents: vi.fn(() => [
+        { id: 'room-agent-1', agentId: 'agent-codex', name: 'Coder', description: 'Writes code' },
+        { id: 'room-agent-2', agentId: 'agent-reviewer', name: 'Reviewer', description: 'Reviews changes' },
       ]),
       getMessagesForContext: vi.fn(() => [{
         id: 'msg-1',
@@ -269,8 +274,8 @@ describe('group chat agent workspace bridge runs', () => {
 
     expect(runAndWait).toHaveBeenCalledWith(expect.objectContaining({
       coding_agent_id: 'codex',
-      source: 'workflow',
-      session_source: 'workflow',
+      source: 'group_chat',
+      session_source: 'group_chat',
       mode: 'scoped',
       profile: 'research',
       provider: 'openai',
@@ -289,8 +294,9 @@ describe('group chat agent workspace bridge runs', () => {
     expect(String(runAndWait.mock.calls[0][0].input)).toContain('截至总结锚点的群聊总结')
     expect(String(runAndWait.mock.calls[0][0].input)).toContain('Keep single chat unchanged.')
     expect(runAndWait.mock.calls[0][0].instructions).toContain('你是"Coder"，群聊房间"Engineering Room"中的 AI 助手')
-    expect(runAndWait.mock.calls[0][0].instructions).toContain('- Human: Product owner')
-    expect(runAndWait.mock.calls[0][0].instructions).toContain('- Reviewer: Reviews changes')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('- [真人成员] Human: Product owner')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('- [AI Agent] Reviewer: Reviews changes')
+    expect(runAndWait.mock.calls[0][0].instructions).not.toContain('Sleeping')
     expect(runAndWait.mock.calls[0][0].group_system_prompt).toBe(runAndWait.mock.calls[0][0].instructions)
     expect(bridgeMock.chat).not.toHaveBeenCalled()
     expect(mockSocket.emit).toHaveBeenCalledWith(
@@ -400,7 +406,7 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
     expect(runData.coding_agent_id).toBe(codingAgentId)
     expect(runData.instructions).toContain(`你是"${agent === 'ekko' ? 'Ekko' : 'Claude'}"，群聊房间"Runtime Room"中的 AI 助手`)
-    expect(runData.instructions).toContain('- Human: Room owner')
+    expect(runData.instructions).toContain('- [真人成员] Human: Room owner')
     expect(runData.group_system_prompt).toBe(runData.instructions)
     expect(runData.group_room_id).toBe('room-runtime')
     expect(runData.group_agent_id).toBe(`agent-${agent}`)

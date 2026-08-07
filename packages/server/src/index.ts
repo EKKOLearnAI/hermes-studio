@@ -17,6 +17,10 @@ import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
+import {
+  getGroupAgentOutboundRelayManager,
+  GroupAgentRelayServer,
+} from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
@@ -62,6 +66,7 @@ let servers: any[] = []
 let chatRunServer: any = null
 let workflowSocketServer: WorkflowSocketServer | null = null
 let petStateSocketServer: PetStateSocketServer | null = null
+let groupAgentRelayServer: GroupAgentRelayServer | null = null
 let agentBridgeManager: any = null
 let desktopShutdownHandler: ShutdownHandler | null = null
 
@@ -340,12 +345,14 @@ export async function bootstrap() {
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
+  groupAgentRelayServer = new GroupAgentRelayServer(groupChatServer.getIO(), groupChatServer)
 
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
   chatRunServer = new ChatRunSocket(groupChatServer.getIO())
   setChatRunServer(chatRunServer)
   groupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
+  void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.
   // Persist a fail-closed terminal state before exposing workflow sockets, then abort

@@ -9,6 +9,8 @@ export interface RoomInfo {
     name: string
     inviteCode: string | null
     canManage?: boolean
+    canMentionAll?: boolean
+    ownerMemberId?: string
     summaryProfile: string
     summaryProvider: string
     summaryModel: string
@@ -16,6 +18,9 @@ export interface RoomInfo {
     summaryEveryTurns: number
     totalTokens?: number
     workspace: string
+    allowGuestAgents?: number
+    guestAgentApproval?: 'owner'
+    maxGuestAgentsPerMember?: number
 }
 
 export interface RoomSummaryConfig {
@@ -64,6 +69,12 @@ export interface RoomAgent {
     description: string
     avatar: string
     invited: number
+    executorType?: 'server' | 'remote'
+    remoteOrigin?: string
+    connectionStatus?: 'online' | 'offline'
+    ownerMemberId?: string
+    connectorId?: string
+    historical?: boolean
 }
 
 export interface RoomAgentInput {
@@ -93,6 +104,15 @@ export interface ChatMessage {
     roomId: string
     senderId: string
     senderName: string
+    senderType?: 'member' | 'agent'
+    senderAgentRecordId?: string
+    senderAvatar?: string
+    senderAgentType?: RoomAgent['agent']
+    senderAgentProfile?: string
+    senderAgentProvider?: string
+    senderAgentModel?: string
+    senderAgentDescription?: string
+    senderOwnerMemberId?: string
     content: string
     timestamp: number
     run_id?: string | null
@@ -321,6 +341,12 @@ export async function listAgents(roomId: string): Promise<{ agents: RoomAgent[] 
 
 export async function removeAgent(roomId: string, agentId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
+        method: 'DELETE',
+    })
+}
+
+export async function removeRoomMember(roomId: string, userId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/members/${encodeURIComponent(userId)}`, {
         method: 'DELETE',
     })
 }

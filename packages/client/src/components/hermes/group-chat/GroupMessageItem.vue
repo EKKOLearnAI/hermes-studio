@@ -30,8 +30,9 @@ import ToolChangeCard from '@/components/hermes/chat/ToolChangeCard.vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { isServerTtsProvider } from '@/api/hermes/tts'
-import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
+import { groupAgentAvatar, groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
+import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -67,9 +68,15 @@ const toolPanelStore = useToolPanelStore()
 const speech = useGlobalSpeech()
 const voiceSettings = useVoiceSettings()
 const previewUrl = ref<string | null>(null)
-const isAgent = computed(() => {
-    return props.agents.some(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
-})
+const activeAgentInfo = computed(() => props.agents.find(a =>
+    !a.historical && (
+        a.id === props.message.senderAgentRecordId
+        || a.agentId === props.message.senderId
+        || (!props.message.senderAgentRecordId && a.name === props.message.senderName)
+    )
+))
+const agentInfo = computed(() => groupMessageAgent(props.message, props.agents))
+const isAgent = computed(() => Boolean(agentInfo.value))
 
 const isAgentError = computed(() => {
     if (props.message.role !== 'assistant') return false
@@ -81,8 +88,10 @@ const isSelf = computed(() => {
     return !!props.currentUserId && props.message.senderId === props.currentUserId
 })
 
-const agentInfo = computed(() => {
-    return props.agents.find(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
+const agentOwnerInfo = computed(() => {
+    const ownerMemberId = agentInfo.value?.ownerMemberId
+    if (!ownerMemberId) return null
+    return props.members?.find(member => member.userId === ownerMemberId) || null
 })
 const messageTtsProfile = computed(() => agentInfo.value?.profile?.trim() || '')
 
@@ -616,6 +625,8 @@ onBeforeUnmount(() => {
             <GroupAgentMessageAvatar
                 v-if="isAgent && agentInfo"
                 :agent="agentInfo"
+                :owner="agentOwnerInfo"
+                :mentionable="!!activeAgentInfo"
                 :size="36"
                 @mention="emit('mentionAgent', $event)"
             />
@@ -625,6 +636,7 @@ onBeforeUnmount(() => {
         <div class="msg-body">
             <div v-if="!embedded" class="msg-header">
                 <span class="sender-name">{{ message.senderName }}</span>
+                <GroupAgentRobotIcon v-if="isAgent" class="sender-agent-icon" />
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
             <div class="tool-line" :class="{ expandable: hasToolDetails }" @click="hasToolDetails && (toolExpanded = !toolExpanded)">
@@ -674,6 +686,8 @@ onBeforeUnmount(() => {
             <GroupAgentMessageAvatar
                 v-if="isAgent && agentInfo"
                 :agent="agentInfo"
+                :owner="agentOwnerInfo"
+                :mentionable="!!activeAgentInfo"
                 :size="36"
                 @mention="emit('mentionAgent', $event)"
             />
@@ -683,6 +697,7 @@ onBeforeUnmount(() => {
         <div class="msg-body">
             <div v-if="!embedded" class="msg-header">
                 <span class="sender-name">{{ message.senderName }}</span>
+                <GroupAgentRobotIcon v-if="isAgent" class="sender-agent-icon" />
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
             </div>
             <div
@@ -1030,7 +1045,7 @@ onBeforeUnmount(() => {
     height: 36px;
     flex-shrink: 0;
     margin-top: 2px;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 8px;
 }
 
@@ -1052,6 +1067,12 @@ onBeforeUnmount(() => {
         font-size: 13px;
         font-weight: 600;
         color: $text-primary;
+    }
+
+    .sender-agent-icon {
+        flex: 0 0 auto;
+        width: 14px;
+        height: 14px;
     }
 
     .agent-desc {
@@ -1080,20 +1101,14 @@ onBeforeUnmount(() => {
     opacity: 1;
 }
 
-.group-message:not(.agent) {
-    .message-meta {
+@media (hover: hover) and (pointer: fine) {
+    .group-message.self .message-meta {
         opacity: 0;
         transition: opacity 0.15s ease;
     }
 
-    &:hover .message-meta,
-    &:focus-within .message-meta {
-        opacity: 1;
-    }
-}
-
-@media (max-width: 768px) {
-    .group-message:not(.agent) .message-meta {
+    .group-message.self:hover .message-meta,
+    .group-message.self:focus-within .message-meta {
         opacity: 1;
     }
 }

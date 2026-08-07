@@ -10,6 +10,7 @@ import { useSessionSearch } from '@/composables/useSessionSearch'
 import { useAppStore } from '@/stores/hermes/app'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
 import { desktopBridge } from '@/utils/desktop-bridge'
+import { naiveLocaleFor } from '@/constants/naiveLocale'
 import { naiveRtlFor } from '@/constants/naiveRtl'
 
 const AppSidebar = defineAsyncComponent(async () => (await import('@/components/layout/AppSidebar.vue')).default)
@@ -27,6 +28,7 @@ const {
   syncThemeFromServer,
 } = useTheme()
 const { t, locale } = useI18n()
+const naiveLocale = computed(() => naiveLocaleFor(locale.value))
 const naiveRtl = computed(() => naiveRtlFor(locale.value))
 const appStore = useAppStore()
 const route = useRoute()
@@ -112,7 +114,13 @@ useKeyboard()
 </script>
 
 <template>
-  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides" :rtl="naiveRtl">
+  <NConfigProvider
+    :theme="naiveTheme"
+    :theme-overrides="themeOverrides"
+    :locale="naiveLocale.locale"
+    :date-locale="naiveLocale.dateLocale"
+    :rtl="naiveRtl"
+  >
     <NMessageProvider>
       <AuthEventListener />
       <NDialogProvider>

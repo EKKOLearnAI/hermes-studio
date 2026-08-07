@@ -3,8 +3,10 @@ import { computed } from 'vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
+import { groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
+import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
 
 const props = withDefaults(defineProps<{
     message: ChatMessage
@@ -20,10 +22,30 @@ const emit = defineEmits<{
     mentionAgent: [agent: RoomAgent]
 }>()
 
-const items = computed(() => props.message.runItems || [])
-const agentInfo = computed(() => props.agents.find(agent =>
-    agent.agentId === props.message.senderId || agent.name === props.message.senderName
+const items = computed(() =>
+    props.message.runItems?.length ? props.message.runItems : [props.message]
+)
+const activeAgentInfo = computed(() => props.agents.find(agent =>
+    !agent.historical && (
+        agent.id === props.message.senderAgentRecordId
+        || agent.agentId === props.message.senderId
+        || (!props.message.senderAgentRecordId && agent.name === props.message.senderName)
+    )
 ))
+const agentInfo = computed(() => groupMessageAgent(props.message, props.agents))
+const memberInfo = computed(() => {
+    if (agentInfo.value) return null
+    return props.members?.find(member =>
+        member.userId === props.message.senderId ||
+        member.name === props.message.senderName
+    ) || null
+})
+const agentOwnerInfo = computed(() => {
+    const ownerMemberId = agentInfo.value?.ownerMemberId
+    if (!ownerMemberId) return null
+    return props.members?.find(member => member.userId === ownerMemberId) || null
+})
+const senderAvatar = computed(() => parseStoredAvatar(memberInfo.value?.avatar))
 const lastTimestamp = computed(() => items.value.at(-1)?.timestamp || props.message.timestamp)
 const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 </script>
@@ -34,14 +56,22 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
             <GroupAgentMessageAvatar
                 v-if="agentInfo"
                 :agent="agentInfo"
+                :owner="agentOwnerInfo"
+                :mentionable="!!activeAgentInfo"
                 :size="36"
                 @mention="emit('mentionAgent', $event)"
             />
-            <ProfileAvatar v-else name="hermes" :size="36" />
+            <ProfileAvatar
+                v-else
+                :name="message.senderName || message.senderId || 'user'"
+                :avatar="senderAvatar"
+                :size="36"
+            />
         </div>
         <div class="run-column">
             <div class="run-header">
                 <span class="run-agent-name">{{ message.senderName }}</span>
+                <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
                 <GroupMessageItem
@@ -78,7 +108,7 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     height: 36px;
     flex: 0 0 36px;
     margin-top: 2px;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 8px;
 }
 
@@ -86,7 +116,8 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     display: flex;
     flex-direction: column;
     min-width: 0;
-    width: min(85%, 920px);
+    width: fit-content;
+    max-width: min(85%, 920px);
 }
 
 .run-header {
@@ -100,6 +131,12 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     color: $text-primary;
     font-size: 13px;
     font-weight: 600;
+}
+
+.run-agent-icon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
 }
 
 .run-card {
@@ -134,7 +171,8 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
 
 @media (max-width: 768px) {
     .run-column {
-        width: calc(100% - 46px);
+        width: fit-content;
+        max-width: calc(100% - 46px);
     }
 }
 </style>

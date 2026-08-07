@@ -15,10 +15,12 @@ const props = withDefaults(defineProps<{
     sendBlocked?: boolean
     allowAttachments?: boolean
     showSettings?: boolean
+    allowAllMention?: boolean
 }>(), {
     sendBlocked: false,
     allowAttachments: true,
     showSettings: true,
+    allowAllMention: false,
 })
 const emit = defineEmits<{
     send: [content: string, attachments?: Attachment[]]
@@ -199,7 +201,12 @@ const dropdownBottom = ref(0)
 const placement = ref<'bottom' | 'top'>('bottom')
 const activeIndex = ref(0)
 
-const filteredMentionOptions = computed(() => buildMentionOptions(store.agents, mentionQuery.value))
+const filteredMentionOptions = computed(() => buildMentionOptions(
+    store.agents,
+    mentionQuery.value,
+    props.allowAllMention,
+    t('groupChat.allAgents'),
+))
 
 const canSend = computed(() => !!inputText.value.trim() || (props.allowAttachments && attachments.value.length > 0))
 

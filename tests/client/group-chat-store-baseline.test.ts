@@ -355,6 +355,43 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.members).toEqual([member])
   })
 
+  it('removes an owned remote Agent through the joined room socket', async () => {
+    const store = await loadStore()
+    const ownedRemoteAgent = {
+      ...agent,
+      executorType: 'remote' as const,
+      ownerMemberId: 'user-1',
+      connectionStatus: 'offline' as const,
+    }
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        ack({
+          roomName: 'Shared Room',
+          members: [member],
+          agents: [ownedRemoteAgent],
+          typingUsers: [],
+          contextStatuses: [],
+        })
+      }
+      if (event === 'remove_agent' && ack) {
+        ack({ ok: true, agents: [], members: [member] })
+      }
+      return groupChatApiMock.socket
+    })
+
+    await store.connect()
+    await store.joinRoom('room-1')
+    await store.removeAgentFromRoom('room-1', ownedRemoteAgent.id)
+
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
+      'remove_agent',
+      { roomId: 'room-1', agentId: ownedRemoteAgent.id },
+      expect.any(Function),
+    )
+    expect(groupChatApiMock.removeAgent).not.toHaveBeenCalled()
+    expect(store.agents).toEqual([])
+  })
+
   it('keeps the current room agent roster in sync with realtime broadcasts', async () => {
     const store = await loadStore()
     const updatedAgent = { ...agent, name: 'Realtime Agent' }
@@ -371,6 +408,72 @@ describe('group chat store baseline lifecycle', () => {
 
     emitSocket('agents_updated', { roomId: 'room-1', agents: [] })
     expect(store.agents).toEqual([])
+  })
+
+  it('snapshots Agent display metadata before a realtime removal changes historical messages', async () => {
+    const store = await loadStore()
+    const avatar = JSON.stringify({ type: 'generated', seed: 'agent-history' })
+    const displayAgent = {
+      ...agent,
+      agent: 'codex' as const,
+      provider: 'openai',
+      model: 'gpt-5',
+      avatar,
+      ownerMemberId: 'owner-1',
+    }
+
+    await store.connect()
+    store.currentRoomId = 'room-1'
+    store.agents = [displayAgent]
+    store.messages = [userMessage({
+      id: 'agent-message',
+      senderId: displayAgent.agentId,
+      senderName: displayAgent.name,
+      role: 'assistant',
+    })]
+
+    emitSocket('agents_updated', { roomId: 'room-1', agents: [] })
+
+    expect(store.agents).toEqual([])
+    expect(store.messages[0]).toMatchObject({
+      senderType: 'agent',
+      senderAgentRecordId: displayAgent.id,
+      senderAvatar: avatar,
+      senderAgentType: 'codex',
+      senderAgentProvider: 'openai',
+      senderAgentModel: 'gpt-5',
+      senderOwnerMemberId: 'owner-1',
+    })
+  })
+
+  it('keeps securely issued ownership fields across the public Agent roster update', async () => {
+    const store = await loadStore()
+    const ownedAgent = {
+      ...agent,
+      executorType: 'remote' as const,
+      ownerMemberId: 'user-1',
+      connectorId: '11111111-2222-4333-8444-555555555555',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    }
+    const publicUpdate = {
+      ...ownedAgent,
+      name: 'Updated Agent',
+      ownerMemberId: undefined,
+      connectorId: undefined,
+      remoteOrigin: undefined,
+    }
+
+    await store.connect()
+    store.currentRoomId = 'room-1'
+    store.agents = [ownedAgent]
+    emitSocket('agents_updated', { roomId: 'room-1', agents: [publicUpdate] })
+
+    expect(store.agents[0]).toMatchObject({
+      name: 'Updated Agent',
+      ownerMemberId: 'user-1',
+      connectorId: '11111111-2222-4333-8444-555555555555',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
   })
 
   it('joins invite-only rooms entirely over realtime when the socket starts disconnected', async () => {

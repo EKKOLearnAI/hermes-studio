@@ -24,6 +24,12 @@ const router = createRouter({
       meta: { public: true, standaloneChat: true, inviteOnly: true },
     },
     {
+      path: '/group-chat-link',
+      name: 'groupChat.link',
+      component: () => import('@/views/hermes/GroupChatLinkView.vue'),
+      meta: { standaloneChat: true },
+    },
+    {
       path: '/hermes/chat',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
@@ -234,7 +240,7 @@ router.beforeEach(async (to, _from, next) => {
 
   // All other pages require token
   if (!hasApiKey()) {
-    next({ name: 'login' })
+    next({ name: 'login', query: { redirect: to.fullPath } })
     return
   }
 

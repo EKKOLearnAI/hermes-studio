@@ -56,6 +56,14 @@ function containsSummaryAnchor(message: import('@/api/hermes/group-chat').ChatMe
     return !!anchorId && (message.runItems || [message]).some(item => item.id === anchorId)
 }
 
+function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
+    if (!store.userId || message.senderId === store.userId) return false
+    return store.members.some(member =>
+        member.userId === message.senderId ||
+        member.name === message.senderName
+    )
+}
+
 function updateScrollBottomButton(): void {
     showScrollBottomButton.value = displayMessages.value.length > 0 && !(listRef.value?.isNearBottom(1000) ?? true)
 }
@@ -158,9 +166,9 @@ defineExpose({ scrollToBottom })
             <template #item="{ message: msg }">
                 <div :data-group-message-id="msg.id">
                     <GroupAgentRunCard
-                        v-if="msg.runItems?.length"
+                        v-if="msg.runItems?.length || isOtherMemberMessage(msg)"
                         :message="msg"
-                        :agents="store.agents"
+                        :agents="store.messageAgents"
                         :members="store.members"
                         :current-user-id="store.userId"
                         :allow-speech="props.allowSpeech"
@@ -169,7 +177,7 @@ defineExpose({ scrollToBottom })
                     <GroupMessageItem
                         v-else
                         :message="msg"
-                        :agents="store.agents"
+                        :agents="store.messageAgents"
                         :members="store.members"
                         :current-user-id="store.userId"
                         :allow-speech="props.allowSpeech"

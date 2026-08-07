@@ -10,11 +10,13 @@ const mockClearApiKey = vi.hoisted(() => vi.fn())
 const mockHasApiKey = vi.hoisted(() => vi.fn())
 const mockIsDesktopShell = vi.hoisted(() => vi.fn())
 const mockActivateUserTheme = vi.hoisted(() => vi.fn())
+const mockRoute = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     replace: mockReplace,
   }),
+  useRoute: () => mockRoute,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -51,6 +53,7 @@ describe('LoginView password login', () => {
     delete (window as any).__LOGIN_TOKEN__
     vi.clearAllMocks()
     mockIsDesktopShell.mockReturnValue(false)
+    mockRoute.query = {}
     mockHasApiKey.mockReturnValue(false)
     mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
   })
