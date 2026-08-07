@@ -1,4 +1,5 @@
 export default {
+  notifications: { title: 'Notifications', readAll: 'Mark all read', empty: 'No notifications', loadFailed: 'Failed to load notifications', delete: 'Delete notification', view: 'View details', justNow: 'Just now', minutesAgo: '{count} minutes ago', hoursAgo: '{count} hours ago' },
   browser: {
     title: 'المتصفح', settings: 'إعدادات المتصفح', desktopOnly: 'المتصفح المدمج متوفر فقط في Hermes Studio Desktop.', newTab: 'تبويب جديد',
     back: 'رجوع', forward: 'تقدّم', reload: 'إعادة تحميل', stop: 'إيقاف', addressPlaceholder: 'ابحث أو أدخل عنوانًا',

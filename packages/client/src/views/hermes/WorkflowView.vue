@@ -14,6 +14,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
 import { resolveWorkflowRunPageSwipe, type WorkflowRunPagerPage } from '@/utils/workflow-run-pager'
 import {
@@ -111,6 +112,7 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
 const { t } = useI18n()
+const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
@@ -1110,14 +1112,24 @@ async function loadWorkflows() {
       await clearActiveWorkflowPage()
       return
     }
-    const activeWorkflow = previousActiveId
-      ? docs.find(workflow => workflow.id === previousActiveId)
-      : null
+    const requestedWorkflowId = typeof route.query.workflowId === 'string' ? route.query.workflowId : ''
+    const activeWorkflow = requestedWorkflowId
+      ? docs.find(workflow => workflow.id === requestedWorkflowId)
+      : previousActiveId
+        ? docs.find(workflow => workflow.id === previousActiveId)
+        : null
     if (previousActiveId && !activeWorkflow) {
       await clearActiveWorkflowPage()
       return
     }
     await applyWorkflow(activeWorkflow || docs[0], false)
+    const requestedRunId = typeof route.query.runId === 'string' ? route.query.runId : ''
+    if (requestedRunId && activeWorkflow) {
+      showWorkflowRunsPanel.value = true
+      await loadWorkflowRuns(activeWorkflow.id, requestedRunId)
+      const requestedRun = workflowRuns.value.find(run => run.id === requestedRunId)
+      if (requestedRun) await selectWorkflowRun(requestedRun)
+    }
   } catch (err) {
     console.error('Failed to load workflows:', err)
   } finally {

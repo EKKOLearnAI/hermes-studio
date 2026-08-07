@@ -1,4 +1,5 @@
 export default {
+  notifications: { title: '通知', readAll: '全部已讀', empty: '暫無通知', loadFailed: '通知載入失敗', delete: '刪除通知', view: '查看詳情', justNow: '剛剛', minutesAgo: '{count} 分鐘前', hoursAgo: '{count} 小時前' },
   browser: {
     title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',
     back: '上一頁', forward: '下一頁', reload: '重新整理', stop: '停止', addressPlaceholder: '搜尋或輸入網址',

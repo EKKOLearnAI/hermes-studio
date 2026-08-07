@@ -1,4 +1,5 @@
 export default {
+  notifications: { title: 'Notifications', readAll: 'Mark all read', empty: 'No notifications', loadFailed: 'Failed to load notifications', delete: 'Delete notification', view: 'View details', justNow: 'Just now', minutesAgo: '{count} minutes ago', hoursAgo: '{count} hours ago' },
   browser: {
     title: 'Navigateur', settings: 'Paramètres du navigateur', desktopOnly: 'Le navigateur intégré est disponible uniquement dans Hermes Studio Desktop.', newTab: 'Nouvel onglet',
     back: 'Précédent', forward: 'Suivant', reload: 'Actualiser', stop: 'Arrêter', addressPlaceholder: 'Rechercher ou saisir une adresse',

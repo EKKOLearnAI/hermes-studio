@@ -28,6 +28,7 @@ import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-pe
 import { startGlobalAgentServer } from './services/global-agent/server'
 import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
+import { NotificationSocketServer } from './services/notification-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
 import { logger } from './services/logger'
 import { createStaticCompressionMiddleware } from './middleware/static-compression'
@@ -61,6 +62,7 @@ let server: any = null
 let servers: any[] = []
 let chatRunServer: any = null
 let workflowSocketServer: WorkflowSocketServer | null = null
+let notificationSocketServer: NotificationSocketServer | null = null
 let petStateSocketServer: PetStateSocketServer | null = null
 let agentBridgeManager: any = null
 let desktopShutdownHandler: ShutdownHandler | null = null
@@ -359,6 +361,9 @@ export async function bootstrap() {
   workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
   workflowSocketServer.init()
 
+  notificationSocketServer = new NotificationSocketServer(groupChatServer.getIO())
+  notificationSocketServer.init()
+
   petStateSocketServer = new PetStateSocketServer(groupChatServer.getIO())
   petStateSocketServer.init()
 
@@ -409,7 +414,13 @@ export async function bootstrap() {
     })
   })
 
-  desktopShutdownHandler = bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager)
+  desktopShutdownHandler = bindShutdown(
+    servers,
+    groupChatServer,
+    chatRunServer,
+    agentBridgeManager,
+    [workflowSocketServer, notificationSocketServer].filter(Boolean) as Array<{ close: () => void }>,
+  )
   startVersionCheck()
 }
 

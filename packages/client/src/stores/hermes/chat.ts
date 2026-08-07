@@ -11,6 +11,7 @@ import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { showCompletionNotification } from '@/utils/completion-notification'
+import { createNotificationEvent, markNotificationReadByDedupeKey } from '@/api/hermes/notifications'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 import { isKnownBridgeSessionCommand } from '@/utils/hermes/bridge-session-commands'
 import { responseErrorMessage } from '@/utils/http-error'
@@ -2850,6 +2851,28 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function persistChatNotification(input: {
+    sessionId: string
+    eventId: string
+    type: 'chat.completed' | 'chat.failed' | 'approval.requested' | 'clarify.requested'
+    severity: 'success' | 'error' | 'warning'
+    title: string
+    body: string
+  }) {
+    void createNotificationEvent({
+      dedupeKey: `${input.type}:${input.sessionId}:${input.eventId}`,
+      type: input.type,
+      severity: input.severity,
+      title: input.title,
+      body: input.body,
+      source: {
+        kind: 'session',
+        id: input.sessionId,
+        route: { name: 'hermes.session', params: { sessionId: input.sessionId } },
+      },
+    }).catch(err => console.warn('Failed to persist chat notification:', err))
+  }
+
   function setPendingApproval(evt: RunEvent) {
     const sid = evt.session_id
     const approvalId = (evt as any).approval_id as string | undefined
@@ -2876,6 +2899,14 @@ export const useChatStore = defineStore('chat', () => {
       requestedAt: Date.now(),
     })
     pendingApprovals.value = new Map(pendingApprovals.value)
+    persistChatNotification({
+      sessionId: sid,
+      eventId: approvalId,
+      type: 'approval.requested',
+      severity: 'warning',
+      title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+      body: description || String((evt as any).command || 'Approval required'),
+    })
   }
 
   function clearPendingApproval(evt: RunEvent) {
@@ -2887,6 +2918,8 @@ export const useChatStore = defineStore('chat', () => {
     if (approvalId && current.approvalId !== approvalId) return
     pendingApprovals.value.delete(sid)
     pendingApprovals.value = new Map(pendingApprovals.value)
+    void markNotificationReadByDedupeKey(`approval.requested:${sid}:${current.approvalId}`)
+      .catch(err => console.warn('Failed to resolve approval notification:', err))
   }
 
   function setPendingClarify(evt: RunEvent) {
@@ -2902,6 +2935,14 @@ export const useChatStore = defineStore('chat', () => {
       requestedAt: Date.now(),
     })
     pendingClarifies.value = new Map(pendingClarifies.value)
+    persistChatNotification({
+      sessionId: sid,
+      eventId: clarifyId,
+      type: 'clarify.requested',
+      severity: 'warning',
+      title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+      body: String((evt as any).question || 'Your response is required'),
+    })
   }
 
   function clearPendingClarify(evt: RunEvent) {
@@ -2913,6 +2954,8 @@ export const useChatStore = defineStore('chat', () => {
     if (clarifyId && current.clarifyId !== clarifyId) return
     pendingClarifies.value.delete(sid)
     pendingClarifies.value = new Map(pendingClarifies.value)
+    void markNotificationReadByDedupeKey(`clarify.requested:${sid}:${current.clarifyId}`)
+      .catch(err => console.warn('Failed to resolve clarify notification:', err))
   }
 
   function clearPendingInteractions(sessionId: string) {
@@ -3906,6 +3949,14 @@ export const useChatStore = defineStore('chat', () => {
               } else {
                 playCompletionBellIfEnabled()
                 showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
+                persistChatNotification({
+                  sessionId: sid,
+                  eventId: String(evt.run_id || completedAssistantMessageId || evt.timestamp || 'completed'),
+                  type: 'chat.completed',
+                  severity: 'success',
+                  title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+                  body: finalOutputTrimmed || 'Response completed',
+                })
               }
               const terminalAssistantMessageId = completedAssistantMessageId || [...getSessionMsgs(sid)]
                 .reverse()
@@ -3956,6 +4007,14 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
               addAgentErrorMessage(sid, evt.error)
+              persistChatNotification({
+                sessionId: sid,
+                eventId: String(evt.run_id || evt.timestamp || 'failed'),
+                type: 'chat.failed',
+                severity: 'error',
+                title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+                body: String(evt.error || 'Run failed'),
+              })
               settleRunningTools(sid, 'error')
               if ((evt as any).queue_remaining > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
@@ -4588,6 +4647,14 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             playCompletionBellIfEnabled()
             showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
+            persistChatNotification({
+              sessionId: sid,
+              eventId: String(evt.run_id || completedAssistantMessageId || evt.timestamp || 'completed'),
+              type: 'chat.completed',
+              severity: 'success',
+              title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+              body: finalOutputTrimmed || 'Response completed',
+            })
           }
           const terminalAssistantMessageId = completedAssistantMessageId || [...getSessionMsgs(sid)]
             .reverse()
@@ -4653,6 +4720,14 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           addAgentErrorMessage(sid, evt.error)
+          persistChatNotification({
+            sessionId: sid,
+            eventId: String(evt.run_id || evt.timestamp || 'failed'),
+            type: 'chat.failed',
+            severity: 'error',
+            title: sessions.value.find(session => session.id === sid)?.title || 'Hermes',
+            body: String(evt.error || 'Run failed'),
+          })
           settleRunningTools(sid, 'error')
           if (!hasQueue && !hasBackground) {
             cleanup()

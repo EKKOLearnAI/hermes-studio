@@ -1,4 +1,5 @@
 export default {
+  notifications: { title: '通知', readAll: '全部已读', empty: '暂无通知', loadFailed: '通知加载失败', delete: '删除通知', view: '查看详情', justNow: '刚刚', minutesAgo: '{count} 分钟前', hoursAgo: '{count} 小时前' },
   browser: {
     title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
     back: '后退', forward: '前进', reload: '刷新', stop: '停止', addressPlaceholder: '搜索或输入网址',

@@ -116,6 +116,33 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
 // ============================================================================
+// User Notifications
+// ============================================================================
+
+export const NOTIFICATIONS_TABLE = 'notifications'
+
+export const NOTIFICATIONS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  owner_id: 'INTEGER NOT NULL',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  dedupe_key: 'TEXT NOT NULL',
+  type: 'TEXT NOT NULL',
+  severity: "TEXT NOT NULL DEFAULT 'info'",
+  title: 'TEXT NOT NULL',
+  body: "TEXT NOT NULL DEFAULT ''",
+  source_json: "TEXT NOT NULL DEFAULT '{}'",
+  read_at: 'INTEGER',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const NOTIFICATIONS_INDEXES = {
+  uniq_notifications_owner_profile_dedupe: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_notifications_owner_profile_dedupe ON notifications(owner_id, profile, dedupe_key)',
+  idx_notifications_owner_profile_created: 'CREATE INDEX IF NOT EXISTS idx_notifications_owner_profile_created ON notifications(owner_id, profile, created_at DESC)',
+  idx_notifications_owner_profile_unread: 'CREATE INDEX IF NOT EXISTS idx_notifications_owner_profile_unread ON notifications(owner_id, profile, read_at)',
+}
+
+// ============================================================================
 // Workspace Run Changes
 // ============================================================================
 
@@ -1091,6 +1118,10 @@ export function initAllHermesTables(): void {
     createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(NOTIFICATIONS_TABLE, NOTIFICATIONS_SCHEMA, {
+      indexes: NOTIFICATIONS_INDEXES,
+    })
+    createIndexes(db, NOTIFICATIONS_INDEXES)
     syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
       indexes: WORKSPACE_RUN_CHANGES_INDEXES,
     })

@@ -17,6 +17,7 @@ const DesktopTitleBar = defineAsyncComponent(async () => (await import('@/compon
 const SessionSearchModal = defineAsyncComponent(async () => (await import('@/components/hermes/chat/SessionSearchModal.vue')).default)
 const DefaultCredentialPrompt = defineAsyncComponent(async () => (await import('@/components/auth/DefaultCredentialPrompt.vue')).default)
 const ProviderConfigurationPrompt = defineAsyncComponent(async () => (await import('@/components/hermes/models/ProviderConfigurationPrompt.vue')).default)
+const NotificationCenter = defineAsyncComponent(async () => (await import('@/components/layout/NotificationCenter.vue')).default)
 const WebPet = defineAsyncComponent(async () => (await import('@/components/hermes/pets/WebPet.vue')).default)
 
 const {
@@ -147,6 +148,7 @@ useKeyboard()
               </main>
             </div>
           </div>
+          <NotificationCenter v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage" />
           <WebPet v-if="showWebPet" />
           <SessionSearchModal v-if="!isDesktopPetRoute && !isStandaloneChatPage && sessionSearchOpen" />
           <DefaultCredentialPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />

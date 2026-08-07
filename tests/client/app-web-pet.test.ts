@@ -79,6 +79,10 @@ vi.mock('@/components/layout/AppSidebar.vue', () => ({
   default: { name: 'AppSidebar', template: '<aside />' },
 }))
 
+vi.mock('@/components/layout/NotificationCenter.vue', () => ({
+  default: { name: 'NotificationCenter', template: '<div class="notification-center-test" />' },
+}))
+
 vi.mock('@/components/layout/DesktopTitleBar.vue', () => ({
   default: {
     name: 'DesktopTitleBar',
@@ -132,6 +136,7 @@ describe('App web pet mounting', () => {
     await flushPromises()
 
     expect(wrapper.findComponent({ name: 'WebPet' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'NotificationCenter' }).exists()).toBe(true)
   })
 
   it('uses native macOS traffic lights without mounting custom window controls', () => {

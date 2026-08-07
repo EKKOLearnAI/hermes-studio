@@ -17,6 +17,8 @@ import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type GroupMessageCursorCutoff } from './group-message-ordering'
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
+import { notificationService } from '../../notification-service'
+import { markNotificationReadByDedupeKey } from '../../../db/hermes/notification-store'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -1737,12 +1739,33 @@ export class GroupChatServer {
         })
     }
 
+    private roomNotificationScope(roomId: string, agentName = ''): { ownerId: number; profile: string; room: RoomInfo } | null {
+        const room = this.storage.getRoom(roomId)
+        const ownerId = Number(room?.ownerAuthUserId || 0)
+        if (!room || ownerId <= 0) return null
+        const agents = this.storage.getRoomAgents(roomId)
+        const agent = agentName ? agents.find(candidate => candidate.name === agentName) : agents[0]
+        return { ownerId, profile: agent?.profile || room.summaryProfile || 'default', room }
+    }
+
     private handleMessageStreamEnd(socket: Socket, data: { roomId?: string; id?: string; agentSessionId?: string }): void {
         const roomId = data.roomId || 'general'
-        if (!this.getCurrentAgentEventMember(socket, roomId, '', data.agentSessionId)) return
+        const member = this.getCurrentAgentEventMember(socket, roomId, '', data.agentSessionId)
+        if (!member) return
         const id = this.normalizeClientMessageId(data.id)
         if (!id) return
         this.nsp.to(roomId).emit('message_stream_end', { roomId, id })
+        const scope = this.roomNotificationScope(roomId, member.name)
+        if (scope) notificationService.publish({
+            ownerId: scope.ownerId,
+            profile: scope.profile,
+            dedupeKey: `group_chat.completed:${roomId}:${id}`,
+            type: 'group_chat.completed',
+            severity: 'success',
+            title: scope.room.name,
+            body: `${member.name} replied`,
+            source: { kind: 'room', id: roomId, route: { name: 'hermes.groupChatRoom', params: { roomId } } },
+        })
     }
 
     private handleTyping(socket: Socket, data: { roomId?: string }): void {
@@ -1892,6 +1915,17 @@ export class GroupChatServer {
             choices: Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'],
             allow_permanent: Boolean(data.allow_permanent),
         })
+        const scope = this.roomNotificationScope(roomId, agentName)
+        if (scope) notificationService.publish({
+            ownerId: scope.ownerId,
+            profile: scope.profile,
+            dedupeKey: `approval.requested:room:${roomId}:${data.approval_id}`,
+            type: 'approval.requested',
+            severity: 'warning',
+            title: scope.room.name,
+            body: data.description || data.command || `${agentName} requires approval`,
+            source: { kind: 'room', id: roomId, route: { name: 'hermes.groupChatRoom', params: { roomId } } },
+        })
     }
 
     private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }): void {
@@ -1908,6 +1942,12 @@ export class GroupChatServer {
             agentName,
             approval_id: data.approval_id,
             choice: data.choice || '',
+        })
+        const scope = this.roomNotificationScope(roomId, agentName)
+        if (scope) markNotificationReadByDedupeKey({
+            ownerId: scope.ownerId,
+            profile: scope.profile,
+            dedupeKey: `approval.requested:room:${roomId}:${data.approval_id}`,
         })
     }
 

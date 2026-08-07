@@ -40,6 +40,8 @@ import { resolveWorkflowSkillContent } from './workflow-skill-resolver'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { deleteSessionForProfile } from './hermes/hermes-cli'
 import { listProfileNamesFromDisk } from './hermes/hermes-profile'
+import { notificationService } from './notification-service'
+import { markNotificationReadByDedupeKey } from '../db/hermes/notification-store'
 import { logger } from './logger'
 
 export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
@@ -1214,6 +1216,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     timeoutMs?: number
     timeoutError?: string
     executionId?: string
+    user?: AuthenticatedUser
+    profile: string
   }): Promise<boolean> {
     if (!workflowNodeRequiresApproval(args.node)) return true
     if (this.canceledRunIds.has(args.runId) || getWorkflowRun(args.runId)?.status === 'canceled') return false
@@ -1230,6 +1234,20 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       resolveApproval = resolve
     })
     const executionId = args.executionId || args.node.id
+    const dedupeKey = `workflow.approval:${args.workflowId}:${args.runId}:${executionId}`
+    if (args.user) notificationService.publish({
+      ownerId: args.user.id,
+      profile: args.profile,
+      dedupeKey,
+      type: 'workflow.approval',
+      severity: 'warning',
+      title: args.node.data.title || 'Workflow approval',
+      body: 'Workflow node requires approval',
+      source: {
+        kind: 'workflow', id: args.workflowId, runId: args.runId,
+        route: { name: 'hermes.workflow', query: { workflowId: args.workflowId, runId: args.runId } },
+      },
+    })
     const key = this.nodeApprovalKey(args.runId, executionId)
     this.pendingNodeApprovals.set(key, {
       workflowId: args.workflowId,
@@ -1253,6 +1271,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     } finally {
       if (timer) clearTimeout(timer)
       this.pendingNodeApprovals.delete(key)
+      if (args.user) markNotificationReadByDedupeKey({ ownerId: args.user.id, profile: args.profile, dedupeKey })
     }
   }
 
@@ -1467,6 +1486,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         if (approvalTimeoutMs !== undefined && approvalTimeoutMs <= 0) throw new Error(runTimeoutMessage!)
         const approved = await this.waitForNodeApproval({
           workflowId: workflowId, runId: run.id, node, nodeStatuses, executionId,
+          user: args.user, profile,
           timeoutMs: approvalTimeoutMs, timeoutError: runTimeoutMessage || undefined,
         })
         if (isCanceled()) throw new Error(getWorkflowRun(run.id)?.error || 'Workflow run canceled')
@@ -2002,7 +2022,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           try {
             approved = await this.waitForNodeApproval({
               workflowId: workflowId, runId: run.id, node, nodeStatuses,
-              executionId: executionIdFor(node.id),
+              executionId: executionIdFor(node.id), user: args.user, profile,
               timeoutMs: approvalTimeoutMs, timeoutError: runTimeoutMessage || undefined,
             })
           } catch (err) {
@@ -2113,6 +2133,53 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     }
   }
 
+  private async runWithNotification(
+    workflow: WorkflowRecord,
+    profile: string,
+    user: AuthenticatedUser | undefined,
+    run: WorkflowRunRecord,
+    execute: () => Promise<WorkflowRunNowResult>,
+  ): Promise<WorkflowRunNowResult> {
+    try {
+      const result = await execute()
+      if (user) this.publishWorkflowTerminalNotification(workflow, profile, user, run, result.run)
+      return result
+    } catch (err) {
+      if (user) {
+        const latestRun = getWorkflowRun(run.id) || run
+        this.publishWorkflowTerminalNotification(workflow, profile, user, run, {
+          ...latestRun,
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      throw err
+    }
+  }
+
+  private publishWorkflowTerminalNotification(
+    workflow: WorkflowRecord,
+    profile: string,
+    user: AuthenticatedUser,
+    attempt: WorkflowRunRecord,
+    terminalRun: WorkflowRunRecord,
+  ): void {
+    const failed = terminalRun.status !== 'completed'
+    notificationService.publish({
+      ownerId: user.id,
+      profile,
+      dedupeKey: `workflow:${workflow.id}:${attempt.id}:${attempt.started_at || 0}:${failed ? 'failed' : 'completed'}`,
+      type: failed ? 'workflow.failed' : 'workflow.completed',
+      severity: failed ? 'error' : 'success',
+      title: workflow.name,
+      body: failed ? terminalRun.error || 'Workflow failed' : 'Workflow completed',
+      source: {
+        kind: 'workflow', id: workflow.id, runId: attempt.id,
+        route: { name: 'hermes.workflow', query: { workflowId: workflow.id, runId: attempt.id } },
+      },
+    })
+  }
+
   async runNow(workflowId: string, input: WorkflowRunNowInput = {}): Promise<WorkflowRunNowResult> {
     const workflow = this.get(workflowId)
     if (!workflow) {
@@ -2172,17 +2239,17 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
 
     const activeLoops = compiledGraph.loops.filter(loop => loop.bodyNodeIds.some(nodeId => activeIds.has(nodeId)))
     if (activeLoops.length > 0) {
-      return this.executeRecursiveCompiledWorkflowRun({
+      return this.runWithNotification(workflow, profile, input.user, run, () => this.executeRecursiveCompiledWorkflowRun({
         workflowId: workflow.id, workspace: workflow.workspace, run, profile, nodes, edges,
         loops: activeLoops, startNodeIds, activeIds, input: input.input, user: input.user,
         runDeadline, runTimeoutMessage,
-      })
+      }))
     }
 
-    return this.executeCompletionDrivenDagRun({
+    return this.runWithNotification(workflow, profile, input.user, run, () => this.executeCompletionDrivenDagRun({
       workflowId: workflow.id, workspace: workflow.workspace, run, profile, nodes, edges,
       startNodeIds, activeIds, input: input.input, user: input.user, runDeadline, runTimeoutMessage,
-    })
+    }))
   }
 
   async rerunFromNode(
@@ -2307,9 +2374,11 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       ignoreHistoricalIncomingForStartNodes: !preserveStartNode,
     }
     const activeLoops = compiledGraph.loops.filter(loop => loop.bodyNodeIds.some(activeNodeId => activeIds.has(activeNodeId)))
-    return activeLoops.length > 0
-      ? this.executeRecursiveCompiledWorkflowRun({ ...sharedSchedulerArgs, loops: activeLoops })
-      : this.executeCompletionDrivenDagRun(sharedSchedulerArgs)
+    return this.runWithNotification(workflow, profile, input.user, updatedRun, () => (
+      activeLoops.length > 0
+        ? this.executeRecursiveCompiledWorkflowRun({ ...sharedSchedulerArgs, loops: activeLoops })
+        : this.executeCompletionDrivenDagRun(sharedSchedulerArgs)
+    ))
   }
 
   private async buildNodeUserMessage(args: {

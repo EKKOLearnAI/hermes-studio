@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { NButton, NSpin, NTooltip } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import JobsPanel from '@/components/hermes/jobs/JobsPanel.vue'
 import JobRunHistory from '@/components/hermes/jobs/JobRunHistory.vue'
 import JobFormModal from '@/components/hermes/jobs/JobFormModal.vue'
@@ -9,6 +10,7 @@ import { useJobsStore } from '@/stores/hermes/jobs'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t } = useI18n()
+const route = useRoute()
 const jobsStore = useJobsStore()
 const profilesStore = useProfilesStore()
 const showModal = ref(false)
@@ -38,6 +40,10 @@ async function reloadJobsForProfile() {
   jobsStore.jobs = []
   await ensureProfileSelection()
   await jobsStore.fetchJobs()
+  const requestedJobId = typeof route.query.jobId === 'string' ? route.query.jobId : ''
+  if (requestedJobId && jobsStore.jobs.some(job => (job.job_id || job.id) === requestedJobId)) {
+    selectedJobId.value = requestedJobId
+  }
 }
 
 onMounted(() => {

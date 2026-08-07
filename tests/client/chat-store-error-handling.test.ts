@@ -8,6 +8,7 @@ const chatApi = vi.hoisted(() => ({
   registerSessionHandlers: vi.fn(),
   unregisterSessionHandlers: vi.fn(),
 }))
+const notificationApi = vi.hoisted(() => ({ createNotificationEvent: vi.fn(() => Promise.resolve()) }))
 
 vi.mock('@/api/hermes/chat', () => ({
   startRunViaSocket: chatApi.startRunViaSocket,
@@ -25,8 +26,10 @@ vi.mock('@/api/hermes/chat', () => ({
 
 vi.mock('@/api/client', () => ({
   getActiveProfileName: () => 'default',
-  hasApiKey: () => false,
+  hasApiKey: function hasApiKey() { return false },
 }))
+
+vi.mock('@/api/hermes/notifications', () => notificationApi)
 
 vi.mock('@/api/hermes/sessions', () => ({
   archiveSession: vi.fn(),
@@ -146,6 +149,18 @@ describe('chat store error handling - #1644', () => {
     )
     expect(errorMessage).toBeDefined()
     expect(errorMessage?.content).toBe('Error: Socket disconnected')
+    expect(notificationApi.createNotificationEvent).toHaveBeenCalledWith({
+      dedupeKey: 'chat.failed:session-1:run-1',
+      type: 'chat.failed',
+      severity: 'error',
+      title: 'session-1',
+      body: 'Socket disconnected',
+      source: {
+        kind: 'session',
+        id: 'session-1',
+        route: { name: 'hermes.session', params: { sessionId: 'session-1' } },
+      },
+    })
   })
 
   it('overwrites empty streaming message when run.failed fires (no substantial content)', async () => {
