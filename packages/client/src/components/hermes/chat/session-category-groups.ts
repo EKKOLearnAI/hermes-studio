@@ -8,6 +8,7 @@ export interface SessionCategoryAssignment {
 }
 
 export interface RecentSessionAssignment extends SessionCategoryAssignment {
+  id: string;
   updatedAt?: number | null;
 }
 

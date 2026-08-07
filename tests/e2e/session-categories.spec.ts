@@ -66,8 +66,7 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   await expect(recentHeader.locator('.session-group-count')).toHaveText('3')
   await expect(page.locator('.session-group-header').first()).toContainText('Recent')
   const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
-  await expect(workHeader).toBeVisible()
-  await expect(workHeader.locator('.session-group-count')).toHaveText('2')
+  await expect(workHeader).toHaveCount(0)
   await expect(page.locator('.session-group-header').filter({ hasText: 'Empty' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /Project Beta/ }).first()).toBeVisible()
@@ -78,6 +77,8 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   await recentDialog.getByRole('button', { name: 'OK', exact: true }).click()
   await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
   await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_recent_session_count_v1'))).toBe('2')
+  await expect(workHeader).toBeVisible()
+  await expect(workHeader.locator('.session-group-count')).toHaveText('1')
 
   await workHeader.click()
   await expect(page.getByText('Project Alpha', { exact: true })).toHaveCount(1)
@@ -124,10 +125,14 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await page.addInitScript(() => {
     localStorage.setItem('hermes_chat_collapsed_categories', '[]')
+    localStorage.setItem('hermes_recent_session_count_v1', '1')
   })
   const api = await mockHermesApi(page, {
     sessionCategories: [{ id: 1, name: 'Work' }],
-    sessions: [sessionSummary('work-session', 'Project Alpha', 1, 100)],
+    sessions: [
+      sessionSummary('recent-session', 'Latest Notes', null, 200),
+      sessionSummary('work-session', 'Project Alpha', 1, 100),
+    ],
   })
   await mockChatSocket(page)
 
@@ -165,10 +170,14 @@ test('moves a session to another category from its context menu', async ({ page 
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await page.addInitScript(() => {
     localStorage.setItem('hermes_chat_collapsed_categories', '[]')
+    localStorage.setItem('hermes_recent_session_count_v1', '1')
   })
   const api = await mockHermesApi(page, {
     sessionCategories: [{ id: 1, name: 'Work' }],
-    sessions: [sessionSummary('general-session', 'General Notes', null, 100)],
+    sessions: [
+      sessionSummary('recent-session', 'Latest Notes', null, 200),
+      sessionSummary('general-session', 'General Notes', null, 100),
+    ],
   })
   await mockChatSocket(page)
 
