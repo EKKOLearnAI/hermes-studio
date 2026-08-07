@@ -10,7 +10,7 @@ impact: Existing direct-chat approval and clarify prompts, group-chat approvals,
 - Mounts one application-level Naive UI notification host for existing pending approval and clarify interactions.
 - Reuses the existing authoritative response paths instead of creating a generic notification API.
 - Keeps direct-chat in-context cards while allowing an inactive Session request to be handled globally.
-- Delivers group-chat approval events to authorized managers even when they have not joined the source Room. In deployments without user authentication, off-Room global delivery and response are disabled because client-declared identities are not trusted; an in-context human must have joined the Room before managing its approval.
+- Delivers group-chat approval events to authorized managers even when they have not joined the source Room. In deployments without user authentication, off-Room global delivery and response are disabled because client-declared identities are not trusted; an in-context human must have joined the Room before managing its approval. Notification fanout also tolerates reduced Socket.IO test/runtime adapters that do not expose the namespace socket registry.
 - Subscribes to existing Workflow runtime status events and exposes approve/reject actions for nodes in `pending_approval`; a second concurrent Run of the same Workflow is rejected so it cannot hide the first Run's pending approval.
 - Keeps unresolved responses pending and removes notifications when authoritative runtime state resolves them; stale clarification responses do not erase replay state.
 - Validates Direct Chat resume, abort, queue cancellation, approval, and clarification targets against the socket's authorized Profile before touching Session state or the Agent Bridge.

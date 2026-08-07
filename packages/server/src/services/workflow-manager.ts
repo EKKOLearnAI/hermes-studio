@@ -997,6 +997,20 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
   private readonly runtimeStatuses = new Map<string, WorkflowRuntimeStatus>()
   private readonly canceledRunIds = new Set<string>()
   private readonly pendingNodeApprovals = new Map<string, PendingNodeApproval>()
+  private readonly runAdmissionTails = new Map<string, Promise<void>>()
+
+  private async acquireRunAdmission(workflowId: string): Promise<() => void> {
+    const previous = this.runAdmissionTails.get(workflowId) || Promise.resolve()
+    let releaseCurrent!: () => void
+    const current = new Promise<void>((resolve) => { releaseCurrent = resolve })
+    const tail = previous.then(() => current)
+    this.runAdmissionTails.set(workflowId, tail)
+    await previous
+    return () => {
+      releaseCurrent()
+      if (this.runAdmissionTails.get(workflowId) === tail) this.runAdmissionTails.delete(workflowId)
+    }
+  }
 
   list(profile?: string | null): WorkflowRecord[] {
     return listWorkflows(profile).map(withoutRemovedWorkflowRecordPolicy)
@@ -2137,14 +2151,40 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       ;(err as any).status = 503
       throw err
     }
-    if (listActiveWorkflowRuns().some(run => run.workflow_id === workflowId)) {
-      const err = new Error('workflow is already running')
-      ;(err as any).status = 409
-      throw err
-    }
+    const releaseAdmission = await this.acquireRunAdmission(workflowId)
+    let run: WorkflowRunRecord
+    let profile: string
+    let executionPreflight: Awaited<ReturnType<typeof preflightWorkflowExecutionDefinition>>
+    try {
+      if (listActiveWorkflowRuns().some(activeRun => activeRun.workflow_id === workflowId)) {
+        const err = new Error('workflow is already running')
+        ;(err as any).status = 409
+        throw err
+      }
 
-    const profile = input.profile?.trim() || workflow.profile || 'default'
-    const executionPreflight = await preflightWorkflowExecutionDefinition(workflow.nodes, workflow.edges, profile, input.startNodeIds || [])
+      profile = input.profile?.trim() || workflow.profile || 'default'
+      executionPreflight = await preflightWorkflowExecutionDefinition(workflow.nodes, workflow.edges, profile, input.startNodeIds || [])
+      const startedAt = Date.now()
+      const runDeadline = input.timeoutMs && input.timeoutMs > 0 ? startedAt + input.timeoutMs : null
+      const snapshot = workflowRunSnapshotGraph(workflow.nodes, workflow.edges, executionPreflight.compiled)
+      run = createWorkflowRun({
+        workflow_id: workflow.id,
+        profile,
+        workspace: workflow.workspace,
+        start_node_ids: executionPreflight.schedulerStartNodeIds,
+        status: 'running',
+        // Freeze authored visual fields together with the validated execution
+        // target and canonical orchestration used by the scheduler below.
+        snapshot_nodes: snapshot.nodes,
+        snapshot_edges: snapshot.edges,
+        compiled_loops: executionPreflight.compiled.loops,
+        requested_timeout_ms: input.timeoutMs ?? null,
+        deadline_at: runDeadline,
+        started_at: startedAt,
+      })
+    } finally {
+      releaseAdmission()
+    }
     const compiledGraph = executionPreflight.compiled
     const nodes = compiledGraph.nodes
     const edges = compiledGraph.edges
@@ -2152,27 +2192,11 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     const activeIds = executionPreflight.activeNodeIds
     const activeNodes = executionPreflight.activeNodes
 
-    const startedAt = Date.now()
-    const runDeadline = input.timeoutMs && input.timeoutMs > 0 ? startedAt + input.timeoutMs : null
+    const startedAt = run.started_at || Date.now()
+    const runDeadline = run.deadline_at
     const runTimeoutMessage = input.timeoutMs && input.timeoutMs > 0
       ? `workflow run timed out after ${input.timeoutMs}ms`
       : null
-    const snapshot = workflowRunSnapshotGraph(workflow.nodes, workflow.edges, compiledGraph)
-    const run = createWorkflowRun({
-      workflow_id: workflow.id,
-      profile,
-      workspace: workflow.workspace,
-      start_node_ids: startNodeIds,
-      status: 'running',
-      // Freeze authored visual fields together with the validated execution
-      // target and canonical orchestration used by the scheduler below.
-      snapshot_nodes: snapshot.nodes,
-      snapshot_edges: snapshot.edges,
-      compiled_loops: compiledGraph.loops,
-      requested_timeout_ms: input.timeoutMs ?? null,
-      deadline_at: runDeadline,
-      started_at: startedAt,
-    })
     this.canceledRunIds.delete(run.id)
     this.setRuntimeStatus(workflow.id, {
       status: 'running',

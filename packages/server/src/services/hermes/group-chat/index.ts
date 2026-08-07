@@ -1424,7 +1424,9 @@ export class GroupChatServer {
 
     private emitToRoomManagers(roomId: string, event: string, payload: Record<string, unknown>): void {
         const emitted = new Set<string>()
-        for (const socket of this.nsp.sockets.values()) {
+        const sockets = this.nsp.sockets?.values?.()
+        if (!sockets) return
+        for (const socket of sockets) {
             if (emitted.has(socket.id) || this.socketRequestedSourceMap?.get(socket.id) === 'agent') continue
             if (!this.canSocketManageRoom(socket, roomId)) continue
             socket.emit(event, payload)
