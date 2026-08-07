@@ -756,8 +756,12 @@ function makeSocket(url, options) {
       for (const handler of handlers) handler(payload)
     },
   }
-  state.sockets.push(socket)
-  state.latest = socket
+  state.allSockets = state.allSockets || []
+  state.allSockets.push(socket)
+  if (String(url).endsWith('/chat-run') || String(url).endsWith('/global-agent')) {
+    state.sockets.push(socket)
+    state.latest = socket
+  }
   return socket
 }
 export function io(url, options) {

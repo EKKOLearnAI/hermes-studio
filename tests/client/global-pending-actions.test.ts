@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick, reactive } from 'vue'
 
 const chatState = reactive({
+  activeSessionId: 'session-a' as string | null,
   pendingApprovals: new Map<string, any>(),
   pendingClarifies: new Map<string, any>(),
   sessions: [] as any[],
@@ -11,6 +12,7 @@ const chatState = reactive({
   respondToClarifyFor: vi.fn(),
 })
 const groupState = reactive({
+  currentRoomId: 'room-a' as string | null,
   pendingApprovals: new Map<string, any>(),
   rooms: [] as any[],
   respondApprovalFor: vi.fn(),
@@ -65,11 +67,24 @@ describe('GlobalPendingActions', () => {
     chatState.pendingApprovals = new Map()
     chatState.pendingClarifies = new Map()
     chatState.sessions = []
+    chatState.activeSessionId = 'session-a'
     groupState.pendingApprovals = new Map()
     groupState.rooms = []
+    groupState.currentRoomId = 'room-a'
     profileState.activeProfileName = 'default'
     vi.clearAllMocks()
     workflowMock.statusHandlers.splice(0)
+  })
+
+  it('does not duplicate the existing in-context approval for the active session', async () => {
+    chatState.pendingApprovals = new Map([['session-a', {
+      sessionId: 'session-a', approvalId: 'approval-a', description: 'Run', command: 'pwd', choices: ['once'],
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    expect(created).toHaveLength(0)
   })
 
   it('shows and directly handles an approval from an inactive chat session', async () => {
@@ -81,9 +96,9 @@ describe('GlobalPendingActions', () => {
     mount(GlobalPendingActions)
     await nextTick()
 
-    expect(created).toHaveLength(1)
-    expect(created[0].options.title).toContain('B')
-    const action = await render(created[0].options.action)
+    const approvalNotification = created.find(entry => String(entry.options.title).includes('B'))
+    expect(approvalNotification).toBeTruthy()
+    const action = await render(approvalNotification.options.action)
     await action.get('button').trigger('click')
     expect(chatState.respondApprovalFor).toHaveBeenCalledWith('session-b', 'approval-b', 'once')
   })

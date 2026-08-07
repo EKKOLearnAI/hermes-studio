@@ -51,12 +51,15 @@ function roomTitle(roomId: string): string {
 function pendingActions(): GlobalPendingAction[] {
   const actions: GlobalPendingAction[] = []
   for (const pending of chatStore.pendingApprovals.values()) {
+    if (pending.sessionId === chatStore.activeSessionId) continue
     actions.push({ key: `chat-approval:${pending.sessionId}:${pending.approvalId}`, kind: 'chat-approval', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of chatStore.pendingClarifies.values()) {
+    if (pending.sessionId === chatStore.activeSessionId) continue
     actions.push({ key: `chat-clarify:${pending.sessionId}:${pending.clarifyId}`, kind: 'chat-clarify', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of groupChatStore.pendingApprovals.values()) {
+    if (pending.roomId === groupChatStore.currentRoomId) continue
     actions.push({ key: `group-approval:${pending.roomId}:${pending.approvalId}`, kind: 'group-approval', title: roomTitle(pending.roomId), pending })
   }
   for (const status of Object.values(workflowStatuses)) {

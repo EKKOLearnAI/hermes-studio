@@ -2941,6 +2941,8 @@ export const useChatStore = defineStore('chat', () => {
     const pending = activePendingClarify.value
     if (!pending) return
     respondToClarifyFor(pending.sessionId, pending.clarifyId, response)
+    pendingClarifies.value.delete(pending.sessionId)
+    pendingClarifies.value = new Map(pendingClarifies.value)
   }
 
 
@@ -2954,6 +2956,8 @@ export const useChatStore = defineStore('chat', () => {
     const pending = activePendingApproval.value
     if (!pending) return
     respondApprovalFor(pending.sessionId, pending.approvalId, choice)
+    pendingApprovals.value.delete(pending.sessionId)
+    pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
   function updateSessionTitle(sessionId: string) {
