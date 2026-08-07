@@ -231,6 +231,7 @@ export interface RoomInfo {
     maxGuestAgentsPerMember: number
     allowRemoteWorkspaceAccess: number
     createdAt: number
+    lastActiveAt?: number
 }
 
 const ROOM_SELECT_COLUMNS = [
@@ -664,11 +665,11 @@ class ChatStorage {
     getAllRooms(): RoomInfo[] {
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    ${roomActivityAtSql('m')} AS _activityAt
+                    ${roomActivityAtSql('m')} AS lastActiveAt
              FROM gc_rooms r
              LEFT JOIN gc_messages m ON m.roomId = r.id
              GROUP BY r.id
-             ORDER BY _activityAt DESC, r.id ASC`,
+             ORDER BY lastActiveAt DESC, r.id ASC`,
         ).all() || []) as any[]
     }
 
@@ -678,7 +679,7 @@ class ChatStorage {
         const placeholders = uniqueProfiles.map(() => '?').join(', ')
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    ${roomActivityAtSql('m')} AS _activityAt
+                    ${roomActivityAtSql('m')} AS lastActiveAt
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
              LEFT JOIN gc_messages m ON m.roomId = r.id
@@ -686,7 +687,7 @@ class ChatStorage {
                AND a.executorType = 'server'
                AND a.profile IN (${placeholders})
              GROUP BY r.id
-             ORDER BY _activityAt DESC, r.id ASC`
+             ORDER BY lastActiveAt DESC, r.id ASC`
         ).all(...uniqueProfiles) || []) as any[]
     }
 
@@ -694,13 +695,13 @@ class ChatStorage {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    ${roomActivityAtSql('messages')} AS _activityAt
+                    ${roomActivityAtSql('messages')} AS lastActiveAt
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              LEFT JOIN gc_messages messages ON messages.roomId = r.id
              WHERE m.authUserId = ?
              GROUP BY r.id
-             ORDER BY _activityAt DESC, r.id ASC`
+             ORDER BY lastActiveAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 
@@ -708,12 +709,12 @@ class ChatStorage {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    ${roomActivityAtSql('m')} AS _activityAt
+                    ${roomActivityAtSql('m')} AS lastActiveAt
              FROM gc_rooms r
              LEFT JOIN gc_messages m ON m.roomId = r.id
              WHERE r.ownerAuthUserId = ?
              GROUP BY r.id
-             ORDER BY _activityAt DESC, r.id ASC`
+             ORDER BY lastActiveAt DESC, r.id ASC`
         ).all(authUserId) || []) as any[]
     }
 

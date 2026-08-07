@@ -157,9 +157,14 @@ describe('group chat legacy activity migration', () => {
     storage.addMessage({ id: 'old', roomId: 'room-a', senderId: 'user', senderName: 'User', content: 'old', timestamp: 10, persistedAt: 10 })
     storage.addMessage({ id: 'new', roomId: 'room-z', senderId: 'user', senderName: 'User', content: 'new', timestamp: 20, persistedAt: 20 })
 
-    expect(storage.getRoomsForProfiles(['default']).map(room => room.id)).toEqual(['room-z', 'room-a'])
-    expect(storage.getRoomsForAuthUser(7).map(room => room.id)).toEqual(['room-z', 'room-a'])
-    expect(storage.getOwnedRoomsForAuthUser(7).map(room => room.id)).toEqual(['room-z', 'room-a'])
+    const expected = [
+      { id: 'room-z', lastActiveAt: 20 },
+      { id: 'room-a', lastActiveAt: 10 },
+    ]
+    expect(storage.getAllRooms().map(({ id, lastActiveAt }) => ({ id, lastActiveAt }))).toEqual(expected)
+    expect(storage.getRoomsForProfiles(['default']).map(({ id, lastActiveAt }) => ({ id, lastActiveAt }))).toEqual(expected)
+    expect(storage.getRoomsForAuthUser(7).map(({ id, lastActiveAt }) => ({ id, lastActiveAt }))).toEqual(expected)
+    expect(storage.getOwnedRoomsForAuthUser(7).map(({ id, lastActiveAt }) => ({ id, lastActiveAt }))).toEqual(expected)
     server.getIO().close()
   })
 

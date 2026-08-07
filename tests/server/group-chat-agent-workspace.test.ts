@@ -205,6 +205,34 @@ describe('group chat agent workspace bridge runs', () => {
     }), expect.any(Function))
   })
 
+  it('does not generate a structured mention for the replying agent itself', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const author = await clients.createAgent({
+      agentId: 'agent-author',
+      profile: 'default',
+      name: 'Author',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    })
+    const replyToMention = vi.fn(async () => {})
+    clients.rooms.set('room-1', new Map([
+      ['agent-author', author],
+      ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer', replyToMention }],
+    ]))
+
+    await author.sendMessage('room-1', '@Author status: waiting for @Reviewer.', 'self-mention-1')
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
+      roomId: 'room-1',
+      id: 'self-mention-1',
+      content: '@Author status: waiting for @Reviewer.',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    }), expect.any(Function))
+    expect(replyToMention).not.toHaveBeenCalled()
+  })
+
   it('dispatches a Codex group agent through chat-run without invoking the Hermes bridge', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const runAndWait = vi.fn(async (_data: any, options: any) => {

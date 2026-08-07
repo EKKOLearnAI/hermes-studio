@@ -209,6 +209,20 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['recent-room', 'future-agent'])
   })
 
+  it('keeps the REST room order based on the server public lastActiveAt instead of createdAt', async () => {
+    const store = await loadStore()
+    groupChatApiMock.listRooms.mockResolvedValue({
+      rooms: [
+        { ...room, id: 'room-old-active', createdAt: 100, lastActiveAt: 300 },
+        { ...room, id: 'room-new-created', createdAt: 200, lastActiveAt: 200 },
+      ],
+    })
+
+    await store.loadRooms()
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['room-old-active', 'room-new-created'])
+  })
+
   it('binds autoplay events to the responding agent profile', async () => {
     vi.useFakeTimers()
     const store = await loadStore()
