@@ -646,6 +646,8 @@ export default {
     hermesHistory: 'Hermes 기록',
     historyScopeHint: '현재 profile의 Hermes 기록 세션을 소스별로 읽기 전용으로 봅니다.',
     noSessions: '세션 없음',
+    recent: '최근',
+    recentCount: '최근 세션 수',
     loadMoreSessions: '세션 더 불러오기',
     newChat: '새 채팅',
     category: '카테고리',

@@ -15,6 +15,7 @@ import type { ContentBlock } from '../run-chat/types'
 import type { StoredMessage } from '../context-engine/types'
 import type { GroupRoomSummaryService, GroupRuntimeContext } from './room-summary'
 import {
+    isAgentMentioned,
     isAllAgentsMentioned,
     resolveMentionTargets,
     stripMentionRoutingTokens,
@@ -59,7 +60,16 @@ type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    mentions?: StructuredMention[]
 }
+
+export type StructuredMention =
+    | { type: 'agent'; participantId: string }
+    | { type: 'all' }
+
+export type StructuredMentionEntry =
+    | { type: 'agent'; participantId: string; displayName: string }
+    | { type: 'all'; displayName: 'all' }
 
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
@@ -248,6 +258,7 @@ class AgentClient {
     private activeSessions = new Map<string, string>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private chatRunService: GroupChatRunService | null = null
+    private mentionBuilder: ((roomId: string, content: string) => StructuredMentionEntry[]) | null = null
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -281,6 +292,10 @@ class AgentClient {
 
     setChatRunService(service: GroupChatRunService | null): void {
         this.chatRunService = service
+    }
+
+    setMentionBuilder(builder: ((roomId: string, content: string) => StructuredMentionEntry[]) | null): void {
+        this.mentionBuilder = builder
     }
 
     async connect(port?: number): Promise<void> {
@@ -349,8 +364,19 @@ class AgentClient {
 
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
+        const generatedMentions = this.mentionBuilder?.(roomId, content) || []
+        const mentions = generatedMentions.length > 0
+            ? generatedMentions
+            : (extra?.role === 'assistant' ? this.structuredMentionsForAgentReply(roomId, content) : [])
         return new Promise((resolve, reject) => {
-            this.socket!.emit('message', { roomId, content, id: messageId, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }, (res: { id?: string; error?: string }) => {
+            this.socket!.emit('message', {
+                roomId,
+                content,
+                id: messageId,
+                ...extra,
+                ...(mentions.length ? { mentions } : {}),
+                ...(agentSessionId ? { agentSessionId } : {}),
+            }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     reject(new Error(res.error))
                 } else {
@@ -358,6 +384,24 @@ class AgentClient {
                 }
             })
         })
+    }
+
+    private structuredMentionsForAgentReply(roomId: string, content: string): StructuredMentionEntry[] {
+        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const agents = Array.isArray(rawAgents) ? rawAgents : []
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        const byName = new Map<string, Array<{ agentId: string; name: string }>>()
+        for (const agent of agents) {
+            const participantId = String(agent?.agentId || '').trim()
+            const displayName = String(agent?.name || '').trim()
+            if (!participantId || !displayName || participantId === this.agentId) continue
+            const matches = byName.get(displayName) || []
+            matches.push({ agentId: participantId, name: displayName })
+            byName.set(displayName, matches)
+        }
+        return [...byName.values()]
+            .filter(matches => matches.length === 1 && isAgentMentioned(content, matches[0].name))
+            .map(matches => ({ type: 'agent' as const, participantId: matches[0].agentId, displayName: matches[0].name }))
     }
 
     startTyping(roomId: string): void {
@@ -1540,6 +1584,7 @@ export class AgentClients {
      */
     async createAgent(config: AgentConfig, handlers?: AgentEventHandler, port?: number): Promise<AgentClient> {
         const client = new AgentClient(config, handlers)
+        client.setMentionBuilder((roomId, content) => this.buildAgentReplyMentions(roomId, content))
         await client.connect(port)
 
         // Auto-apply stored references (fixes propagation for agents created after set*)
@@ -1561,6 +1606,9 @@ export class AgentClients {
             this.rooms.set(roomId, room)
         }
 
+        if (typeof (client as any).setMentionBuilder === 'function') {
+            client.setMentionBuilder((targetRoomId, content) => this.buildAgentReplyMentions(targetRoomId, content))
+        }
         room.set(client.agentId, client)
         try {
             const result = await client.joinRoom(roomId)
@@ -1600,6 +1648,18 @@ export class AgentClients {
     getAgents(roomId: string): AgentClient[] {
         const room = this.rooms.get(roomId)
         return room ? Array.from(room.values()) : []
+    }
+
+    private buildAgentReplyMentions(roomId: string, content: string): StructuredMentionEntry[] {
+        const agents = this.getAgents(roomId)
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        return agents
+            .filter(agent => isAgentMentioned(content, agent.name))
+            .map(agent => ({
+                type: 'agent' as const,
+                participantId: agent.agentId,
+                displayName: agent.name,
+            }))
     }
 
     /**
@@ -1816,7 +1876,9 @@ export class AgentClients {
      */
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
         const agents = this.getAgents(roomId)
-        const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
+        const mentioned = msg.mentions
+            ? this.resolveStructuredMentionTargets(agents, msg.mentions, msg.senderId)
+            : resolveMentionTargets(agents, msg.content, msg.senderId)
         if (mentioned.length === 0 && msg.role !== 'user') return
 
         if (mentioned.length > 0) {
@@ -1827,6 +1889,17 @@ export class AgentClients {
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
         }
+    }
+
+    private resolveStructuredMentionTargets(
+        agents: AgentClient[],
+        mentions: StructuredMention[],
+        senderId: string,
+    ): AgentClient[] {
+        const candidates = agents.filter(agent => agent.agentId !== senderId && agent.id !== senderId)
+        if (mentions.some(mention => mention.type === 'all')) return candidates
+        const ids = new Set(mentions.flatMap(mention => mention.type === 'agent' ? [mention.participantId] : []))
+        return candidates.filter(agent => ids.has(agent.agentId))
     }
 
     async processSummaryCheck(roomId: string, messageId: string): Promise<void> {

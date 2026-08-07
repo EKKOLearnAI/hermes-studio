@@ -15,7 +15,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -833,9 +833,9 @@ async function handleSelectRoom(roomId: string) {
     }
 }
 
-async function handleSendMessage(content: string, attachments?: Attachment[]) {
+async function handleSendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
     try {
-        await store.sendMessage(content, attachments)
+        await store.sendMessage(content, attachments, mentions)
     } catch (err: any) {
         message.error(err.message)
     }

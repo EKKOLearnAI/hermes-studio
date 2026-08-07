@@ -16,6 +16,8 @@ export interface RoomInfo {
     summaryEveryTurns: number
     totalTokens?: number
     workspace: string
+    createdAt?: number
+    lastActiveAt?: number
 }
 
 export interface RoomSummaryConfig {
@@ -95,6 +97,8 @@ export interface ChatMessage {
     senderName: string
     content: string
     timestamp: number
+    /** Server-assigned persistence time used for room activity ordering. */
+    persistedAt?: number
     run_id?: string | null
     role?: string
     tool_call_id?: string | null
@@ -104,6 +108,7 @@ export interface ChatMessage {
     reasoning?: string | null
     reasoning_details?: string | null
     reasoning_content?: string | null
+    mentions?: GroupChatMention[]
     isStreaming?: boolean
     toolName?: string
     toolCallId?: string
@@ -115,6 +120,12 @@ export interface ChatMessage {
     firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
     runItems?: ChatMessage[]
+}
+
+export interface GroupChatMention {
+    type: 'agent' | 'all'
+    participantId?: string
+    displayName: string
 }
 
 export interface GroupWorkspaceDiffFile {

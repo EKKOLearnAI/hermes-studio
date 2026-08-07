@@ -646,6 +646,8 @@ export default {
     hermesHistory: 'Hermes-Verlauf',
     historyScopeHint: 'Schreibgeschützte Hermes-Verlaufssitzungen des aktuellen Profils, nach Quelle gruppiert.',
     noSessions: 'Keine Sitzungen',
+    recent: 'Zuletzt',
+    recentCount: 'Anzahl letzter Sitzungen',
     loadMoreSessions: 'Weitere Sitzungen laden',
     newChat: 'Neuer Chat',
     category: 'Kategorie',

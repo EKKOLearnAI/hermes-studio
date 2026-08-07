@@ -25,6 +25,7 @@ import {
   NDrawerContent,
   NDropdown,
   NInput,
+  NInputNumber,
   NModal,
   NSelect,
   NTooltip,
@@ -48,7 +49,7 @@ import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
-import { buildVisibleSessionCategoryGroups } from "./session-category-groups";
+import { buildRecentSessionCategoryGroup, buildVisibleSessionCategoryGroups } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
@@ -504,6 +505,8 @@ const sessionCategoriesLoading = ref(false);
 const sessionCategoriesLoaded = ref(false);
 let sessionCategoriesLoadPromise: Promise<void> | null = null;
 const COLLAPSED_CATEGORIES_STORAGE_KEY = "hermes_chat_collapsed_categories";
+const showRecentCountModal = ref(false);
+const recentCountDraft = ref(sessionBrowserPrefsStore.recentCount);
 
 function loadCollapsedCategories(): Set<string> {
   try {
@@ -573,6 +576,22 @@ const categorizedSessions = computed(() => buildVisibleSessionCategoryGroups(
   unpinnedSessions.value,
   t("chat.uncategorized"),
 ));
+const recentSessions = computed(() => buildRecentSessionCategoryGroup(
+  chatStore.sessions,
+  sessionBrowserPrefsStore.recentCount,
+  t("chat.recent"),
+));
+
+function openRecentCountModal(event: MouseEvent) {
+  event.stopPropagation();
+  recentCountDraft.value = sessionBrowserPrefsStore.recentCount;
+  showRecentCountModal.value = true;
+}
+
+function saveRecentCount() {
+  sessionBrowserPrefsStore.setRecentCount(recentCountDraft.value);
+  showRecentCountModal.value = false;
+}
 
 watch(
   () => [
@@ -1963,6 +1982,34 @@ async function handleSessionModelCustomSubmit() {
           {{ t("chat.noSessions") }}
         </div>
 
+        <template v-if="recentSessions.sessions.length > 0">
+          <div class="session-group-header session-group-header--static">
+            <span class="session-group-label">{{ recentSessions.label }}</span>
+            <span class="session-group-count">{{ recentSessions.sessions.length }}</span>
+            <button class="session-group-config" type="button" :title="t('chat.recentCount')" @click="openRecentCountModal">⚙</button>
+          </div>
+          <SessionListItem
+            v-for="s in recentSessions.sessions"
+            :key="`recent-${s.id}`"
+            :session="s"
+            :active="s.id === chatStore.activeSessionId"
+            :pinned="sessionBrowserPrefsStore.isPinned(s.id)"
+            :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+            :streaming="chatStore.isSessionLive(s.id)"
+            :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
+            :selectable="isBatchMode"
+            :selected="isSessionSelected(s)"
+            :show-profile="true"
+            :to="sessionHref(s.id)"
+            :intercept-modified-navigation="desktopChatWindowAvailable"
+            @select="handleSessionClick(s.id)"
+            @open-new="openSessionInNewTab(s.id)"
+            @contextmenu="handleContextMenu($event, s.id)"
+            @delete="handleDeleteSession(s.id)"
+            @toggle-select="toggleSessionSelection(s)"
+          />
+        </template>
+
         <template v-if="pinnedSessions.length > 0">
           <div class="session-group-header session-group-header--static">
             <span class="session-group-label">{{ t("chat.pinned") }}</span>
@@ -2072,6 +2119,17 @@ async function handleSessionModelCustomSubmit() {
       @select="handleContextMenuSelect"
       @clickoutside="handleClickOutside"
     />
+
+    <NModal
+      v-model:show="showRecentCountModal"
+      preset="dialog"
+      :title="t('chat.recentCount')"
+      :positive-text="t('common.ok')"
+      :negative-text="t('common.cancel')"
+      @positive-click="saveRecentCount"
+    >
+      <NInputNumber v-model:value="recentCountDraft" :min="1" :max="100" />
+    </NModal>
 
     <NDropdown
       placement="bottom-start"
@@ -3329,6 +3387,15 @@ async function handleSessionModelCustomSubmit() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.session-group-config {
+  margin-inline-start: auto;
+  border: 0;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  padding: 0 2px;
 }
 
 .session-group-count {
