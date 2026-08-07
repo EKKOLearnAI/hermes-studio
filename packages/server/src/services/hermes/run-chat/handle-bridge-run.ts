@@ -420,9 +420,11 @@ export async function handleBridgeRun(
     return
   }
 
-  let fullInstructions = instructions
-    ? `${getSystemPrompt(undefined, { source: data.session_source || data.source })}\n${instructions}`
-    : getSystemPrompt(undefined, { source: data.session_source || data.source })
+  // `instructions` already carries the Studio guidance: the chat-run socket
+  // composes it before delegating here. Prepending it again duplicated the whole
+  // block — MCP usage plus the output-format rules — byte for byte in the system
+  // message of every request. Compose only when a caller hands us nothing.
+  let fullInstructions = instructions || getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
   const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !sessionRow?.workspace)
