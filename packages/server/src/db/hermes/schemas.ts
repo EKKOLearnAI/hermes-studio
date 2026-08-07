@@ -570,6 +570,10 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',
+  allowGuestAgents: 'INTEGER NOT NULL DEFAULT 0',
+  guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
+  maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
+  allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const GC_MESSAGES_TABLE = 'gc_messages'
@@ -579,6 +583,8 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   roomId: 'TEXT NOT NULL',
   senderId: 'TEXT NOT NULL',
   senderName: 'TEXT NOT NULL',
+  senderType: "TEXT NOT NULL DEFAULT ''",
+  senderAgentRecordId: "TEXT NOT NULL DEFAULT ''",
   content: 'TEXT NOT NULL',
   timestamp: 'INTEGER NOT NULL',
   run_id: 'TEXT',
@@ -608,6 +614,48 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   description: "TEXT NOT NULL DEFAULT ''",
   avatar: "TEXT NOT NULL DEFAULT ''",
   invited: 'INTEGER NOT NULL DEFAULT 0',
+  executorType: "TEXT NOT NULL DEFAULT 'server'",
+  ownerMemberId: "TEXT NOT NULL DEFAULT ''",
+  connectorId: "TEXT NOT NULL DEFAULT ''",
+  remoteOrigin: "TEXT NOT NULL DEFAULT ''",
+  removedAt: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const GC_AGENT_PAIRING_REQUESTS_TABLE = 'gc_agent_pairing_requests'
+
+export const GC_AGENT_PAIRING_REQUESTS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  ownerMemberId: 'TEXT NOT NULL',
+  ownerName: 'TEXT NOT NULL',
+  requesterSecretHash: 'TEXT NOT NULL',
+  pairingTicketHash: 'TEXT NOT NULL UNIQUE',
+  targetOrigin: 'TEXT NOT NULL',
+  agentJson: 'TEXT NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'pending'",
+  createdAt: 'INTEGER NOT NULL',
+  expiresAt: 'INTEGER NOT NULL',
+  approvedAt: 'INTEGER',
+  ticketExpiresAt: 'INTEGER',
+  consumedAt: 'INTEGER',
+  decidedByAuthUserId: 'INTEGER',
+  failureReason: "TEXT NOT NULL DEFAULT ''",
+}
+
+export const GC_AGENT_CONNECTORS_TABLE = 'gc_agent_connectors'
+
+export const GC_AGENT_CONNECTORS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  roomAgentId: 'TEXT NOT NULL',
+  agentId: 'TEXT NOT NULL',
+  ownerMemberId: 'TEXT NOT NULL',
+  targetOrigin: 'TEXT NOT NULL',
+  credentialHash: 'TEXT NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'offline'",
+  createdAt: 'INTEGER NOT NULL',
+  lastSeenAt: 'INTEGER NOT NULL',
+  revokedAt: 'INTEGER',
 }
 
 export const GC_CONTEXT_SNAPSHOTS_TABLE = 'gc_context_snapshots'
@@ -1193,6 +1241,17 @@ export function initAllHermesTables(): void {
       indexes: {
         idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
       }
+    })
+    syncTable(GC_AGENT_PAIRING_REQUESTS_TABLE, GC_AGENT_PAIRING_REQUESTS_SCHEMA, {
+      indexes: {
+        idx_gc_agent_pairing_room_status: 'CREATE INDEX idx_gc_agent_pairing_room_status ON gc_agent_pairing_requests(roomId, status, createdAt)',
+      },
+    })
+    syncTable(GC_AGENT_CONNECTORS_TABLE, GC_AGENT_CONNECTORS_SCHEMA, {
+      indexes: {
+        idx_gc_agent_connectors_room: 'CREATE INDEX idx_gc_agent_connectors_room ON gc_agent_connectors(roomId, status)',
+        idx_gc_agent_connectors_agent: 'CREATE UNIQUE INDEX idx_gc_agent_connectors_agent ON gc_agent_connectors(roomId, agentId)',
+      },
     })
 
     syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {

@@ -65,7 +65,7 @@ export interface EkkoAgentRunSocketData {
   workspace?: string | null
   category_id?: number | null
   source?: string
-  session_source?: 'global_agent' | 'workflow'
+  session_source?: 'global_agent' | 'workflow' | 'group_chat'
   context_compression_enabled?: boolean
   baseUrl?: string
   base_url?: string
@@ -406,7 +406,11 @@ export async function handleEkkoAgentRun(
   state.isWorking = true
   state.isAborting = false
   state.profile = profile
-  state.source = data.source === 'workflow' ? 'workflow' : 'coding_agent'
+  state.source = data.session_source === 'group_chat' || data.source === 'group_chat'
+    ? 'group_chat'
+    : data.session_source === 'workflow' || data.source === 'workflow'
+      ? 'workflow'
+      : 'coding_agent'
   state.events = []
   const abortController = new AbortController()
   state.abortController = abortController
@@ -453,9 +457,11 @@ export async function handleEkkoAgentRun(
     : []
   const sessionSource = data.session_source === 'global_agent'
     ? 'global_agent'
-    : data.session_source === 'workflow' || data.source === 'workflow'
-      ? 'workflow'
-      : 'coding_agent'
+    : data.session_source === 'group_chat' || data.source === 'group_chat'
+      ? 'group_chat'
+      : data.session_source === 'workflow' || data.source === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id: sessionId }
     observeRunChatPetEvent(profile, event, tagged)

@@ -83,6 +83,19 @@ describe('group chat member avatars', () => {
     ])
   })
 
+  it('does not expose an account avatar to a guest that chooses the same display name', async () => {
+    const { users, storage } = await initStorage()
+    const alice = users.createUser({ username: 'alice', password: 'pw' })!
+    const aliceAvatar = JSON.stringify({ type: 'image', dataUrl: 'data:image/png;base64,ALICE' })
+    users.setUserAvatar(alice.id, aliceAvatar)
+
+    storage.addRoomMember('room-1', 'guest-browser-id', 'alice', '')
+
+    expect(storage.getRoomMembers('room-1')).toMatchObject([
+      { userId: 'guest-browser-id', name: 'alice', avatar: '' },
+    ])
+  })
+
   it('merges a browser-local member row into the authenticated account identity', async () => {
     const { users, storage } = await initStorage()
     const alice = users.createUser({ username: 'alice-login', password: 'pw' })!

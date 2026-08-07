@@ -1,19 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { io as socketIo } from 'socket.io-client'
 import {
   connectGroupChatClient,
   createTestGroupChatServer,
   emitAck,
   once,
+  rejectGroupChatClient,
 } from './group-chat-test-helpers'
-import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import {
+  defaultGroupChatWorkspace,
+  type GroupChatServer,
+} from '../../packages/server/src/services/hermes/group-chat'
+import {
+  GroupAgentRelayServer,
+  redactRelaySecrets,
+  relayRoomWorkspace,
+} from '../../packages/server/src/services/hermes/group-chat/agent-relay'
+import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import {
+  authenticateRemoteWorkspaceGrant,
+  resetRemoteWorkspaceGrantsForTest,
+} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
+import { performRemoteWorkspaceAction } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
 
 describe('group chat baseline behavior', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
   let groupServer: GroupChatServer
   let port: number
+  let originalPort: string | undefined
+  const temporaryDirectories: string[] = []
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    originalPort = process.env.PORT
     harness = await createTestGroupChatServer()
     groupServer = harness.groupServer
     port = harness.port
@@ -21,6 +43,36 @@ describe('group chat baseline behavior', () => {
 
   afterEach(() => {
     harness?.cleanup()
+    resetRemoteWorkspaceGrantsForTest()
+    for (const path of temporaryDirectories.splice(0)) {
+      rmSync(path, { recursive: true, force: true })
+    }
+    vi.restoreAllMocks()
+    if (originalPort === undefined) delete process.env.PORT
+    else process.env.PORT = originalPort
+  })
+
+  it('derives a stable local workspace for remote room runs', () => {
+    const room = { id: 'room-1', summaryProfile: 'research' }
+
+    expect(relayRoomWorkspace(room)).toBe(defaultGroupChatWorkspace('research', 'room-1'))
+    expect(relayRoomWorkspace(room)).toBe(relayRoomWorkspace(room))
+    expect(() => relayRoomWorkspace({ id: '..', summaryProfile: 'research' })).toThrow('Invalid Relay room id')
+    expect(() => relayRoomWorkspace({ id: 'room-1', summaryProfile: '..' })).toThrow(
+      'Invalid Relay room summary profile',
+    )
+  })
+
+  it('redacts short-lived workspace grants from nested relay events', () => {
+    const secret = 'a'.repeat(43)
+
+    expect(redactRelaySecrets({
+      command: `curl -H "Authorization: Bearer ${secret}" https://group.example`,
+      tool_calls: [{ arguments: JSON.stringify({ token: secret }) }],
+    }, [secret])).toEqual({
+      command: 'curl -H "Authorization: Bearer [REDACTED]" https://group.example',
+      tool_calls: [{ arguments: JSON.stringify({ token: '[REDACTED]' }) }],
+    })
   })
 
   it('joins an existing room and returns room-level history and membership', async () => {
@@ -43,6 +95,761 @@ describe('group chat baseline behavior', () => {
     expect(joined).toMatchObject({ roomId: 'room-1' })
     expect(joined.messages.map((m: any) => m.id)).toEqual(['msg-1'])
     expect(joined.members.map((m: any) => m.name)).toContain('Alice')
+  })
+
+  it('removes a live human member from the room and notifies that member', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'ROOM1')
+    const guest = await connectGroupChatClient(port, 'guest-remove', 'Guest')
+    harness.sockets.push(guest)
+    await emitAck(guest, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const kicked = once<any>(guest, 'member_kicked')
+    const members = groupServer.removeRoomMember('room-1', 'guest-remove')
+
+    await expect(kicked).resolves.toEqual({ roomId: 'room-1' })
+    expect(members).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: 'guest-remove' }),
+    ]))
+    expect(storage.getMemberByUserId('room-1', 'guest-remove')).toBeNull()
+  })
+
+  it('authenticates an invite-only socket and scopes it to the invited room', async () => {
+    harness.cleanup()
+    harness = await createTestGroupChatServer({ authEnabled: true })
+    groupServer = harness.groupServer
+    port = harness.port
+
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.saveRoom('room-2', 'Other Room', 'ROOM2')
+
+    const guest = await connectGroupChatClient(port, 'guest-1', 'Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(guest)
+
+    const joined = await emitAck<any>(guest, 'join', { roomId: 'room-1', name: 'Guest' })
+    const denied = await emitAck<any>(guest, 'join', { roomId: 'room-2', inviteCode: 'ROOM2' })
+
+    expect(joined).toMatchObject({ roomId: 'room-1', rooms: ['room-1'] })
+    expect(denied).toEqual({ error: 'Access denied' })
+  })
+
+  it('keeps invite-only sockets scoped when account authentication is disabled', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.saveRoom('room-2', 'Other Room', 'ROOM2')
+
+    const guest = await connectGroupChatClient(port, 'guest-1', 'Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(guest)
+
+    const joined = await emitAck<any>(guest, 'join', { roomId: 'room-1', name: 'Guest' })
+    const denied = await emitAck<any>(guest, 'join', { roomId: 'room-2', inviteCode: 'ROOM2' })
+    const managementDenied = await emitAck<any>(guest, 'interrupt_agent', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+    })
+
+    expect(joined).toMatchObject({ roomId: 'room-1', rooms: ['room-1'] })
+    expect(denied).toEqual({ error: 'Access denied' })
+    expect(managementDenied).toEqual({ error: 'Access denied' })
+    await expect(rejectGroupChatClient(port, {
+      userId: 'invalid-guest',
+      name: 'Invalid Guest',
+      inviteCode: 'INVALID',
+    })).resolves.toBe('Unauthorized')
+  })
+
+  it('allows only the room owner to broadcast with @all', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+
+    const guest = await connectGroupChatClient(port, 'guest-1', 'Guest', { inviteCode: 'ROOM1' })
+    const owner = await connectGroupChatClient(port, 'owner-1', 'Owner')
+    harness.sockets.push(guest, owner)
+    await emitAck(guest, 'join', { roomId: 'room-1', name: 'Guest' })
+    await emitAck(owner, 'join', { roomId: 'room-1', name: 'Owner', inviteCode: 'ROOM1' })
+
+    const denied = await emitAck<any>(guest, 'message', {
+      roomId: 'room-1',
+      content: '@all guest broadcast',
+    })
+    const allowed = await emitAck<any>(owner, 'message', {
+      roomId: 'room-1',
+      content: '@all owner broadcast',
+    })
+
+    expect(denied).toEqual({
+      code: 'GROUP_CHAT_ALL_MENTION_FORBIDDEN',
+      error: 'Only the room owner can mention @all',
+    })
+    expect(allowed.id).toEqual(expect.any(String))
+    expect(storage.getRecentMessagesForUI('room-1').map(message => message.content))
+      .toEqual(['@all owner broadcast'])
+  })
+
+  it('issues a room-member-bound proof for guest Agent pairing requests', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+
+    const guest = await connectGroupChatClient(port, 'guest-agent-owner', 'Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(guest)
+    const joined = await emitAck<any>(guest, 'join', { roomId: 'room-1', name: 'Guest' })
+
+    expect(joined.agentLinkToken).toEqual(expect.any(String))
+    expect(joined.agentLinkToken.length).toBeGreaterThan(32)
+    expect(groupServer.authorizeGuestAgentRequestToken(
+      'room-1',
+      'guest-agent-owner',
+      joined.agentLinkToken,
+    )).toBe(true)
+    expect(groupServer.authorizeGuestAgentRequestToken(
+      'room-1',
+      'another-member',
+      joined.agentLinkToken,
+    )).toBe(false)
+    expect(groupServer.authorizeGuestAgentRequestToken(
+      'another-room',
+      'guest-agent-owner',
+      joined.agentLinkToken,
+    )).toBe(false)
+    expect(groupServer.authorizeGuestAgentRequestToken(
+      'room-1',
+      'guest-agent-owner',
+      'forged-token',
+    )).toBe(false)
+  })
+
+  it('reveals remote Agent management fields only to its owning guest', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.addRoomAgent('room-1', 'remote-owned', 'default', 'Owned Agent', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-owner',
+      connectorId: '11111111-2222-4333-8444-555555555555',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+
+    const owner = await connectGroupChatClient(port, 'guest-owner', 'Owner Guest', { inviteCode: 'ROOM1' })
+    const other = await connectGroupChatClient(port, 'guest-other', 'Other Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(owner, other)
+    const ownerJoin = await emitAck<any>(owner, 'join', { roomId: 'room-1', name: 'Owner Guest' })
+    const otherJoin = await emitAck<any>(other, 'join', { roomId: 'room-1', name: 'Other Guest' })
+
+    expect(ownerJoin.agents[0]).toMatchObject({
+      ownerMemberId: 'guest-owner',
+      connectorId: '11111111-2222-4333-8444-555555555555',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+    expect(otherJoin.agents[0]).toMatchObject({ ownerMemberId: 'guest-owner' })
+    expect(otherJoin.agents[0]).not.toHaveProperty('connectorId')
+    expect(otherJoin.agents[0]).not.toHaveProperty('remoteOrigin')
+    const managerView = groupServer.getRoomAgentViews('room-1', true)
+    expect(managerView[0]).toMatchObject({ ownerMemberId: 'guest-owner' })
+    expect(managerView[0]).not.toHaveProperty('connectorId')
+    expect(managerView[0]).not.toHaveProperty('remoteOrigin')
+  })
+
+  it('returns an offline Agent owner avatar to other room members', async () => {
+    const storage = groupServer.getStorage()
+    const ownerAvatar = JSON.stringify({ type: 'generated', seed: 'offline-owner' })
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.addRoomMember('room-1', 'guest-owner', 'Offline Owner', '', ownerAvatar)
+    storage.addRoomAgent('room-1', 'remote-owned', 'default', 'Owned Agent', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-owner',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+
+    const viewer = await connectGroupChatClient(port, 'guest-viewer', 'Viewer', { inviteCode: 'ROOM1' })
+    harness.sockets.push(viewer)
+    const joined = await emitAck<any>(viewer, 'join', { roomId: 'room-1', name: 'Viewer' })
+
+    expect(joined.agents).toEqual([
+      expect.objectContaining({
+        ownerMemberId: 'guest-owner',
+        connectionStatus: 'offline',
+      }),
+    ])
+    expect(joined.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        userId: 'guest-owner',
+        name: 'Offline Owner',
+        avatar: ownerAvatar,
+      }),
+    ]))
+  })
+
+  it('allows an invite member to remove only their own remote Agent', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    const owned = storage.addRoomAgent('room-1', 'owned-remote', 'default', 'Owned Remote', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-owner',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+    const other = storage.addRoomAgent('room-1', 'other-remote', 'default', 'Other Remote', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-other',
+      remoteOrigin: 'http://127.0.0.1:8748',
+    })
+    const owner = await connectGroupChatClient(port, 'guest-owner', 'Owner Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(owner)
+    await emitAck(owner, 'join', { roomId: 'room-1', name: 'Owner Guest' })
+
+    const denied = await emitAck<any>(owner, 'remove_agent', {
+      roomId: 'room-1',
+      agentId: other.id,
+    })
+    const removed = await emitAck<any>(owner, 'remove_agent', {
+      roomId: 'room-1',
+      agentId: owned.id,
+    })
+
+    expect(denied).toEqual({ error: 'Access denied' })
+    expect(removed).toMatchObject({
+      ok: true,
+      agents: [expect.objectContaining({ id: other.id, ownerMemberId: 'guest-other' })],
+    })
+    expect(storage.getRoomAgents('room-1')).toEqual([
+      expect.objectContaining({ id: other.id }),
+    ])
+  })
+
+  it('attributes server-local room Agents to the persisted room owner', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-owned', 'Owned Room', 'OWNED1', {
+      summaryProfile: 'default',
+      summaryProvider: '',
+      summaryModel: '',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+      ownerAuthUserId: 7,
+    })
+    storage.addRoomMember('room-owned', 'auth:7', 'Room Owner', '', '', 7)
+    storage.addRoomAgent('room-owned', 'local-agent', 'default', 'Local Agent', '', 1)
+
+    expect(groupServer.getRoomAgentViews('room-owned', false)[0]).toMatchObject({
+      executorType: 'server',
+      ownerMemberId: 'auth:7',
+    })
+  })
+
+  it('keeps pairing tickets single-use and replaces them with revocable reconnect credentials', async () => {
+    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.updateRoomGuestAgentPolicy('room-1', {
+      allowGuestAgents: true,
+      maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: false,
+    })
+    const roomAgent = storage.addRoomAgent('room-1', 'remote-agent', 'default', 'Remote', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-agent-owner',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+    const created = relayStore.createGroupAgentPairingRequest({
+      roomId: 'room-1',
+      ownerMemberId: 'guest-agent-owner',
+      ownerName: 'Guest',
+      targetOrigin: 'http://127.0.0.1:8648',
+      agent: relayStore.normalizeRemoteGroupAgentDescriptor({
+        agent: 'hermes',
+        profile: 'default',
+        name: 'Remote',
+      }),
+      now: 1_000,
+    })
+
+    expect(relayStore.getGroupAgentPairingRequestForRequester(
+      created.request.id,
+      'wrong-secret',
+      1_100,
+    )).toBeNull()
+    expect(relayStore.decideGroupAgentPairingRequest(created.request.id, true, 1, 2_000)?.status)
+      .toBe('approved')
+    expect(relayStore.claimGroupAgentPairingTicket(created.pairingTicket, 2_100)?.status)
+      .toBe('connecting')
+    expect(relayStore.claimGroupAgentPairingTicket(created.pairingTicket, 2_100)).toBeNull()
+
+    relayStore.releaseGroupAgentPairingClaim(created.request.id, 2_200)
+    expect(relayStore.claimGroupAgentPairingTicket(created.pairingTicket, 2_300)?.status)
+      .toBe('connecting')
+    const completed = relayStore.completeGroupAgentPairing({
+      requestId: created.request.id,
+      roomAgentId: roomAgent.id,
+      agentId: roomAgent.agentId,
+      now: 2_400,
+    })
+
+    expect(completed?.connector.status).toBe('online')
+    expect(relayStore.claimGroupAgentPairingTicket(created.pairingTicket, 2_500)).toBeNull()
+    expect(relayStore.authenticateGroupAgentConnector(
+      completed!.connector.id,
+      'wrong-credential',
+    )).toBeNull()
+    expect(relayStore.authenticateGroupAgentConnector(
+      completed!.connector.id,
+      completed!.credential,
+    )).toMatchObject({ id: completed!.connector.id, roomId: 'room-1' })
+    relayStore.revokeGroupAgentConnector(completed!.connector.id, 2_600)
+    expect(relayStore.authenticateGroupAgentConnector(
+      completed!.connector.id,
+      completed!.credential,
+    )).toBeNull()
+  })
+
+  it('keeps Agent handoffs draft until the target service submits the selected Agent', async () => {
+    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const requestSecret = 'request_secret_abcdefghijklmnopqrstuvwxyz123456'
+    const pairingTicket = 'pairing_ticket_abcdefghijklmnopqrstuvwxyz123456'
+    const draft = relayStore.createGroupAgentPairingHandoff({
+      requestId: '11111111-2222-4333-8444-555555555555',
+      requestSecret,
+      pairingTicket,
+      roomId: 'room-handoff',
+      ownerMemberId: 'guest-handoff',
+      ownerName: 'Guest',
+      targetOrigin: 'http://127.0.0.1:8648',
+      now: 1_000,
+    })
+    const agent = relayStore.normalizeRemoteGroupAgentDescriptor({
+      agent: 'codex',
+      profile: 'default',
+      provider: 'openai',
+      model: 'gpt-test',
+      name: 'Remote Codex',
+    })
+
+    expect(draft.status).toBe('draft')
+    expect(relayStore.listPendingGroupAgentPairingRequests('room-handoff', 1_100)).toEqual([])
+    expect(relayStore.submitGroupAgentPairingHandoff(
+      draft.id,
+      'wrong_request_secret_abcdefghijklmnopqrstuvwxyz',
+      agent,
+      1_100,
+    )).toBeNull()
+    expect(relayStore.submitGroupAgentPairingHandoff(
+      draft.id,
+      requestSecret,
+      agent,
+      1_100,
+    )).toMatchObject({ status: 'pending', agent: { name: 'Remote Codex' } })
+    expect(relayStore.submitGroupAgentPairingHandoff(
+      draft.id,
+      requestSecret,
+      agent,
+      1_200,
+    )?.status).toBe('pending')
+    expect(relayStore.listPendingGroupAgentPairingRequests('room-handoff', 1_200))
+      .toHaveLength(1)
+
+    expect(relayStore.failGroupAgentPairingRequestForRequester(
+      draft.id,
+      requestSecret,
+      'local relay failed',
+    )).toMatchObject({ status: 'failed', failureReason: 'local relay failed' })
+    expect(relayStore.claimGroupAgentPairingTicket(pairingTicket, 1_300)).toBeNull()
+  })
+
+  it('releases a pairing claim after an origin mismatch and accepts the intended target once', async () => {
+    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const storage = groupServer.getStorage()
+    const relayWorkspace = mkdtempSync(join(tmpdir(), 'group-chat-relay-diff-'))
+    temporaryDirectories.push(relayWorkspace)
+    storage.saveRoom('room-relay', 'Relay Room', 'RELAY1', {
+      workspace: relayWorkspace,
+    })
+    storage.updateRoomGuestAgentPolicy('room-relay', {
+      allowGuestAgents: true,
+      maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: true,
+    })
+    storage.addRoomMember('room-relay', 'guest-relay', 'Relay Guest', '')
+    const created = relayStore.createGroupAgentPairingRequest({
+      roomId: 'room-relay',
+      ownerMemberId: 'guest-relay',
+      ownerName: 'Relay Guest',
+      targetOrigin: 'http://127.0.0.1:8648',
+      agent: relayStore.normalizeRemoteGroupAgentDescriptor({
+        agent: 'hermes',
+        profile: 'default',
+        name: 'Remote Relay Agent',
+      }),
+    })
+    relayStore.decideGroupAgentPairingRequest(created.request.id, true, 1)
+    const relayServer = new GroupAgentRelayServer(groupServer.getIO(), groupServer)
+    process.env.PORT = String(port)
+    vi.spyOn(AgentClient.prototype, 'connect').mockResolvedValue()
+    vi.spyOn(AgentClient.prototype, 'joinRoom').mockResolvedValue({
+      roomId: 'room-relay',
+      roomName: 'Relay Room',
+      members: [],
+      messages: [],
+      rooms: ['room-relay'],
+    })
+    const proxySendMessage = vi.spyOn(AgentClient.prototype, 'sendMessage').mockResolvedValue('cloud-message')
+
+    const wrongTarget = socketIo(`http://127.0.0.1:${port}/group-chat-agent-relay`, {
+      autoConnect: false,
+      transports: ['websocket'],
+      reconnection: false,
+      auth: {
+        protocolVersion: 1,
+        pairingTicket: created.pairingTicket,
+        targetOrigin: 'http://127.0.0.1:8748',
+      },
+    })
+    const rejected = once<Error>(wrongTarget as any, 'connect_error')
+    wrongTarget.connect()
+    await expect(rejected).resolves.toMatchObject({
+      message: 'Invalid or expired pairing ticket',
+    })
+    wrongTarget.disconnect()
+    expect(relayStore.getGroupAgentPairingRequestForRequester(
+      created.request.id,
+      created.requestSecret,
+    )?.status).toBe('approved')
+
+    const intendedTarget = socketIo(`http://127.0.0.1:${port}/group-chat-agent-relay`, {
+      autoConnect: false,
+      transports: ['websocket'],
+      reconnection: false,
+      auth: {
+        protocolVersion: 1,
+        pairingTicket: created.pairingTicket,
+        targetOrigin: 'http://127.0.0.1:8648',
+      },
+    })
+    const ready = Promise.race([
+      once<any>(intendedTarget as any, 'relay.ready', 15_000),
+      once<any>(intendedTarget as any, 'relay.error', 15_000).then(payload => {
+        throw new Error(`relay error: ${payload?.error || 'unknown'}`)
+      }),
+    ])
+    intendedTarget.connect()
+    await expect(ready).resolves.toMatchObject({
+      protocolVersion: 1,
+      roomId: 'room-relay',
+      agent: { name: 'Remote Relay Agent' },
+    })
+    expect(relayStore.getGroupAgentPairingRequestForRequester(
+      created.request.id,
+      created.requestSecret,
+    )?.status).toBe('consumed')
+    expect(storage.getRoomAgents('room-relay')).toEqual([
+      expect.objectContaining({
+        name: 'Remote Relay Agent',
+        executorType: 'remote',
+        remoteOrigin: 'http://127.0.0.1:8648',
+      }),
+    ])
+    expect(storage.getMentionableRoomAgents('room-relay')).toEqual([
+      expect.objectContaining({ name: 'Remote Relay Agent' }),
+    ])
+    expect(groupServer.getRoomAgentViews('room-relay')[0]).toMatchObject({
+      name: 'Remote Relay Agent',
+      connectionStatus: 'online',
+    })
+
+    const executor = groupServer.agentClients.getAgents('room-relay')[0]
+    const runRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const reply = executor.replyToMention('room-relay', {
+      messageId: 'source-message',
+      content: '@Remote Relay Agent hello',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const run = await runRequested
+    expect(run.room).toMatchObject({
+      id: 'room-relay',
+      name: 'Relay Room',
+      summaryProfile: 'default',
+    })
+    expect(run.workspaceApi).toMatchObject({
+      access: 'read-write',
+      token: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/),
+    })
+    const workspaceToken = run.workspaceApi.token
+    expect(authenticateRemoteWorkspaceGrant(workspaceToken)).toMatchObject({
+      roomId: 'room-relay',
+      agentId: expect.any(String),
+    })
+    await expect(performRemoteWorkspaceAction(relayWorkspace, {
+      action: 'write',
+      path: 'remote-notes.txt',
+      content: 'changed by the remote Agent',
+    })).resolves.toMatchObject({
+      ok: true,
+      path: 'remote-notes.txt',
+    })
+    intendedTarget.emit('run.accepted', { runId: run.runId })
+    const eventResult = await emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: run.runId,
+      seq: 1,
+      event: 'message',
+      data: {
+        id: 'existing-cloud-message-id',
+        content: 'safe remote reply',
+        agentSessionId: 'remote-session',
+        extra: {
+          role: 'assistant',
+          roomId: 'another-room',
+          content: 'forged content',
+          id: 'forged-id',
+          senderId: 'forged-sender',
+        },
+      },
+    })
+    expect(eventResult).toEqual({ ok: true })
+    intendedTarget.emit('run.completed', { runId: run.runId })
+    await reply
+    expect(authenticateRemoteWorkspaceGrant(workspaceToken)).toBeNull()
+    expect(proxySendMessage).toHaveBeenCalledWith(
+      'room-relay',
+      'safe remote reply',
+      expect.stringMatching(/^gcr_[a-f0-9]{32}$/),
+      { role: 'assistant' },
+      'remote-session',
+    )
+    const workspaceDiffMessage = storage.getRecentMessagesForUI('room-relay')
+      .find(message => message.tool_name === 'workspace_diff')
+    expect(workspaceDiffMessage).toBeTruthy()
+    expect(JSON.parse(workspaceDiffMessage!.content)).toMatchObject({
+      kind: 'workspace_diff',
+      status: 'completed',
+      parent_message_id: 'cloud-message',
+      files: [
+        expect.objectContaining({
+          path: 'remote-notes.txt',
+          change_type: 'added',
+        }),
+      ],
+    })
+
+    const nameConflict = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
+      agent: 'codex',
+      profile: 'default',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Relay Guest',
+      description: '',
+      avatar: '',
+    })
+    expect(nameConflict).toMatchObject({
+      code: 'ROOM_PARTICIPANT_NAME_CONFLICT',
+      error: 'Name is already in use in this room',
+    })
+
+    const updated = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
+      agent: 'codex',
+      profile: 'default',
+      provider: 'openai',
+      model: 'gpt-updated',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Updated Relay Agent',
+      description: 'Updated locally',
+      avatar: '',
+    })
+    expect(updated).toMatchObject({
+      ok: true,
+      agent: {
+        agent: 'codex',
+        model: 'gpt-updated',
+        name: 'Updated Relay Agent',
+      },
+    })
+    expect(storage.getRoomAgents('room-relay')[0]).toMatchObject({
+      agent: 'codex',
+      model: 'gpt-updated',
+      name: 'Updated Relay Agent',
+      ownerMemberId: 'guest-relay',
+    })
+
+    const allRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const processAll = groupServer.agentClients.processMentions('room-relay', {
+      messageId: 'all-source-message',
+      content: '@all status update',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const allRun = await allRunRequested
+    expect(allRun.message).toMatchObject({
+      messageId: 'all-source-message',
+      content: '@all status update',
+    })
+    intendedTarget.emit('run.accepted', { runId: allRun.runId })
+    intendedTarget.emit('run.completed', { runId: allRun.runId })
+    await processAll
+
+    intendedTarget.disconnect()
+    await vi.waitFor(() => {
+      expect(storage.getMentionableRoomAgents('room-relay')).toEqual([])
+    })
+    expect(storage.getRoomAgents('room-relay')).toEqual([
+      expect.objectContaining({ name: 'Updated Relay Agent' }),
+    ])
+    expect(groupServer.getRoomAgentViews('room-relay')[0]).toMatchObject({
+      name: 'Updated Relay Agent',
+      connectionStatus: 'offline',
+    })
+    relayServer.shutdown()
+  }, 20_000)
+
+  it('requires invite guests to choose a unique room participant name', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
+
+    const unnamed = await connectGroupChatClient(port, 'guest-unnamed', 'Ignored', { inviteCode: 'ROOM1' })
+    const alice = await connectGroupChatClient(port, 'guest-alice', 'Alice', { inviteCode: 'ROOM1' })
+    const duplicateUser = await connectGroupChatClient(port, 'guest-alice-2', 'Alice 2', { inviteCode: 'ROOM1' })
+    const duplicateAgent = await connectGroupChatClient(port, 'guest-worker', 'Worker Guest', { inviteCode: 'ROOM1' })
+    harness.sockets.push(unnamed, alice, duplicateUser, duplicateAgent)
+
+    await expect(emitAck<any>(unnamed, 'join', { roomId: 'room-1' })).resolves.toEqual({
+      code: 'ROOM_PARTICIPANT_NAME_REQUIRED',
+      error: 'Name is required',
+    })
+    await expect(emitAck<any>(alice, 'join', { roomId: 'room-1', name: 'Alice' })).resolves.toMatchObject({
+      roomId: 'room-1',
+    })
+    await expect(emitAck<any>(duplicateUser, 'join', { roomId: 'room-1', name: '  alice  ' })).resolves.toEqual({
+      code: 'ROOM_PARTICIPANT_NAME_CONFLICT',
+      error: 'Name is already in use in this room',
+    })
+    await expect(emitAck<any>(duplicateAgent, 'join', { roomId: 'room-1', name: 'worker' })).resolves.toEqual({
+      code: 'ROOM_PARTICIPANT_NAME_CONFLICT',
+      error: 'Name is already in use in this room',
+    })
+  })
+
+  it('stores only validated room-scoped avatars for invite guests', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    const validAvatar = JSON.stringify({
+      type: 'image',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    })
+
+    const guest = await connectGroupChatClient(port, 'guest-avatar', 'Guest', { inviteCode: 'ROOM1' })
+    const invalidGuest = await connectGroupChatClient(port, 'guest-avatar-invalid', 'Guest 2', { inviteCode: 'ROOM1' })
+    harness.sockets.push(guest, invalidGuest)
+
+    const joined = await emitAck<any>(guest, 'join', {
+      roomId: 'room-1',
+      name: 'Avatar Guest',
+      avatar: validAvatar,
+    })
+    expect(joined.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: 'guest-avatar', avatar: validAvatar }),
+    ]))
+    expect(storage.getMemberByUserId('room-1', 'guest-avatar')).toMatchObject({
+      avatar: validAvatar,
+    })
+
+    await expect(emitAck<any>(invalidGuest, 'join', {
+      roomId: 'room-1',
+      name: 'Invalid Avatar Guest',
+      avatar: JSON.stringify({
+        type: 'image',
+        dataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      }),
+    })).resolves.toEqual({
+      code: 'ROOM_PARTICIPANT_AVATAR_INVALID',
+      error: 'Invalid member avatar',
+    })
+  })
+
+  it('rejects duplicate names across member and Agent persistence paths', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.addRoomMember('room-1', 'user-alice', 'Alice', '')
+    const worker = storage.addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
+
+    expect(() => storage.addRoomAgent('room-1', 'agent-alice', 'default', 'alice', '', 0))
+      .toThrowError(expect.objectContaining({ code: 'ROOM_PARTICIPANT_NAME_CONFLICT' }))
+    expect(() => storage.addRoomMember('room-1', 'user-worker', 'WORKER', ''))
+      .toThrowError(expect.objectContaining({ code: 'ROOM_PARTICIPANT_NAME_CONFLICT' }))
+    expect(() => storage.updateRoomAgent('room-1', worker.id, 'default', 'ALICE', ''))
+      .toThrowError(expect.objectContaining({ code: 'ROOM_PARTICIPANT_NAME_CONFLICT' }))
+  })
+
+  it('keeps one credential-free Agent record for historical avatars until chat history is cleared', () => {
+    const storage = groupServer.getStorage()
+    const avatar = JSON.stringify({ type: 'generated', seed: 'historical-worker' })
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    const worker = storage.addRoomAgent(
+      'room-1',
+      'agent-worker',
+      'default',
+      'Worker',
+      'Historical worker',
+      0,
+      {
+        agent: 'codex',
+        avatar,
+        executorType: 'remote',
+        connectorId: 'connector-secret',
+        remoteOrigin: 'http://127.0.0.1:8648',
+      },
+    )
+    storage.saveMessageAndRefreshRoom({
+      id: 'agent-history-message',
+      roomId: 'room-1',
+      senderId: worker.agentId,
+      senderName: worker.name,
+      content: 'historical answer',
+      timestamp: 1,
+      role: 'assistant',
+    } as any)
+    storage.saveMessageAndRefreshRoom({
+      id: 'agent-history-message-2',
+      roomId: 'room-1',
+      senderId: worker.agentId,
+      senderName: worker.name,
+      content: 'another historical answer',
+      timestamp: 2,
+      role: 'assistant',
+    } as any)
+
+    storage.removeRoomAgent('room-1', worker.id)
+
+    expect(storage.getRoomAgents('room-1')).toEqual([])
+    const history = storage.getRecentMessagesForUI('room-1')
+    expect(history).toHaveLength(2)
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        senderType: 'agent',
+        senderAgentRecordId: worker.id,
+      }),
+    ]))
+    expect(history.filter(message => message.senderAvatar === avatar)).toHaveLength(1)
+    expect(history.filter(message => message.senderAgentType === 'codex')).toHaveLength(1)
+    expect(harness.db.prepare(
+      'SELECT removedAt, connectorId, remoteOrigin FROM gc_room_agents WHERE id = ?',
+    ).get(worker.id)).toMatchObject({
+      connectorId: '',
+      remoteOrigin: '',
+    })
+    expect(Number((harness.db.prepare(
+      'SELECT removedAt FROM gc_room_agents WHERE id = ?',
+    ).get(worker.id) as { removedAt: number }).removedAt)).toBeGreaterThan(0)
+    expect((harness.db.prepare('PRAGMA table_info(gc_messages)').all() as Array<{ name: string }>)
+      .map(column => column.name)).not.toContain('senderAvatar')
+
+    storage.clearRoomContext('room-1')
+
+    expect(harness.db.prepare(
+      'SELECT COUNT(*) AS count FROM gc_room_agents WHERE id = ?',
+    ).get(worker.id)).toEqual({ count: 0 })
   })
 
   it('persists a sent message and broadcasts it to other room members', async () => {

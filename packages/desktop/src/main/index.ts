@@ -25,6 +25,7 @@ import { resetDesktopDefaultLogin } from './desktop-login-reset'
 import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import { installSelectionContextMenu } from './selection-context-menu'
+import { groupChatAgentLinkPopupResponse } from './group-chat-agent-popup'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
@@ -512,7 +513,9 @@ async function createWindow(): Promise<void> {
   installSelectionContextMenu(mainWindow)
 
   // External links → system browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    const agentLinkPopup = groupChatAgentLinkPopupResponse(url, frameName)
+    if (agentLinkPopup) return agentLinkPopup
     if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
       return { action: 'allow' }
     }
@@ -599,7 +602,9 @@ async function openChatWindow(sessionIdInput: unknown, profileInput?: unknown): 
   })
 
   installSelectionContextMenu(chatWindow)
-  chatWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+  chatWindow.webContents.setWindowOpenHandler(({ url: targetUrl, frameName }) => {
+    const agentLinkPopup = groupChatAgentLinkPopupResponse(targetUrl, frameName)
+    if (agentLinkPopup) return agentLinkPopup
     if (/^(https?:|mailto:)/i.test(targetUrl)) {
       shell.openExternal(targetUrl).catch(() => undefined)
     }

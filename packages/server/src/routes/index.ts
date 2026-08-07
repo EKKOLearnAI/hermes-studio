@@ -43,7 +43,7 @@ import { ttsRoutes, ttsProtectedRoutes } from './hermes/tts'
 import { sttProtectedRoutes } from './hermes/stt'
 import { mcuFirmwareRoutes } from './hermes/mcu-firmware'
 import { mediaRoutes } from './hermes/media'
-import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { chatRunRoutes } from './hermes/chat-run'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
 import { journeyRoutes } from './hermes/journey'
@@ -69,6 +69,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(ttsRoutes.routes())
   app.use(apiDocsRoutes.routes())
   app.use(petdexPublicRoutes.routes())
+  app.use(groupChatPublicRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))

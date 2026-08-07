@@ -43,6 +43,7 @@ const groupChatApiMock = vi.hoisted(() => {
 })
 const clientApiMock = vi.hoisted(() => ({
   getApiKey: vi.fn(() => 'test-token'),
+  getBaseUrlValue: vi.fn(() => ''),
   getActiveProfileName: vi.fn(() => 'research'),
   getStoredUsername: vi.fn(() => null),
 }))
@@ -110,6 +111,7 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.getStoredUserId.mockReturnValue('user-1')
     groupChatApiMock.getStoredUserName.mockReturnValue('tester')
     clientApiMock.getApiKey.mockReturnValue('test-token')
+    clientApiMock.getBaseUrlValue.mockReturnValue('')
     clientApiMock.getActiveProfileName.mockReturnValue('research')
     clientApiMock.getStoredUsername.mockReturnValue(null)
     authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
@@ -744,7 +746,52 @@ describe('group chat store streaming merge', () => {
     expect(store.userName).toBe('Alice Display')
   })
 
-  it('adds auth and active profile headers to group chat uploads', async () => {
+  it('restores the browser-persisted identity when switching from an account to an invite guest', async () => {
+    groupChatApiMock.getStoredUserId.mockReturnValue('browser-guest-id')
+    authApiMock.fetchCurrentUser.mockResolvedValue({
+      id: 42,
+      username: 'alice-login',
+      role: 'admin',
+      status: 'active',
+      created_at: 1,
+      updated_at: 1,
+      last_login_at: null,
+      avatar: '',
+    })
+    authApiMock.fetchCurrentUser.mockClear()
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        ack({
+          members: [{ id: 'member-guest', userId: 'browser-guest-id', name: 'Guest', description: '', joinedAt: 1 }],
+          agents: [],
+          messages: [],
+          typingUsers: [],
+          contextStatuses: [],
+        })
+      }
+      return groupChatApiMock.socket
+    })
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+
+    await store.connect()
+    expect(store.userId).toBe('auth:42')
+    store.disconnect()
+
+    await store.joinByCode('ROOM1', { guest: true })
+
+    expect(store.userId).toBe('browser-guest-id')
+    expect(groupChatApiMock.connectGroupChat).toHaveBeenLastCalledWith({
+      userId: 'browser-guest-id',
+      userName: 'tester',
+      authUserId: undefined,
+      inviteCode: 'ROOM1',
+    })
+    expect(authApiMock.fetchCurrentUser).toHaveBeenCalledOnce()
+  })
+
+  it('uploads authenticated room attachments only through the group chat endpoint', async () => {
     const store = await createJoinedStore()
     fetchMock.mockResolvedValue({
       ok: true,
@@ -768,10 +815,10 @@ describe('group chat store streaming merge', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, options] = fetchMock.mock.calls[0]
-    expect(url).toBe('/upload')
+    expect(url).toBe('/api/hermes/group-chat/rooms/room-1/attachments')
     expect(options.method).toBe('POST')
     expect(options.headers.Authorization).toBe('Bearer test-token')
-    expect(options.headers['X-Hermes-Profile']).toBe('research')
+    expect(options.headers['X-Hermes-Profile']).toBeUndefined()
     expect(options.body).toBeInstanceOf(FormData)
   })
 })

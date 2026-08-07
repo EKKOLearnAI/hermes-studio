@@ -2,6 +2,7 @@ import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import { mkdirSync } from 'fs'
 import { basename, join } from 'path'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
@@ -12,11 +13,16 @@ import { AgentBridgeClient } from '../agent-bridge'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { insertWorkspaceRunChange, deleteWorkspaceRunChangesForRoom, type SaveWorkspaceRunChangeInput, type WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
-import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
+import { getUserAvatar } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type GroupMessageCursorCutoff } from './group-message-ordering'
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
+import { isAllAgentsMentioned, isReservedMentionName } from './mention-routing'
+import { isGroupChatRoomOwner } from './access'
+import { normalizeHumanGroupChatContent } from './attachments'
+import { revokeGroupAgentConnector } from './agent-relay-store'
+import type { ContentBlock } from '../run-chat/types'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -25,6 +31,15 @@ interface ChatMessage {
     roomId: string
     senderId: string
     senderName: string
+    senderType?: 'member' | 'agent'
+    senderAgentRecordId?: string
+    senderAvatar?: string
+    senderAgentType?: RoomAgent['agent']
+    senderAgentProfile?: string
+    senderAgentProvider?: string
+    senderAgentModel?: string
+    senderAgentDescription?: string
+    senderOwnerMemberId?: string
     content: string
     timestamp: number
     run_id?: string | null
@@ -40,6 +55,13 @@ interface ChatMessage {
     agentSessionId?: string
 }
 
+type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
+    roomId?: string
+    content: string | Array<Record<string, unknown>>
+    id?: string
+    mentionDepth?: number
+}
+
 interface PendingGroupApprovalRoute {
     roomId: string
     agentName: string
@@ -51,8 +73,22 @@ function contentToStorageString(content: unknown): string {
     return JSON.stringify(content ?? '')
 }
 
+function humanStructuredContent(content: unknown): Array<Record<string, unknown>> | null {
+    if (Array.isArray(content)) return content
+    if (typeof content !== 'string') return null
+    const trimmed = content.trim()
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null
+    try {
+        const parsed = JSON.parse(trimmed)
+        return Array.isArray(parsed) ? parsed : null
+    } catch {
+        return null
+    }
+}
+
 function safeGroupChatWorkspaceSegment(value: string, fallback: string): string {
-    return String(value || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || fallback
+    const segment = String(value || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim()
+    return !segment || segment === '.' || segment === '..' ? fallback : segment
 }
 
 export function defaultGroupChatWorkspace(profile: string, roomId: string): string {
@@ -105,6 +141,10 @@ interface RoomAgent {
     description: string
     avatar: string
     invited: number
+    executorType: 'server' | 'remote'
+    ownerMemberId: string
+    connectorId: string
+    remoteOrigin: string
 }
 
 interface RoomAgentMetadata {
@@ -114,6 +154,52 @@ interface RoomAgentMetadata {
     apiMode?: string
     reasoningEffort?: string
     avatar?: string
+    executorType?: 'server' | 'remote'
+    ownerMemberId?: string
+    connectorId?: string
+    remoteOrigin?: string
+}
+
+export const ROOM_PARTICIPANT_NAME_CONFLICT = 'ROOM_PARTICIPANT_NAME_CONFLICT'
+
+export class RoomParticipantNameConflictError extends Error {
+    readonly code = ROOM_PARTICIPANT_NAME_CONFLICT
+
+    constructor() {
+        super('Name is already in use in this room')
+        this.name = 'RoomParticipantNameConflictError'
+    }
+}
+
+function canonicalParticipantName(name: string): string {
+    return name.trim().normalize('NFKC').toLocaleLowerCase()
+}
+
+const GROUP_MEMBER_AVATAR_MAX_LENGTH = 1_500_000
+
+function normalizeRoomMemberAvatar(value: unknown): string {
+    if (value === undefined || value === null || value === '') return ''
+    if (typeof value !== 'string' || value.length > GROUP_MEMBER_AVATAR_MAX_LENGTH) {
+        throw new Error('Invalid member avatar')
+    }
+    let parsed: any
+    try {
+        parsed = JSON.parse(value)
+    } catch {
+        throw new Error('Invalid member avatar')
+    }
+    if (parsed?.type === 'generated' && typeof parsed.seed === 'string' && parsed.seed.trim() && parsed.seed.length <= 200) {
+        return JSON.stringify({ type: 'generated', seed: parsed.seed.trim() })
+    }
+    if (
+        parsed?.type === 'image' &&
+        typeof parsed.dataUrl === 'string' &&
+        /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(parsed.dataUrl) &&
+        parsed.dataUrl.length <= GROUP_MEMBER_AVATAR_MAX_LENGTH
+    ) {
+        return JSON.stringify({ type: 'image', dataUrl: parsed.dataUrl })
+    }
+    throw new Error('Invalid member avatar')
 }
 
 export interface RoomInfo {
@@ -132,6 +218,10 @@ export interface RoomInfo {
     sessionSeed: string
     workspace: string
     ownerAuthUserId: number | null
+    allowGuestAgents: number
+    guestAgentApproval: 'owner'
+    maxGuestAgentsPerMember: number
+    allowRemoteWorkspaceAccess: number
 }
 
 const ROOM_SELECT_COLUMNS = [
@@ -150,6 +240,50 @@ const ROOM_SELECT_COLUMNS = [
     'sessionSeed',
     'workspace',
     'ownerAuthUserId',
+    'allowGuestAgents',
+    'guestAgentApproval',
+    'maxGuestAgentsPerMember',
+    'allowRemoteWorkspaceAccess',
+].join(', ')
+
+const ROOM_AGENT_SELECT_COLUMNS = [
+    'id',
+    'roomId',
+    'agentId',
+    'agent',
+    'profile',
+    'provider',
+    'model',
+    'apiMode',
+    'reasoningEffort',
+    'name',
+    'description',
+    'avatar',
+    'invited',
+    'executorType',
+    'ownerMemberId',
+    'connectorId',
+    'remoteOrigin',
+].join(', ')
+
+const MESSAGE_SELECT_COLUMNS = [
+    'id',
+    'roomId',
+    'senderId',
+    'senderName',
+    'senderType',
+    'senderAgentRecordId',
+    'content',
+    'timestamp',
+    'run_id',
+    'role',
+    'tool_call_id',
+    'tool_calls',
+    'tool_name',
+    'finish_reason',
+    'reasoning',
+    'reasoning_details',
+    'reasoning_content',
 ].join(', ')
 
 export interface RoomSummaryConfig {
@@ -185,6 +319,8 @@ interface Member {
     avatar: string
     authUserId?: number | null
 }
+
+type MemberView = Pick<Member, 'id' | 'userId' | 'name' | 'description' | 'joinedAt' | 'avatar'>
 
 function authenticatedGroupUserId(authUserId: number): string {
     return `auth:${authUserId}`
@@ -249,13 +385,126 @@ function maxAgentMentionDepth(): number {
 }
 
 class ChatStorage {
+    private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
+
     private db() { return getDb() }
 
-    private mapStoredMessageRow(row: any): ChatMessage {
+    setRoomAgentOnlineProvider(provider: ((roomId: string, agentId: string) => boolean) | null): void {
+        this.roomAgentOnlineProvider = provider
+    }
+
+    private mapStoredMessageRow(
+        row: any,
+        agentCache = new Map<string, RoomAgent | null>(),
+        roomCache = new Map<string, RoomInfo | undefined>(),
+    ): ChatMessage {
+        const role = String(row.role || 'user')
+        const mayBeAgent = row.senderType === 'agent'
+            || Boolean(row.senderAgentRecordId)
+            || (!row.senderType && (role === 'assistant' || role === 'tool'))
+        const agentCacheKey = `${row.roomId || ''}\u0000${row.senderAgentRecordId || row.senderId || ''}`
+        let agent = mayBeAgent ? agentCache.get(agentCacheKey) : null
+        if (mayBeAgent && agent === undefined) {
+            agent = this.getHistoricalMessageAgent(row)
+            agentCache.set(agentCacheKey, agent)
+        }
+        const roomId = String(row.roomId || '')
+        let room = agent ? roomCache.get(roomId) : undefined
+        if (agent && room === undefined && !roomCache.has(roomId)) {
+            room = this.getRoom(roomId)
+            roomCache.set(roomId, room)
+        }
+        const ownerMemberId = agent?.ownerMemberId
+            || (
+                agent?.executorType === 'server' && Number(room?.ownerAuthUserId || 0) > 0
+                    ? authenticatedGroupUserId(Number(room?.ownerAuthUserId))
+                    : ''
+            )
         return {
             ...row,
+            senderType: agent || mayBeAgent ? 'agent' : 'member',
+            ...(agent ? {
+                senderAgentRecordId: agent.id,
+                senderAvatar: agent.avatar || '',
+                senderAgentType: agent.agent,
+                senderAgentProfile: agent.profile || '',
+                senderAgentProvider: agent.provider || '',
+                senderAgentModel: agent.model || '',
+                senderAgentDescription: agent.description || '',
+                senderOwnerMemberId: ownerMemberId,
+            } : {}),
             tool_calls: parseJsonArray(row.tool_calls),
         }
+    }
+
+    private getHistoricalMessageAgent(message: Pick<ChatMessage, 'roomId' | 'senderId' | 'senderName' | 'senderAgentRecordId'>): RoomAgent | null {
+        const db = this.db()
+        if (!db) return null
+        const recordId = String(message.senderAgentRecordId || '').trim()
+        if (recordId) {
+            return (db.prepare(
+                `SELECT ${ROOM_AGENT_SELECT_COLUMNS} FROM gc_room_agents WHERE roomId = ? AND id = ?`
+            ).get(message.roomId, recordId) as RoomAgent | undefined) || null
+        }
+        return (db.prepare(
+            `SELECT ${ROOM_AGENT_SELECT_COLUMNS}
+             FROM gc_room_agents
+             WHERE roomId = ? AND (id = ? OR agentId = ?)
+             ORDER BY removedAt ASC
+             LIMIT 1`
+        ).get(message.roomId, message.senderId, message.senderId) as RoomAgent | undefined) || null
+    }
+
+    private snapshotMessageSender(msg: ChatMessage, existing?: ChatMessage | null): ChatMessage {
+        if (existing?.senderType) {
+            return {
+                ...msg,
+                senderType: existing.senderType,
+                senderAgentRecordId: existing.senderAgentRecordId || '',
+            }
+        }
+        if (msg.senderType) return msg
+
+        const agent = this.getRoomAgents(msg.roomId).find(candidate =>
+            candidate.id === msg.senderId
+            || candidate.agentId === msg.senderId
+            || candidate.name === msg.senderName
+        )
+        if (agent) {
+            return {
+                ...msg,
+                senderType: 'agent',
+                senderAgentRecordId: agent.id,
+            }
+        }
+
+        return {
+            ...msg,
+            senderType: 'member',
+            senderAgentRecordId: '',
+        }
+    }
+
+    private compactMessageAgentMetadata(messages: ChatMessage[]): ChatMessage[] {
+        const seenAgentRecords = new Set<string>()
+        return messages.map((message) => {
+            const recordId = String(message.senderAgentRecordId || '').trim()
+            if (!recordId || !message.senderAgentType || !seenAgentRecords.has(recordId)) {
+                if (recordId && message.senderAgentType) seenAgentRecords.add(recordId)
+                return message
+            }
+            const {
+                senderAvatar: _senderAvatar,
+                senderAgentType: _senderAgentType,
+                senderAgentProfile: _senderAgentProfile,
+                senderAgentProvider: _senderAgentProvider,
+                senderAgentModel: _senderAgentModel,
+                senderAgentDescription: _senderAgentDescription,
+                senderOwnerMemberId: _senderOwnerMemberId,
+                ...compact
+            } = message
+            return compact
+        })
     }
 
     init(): void {
@@ -386,7 +635,9 @@ class ChatStorage {
             `SELECT DISTINCT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')}
              FROM gc_rooms r
              INNER JOIN gc_room_agents a ON a.roomId = r.id
-             WHERE a.profile IN (${placeholders})
+             WHERE a.removedAt = 0
+               AND a.executorType = 'server'
+               AND a.profile IN (${placeholders})
              ORDER BY r.id`
         ).all(...uniqueProfiles) || []) as any[]
     }
@@ -437,6 +688,25 @@ class ChatStorage {
     setRoomOwnerAuthUserId(roomId: string, authUserId: number): void {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return
         this.db()?.prepare('UPDATE gc_rooms SET ownerAuthUserId = ? WHERE id = ?').run(authUserId, roomId)
+    }
+
+    updateRoomGuestAgentPolicy(
+        roomId: string,
+        policy: {
+            allowGuestAgents: boolean
+            maxGuestAgentsPerMember: number
+            allowRemoteWorkspaceAccess: boolean
+        },
+    ): RoomInfo | null {
+        const maxAgents = Math.min(5, Math.max(1, Math.floor(policy.maxGuestAgentsPerMember || 1)))
+        const allowRemoteWorkspaceAccess = policy.allowGuestAgents && policy.allowRemoteWorkspaceAccess
+        this.db()?.prepare(
+            `UPDATE gc_rooms
+             SET allowGuestAgents = ?, guestAgentApproval = 'owner',
+                 maxGuestAgentsPerMember = ?, allowRemoteWorkspaceAccess = ?
+             WHERE id = ?`,
+        ).run(policy.allowGuestAgents ? 1 : 0, maxAgents, allowRemoteWorkspaceAccess ? 1 : 0, roomId)
+        return this.getRoom(roomId) || null
     }
 
     updateRoomConfig(roomId: string, config: RoomSummaryConfig): void {
@@ -535,18 +805,28 @@ class ChatStorage {
 
     getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+            `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages WHERE roomId = ?`
         ).all(roomId) || []) as any[]
-        return paginateRecentGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), { limit, offset })
+        const page = paginateRecentGroupMessagesCanonical(rows, { limit, offset })
+        const agentCache = new Map<string, RoomAgent | null>()
+        const roomCache = new Map<string, RoomInfo | undefined>()
+        return this.compactMessageAgentMetadata(
+            page.map(row => this.mapStoredMessageRow(row, agentCache, roomCache)),
+        )
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            `SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+            `SELECT ${MESSAGE_SELECT_COLUMNS}
              FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'`
         ).all(roomId) || []) as any[]
-        return sliceGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), cutoff).messages
+        const agentCache = new Map<string, RoomAgent | null>()
+        const roomCache = new Map<string, RoomInfo | undefined>()
+        return sliceGroupMessagesCanonical(
+            rows.map(row => this.mapStoredMessageRow(row, agentCache, roomCache)),
+            cutoff,
+        ).messages
     }
 
     getMessageCount(roomId: string): number {
@@ -558,7 +838,7 @@ class ChatStorage {
 
     getMessage(messageId: string): ChatMessage | null {
         const row = this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
+            `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages WHERE id = ?`
         ).get(messageId) as any
         if (!row) return null
         return this.mapStoredMessageRow(row)
@@ -568,15 +848,21 @@ class ChatStorage {
         this.upsertMessage(msg)
     }
 
-    upsertMessage(msg: ChatMessage): void {
-        const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
+    upsertMessage(msg: ChatMessage, existing?: ChatMessage | null): ChatMessage {
+        const storedMessage = this.snapshotMessageSender(msg, existing ?? this.getMessage(msg.id))
+        const toolCallsJson = storedMessage.tool_calls ? JSON.stringify(storedMessage.tool_calls) : null
         this.db()?.prepare(
-            `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, run_id, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO gc_messages (
+                id, roomId, senderId, senderName, senderType, senderAgentRecordId,
+                content, timestamp, run_id, role, tool_call_id, tool_calls,
+                tool_name, finish_reason, reasoning, reasoning_details, reasoning_content
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             + ` ON CONFLICT(id) DO UPDATE SET
                 roomId = excluded.roomId,
                 senderId = excluded.senderId,
                 senderName = excluded.senderName,
+                senderType = excluded.senderType,
+                senderAgentRecordId = excluded.senderAgentRecordId,
                 content = excluded.content,
                 timestamp = excluded.timestamp,
                 run_id = excluded.run_id,
@@ -589,17 +875,25 @@ class ChatStorage {
                 reasoning_details = excluded.reasoning_details,
                 reasoning_content = excluded.reasoning_content`
         ).run(
-            msg.id, msg.roomId, msg.senderId, msg.senderName, messageContentForStorage(msg.role, msg.content), msg.timestamp,
-            msg.run_id ?? null,
-            msg.role || 'user',
-            msg.tool_call_id ?? null,
+            storedMessage.id,
+            storedMessage.roomId,
+            storedMessage.senderId,
+            storedMessage.senderName,
+            storedMessage.senderType || 'member',
+            storedMessage.senderAgentRecordId || '',
+            messageContentForStorage(storedMessage.role, storedMessage.content),
+            storedMessage.timestamp,
+            storedMessage.run_id ?? null,
+            storedMessage.role || 'user',
+            storedMessage.tool_call_id ?? null,
             toolCallsJson,
-            msg.tool_name ?? null,
-            msg.finish_reason ?? null,
-            msg.reasoning ?? null,
-            msg.reasoning_details ?? null,
-            msg.reasoning_content ?? null,
+            storedMessage.tool_name ?? null,
+            storedMessage.finish_reason ?? null,
+            storedMessage.reasoning ?? null,
+            storedMessage.reasoning_details ?? null,
+            storedMessage.reasoning_content ?? null,
         )
+        return this.mapStoredMessageRow(storedMessage)
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
@@ -672,13 +966,13 @@ class ChatStorage {
                 tool_calls: null,
                 tool_name: 'workspace_diff',
             }
-            this.upsertMessage(message)
+            const storedMessage = this.upsertMessage(message)
             this.pruneMessages(args.roomId)
             const messages = this.getMessagesForContext(args.roomId)
             const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
             this.updateRoomTotalTokens(args.roomId, totalTokens)
             db.exec('COMMIT')
-            return { message, totalTokens, change }
+            return { message: storedMessage, totalTokens, change }
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err
@@ -701,13 +995,13 @@ class ChatStorage {
                 ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
                 : msg
             const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
-            this.upsertMessage(message)
+            const storedMessage = this.upsertMessage(message, existing)
             this.pruneMessages(msg.roomId)
             const messages = this.getMessagesForContext(msg.roomId)
             const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
             db.exec('COMMIT')
-            return { message, totalTokens }
+            return { message: storedMessage, totalTokens }
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err
@@ -740,7 +1034,14 @@ class ChatStorage {
         if (!db) return
         this.withImmediateTransaction(db, () => {
             this.deleteWorkspaceDiffChanges(roomId)
+            db.prepare(
+                `UPDATE gc_agent_connectors
+                 SET status = 'revoked', revokedAt = ?, lastSeenAt = ?
+                 WHERE roomId = ? AND status != 'revoked'`,
+            ).run(Date.now(), Date.now(), roomId)
+            db.prepare('DELETE FROM gc_agent_pairing_requests WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
             db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
@@ -769,8 +1070,36 @@ class ChatStorage {
 
     getRoomAgents(roomId: string): RoomAgent[] {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited FROM gc_room_agents WHERE roomId = ?'
+            `SELECT ${ROOM_AGENT_SELECT_COLUMNS} FROM gc_room_agents WHERE roomId = ? AND removedAt = 0`
         ).all(roomId) || []) as unknown as RoomAgent[]
+    }
+
+    getMentionableRoomAgents(roomId: string): RoomAgent[] {
+        const agents = this.getRoomAgents(roomId)
+        if (!this.roomAgentOnlineProvider) return agents
+        return agents.filter(agent => this.roomAgentOnlineProvider?.(roomId, agent.agentId) === true)
+    }
+
+    assertParticipantNameAvailable(
+        roomId: string,
+        name: string,
+        options: { excludeAgentRef?: string; excludeMemberId?: string } = {},
+    ): void {
+        const canonicalName = canonicalParticipantName(name)
+        if (!canonicalName) return
+
+        const conflictingAgent = this.getRoomAgents(roomId).find(agent =>
+            agent.id !== options.excludeAgentRef &&
+            agent.agentId !== options.excludeAgentRef &&
+            canonicalParticipantName(agent.name) === canonicalName
+        )
+        if (conflictingAgent) throw new RoomParticipantNameConflictError()
+
+        const conflictingMember = this.getRoomMembers(roomId).find(member =>
+            member.id !== options.excludeMemberId &&
+            canonicalParticipantName(member.name) === canonicalName
+        )
+        if (conflictingMember) throw new RoomParticipantNameConflictError()
     }
 
     addRoomAgent(
@@ -782,6 +1111,7 @@ class ChatStorage {
         invited: number,
         metadata: RoomAgentMetadata = {},
     ): RoomAgent {
+        this.assertParticipantNameAvailable(roomId, name)
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const agent = metadata.agent || 'hermes'
         const provider = String(metadata.provider || '').trim()
@@ -789,21 +1119,41 @@ class ChatStorage {
         const apiMode = agent === 'hermes' ? '' : String(metadata.apiMode || '').trim()
         const reasoningEffort = String(metadata.reasoningEffort || '').trim()
         const avatar = String(metadata.avatar || '').trim()
+        const executorType = metadata.executorType === 'remote' ? 'remote' : 'server'
+        const ownerMemberId = String(metadata.ownerMemberId || '').trim()
+        const connectorId = String(metadata.connectorId || '').trim()
+        const remoteOrigin = String(metadata.remoteOrigin || '').trim()
         this.db()?.prepare(
-            'INSERT INTO gc_room_agents (id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited)
-        return { id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited }
+            `INSERT INTO gc_room_agents (
+                id, roomId, agentId, agent, profile, provider, model, apiMode,
+                reasoningEffort, name, description, avatar, invited,
+                executorType, ownerMemberId, connectorId, remoteOrigin
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+            id, roomId, agentId, agent, profile, provider, model, apiMode,
+            reasoningEffort, name, description, avatar, invited,
+            executorType, ownerMemberId, connectorId, remoteOrigin,
+        )
+        return {
+            id, roomId, agentId, agent, profile, provider, model, apiMode,
+            reasoningEffort, name, description, avatar, invited,
+            executorType, ownerMemberId, connectorId, remoteOrigin,
+        }
     }
 
     getRoomAgent(roomId: string, agentRef: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)'
+            `SELECT ${ROOM_AGENT_SELECT_COLUMNS}
+             FROM gc_room_agents
+             WHERE roomId = ? AND removedAt = 0 AND (id = ? OR agentId = ?)`
         ).get(roomId, agentRef, agentRef) as any) ?? null
     }
 
     getRoomAgentByAgentId(roomId: string, agentId: string): RoomAgent | null {
         return (this.db()?.prepare(
-            'SELECT id, roomId, agentId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited FROM gc_room_agents WHERE roomId = ? AND agentId = ?'
+            `SELECT ${ROOM_AGENT_SELECT_COLUMNS}
+             FROM gc_room_agents
+             WHERE roomId = ? AND removedAt = 0 AND agentId = ?`
         ).get(roomId, agentId) as any) ?? null
     }
 
@@ -815,6 +1165,9 @@ class ChatStorage {
         description: string,
         metadata: RoomAgentMetadata = {},
     ): RoomAgent | null {
+        const existing = this.getRoomAgent(roomId, agentRef)
+        if (!existing) return null
+        this.assertParticipantNameAvailable(roomId, name, { excludeAgentRef: existing.id })
         const agent = metadata.agent || 'hermes'
         const provider = String(metadata.provider || '').trim()
         const model = String(metadata.model || '').trim()
@@ -824,13 +1177,46 @@ class ChatStorage {
         this.db()?.prepare(
             `UPDATE gc_room_agents
              SET agent = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, name = ?, description = ?, avatar = ?
-             WHERE roomId = ? AND (id = ? OR agentId = ?)`
+             WHERE roomId = ? AND removedAt = 0 AND (id = ? OR agentId = ?)`
         ).run(agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, roomId, agentRef, agentRef)
         return this.getRoomAgent(roomId, agentRef)
     }
 
+    updateRoomAgentRelayMetadata(
+        roomId: string,
+        agentRef: string,
+        metadata: { connectorId: string; remoteOrigin: string },
+    ): RoomAgent | null {
+        this.db()?.prepare(
+            `UPDATE gc_room_agents
+             SET executorType = 'remote', connectorId = ?, remoteOrigin = ?
+             WHERE roomId = ? AND removedAt = 0 AND (id = ? OR agentId = ?)`,
+        ).run(metadata.connectorId, metadata.remoteOrigin, roomId, agentRef, agentRef)
+        return this.getRoomAgent(roomId, agentRef)
+    }
+
     removeRoomAgent(roomId: string, agentRef: string): void {
-        this.db()?.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND (id = ? OR agentId = ?)').run(roomId, agentRef, agentRef)
+        const db = this.db()
+        if (!db) return
+        const agent = this.getRoomAgent(roomId, agentRef)
+        if (!agent) return
+        this.removeRoomMembersForAgent(roomId, agent)
+        db.prepare(
+            `UPDATE gc_messages
+             SET senderType = 'agent', senderAgentRecordId = ?
+             WHERE roomId = ?
+               AND COALESCE(senderAgentRecordId, '') = ''
+               AND (
+                    senderId = ?
+                    OR senderId = ?
+                    OR (senderName = ? AND role IN ('assistant', 'tool'))
+               )`
+        ).run(agent.id, roomId, agent.id, agent.agentId, agent.name)
+        db.prepare(
+            `UPDATE gc_room_agents
+             SET removedAt = ?, connectorId = '', remoteOrigin = ''
+             WHERE roomId = ? AND removedAt = 0 AND id = ?`
+        ).run(Date.now(), roomId, agent.id)
     }
 
     // ─── Rolling Room Summary ───────────────────────────────
@@ -895,6 +1281,7 @@ class ChatStorage {
                AND NOT EXISTS (
                  SELECT 1 FROM gc_room_agents a
                  WHERE a.roomId = m.roomId
+                   AND a.removedAt = 0
                    AND (a.agentId = m.userId OR (m.userId NOT GLOB '????????-????-????-????-????????????' AND COALESCE(m.description, '') = '' AND a.name = m.userName))
                )
              ORDER BY m.joinedAt`
@@ -912,9 +1299,6 @@ class ChatStorage {
             try {
                 if (typeof member.authUserId === 'number' && member.authUserId > 0) {
                     member.avatar = getUserAvatar(member.authUserId) || member.avatar || ''
-                } else if (member.name) {
-                    const user = findUserByUsername(member.name)
-                    if (user?.avatar) member.avatar = user.avatar
                 }
             } catch {
                 // ignore individual lookup failures
@@ -931,7 +1315,17 @@ class ChatStorage {
         ).run(roomId, agent.agentId, agent.name)
     }
 
+    removeRoomMember(roomId: string, userId: string): void {
+        this.db()?.prepare(
+            'DELETE FROM gc_room_members WHERE roomId = ? AND userId = ?'
+        ).run(roomId, userId)
+    }
+
     addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = '', authUserId?: number): void {
+        const existing = this.getMemberByUserId(roomId, userId) ||
+            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
+        this.assertParticipantNameAvailable(roomId, userName, { excludeMemberId: existing?.id })
+
         let resolvedAvatar = avatar
         if (!resolvedAvatar && typeof authUserId === 'number' && authUserId > 0) {
             try {
@@ -940,17 +1334,6 @@ class ChatStorage {
                 // ignore lookup failures
             }
         }
-        if (!resolvedAvatar && userName) {
-            try {
-                const user = findUserByUsername(userName)
-                if (user) resolvedAvatar = user.avatar || ''
-            } catch {
-                // ignore lookup failures
-            }
-        }
-
-        const existing = this.getMemberByUserId(roomId, userId) ||
-            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
         if (existing) {
             const nextAvatar = resolvedAvatar || existing.avatar || ''
             const nextAuthUserId = typeof authUserId === 'number' && authUserId > 0
@@ -1033,6 +1416,12 @@ class ChatRoom {
         }
     }
 
+    removeUser(userId: string): Member | null {
+        const member = this.members.get(userId) || null
+        if (member) this.members.delete(userId)
+        return member
+    }
+
     getMembersList(): Member[] {
         return Array.from(this.members.values()).filter(member => member.source !== 'agent')
     }
@@ -1067,6 +1456,7 @@ export class GroupChatServer {
     readonly agentClients = new AgentClients()
     private roomSummaryService: GroupRoomSummaryService
     private _restoreScheduled = false
+    private chatRunService: GroupChatRunService | null = null
     /** roomId -> (userId -> { userName, timer }) */
     private typingState = new Map<string, Map<string, { userName: string; timer: ReturnType<typeof setTimeout> }>>()
     /**
@@ -1088,6 +1478,8 @@ export class GroupChatServer {
     }
     /** roomId -> blocked Bridge session ids from room-level interrupts/rotations. */
     private fencedRoomAgentSessions = new Map<string, Set<string>>()
+    /** A short-lived proof that an invite guest actually joined as this room member. */
+    private guestAgentRequestTokens = new Map<string, { hash: Buffer; expiresAt: number; socketId: string }>()
 
     constructor(httpServers: HttpServer | HttpServer[]) {
         this.storage = new ChatStorage()
@@ -1096,6 +1488,7 @@ export class GroupChatServer {
 
         this.io = new Server(servers[0], {
             cors: { origin: createSocketIoCorsOrigin(config.corsOrigins) },
+            maxHttpBufferSize: 2_000_000,
             allowRequest: (req, callback) => {
                 if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
                     callback('origin not allowed', false)
@@ -1126,6 +1519,9 @@ export class GroupChatServer {
             this.nsp.to(summary.roomId).emit('room_summary_updated', summary)
         })
         this.agentClients.setStorage(this.storage)
+        this.storage.setRoomAgentOnlineProvider((roomId, agentId) =>
+            this.agentClients.getAgent(roomId, agentId)?.connected === true
+        )
         this.agentClients.setRoomSummaryService(this.roomSummaryService)
         this.agentClients.setActivityBroadcaster((roomId, agentName, status) => {
             let roomStatuses = this.contextStatusState.get(roomId)
@@ -1161,6 +1557,49 @@ export class GroupChatServer {
         return this.roomSummaryService
     }
 
+    getChatRunService(): GroupChatRunService | null {
+        return this.chatRunService
+    }
+
+    authorizeGuestAgentRequestToken(roomId: string, userId: string, token: string): boolean {
+        const key = `${roomId}\u0000${userId}`
+        const entry = this.guestAgentRequestTokens.get(key)
+        if (!entry || entry.expiresAt <= Date.now() || !token) {
+            if (entry?.expiresAt && entry.expiresAt <= Date.now()) this.guestAgentRequestTokens.delete(key)
+            return false
+        }
+        const actual = createHash('sha256').update(token).digest()
+        return actual.length === entry.hash.length && timingSafeEqual(actual, entry.hash)
+    }
+
+    private issueGuestAgentRequestToken(roomId: string, userId: string, socketId: string): string {
+        const token = randomBytes(32).toString('base64url')
+        this.guestAgentRequestTokens.set(`${roomId}\u0000${userId}`, {
+            hash: createHash('sha256').update(token).digest(),
+            expiresAt: Date.now() + 60 * 60_000,
+            socketId,
+        })
+        return token
+    }
+
+    broadcastAgentPairingRequest(roomId: string, request: Record<string, unknown>): void {
+        this.emitToRoomManagers(roomId, 'agent_pairing_requested', { roomId, request })
+    }
+
+    broadcastAgentPairingUpdated(roomId: string, request: Record<string, unknown>): void {
+        this.emitToRoomManagers(roomId, 'agent_pairing_updated', { roomId, request })
+    }
+
+    broadcastGuestAgentPolicy(roomId: string, room: RoomInfo): void {
+        this.nsp.to(roomId).emit('room_updated', {
+            roomId,
+            allowGuestAgents: Number(room.allowGuestAgents || 0),
+            guestAgentApproval: 'owner',
+            maxGuestAgentsPerMember: Math.max(1, Number(room.maxGuestAgentsPerMember || 1)),
+            allowRemoteWorkspaceAccess: Number(room.allowRemoteWorkspaceAccess || 0),
+        })
+    }
+
     ensureDefaultRoomWorkspace(roomId: string, profile: string): string {
         const workspace = defaultGroupChatWorkspace(profile, roomId)
         mkdirSync(workspace, { recursive: true })
@@ -1184,7 +1623,117 @@ export class GroupChatServer {
         return room
     }
 
+    getRoomAgentViews(
+        roomId: string,
+        _includeManageFields = false,
+        viewerMemberId = '',
+    ): Array<Record<string, unknown>> {
+        const room = typeof this.storage.getRoom === 'function'
+            ? this.storage.getRoom(roomId)
+            : null
+        const roomOwnerAuthUserId = Number(room?.ownerAuthUserId || 0)
+        const roomOwnerMemberId = roomOwnerAuthUserId > 0
+            ? authenticatedGroupUserId(roomOwnerAuthUserId)
+            : ''
+        return this.storage.getRoomAgents(roomId).map(agent => {
+            const { ownerMemberId, connectorId, remoteOrigin, ...visible } = agent
+            const executor = this.agentClients?.getAgent?.(roomId, agent.agentId)
+            const displayOwnerMemberId = ownerMemberId
+                || (agent.executorType === 'server' ? roomOwnerMemberId : '')
+            const canManageAgent = agent.executorType === 'remote'
+                && Boolean(viewerMemberId)
+                && displayOwnerMemberId === viewerMemberId
+            return {
+                ...visible,
+                connectionStatus: executor?.connected ? 'online' : 'offline',
+                ...(displayOwnerMemberId ? { ownerMemberId: displayOwnerMemberId } : {}),
+                ...(canManageAgent ? { connectorId, remoteOrigin } : {}),
+            }
+        })
+    }
+
+    private getRoomMemberViews(roomId: string, room = this.rooms.get(roomId)): MemberView[] {
+        const storedMembers = typeof this.storage.getRoomMembers === 'function'
+            ? this.storage.getRoomMembers(roomId)
+            : []
+        if (storedMembers.length > 0) return storedMembers
+        return (room?.getMembersList() || []).map(({
+            id,
+            userId,
+            name,
+            description,
+            joinedAt,
+            avatar,
+        }) => ({
+            id,
+            userId,
+            name,
+            description,
+            joinedAt,
+            avatar,
+        }))
+    }
+
+    broadcastRoomAgents(roomId: string): RoomAgent[] {
+        const agents = this.storage.getRoomAgents(roomId)
+        this.nsp.to(roomId).emit('agents_updated', {
+            roomId,
+            agents: this.getRoomAgentViews(roomId, false),
+        })
+        this.emitToRoomManagers(roomId, 'agents_updated', {
+            roomId,
+            agents: this.getRoomAgentViews(roomId, true),
+        })
+        for (const socket of this.nsp.sockets?.values?.() || []) {
+            if (
+                !socket.rooms?.has(roomId)
+                || this.socketRequestedSourceMap.get(socket.id) === 'agent'
+                || this.canSocketManageRoom(socket, roomId)
+            ) continue
+            const userId = this.socketUserMap.get(socket.id)
+            if (!userId) continue
+            socket.emit('agents_updated', {
+                roomId,
+                agents: this.getRoomAgentViews(roomId, false, userId),
+            })
+        }
+        return agents
+    }
+
+    removeRoomMember(roomId: string, userId: string): MemberView[] | null {
+        const normalizedUserId = String(userId || '').trim()
+        if (!normalizedUserId) return null
+        const room = this.rooms.get(roomId)
+        const storedMember = typeof this.storage.getMemberByUserId === 'function'
+            ? this.storage.getMemberByUserId(roomId, normalizedUserId)
+            : null
+        const onlineMember = room?.members.get(normalizedUserId) || null
+        if (!storedMember && !onlineMember) return null
+
+        room?.removeUser(normalizedUserId)
+        this.storage.removeRoomMember?.(roomId, normalizedUserId)
+
+        for (const socket of this.nsp.sockets?.values?.() || []) {
+            if (
+                this.socketUserMap.get(socket.id) !== normalizedUserId
+                || !socket.rooms?.has(roomId)
+            ) continue
+            socket.emit('member_kicked', { roomId })
+            socket.leave(roomId)
+        }
+
+        const members = this.getRoomMemberViews(roomId, room)
+        this.nsp.to(roomId).emit('member_left', {
+            roomId,
+            memberId: normalizedUserId,
+            memberName: onlineMember?.name || storedMember?.name || normalizedUserId,
+            members,
+        })
+        return members
+    }
+
     setChatRunService(service: GroupChatRunService | null): void {
+        this.chatRunService = service
         this.agentClients.setChatRunService(service)
     }
 
@@ -1292,6 +1841,7 @@ export class GroupChatServer {
         for (const room of rooms) {
             const agents = this.storage.getRoomAgents(room.id)
             for (const agent of agents) {
+                if (agent.executorType === 'remote') continue
                 try {
                     const client = await this.agentClients.createAgent({
                         agentId: agent.agentId,
@@ -1322,9 +1872,23 @@ export class GroupChatServer {
     // ─── Auth ───────────────────────────────────────────────────
 
     private async authMiddleware(socket: Socket, next: (err?: Error) => void): Promise<void> {
-        const auth = socket.handshake.auth as { source?: string; agentSocketSecret?: string; token?: string }
+        const auth = socket.handshake.auth as {
+            source?: string
+            agentSocketSecret?: string
+            token?: string
+            inviteCode?: string
+        }
         const isAgentSocket = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET
         if (isAgentSocket) {
+            next()
+            return
+        }
+
+        const inviteCode = typeof auth.inviteCode === 'string' ? auth.inviteCode.trim() : ''
+        if (inviteCode) {
+            const invitedRoom = inviteCode ? this.storage.getRoomByInviteCode(inviteCode) : null
+            if (!invitedRoom) return next(new Error('Unauthorized'))
+            socket.data.inviteGuestRoomId = invitedRoom.id
             next()
             return
         }
@@ -1361,8 +1925,9 @@ export class GroupChatServer {
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
         socket.on('join', (data: { roomId?: string; name?: string }, ack?: (response?: unknown) => void) => this.handleJoin(socket, data, ack))
+        socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
         socket.on('update_member_profile', (data: { roomId?: string; name?: string; description?: string } | undefined, ack?: (response?: unknown) => void) => this.handleUpdateMemberProfile(socket, data, ack))
-        socket.on('message', (data: Partial<ChatMessage> & { roomId?: string; content: string | Array<Record<string, unknown>>; id?: string; mentionDepth?: number }, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
+        socket.on('message', (data: IncomingGroupChatMessage, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
         socket.on('message_stream_start', (data: { roomId?: string; id?: string; senderId?: string; senderName?: string; timestamp?: number; run_id?: string; agentSessionId?: string }) => this.handleMessageStreamStart(socket, data))
         socket.on('message_stream_delta', (data: { roomId?: string; id?: string; delta?: string }) => this.handleMessageStreamDelta(socket, data))
         socket.on('message_reasoning_delta', (data: { roomId?: string; id?: string; delta?: string }) => this.handleMessageReasoningDelta(socket, data))
@@ -1371,6 +1936,7 @@ export class GroupChatServer {
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
+        socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
@@ -1381,6 +1947,8 @@ export class GroupChatServer {
 
     private canSocketJoinRoom(socket: Socket, roomId: string, room: RoomInfo | undefined, existingMember: Member | null, inviteCode?: string): boolean {
         if (!room) return typeof this.storage.getRoom !== 'function'
+        const inviteGuestRoomId = socket.data?.inviteGuestRoomId
+        if (typeof inviteGuestRoomId === 'string') return inviteGuestRoomId === roomId
         const requested = typeof inviteCode === 'string' ? inviteCode.trim() : ''
         if (requested && room.inviteCode && requested === room.inviteCode) return true
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
@@ -1394,6 +1962,7 @@ export class GroupChatServer {
 
     private canSocketManageRoom(socket: Socket, roomId: string): boolean {
         if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        if (typeof socket.data?.inviteGuestRoomId === 'string') return false
         const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
         if (!room) return false
         const authUser = socket.data?.authUser as AuthenticatedUser | undefined
@@ -1408,6 +1977,36 @@ export class GroupChatServer {
         if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
         const profiles = authenticatedUserProfiles(authUser)
         return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
+    }
+
+    private canSocketMentionAll(socket: Socket, roomId: string): boolean {
+        if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        if (typeof socket.data?.inviteGuestRoomId === 'string') return false
+        return isGroupChatRoomOwner(
+            this.storage,
+            roomId,
+            socket.data?.authUser as AuthenticatedUser | undefined,
+        )
+    }
+
+    private canSocketInterruptAgent(socket: Socket, roomId: string, agentName: string): boolean {
+        if (this.canSocketManageRoom(socket, roomId)) return true
+        if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        const requesterMemberId = this.socketUserMap?.get(socket.id)
+        if (!requesterMemberId) return false
+        const agent = this.storage.getRoomAgents(roomId)
+            .find(candidate => candidate.name === agentName)
+        return agent?.executorType === 'remote'
+            && agent.ownerMemberId === requesterMemberId
+    }
+
+    private canSocketRemoveAgent(socket: Socket, roomId: string, agent: RoomAgent): boolean {
+        if (this.canSocketManageRoom(socket, roomId)) return true
+        if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        const requesterMemberId = this.socketUserMap?.get(socket.id)
+        return agent.executorType === 'remote'
+            && Boolean(requesterMemberId)
+            && agent.ownerMemberId === requesterMemberId
     }
 
     private getOnlineRoomMember(socket: Socket, roomId: string): { room: ChatRoom; member: Member } | null {
@@ -1454,7 +2053,11 @@ export class GroupChatServer {
         return sessionId === expected && !this.isRoomAgentSessionFenced(roomId, sessionId)
     }
 
-    private canPersistAgentMessageForCurrentSession(roomId: string, member: Member | undefined, data: Partial<ChatMessage>): boolean {
+    private canPersistAgentMessageForCurrentSession(
+        roomId: string,
+        member: Member | undefined,
+        data: Pick<IncomingGroupChatMessage, 'role' | 'tool_calls' | 'tool_call_id' | 'agentSessionId'>,
+    ): boolean {
         if (member?.source !== 'agent') return true
         const role = normalizeMessageRole(data.role)
         const isRunTrace = role === 'assistant' || role === 'tool' || Array.isArray(data.tool_calls) || Boolean(data.tool_call_id)
@@ -1470,7 +2073,7 @@ export class GroupChatServer {
         return joined.member
     }
 
-    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; inviteCode?: string }, ack?: (res: any) => void): void {
+    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; avatar?: string; inviteCode?: string }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
         const requestedSource = this.socketRequestedSourceMap.get(socketId) || 'human'
@@ -1499,12 +2102,32 @@ export class GroupChatServer {
         }
         const requestedName = typeof data.name === 'string' ? data.name.trim() : ''
         const requestedDescription = typeof data.description === 'string' ? data.description.trim() : ''
+        const isInviteGuest = typeof socket.data?.inviteGuestRoomId === 'string'
+        if (isInviteGuest && !requestedName) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_REQUIRED', error: 'Name is required' })
+            return
+        }
         // On rejoin, prefer the per-room DB record over the join-request name
         // so switching rooms doesn't overwrite a member's per-room identity.
-        // The DB is authoritative for existing members; requestedName only
-        // applies on first join (when there's no DB record yet).
-        const userName = existingMember?.name || requestedName || userInfo.name
+        // Invite guests explicitly confirm their name before every entry, so
+        // their requested name may update the persisted browser identity.
+        const userName = isInviteGuest && requestedName
+            ? requestedName
+            : existingMember?.name || requestedName || userInfo.name
         const description = existingMember?.description || requestedDescription || userInfo.description
+        if (isReservedMentionName(userName)) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_RESERVED', error: '`all` is reserved for @all mentions' })
+            return
+        }
+        let requestedAvatar = ''
+        if (isInviteGuest) {
+            try {
+                requestedAvatar = normalizeRoomMemberAvatar(data.avatar)
+            } catch {
+                ack?.({ code: 'ROOM_PARTICIPANT_AVATAR_INVALID', error: 'Invalid member avatar' })
+                return
+            }
+        }
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })
@@ -1522,7 +2145,9 @@ export class GroupChatServer {
 
         // Look up the user's avatar via their numeric users.id from the web UI session.
         // Falls back to name-based lookup for clients that don't pass authUserId.
-        let userAvatar = ''
+        let userAvatar = isInviteGuest
+            ? requestedAvatar || existingMember?.avatar || ''
+            : existingMember?.avatar || ''
         let authUserId: number | undefined
         if (source !== 'agent') {
             authUserId = this.socketAuthUserIdMap.get(socket.id)
@@ -1532,13 +2157,6 @@ export class GroupChatServer {
                 } catch (err) {
                     logger.info(`[GroupChat] avatar lookup by id=${authUserId} failed: ${(err as Error).message}`)
                 }
-            } else if (userName) {
-                try {
-                    const matched = findUserByUsername(userName)
-                    if (matched) userAvatar = matched.avatar || ''
-                } catch (err) {
-                    logger.info(`[GroupChat] avatar lookup by name '${userName}' failed: ${(err as Error).message}`)
-                }
             }
         }
 
@@ -1546,7 +2164,17 @@ export class GroupChatServer {
         // tracked through gc_room_agents and AgentClients; storing them in
         // gc_room_members makes member counts grow on reconnect/restore.
         if (source !== 'agent') {
-            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
+            try {
+                this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
+            } catch (err: any) {
+                if (err?.code === ROOM_PARTICIPANT_NAME_CONFLICT) {
+                    ack?.({ code: err.code, error: err.message })
+                    return
+                }
+                logger.error(`[GroupChat] Failed to persist room member: ${err?.message || err}`)
+                ack?.({ error: 'Failed to join room' })
+                return
+            }
         }
 
         // Add to in-memory online participants (keyed by userId)
@@ -1554,30 +2182,67 @@ export class GroupChatServer {
         socket.join(roomId)
 
         if (source !== 'agent') {
+            const members = this.getRoomMemberViews(roomId, room)
             socket.to(roomId).emit('member_joined', {
                 roomId,
                 memberId: userId,
                 memberName: userName,
-                members: room.getMembersList(),
+                members,
             })
         }
 
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
-        const agents = this.storage.getRoomAgents(roomId)
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
+        const agents = this.getRoomAgentViews(
+            roomId,
+            this.canSocketManageRoom(socket, roomId),
+            userId,
+        )
 
         ack?.({
             roomId,
             roomName: room.name,
-            members: room.getMembersList(),
+            members: this.getRoomMemberViews(roomId, room),
             messages,
             agents,
-            rooms: this.getRoomIds(),
+            rooms: typeof socket.data?.inviteGuestRoomId === 'string' ? [roomId] : this.getRoomIds(),
+            total,
+            offset: 0,
+            limit: messages.length,
+            hasMore: messages.length < total,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            ...(isInviteGuest && source !== 'agent'
+                ? { agentLinkToken: this.issueGuestAgentRequestToken(roomId, userId, socket.id) }
+                : {}),
         })
 
         logger.debug(`[GroupChat] ${userName} (user=${userId}) joined room: ${roomId}`)
+    }
+
+    private handleLoadMessages(
+        socket: Socket,
+        data: { roomId?: string; offset?: number; limit?: number } | undefined,
+        ack?: (res: any) => void,
+    ): void {
+        const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
+        if (!roomId || !this.getOnlineRoomMember(socket, roomId)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+
+        const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
+        const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
+        const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
+        ack?.({
+            messages,
+            total,
+            offset,
+            limit,
+            hasMore: offset + messages.length < total,
+        })
     }
 
     private handleUpdateMemberProfile(
@@ -1590,6 +2255,10 @@ export class GroupChatServer {
         const description = typeof data?.description === 'string' ? data.description.trim() : ''
         if (!roomId || !name) {
             ack?.({ error: 'roomId and name are required' })
+            return
+        }
+        if (isReservedMentionName(name)) {
+            ack?.({ code: 'ROOM_PARTICIPANT_NAME_RESERVED', error: '`all` is reserved for @all mentions' })
             return
         }
         if (name.length > 120 || description.length > 2000) {
@@ -1611,7 +2280,7 @@ export class GroupChatServer {
             joined.room.addOrUpdateMember(socket.id, userId, name, description, 'human', avatar)
             this.userInfoMap.set(userId, { name, description })
 
-            const members = joined.room.getMembersList()
+            const members = this.getRoomMemberViews(roomId, joined.room)
             this.nsp.to(roomId).emit('member_updated', {
                 roomId,
                 memberId: userId,
@@ -1620,12 +2289,20 @@ export class GroupChatServer {
             })
             ack?.({ member: joined.room.getOnlineMemberBySocketId(socket.id), members })
         } catch (err) {
+            if ((err as any)?.code === ROOM_PARTICIPANT_NAME_CONFLICT) {
+                ack?.({ code: ROOM_PARTICIPANT_NAME_CONFLICT, error: (err as Error).message })
+                return
+            }
             logger.error(`[GroupChat] Failed to update member profile: ${(err as Error).message}`)
             ack?.({ error: 'Failed to update member profile' })
         }
     }
 
-    private handleMessage(socket: Socket, data: Partial<ChatMessage> & { roomId?: string; content: string | Array<Record<string, unknown>>; id?: string; mentionDepth?: number }, ack?: (res: any) => void): void {
+    private handleMessage(socket: Socket, data: IncomingGroupChatMessage, ack?: (res: any) => void): void {
+        if (!data || (typeof data.content !== 'string' && !Array.isArray(data.content))) {
+            ack?.({ error: 'Invalid message content' })
+            return
+        }
         const socketId = socket.id
         const roomId = data.roomId || 'general'
         const room = this.rooms.get(roomId)
@@ -1642,26 +2319,55 @@ export class GroupChatServer {
         }
         const userId = member?.userId || socketId
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
-        const role = normalizeMessageRole(data.role)
+        const isHumanMessage = member?.source === 'human'
+        const role = isHumanMessage ? 'user' : normalizeMessageRole(data.role)
+        let messageContent: unknown = data.content
+        let runtimeInput: ContentBlock[] | undefined = Array.isArray(data.content)
+            ? data.content as ContentBlock[]
+            : undefined
+        const structuredHumanContent = isHumanMessage ? humanStructuredContent(data.content) : null
+        if (structuredHumanContent) {
+            try {
+                const normalized = normalizeHumanGroupChatContent(roomId, structuredHumanContent)
+                messageContent = normalized.storageContent
+                runtimeInput = normalized.runtimeInput
+            } catch (error) {
+                ack?.({
+                    code: 'GROUP_CHAT_ATTACHMENT_INVALID',
+                    error: error instanceof Error ? error.message : 'Invalid group chat attachment',
+                })
+                return
+            }
+        }
+        if (
+            isAllAgentsMentioned(contentToText(messageContent))
+            && !this.canSocketMentionAll(socket, roomId)
+        ) {
+            ack?.({
+                code: 'GROUP_CHAT_ALL_MENTION_FORBIDDEN',
+                error: 'Only the room owner can mention @all',
+            })
+            return
+        }
 
         const msg: ChatMessage = {
             id: this.normalizeClientMessageId(data.id) || this.generateId(),
             roomId,
             senderId: userId,
             senderName: userName,
-            content: contentToStorageString(data.content),
-            timestamp: this.normalizeMessageTimestamp(data.timestamp, data.role),
-            run_id: member?.source === 'agent' && typeof data.run_id === 'string' && data.run_id.trim()
+            content: contentToStorageString(messageContent),
+            timestamp: this.normalizeMessageTimestamp(data.timestamp, role),
+            run_id: !isHumanMessage && typeof data.run_id === 'string' && data.run_id.trim()
                 ? data.run_id.trim()
                 : null,
             role,
-            tool_call_id: data.tool_call_id ?? null,
-            tool_calls: Array.isArray(data.tool_calls) ? data.tool_calls : null,
-            tool_name: data.tool_name ?? null,
-            finish_reason: data.finish_reason ?? null,
-            reasoning: data.reasoning ?? null,
-            reasoning_details: data.reasoning_details ?? null,
-            reasoning_content: data.reasoning_content ?? null,
+            tool_call_id: !isHumanMessage ? data.tool_call_id ?? null : null,
+            tool_calls: !isHumanMessage && Array.isArray(data.tool_calls) ? data.tool_calls : null,
+            tool_name: !isHumanMessage ? data.tool_name ?? null : null,
+            finish_reason: !isHumanMessage ? data.finish_reason ?? null : null,
+            reasoning: !isHumanMessage ? data.reasoning ?? null : null,
+            reasoning_details: !isHumanMessage ? data.reasoning_details ?? null : null,
+            reasoning_content: !isHumanMessage ? data.reasoning_content ?? null : null,
         }
 
         const saved = this.storage.saveMessageAndRefreshRoom(msg)
@@ -1674,7 +2380,11 @@ export class GroupChatServer {
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
-        const canRouteHumanMentions = savedMsg.role === 'user' && this.canSocketManageRoom(socket, roomId)
+        // Any human who has successfully joined the room may interact with its
+        // Agents. Room management remains separately protected by
+        // canSocketManageRoom, so invite guests cannot mutate settings, approve
+        // tools, or interrupt an Agent.
+        const canRouteHumanMentions = savedMsg.role === 'user' && member?.source === 'human'
         const shouldRouteMentions = canRouteHumanMentions ||
             (isAgentReply && mentionDepth < maxAgentMentionDepth())
 
@@ -1685,7 +2395,7 @@ export class GroupChatServer {
             this.agentClients.processMentions(roomId, {
                 messageId: savedMsg.id,
                 content: contentToText(savedMsg.content),
-                input: Array.isArray(data.content) ? data.content : undefined,
+                input: runtimeInput,
                 senderName: savedMsg.senderName,
                 senderId: savedMsg.senderId,
                 timestamp: savedMsg.timestamp,
@@ -1864,7 +2574,7 @@ export class GroupChatServer {
             ack?.({ error: 'Not in room' })
             return
         }
-        if (!this.canSocketManageRoom(socket, roomId)) {
+        if (!this.canSocketInterruptAgent(socket, roomId, agentName)) {
             ack?.({ error: 'Access denied' })
             return
         }
@@ -1879,6 +2589,45 @@ export class GroupChatServer {
             logger.warn(`[GroupChat] failed to interrupt agent ${agentName} in room ${roomId}: ${err.message}`)
             ack?.({ error: err.message || 'interrupt failed' })
         }
+    }
+
+    private handleRemoveAgent(
+        socket: Socket,
+        data: { roomId?: string; agentId?: string },
+        ack?: (response?: unknown) => void,
+    ): void {
+        const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
+        const agentId = typeof data?.agentId === 'string' ? data.agentId.trim() : ''
+        if (!roomId || !agentId) {
+            ack?.({ error: 'roomId and agentId are required' })
+            return
+        }
+        const joined = this.getOnlineRoomMember(socket, roomId)
+        if (!joined || joined.member.source !== 'human') {
+            ack?.({ error: 'Not in room' })
+            return
+        }
+        const agent = this.storage.getRoomAgent(roomId, agentId)
+        if (!agent) {
+            ack?.({ error: 'Agent not found' })
+            return
+        }
+        if (!this.canSocketRemoveAgent(socket, roomId, agent)) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+
+        if (agent.executorType === 'remote' && agent.connectorId) {
+            revokeGroupAgentConnector(agent.connectorId)
+        }
+        this.storage.removeRoomAgent(roomId, agent.id)
+        this.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+        this.broadcastRoomAgents(roomId)
+        ack?.({
+            ok: true,
+            agents: this.getRoomAgentViews(roomId, false, joined.member.userId),
+            members: this.storage.getRoomMembers(roomId),
+        })
     }
 
     private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; agentSessionId?: string }): void {
@@ -1941,6 +2690,19 @@ export class GroupChatServer {
             ack?.({ error: 'Approval is not pending in this room' })
             return
         }
+        const remoteExecutor = this.agentClients.getAgents(roomId).find(agent =>
+            agent.name === pendingRoute.agentName && typeof agent.respondApproval === 'function'
+        )
+        if (remoteExecutor?.respondApproval) {
+            try {
+                const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
+                if (resolved) this.pendingApprovalRoutes.delete(data.approval_id)
+                ack?.({ ok: true, resolved })
+            } catch (err: any) {
+                ack?.({ error: err.message || 'approval response failed' })
+            }
+            return
+        }
         const ekkoResult = pendingRoute.agentSessionId
             ? respondToEkkoToolApproval(
                 pendingRoute.agentSessionId,
@@ -1980,6 +2742,15 @@ export class GroupChatServer {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId)
         const userName = userId ? this.userInfoMap.get(userId)?.name : undefined
+        const inviteGuestRoomId = typeof socket.data?.inviteGuestRoomId === 'string'
+            ? socket.data.inviteGuestRoomId
+            : ''
+        if (userId && inviteGuestRoomId) {
+            const key = `${inviteGuestRoomId}\u0000${userId}`
+            if (this.guestAgentRequestTokens.get(key)?.socketId === socketId) {
+                this.guestAgentRequestTokens.delete(key)
+            }
+        }
 
         logger.debug(`[GroupChat] Disconnected: ${userName || socketId} (socket=${socketId}, user=${userId || socketId})`)
 
@@ -2029,7 +2800,7 @@ export class GroupChatServer {
                         roomId: rid,
                         memberId: member?.userId || socketId,
                         memberName: member?.name || `User-${socketId.slice(0, 6)}`,
-                        members: room.getMembersList(),
+                        members: this.getRoomMemberViews(rid, room),
                     })
                 }
             }

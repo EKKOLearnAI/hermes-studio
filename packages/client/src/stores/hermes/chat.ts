@@ -1719,7 +1719,7 @@ export const useChatStore = defineStore('chat', () => {
     profile?: string
     model?: string
     provider?: string
-    source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
+    source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
     agent?: ChatAgentId
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'
@@ -2060,7 +2060,7 @@ export const useChatStore = defineStore('chat', () => {
     profile?: string
     model?: string
     provider?: string
-    source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
+    source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
     agent?: ChatAgentId
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'

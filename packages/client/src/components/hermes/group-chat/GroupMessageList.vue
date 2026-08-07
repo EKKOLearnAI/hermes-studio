@@ -8,6 +8,11 @@ import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
 
 const store = useGroupChatStore()
+const props = withDefaults(defineProps<{
+    allowSpeech?: boolean
+}>(), {
+    allowSpeech: true,
+})
 const emit = defineEmits<{
     mentionAgent: [agent: import('@/api/hermes/group-chat').RoomAgent]
 }>()
@@ -49,6 +54,14 @@ function scrollToBottom(options?: BottomScrollOptions): void {
 function containsSummaryAnchor(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
     const anchorId = summaryAnchorMessageId.value
     return !!anchorId && (message.runItems || [message]).some(item => item.id === anchorId)
+}
+
+function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
+    if (!store.userId || message.senderId === store.userId) return false
+    return store.members.some(member =>
+        member.userId === message.senderId ||
+        member.name === message.senderName
+    )
 }
 
 function updateScrollBottomButton(): void {
@@ -153,19 +166,21 @@ defineExpose({ scrollToBottom })
             <template #item="{ message: msg }">
                 <div :data-group-message-id="msg.id">
                     <GroupAgentRunCard
-                        v-if="msg.runItems?.length"
+                        v-if="msg.runItems?.length || isOtherMemberMessage(msg)"
                         :message="msg"
-                        :agents="store.agents"
+                        :agents="store.messageAgents"
                         :members="store.members"
                         :current-user-id="store.userId"
+                        :allow-speech="props.allowSpeech"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <GroupMessageItem
                         v-else
                         :message="msg"
-                        :agents="store.agents"
+                        :agents="store.messageAgents"
                         :members="store.members"
                         :current-user-id="store.userId"
+                        :allow-speech="props.allowSpeech"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <div

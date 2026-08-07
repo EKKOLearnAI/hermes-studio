@@ -34,7 +34,7 @@ export interface CodingAgentRunSocketData {
   apiMode?: any
   api_mode?: any
   reasoning_effort?: string
-  session_source?: 'global_agent' | 'workflow'
+  session_source?: 'global_agent' | 'workflow' | 'group_chat'
   group_system_prompt?: string
   group_room_id?: string
   group_agent_id?: string
@@ -62,7 +62,11 @@ export async function handleCodingAgentRun(
   const agentId = codingAgentId(data)
   const state = getOrCreateSession(sessionMap, sessionId)
   state.profile = profile
-  state.source = data.session_source === 'workflow' || data.source === 'workflow' ? 'workflow' : 'coding_agent'
+  state.source = data.session_source === 'group_chat' || data.source === 'group_chat'
+    ? 'group_chat'
+    : data.session_source === 'workflow' || data.source === 'workflow'
+      ? 'workflow'
+      : 'coding_agent'
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'

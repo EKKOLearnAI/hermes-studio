@@ -74,7 +74,7 @@ export interface CodingAgentRunLaunch {
   workspaceDir: string
   env?: NodeJS.ProcessEnv
   state?: SessionState
-  sessionSource?: 'global_agent' | 'workflow'
+  sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   reasoningEffort?: string
 }
 
@@ -484,7 +484,11 @@ export class CodingAgentRunManager {
     const state = launch.state || { messages: [], isWorking: false, events: [], queue: [] }
     state.isWorking = true
     state.profile = launch.profile
-    state.source = launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
+    state.source = launch.sessionSource === 'group_chat'
+      ? 'group_chat'
+      : launch.sessionSource === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
     state.runId = runId
 
     if (isPrintAgent(launch.agentId)) {
@@ -699,7 +703,11 @@ export class CodingAgentRunManager {
     if (!run.runMarker) run.runMarker = `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
     run.state.isWorking = true
     run.state.profile = run.launch.profile
-    run.state.source = run.launch.sessionSource === 'workflow' ? 'workflow' : 'coding_agent'
+    run.state.source = run.launch.sessionSource === 'group_chat'
+      ? 'group_chat'
+      : run.launch.sessionSource === 'workflow'
+        ? 'workflow'
+        : 'coding_agent'
     run.state.runId = run.id
     for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
@@ -805,6 +813,8 @@ export class CodingAgentRunManager {
     if (getSession(run.launch.sessionId)) return
     const source = run.launch.sessionSource === 'global_agent'
       ? 'global_agent'
+      : run.launch.sessionSource === 'group_chat'
+        ? 'group_chat'
       : run.launch.sessionSource === 'workflow'
         ? 'workflow'
         : 'coding_agent'

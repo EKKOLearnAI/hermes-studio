@@ -79,7 +79,7 @@
     "@vue-flow/core": "^1.48.2",
     "@vue-flow/minimap": "^1.5.4",
     "@vue-flow/node-resizer": "^1.5.1",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "agent-browser": "^0.26.0",
     "eventsource": "^4.1.0",
     "js-tiktoken": "^1.0.21",

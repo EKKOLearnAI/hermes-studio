@@ -29,7 +29,16 @@ export function buildAgentInstructions(params: AgentInstructionsParams): string 
     let memberSection: string
     if (uniqueMembers.length > 0) {
         memberSection = uniqueMembers
-            .map(m => m.description ? `- ${m.name}: ${m.description}` : `- ${m.name}`)
+            .map((m) => {
+                const kind = m.kind === 'agent'
+                    ? '[AI Agent] '
+                    : m.kind === 'human'
+                        ? '[真人成员] '
+                        : ''
+                return m.description
+                    ? `- ${kind}${m.name}: ${m.description}`
+                    : `- ${kind}${m.name}`
+            })
             .join('\n')
     } else if (params.memberNames.length > 0) {
         // Deduplicate member names as well
@@ -48,7 +57,7 @@ export function buildAgentInstructions(params: AgentInstructionsParams): string 
 
 你的角色：${roleDescription}
 
-当前房间成员：
+当前房间有效参与者（列表中的类型由群聊系统提供，不要自行猜测）：
 ${memberSection}
 
 规则：

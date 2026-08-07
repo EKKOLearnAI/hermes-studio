@@ -9,6 +9,8 @@ export interface RoomInfo {
     name: string
     inviteCode: string | null
     canManage?: boolean
+    canMentionAll?: boolean
+    ownerMemberId?: string
     summaryProfile: string
     summaryProvider: string
     summaryModel: string
@@ -16,6 +18,10 @@ export interface RoomInfo {
     summaryEveryTurns: number
     totalTokens?: number
     workspace: string
+    allowGuestAgents?: number
+    guestAgentApproval?: 'owner'
+    maxGuestAgentsPerMember?: number
+    allowRemoteWorkspaceAccess?: number
 }
 
 export interface RoomSummaryConfig {
@@ -64,6 +70,12 @@ export interface RoomAgent {
     description: string
     avatar: string
     invited: number
+    executorType?: 'server' | 'remote'
+    remoteOrigin?: string
+    connectionStatus?: 'online' | 'offline'
+    ownerMemberId?: string
+    connectorId?: string
+    historical?: boolean
 }
 
 export interface RoomAgentInput {
@@ -93,6 +105,15 @@ export interface ChatMessage {
     roomId: string
     senderId: string
     senderName: string
+    senderType?: 'member' | 'agent'
+    senderAgentRecordId?: string
+    senderAvatar?: string
+    senderAgentType?: RoomAgent['agent']
+    senderAgentProfile?: string
+    senderAgentProvider?: string
+    senderAgentModel?: string
+    senderAgentDescription?: string
+    senderOwnerMemberId?: string
     content: string
     timestamp: number
     run_id?: string | null
@@ -168,13 +189,20 @@ export interface JoinResult {
 
 let socket: ReturnType<typeof io> | null = null
 
-export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
+export function connectGroupChat(opts?: {
+    userId?: string
+    userName?: string
+    description?: string
+    authUserId?: number
+    inviteCode?: string
+}): ReturnType<typeof io> {
     // Keep one Socket.IO instance while it reconnects. Replacing a disconnected
     // instance leaves the old reconnection loop alive and can split join/message
     // events across different socket ids.
     if (socket) return socket
 
-    const token = getApiKey()
+    const inviteCode = opts?.inviteCode?.trim() || ''
+    const token = inviteCode ? '' : getApiKey()
     const userId = opts?.userId || localStorage.getItem('gc_user_id') || generateUUID()
     if (!opts?.userId) localStorage.setItem('gc_user_id', userId)
 
@@ -185,6 +213,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
             name: opts?.userName || localStorage.getItem('gc_user_name') || undefined,
             description: opts?.description || localStorage.getItem('gc_user_description') || undefined,
             authUserId: opts?.authUserId,
+            inviteCode: inviteCode || undefined,
         },
         transports: ['websocket', 'polling'],
         reconnection: true,
@@ -280,7 +309,7 @@ export async function getRoomDetail(
 }
 
 export async function joinRoomByCode(code: string): Promise<{ room: RoomInfo }> {
-    return request(`/api/hermes/group-chat/rooms/join/${code}`)
+    return request(`/api/hermes/group-chat/rooms/join/${encodeURIComponent(code)}`)
 }
 
 export async function updateInviteCode(roomId: string, inviteCode: string): Promise<{ success: boolean }> {
@@ -313,6 +342,12 @@ export async function listAgents(roomId: string): Promise<{ agents: RoomAgent[] 
 
 export async function removeAgent(roomId: string, agentId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
+        method: 'DELETE',
+    })
+}
+
+export async function removeRoomMember(roomId: string, userId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/members/${encodeURIComponent(userId)}`, {
         method: 'DELETE',
     })
 }

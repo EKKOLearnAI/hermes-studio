@@ -25,7 +25,7 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 // ─── Types ────────────────────────────────────────────────────
 
-interface AgentConfig {
+export interface AgentConfig {
     agentId?: string
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
     profile: string
@@ -50,7 +50,7 @@ interface MessageData {
     run_id?: string | null
 }
 
-type MentionMessage = {
+export type MentionMessage = {
     messageId?: string
     content: string
     senderName: string
@@ -83,7 +83,7 @@ export type GroupAgentSessionConfig = {
     reasoningEffort?: string
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
-type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
+export type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
 type AgentActivityBroadcaster = (
     roomId: string,
     agentName: string,
@@ -161,13 +161,13 @@ export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown
     return text ? text : null
 }
 
-interface MemberData {
+export interface MemberData {
     id: string
     name: string
     joinedAt: number
 }
 
-interface JoinResult {
+export interface JoinResult {
     roomId: string
     roomName: string
     members: MemberData[]
@@ -181,6 +181,48 @@ export interface AgentEventHandler {
     onStopTyping?: (data: { roomId: string; userId: string; userName: string }) => void
     onMemberJoined?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
     onMemberLeft?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
+}
+
+export interface GroupAgentEventSink {
+    readonly connected: boolean
+    readonly id?: string
+    sendMessage(
+        roomId: string,
+        content: string,
+        messageId?: string,
+        extra?: Record<string, unknown>,
+        agentSessionId?: string,
+    ): Promise<string>
+    emit(event: string, payload: Record<string, unknown>): void
+    disconnect?(): void
+}
+
+export interface GroupAgentExecutor {
+    readonly agentId: string
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly profile: string
+    readonly provider: string
+    readonly model: string
+    readonly apiMode: string
+    readonly reasoningEffort: string
+    readonly name: string
+    readonly description: string
+    readonly connected: boolean
+    disconnect(): void
+    sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
+    interrupt(roomId: string): Promise<boolean>
+    getActiveSessionId(roomId: string): string | undefined
+    isActiveSession(roomId: string, sessionId: string): boolean
+    respondApproval?(approvalId: string, choice: string): Promise<boolean>
+    replyToMention(
+        roomId: string,
+        msg: MentionMessage,
+        runtimeContext?: GroupRuntimeContext,
+        onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
+    ): Promise<void>
+    setStorage(storage: any): void
+    setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void
+    setChatRunService(service: GroupChatRunService | null): void
 }
 
 export interface GroupChatRunService {
@@ -197,7 +239,7 @@ export interface GroupChatRunService {
             group_agent_id?: string
             workspace?: string | null
             source?: string
-            session_source?: 'workflow'
+            session_source?: 'group_chat'
             coding_agent_id?: 'claude-code' | 'codex' | 'ekko-agent'
             mode?: 'scoped'
             profile?: string
@@ -222,7 +264,7 @@ export interface GroupChatRunService {
 
 // ─── Agent Client (single connection) ─────────────────────────
 
-class AgentClient {
+export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
     readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
     readonly profile: string
@@ -248,8 +290,9 @@ class AgentClient {
     private activeSessions = new Map<string, string>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private chatRunService: GroupChatRunService | null = null
+    private readonly eventSink: GroupAgentEventSink | null
 
-    constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
+    constructor(config: AgentConfig, handlers: AgentEventHandler = {}, eventSink: GroupAgentEventSink | null = null) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.agent = config.agent || 'hermes'
         this.profile = config.profile
@@ -261,14 +304,15 @@ class AgentClient {
         this.description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
         this.handlers = handlers
+        this.eventSink = eventSink
     }
 
     get connected(): boolean {
-        return this.socket?.connected ?? false
+        return this.eventSink?.connected ?? this.socket?.connected ?? false
     }
 
     get id(): string | undefined {
-        return this.socket?.id
+        return this.eventSink?.id || this.socket?.id
     }
 
     setStorage(storage: any): void {
@@ -284,6 +328,10 @@ class AgentClient {
     }
 
     async connect(port?: number): Promise<void> {
+        if (this.eventSink) {
+            this.ensureConnected()
+            return
+        }
         const actualPort = port ?? parseInt(process.env.PORT || '8648', 10)
         const token = await getToken()
 
@@ -325,6 +373,7 @@ class AgentClient {
     }
 
     disconnect(): void {
+        this.eventSink?.disconnect?.()
         if (this.socket) {
             this.socket.disconnect()
             this.socket = null
@@ -349,6 +398,9 @@ class AgentClient {
 
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
+        if (this.eventSink) {
+            return this.eventSink.sendMessage(roomId, content, messageId, extra, agentSessionId)
+        }
         return new Promise((resolve, reject) => {
             this.socket!.emit('message', { roomId, content, id: messageId, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
@@ -362,27 +414,50 @@ class AgentClient {
 
     startTyping(roomId: string): void {
         this.ensureConnected()
+        if (this.eventSink) {
+            this.eventSink.emit('typing', { roomId })
+            return
+        }
         this.socket!.emit('typing', { roomId })
     }
 
     stopTyping(roomId: string): void {
         this.ensureConnected()
+        if (this.eventSink) {
+            this.eventSink.emit('stop_typing', { roomId })
+            return
+        }
         this.socket!.emit('stop_typing', { roomId })
     }
 
     emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>, agentSessionId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('context_status', { roomId, agentName: this.name, status, ...extra, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, agentName: this.name, status, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('context_status', payload)
+            return
+        }
+        this.socket!.emit('context_status', payload)
     }
 
     emitApprovalRequested(roomId: string, payload: Record<string, unknown>): void {
         this.ensureConnected()
-        this.socket!.emit('approval.requested', { roomId, agentName: this.name, ...payload })
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('approval.requested', event)
+            return
+        }
+        this.socket!.emit('approval.requested', event)
     }
 
     emitApprovalResolved(roomId: string, payload: Record<string, unknown>): void {
         this.ensureConnected()
-        this.socket!.emit('approval.resolved', { roomId, agentName: this.name, ...payload })
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('approval.resolved', event)
+            return
+        }
+        this.socket!.emit('approval.resolved', event)
     }
 
     async interrupt(roomId: string): Promise<boolean> {
@@ -435,32 +510,52 @@ class AgentClient {
 
     emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string, responseRunId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_start', {
+        const payload = {
             roomId,
             id: messageId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             timestamp: Date.now(),
             ...(responseRunId ? { run_id: responseRunId } : {}),
             ...(agentSessionId ? { agentSessionId } : {}),
-        })
+        }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_start', payload)
+            return
+        }
+        this.socket!.emit('message_stream_start', payload)
     }
 
     emitMessageStreamDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_stream_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_delta', payload)
+            return
+        }
+        this.socket!.emit('message_stream_delta', payload)
     }
 
     emitMessageReasoningDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_reasoning_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_reasoning_delta', payload)
+            return
+        }
+        this.socket!.emit('message_reasoning_delta', payload)
     }
 
     emitMessageStreamEnd(roomId: string, messageId: string, agentSessionId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_end', { roomId, id: messageId, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_end', payload)
+            return
+        }
+        this.socket!.emit('message_stream_end', payload)
     }
 
     getJoinedRooms(): string[] {
@@ -571,7 +666,7 @@ class AgentClient {
     }
 
     private ensureConnected(): void {
-        if (!this.socket?.connected) {
+        if (!this.connected) {
             throw new Error(`Agent "${this.name}" is not connected`)
         }
     }
@@ -718,7 +813,8 @@ class AgentClient {
     private groupSystemPrompt(roomId: string): string {
         const room = this.storage?.getRoom?.(roomId)
         const rawMembers = this.storage?.getRoomMembers?.(roomId)
-        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const rawAgents = this.storage?.getMentionableRoomAgents?.(roomId)
+            ?? this.storage?.getRoomAgents?.(roomId)
         const humanMembers = Array.isArray(rawMembers) ? rawMembers : []
         const roomAgents = Array.isArray(rawAgents) ? rawAgents : []
         const members = [
@@ -726,20 +822,51 @@ class AgentClient {
                 userId: String(member.userId || member.id || ''),
                 name: String(member.name || ''),
                 description: String(member.description || ''),
+                kind: 'human' as const,
             })),
             ...roomAgents.map((agent: any) => ({
                 userId: String(agent.agentId || agent.id || ''),
                 name: String(agent.name || ''),
                 description: String(agent.description || ''),
+                kind: 'agent' as const,
             })),
         ].filter(member => member.name)
-        return buildAgentInstructions({
+        const instructions = buildAgentInstructions({
             agentName: this.name,
             roomName: String(room?.name || roomId),
             agentDescription: this.description,
             memberNames: members.map(member => member.name),
             members,
         })
+        const remoteWorkspaceApi = room?.remoteWorkspaceApi
+        if (
+            !remoteWorkspaceApi
+            || remoteWorkspaceApi.access !== 'read-write'
+            || typeof remoteWorkspaceApi.endpoint !== 'string'
+            || typeof remoteWorkspaceApi.token !== 'string'
+        ) {
+            return instructions
+        }
+        const workspaceInstructions = [
+            'This run may access the sharing host\'s group-chat workspace through a short-lived HTTP JSON API.',
+            'Your current local working directory is separate; use this API only when files must be shared with the room owner or other Agents.',
+            `Endpoint: ${remoteWorkspaceApi.endpoint}`,
+            `Authorization header: Bearer ${remoteWorkspaceApi.token}`,
+            'Send POST requests with Content-Type: application/json.',
+            'Supported request bodies:',
+            '{"action":"list","path":""}',
+            '{"action":"read","path":"relative/file.txt"}',
+            '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
+            '{"action":"mkdir","path":"relative/directory"}',
+            '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
+            `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
+            `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
+            'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
+            'Binary uploads and downloads are limited to 20 MiB per file.',
+            'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
+            'The authorization expires when this run finishes. Never repeat the token in chat output.',
+        ].join('\n')
+        return `${instructions}\n\n${workspaceInstructions}`
     }
 
     private groupConversationHistory(runtimeContext: GroupRuntimeContext): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -825,8 +952,8 @@ class AgentClient {
                 group_room_id: roomId,
                 group_agent_id: this.agentId,
                 workspace: workspace || null,
-                source: 'workflow',
-                session_source: 'workflow',
+                source: 'group_chat',
+                session_source: 'group_chat',
                 coding_agent_id: codingAgentId,
                 mode: 'scoped',
                 profile: this.profile,
@@ -1293,7 +1420,7 @@ class AgentClient {
         const msg: MessageData & Record<string, any> = {
             id: `${runMessageId}_toolcall_${safeId(toolCallId)}`,
             roomId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             content: '',
             timestamp,
@@ -1336,7 +1463,7 @@ class AgentClient {
         const msg: MessageData & Record<string, any> = {
             id: `${runMessageId}_toolresult_${safeId(toolCallId)}_${Date.now()}`,
             roomId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             content: output,
             timestamp,
@@ -1521,7 +1648,7 @@ function extractBridgeFinalText(chunk: AgentBridgeOutput | null): string {
 // ─── AgentClients (roomId -> agents) ──────────────────────────
 
 export class AgentClients {
-    private rooms = new Map<string, Map<string, AgentClient>>()
+    private rooms = new Map<string, Map<string, GroupAgentExecutor>>()
     private _storage: any = null
     private _workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private _chatRunService: GroupChatRunService | null = null
@@ -1530,7 +1657,7 @@ export class AgentClients {
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
-    private _mentionQueue = new Map<string, Array<{ agents: AgentClient[]; msg: MentionMessage }>>()
+    private _mentionQueue = new Map<string, Array<{ agents: GroupAgentExecutor[]; msg: MentionMessage }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
 
@@ -1575,6 +1702,23 @@ export class AgentClients {
     }
 
     /**
+     * Register an executor whose transport has already joined the room.
+     * Used by authenticated outbound relay connections.
+     */
+    registerAgentForRoom(roomId: string, executor: GroupAgentExecutor): void {
+        let room = this.rooms.get(roomId)
+        if (!room) {
+            room = new Map()
+            this.rooms.set(roomId, room)
+        }
+        executor.setStorage?.(this._storage)
+        executor.setWorkspaceDiffBroadcaster?.(this._workspaceDiffBroadcaster)
+        executor.setChatRunService?.(this._chatRunService)
+        room.set(executor.agentId, executor)
+        logger.info(`[AgentClients] Registered relay executor: ${executor.name} (${executor.agentId})`)
+    }
+
+    /**
      * Remove an agent from a room and disconnect it.
      */
     removeAgentFromRoom(roomId: string, agentId: string): void {
@@ -1597,15 +1741,19 @@ export class AgentClients {
     /**
      * Get all agents in a room.
      */
-    getAgents(roomId: string): AgentClient[] {
+    getAgents(roomId: string): GroupAgentExecutor[] {
         const room = this.rooms.get(roomId)
         return room ? Array.from(room.values()) : []
+    }
+
+    getConnectedAgents(roomId: string): GroupAgentExecutor[] {
+        return this.getAgents(roomId).filter(agent => agent.connected !== false)
     }
 
     /**
      * Get a specific agent in a room.
      */
-    getAgent(roomId: string, agentId: string): AgentClient | undefined {
+    getAgent(roomId: string, agentId: string): GroupAgentExecutor | undefined {
         return this.rooms.get(roomId)?.get(agentId)
     }
 
@@ -1706,7 +1854,7 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: AgentClient[], msg: MentionMessage): void {
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): void {
         let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
@@ -1815,7 +1963,7 @@ export class AgentClients {
      * If the room is already processing (compressing/replying), queue the mention.
      */
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
-        const agents = this.getAgents(roomId)
+        const agents = this.getConnectedAgents(roomId)
         const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
         if (mentioned.length === 0 && msg.role !== 'user') return
 

@@ -4,8 +4,8 @@ import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 type DesktopPlatform = 'darwin' | 'win32'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123 },
-  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0 },
+  { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0 },
   { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0 },
 ]
 
@@ -65,6 +65,7 @@ const agentsByRoom: Record<string, unknown[]> = {
 async function mockGroupChatApi(page: Page) {
   const rooms = baseRooms.map(room => ({ ...room }))
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
+  const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -105,6 +106,23 @@ async function mockGroupChatApi(page: Page) {
       return json({ success: true })
     }
 
+    const guestAgentPolicyMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/guest-agent-policy$/)
+    if (guestAgentPolicyMatch && request.method() === 'PUT') {
+      const roomId = decodeURIComponent(guestAgentPolicyMatch[1])
+      const body = JSON.parse(request.postData() || '{}')
+      guestAgentPolicyUpdates.push({ roomId, body })
+      const room = rooms.find(r => r.id === roomId)
+      if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      const policy = {
+        allowGuestAgents: body.allowGuestAgents ? 1 : 0,
+        guestAgentApproval: 'owner',
+        maxGuestAgentsPerMember: body.maxGuestAgentsPerMember,
+        allowRemoteWorkspaceAccess: body.allowGuestAgents && body.allowRemoteWorkspaceAccess ? 1 : 0,
+      }
+      Object.assign(room, policy)
+      return json({ policy })
+    }
+
     const workspaceListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
     if (workspaceListMatch) {
       return json({
@@ -135,7 +153,7 @@ async function mockGroupChatApi(page: Page) {
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
 
-  return { inviteCodeUpdates }
+  return { inviteCodeUpdates, guestAgentPolicyUpdates }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -231,6 +249,7 @@ test.describe('group chat room deep links', () => {
 
     await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
     await expect(page.getByText('Beta room message')).toBeVisible()
+    expect((await page.locator('.run-card').first().boundingBox())?.width).toBeGreaterThanOrEqual(259)
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
   })
 
@@ -384,6 +403,33 @@ test.describe('group chat room deep links', () => {
     await expect(drawer).toBeHidden()
     await settingsButton.click()
     await expect(drawer.getByPlaceholder('Enter a new invite code')).toHaveValue('NEW456')
+  })
+
+  test('room owner can explicitly enable remote Agent workspace access', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await page.locator('.chat-header .header-info .compression-settings-button').click()
+    const drawer = page.locator('.n-drawer').filter({ has: page.locator('.room-settings-drawer') })
+    const section = drawer.locator('.settings-section').filter({ hasText: 'Guest Agent connections' })
+    const accessRow = section.locator('.guest-agent-policy-row').filter({
+      hasText: 'Allow remote Agents to read and write the group workspace',
+    })
+    await expect(accessRow).toBeVisible()
+    await accessRow.locator('.n-switch').click()
+
+    const response = page.waitForResponse(item =>
+      item.request().method() === 'PUT'
+      && item.url().includes('/api/hermes/group-chat/rooms/room-alpha/guest-agent-policy'))
+    await section.getByRole('button', { name: 'Save' }).click()
+    await expect((await response).status()).toBe(200)
+    expect(api.guestAgentPolicyUpdates.at(-1)).toEqual({
+      roomId: 'room-alpha',
+      body: {
+        allowGuestAgents: true,
+        maxGuestAgentsPerMember: 1,
+        allowRemoteWorkspaceAccess: true,
+      },
+    })
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {

@@ -126,7 +126,7 @@ function isHermesWorkerBackedSession(session?: { source?: string | null; agent?:
   // "api_server" is a legacy/default source value; Hermes sessions still use worker-backed runtime.
   // coding_agent runs have a separate lifecycle.
   if (!source || source === 'cli' || source === 'api_server') return true
-  if (source === 'workflow') {
+  if (source === 'workflow' || source === 'group_chat') {
     const agent = String(session?.agent || '').trim()
     return agent !== 'claude' && agent !== 'codex' && agent !== 'ekko-agent' && !session?.agent_session_id
   }
@@ -136,7 +136,7 @@ function isHermesWorkerBackedSession(session?: { source?: string | null; agent?:
 }
 
 function isBridgeRunSource(source?: string): boolean {
-  return source === 'cli' || source === 'global_agent' || source === 'workflow'
+  return source === 'cli' || source === 'global_agent' || source === 'workflow' || source === 'group_chat'
 }
 
 export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -158,7 +158,8 @@ export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok
 }
 
 function isCodingAgentExecution(source: string | undefined, data?: { coding_agent_id?: string; agent_id?: string }): boolean {
-  return source === 'coding_agent' || (source === 'workflow' && Boolean(data?.coding_agent_id || data?.agent_id))
+  return source === 'coding_agent'
+    || ((source === 'workflow' || source === 'group_chat') && Boolean(data?.coding_agent_id || data?.agent_id))
 }
 
 function resolveSessionCategoryId(value: unknown): number | null {
@@ -302,7 +303,7 @@ export class ChatRunSocket {
       workspace?: string | null
       category_id?: number | null
       source?: string
-      session_source?: 'global_agent' | 'workflow'
+      session_source?: 'global_agent' | 'workflow' | 'group_chat'
       coding_agent_id?: ChatCodingAgentId
       agent_id?: ChatCodingAgentId
       mode?: 'scoped' | 'global'
@@ -607,7 +608,7 @@ export class ChatRunSocket {
       workspace?: string | null
       category_id?: number | null
       source?: string
-      session_source?: 'global_agent' | 'workflow'
+      session_source?: 'global_agent' | 'workflow' | 'group_chat'
       queue_id?: string
       peerExcludeSocketId?: string
       coding_agent_id?: ChatCodingAgentId
@@ -1013,6 +1014,8 @@ export class ChatRunSocket {
       state.profile = profile
       state.source = source === 'global_agent'
         ? 'global_agent'
+        : source === 'group_chat'
+          ? 'group_chat'
         : source === 'workflow'
           ? 'workflow'
           : 'cli'
@@ -1149,7 +1152,7 @@ export class ChatRunSocket {
       group_agent_id?: string
       workspace?: string | null
       source?: string
-      session_source?: 'global_agent' | 'workflow'
+      session_source?: 'global_agent' | 'workflow' | 'group_chat'
       queue_id?: string
       coding_agent_id?: ChatCodingAgentId
       agent_id?: ChatCodingAgentId

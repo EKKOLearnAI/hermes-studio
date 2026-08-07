@@ -13,8 +13,14 @@ import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-in
 const { t } = useI18n()
 const props = withDefaults(defineProps<{
     sendBlocked?: boolean
+    allowAttachments?: boolean
+    showSettings?: boolean
+    allowAllMention?: boolean
 }>(), {
     sendBlocked: false,
+    allowAttachments: true,
+    showSettings: true,
+    allowAllMention: false,
 })
 const emit = defineEmits<{
     send: [content: string, attachments?: Attachment[]]
@@ -62,10 +68,15 @@ const configuredTextareaHeight = computed(() =>
 )
 
 onMounted(() => {
-    const saved = localStorage.getItem('autoPlaySpeech')
-    if (saved !== null) {
-        autoPlaySpeech.value = saved === 'true'
-        store.setAutoPlaySpeech(autoPlaySpeech.value)
+    if (props.showSettings) {
+        const saved = localStorage.getItem('autoPlaySpeech')
+        if (saved !== null) {
+            autoPlaySpeech.value = saved === 'true'
+            store.setAutoPlaySpeech(autoPlaySpeech.value)
+        }
+    } else {
+        autoPlaySpeech.value = false
+        store.setAutoPlaySpeech(false)
     }
     syncViewport()
     window.addEventListener('resize', syncViewport)
@@ -190,9 +201,14 @@ const dropdownBottom = ref(0)
 const placement = ref<'bottom' | 'top'>('bottom')
 const activeIndex = ref(0)
 
-const filteredMentionOptions = computed(() => buildMentionOptions(store.agents, mentionQuery.value))
+const filteredMentionOptions = computed(() => buildMentionOptions(
+    store.agents,
+    mentionQuery.value,
+    props.allowAllMention,
+    t('groupChat.allAgents'),
+))
 
-const canSend = computed(() => !!inputText.value.trim() || attachments.value.length > 0)
+const canSend = computed(() => !!inputText.value.trim() || (props.allowAttachments && attachments.value.length > 0))
 
 // ─── Scroll active item into view ──────────────────────
 
@@ -423,6 +439,7 @@ function handleCompositionEnd() {
 }
 
 function addFile(file: File) {
+    if (!props.allowAttachments) return
     if (attachments.value.find(a => a.name === file.name)) return
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
     attachments.value.push({
@@ -441,6 +458,7 @@ function addFiles(files: File[]) {
 }
 
 function handleAttachClick() {
+    if (!props.allowAttachments) return
     fileInputRef.value?.click()
 }
 
@@ -452,6 +470,7 @@ function handleFileChange(e: Event) {
 }
 
 function handlePaste(e: ClipboardEvent) {
+    if (!props.allowAttachments) return
     const files = extractClipboardFiles(e.clipboardData)
     if (!files.length) return
     e.preventDefault()
@@ -459,10 +478,12 @@ function handlePaste(e: ClipboardEvent) {
 }
 
 function handleDragOver(e: DragEvent) {
+    if (!props.allowAttachments) return
     e.preventDefault()
 }
 
 function handleDragEnter(e: DragEvent) {
+    if (!props.allowAttachments) return
     e.preventDefault()
     if (e.dataTransfer?.types.includes('Files')) {
         dragCounter.value++
@@ -479,6 +500,7 @@ function handleDragLeave() {
 }
 
 function handleDrop(e: DragEvent) {
+    if (!props.allowAttachments) return
     e.preventDefault()
     dragCounter.value = 0
     isDragging.value = false
@@ -544,7 +566,7 @@ function isImage(type: string): boolean {
             @dragleave="handleDragLeave"
             @drop="handleDrop"
         >
-            <input ref="fileInputRef" type="file" multiple class="file-input-hidden" @change="handleFileChange" />
+            <input v-if="props.allowAttachments" ref="fileInputRef" type="file" multiple class="file-input-hidden" @change="handleFileChange" />
             <div class="resize-handle" :title="t('chat.inputHeightResizeHint')" @mousedown="startResize" @dblclick="resetTextareaHeight"></div>
             <textarea
                 ref="textareaRef"
@@ -561,7 +583,7 @@ function isImage(type: string): boolean {
             />
             <div class="input-toolbar">
                 <div class="input-top-bar">
-                    <NTooltip trigger="hover" :disabled="isMobileViewport">
+                    <NTooltip v-if="props.allowAttachments" trigger="hover" :disabled="isMobileViewport">
                         <template #trigger>
                             <NButton quaternary size="tiny" circle class="toolbar-icon-button" @click="handleAttachClick">
                                 <template #icon>
@@ -572,6 +594,7 @@ function isImage(type: string): boolean {
                         {{ t('chat.attachFiles') }}
                     </NTooltip>
                     <NDropdown
+                        v-if="props.showSettings"
                         trigger="click"
                         :options="inputSettingsOptions"
                         :show-arrow="true"

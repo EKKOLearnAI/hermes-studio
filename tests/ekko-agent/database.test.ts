@@ -23,10 +23,23 @@ afterEach(async () => {
 })
 
 describe('EkkoDatabaseManager', () => {
-  it('uses the generic Ekko data directory and database name', () => {
-    expect(resolveEkkoDataDirectory({ baseDirectory: webUiHome })).toBe(join(webUiHome, '.ekko'))
-    expect(resolveEkkoDatabasePath({ baseDirectory: webUiHome })).toBe(join(webUiHome, '.ekko', 'ekko.db'))
+  it('uses the Web UI Ekko directory and database name outside development', () => {
+    const options = { baseDirectory: webUiHome, env: { NODE_ENV: 'production' } }
+    expect(resolveEkkoDataDirectory(options)).toBe(join(webUiHome, '.ekko'))
+    expect(resolveEkkoDatabasePath(options)).toBe(join(webUiHome, '.ekko', 'ekko.db'))
     expect(new EkkoDirectoryManager().baseDirectory).toBe(homedir())
+  })
+
+  it('uses the package-local SQL data directory in development', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const options = {
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    }
+
+    expect(resolveEkkoDataDirectory(options)).toBe(join(packageRoot, 'sql-data'))
+    expect(resolveEkkoDatabasePath(options)).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
   })
 
   it('initializes the Ekko root with its global config, skills, and workspace directories', async () => {
@@ -140,12 +153,37 @@ describe('EkkoDatabaseManager', () => {
     expect(existsSync(join(ekkoBase, '.ekko', 'skills', 'default', 'late-skill'))).toBe(false)
   })
 
-  it('uses the same .ekko database path with development SQLite settings', () => {
-    const options = { baseDirectory: webUiHome, env: { NODE_ENV: 'development' } }
+  it('uses the package-local database path with development SQLite settings', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const options = {
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    }
     const manager = new EkkoDatabaseManager(options)
     expect(manager.connection.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'delete' })
-    expect(existsSync(join(webUiHome, '.ekko', 'ekko.db'))).toBe(true)
+    expect(manager.databasePath).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
+    expect(existsSync(join(packageRoot, 'sql-data', 'ekko-agent.db'))).toBe(true)
+    expect(existsSync(join(webUiHome, 'production-home', '.ekko', 'ekko.db'))).toBe(false)
     manager.close()
+  })
+
+  it('reports and opens the package-local database path during development setup', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const setup = setupEkkoAgent({
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    })
+
+    try {
+      expect(setup.layout.databasePath).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
+      expect(setup.database.databasePath).toBe(setup.layout.databasePath)
+      expect(existsSync(setup.layout.databasePath)).toBe(true)
+      expect(existsSync(join(webUiHome, 'production-home', '.ekko', 'ekko.db'))).toBe(false)
+    } finally {
+      setup.close()
+    }
   })
 
   it('owns the connection and component migrations', () => {
