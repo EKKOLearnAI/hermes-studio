@@ -1,7 +1,7 @@
 # Durable global notifications
 
 - issue: #2400
-- pr: pending
+- pr: #2402
 
 ## Scope
 
