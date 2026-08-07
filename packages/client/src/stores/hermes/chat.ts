@@ -352,6 +352,7 @@ export interface MessageReference {
   role: 'user' | 'assistant'
   content: string
   sender?: string
+  senderId?: string
 }
 
 export interface ParsedMessageReference {

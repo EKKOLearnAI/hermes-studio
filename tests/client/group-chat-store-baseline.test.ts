@@ -183,6 +183,82 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
   })
 
+  it('uses server persisted activity time instead of an agent display timestamp for live room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'future-agent', createdAt: 1, lastActiveAt: 1 },
+      { ...room, id: 'recent-room', createdAt: 2, lastActiveAt: 2 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'future-agent-message',
+      roomId: 'future-agent',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'assistant',
+      timestamp: 9_999_999_999_999,
+      persistedAt: 3,
+    }))
+    emitSocket('message', userMessage({
+      id: 'recent-room-message',
+      roomId: 'recent-room',
+      timestamp: 4,
+      persistedAt: 4,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['recent-room', 'future-agent'])
+  })
+
+  it('does not let live tool or streaming messages change room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'visible-room', createdAt: 2, lastActiveAt: 2 },
+      { ...room, id: 'internal-room', createdAt: 1, lastActiveAt: 1 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'tool-message',
+      roomId: 'internal-room',
+      role: 'tool',
+      persistedAt: 100,
+    }))
+    emitSocket('message', userMessage({
+      id: 'streaming-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'streaming',
+      persistedAt: 101,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['visible-room', 'internal-room'])
+    expect(store.rooms.find((item: RoomInfo) => item.id === 'internal-room')?.lastActiveAt).toBe(1)
+
+    emitSocket('message', userMessage({
+      id: 'visible-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'stop',
+      persistedAt: 102,
+    }))
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['internal-room', 'visible-room'])
+  })
+
+  it('keeps the REST room order based on the server public lastActiveAt instead of createdAt', async () => {
+    const store = await loadStore()
+    groupChatApiMock.listRooms.mockResolvedValue({
+      rooms: [
+        { ...room, id: 'room-old-active', createdAt: 100, lastActiveAt: 300 },
+        { ...room, id: 'room-new-created', createdAt: 200, lastActiveAt: 200 },
+      ],
+    })
+
+    await store.loadRooms()
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['room-old-active', 'room-new-created'])
+  })
+
   it('binds autoplay events to the responding agent profile', async () => {
     vi.useFakeTimers()
     const store = await loadStore()

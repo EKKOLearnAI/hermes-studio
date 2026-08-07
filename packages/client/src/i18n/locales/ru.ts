@@ -577,6 +577,8 @@ export default {
     hermesHistory: 'История Hermes',
     historyScopeHint: 'Здесь для чтения отображаются исторические сеансы Hermes текущего профиля с разбивкой по источникам.',
     noSessions: 'Нет сеансов',
+    recent: 'Недавние',
+    recentCount: 'Количество недавних сессий',
     loadMoreSessions: 'Загрузить ещё сеансы',
     searchTitle: 'Поиск сеансов',
     searchSubtitle: 'Поиск по заголовку или содержимому сообщений',

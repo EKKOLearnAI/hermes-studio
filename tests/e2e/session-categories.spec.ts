@@ -61,22 +61,35 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
 
   await page.goto('/#/hermes/chat')
 
+  const recentHeader = page.locator('.session-group-header').filter({ hasText: 'Recent' })
+  await expect(recentHeader).toBeVisible()
+  await expect(recentHeader.locator('.session-group-count')).toHaveText('3')
+  await expect(page.locator('.session-group-header').first()).toContainText('Recent')
   const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
-  await expect(workHeader).toBeVisible()
-  await expect(workHeader.locator('.session-group-count')).toHaveText('2')
+  await expect(workHeader).toHaveCount(0)
   await expect(page.locator('.session-group-header').filter({ hasText: 'Empty' })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: /Project Alpha/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: /Project Beta/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: /Project Beta/ }).first()).toBeVisible()
+
+  await recentHeader.getByRole('button').click()
+  const recentDialog = page.getByRole('dialog').filter({ hasText: 'Recent session count' })
+  await recentDialog.locator('input').fill('2')
+  await recentDialog.getByRole('button', { name: 'OK', exact: true }).click()
+  await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_recent_session_count_v1'))).toBe('2')
+  await expect(workHeader).toBeVisible()
+  await expect(workHeader.locator('.session-group-count')).toHaveText('1')
 
   await workHeader.click()
-  await expect(page.getByText('Project Alpha', { exact: true })).toBeHidden()
-  await expect(page.getByText('Project Beta', { exact: true })).toBeHidden()
+  await expect(page.getByText('Project Alpha', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Project Beta', { exact: true })).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
     .toContain('category-1')
 
   await page.reload()
   await expect(page.locator('.session-group-header').filter({ hasText: 'Work' })).toBeVisible()
-  await expect(page.getByText('Project Alpha', { exact: true })).toBeHidden()
+  await expect(page.getByText('Project Alpha', { exact: true })).toHaveCount(1)
+  await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
 })
 
 test('creates a category in the new chat selector and sends its id with the first run', async ({ page }) => {
@@ -112,10 +125,14 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await page.addInitScript(() => {
     localStorage.setItem('hermes_chat_collapsed_categories', '[]')
+    localStorage.setItem('hermes_recent_session_count_v1', '1')
   })
   const api = await mockHermesApi(page, {
     sessionCategories: [{ id: 1, name: 'Work' }],
-    sessions: [sessionSummary('work-session', 'Project Alpha', 1, 100)],
+    sessions: [
+      sessionSummary('recent-session', 'Latest Notes', null, 200),
+      sessionSummary('work-session', 'Project Alpha', 1, 100),
+    ],
   })
   await mockChatSocket(page)
 
@@ -140,7 +157,7 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await expect(page.getByText('Category deleted')).toBeVisible()
   await expect(page.locator('.session-group-header').filter({ hasText: 'Client Work' })).toHaveCount(0)
   await expect(page.locator('.session-group-header').filter({ hasText: 'Uncategorized' })).toBeVisible()
-  await expect(page.getByRole('link', { name: /Project Alpha/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toBeVisible()
   expect(api.requests.some(request =>
     request.method === 'PATCH' && request.pathname === '/api/hermes/session-categories/1',
   )).toBe(true)
@@ -153,21 +170,25 @@ test('moves a session to another category from its context menu', async ({ page 
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await page.addInitScript(() => {
     localStorage.setItem('hermes_chat_collapsed_categories', '[]')
+    localStorage.setItem('hermes_recent_session_count_v1', '1')
   })
   const api = await mockHermesApi(page, {
     sessionCategories: [{ id: 1, name: 'Work' }],
-    sessions: [sessionSummary('general-session', 'General Notes', null, 100)],
+    sessions: [
+      sessionSummary('recent-session', 'Latest Notes', null, 200),
+      sessionSummary('general-session', 'General Notes', null, 100),
+    ],
   })
   await mockChatSocket(page)
 
   await page.goto('/#/hermes/chat')
-  await page.getByRole('link', { name: /General Notes/ }).click({ button: 'right' })
+  await page.getByRole('link', { name: /General Notes/ }).last().click({ button: 'right' })
   await page.locator('.n-dropdown-option').filter({ hasText: 'Move to category' }).hover()
   await page.locator('.n-dropdown-option').filter({ hasText: /^Work$/ }).click()
 
   await expect(page.getByText('Category updated')).toBeVisible()
   await expect(page.locator('.session-group-header').filter({ hasText: 'Work' })).toBeVisible()
-  await expect(page.getByRole('link', { name: /General Notes/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /General Notes/ }).first()).toBeVisible()
   const moveRequest = api.requests.find(request =>
     request.method === 'POST' && request.pathname === '/api/hermes/sessions/general-session/category',
   )

@@ -21,7 +21,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -130,7 +130,7 @@ const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
     addFiles?: (files: File[]) => void
-    insertMention?: (name: string) => void
+    insertMention?: (name: string, participantId?: string) => void
 }) | null>(null)
 const summarySettingsSectionRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
@@ -410,7 +410,7 @@ function canRemoveAgent(agent: RoomAgent): boolean {
 
 function handleMentionAgent(agent: RoomAgent) {
     if (agent.connectionStatus === 'offline') return
-    groupChatInputRef.value?.insertMention?.(agent.name)
+    groupChatInputRef.value?.insertMention?.(agent.name, agent.agentId)
 }
 
 function handleAgentRailAdd() {
@@ -942,9 +942,9 @@ async function handleSelectRoom(roomId: string) {
     }
 }
 
-async function handleSendMessage(content: string, attachments?: Attachment[]) {
+async function handleSendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
     try {
-        await store.sendMessage(content, attachments)
+        await store.sendMessage(content, attachments, mentions)
     } catch (err: any) {
         message.error(err.message)
     }

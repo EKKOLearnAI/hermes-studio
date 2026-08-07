@@ -15,6 +15,7 @@ import {
     type RoomSummaryConfig,
     type RoomSummaryState,
     type ChatMessage,
+    type GroupChatMention,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
     createRoom,
@@ -201,6 +202,21 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
     function setAutoPlaySpeech(enabled: boolean) {
         autoPlaySpeechEnabled.value = enabled
+    }
+
+    function sortRoomsByActivity() {
+        rooms.value = [...rooms.value].sort((a, b) =>
+            Number(b.lastActiveAt || b.createdAt || 0) - Number(a.lastActiveAt || a.createdAt || 0)
+            || Number(b.createdAt || 0) - Number(a.createdAt || 0)
+            || b.id.localeCompare(a.id),
+        )
+    }
+
+    function recordPersistedRoomActivity(roomId: string, timestamp: number) {
+        const room = rooms.value.find(item => item.id === roomId)
+        if (!room || !Number.isFinite(timestamp)) return
+        room.lastActiveAt = Math.max(Number(room.lastActiveAt || room.createdAt || 0), timestamp)
+        sortRoomsByActivity()
     }
 
     function setMessageReference(roomId: string, reference: MessageReference) {
@@ -642,6 +658,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
 
         socket.on('message', (msg: ChatMessage) => {
+            if (msg.role !== 'tool' && msg.finish_reason !== 'streaming') {
+                recordPersistedRoomActivity(msg.roomId, Number(msg.persistedAt || msg.timestamp || 0))
+            }
             if (msg.roomId === currentRoomId.value) {
                 captureHistoricalMessageAgents([msg])
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
@@ -1064,7 +1083,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
-    async function sendMessage(content: string, attachments?: Attachment[]) {
+    async function sendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
         if (!currentRoomId.value) return
         const roomId = currentRoomId.value
         const messageId = uid()
@@ -1108,7 +1127,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
         emitStopTyping(roomId)
         return new Promise<void>((resolve, reject) => {
-            socket.emit('message', { roomId, id: messageId, content: finalContent }, (res: { id?: string; error?: string }) => {
+            socket.emit('message', { roomId, id: messageId, content: finalContent, mentions }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)
                     reject(new Error(res.error))
@@ -1123,6 +1142,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         try {
             const res = await listRooms()
             rooms.value = res.rooms
+            sortRoomsByActivity()
         } catch (err: any) {
             error.value = err.message
         }

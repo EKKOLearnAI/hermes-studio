@@ -4,6 +4,7 @@ import { useProfilesStore } from './profiles'
 
 const PIN_KEY_PREFIX = 'hermes_session_pins_v1_'
 const HUMAN_ONLY_KEY_PREFIX = 'hermes_human_only_v1_'
+const RECENT_COUNT_KEY = 'hermes_recent_session_count_v1'
 
 function currentProfileName(): string {
   try {
@@ -47,6 +48,7 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
   const profileName = ref(currentProfileName())
   const pinnedIds = ref<string[]>(loadJson<string[]>(pinsKey(profileName.value), []))
   const humanOnly = ref<boolean>(loadJson<boolean>(humanOnlyKey(profileName.value), true))
+  const recentCount = ref<number>(Math.min(100, Math.max(1, loadJson<number>(RECENT_COUNT_KEY, 10))))
 
   function reload() {
     profileName.value = currentProfileName()
@@ -88,6 +90,11 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     persistHumanOnly()
   }
 
+  function setRecentCount(value: number) {
+    recentCount.value = Math.min(100, Math.max(1, Math.floor(Number(value) || 10)))
+    saveJson(RECENT_COUNT_KEY, recentCount.value)
+  }
+
   function pruneMissingSessions(existingIds: string[]): boolean {
     if (existingIds.length === 0) return false
     const existing = new Set(existingIds)
@@ -107,11 +114,13 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     profileName,
     pinnedIds,
     humanOnly,
+    recentCount,
     reload,
     isPinned,
     togglePinned,
     removePinned,
     setHumanOnly,
+    setRecentCount,
     pruneMissingSessions,
   }
 })

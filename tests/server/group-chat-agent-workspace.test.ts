@@ -178,6 +178,59 @@ describe('group chat agent workspace bridge runs', () => {
     expect(hermesSession).not.toBe(codexSession)
     expect(codexResponsesSession).not.toBe(codexChatSession)
     expect(hermesWithIgnoredApiMode).toBe(hermesSession)
+  }, 15_000)
+
+  it('generates a complete entry mention DTO for an agent reply handoff', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const author = await clients.createAgent({
+      agentId: 'agent-author',
+      profile: 'default',
+      name: 'Author',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    })
+    clients.rooms.set('room-1', new Map([
+      ['agent-author', author],
+      ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer' }],
+    ]))
+
+    await author.sendMessage('room-1', '@Reviewer please verify this.', 'handoff-1')
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
+      roomId: 'room-1',
+      id: 'handoff-1',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    }), expect.any(Function))
+  })
+
+  it('does not generate a structured mention for the replying agent itself', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const author = await clients.createAgent({
+      agentId: 'agent-author',
+      profile: 'default',
+      name: 'Author',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    })
+    const replyToMention = vi.fn(async () => {})
+    clients.rooms.set('room-1', new Map([
+      ['agent-author', author],
+      ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer', replyToMention }],
+    ]))
+
+    await author.sendMessage('room-1', '@Author status: waiting for @Reviewer.', 'self-mention-1')
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
+      roomId: 'room-1',
+      id: 'self-mention-1',
+      content: '@Author status: waiting for @Reviewer.',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    }), expect.any(Function))
+    expect(replyToMention).not.toHaveBeenCalled()
   })
 
   it('dispatches a Codex group agent through chat-run without invoking the Hermes bridge', async () => {
@@ -576,6 +629,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderName: 'Alice',
       senderId: 'user-1',
       timestamp: 1,
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
     await waitFor(() => bridgeMock.chat.mock.calls.length === 1)
     await clients.processMentions('room-1', {
@@ -583,6 +637,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderName: 'Alice',
       senderId: 'user-1',
       timestamp: 2,
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
 
     const interruptPromise = clients.interruptRoom('room-1')
@@ -625,6 +680,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderId: 'user-1',
       timestamp: 1,
       role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
 
     expect(statuses[0]).toEqual({ agentName: 'Worker', status: 'replying' })
@@ -656,6 +712,7 @@ describe('group chat agent workspace bridge runs', () => {
       timestamp: 1,
       role: 'assistant',
       mentionDepth: 1,
+      mentions: [{ type: 'agent', participantId: 'agent-codex' }],
     })
 
     expect(replyToMention).toHaveBeenCalledWith(
@@ -665,6 +722,47 @@ describe('group chat agent workspace bridge runs', () => {
         mentionDepth: 1,
       }),
       { summary: '', history: [] },
+      expect.any(Function),
+    )
+  })
+
+  it('attaches a validated structured mention to an agent reply before it is persisted', async () => {
+    const client = await createClient('')
+    client.__testStorage.getRoomAgents = vi.fn(() => [
+      { agentId: 'agent-1', name: 'Worker' },
+      { agentId: 'agent-reviewer', name: 'Reviewer' },
+    ])
+    bridgeMock.streamOutput.mockImplementation(async function* (runId: string) {
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: 'session-1',
+        status: 'complete',
+        delta: '@Reviewer please verify this',
+        cursor: 1,
+        output: '@Reviewer please verify this',
+        done: true,
+        events: [],
+        event_cursor: 0,
+      }
+    })
+
+    await client.replyToMention('room-1', {
+      content: '@Worker prepare the patch',
+      senderName: 'Alice',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
+    })
+
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        content: '@Reviewer please verify this',
+        mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+      }),
       expect.any(Function),
     )
   })
@@ -695,6 +793,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderId: 'user-1',
       timestamp: 1,
       role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
     await Promise.resolve()
     await clients.processMentions('room-1', {
@@ -704,6 +803,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderId: 'user-1',
       timestamp: 2,
       role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
 
     expect(statuses).toEqual(['replying'])
@@ -750,6 +850,7 @@ describe('group chat agent workspace bridge runs', () => {
       senderName: 'Alice',
       senderId: 'user-1',
       timestamp: 1,
+      mentions: [{ type: 'agent', participantId: 'agent-1' }],
     })
 
     expect(trackerMock.startWorkspaceRunCheckpoint).not.toHaveBeenCalled()

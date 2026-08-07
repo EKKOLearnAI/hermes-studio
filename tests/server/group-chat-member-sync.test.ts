@@ -1185,6 +1185,10 @@ describe('Group Chat member/agent identity sync', () => {
         ? { id: 'member-human-1', roomId: 'room-1', userId: 'human-1', source: 'human' }
         : null),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' })),
+      getRoomAgents: vi.fn(() => [
+        { id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' },
+        { id: 'row-2', roomId: 'room-1', agentId: 'agent-2', profile: 'default', name: 'Reviewer' },
+      ]),
       saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
@@ -1198,16 +1202,31 @@ describe('Group Chat member/agent identity sync', () => {
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@Helper agent says hi', role: 'assistant', mentionDepth: 1, agentSessionId }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, {
+      roomId: 'room-1',
+      content: '@Reviewer agent says hi',
+      role: 'assistant',
+      mentionDepth: 1,
+      agentSessionId,
+      mentions: [{ type: 'agent', participantId: 'agent-2', displayName: 'Reviewer' }],
+    }, vi.fn())
     expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
     expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
-      content: '@Helper agent says hi',
+      content: '@Reviewer agent says hi',
       senderId: 'agent-1',
       mentionDepth: 1,
+      mentions: [{ type: 'agent', participantId: 'agent-2' }],
     }))
 
     server.agentClients.processMentions.mockClear()
-    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4, agentSessionId }, vi.fn())
+    server.handleMessage({ id: 'agent-socket' }, {
+      roomId: 'room-1',
+      content: '@Reviewer too deep',
+      role: 'assistant',
+      mentionDepth: 4,
+      agentSessionId,
+      mentions: [{ type: 'agent', participantId: 'agent-2', displayName: 'Reviewer' }],
+    }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
 

@@ -687,6 +687,8 @@ export default {
     hermesHistory: 'Hermes 歷史',
     historyScopeHint: '這裡按來源以唯讀方式查看目前 profile 的 Hermes 歷史工作階段。',
     noSessions: '目前無工作階段',
+    recent: '最近',
+    recentCount: '最近會話數量',
     loadMoreSessions: '載入更多工作階段',
     searchTitle: '搜尋工作階段',
     searchSubtitle: '依標題或訊息內容搜尋',

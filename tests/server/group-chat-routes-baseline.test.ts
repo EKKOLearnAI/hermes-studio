@@ -42,6 +42,8 @@ describe('group chat REST route baseline', () => {
       getRoom: vi.fn((id) => storage.rooms.get(id)),
       getAllRooms: vi.fn(() => [...storage.rooms.values()]),
       getRoomsForProfiles: vi.fn(() => [...storage.rooms.values()]),
+      getRoomsForAuthUser: vi.fn(() => []),
+      getOwnedRoomsForAuthUser: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
@@ -150,6 +152,9 @@ describe('group chat REST route baseline', () => {
     app.use(async (ctx, next) => {
       const userId = Number(ctx.get('x-test-user-id') || 0)
       if (userId > 0) ctx.state.user = { id: userId, role: 'user', profiles: [] }
+      if (ctx.get('x-test-user') === 'member') {
+        ctx.state.user = { id: 7, username: 'member', role: 'user', profiles: ['default'] }
+      }
       await next()
     })
     app.use(groupChatPublicRoutes.routes())
@@ -344,6 +349,28 @@ describe('group chat REST route baseline', () => {
       body: JSON.stringify({ action: 'list', path: '' }),
     })
     expect(revoked.status).toBe(401)
+  })
+
+  it('returns public lastActiveAt and keeps the aggregated authenticated room list ordered by activity instead of room id', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-old-active', name: 'Old but active', inviteCode: 'Z', createdAt: 100, lastActiveAt: 300 },
+    ])
+    storage.getRoomsForAuthUser.mockReturnValue([
+      { id: 'room-new-created', name: 'New but inactive', inviteCode: 'A', createdAt: 200, lastActiveAt: 200 },
+    ])
+    storage.getOwnedRoomsForAuthUser.mockReturnValue([])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      rooms: [
+        { id: 'room-old-active', lastActiveAt: 300 },
+        { id: 'room-new-created', lastActiveAt: 200 },
+      ],
+    })
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {

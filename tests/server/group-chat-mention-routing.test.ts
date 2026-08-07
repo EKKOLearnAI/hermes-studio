@@ -4,6 +4,7 @@ import {
   isAgentMentioned,
   isReservedMentionName,
   resolveMentionTargets,
+  resolveStructuredMentionTargets,
   stripMentionRoutingTokens,
 } from '../../packages/server/src/services/hermes/group-chat/mention-routing'
 
@@ -104,6 +105,21 @@ describe('group chat mention routing', () => {
 
   it('dedupes mixed @all and explicit mentions', () => {
     expect(resolveMentionTargets(agents, '@all @Bob compare plans', 'socket-alice').map(a => a.name)).toEqual(['Bob', 'Regex.Bot'])
+  })
+
+  it('routes only stable structured agent identities and never resolves display-name collisions', () => {
+    const sameNameAgents: TestAgent[] = [
+      { name: 'Alex', id: 'socket-agent-alex', agentId: 'agent-alex' },
+      { name: 'Alex', id: 'socket-agent-alex-2', agentId: 'agent-alex-2' },
+    ]
+
+    expect(resolveStructuredMentionTargets(sameNameAgents, [
+      { type: 'agent', participantId: 'agent-alex-2' },
+    ], 'human-alex').map(agent => agent.agentId)).toEqual(['agent-alex-2'])
+    expect(resolveStructuredMentionTargets(sameNameAgents, [
+      { type: 'agent', participantId: 'missing-agent' },
+    ], 'human-alex')).toEqual([])
+    expect(resolveStructuredMentionTargets(sameNameAgents, [], 'human-alex')).toEqual([])
   })
 
   it('strips the broadcast token and this agent mention before routing to the model', () => {
