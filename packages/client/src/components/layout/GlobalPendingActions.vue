@@ -37,7 +37,9 @@ function loadApprovalSoundSetting() {
   const generation = ++settingsLoadGeneration
   approvalSoundArmed = false
   pendingSoundKeys.clear()
-  void settingsStore.fetchSettings().then(loaded => {
+  void settingsStore.fetchSettings({
+    shouldCommit: () => generation === settingsLoadGeneration,
+  }).then(loaded => {
     if (generation !== settingsLoadGeneration) return
     if (!loaded) {
       approvalSoundArmed = false

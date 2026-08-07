@@ -67,10 +67,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const platforms = ref<Record<string, any>>({})
   const platformCredentialStatus = ref<Record<string, boolean>>({})
 
-  async function fetchSettings() {
+  async function fetchSettings(options?: { shouldCommit?: () => boolean }) {
     loading.value = true
     try {
       const data = await configApi.fetchConfig()
+      if (options?.shouldCommit && !options.shouldCommit()) return false
       display.value = data.display || {}
       agent.value = data.agent || {}
       memory.value = data.memory || {}

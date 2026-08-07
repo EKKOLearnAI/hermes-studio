@@ -23,6 +23,15 @@ describe('settings store load result', () => {
     expect(store.display.approval_bell).toBe(true)
   })
 
+  it('does not commit a stale load when its generation is no longer active', async () => {
+    configMock.fetchConfig.mockResolvedValue({ display: { approval_bell: true } })
+    const store = useSettingsStore()
+    store.display = { approval_bell: false }
+
+    await expect(store.fetchSettings({ shouldCommit: () => false })).resolves.toBe(false)
+    expect(store.display.approval_bell).toBe(false)
+  })
+
   it('returns false and keeps the previous display state when loading fails', async () => {
     const store = useSettingsStore()
     store.display = { approval_bell: true }

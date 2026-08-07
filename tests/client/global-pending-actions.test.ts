@@ -83,6 +83,7 @@ describe('GlobalPendingActions', () => {
     settingsState.display.approval_bell = false
     routeState.name = 'hermes.chat'
     vi.clearAllMocks()
+    settingsState.fetchSettings.mockImplementation(async () => true)
     workflowMock.statusHandlers.splice(0)
   })
 
@@ -91,6 +92,48 @@ describe('GlobalPendingActions', () => {
     await nextTick()
     expect(settingsState.fetchSettings).toHaveBeenCalledTimes(1)
     wrapper.unmount()
+  })
+
+  it('fences an out-of-order settings load after a Profile switch', async () => {
+    const loads: Array<{ options?: { shouldCommit?: () => boolean }; resolve: (value: boolean) => void }> = []
+    settingsState.fetchSettings.mockImplementation((options?: { shouldCommit?: () => boolean }) => new Promise<boolean>(resolve => {
+      loads.push({ options, resolve })
+    }))
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+    expect(loads).toHaveLength(1)
+
+    profileState.activeProfileName = 'research'
+    await nextTick()
+    expect(loads).toHaveLength(2)
+    expect(loads[0].options?.shouldCommit?.()).toBe(false)
+    expect(loads[1].options?.shouldCommit?.()).toBe(true)
+
+    settingsState.display.approval_bell = false
+    loads[1].resolve(true)
+    await Promise.resolve()
+    loads[0].resolve(false)
+    await Promise.resolve()
+
+    chatState.pendingApprovals = new Map([['research-session', {
+      sessionId: 'research-session', approvalId: 'approval-r', description: 'Read config', command: 'read config', choices: ['once'],
+    }]])
+    await nextTick()
+    expect(playCompletionSound).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('invalidates a pending settings commit when unmounted', async () => {
+    let shouldCommit: (() => boolean) | undefined
+    settingsState.fetchSettings.mockImplementationOnce((options?: { shouldCommit?: () => boolean }) => {
+      shouldCommit = options?.shouldCommit
+      return new Promise<boolean>(() => undefined)
+    })
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+    expect(shouldCommit?.()).toBe(true)
+    wrapper.unmount()
+    expect(shouldCommit?.()).toBe(false)
   })
 
   it('plays a pending new approval after persisted settings finish loading', async () => {
