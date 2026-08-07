@@ -1,9 +1,9 @@
-# Durable global notifications
-
-- issue: #2400
-- pr: #2402
-
-## Scope
+---
+date: 2026-08-07
+pr: 2402
+feature: Durable global notification center
+impact: Direct Chat, Group Chat, Workflow, and Cron events now share one owner/profile-scoped persistent notification center, including authorization requests and durable read state.
+---
 
 Hermes Studio now persists and delivers owner/profile-scoped in-app notifications for:
 
