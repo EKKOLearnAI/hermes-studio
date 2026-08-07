@@ -1,6 +1,6 @@
 ---
 date: 2026-08-07
-commit: pending
+commit: adb1a228
 feature: Global direct handling for existing approval prompts
 impact: Existing direct-chat approval and clarify prompts, group-chat approvals, and workflow node approvals are now surfaced globally and can be handled without switching away from the current page.
 ---
