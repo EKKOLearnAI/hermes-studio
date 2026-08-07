@@ -85,7 +85,6 @@ import {
   type WorkflowViewport,
 } from '@/api/hermes/workflows'
 import {
-  disconnectWorkflowSocket,
   listWorkflowsSocket,
   onWorkflowStatusError,
   onWorkflowStatusUpdated,
@@ -827,7 +826,6 @@ onUnmounted(() => {
   removeWorkflowStatusListener = null
   removeWorkflowStatusErrorListener?.()
   removeWorkflowStatusErrorListener = null
-  disconnectWorkflowSocket()
 })
 
 function handleMobileChange(event: MediaQueryList | MediaQueryListEvent) {

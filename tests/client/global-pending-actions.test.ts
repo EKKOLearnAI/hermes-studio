@@ -16,6 +16,7 @@ const groupState = reactive({
   respondApprovalFor: vi.fn(),
   connect: vi.fn(async () => undefined),
 })
+const profileState = reactive({ activeProfileName: 'default' as string | null })
 const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
@@ -26,6 +27,7 @@ const workflowMock = vi.hoisted(() => ({
 
 vi.mock('@/stores/hermes/chat', () => ({ useChatStore: () => chatState }))
 vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupState }))
+vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
 vi.mock('@/api/hermes/workflow-socket', () => ({
   listWorkflowsSocket: workflowMock.listWorkflowsSocket,
@@ -65,6 +67,7 @@ describe('GlobalPendingActions', () => {
     chatState.sessions = []
     groupState.pendingApprovals = new Map()
     groupState.rooms = []
+    profileState.activeProfileName = 'default'
     vi.clearAllMocks()
     workflowMock.statusHandlers.splice(0)
   })
@@ -147,5 +150,16 @@ describe('GlobalPendingActions', () => {
     const buttons = action.findAll('button')
     await buttons[buttons.length - 1].trigger('click')
     expect(workflowMock.approveWorkflowNode).toHaveBeenCalledWith('workflow-b', 'run-b', 'build', true, 'exec-b')
+  })
+
+  it('resubscribes workflow approvals when the active profile changes', async () => {
+    mount(GlobalPendingActions)
+    await nextTick()
+    workflowMock.subscribeWorkflowStatuses.mockClear()
+
+    profileState.activeProfileName = 'research'
+    await nextTick()
+
+    expect(workflowMock.subscribeWorkflowStatuses).toHaveBeenCalledWith(undefined, 'research')
   })
 })

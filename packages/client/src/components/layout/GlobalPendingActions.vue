@@ -4,11 +4,13 @@ import { NButton, NInput, useMessage, useNotification, type NotificationReactive
 import { useI18n } from 'vue-i18n'
 import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/group-chat'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
 
 const chatStore = useChatStore()
 const groupChatStore = useGroupChatStore()
+const profilesStore = useProfilesStore()
 const notification = useNotification()
 const message = useMessage()
 const { t } = useI18n()
@@ -19,6 +21,17 @@ const submitting = reactive<Record<string, boolean>>({})
 const workflows = ref<WorkflowRecord[]>([])
 const workflowStatuses = reactive<Record<string, WorkflowRuntimeStatus>>({})
 let stopWorkflowStatus: (() => void) | null = null
+
+function resetWorkflowSubscriptions(profile?: string | null) {
+  stopWorkflowStatus?.()
+  stopWorkflowStatus = onWorkflowStatusUpdated(status => { workflowStatuses[status.workflowId] = status }, profile)
+  workflows.value = []
+  for (const key of Object.keys(workflowStatuses)) delete workflowStatuses[key]
+  void listWorkflowsSocket(profile).then(records => { workflows.value = records }).catch(() => undefined)
+  void subscribeWorkflowStatuses(undefined, profile).then(statuses => {
+    for (const status of statuses) workflowStatuses[status.workflowId] = status
+  }).catch(() => undefined)
+}
 
 type ApprovalChoice = PendingApproval['choices'][number]
 type GlobalPendingAction =
@@ -192,12 +205,10 @@ watch(pendingActions, actions => {
 
 onMounted(() => {
   void groupChatStore.connect().catch(() => undefined)
-  stopWorkflowStatus = onWorkflowStatusUpdated(status => { workflowStatuses[status.workflowId] = status })
-  void listWorkflowsSocket().then(records => { workflows.value = records }).catch(() => undefined)
-  void subscribeWorkflowStatuses().then(statuses => {
-    for (const status of statuses) workflowStatuses[status.workflowId] = status
-  }).catch(() => undefined)
+  resetWorkflowSubscriptions(profilesStore.activeProfileName)
 })
+
+watch(() => profilesStore.activeProfileName, profile => resetWorkflowSubscriptions(profile))
 
 onUnmounted(() => stopWorkflowStatus?.())
 </script>
