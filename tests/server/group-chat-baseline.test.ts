@@ -249,6 +249,36 @@ describe('group chat baseline behavior', () => {
     expect(managerView[0]).not.toHaveProperty('remoteOrigin')
   })
 
+  it('returns an offline Agent owner avatar to other room members', async () => {
+    const storage = groupServer.getStorage()
+    const ownerAvatar = JSON.stringify({ type: 'generated', seed: 'offline-owner' })
+    storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
+    storage.addRoomMember('room-1', 'guest-owner', 'Offline Owner', '', ownerAvatar)
+    storage.addRoomAgent('room-1', 'remote-owned', 'default', 'Owned Agent', '', 1, {
+      executorType: 'remote',
+      ownerMemberId: 'guest-owner',
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
+
+    const viewer = await connectGroupChatClient(port, 'guest-viewer', 'Viewer', { inviteCode: 'ROOM1' })
+    harness.sockets.push(viewer)
+    const joined = await emitAck<any>(viewer, 'join', { roomId: 'room-1', name: 'Viewer' })
+
+    expect(joined.agents).toEqual([
+      expect.objectContaining({
+        ownerMemberId: 'guest-owner',
+        connectionStatus: 'offline',
+      }),
+    ])
+    expect(joined.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        userId: 'guest-owner',
+        name: 'Offline Owner',
+        avatar: ownerAvatar,
+      }),
+    ]))
+  })
+
   it('allows an invite member to remove only their own remote Agent', async () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Shared Room', 'ROOM1')

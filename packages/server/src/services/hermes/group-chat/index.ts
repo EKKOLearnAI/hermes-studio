@@ -1648,6 +1648,28 @@ export class GroupChatServer {
         })
     }
 
+    private getRoomMemberViews(roomId: string, room = this.rooms.get(roomId)): MemberView[] {
+        const storedMembers = typeof this.storage.getRoomMembers === 'function'
+            ? this.storage.getRoomMembers(roomId)
+            : []
+        if (storedMembers.length > 0) return storedMembers
+        return (room?.getMembersList() || []).map(({
+            id,
+            userId,
+            name,
+            description,
+            joinedAt,
+            avatar,
+        }) => ({
+            id,
+            userId,
+            name,
+            description,
+            joinedAt,
+            avatar,
+        }))
+    }
+
     broadcastRoomAgents(roomId: string): RoomAgent[] {
         const agents = this.storage.getRoomAgents(roomId)
         this.nsp.to(roomId).emit('agents_updated', {
@@ -1696,8 +1718,7 @@ export class GroupChatServer {
             socket.leave(roomId)
         }
 
-        const members = room?.getMembersList()
-            || (typeof this.storage.getRoomMembers === 'function' ? this.storage.getRoomMembers(roomId) : [])
+        const members = this.getRoomMemberViews(roomId, room)
         this.nsp.to(roomId).emit('member_left', {
             roomId,
             memberId: normalizedUserId,
@@ -2153,11 +2174,12 @@ export class GroupChatServer {
         socket.join(roomId)
 
         if (source !== 'agent') {
+            const members = this.getRoomMemberViews(roomId, room)
             socket.to(roomId).emit('member_joined', {
                 roomId,
                 memberId: userId,
                 memberName: userName,
-                members: room.getMembersList(),
+                members,
             })
         }
 
@@ -2173,7 +2195,7 @@ export class GroupChatServer {
         ack?.({
             roomId,
             roomName: room.name,
-            members: room.getMembersList(),
+            members: this.getRoomMemberViews(roomId, room),
             messages,
             agents,
             rooms: typeof socket.data?.inviteGuestRoomId === 'string' ? [roomId] : this.getRoomIds(),
@@ -2250,7 +2272,7 @@ export class GroupChatServer {
             joined.room.addOrUpdateMember(socket.id, userId, name, description, 'human', avatar)
             this.userInfoMap.set(userId, { name, description })
 
-            const members = joined.room.getMembersList()
+            const members = this.getRoomMemberViews(roomId, joined.room)
             this.nsp.to(roomId).emit('member_updated', {
                 roomId,
                 memberId: userId,
@@ -2768,7 +2790,7 @@ export class GroupChatServer {
                         roomId: rid,
                         memberId: member?.userId || socketId,
                         memberName: member?.name || `User-${socketId.slice(0, 6)}`,
-                        members: room.getMembersList(),
+                        members: this.getRoomMemberViews(rid, room),
                     })
                 }
             }
