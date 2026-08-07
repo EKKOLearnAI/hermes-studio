@@ -20,7 +20,7 @@ const groupState = reactive({
   disconnect: vi.fn(),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
-const settingsState = reactive({ display: { approval_bell: false }, fetchSettings: vi.fn(async () => undefined) })
+const settingsState = reactive({ display: { approval_bell: false }, fetchSettings: vi.fn(async () => true) })
 const routeState = reactive({ name: 'hermes.chat' as string })
 const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
@@ -95,7 +95,7 @@ describe('GlobalPendingActions', () => {
 
   it('plays a pending new approval after persisted settings finish loading', async () => {
     let resolveSettings!: () => void
-    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>(resolve => { resolveSettings = () => resolve(undefined) }))
+    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<boolean>(resolve => { resolveSettings = () => resolve(true) }))
     const wrapper = mount(GlobalPendingActions)
     await nextTick()
 
@@ -114,8 +114,8 @@ describe('GlobalPendingActions', () => {
   })
 
   it('does not play queued approval sounds when persisted settings fail to load', async () => {
-    let rejectSettings!: (reason?: unknown) => void
-    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { rejectSettings = reject }))
+    let resolveSettings!: () => void
+    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<boolean>(resolve => { resolveSettings = () => resolve(false) }))
     settingsState.display.approval_bell = true
     const wrapper = mount(GlobalPendingActions)
     await nextTick()
@@ -124,7 +124,7 @@ describe('GlobalPendingActions', () => {
       sessionId: 'session-b', approvalId: 'approval-b', description: 'Read config', command: 'read config', choices: ['once'],
     }]])
     await nextTick()
-    rejectSettings(new Error('settings unavailable'))
+    resolveSettings()
     await Promise.resolve()
     await nextTick()
     expect(playCompletionSound).not.toHaveBeenCalled()
@@ -133,7 +133,7 @@ describe('GlobalPendingActions', () => {
 
   it('does not play a queued sound when the approval resolves before settings load', async () => {
     let resolveSettings!: () => void
-    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<undefined>(resolve => { resolveSettings = () => resolve(undefined) }))
+    settingsState.fetchSettings.mockImplementationOnce(() => new Promise<boolean>(resolve => { resolveSettings = () => resolve(true) }))
     const wrapper = mount(GlobalPendingActions)
     await nextTick()
 
