@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, extname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { Server, Socket as ServerSocket } from 'socket.io'
 import { io, type Socket as ClientSocket } from 'socket.io-client'
 import { config } from '../../../config'
@@ -53,7 +53,7 @@ const RELAY_AGENT_CONFIG_UPDATE_INTERVAL_MS = 1_000
 const RELAY_ATTACHMENT_CHUNK_BYTES = 256 * 1024
 const RELAY_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 const RELAY_RUN_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
-const OUTBOUND_LINKS_FILE = join(config.appHome, 'group-chat-agent-links.json')
+const OUTBOUND_LINKS_FILE = join(config.appHome, 'group-chat', 'group-chat-agent-links.json')
 const OUTBOUND_ATTACHMENTS_DIR = join(config.appHome, 'group-chat-agent-relay', 'attachments')
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -1746,7 +1746,7 @@ export class GroupAgentOutboundRelayManager {
   }
 
   private async writePersisted(links: PersistedOutboundLink[]): Promise<void> {
-    await mkdir(config.appHome, { recursive: true })
+    await mkdir(dirname(OUTBOUND_LINKS_FILE), { recursive: true })
     const tempPath = `${OUTBOUND_LINKS_FILE}.tmp-${process.pid}-${randomUUID()}`
     try {
       await writeFile(
