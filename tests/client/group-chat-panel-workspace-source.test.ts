@@ -45,6 +45,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('showManualRoomLinkModal.value = true')
     expect(source).toContain('manualRoomLinkInput.value?.select()')
     expect(source).toContain('v-model:show="showManualRoomLinkModal"')
+    expect(source).toContain(':aria-label="t(\'groupChat.copyRoomLink\')"')
     expect(source).toContain("t('groupChat.manualCopyRoomLinkHint')")
     expect(source).toContain('ref="manualRoomLinkInput"')
   })

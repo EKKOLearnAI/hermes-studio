@@ -2234,6 +2234,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                 v-model:show="showManualRoomLinkModal"
                 preset="dialog"
                 :title="t('groupChat.copyRoomLink')"
+                :aria-label="t('groupChat.copyRoomLink')"
                 style="width: 560px; max-width: 92vw"
                 @after-enter="selectManualRoomLink"
             >
