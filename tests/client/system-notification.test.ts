@@ -115,6 +115,27 @@ describe('system notification adapter', () => {
     expect(shown).toHaveLength(1)
   })
 
+  it.each([
+    ['window blur', () => window.dispatchEvent(new Event('blur'))],
+    ['document visibilitychange', () => document.dispatchEvent(new Event('visibilitychange'))],
+    ['window pagehide', () => window.dispatchEvent(new Event('pagehide'))],
+  ])('releases only this tab heartbeat on %s and preserves another tab heartbeat', async (_label, release) => {
+    const otherTabKey = 'hermes-system-notification-foreground-v2:other-tab'
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })
+    await import('@/utils/completion-notification')
+    window.dispatchEvent(new Event('focus'))
+
+    localStorage.setItem(otherTabKey, String(Date.now()))
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false })
+    release()
+
+    expect(localStorage.getItem(otherTabKey)).not.toBeNull()
+    expect(Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+      .filter(key => key?.startsWith('hermes-system-notification-foreground-v2:'))).toEqual([otherTabKey])
+  })
+
   it('releases this Studio tab foreground heartbeat immediately when its window blurs', async () => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })

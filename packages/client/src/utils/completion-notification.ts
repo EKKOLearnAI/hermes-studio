@@ -120,6 +120,7 @@ export async function showCompletionNotification(payload: CompletionNotification
 const announcedSystemNotificationTags = new Set<string>()
 const SYSTEM_NOTIFICATION_LEDGER_KEY = 'hermes-system-notification-ledger-v1'
 const SYSTEM_NOTIFICATION_FOREGROUND_KEY = 'hermes-system-notification-foreground-v1'
+const SYSTEM_NOTIFICATION_FOREGROUND_TAB_PREFIX = 'hermes-system-notification-foreground-v2:'
 const SYSTEM_NOTIFICATION_LEDGER_TTL = 7 * 24 * 60 * 60 * 1000
 const SYSTEM_NOTIFICATION_FOREGROUND_TTL = 5000
 const SYSTEM_NOTIFICATION_TAB_ID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -130,22 +131,28 @@ function isCurrentDocumentForeground(): boolean {
   return typeof document !== 'undefined' && !document.hidden && document.hasFocus()
 }
 
-function readForegroundHeartbeats(): Record<string, number> {
+function currentForegroundHeartbeatKey(): string {
+  return `${SYSTEM_NOTIFICATION_FOREGROUND_TAB_PREFIX}${SYSTEM_NOTIFICATION_TAB_ID}`
+}
+
+function freshHeartbeat(timestamp: number, now = Date.now()): boolean {
+  return Number.isFinite(timestamp) && now - timestamp < SYSTEM_NOTIFICATION_FOREGROUND_TTL
+}
+
+function hasLegacyForegroundHeartbeat(now: number): boolean {
   try {
     const parsed = JSON.parse(localStorage.getItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY) || '{}') as Record<string, number>
-    const now = Date.now()
-    return Object.fromEntries(Object.entries(parsed).filter(([, timestamp]) => Number.isFinite(timestamp) && now - timestamp < SYSTEM_NOTIFICATION_FOREGROUND_TTL))
+    return Object.values(parsed).some(timestamp => freshHeartbeat(timestamp, now))
   } catch {
-    return {}
+    return false
   }
 }
 
 function recordForegroundHeartbeat() {
   try {
-    const heartbeats = readForegroundHeartbeats()
-    if (isCurrentDocumentForeground()) heartbeats[SYSTEM_NOTIFICATION_TAB_ID] = Date.now()
-    else delete heartbeats[SYSTEM_NOTIFICATION_TAB_ID]
-    localStorage.setItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY, JSON.stringify(heartbeats))
+    const key = currentForegroundHeartbeatKey()
+    if (isCurrentDocumentForeground()) localStorage.setItem(key, String(Date.now()))
+    else localStorage.removeItem(key)
   } catch {
     // Foreground detection falls back to this document when storage is blocked.
   }
@@ -153,17 +160,27 @@ function recordForegroundHeartbeat() {
 
 function releaseForegroundHeartbeat() {
   try {
-    const heartbeats = readForegroundHeartbeats()
-    delete heartbeats[SYSTEM_NOTIFICATION_TAB_ID]
-    localStorage.setItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY, JSON.stringify(heartbeats))
+    localStorage.removeItem(currentForegroundHeartbeatKey())
   } catch {
     // Foreground detection falls back to this document when storage is blocked.
   }
 }
 
 function hasFreshForegroundHeartbeat(): boolean {
-  const heartbeats = readForegroundHeartbeats()
-  return Object.keys(heartbeats).length > 0
+  try {
+    const now = Date.now()
+    if (hasLegacyForegroundHeartbeat(now)) return true
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith(SYSTEM_NOTIFICATION_FOREGROUND_TAB_PREFIX)) continue
+      const timestamp = Number(localStorage.getItem(key))
+      if (freshHeartbeat(timestamp, now)) return true
+      localStorage.removeItem(key)
+    }
+  } catch {
+    // Foreground detection falls back to this document when storage is blocked.
+  }
+  return false
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
