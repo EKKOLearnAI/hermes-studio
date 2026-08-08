@@ -68,6 +68,15 @@ playing speech, so device playback cannot trigger a new turn. The existing
 button controls remain unchanged: long press talks, single click stops the
 current response, and double click clears the session.
 
+## Agent Runtime
+
+The device page can select Ekko or Hermes for MCU voice turns. Ekko is selected
+by default, including after upgrading from firmware that did not have this
+setting. The choice is stored in MCU preferences and sent with each voice turn.
+Ekko and Hermes use separate deterministic session IDs, so their histories,
+workspaces, and background tasks are never shared. Switching back to an agent
+continues only that agent's own MCU session.
+
 ## Idle Power Saving
 
 After three minutes by default without a voice, audio, or status interaction,

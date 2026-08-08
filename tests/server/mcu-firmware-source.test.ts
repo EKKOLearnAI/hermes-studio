@@ -11,6 +11,19 @@ function readFirmwareSources(): string[] {
 }
 
 describe('MCU firmware remote reliability', () => {
+  it('defaults to Ekko and persists an explicit Hermes selection', () => {
+    for (const source of readFirmwareSources()) {
+      expect(source).toContain('bool hermesAgentSelected = false;')
+      expect(source).toContain('prefs.getBool("agent_hermes", false)')
+      expect(source).toContain('prefs.putBool("agent_hermes", hermesAgentSelected)')
+      expect(source).toContain("action='/device/agent'")
+      expect(source).toContain("name='runtime' value='ekko'")
+      expect(source).toContain("name='runtime' value='hermes'")
+      expect(source).toContain('agentRuntime')
+      expect(source).toContain('mcuAgentRuntimeValue()')
+    }
+  })
+
   it('keeps voice streaming buffers bounded and statically reusable', () => {
     for (const source of readFirmwareSources()) {
       expect(source).toContain('constexpr size_t kListeningPreRollFrames = 4096;')

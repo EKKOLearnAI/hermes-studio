@@ -21,6 +21,7 @@ import { SttProviderConfigError, transcribeWithProvider } from '../../services/h
 import { SttNoSpeechDetectedError } from '../../services/hermes/stt-providers/types'
 import { logger } from '../../services/logger'
 import { getActiveGlobalAgentServer } from '../../services/global-agent/server'
+import { normalizeMcuAgentRuntime } from '../../services/global-agent/mcu-agent-runtime'
 import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../services/hermes/mcu-prompts'
 import { syncVoiceConfigToHermesProfile } from '../../services/hermes/voice-config-sync'
 import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
@@ -657,6 +658,7 @@ export async function mcuVoiceTurn(ctx: Context) {
   const interactionId = ctx.get('x-hermes-mcu-interaction-id') || `mcu-voice-${Date.now()}`
   const token = bearerToken(ctx)
   const clientId = ctx.get('x-hermes-mcu-device-id') || undefined
+  const agentRuntime = normalizeMcuAgentRuntime(ctx.get('x-hermes-mcu-agent-runtime'))
   let debugAudioPath = ''
   let debugMetadataPath = ''
   try {
@@ -750,6 +752,7 @@ export async function mcuVoiceTurn(ctx: Context) {
         interactionId,
         transcript,
         clientId,
+        agentRuntime,
       })
     } catch (error) {
       const globalAgentServer = getActiveGlobalAgentServer()

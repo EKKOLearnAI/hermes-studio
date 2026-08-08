@@ -210,6 +210,7 @@ bool bootSecondClickStarted = false;
 bool bootInputArmed = false;
 bool idlePowerSaveActive = false;
 bool listeningModeEnabled = false;
+bool hermesAgentSelected = false;
 uint32_t lastOledAtMs = 0;
 uint32_t oledStatusReturnAtMs = 0;
 uint32_t restartAtMs = 0;
@@ -1120,7 +1121,24 @@ void loadAudioPreferences() {
       static_cast<uint32_t>(prefs.getUChar("idle_min", kDefaultIdlePowerSaveMinutes)),
       kMaxIdlePowerSaveMinutes);
   listeningModeEnabled = prefs.getBool("listen_mode", false);
+  hermesAgentSelected = prefs.getBool("agent_hermes", false);
   prefs.end();
+}
+
+String mcuAgentRuntimeValue() {
+  return hermesAgentSelected ? String(F("hermes")) : String(F("ekko"));
+}
+
+String mcuAgentRuntimeLabel() {
+  return hermesAgentSelected ? String(F("Hermes")) : String(F("Ekko"));
+}
+
+void saveMcuAgentRuntime(bool useHermes) {
+  hermesAgentSelected = useHermes;
+  prefs.begin("mcu", false);
+  prefs.putBool("agent_hermes", hermesAgentSelected);
+  prefs.end();
+  noteMcuActivity();
 }
 
 void saveOutputVolume(uint8_t volume) {
@@ -2310,6 +2328,7 @@ void cleanupMcuPreferences() {
       static_cast<uint32_t>(prefs.getUChar("idle_min", kDefaultIdlePowerSaveMinutes)),
       kMaxIdlePowerSaveMinutes);
   bool listenMode = prefs.getBool("listen_mode", false);
+  bool agentHermes = prefs.getBool("agent_hermes", false);
   String activeKey = prefs.getString("active_key", "");
   String activeAddr = prefs.getString("active_addr", "");
   String activeUrl = prefs.getString("active_url", "");
@@ -2346,6 +2365,7 @@ void cleanupMcuPreferences() {
   prefs.putUChar("volume", volume);
   prefs.putUChar("idle_min", idleMinutes);
   prefs.putBool("listen_mode", listenMode);
+  prefs.putBool("agent_hermes", agentHermes);
   if (activeKey.length() > 0) prefs.putString("active_key", activeKey);
   if (activeAddr.length() > 0) prefs.putString("active_addr", activeAddr);
   if (activeUrl.length() > 0) prefs.putString("active_url", activeUrl);
@@ -2847,6 +2867,7 @@ void sendStatusPage() {
   appendInfoRow(html, F("音频硬件"), String(es8311Ready && i2sReady ? F("就绪") : F("未就绪")) + F(" · ") + lastAudioDetail);
   appendInfoRow(html, F("音量"), String(outputVolumePercent) + F("%"));
   appendInfoRow(html, F("语音模式"), listeningModeEnabled ? F("自动监听") : F("按住说话"));
+  appendInfoRow(html, F("Agent"), mcuAgentRuntimeLabel());
   appendInfoRow(html, F("自动待机"), idlePowerSaveMinutes == 0 ? String(F("关闭")) : String(idlePowerSaveMinutes) + F(" 分钟"));
   appendInfoRow(html, F("电量"), F("未启用"));
   if (selectedProfile.length() > 0) {
@@ -2861,6 +2882,20 @@ void sendStatusPage() {
   html += F("</div>");
 
   html += F("</section>");
+
+  html += F("<section class='card'><h2>Agent</h2><form method='post' action='/device/agent'>");
+  html += F("<div class='choice-grid'><label class='choice'><input type='radio' name='runtime' value='ekko'");
+  if (!hermesAgentSelected) html += F(" checked");
+  html += F("><span class='choice-card'><span class='choice-dot'></span><span class='choice-title'>Ekko</span>"
+            "<span class='choice-copy'>使用 Ekko Agent Runtime，支持工具调用和后台任务。</span>"
+            "<span class='choice-meta'>EKKO AGENT</span></span></label>");
+  html += F("<label class='choice'><input type='radio' name='runtime' value='hermes'");
+  if (hermesAgentSelected) html += F(" checked");
+  html += F("><span class='choice-card'><span class='choice-dot'></span><span class='choice-title'>Hermes</span>"
+            "<span class='choice-copy'>使用 Hermes Agent Bridge，保留原有 MCU Agent 体验。</span>"
+            "<span class='choice-meta'>HERMES AGENT</span></span></label></div>");
+  html += F("<div class='btn-row'><button class='btn primary' type='submit'>保存 Agent</button></div>");
+  html += F("<p class='hint'>选择将在下一次语音交互生效；Ekko 与 Hermes 使用互不共享的独立会话。</p></form></section>");
 
   html += F("<section class='card'><h2>音频</h2>");
   html += F("<form method='post' action='/device/audio'><div class='field'><span class='label'>播放音量 <output id='volume-output'>");
@@ -3101,6 +3136,18 @@ void handleDeviceVoiceMode() {
     return;
   }
   saveListeningMode(mode == F("listen"));
+  server.sendHeader(F("Location"), F("/device"), true);
+  server.send(302, F("text/plain"), F(""));
+}
+
+void handleDeviceAgent() {
+  String runtime = server.arg(F("runtime"));
+  runtime.trim();
+  if (runtime != F("ekko") && runtime != F("hermes")) {
+    server.send(400, F("text/plain; charset=utf-8"), F("无效的 Agent"));
+    return;
+  }
+  saveMcuAgentRuntime(runtime == F("hermes"));
   server.sendHeader(F("Location"), F("/device"), true);
   server.send(302, F("text/plain"), F(""));
 }
@@ -3527,6 +3574,8 @@ String mcuStatusJson() {
   json += escapeJson(activeDeviceKey);
   json += F("\",\"profile\":\"");
   json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
   json += F("\",\"text\":\"");
   json += escapeJson(mcuInteractionText);
   json += F("\",\"tool\":\"");
@@ -4468,6 +4517,8 @@ bool broadcastMcuInterrupt(const String &interactionId, const String &reason) {
   json += escapeJson(interactionId.length() > 0 ? interactionId : mcuInteractionId);
   json += F("\",\"profile\":\"");
   json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
   json += F("\",\"reason\":\"");
   json += escapeJson(reason);
   json += F("\"}");
@@ -4482,6 +4533,8 @@ bool broadcastMcuSessionClear(const String &interactionId) {
   json += escapeJson(interactionId);
   json += F("\",\"profile\":\"");
   json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
   json += F("\"}");
   return sendMcuSocketJson(json);
 }
@@ -5116,6 +5169,11 @@ bool broadcastMcuVoiceWav(const String &interactionId, const uint8_t *wav, size_
   json += escapeJson(interactionId);
   json += F("\",\"mimeType\":\"audio/wav\",\"bytes\":");
   json += wavLen;
+  json += F(",\"profile\":\"");
+  json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
+  json += F("\"");
   json += F(",\"rms\":");
   json += voiceRecordRms;
   json += F(",\"peak\":");
@@ -5141,6 +5199,8 @@ bool broadcastMcuVoiceStreamStart(const String &interactionId) {
   json += kVoiceInputSampleRate;
   json += F(",\"channels\":1,\"bitsPerSample\":16,\"profile\":\"");
   json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
   json += F("\"}");
   return sendMcuSocketJson(json);
 }
@@ -5839,6 +5899,8 @@ String mcuSocketAuthJson() {
   json += escapeJson(deviceId());
   json += F("\",\"profile\":\"");
   json += escapeJson(selectedProfile);
+  json += F("\",\"agentRuntime\":\"");
+  json += mcuAgentRuntimeValue();
   json += F("\"}");
   return json;
 }
@@ -5853,6 +5915,7 @@ void sendMcuReady() {
   String json = String(F("{\"type\":\"mcu.ready\",\"id\":\"")) + escapeJson(deviceId()) +
                 F("\",\"active_device\":\"") + escapeJson(activeDeviceKey) +
                 F("\",\"profile\":\"") + escapeJson(selectedProfile) +
+                F("\",\"agentRuntime\":\"") + mcuAgentRuntimeValue() +
                 F("\",\"capabilities\":{\"display\":true,\"audio_queue\":true,\"audio_playback\":true,\"pcm_stream\":false}}");
   sendMcuSocketEvent(F("mcu.ready"), json);
   broadcastMcuStatus();
@@ -6480,6 +6543,7 @@ void setupRoutes() {
   server.on(F("/device"), HTTP_GET, scanAndSendStatusPage);
   server.on(F("/device/scan"), HTTP_GET, scanAndSendStatusPage);
   server.on(F("/device/audio"), HTTP_POST, handleDeviceAudio);
+  server.on(F("/device/agent"), HTTP_POST, handleDeviceAgent);
   server.on(F("/device/voice-mode"), HTTP_POST, handleDeviceVoiceMode);
   server.on(F("/device/power-save"), HTTP_POST, handleDevicePowerSave);
   server.on(F("/device/manual"), HTTP_POST, addManualDevice);
