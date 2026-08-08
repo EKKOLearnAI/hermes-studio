@@ -8,7 +8,7 @@ import { cancelWorkflowImport, consumeWorkflowImportPreview, exportWorkflowDefin
 import { assertWorkflowImportCapabilities } from '../../services/workflow-import-capabilities'
 import { getAvailableModelGroupsForProfile } from './models'
 import { createWorkflowSchedule, deleteWorkflowSchedule, getWorkflowSchedule, listWorkflowSchedules, updateWorkflowSchedule } from '../../db/hermes/workflow-schedule-store'
-import { assertWorkflowScheduleCron, nextWorkflowScheduleAt } from '../../services/workflow-schedule-service'
+import { assertWorkflowScheduleCron, nextWorkflowScheduleAt, normalizeWorkflowSchedule } from '../../services/workflow-schedule-service'
 
 const MAX_BATCH_DELETE = 200
 
@@ -146,8 +146,13 @@ function scheduleId(ctx: Context): string {
   return String(ctx.params?.scheduleId || '').trim()
 }
 
+function scheduleOwnerUserId(ctx: Context): number | null {
+  const value = Number(ctx.state?.user?.id)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
 function workflowScheduleInput(body: Record<string, unknown>, workflow: { profile: string }) {
-  const schedule = String(body.schedule || '').trim()
+  const schedule = normalizeWorkflowSchedule(String(body.schedule || ''))
   const timezone = String(body.timezone || 'UTC').trim()
   if (!schedule) throw new Error('schedule is required')
   assertWorkflowScheduleCron(schedule)
@@ -178,7 +183,7 @@ export async function createSchedule(ctx: Context) {
   try {
     const value = workflowScheduleInput(bodyRecord(ctx), workflow)
     ctx.status = 201
-    ctx.body = { schedule: createWorkflowSchedule({ workflow_id: id, ...value }) }
+    ctx.body = { schedule: createWorkflowSchedule({ workflow_id: id, owner_user_id: scheduleOwnerUserId(ctx), ...value }) }
   } catch (err: any) { ctx.status = 400; ctx.body = { error: err?.message || 'invalid schedule' } }
 }
 

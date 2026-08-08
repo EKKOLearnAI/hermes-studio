@@ -197,7 +197,7 @@ export const WORKFLOWS_INDEXES = {
 
 export const WORKFLOW_SCHEDULES_TABLE = 'workflow_schedules'
 export const WORKFLOW_SCHEDULES_SCHEMA: Record<string, string> = {
-  id: 'TEXT PRIMARY KEY', workflow_id: 'TEXT NOT NULL', profile: "TEXT NOT NULL DEFAULT 'default'", schedule: 'TEXT NOT NULL', timezone: "TEXT NOT NULL DEFAULT 'UTC'", enabled: 'INTEGER NOT NULL DEFAULT 1', input: 'TEXT', start_node_ids_json: "TEXT NOT NULL DEFAULT '[]'", timeout_ms: 'INTEGER', concurrency_policy: "TEXT NOT NULL DEFAULT 'skip'", misfire_policy: "TEXT NOT NULL DEFAULT 'skip'", last_scheduled_at: 'INTEGER', next_run_at: 'INTEGER', last_run_id: 'TEXT', last_error: 'TEXT', created_at: 'INTEGER NOT NULL', updated_at: 'INTEGER NOT NULL',
+  id: 'TEXT PRIMARY KEY', workflow_id: 'TEXT NOT NULL', profile: "TEXT NOT NULL DEFAULT 'default'", owner_user_id: 'INTEGER', schedule: 'TEXT NOT NULL', timezone: "TEXT NOT NULL DEFAULT 'UTC'", enabled: 'INTEGER NOT NULL DEFAULT 1', input: 'TEXT', start_node_ids_json: "TEXT NOT NULL DEFAULT '[]'", timeout_ms: 'INTEGER', concurrency_policy: "TEXT NOT NULL DEFAULT 'skip'", misfire_policy: "TEXT NOT NULL DEFAULT 'skip'", last_scheduled_at: 'INTEGER', next_run_at: 'INTEGER', last_run_id: 'TEXT', last_error: 'TEXT', created_at: 'INTEGER NOT NULL', updated_at: 'INTEGER NOT NULL',
 }
 export const WORKFLOW_SCHEDULES_INDEXES = { idx_workflow_schedules_workflow: 'CREATE INDEX IF NOT EXISTS idx_workflow_schedules_workflow ON workflow_schedules(workflow_id)', idx_workflow_schedules_due: 'CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due ON workflow_schedules(enabled, next_run_at)' }
 export const WORKFLOW_SCHEDULE_TRIGGERS_TABLE = 'workflow_schedule_triggers'
