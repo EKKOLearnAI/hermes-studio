@@ -877,6 +877,10 @@ export default {
       importFailed: 'Workflow 匯入失敗',
       exportFailed: 'Workflow 匯出失敗',
     },
+    schedule: {
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
+      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+    },
     evidence: {
       historyPage: '執行歷史', detailsPage: '執行詳情', backToRuns: '返回執行歷史', resultStatus: '狀態', duration: '耗時', budgetLabel: '預算', actualExecution: '實際執行', otherJudgments: '其他判斷', loopEvents: '循環事件', evaluatedNotExecuted: '已判斷，未執行',
       ariaLabel: 'Workflow 執行詳情', title: '執行詳情', count: '{count} 條',

@@ -886,6 +886,10 @@ export default {
       summary: '总预算 {total} · 已用 {elapsed} · 剩余 {remaining}', deadline: '截止时间：{deadline}',
       nodeStartRemaining: '节点启动时剩余 {remaining}',
     },
+    schedule: {
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
+      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+    },
     evidence: {
       historyPage: '运行历史', detailsPage: '运行详情', backToRuns: '返回运行历史', resultStatus: '状态', duration: '耗时', budgetLabel: '预算', actualExecution: '实际执行', otherJudgments: '其他判断', loopEvents: '循环事件', evaluatedNotExecuted: '已判断，未执行',
       ariaLabel: 'Workflow 执行详情', title: '执行详情', count: '{count} 条',

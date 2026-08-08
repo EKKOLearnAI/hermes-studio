@@ -1216,3 +1216,47 @@ test('workflow title is hidden on mobile', async ({ page }) => {
   await expect(workspaceBadge).toHaveCSS('flex-grow', '1')
   await expect(workspaceBadge).toHaveCSS('max-width', 'none')
 })
+
+test('workflow schedules can be created, edited, disabled, and deleted from the Workflow page', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(page, {
+    workflows: [{
+      id: 'wf-schedule-ui', name: 'Scheduled workflow', profile: 'research', workspace: null,
+      nodes: [{ id: 'agent-a', type: 'agent', position: { x: 80, y: 80 }, data: { title: 'Agent A', agent: 'hermes', input: 'Run', skills: [], images: [], approvalRequired: false } }],
+      edges: [], viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1,
+    }],
+  })
+
+  await page.goto('/#/hermes/workflow')
+  await page.getByRole('button', { name: 'Manage schedules' }).click()
+  const modal = page.getByTestId('workflow-schedules-modal')
+  await expect(modal).toBeVisible()
+  await modal.getByRole('textbox').nth(0).fill('@hourly')
+  await modal.getByRole('textbox').nth(1).fill('Asia/Shanghai')
+  await modal.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
+  await modal.getByRole('button', { name: 'Edit schedule' }).click()
+  await modal.getByRole('textbox').nth(0).fill('0 9 * * *')
+  await modal.getByRole('button', { name: 'Save schedule' }).click()
+  await expect(modal.getByText('0 9 * * *', { exact: true })).toBeVisible()
+  await modal.getByRole('button', { name: 'Disable schedule' }).click()
+  await expect(modal.getByText('Disabled', { exact: true })).toBeVisible()
+  await modal.getByRole('button', { name: 'Delete schedule' }).click()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(modal.getByText('No schedules yet', { exact: true })).toBeVisible()
+})
+
+test('workflow schedules show server errors without changing displayed schedule state', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(page, {
+    workflowScheduleError: 'Schedule service unavailable',
+    workflows: [{ id: 'wf-schedule-error', name: 'Scheduled workflow', profile: 'research', workspace: null, nodes: [], edges: [], viewport: { x: 80, y: 80, zoom: .75 }, created_at: 1, updated_at: 1 }],
+  })
+
+  await page.goto('/#/hermes/workflow')
+  await page.getByRole('button', { name: 'Manage schedules' }).click()
+  const modal = page.getByTestId('workflow-schedules-modal')
+  await expect(modal).toBeVisible()
+  await expect(modal.getByText('No schedules yet', { exact: true })).toHaveCount(0)
+  await expect(modal.getByText(/Schedule service unavailable|Failed to load schedules/)).toBeVisible()
+})

@@ -2292,6 +2292,10 @@ export default {
       plan: '요청을 실행 가능한 단계로 나누세요.', execute: '구현 단계를 실행하고 결과물을 만드세요.', review: '출력 품질을 검토하고 후속 작업을 식별하세요.',
     },
     newNodeTitle: '노드 {count}',
+    schedule: {
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
+      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+    },
     evidence: {
       historyPage: '실행 기록', detailsPage: '실행 상세', backToRuns: '실행 기록으로 돌아가기', resultStatus: '상태', duration: '소요 시간', budgetLabel: '예산', actualExecution: '실제 실행', otherJudgments: '기타 판단', loopEvents: '루프 이벤트', evaluatedNotExecuted: '판단됨, 실행 안 됨',
       ariaLabel: 'Workflow 실행 세부 정보', title: '실행 세부 정보', count: '{count}개',

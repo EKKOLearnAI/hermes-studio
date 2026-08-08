@@ -2292,6 +2292,10 @@ export default {
       plan: '依頼を実行可能な手順に分解してください。', execute: '実装手順を実行して成果物を作成してください。', review: '出力品質を確認し、追加作業を特定してください。',
     },
     newNodeTitle: 'ノード {count}',
+    schedule: {
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
+      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+    },
     evidence: {
       historyPage: '実行履歴', detailsPage: '実行詳細', backToRuns: '実行履歴に戻る', resultStatus: 'ステータス', duration: '所要時間', budgetLabel: '予算', actualExecution: '実行済み', otherJudgments: 'その他の判定', loopEvents: 'ループイベント', evaluatedNotExecuted: '判定済み・未実行',
       ariaLabel: 'Workflow 実行詳細', title: '実行詳細', count: '{count} 件',

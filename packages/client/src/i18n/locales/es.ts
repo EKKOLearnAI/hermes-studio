@@ -2293,6 +2293,10 @@ jobTriggered: 'Job ejecutado',
       plan: 'Divide la solicitud en pasos realizables.', execute: 'Ejecuta los pasos de implementación y genera los entregables.', review: 'Revisa la calidad del resultado e identifica el trabajo de seguimiento.',
     },
     newNodeTitle: 'Nodo {count}',
+    schedule: {
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
+      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+    },
     evidence: {
       historyPage: 'Historial de ejecuciones', detailsPage: 'Detalles de ejecución', backToRuns: 'Volver al historial', resultStatus: 'Estado', duration: 'Duración', budgetLabel: 'Presupuesto', actualExecution: 'Ejecutado', otherJudgments: 'Otras decisiones', loopEvents: 'Eventos de bucle', evaluatedNotExecuted: 'Evaluado, no ejecutado',
       ariaLabel: 'Detalles de ejecución del Workflow', title: 'Detalles de ejecución', count: '{count} elementos',

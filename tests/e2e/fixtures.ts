@@ -55,6 +55,8 @@ interface MockHermesApiOptions {
   bundles?: MockSkillBundlePayload[]
   workflows?: unknown[]
   workflowRuns?: unknown[]
+  workflowSchedules?: unknown[]
+  workflowScheduleError?: string
   workflowImportDocument?: unknown
   workflowImportPreviewError?: string
   channelCredentials?: boolean
@@ -151,6 +153,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
   const sessionCategories = [...(options.sessionCategories ?? [])]
+  let workflowSchedules: any[] = [...(options.workflowSchedules ?? [])]
   const skillBundles = [...(options.bundles ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
   let theme: MockThemePayload = {
@@ -301,6 +304,41 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       const workflow: any = (options.workflows || []).find((item: any) => item?.id === workflowId)
       await route.fulfill(workflow ? jsonResponse({ format: 'hermes-studio.workflow', version: 1, definition: { name: workflow.name, nodes: workflow.nodes, edges: workflow.edges, viewport: workflow.viewport } }) : jsonResponse({ error: 'workflow not found' }, 404))
       return
+    }
+
+    if (/^\/api\/hermes\/workflows\/[^/]+\/schedules(?:\/[^/]+)?$/.test(pathname)) {
+      if (options.workflowScheduleError) {
+        await route.fulfill(jsonResponse({ error: options.workflowScheduleError }, 500))
+        return
+      }
+      const parts = pathname.split('/')
+      const workflowId = parts[4]
+      const scheduleId = parts[6]
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ schedules: workflowSchedules.filter(item => item.workflow_id === workflowId) }))
+        return
+      }
+      let body: Record<string, any> = {}
+      try { body = JSON.parse(request.postData() || '{}') } catch {}
+      if (request.method() === 'POST') {
+        const schedule = { id: `schedule-${workflowSchedules.length + 1}`, workflow_id: workflowId, profile: 'research', concurrency_policy: 'skip', misfire_policy: 'skip', last_scheduled_at: null, next_run_at: Date.now() + 3_600_000, last_run_id: null, last_error: null, created_at: Date.now(), updated_at: Date.now(), ...body }
+        workflowSchedules = [...workflowSchedules, schedule]
+        await route.fulfill(jsonResponse({ schedule }, 201))
+        return
+      }
+      if (request.method() === 'PATCH') {
+        const current = workflowSchedules.find(item => item.id === scheduleId && item.workflow_id === workflowId)
+        await route.fulfill(current
+          ? jsonResponse({ schedule: { ...current, ...body, updated_at: Date.now() } })
+          : jsonResponse({ error: 'workflow schedule not found' }, 404))
+        if (current) workflowSchedules = workflowSchedules.map(item => item.id === scheduleId ? { ...item, ...body, updated_at: Date.now() } : item)
+        return
+      }
+      if (request.method() === 'DELETE') {
+        workflowSchedules = workflowSchedules.filter(item => item.id !== scheduleId || item.workflow_id !== workflowId)
+        await route.fulfill(jsonResponse({ ok: true }))
+        return
+      }
     }
 
     if (/^\/api\/hermes\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
