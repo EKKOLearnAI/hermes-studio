@@ -1,6 +1,12 @@
 export { ContextEngine } from './compressor'
 export { GatewaySummarizer } from './gateway-client'
-export { buildAgentInstructions, buildSummarizationSystemPrompt, buildFullSummaryPrompt, buildIncrementalUpdatePrompt } from './prompt'
+export {
+    buildAgentInstructions,
+    buildNonOwnerRequestSecurityPrompt,
+    buildSummarizationSystemPrompt,
+    buildFullSummaryPrompt,
+    buildIncrementalUpdatePrompt,
+} from './prompt'
 export { DEFAULT_COMPRESSION_CONFIG } from './types'
 export type {
     StoredMessage,

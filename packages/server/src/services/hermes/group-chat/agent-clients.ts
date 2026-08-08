@@ -20,7 +20,7 @@ import {
     resolveMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
-import { buildAgentInstructions } from '../context-engine/prompt'
+import { buildAgentInstructions, buildNonOwnerRequestSecurityPrompt } from '../context-engine/prompt'
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
@@ -61,6 +61,8 @@ export type MentionMessage = {
     input?: string | ContentBlock[]
     mentionDepth?: number
     mentions?: StructuredMention[]
+    /** Trusted, target-specific ownership context added by AgentClients. */
+    targetOwnerMemberId?: string
 }
 
 export type StructuredMention =
@@ -858,18 +860,18 @@ export class AgentClient implements GroupAgentExecutor {
      */
     private groupRuntimeInput(msg: MentionMessage, runtimeContext: GroupRuntimeContext): string | ContentBlock[] {
         const routedPrefix = isAllAgentsMentioned(msg.content)
-            ? '群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。'
-            : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+            ? 'Group chat system: this message mentioned every Agent with @all. You are one of the targets, so reply directly.'
+            : `Group chat system: this message mentioned you (${this.name}). Reply directly even if it also mentions other participants; do not return an empty response.`
         const transcript = runtimeContext.history
-            .map(item => `${item.role === 'assistant' ? '智能体' : '成员'}「${item.senderName}」：${item.content}`)
+            .map(item => `${item.role === 'assistant' ? 'Agent' : 'Member'} "${item.senderName}": ${item.content}`)
             .join('\n\n')
         const context = [
             routedPrefix,
             runtimeContext.summary
-                ? `以下是截至总结锚点的群聊总结：\n<group_chat_summary>\n${runtimeContext.summary}\n</group_chat_summary>`
+                ? `The following group chat summary covers everything through the summary anchor:\n<group_chat_summary>\n${runtimeContext.summary}\n</group_chat_summary>`
                 : '',
             transcript
-                ? `以下是总结锚点之后、当前消息之前的群聊记录：\n<group_chat_history>\n${transcript}\n</group_chat_history>`
+                ? `The following group chat history begins after the summary anchor and ends before the current message:\n<group_chat_history>\n${transcript}\n</group_chat_history>`
                 : '',
         ].filter(Boolean).join('\n\n')
         const rawInput = msg.input || msg.content
@@ -882,14 +884,14 @@ export class AgentClient implements GroupAgentExecutor {
                     const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name) || msg.content
                     if (markedCurrent) return { ...block, text }
                     markedCurrent = true
-                    return { ...block, text: `当前消息：${text}` }
+                    return { ...block, text: `Current message: ${text}` }
                 }),
             ]
         }
-        return `${context}\n\n当前消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+        return `${context}\n\nCurrent message: ${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
     }
 
-    private groupSystemPrompt(roomId: string): string {
+    private groupSystemPrompt(roomId: string, msg?: MentionMessage): string {
         const room = this.storage?.getRoom?.(roomId)
         const rawMembers = this.storage?.getRoomMembers?.(roomId)
         const rawAgents = this.storage?.getMentionableRoomAgents?.(roomId)
@@ -917,35 +919,47 @@ export class AgentClient implements GroupAgentExecutor {
             memberNames: members.map(member => member.name),
             members,
         })
+        const promptParts = [instructions]
         const remoteWorkspaceApi = room?.remoteWorkspaceApi
         if (
-            !remoteWorkspaceApi
-            || remoteWorkspaceApi.access !== 'read-write'
-            || typeof remoteWorkspaceApi.endpoint !== 'string'
-            || typeof remoteWorkspaceApi.token !== 'string'
+            remoteWorkspaceApi
+            && remoteWorkspaceApi.access === 'read-write'
+            && typeof remoteWorkspaceApi.endpoint === 'string'
+            && typeof remoteWorkspaceApi.token === 'string'
         ) {
-            return instructions
+            promptParts.push([
+                'This run may access the sharing host\'s group-chat workspace through a short-lived HTTP JSON API.',
+                'Your current local working directory is separate; use this API only when files must be shared with the room owner or other Agents.',
+                `Endpoint: ${remoteWorkspaceApi.endpoint}`,
+                `Authorization header: Bearer ${remoteWorkspaceApi.token}`,
+                'Send POST requests with Content-Type: application/json.',
+                'Supported request bodies:',
+                '{"action":"list","path":""}',
+                '{"action":"read","path":"relative/file.txt"}',
+                '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
+                '{"action":"mkdir","path":"relative/directory"}',
+                '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
+                `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
+                `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
+                'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
+                'Binary uploads and downloads are limited to 20 MiB per file.',
+                'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
+                'The authorization expires when this run finishes. Never repeat the token in chat output.',
+            ].join('\n'))
         }
-        const workspaceInstructions = [
-            'This run may access the sharing host\'s group-chat workspace through a short-lived HTTP JSON API.',
-            'Your current local working directory is separate; use this API only when files must be shared with the room owner or other Agents.',
-            `Endpoint: ${remoteWorkspaceApi.endpoint}`,
-            `Authorization header: Bearer ${remoteWorkspaceApi.token}`,
-            'Send POST requests with Content-Type: application/json.',
-            'Supported request bodies:',
-            '{"action":"list","path":""}',
-            '{"action":"read","path":"relative/file.txt"}',
-            '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
-            '{"action":"mkdir","path":"relative/directory"}',
-            '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
-            `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
-            `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
-            'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
-            'Binary uploads and downloads are limited to 20 MiB per file.',
-            'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
-            'The authorization expires when this run finishes. Never repeat the token in chat output.',
-        ].join('\n')
-        return `${instructions}\n\n${workspaceInstructions}`
+        if (
+            msg?.targetOwnerMemberId
+            && msg.senderId
+            && msg.senderId !== msg.targetOwnerMemberId
+        ) {
+            promptParts.push(buildNonOwnerRequestSecurityPrompt({
+                requesterName: msg.senderName,
+                requesterId: msg.senderId,
+                ownerMemberId: msg.targetOwnerMemberId,
+                workspaceRoot: String(room?.workspace || '').trim(),
+            }))
+        }
+        return promptParts.join('\n\n')
     }
 
     private groupConversationHistory(runtimeContext: GroupRuntimeContext): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -953,7 +967,7 @@ export class AgentClient implements GroupAgentExecutor {
         if (runtimeContext.summary) {
             history.push({
                 role: 'user',
-                content: `[群聊历史总结]\n${runtimeContext.summary}`,
+                content: `[Group chat history summary]\n${runtimeContext.summary}`,
             })
         }
         for (const message of runtimeContext.history) {
@@ -1019,7 +1033,7 @@ export class AgentClient implements GroupAgentExecutor {
                 : this.agent === 'claude'
                     ? 'claude-code'
                     : 'codex'
-            const groupSystemPrompt = this.groupSystemPrompt(roomId)
+            const groupSystemPrompt = this.groupSystemPrompt(roomId, msg)
             const result = await this.chatRunService.runAndWait({
                 input: this.groupRuntimeInput(msg, runtimeContext),
                 session_id: sessionId,
@@ -1160,7 +1174,7 @@ export class AgentClient implements GroupAgentExecutor {
             this.startTyping(roomId)
 
             const conversationHistory = this.groupConversationHistory(runtimeContext)
-            let instructions = this.groupSystemPrompt(roomId)
+            let instructions = this.groupSystemPrompt(roomId, msg)
             const bridge = new AgentBridgeClient()
             const sessionId = groupRuntimeSessionId(roomId, this.profile, this.name)
             this.activeSessions.set(roomId, sessionId)
@@ -1216,16 +1230,16 @@ export class AgentClient implements GroupAgentExecutor {
             // selected this agent. This avoids making @all look like an
             // instruction for the model to fan out another routing cycle.
             const routedPrefix = isAllAgentsMentioned(msg.content)
-                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
-                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+                ? 'Group chat system: this message mentioned every Agent with @all. You are one of the targets, so reply directly.'
+                : `Group chat system: this message mentioned you (${this.name}). Reply directly even if it also mentions other participants; do not return an empty response.`
             const rawInput = msg.input || msg.content
             const input = isContentBlockArray(rawInput)
                 ? rawInput.map((block) => {
                     if (block.type !== 'text') return block
                     const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
-                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
+                    return { ...block, text: `${routedPrefix}\n\nOriginal message: ${text || msg.content}` }
                 })
-                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+                : `${routedPrefix}\n\nOriginal message: ${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
             const runPrompt = 'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.'
             instructions = `${instructions}\n\n${runPrompt}`
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
@@ -2273,6 +2287,24 @@ export class AgentClients {
         return candidates.filter(agent => ids.has(agent.agentId))
     }
 
+    private targetAgentOwnerMemberId(roomId: string, agent: GroupAgentExecutor): string {
+        const roomAgents = this._storage?.getRoomAgents?.(roomId)
+        const storedAgent = Array.isArray(roomAgents)
+            ? roomAgents.find((candidate: any) => (
+                String(candidate?.agentId || '') === agent.agentId
+                || String(candidate?.name || '') === agent.name
+            ))
+            : null
+        const explicitOwner = String(storedAgent?.ownerMemberId || '').trim()
+        if (explicitOwner) return explicitOwner
+        if (storedAgent?.executorType === 'remote') return ''
+
+        const ownerAuthUserId = Number(this._storage?.getRoom?.(roomId)?.ownerAuthUserId || 0)
+        return Number.isSafeInteger(ownerAuthUserId) && ownerAuthUserId > 0
+            ? `auth:${ownerAuthUserId}`
+            : ''
+    }
+
     async processSummaryCheck(roomId: string, messageId: string): Promise<void> {
         this.queueMention(roomId, [], {
             messageId,
@@ -2305,7 +2337,11 @@ export class AgentClients {
                         if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
                     }
                     try {
-                        await agent.replyToMention(roomId, next.msg, runtimeContext, onStatus)
+                        const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
+                        const targetMessage = targetOwnerMemberId
+                            ? { ...next.msg, targetOwnerMemberId }
+                            : next.msg
+                        await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
                     } finally {
                         this.finishAgentActivity(roomId, agent.name)
                     }

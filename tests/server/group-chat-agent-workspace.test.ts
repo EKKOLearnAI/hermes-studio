@@ -564,10 +564,10 @@ describe('group chat agent workspace bridge runs', () => {
       onEvent: expect.any(Function),
     }))
     expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
-    expect(String(runAndWait.mock.calls[0][0].input)).toContain('截至总结锚点的群聊总结')
+    expect(String(runAndWait.mock.calls[0][0].input)).toContain('summary covers everything through the summary anchor')
     expect(String(runAndWait.mock.calls[0][0].input)).toContain('Keep single chat unchanged.')
-    expect(runAndWait.mock.calls[0][0].instructions).toContain('你是"Coder"，群聊房间"Engineering Room"中的 AI 助手')
-    expect(runAndWait.mock.calls[0][0].instructions).toContain('- [真人成员] Human: Product owner')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('You are "Coder", an AI assistant in the group chat room "Engineering Room"')
+    expect(runAndWait.mock.calls[0][0].instructions).toContain('- [Human member] Human: Product owner')
     expect(runAndWait.mock.calls[0][0].instructions).toContain('- [AI Agent] Reviewer: Reviews changes')
     expect(runAndWait.mock.calls[0][0].instructions).not.toContain('Sleeping')
     expect(runAndWait.mock.calls[0][0].instructions).toContain(
@@ -693,8 +693,8 @@ describe('group chat agent workspace bridge runs', () => {
     const runData = runAndWait.mock.calls[0][0]
     expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
     expect(runData.coding_agent_id).toBe(codingAgentId)
-    expect(runData.instructions).toContain(`你是"${agent === 'ekko' ? 'Ekko' : 'Claude'}"，群聊房间"Runtime Room"中的 AI 助手`)
-    expect(runData.instructions).toContain('- [真人成员] Human: Room owner')
+    expect(runData.instructions).toContain(`You are "${agent === 'ekko' ? 'Ekko' : 'Claude'}", an AI assistant in the group chat room "Runtime Room"`)
+    expect(runData.instructions).toContain('- [Human member] Human: Room owner')
     expect(runData.group_system_prompt).toBe(runData.instructions)
     expect(runData.group_room_id).toBe('room-runtime')
     expect(runData.group_agent_id).toBe(`agent-${agent}`)
@@ -704,6 +704,95 @@ describe('group chat agent workspace bridge runs', () => {
     expect(mockSocket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
       roomId: 'room-runtime', clarify_id: `clarify-${agent}`, resolved: true,
     }))
+  })
+
+  it('adds the workspace-scoped security policy only when a non-owner mentions the Agent', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any) => ({ ok: true, output: 'done' }))
+    const clients = new AgentClients()
+    clients.setChatRunService({ runAndWait, abortSession: vi.fn(async () => {}) })
+    const client = await clients.createAgent({
+      agentId: 'agent-secure',
+      agent: 'codex',
+      profile: 'default',
+      name: 'SecureAgent',
+      description: 'Handles shared media work',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any)
+    const storage = {
+      getRoom: vi.fn(() => ({
+        name: 'Secure Room',
+        workspace: '/srv/group-chat/secure-room',
+        ownerAuthUserId: 42,
+      })),
+      getRoomMembers: vi.fn(() => [
+        { userId: 'auth:42', name: 'Room Owner' },
+        { userId: 'member-guest', name: 'Guest' },
+      ]),
+      getRoomAgents: vi.fn(() => [{
+        id: 'room-agent-secure',
+        agentId: 'agent-secure',
+        name: 'SecureAgent',
+        executorType: 'remote',
+        ownerMemberId: 'auth:42',
+      }]),
+    }
+    ;(clients as any).rooms.set('room-secure', new Map([[client.agentId, client]]))
+    clients.setStorage(storage)
+
+    await clients.processMentions('room-secure', {
+      messageId: 'message-guest',
+      content: '@SecureAgent render and upload the video',
+      senderName: 'Guest',
+      senderId: 'member-guest',
+      timestamp: 1,
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-secure' }],
+    })
+
+    const guestInstructions = String(runAndWait.mock.calls[0]?.[0]?.instructions || '')
+    expect(guestInstructions).toContain('# Security context: request from a non-owner')
+    expect(guestInstructions).toContain('"requester_id": "member-guest"')
+    expect(guestInstructions).toContain('"agent_owner_member_id": "auth:42"')
+    expect(guestInstructions).toContain('"authorized_workspace": "/srv/group-chat/secure-room"')
+    expect(guestInstructions).toContain('cloud rendering, media generation, storage, and publishing')
+
+    runAndWait.mockClear()
+    await clients.processMentions('room-secure', {
+      messageId: 'message-owner',
+      content: '@SecureAgent render and upload the video',
+      senderName: 'Room Owner',
+      senderId: 'auth:42',
+      timestamp: 2,
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-secure' }],
+    })
+
+    const ownerInstructions = String(runAndWait.mock.calls[0]?.[0]?.instructions || '')
+    expect(ownerInstructions).not.toContain('# Security context: request from a non-owner')
+
+    storage.getRoomAgents.mockReturnValue([{
+      id: 'room-agent-secure',
+      agentId: 'agent-secure',
+      name: 'SecureAgent',
+      executorType: 'server',
+      ownerMemberId: '',
+    }])
+    runAndWait.mockClear()
+    await clients.processMentions('room-secure', {
+      messageId: 'message-server-agent-guest',
+      content: '@SecureAgent render and upload the video',
+      senderName: 'Guest',
+      senderId: 'member-guest',
+      timestamp: 3,
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-secure' }],
+    })
+
+    const serverAgentInstructions = String(runAndWait.mock.calls[0]?.[0]?.instructions || '')
+    expect(serverAgentInstructions).toContain('"agent_owner_member_id": "auth:42"')
+    client.disconnect()
   })
 
   it('finishes a group-only Codex tool card when chat-run has no matching completed event', async () => {
@@ -1118,8 +1207,8 @@ describe('group chat agent workspace bridge runs', () => {
         background_delegation_enabled: false,
       }),
     )
-    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('你是"Worker"，群聊房间"room-1"中的 AI 助手')
-    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('群聊系统支持 agent 之间通过 @名字 接力')
+    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('You are "Worker", an AI assistant in the group chat room "room-1"')
+    expect(String(bridgeMock.chat.mock.calls[0]?.[3])).toContain('supports Agent-to-Agent handoffs through @name')
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('workspace')
     expect(bridgeMock.chat.mock.calls[0]?.[5]).not.toHaveProperty('run_id')
   })

@@ -240,6 +240,9 @@ function validateRelayRunRequest(value: unknown): asserts value is RelayRunReque
   boundedRelayText(message.content, 1_000_000, 'message content')
   boundedRelayText(message.senderName, 120, 'message sender name', true)
   boundedRelayText(message.senderId, 240, 'message sender id', true)
+  if (message.targetOwnerMemberId !== undefined) {
+    boundedRelayText(message.targetOwnerMemberId, 240, 'target Agent owner member id', true)
+  }
   if (!Number.isFinite(message.timestamp)) throw relayError('Invalid Relay message timestamp', 'GROUP_AGENT_RUN_INVALID')
   if (
     message.mentionDepth !== undefined
