@@ -74,6 +74,7 @@ type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
 interface PendingGroupApprovalRoute {
     roomId: string
     agentName: string
+    ownerMemberId: string
     agentSessionId: string
     approvalId: string
     command: string
@@ -1600,11 +1601,11 @@ export class GroupChatServer {
         return `${roomId}:${clarifyId}`
     }
 
-    private pendingApprovalSnapshots(roomId: string) {
+    private pendingApprovalSnapshots(roomId: string | null, socket: Socket) {
         const pendingRoutes = this.pendingApprovalRoutes
         if (!pendingRoutes) return []
         return [...pendingRoutes.values()]
-            .filter(route => route.roomId === roomId)
+            .filter(route => (!roomId || route.roomId === roomId) && this.canSocketHandleAgentApproval(socket, route))
             .map(route => ({
                 roomId: route.roomId,
                 agentName: route.agentName,
@@ -1837,11 +1838,11 @@ export class GroupChatServer {
         }))
     }
 
-    broadcastRoomAgents(roomId: string): RoomAgent[] {
-        const agents = this.storage.getRoomAgents(roomId)
+    broadcastRoomAgents(roomId: string): Array<Record<string, unknown>> {
+        const agents = this.getRoomAgentViews(roomId, false)
         this.nsp.to(roomId).emit('agents_updated', {
             roomId,
-            agents: this.getRoomAgentViews(roomId, false),
+            agents,
         })
         this.emitToRoomManagers(roomId, 'agents_updated', {
             roomId,
@@ -2090,6 +2091,9 @@ export class GroupChatServer {
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
         socket.on('join', (data: { roomId?: string; name?: string }, ack?: (response?: unknown) => void) => this.handleJoin(socket, data, ack))
+        socket.on('load_pending_approvals', (_data: unknown, ack?: (response?: unknown) => void) => {
+            ack?.({ pendingApprovals: this.pendingApprovalSnapshots(null, socket) })
+        })
         socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
         socket.on('update_member_profile', (data: { roomId?: string; name?: string; description?: string } | undefined, ack?: (response?: unknown) => void) => this.handleUpdateMemberProfile(socket, data, ack))
         socket.on('message', (data: IncomingGroupChatMessage, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
@@ -2145,6 +2149,49 @@ export class GroupChatServer {
         if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
         const profiles = authenticatedUserProfiles(authUser)
         return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
+    }
+
+    private groupAgentOwnerMemberId(roomId: string, agentName: string): string {
+        const agent = this.storage.getRoomAgents(roomId)
+            .find(candidate => candidate.name === agentName)
+        if (!agent) return ''
+        const explicitOwner = String(agent.ownerMemberId || '').trim()
+        if (explicitOwner) return explicitOwner
+        if (agent.executorType !== 'server') return ''
+        const roomOwnerAuthUserId = Number(this.storage.getRoom(roomId)?.ownerAuthUserId || 0)
+        return roomOwnerAuthUserId > 0
+            ? authenticatedGroupUserId(roomOwnerAuthUserId)
+            : ''
+    }
+
+    private canSocketHandleAgentApproval(
+        socket: Socket,
+        route: Pick<PendingGroupApprovalRoute, 'roomId' | 'ownerMemberId'>,
+    ): boolean {
+        if (!route.ownerMemberId || this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        const authUser = socket.data?.authUser as AuthenticatedUser | undefined
+        if (typeof authUser?.id === 'number') {
+            return authenticatedGroupUserId(authUser.id) === route.ownerMemberId
+        }
+        const joined = this.getOnlineRoomMember(socket, route.roomId)
+        return Boolean(
+            joined
+            && joined.member.source === 'human'
+            && joined.member.userId === route.ownerMemberId
+            && this.socketUserMap.get(socket.id) === route.ownerMemberId,
+        )
+    }
+
+    private emitToAgentApprovalOwner(
+        route: Pick<PendingGroupApprovalRoute, 'roomId' | 'ownerMemberId'>,
+        event: string,
+        payload: Record<string, unknown>,
+    ): void {
+        const sockets = this.nsp.sockets?.values?.()
+        if (!sockets) return
+        for (const socket of sockets) {
+            if (this.canSocketHandleAgentApproval(socket, route)) socket.emit(event, payload)
+        }
     }
 
     private canSocketMentionAll(socket: Socket, roomId: string): boolean {
@@ -2384,7 +2431,7 @@ export class GroupChatServer {
             hasMore: messages.length < total,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
-            pendingApprovals: this.canSocketManageRoom(socket, roomId) ? this.pendingApprovalSnapshots(roomId) : [],
+            pendingApprovals: this.pendingApprovalSnapshots(roomId, socket),
             pendingClarifies: this.canSocketManageRoom(socket, roomId) ? this.pendingClarifySnapshots(roomId) : [],
             ...(isInviteGuest && source !== 'agent'
                 ? { agentLinkToken: this.issueGuestAgentRequestToken(roomId, userId, socket.id) }
@@ -2897,9 +2944,10 @@ export class GroupChatServer {
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
         const choices = Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny']
-        this.pendingApprovalRoutes.set(this.pendingApprovalRouteKey(roomId, data.approval_id), {
+        const pendingRoute: PendingGroupApprovalRoute = {
             roomId,
             agentName,
+            ownerMemberId: this.groupAgentOwnerMemberId(roomId, agentName),
             agentSessionId: String(data.agentSessionId || '').trim(),
             approvalId: data.approval_id,
             command: data.command || '',
@@ -2907,8 +2955,12 @@ export class GroupChatServer {
             choices,
             allowPermanent: Boolean(data.allow_permanent),
             requestedAt: Date.now(),
-        })
-        this.emitToRoomManagers(roomId, 'approval.requested', {
+        }
+        this.pendingApprovalRoutes.set(this.pendingApprovalRouteKey(roomId, data.approval_id), pendingRoute)
+        if (!pendingRoute.ownerMemberId) {
+            logger.warn(`[GroupChat] approval ${data.approval_id} has no Agent owner in room ${roomId}`)
+        }
+        this.emitToAgentApprovalOwner(pendingRoute, 'approval.requested', {
             event: 'approval.requested',
             roomId,
             agentName,
@@ -2929,7 +2981,8 @@ export class GroupChatServer {
         if (pendingRoute?.roomId === roomId && pendingRoute.agentName === agentName) {
             this.pendingApprovalRoutes.delete(routeKey)
         }
-        this.emitToRoomManagers(roomId, 'approval.resolved', {
+        const ownerMemberId = pendingRoute?.ownerMemberId || this.groupAgentOwnerMemberId(roomId, agentName)
+        this.emitToAgentApprovalOwner({ roomId, ownerMemberId }, 'approval.resolved', {
             event: 'approval.resolved',
             roomId,
             agentName,
@@ -2949,14 +3002,19 @@ export class GroupChatServer {
             ack?.({ error: 'Not in room' })
             return
         }
-        if (!this.canSocketManageRoom(socket, roomId)) {
+        const pendingRoutes = this.pendingApprovalRoutes
+        if (!pendingRoutes) {
             ack?.({ error: 'Access denied' })
             return
         }
         const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
-        const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
+        const pendingRoute = pendingRoutes.get(routeKey)
         if (!pendingRoute || pendingRoute.roomId !== roomId) {
             ack?.({ error: 'Approval is not pending in this room' })
+            return
+        }
+        if (!this.canSocketHandleAgentApproval(socket, pendingRoute)) {
+            ack?.({ error: 'Access denied' })
             return
         }
         const remoteExecutor = this.agentClients.getAgents(roomId).find(agent =>

@@ -25,13 +25,22 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain('workspaceValue.value.trim()')
   })
 
-  it('gates workspace mutation controls to rooms the server marks manageable', () => {
+  it('gates room management controls while allowing an Agent owner to handle a directed approval', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const visibleApproval = source.slice(
+      source.indexOf('const visibleApproval = computed(() =>'),
+      source.indexOf('const visibleClarify = computed(() =>'),
+    )
+    const approvalHandler = source.slice(
+      source.indexOf('async function handleApproval('),
+      source.indexOf('async function handleClarify('),
+    )
 
     expect(source).toContain('const currentRoomCanManage = computed(() => !props.standalone && canManageRoom(currentRoom.value))')
     expect(source).toContain("const currentRoomCanMentionAll = computed(() => !props.standalone && currentRoom.value?.canMentionAll === true)")
-    expect(source).toContain('const visibleApproval = computed(() =>')
-    expect(source).toContain('currentRoomCanManage.value && pendingAgentPairings.value.length === 0')
+    expect(visibleApproval).toContain('pendingAgentPairings.value.length === 0')
+    expect(visibleApproval).not.toContain('currentRoomCanManage.value')
+    expect(approvalHandler).not.toContain('currentRoomCanManage.value')
     expect(source).toContain('if (!currentRoomCanManage.value) return')
     expect(source).toContain('if (!canManageRoom(room)) return')
     expect(source).toContain("options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })")

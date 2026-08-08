@@ -14598,6 +14598,32 @@
         }
       }
     },
+    "/livez": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Get livez",
+        "description": "GET /livez",
+        "operationId": "livenessCheck",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/upload": {
       "post": {
         "tags": [

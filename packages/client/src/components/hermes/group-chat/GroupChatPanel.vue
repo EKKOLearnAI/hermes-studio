@@ -494,7 +494,7 @@ function agentOwnerAvatar(agent: RoomAgent) {
     return owner ? memberAvatarFor(owner) : null
 }
 const visibleApproval = computed(() =>
-    currentRoomCanManage.value && pendingAgentPairings.value.length === 0
+    pendingAgentPairings.value.length === 0
         ? store.activePendingApproval
         : null,
 )
@@ -1488,7 +1488,6 @@ async function handleInterruptAgent(agent: RoomAgent) {
 }
 
 async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
-    if (!currentRoomCanManage.value) return
     try {
         await store.respondApproval(choice)
     } catch (err: any) {

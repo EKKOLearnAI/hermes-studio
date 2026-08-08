@@ -738,22 +738,25 @@ describe('Group Chat member/agent identity sync', () => {
   })
 
   it('broadcasts the complete room agent roster after mutations', () => {
-    const agents = [{ id: 'row-agent', agentId: 'agent-1', name: 'Agent' }]
+    const agents = [{ id: 'row-agent', agentId: 'agent-1', name: 'Agent', executorType: 'server' }]
     const emit = vi.fn()
     const to = vi.fn(() => ({ emit }))
     const server = Object.create(GroupChatServer.prototype) as any
     server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', ownerAuthUserId: 7 })),
       getRoomAgents: vi.fn(() => agents),
     }
     server.agentClients = { getAgent: vi.fn(() => ({ connected: true })) }
     server.rooms = new Map()
     server.nsp = { to }
 
-    expect(server.broadcastRoomAgents('room-1')).toEqual(agents)
+    expect(server.broadcastRoomAgents('room-1')).toEqual([
+      { ...agents[0], connectionStatus: 'online', ownerMemberId: 'auth:7' },
+    ])
     expect(to).toHaveBeenCalledWith('room-1')
     expect(emit).toHaveBeenCalledWith('agents_updated', {
       roomId: 'room-1',
-      agents: [{ ...agents[0], connectionStatus: 'online' }],
+      agents: [{ ...agents[0], connectionStatus: 'online', ownerMemberId: 'auth:7' }],
     })
   })
 

@@ -374,6 +374,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         pendingApprovals.value = new Map(pendingApprovals.value)
         pendingClarifies.value = new Map(pendingClarifies.value)
     }
+
+    function replacePendingApprovalSnapshots(approvals: unknown) {
+        if (!Array.isArray(approvals)) return
+        pendingApprovals.value.clear()
+        for (const pending of approvals) upsertPendingApproval(pending as any)
+        pendingApprovals.value = new Map(pendingApprovals.value)
+    }
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredGroupUserName() || getStoredUsername() || '')
 
@@ -441,6 +448,27 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         messages.value = [...messages.value]
     }
 
+    function mergeRoomAgentRoster(nextAgents: RoomAgent[], previousAgents = agents.value) {
+        const previousById = new Map(previousAgents.map(agent => [agent.id, agent]))
+        return nextAgents.map((agent) => {
+            const previous = previousById.get(agent.id)
+            const ownerMemberId = agent.ownerMemberId || previous?.ownerMemberId
+            const ownsRemoteAgent = agent.executorType === 'remote'
+                && ownerMemberId === userId.value
+            const { connectorId, remoteOrigin, ...visibleAgent } = agent
+            return {
+                ...visibleAgent,
+                ...(ownerMemberId ? { ownerMemberId } : {}),
+                ...(ownsRemoteAgent && (connectorId || previous?.connectorId)
+                    ? { connectorId: connectorId || previous?.connectorId }
+                    : {}),
+                ...(ownsRemoteAgent && (remoteOrigin || previous?.remoteOrigin)
+                    ? { remoteOrigin: remoteOrigin || previous?.remoteOrigin }
+                    : {}),
+            }
+        })
+    }
+
     function captureHistoricalMessageAgents(chatMessages: ChatMessage[]) {
         const historicalById = new Map(historicalMessageAgents.value.map(agent => [agent.id, agent]))
         let changed = false
@@ -458,7 +486,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         members.value = res.members || []
         if (res.agents) {
             snapshotCurrentMessageAgents(agents.value)
-            agents.value = res.agents
+            agents.value = mergeRoomAgentRoster(res.agents)
         }
         if (res.roomName) roomName.value = res.roomName
         if (typeof res.agentLinkToken === 'string') agentLinkToken.value = res.agentLinkToken
@@ -707,6 +735,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             realtimeJoinedRoomId.value = null
             realtimeJoinedSocketId.value = null
             error.value = null
+            socket.emit('load_pending_approvals', {}, (res: { pendingApprovals?: unknown } | undefined) => {
+                replacePendingApprovalSnapshots(res?.pendingApprovals)
+            })
             const roomId = currentRoomId.value
             if (roomId) {
                 void joinRealtimeRoom(roomId, {
@@ -894,22 +925,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('agents_updated', (data: { roomId: string; agents: RoomAgent[] }) => {
             if (data.roomId === currentRoomId.value) {
                 snapshotCurrentMessageAgents(agents.value)
-                const previousById = new Map(agents.value.map(agent => [agent.id, agent]))
                 agents.value = Array.isArray(data.agents)
-                    ? data.agents.map((agent) => {
-                        const previous = previousById.get(agent.id)
-                        if (
-                            agent.executorType !== 'remote'
-                            || (agent.ownerMemberId || previous?.ownerMemberId) !== userId.value
-                            || (agent.connectorId && agent.remoteOrigin)
-                        ) return agent
-                        return {
-                            ...agent,
-                            ownerMemberId: agent.ownerMemberId || previous?.ownerMemberId,
-                            connectorId: previous?.connectorId,
-                            remoteOrigin: previous?.remoteOrigin,
-                        }
-                    })
+                    ? mergeRoomAgentRoster(data.agents)
                     : []
             }
         })
@@ -1372,7 +1389,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         try {
             const res = await listAgents(roomId)
             snapshotCurrentMessageAgents(agents.value)
-            agents.value = res.agents
+            agents.value = mergeRoomAgentRoster(res.agents)
         } catch { /* ignore */ }
     }
 
@@ -1383,8 +1400,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 agent.id === res.agent.id || agent.agentId === res.agent.agentId
             )
             if (index >= 0) {
-                agents.value[index] = res.agent
-                agents.value = [...agents.value]
+                agents.value = mergeRoomAgentRoster(agents.value.map((agent, agentIndex) => (
+                    agentIndex === index ? res.agent : agent
+                )))
             } else {
                 agents.value = [...agents.value, res.agent]
             }
@@ -1398,9 +1416,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function updateAgentInRoom(roomId: string, agentId: string, data: RoomAgentInput) {
         try {
             const res = await updateAgent(roomId, agentId, data)
-            agents.value = res.agents ?? agents.value.map(agent => (
+            agents.value = mergeRoomAgentRoster(res.agents ?? agents.value.map(agent => (
                 agent.id === agentId || agent.agentId === agentId ? res.agent : agent
-            ))
+            )))
             if (res.members) members.value = res.members
             return res.agent
         } catch (err: any) {
@@ -1418,7 +1436,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const res = ownsRemoteAgent
                 ? await removeOwnedRemoteAgent(roomId, agentId)
                 : await removeAgent(roomId, agentId)
-            agents.value = res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId)
+            agents.value = mergeRoomAgentRoster(
+                res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId),
+            )
             if (res.members) members.value = res.members
         } catch (err: any) {
             error.value = err.message
@@ -1444,7 +1464,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             snapshotCurrentMessageAgents(agents.value)
             const res = await removeRoomMemberApi(roomId, memberUserId)
             members.value = res.members ?? members.value.filter(member => member.userId !== memberUserId)
-            agents.value = res.agents ?? agents.value.filter(agent => agent.ownerMemberId !== memberUserId)
+            agents.value = mergeRoomAgentRoster(
+                res.agents ?? agents.value.filter(agent => agent.ownerMemberId !== memberUserId),
+            )
         } catch (err: any) {
             error.value = err.message
             throw err

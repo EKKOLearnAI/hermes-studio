@@ -176,6 +176,7 @@ describe('group chat store baseline lifecycle', () => {
     groupChatApiMock.socket.emit.mockReset()
     groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'load_pending_approvals' && ack) ack({ pendingApprovals: [] })
       if (event === 'message' && ack) ack({ id: data?.id })
       return groupChatApiMock.socket
     })
@@ -197,6 +198,29 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('approval.requested', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
+  })
+
+  it('restores directed approvals when the Agent owner comes online without joining the room', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'load_pending_approvals' && ack) ack({
+        pendingApprovals: [{
+          roomId: 'room-offline', agentName: 'Agent', approval_id: 'approval-offline',
+          command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+        }],
+      })
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+
+    await store.connect()
+
+    expect([...store.pendingApprovals.values()]).toEqual([
+      expect.objectContaining({
+        roomId: 'room-offline',
+        agentName: 'Agent',
+        approvalId: 'approval-offline',
+      }),
+    ])
   })
 
   it('uses server persisted activity time instead of an agent display timestamp for live room ordering', async () => {
@@ -485,6 +509,38 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.agents).toEqual([])
   })
 
+  it('keeps remaining Agent owner badges when a removal response omits ownership fields', async () => {
+    const store = await loadStore()
+    const remainingAgent = {
+      ...agent,
+      id: 'row-remaining-agent',
+      agentId: 'remaining-agent',
+      executorType: 'remote' as const,
+      ownerMemberId: 'other-owner',
+    }
+    groupChatApiMock.removeAgent.mockResolvedValue({
+      agents: [{
+        ...remainingAgent,
+        ownerMemberId: undefined,
+        connectorId: 'other-owner-secret',
+        remoteOrigin: 'http://127.0.0.1:9999',
+      }],
+      members: [member],
+    })
+    store.agents = [agent, remainingAgent]
+
+    await store.removeAgentFromRoom('room-1', agent.id)
+
+    expect(store.agents).toEqual([
+      expect.objectContaining({
+        id: 'row-remaining-agent',
+        ownerMemberId: 'other-owner',
+      }),
+    ])
+    expect(store.agents[0]).not.toHaveProperty('connectorId')
+    expect(store.agents[0]).not.toHaveProperty('remoteOrigin')
+  })
+
   it('keeps the current room agent roster in sync with realtime broadcasts', async () => {
     const store = await loadStore()
     const updatedAgent = { ...agent, name: 'Realtime Agent' }
@@ -555,11 +611,23 @@ describe('group chat store baseline lifecycle', () => {
       connectorId: undefined,
       remoteOrigin: undefined,
     }
+    const otherOwnedAgent = {
+      ...agent,
+      id: 'row-other-agent',
+      agentId: 'other-agent',
+      executorType: 'remote' as const,
+      ownerMemberId: 'other-owner',
+      connectorId: 'other-owner-secret',
+      remoteOrigin: 'http://127.0.0.1:9999',
+    }
 
     await store.connect()
     store.currentRoomId = 'room-1'
-    store.agents = [ownedAgent]
-    emitSocket('agents_updated', { roomId: 'room-1', agents: [publicUpdate] })
+    store.agents = [ownedAgent, otherOwnedAgent]
+    emitSocket('agents_updated', {
+      roomId: 'room-1',
+      agents: [publicUpdate, { ...otherOwnedAgent, ownerMemberId: undefined }],
+    })
 
     expect(store.agents[0]).toMatchObject({
       name: 'Updated Agent',
@@ -567,6 +635,12 @@ describe('group chat store baseline lifecycle', () => {
       connectorId: '11111111-2222-4333-8444-555555555555',
       remoteOrigin: 'http://127.0.0.1:8648',
     })
+    expect(store.agents[1]).toMatchObject({
+      id: 'row-other-agent',
+      ownerMemberId: 'other-owner',
+    })
+    expect(store.agents[1]).not.toHaveProperty('connectorId')
+    expect(store.agents[1]).not.toHaveProperty('remoteOrigin')
   })
 
   it('joins invite-only rooms entirely over realtime when the socket starts disconnected', async () => {

@@ -28,7 +28,7 @@ describe('group chat approval and context baseline', () => {
     groupServer = harness.groupServer
     port = harness.port
     vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
-    groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
+    groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1', { ownerAuthUserId: 1 })
     groupServer.getStorage().addRoomAgent('room-1', 'agent-1', 'default', 'Agent', '', 0)
   })
 
@@ -47,6 +47,9 @@ describe('group chat approval and context baseline', () => {
     })
     const human = await connectGroupChatClient(port, 'human-1', 'Human')
     harness.sockets.push(agent, human)
+    groupServer.getIO().of('/group-chat').sockets.get(human.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
     await emitAck(agent, 'join', { roomId: 'room-1' })
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     return { agent, human, agentSessionId }
@@ -134,17 +137,17 @@ describe('group chat approval and context baseline', () => {
     ])
   })
 
-  it('delivers and handles approval globally for a manager who has not joined the source room', async () => {
+  it('delivers and handles approval globally for the Agent owner who has not joined the source room', async () => {
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
-    const manager = await connectGroupChatClient(port, 'manager-1', 'Manager')
-    harness.sockets.push(agent, manager)
+    const owner = await connectGroupChatClient(port, 'manager-1', 'Owner')
+    harness.sockets.push(agent, owner)
     await emitAck(agent, 'join', { roomId: 'room-1' })
     groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
-    groupServer.getIO().of('/group-chat').sockets.get(manager.id!)!.data.authUser = {
+    groupServer.getIO().of('/group-chat').sockets.get(owner.id!)!.data.authUser = {
       id: 1, role: 'super_admin', profiles: ['default'],
     }
 
@@ -170,11 +173,11 @@ describe('group chat approval and context baseline', () => {
       }),
     })
 
-    await expect(once<any>(manager, 'approval.requested')).resolves.toMatchObject({
+    await expect(once<any>(owner, 'approval.requested')).resolves.toMatchObject({
       roomId: 'room-1',
       approval_id: 'approval-global',
     })
-    await expect(emitAck(manager, 'approval.respond', {
+    await expect(emitAck(owner, 'approval.respond', {
       roomId: 'room-1',
       approval_id: 'approval-global',
       choice: 'once',
@@ -182,22 +185,64 @@ describe('group chat approval and context baseline', () => {
     await expect(approval).resolves.toBe('once')
   })
 
-  it('does not expose or resolve approvals for a non-member socket when authentication is disabled', async () => {
+  it('replays a still-pending approval when the Agent owner comes online later', async () => {
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
       source: 'agent',
       agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
     })
+    harness.sockets.push(agent)
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-offline-owner',
+      command: 'touch offline.txt',
+      description: 'writes a file',
+      choices: ['once', 'deny'],
+    })
+    await wait()
+
+    const owner = await connectGroupChatClient(port, 'owner-offline', 'Owner')
+    harness.sockets.push(owner)
+    groupServer.getIO().of('/group-chat').sockets.get(owner.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
+
+    await expect(emitAck<any>(owner, 'load_pending_approvals', {})).resolves.toEqual({
+      pendingApprovals: [expect.objectContaining({
+        roomId: 'room-1',
+        agentName: 'Agent',
+        approval_id: 'approval-offline-owner',
+        command: 'touch offline.txt',
+      })],
+    })
+  })
+
+  it('delivers an approval only to the Agent owner, not another room manager or a stranger', async () => {
+    const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
+    const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const owner = await connectGroupChatClient(port, 'human-1', 'Owner')
     const manager = await connectGroupChatClient(port, 'manager-1', 'Manager')
     const stranger = await connectGroupChatClient(port, 'stranger-1', 'Stranger')
-    harness.sockets.push(agent, manager, stranger)
+    harness.sockets.push(agent, owner, manager, stranger)
+    groupServer.getIO().of('/group-chat').sockets.get(owner.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
     await emitAck(agent, 'join', { roomId: 'room-1' })
-    groupServer.getStorage().addRoomMember('room-1', 'manager-1', 'Manager', '')
+    await emitAck(owner, 'join', { roomId: 'room-1' })
     await emitAck(manager, 'join', { roomId: 'room-1' })
 
-    let leaked: unknown = null
-    stranger.on('approval.requested', payload => { leaked = payload })
-    const managerRequest = once<any>(manager, 'approval.requested')
+    let managerLeak: unknown = null
+    let strangerLeak: unknown = null
+    manager.on('approval.requested', payload => { managerLeak = payload })
+    stranger.on('approval.requested', payload => { strangerLeak = payload })
+    const ownerRequest = once<any>(owner, 'approval.requested')
     const approval = waitForEkkoToolApproval({
       approvalId: 'approval-private-global',
       toolName: 'terminal_exec',
@@ -220,9 +265,10 @@ describe('group chat approval and context baseline', () => {
       }),
     })
 
-    await expect(managerRequest).resolves.toMatchObject({ approval_id: 'approval-private-global' })
+    await expect(ownerRequest).resolves.toMatchObject({ approval_id: 'approval-private-global' })
     await wait()
-    expect(leaked).toBeNull()
+    expect(managerLeak).toBeNull()
+    expect(strangerLeak).toBeNull()
     await expect(emitAck(stranger, 'approval.respond', {
       roomId: 'room-1',
       approval_id: 'approval-private-global',
@@ -231,9 +277,70 @@ describe('group chat approval and context baseline', () => {
     await expect(emitAck(manager, 'approval.respond', {
       roomId: 'room-1',
       approval_id: 'approval-private-global',
+      choice: 'once',
+    })).resolves.toEqual({ error: 'Access denied' })
+    await expect(emitAck(owner, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval-private-global',
       choice: 'deny',
     })).resolves.toEqual({ ok: true, resolved: true })
     await expect(approval).resolves.toBe('deny')
+  })
+
+  it('sends a guest Agent approval to its inviter instead of the room owner', async () => {
+    groupServer.getStorage().addRoomAgent(
+      'room-1',
+      'remote-agent',
+      'guest-profile',
+      'Guest Agent',
+      '',
+      1,
+      { executorType: 'remote', ownerMemberId: 'guest-owner' },
+    )
+    const agentSessionId = groupRuntimeSessionId('room-1', 'guest-profile', 'Guest Agent')
+    const agent = await connectGroupChatClient(port, 'remote-agent', 'Guest Agent', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    const inviter = await connectGroupChatClient(port, 'guest-owner', 'Inviter')
+    const roomOwner = await connectGroupChatClient(port, 'room-owner', 'Room Owner')
+    harness.sockets.push(agent, inviter, roomOwner)
+    groupServer.getIO().of('/group-chat').sockets.get(roomOwner.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
+    await emitAck(agent, 'join', { roomId: 'room-1' })
+    await emitAck(inviter, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(roomOwner, 'join', { roomId: 'room-1' })
+
+    const respondApproval = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Guest Agent',
+      respondApproval,
+    } as any])
+    let roomOwnerLeak: unknown = null
+    roomOwner.on('approval.requested', payload => { roomOwnerLeak = payload })
+    const inviterRequest = once<any>(inviter, 'approval.requested')
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Guest Agent',
+      agentSessionId,
+      approval_id: 'approval-guest-agent',
+      command: 'touch guest.txt',
+      description: 'writes a file',
+      choices: ['once', 'deny'],
+    })
+
+    await expect(inviterRequest).resolves.toMatchObject({ approval_id: 'approval-guest-agent' })
+    await wait()
+    expect(roomOwnerLeak).toBeNull()
+    await expect(emitAck(roomOwner, 'approval.respond', {
+      roomId: 'room-1', approval_id: 'approval-guest-agent', choice: 'once',
+    })).resolves.toEqual({ error: 'Access denied' })
+    await expect(emitAck(inviter, 'approval.respond', {
+      roomId: 'room-1', approval_id: 'approval-guest-agent', choice: 'once',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    expect(respondApproval).toHaveBeenCalledWith('approval-guest-agent', 'once')
   })
 
   it('does not trust a claimed persisted member identity for off-room approvals when authentication is disabled', async () => {
