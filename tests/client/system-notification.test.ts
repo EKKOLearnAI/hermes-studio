@@ -114,4 +114,17 @@ describe('system notification adapter', () => {
     expect(await module.showSystemNotification({ title: 'Approval required', tag: 'approval-after-tab-switch' })).toBe(true)
     expect(shown).toHaveLength(1)
   })
+
+  it('releases this Studio tab foreground heartbeat immediately when its window blurs', async () => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })
+    const module = await import('@/utils/completion-notification')
+    window.dispatchEvent(new Event('focus'))
+
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false })
+    window.dispatchEvent(new Event('blur'))
+
+    expect(await module.showSystemNotification({ title: 'Approval required', tag: 'approval-after-window-blur' })).toBe(true)
+    expect(shown).toHaveLength(1)
+  })
 })

@@ -151,6 +151,16 @@ function recordForegroundHeartbeat() {
   }
 }
 
+function releaseForegroundHeartbeat() {
+  try {
+    const heartbeats = readForegroundHeartbeats()
+    delete heartbeats[SYSTEM_NOTIFICATION_TAB_ID]
+    localStorage.setItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY, JSON.stringify(heartbeats))
+  } catch {
+    // Foreground detection falls back to this document when storage is blocked.
+  }
+}
+
 function hasFreshForegroundHeartbeat(): boolean {
   const heartbeats = readForegroundHeartbeats()
   return Object.keys(heartbeats).length > 0
@@ -159,6 +169,8 @@ function hasFreshForegroundHeartbeat(): boolean {
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   recordForegroundHeartbeat()
   window.addEventListener('focus', recordForegroundHeartbeat)
+  window.addEventListener('blur', releaseForegroundHeartbeat)
+  window.addEventListener('pagehide', releaseForegroundHeartbeat)
   document.addEventListener('visibilitychange', recordForegroundHeartbeat)
   window.setInterval(recordForegroundHeartbeat, 2000)
 }

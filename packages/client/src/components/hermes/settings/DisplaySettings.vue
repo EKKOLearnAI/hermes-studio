@@ -48,16 +48,18 @@ async function handleNotifyOnApprovalChange(value: boolean) {
       message.error(t(notificationPermissionErrorKey(result)))
       return
     }
-  }
-  await save({ notify_on_approval: value })
-  if (value) {
-    void showSystemNotification({
+    const shown = await showSystemNotification({
       title: 'Hermes',
       body: t('settings.display.notifyOnApprovalTest'),
       icon: '/coding-agents/hermes.png',
       tag: `hermes-approval-test-${Date.now()}`,
     }, { requireBackground: false, deduplicate: false })
+    if (!shown) {
+      message.error(t('settings.display.notifyOnApprovalTestFailed'))
+      return
+    }
   }
+  await save({ notify_on_approval: value })
 }
 
 async function testApprovalNotification() {

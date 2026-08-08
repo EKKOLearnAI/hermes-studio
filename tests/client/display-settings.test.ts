@@ -159,6 +159,22 @@ describe('DisplaySettings', () => {
     }), { requireBackground: false, deduplicate: false })
   })
 
+  it('does not enable approval notifications when the initial delivery check fails', async () => {
+    notificationMock.showSystemNotification.mockResolvedValueOnce(false)
+    const wrapper = mount(DisplaySettings, {
+      global: { stubs: {
+        SettingRow: { props: ['label', 'hint'], template: '<div class="setting-row"><div>{{ label }}</div><div>{{ hint }}</div><slot /></div>' },
+        NSwitch: defineComponent({ props: ['value'], emits: ['update:value'], template: '<button role="switch" @click="$emit(\'update:value\', !value)" />' }),
+      } },
+    })
+    const row = wrapper.findAll('.setting-row').find(item => item.text().includes('settings.display.notifyOnApproval'))
+    await row!.get('[role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(notificationMock.showSystemNotification).toHaveBeenCalledTimes(1)
+    expect(mockSettingsStore.saveSection).not.toHaveBeenCalledWith('display', { notify_on_approval: true })
+  })
+
   it('does not expose the unwired busy input mode toggle', () => {
     const wrapper = mount(DisplaySettings, {
       global: {
