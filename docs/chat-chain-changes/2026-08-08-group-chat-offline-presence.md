@@ -1,6 +1,6 @@
 ---
 date: 2026-08-08
-pr: pending
+pr: 2423
 feature: Group chat offline presence and remote Agent revocation consistency
 impact: Human members and Agents remain visible but appear muted while temporarily offline; rotating a room invite code preserves existing remote Agent connections, while explicitly revoked connectors remove their active room Agent registration atomically.
 ---
