@@ -195,6 +195,17 @@ export const WORKFLOWS_INDEXES = {
   idx_workflows_updated_at: 'CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows(updated_at)',
 }
 
+export const WORKFLOW_SCHEDULES_TABLE = 'workflow_schedules'
+export const WORKFLOW_SCHEDULES_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY', workflow_id: 'TEXT NOT NULL', profile: "TEXT NOT NULL DEFAULT 'default'", schedule: 'TEXT NOT NULL', timezone: "TEXT NOT NULL DEFAULT 'UTC'", enabled: 'INTEGER NOT NULL DEFAULT 1', input: 'TEXT', start_node_ids_json: "TEXT NOT NULL DEFAULT '[]'", timeout_ms: 'INTEGER', concurrency_policy: "TEXT NOT NULL DEFAULT 'skip'", misfire_policy: "TEXT NOT NULL DEFAULT 'skip'", last_scheduled_at: 'INTEGER', next_run_at: 'INTEGER', last_run_id: 'TEXT', last_error: 'TEXT', created_at: 'INTEGER NOT NULL', updated_at: 'INTEGER NOT NULL',
+}
+export const WORKFLOW_SCHEDULES_INDEXES = { idx_workflow_schedules_workflow: 'CREATE INDEX IF NOT EXISTS idx_workflow_schedules_workflow ON workflow_schedules(workflow_id)', idx_workflow_schedules_due: 'CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due ON workflow_schedules(enabled, next_run_at)' }
+export const WORKFLOW_SCHEDULE_TRIGGERS_TABLE = 'workflow_schedule_triggers'
+export const WORKFLOW_SCHEDULE_TRIGGERS_SCHEMA: Record<string, string> = { identity: 'TEXT PRIMARY KEY', schedule_id: 'TEXT NOT NULL', workflow_id: 'TEXT NOT NULL', scheduled_at: 'INTEGER NOT NULL', created_at: 'INTEGER NOT NULL' }
+export const WORKFLOW_SCHEDULE_EVENTS_TABLE = 'workflow_schedule_events'
+export const WORKFLOW_SCHEDULE_EVENTS_SCHEMA: Record<string, string> = { id: 'TEXT PRIMARY KEY', schedule_id: 'TEXT NOT NULL', workflow_id: 'TEXT NOT NULL', trigger_identity: 'TEXT NOT NULL', scheduled_at: 'INTEGER NOT NULL', kind: 'TEXT NOT NULL', run_id: 'TEXT', error: 'TEXT', created_at: 'INTEGER NOT NULL' }
+export const WORKFLOW_SCHEDULE_EVENTS_INDEXES = { idx_workflow_schedule_events_schedule: 'CREATE INDEX IF NOT EXISTS idx_workflow_schedule_events_schedule ON workflow_schedule_events(schedule_id, created_at)' }
+
 export const WORKFLOW_RUNS_TABLE = 'workflow_runs'
 
 export const WORKFLOW_RUNS_SCHEMA: Record<string, string> = {
@@ -213,6 +224,8 @@ export const WORKFLOW_RUNS_SCHEMA: Record<string, string> = {
   finished_at: 'INTEGER',
   created_at: 'INTEGER NOT NULL',
   error: 'TEXT',
+  trigger_source: "TEXT NOT NULL DEFAULT 'manual'",
+  scheduled_at: 'INTEGER',
 }
 
 export const WORKFLOW_RUNS_INDEXES = {
@@ -1209,6 +1222,9 @@ export function initAllHermesTables(): void {
     syncTable(WORKFLOWS_TABLE, WORKFLOWS_SCHEMA, {
       indexes: WORKFLOWS_INDEXES,
     })
+    syncTable(WORKFLOW_SCHEDULES_TABLE, WORKFLOW_SCHEDULES_SCHEMA, { indexes: WORKFLOW_SCHEDULES_INDEXES })
+    syncTable(WORKFLOW_SCHEDULE_TRIGGERS_TABLE, WORKFLOW_SCHEDULE_TRIGGERS_SCHEMA)
+    syncTable(WORKFLOW_SCHEDULE_EVENTS_TABLE, WORKFLOW_SCHEDULE_EVENTS_SCHEMA, { indexes: WORKFLOW_SCHEDULE_EVENTS_INDEXES })
     syncTable(WORKFLOW_RUNS_TABLE, WORKFLOW_RUNS_SCHEMA, {
       indexes: WORKFLOW_RUNS_INDEXES,
     })

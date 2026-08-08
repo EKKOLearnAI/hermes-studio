@@ -362,6 +362,8 @@ export async function bootstrap() {
   if (recoveredWorkflows.runs > 0) {
     logger.warn('Recovered %d orphaned workflow runs and aborted %d sessions', recoveredWorkflows.runs, recoveredWorkflows.sessions)
   }
+  const { getWorkflowScheduleService } = await import('./services/workflow-schedule-service')
+  getWorkflowScheduleService().start()
 
   workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
   workflowSocketServer.init()

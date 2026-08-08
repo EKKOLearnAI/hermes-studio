@@ -80,6 +80,8 @@ export interface WorkflowRunNowInput {
   input?: string | null
   user?: AuthenticatedUser
   timeoutMs?: number
+  triggerSource?: 'manual' | 'scheduled'
+  scheduledAt?: number
   /** Resolves only after the normalized frozen Run is durably persisted. */
   onAccepted?: (run: WorkflowRunRecord) => void
 }
@@ -1042,6 +1044,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
   async delete(id: string): Promise<boolean> {
     const workflow = getWorkflow(id)
     if (!workflow) return false
+    const { deleteWorkflowSchedules } = await import('../db/hermes/workflow-schedule-store')
+    deleteWorkflowSchedules(id)
     const runs = listAllWorkflowRuns(id)
     for (const run of runs) {
       await this.deleteRun(id, run.id)
@@ -2181,6 +2185,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         requested_timeout_ms: input.timeoutMs ?? null,
         deadline_at: runDeadline,
         started_at: startedAt,
+        trigger_source: input.triggerSource === 'scheduled' ? 'scheduled' : 'manual',
+        scheduled_at: input.triggerSource === 'scheduled' ? input.scheduledAt ?? null : null,
       })
     } finally {
       releaseAdmission()
