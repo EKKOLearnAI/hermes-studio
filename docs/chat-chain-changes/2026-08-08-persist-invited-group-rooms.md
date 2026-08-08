@@ -1,7 +1,7 @@
 ---
 date: 2026-08-08
 issue: 2418
-pr: pending
+pr: 2419
 feature: persistent invited group-room memberships
 touched: group-chat shared invitation membership
 impact: Authenticated invite acceptance now creates a durable account member with an explicit invite source. The unified list exposes only a server-authoritative shared access type for that source; anonymous invite guests remain temporary.
