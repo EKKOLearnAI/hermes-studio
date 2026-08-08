@@ -18,7 +18,7 @@ const routeRoomId = computed(() => {
 })
 
 const routeProfile = computed(() => {
-    const value = route.query.profile
+    const value = route.query?.profile
     return typeof value === 'string' && value.trim() ? value : null
 })
 
