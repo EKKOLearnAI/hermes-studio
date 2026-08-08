@@ -27,6 +27,7 @@ const announcedKeys = new Set<string>()
 const pendingSoundKeys = new Set<string>()
 const clarifyDrafts = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
+const copiedCommandKey = ref<string | null>(null)
 const workflows = ref<WorkflowRecord[]>([])
 const workflowStatuses = reactive<Record<string, WorkflowRuntimeStatus>>({})
 const visibleWorkflowApprovalKeys = reactive(new Set<string>())
@@ -91,8 +92,12 @@ type GlobalPendingAction =
   | { key: string; kind: 'group-clarify'; title: string; pending: GroupPendingClarify }
   | { key: string; kind: 'workflow-approval'; title: string; workflowId: string; runId: string; nodeId: string; executionId?: string }
 
+function normalizePendingSourceTitle(title: string): string {
+  return title.replace(/^(?:\s*branch:\s*)+/i, 'branch: ').trim()
+}
+
 function sessionTitle(sessionId: string): string {
-  return chatStore.sessions.find(session => session.id === sessionId)?.title || sessionId
+  return normalizePendingSourceTitle(chatStore.sessions.find(session => session.id === sessionId)?.title || sessionId)
 }
 
 function roomTitle(roomId: string): string {
@@ -169,6 +174,30 @@ function pendingActions(): GlobalPendingAction[] {
     }
   }
   return actions
+}
+
+async function copyApprovalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
+  try {
+    await navigator.clipboard.writeText(action.pending.command)
+    copiedCommandKey.value = action.key
+  } catch {
+    message.error(t('chat.copyFailed'))
+  }
+}
+
+function approvalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
+  if (!action.pending.command) return null
+  return h('div', { class: 'global-approval-command' }, [
+    h('div', { class: 'global-approval-command-header' }, [
+      h('span', { class: 'global-approval-command-label' }, t('chat.approvalCommand')),
+      h(NButton, {
+        size: 'tiny',
+        quaternary: true,
+        onClick: () => void copyApprovalCommand(action),
+      }, { default: () => copiedCommandKey.value === action.key ? t('common.copied') : t('common.copy') }),
+    ]),
+    h('pre', { tabindex: 0 }, [h('code', action.pending.command)]),
+  ])
 }
 
 function approvalButtons(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
@@ -287,7 +316,7 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
         ? () => h('div', { class: 'global-approval-content' }, t('workflow.status.pending_approval'))
         : () => h('div', { class: 'global-approval-content' }, [
             h('div', action.pending.description || ''),
-            action.pending.command ? h('code', action.pending.command) : null,
+            approvalCommand(action),
           ]),
     action: clarify
       ? () => h(NButton, {
@@ -374,7 +403,11 @@ onUnmounted(() => {
 .global-pending-title:focus-visible { border-radius: 2px; outline: 2px solid var(--accent-info); outline-offset: 3px; }
 .global-pending-actions, .global-clarify-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .global-approval-content, .global-clarify-content { display: grid; gap: 10px; max-width: 420px; max-height: min(300px, calc(100dvh - 160px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
-.global-approval-content code { display: block; padding: 8px; border-radius: 6px; background: var(--n-color-embedded); white-space: pre-wrap; }
+.global-approval-command { min-width: 0; overflow: hidden; border: 1px solid var(--n-border-color); border-radius: 8px; background: var(--n-color-embedded); }
+.global-approval-command-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 4px 6px 4px 12px; border-bottom: 1px solid var(--n-border-color); }
+.global-approval-command-label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.global-approval-command pre { max-height: 240px; margin: 0; padding: 12px; overflow: auto; overscroll-behavior: contain; white-space: pre; }
+.global-approval-command code { display: block; width: max-content; min-width: 100%; color: var(--text-primary); font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace; font-size: 12px; line-height: 1.55; }
 .global-clarify-question { font-weight: 600; }
 
 @media (max-width: 600px) {

@@ -670,6 +670,7 @@ export default {
     categoryDeleteFailed: '카테고리를 삭제하지 못했습니다',
     agent: 'Agent',
     approvalKicker: '도구 권한',
+    approvalCommand: '실행할 명령',
     approvalTitle: '실행 전에 도구 호출 확인',
     approvalAgree: '동의',
     approvalAllowOnce: '한 번만 허용',

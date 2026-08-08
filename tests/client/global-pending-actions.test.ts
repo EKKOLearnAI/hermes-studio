@@ -313,6 +313,32 @@ describe('GlobalPendingActions', () => {
     expect(created.some(entry => notificationTitleText(entry).includes('session-a'))).toBe(true)
   })
 
+  it('renders the exact approval command as a scrollable code block and copies it', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    chatState.sessions = [{ id: 'session-b', title: 'branch: branch: Build scripts' }]
+    const command = 'rm -rf /tmp/reviewer-snapshot &&\nmkdir -p /tmp/reviewer-snapshot'
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Security scan', command, choices: ['once', 'deny'],
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    expect(notificationTitleText(created[0])).toBe('branch: Build scripts · chat.approvalTitle')
+    const content = await render(created[0].options.content)
+    const preview = content.get('.global-approval-command')
+    expect(preview.get('.global-approval-command-label').text()).toBe('chat.approvalCommand')
+    expect(preview.get('pre > code').text()).toBe(command)
+    expect(preview.get('pre').attributes('tabindex')).toBe('0')
+
+    await preview.get('button').trigger('click')
+    expect(writeText).toHaveBeenCalledWith(command)
+  })
+
   it('shows and directly handles an approval from an inactive chat session', async () => {
     chatState.sessions = [{ id: 'session-a', title: 'A' }, { id: 'session-b', title: 'B' }]
     chatState.pendingApprovals = new Map([['session-b', {

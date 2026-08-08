@@ -724,6 +724,7 @@ export default {
     categoryDeleteFailed: '删除分类失败',
     agent: 'Agent',
     approvalKicker: '工具调用授权',
+    approvalCommand: '待执行命令',
     approvalTitle: '运行前请确认工具调用',
     approvalAgree: '同意',
     approvalAllowOnce: '仅本次允许',

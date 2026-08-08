@@ -612,6 +612,7 @@ export default {
     categoryDeleteFailed: 'Не удалось удалить категорию',
     agent: 'Agent',
     approvalKicker: 'Разрешение инструмента',
+    approvalCommand: 'Команда для выполнения',
     approvalTitle: 'Подтвердите вызов инструмента перед выполнением',
     approvalAgree: 'Согласиться',
     approvalAllowOnce: 'Разрешить однократно',
