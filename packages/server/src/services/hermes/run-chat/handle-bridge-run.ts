@@ -37,6 +37,7 @@ import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
 import { observeRunChatPetEvent } from '../pet-state-socket'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
+import { canUserRun, chargeUserRun } from '../../credits-billing'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
@@ -446,6 +447,21 @@ export async function handleBridgeRun(
   }
   const socketUser = socket.data.user as AuthenticatedUser | undefined
   await writeModelRunProfileToken(socketUser, profile)
+
+  // [credits] run 开始前检查余额（super_admin 豁免）
+  const gate = canUserRun(socketUser)
+  if (!gate.allowed && gate.reason === 'insufficient_balance') {
+    socket.emit('run.failed', {
+      event: 'run.failed',
+      queue_id: data.queue_id,
+      error: '点数余额不足，请先充值再继续使用。 (insufficient credits balance)',
+      code: 'INSUFFICIENT_CREDITS',
+      balance: gate.balance,
+    })
+    bridgeLogger.warn({ userId: socketUser?.id, username: socketUser?.username }, '[credits] run blocked: no balance')
+    return
+  }
+
   const runPrompt = [
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
   ].filter(Boolean).join('\n')
@@ -1617,6 +1633,28 @@ async function applyBridgeChunkAsync(
   })
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   const eventName = terminalError ? 'run.failed' : 'run.completed'
+
+  // [credits] run 完成后按真实 token 用量扣点（super_admin 豁免；失败不扣）
+  if (eventName === 'run.completed') {
+    try {
+      const charge = chargeUserRun(socket.data.user as AuthenticatedUser | undefined, usage.inputTokens, usage.outputTokens, {
+        sessionId,
+        runId: chunk.run_id,
+      })
+      if (charge.charged) {
+        state.creditsBalanceAfter = charge.balance
+        emit('credits.updated', { event: 'credits.updated', balance: charge.balance, charged: charge.points })
+      } else if (charge.reason === 'insufficient') {
+        emit('credits.insufficient', {
+          event: 'credits.insufficient',
+          balance: charge.balance,
+          message: '点数余额已不足，下次对话将被拦截。请尽快充值。',
+        })
+      }
+    } catch (err) {
+      bridgeLogger.warn({ err, sessionId, runId: chunk.run_id }, '[credits] failed to charge run usage')
+    }
+  }
   if (runMetadata?.delegationId && state.backgroundDelegations?.[runMetadata.delegationId]) {
     state.backgroundDelegations[runMetadata.delegationId] = {
       ...state.backgroundDelegations[runMetadata.delegationId],

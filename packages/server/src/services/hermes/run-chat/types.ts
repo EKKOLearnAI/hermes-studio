@@ -96,6 +96,8 @@ export interface SessionState {
    *  handleAbort 与 bridge terminal chunk 的 markAbortCompleted 会并发触发,
    *  不加保护会把刚启动的下一条 run 的 activeRunMarker/runId 清掉。 */
   abortFinalized?: boolean
+  /** [credits] run 扣点后的余额（用于前端展示） */
+  creditsBalanceAfter?: number
   queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource
