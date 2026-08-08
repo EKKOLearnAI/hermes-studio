@@ -1566,7 +1566,9 @@ export class GroupChatServer {
     }
 
     private pendingApprovalSnapshots(roomId: string) {
-        return [...this.pendingApprovalRoutes.values()]
+        const pendingRoutes = this.pendingApprovalRoutes
+        if (!pendingRoutes) return []
+        return [...pendingRoutes.values()]
             .filter(route => route.roomId === roomId)
             .map(route => ({
                 roomId: route.roomId,
@@ -1581,7 +1583,9 @@ export class GroupChatServer {
     }
 
     private pendingClarifySnapshots(roomId: string) {
-        return [...this.pendingClarifyRoutes.values()]
+        const pendingRoutes = this.pendingClarifyRoutes
+        if (!pendingRoutes) return []
+        return [...pendingRoutes.values()]
             .filter(route => route.roomId === roomId)
             .map(route => ({
                 roomId: route.roomId,

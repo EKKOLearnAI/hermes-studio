@@ -369,7 +369,7 @@ onUnmounted(() => {
 <style scoped>.global-pending-actions-host { display: none; }</style>
 <style>
 .n-notification:has(.global-approval-content, .global-clarify-content) { width: 400px; }
-.global-pending-title { appearance: none; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.global-pending-title { appearance: none; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
 .global-pending-title:hover { text-decoration-color: currentcolor; }
 .global-pending-title:focus-visible { border-radius: 2px; outline: 2px solid var(--accent-info); outline-offset: 3px; }
 .global-pending-actions, .global-clarify-choices { display: flex; flex-wrap: wrap; gap: 8px; }

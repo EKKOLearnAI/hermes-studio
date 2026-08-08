@@ -8,4 +8,5 @@ impact: Hermes and Ekko Group Chat clarification requests now reach room manager
 Group Chat owns the approval and clarification lifecycle for its runs. Generic
 `/chat-run` pending-interaction delivery ignores `group_chat` sessions so the
 same request is not also shown under an internal run ID. Pending room actions
-are restored for authorized managers when they reconnect.
+are restored for authorized managers when they reconnect. Snapshot recovery
+also treats missing transient route maps as empty during partial server setup.
