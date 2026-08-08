@@ -186,6 +186,7 @@ export interface MemberInfo {
     description: string
     joinedAt: number
     avatar?: string
+    connectionStatus?: 'online' | 'offline'
 }
 
 export interface JoinResult {

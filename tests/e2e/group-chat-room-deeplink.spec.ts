@@ -62,7 +62,7 @@ const agentsByRoom: Record<string, unknown[]> = {
   ],
 }
 
-async function mockGroupChatApi(page: Page) {
+async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const rooms = baseRooms.map(room => ({ ...room }))
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
@@ -145,8 +145,14 @@ async function mockGroupChatApi(page: Page) {
     if (detailMatch) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
+      const agents = (agentsByRoom[roomId] || []).map(agent => (
+        offlinePresence ? { ...(agent as object), connectionStatus: 'offline' } : agent
+      ))
+      const members = offlinePresence
+        ? [{ id: 'member-offline', userId: 'user-offline', name: 'Offline Member', description: '', joinedAt: 1_790_000_000, connectionStatus: 'offline' }]
+        : [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }]
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents: agentsByRoom[roomId] || [], members: [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }] })
+        ? json({ room, messages: messagesByRoom[roomId] || [], agents, members })
         : json({ error: 'Room not found' }, 404)
     }
 
@@ -227,14 +233,14 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
   }, platform)
 }
 
-async function setup(page: Page, path: string, platform?: DesktopPlatform) {
+async function setup(page: Page, path: string, platform?: DesktopPlatform, offlinePresence = false) {
   if (platform) await installDesktopBridge(page, platform)
   await page.addInitScript(() => {
     window.localStorage.setItem('hermes.groupChat.refactorNotice.v1.acknowledged', '1')
   })
   await authenticate(page)
   await mockGroupChatSocket(page)
-  const api = await mockGroupChatApi(page)
+  const api = await mockGroupChatApi(page, offlinePresence)
   await page.goto(path)
   return api
 }
@@ -400,6 +406,17 @@ test.describe('group chat room deep links', () => {
     await expect(rail).toBeVisible()
     await page.getByRole('button', { name: 'Your Name' }).click()
     await expect(page.locator('.n-modal').filter({ hasText: 'Your Name' })).toBeVisible()
+  })
+
+  test('renders offline people and Agents in gray', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha', undefined, true)
+
+    const offlineMember = page.getByRole('button', { name: 'Offline Member' })
+    const offlineAgent = page.getByRole('button', { name: 'Worker' })
+    await expect(offlineMember).toHaveClass(/agent-avatar-rail-offline/)
+    await expect(offlineAgent).toHaveClass(/agent-avatar-rail-offline/)
+    await expect(offlineMember.locator('.agent-avatar')).toHaveCSS('filter', 'grayscale(1)')
+    await expect(offlineAgent.locator('.agent-avatar')).toHaveCSS('opacity', '0.42')
   })
 
   test('room settings rotate invite codes only after the update API succeeds', async ({ page }) => {

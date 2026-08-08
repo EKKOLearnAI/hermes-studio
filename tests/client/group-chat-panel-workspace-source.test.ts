@@ -184,8 +184,10 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(rail).toContain(':key="member.userId"')
     expect(rail).toContain('v-for="agent in store.agents"')
     expect(rail).toContain('class="agent-avatar-rail-item"')
+    expect(rail).toContain("'agent-avatar-rail-offline': agent.connectionStatus === 'offline'")
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
     expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
+    expect(rail).toContain("'agent-avatar-rail-offline': member.connectionStatus === 'offline'")
     expect(rail).toContain('@click="handleRoomMemberClick(member)"')
     expect(rail).toContain('@click="handleAgentRailClick(agent)"')
     expect(rail).not.toContain(':disabled="!currentRoomCanManage"')
@@ -198,6 +200,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('overflow-y: auto')
     expect(source).toContain('animation: member-avatar-typing-breathe 1.6s ease-in-out infinite')
     expect(source).toContain('@keyframes member-avatar-typing-breathe')
+    expect(source).toContain('.agent-avatar-rail-offline')
+    expect(source).toContain('filter: grayscale(1)')
+    expect(source).toContain('opacity: 0.42')
   })
 
   it('keeps invite-only chat free of settings and speech controls', () => {

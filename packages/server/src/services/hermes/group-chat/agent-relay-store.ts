@@ -104,6 +104,17 @@ export type GroupAgentConnector = {
   revokedAt: number | null
 }
 
+type GroupAgentConnectorRevocationListener = (connector: GroupAgentConnector) => void
+
+const connectorRevocationListeners = new Set<GroupAgentConnectorRevocationListener>()
+
+export function subscribeGroupAgentConnectorRevocations(
+  listener: GroupAgentConnectorRevocationListener,
+): () => void {
+  connectorRevocationListeners.add(listener)
+  return () => connectorRevocationListeners.delete(listener)
+}
+
 type PairingRow = Omit<GroupAgentPairingRequest, 'agent'> & {
   agentJson: string
   requesterSecretHash: string
@@ -480,12 +491,38 @@ export function touchGroupAgentConnector(connectorId: string, status: 'online' |
   ).run(status, now, connectorId)
 }
 
-export function revokeGroupAgentConnector(connectorId: string, now = Date.now()): GroupAgentConnector | null {
-  getDb()?.prepare(
-    `UPDATE gc_agent_connectors SET status = 'revoked', revokedAt = ?, lastSeenAt = ?
-     WHERE id = ? AND status != 'revoked'`,
-  ).run(now, now, connectorId)
-  return getGroupAgentConnector(connectorId)
+export function revokeGroupAgentConnector(
+  connectorId: string,
+  now = Date.now(),
+  options: { notify?: boolean } = {},
+): GroupAgentConnector | null {
+  const db = getDb()
+  if (!db) return null
+  const connector = getGroupAgentConnector(connectorId)
+  if (!connector) return null
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare(
+      `UPDATE gc_agent_connectors SET status = 'revoked', revokedAt = ?, lastSeenAt = ?
+       WHERE id = ? AND status != 'revoked'`,
+    ).run(now, now, connectorId)
+    db.prepare(
+      `UPDATE gc_room_agents
+       SET removedAt = CASE WHEN removedAt = 0 THEN ? ELSE removedAt END
+       WHERE roomId = ? AND id = ? AND executorType = 'remote'`,
+    ).run(now, connector.roomId, connector.roomAgentId)
+    db.exec('COMMIT')
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK')
+    throw error
+  }
+  const revoked = getGroupAgentConnector(connectorId)
+  if (revoked && options.notify !== false) {
+    for (const listener of connectorRevocationListeners) {
+      try { listener(revoked) } catch { /* A notification failure must not roll back revocation. */ }
+    }
+  }
+  return revoked
 }
 
 export function countActiveGuestAgentLinks(roomId: string, ownerMemberId: string): number {
