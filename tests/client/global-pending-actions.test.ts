@@ -329,6 +329,9 @@ describe('GlobalPendingActions', () => {
 
     expect(notificationTitleText(created[0])).toBe('branch: Build scripts · chat.approvalTitle')
     const content = await render(created[0].options.content)
+    expect(content.classes()).toContain('global-approval-content')
+    expect(content.get('.global-approval-description').text()).toBe('Security scan')
+    expect(content.get('.global-approval-command').classes()).toContain('studio-surface')
     const preview = content.get('.global-approval-command')
     expect(preview.get('.global-approval-command-label').text()).toBe('chat.approvalCommand')
     expect(preview.get('pre > code').text()).toBe(command)

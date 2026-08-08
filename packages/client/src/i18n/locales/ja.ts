@@ -670,6 +670,7 @@ export default {
     categoryDeleteFailed: 'カテゴリーを削除できませんでした',
     agent: 'Agent',
     approvalKicker: 'ツール権限',
+    toolResultUnavailable: '実行が中断され、ツール結果を受信できませんでした',
     approvalCommand: '実行するコマンド',
     approvalTitle: '実行前にツール呼び出しを確認',
     approvalAgree: '同意',

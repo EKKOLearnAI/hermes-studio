@@ -77,6 +77,13 @@ describe('GroupMessageItem tool details', () => {
     })
   })
 
+  it('shows an explicit unavailable-result label for interrupted historical tools', () => {
+    const wrapper = mountToolMessage({ toolStatus: 'interrupted' })
+
+    expect(wrapper.find('.tool-spinner').exists()).toBe(false)
+    expect(wrapper.get('.tool-interrupted-badge').text()).toBe('chat.toolResultUnavailable')
+  })
+
   it('selects a group message as the active room reference', async () => {
     const store = useGroupChatStore()
     store.currentRoomId = 'room-1'

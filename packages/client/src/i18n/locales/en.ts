@@ -724,6 +724,7 @@ export default {
     categoryDeleteFailed: 'Failed to delete category',
     agent: 'Agent',
     approvalKicker: 'Tool permission',
+    toolResultUnavailable: 'Execution interrupted; no tool result received',
     approvalCommand: 'Command to run',
     approvalTitle: 'Review tool call before running',
     approvalAgree: 'Agree',

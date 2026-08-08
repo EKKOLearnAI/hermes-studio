@@ -634,7 +634,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
 
     // ─── Computed ───────────────────────────────────────────
-    const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => (a.firstSeenAt ?? a.timestamp) - (b.firstSeenAt ?? b.timestamp))))
+    const sortedMessages = computed(() => mapGroupMessages(
+        [...messages.value].sort((a, b) => (a.firstSeenAt ?? a.timestamp) - (b.firstSeenAt ?? b.timestamp)),
+        new Set(contextStatuses.value.keys()),
+    ))
 
     const memberNames = computed(() => {
         return members.value.map(m => m.name)
@@ -1741,11 +1744,14 @@ function segmentGroupReasoningSnapshots(messages: ChatMessage[]): ChatMessage[] 
     })
 }
 
-function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
+function mapGroupMessages(msgs: ChatMessage[], activeAgentNames = new Set<string>()): ChatMessage[] {
     msgs = segmentGroupReasoningSnapshots(msgs)
     const toolNameMap = new Map<string, string>()
     const toolArgsMap = new Map<string, unknown>()
+    const activeRunByAgent = new Map<string, string>()
     for (const msg of msgs) {
+        const runId = inferredGroupResponseRunId(msg)
+        if (runId && activeAgentNames.has(msg.senderName)) activeRunByAgent.set(msg.senderName, runId)
         if (msg.role === 'assistant' && msg.tool_calls?.length) {
             for (const tc of msg.tool_calls) {
                 if (!tc?.id) continue
@@ -1800,7 +1806,9 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                     toolName: tc.function?.name || undefined,
                     toolCallId: tc.id,
                     toolArgs: runtimeToolPayloadOrUndefined(tc.function?.arguments),
-                    toolStatus: 'running',
+                    toolStatus: msg.isStreaming || activeRunByAgent.get(msg.senderName) === inferredGroupResponseRunId(msg)
+                        ? 'running'
+                        : 'interrupted',
                 })
             }
             continue

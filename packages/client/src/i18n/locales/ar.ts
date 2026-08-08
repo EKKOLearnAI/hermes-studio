@@ -724,6 +724,7 @@ export default {
     categoryDeleteFailed: 'تعذّر حذف الفئة',
     agent: 'وكيل',
     approvalKicker: 'صلاحية الأداة',
+    toolResultUnavailable: 'توقف التنفيذ ولم يتم استلام نتيجة الأداة',
     approvalCommand: 'الأمر المطلوب تشغيله',
     approvalTitle: 'راجع استدعاء الأداة قبل التشغيل',
     approvalAgree: 'موافقة',

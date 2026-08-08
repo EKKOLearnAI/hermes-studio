@@ -722,6 +722,7 @@ export default {
     categoryDeleteFailed: '刪除分類失敗',
     agent: 'Agent',
     approvalKicker: '工具呼叫授權',
+    toolResultUnavailable: '執行已中斷，未收到工具結果',
     approvalCommand: '待執行命令',
     approvalTitle: '執行前請確認工具呼叫',
     approvalAgree: '同意',

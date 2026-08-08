@@ -661,6 +661,7 @@ onBeforeUnmount(() => {
                 <span v-if="message.toolPreview && !toolExpanded" class="tool-preview">{{ message.toolPreview }}</span>
                 <span v-if="message.toolStatus === 'running'" class="tool-spinner"></span>
                 <span v-if="message.toolStatus === 'error'" class="tool-error-badge">{{ t('chat.error') }}</span>
+                <span v-if="message.toolStatus === 'interrupted'" class="tool-interrupted-badge">{{ t('chat.toolResultUnavailable') }}</span>
             </div>
             <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
                 <div v-if="message.reasoning?.trim()" class="tool-detail-section">
@@ -916,6 +917,12 @@ onBeforeUnmount(() => {
             background: rgba(0, 0, 0, 0.03);
         }
     }
+}
+
+.tool-interrupted-badge {
+    flex: 0 0 auto;
+    color: $text-muted;
+    font-size: 10px;
 }
 
 .tool-chevron {

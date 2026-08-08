@@ -670,6 +670,7 @@ export default {
     categoryDeleteFailed: 'Falha ao excluir categoria',
     agent: 'Agent',
     approvalKicker: 'Permissão da ferramenta',
+    toolResultUnavailable: 'Execução interrompida; nenhum resultado recebido',
     approvalCommand: 'Comando a executar',
     approvalTitle: 'Revisar chamada da ferramenta antes de executar',
     approvalAgree: 'Concordar',

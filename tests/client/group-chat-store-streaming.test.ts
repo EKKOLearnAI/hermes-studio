@@ -125,6 +125,90 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.socket.disconnect.mockClear()
   })
 
+  it('settles a historical Tool call without a persisted result instead of spinning forever', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-orphan_part_0_toolcall_call-orphan',
+        run_id: 'run-orphan',
+        senderName: 'QA Engineer',
+        tool_calls: [{
+          id: 'call-orphan',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-orphan',
+        toolStatus: 'interrupted',
+      }),
+    ])
+  })
+
+  it('keeps an unmatched Tool call running while its streamed message is live', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-live_part_0',
+      run_id: 'run-live',
+    }))
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+    emitSocket('message', assistantMessage({
+      id: 'run-live_part_0_toolcall_call-live',
+      run_id: 'run-live',
+      isStreaming: true,
+      tool_calls: [{
+        id: 'call-live',
+        type: 'function',
+        function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+      }],
+      finish_reason: 'tool_calls',
+    }))
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')).toEqual(
+      expect.objectContaining({ toolStatus: 'running' }),
+    )
+  })
+
+  it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-old_part_0_toolcall_call-old',
+        run_id: 'run-old',
+        senderName: 'bot',
+        timestamp: 1,
+        tool_calls: [{
+          id: 'call-old',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'old' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+      assistantMessage({
+        id: 'run-live_part_0_toolcall_call-live',
+        run_id: 'run-live',
+        senderName: 'bot',
+        timestamp: 2,
+        tool_calls: [{
+          id: 'call-live',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'live' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-old')?.toolStatus)
+      .toBe('interrupted')
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')?.toolStatus)
+      .toBe('running')
+  })
+
   it('preserves streamed reasoning when the final message supplies content only', async () => {
     const store = await createJoinedStore()
 
