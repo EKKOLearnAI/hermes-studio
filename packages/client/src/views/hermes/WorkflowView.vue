@@ -15,7 +15,7 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
+import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, workflowNodeSessionByExecution, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
 import { resolveWorkflowRunPageSwipe, type WorkflowRunPagerPage } from '@/utils/workflow-run-pager'
 import {
   normalizeWorkflowRunEdge,
@@ -82,6 +82,7 @@ import {
   runWorkflowNow,
   stopWorkflowRun,
   updateWorkflow as updateWorkflowApi,
+  type WorkflowRunNodeSessionRecord,
   type WorkflowRunRecord,
   type WorkflowRecord,
   type WorkflowViewport,
@@ -1098,11 +1099,17 @@ function workflowDocumentFromRecord(record: WorkflowRecord): WorkflowDocument {
 }
 
 async function openWorkflowNotificationTarget() {
+  const profile = typeof route.query.profile === 'string' ? route.query.profile : ''
   const workflowId = typeof route.query.workflowId === 'string' ? route.query.workflowId : ''
   const runId = typeof route.query.runId === 'string' ? route.query.runId : ''
   const nodeId = typeof route.query.nodeId === 'string' ? route.query.nodeId : ''
   const executionId = typeof route.query.executionId === 'string' ? route.query.executionId : ''
   if (!workflowId || !runId || !nodeId) return
+
+  if (profile && profile !== profilesStore.activeProfileName && profilesStore.profiles.some(item => item.name === profile)) {
+    await profilesStore.switchProfile(profile)
+    await loadWorkflows()
+  }
 
   const workflow = workflows.value.find(item => item.id === workflowId)
   if (!workflow) return
@@ -1110,10 +1117,11 @@ async function openWorkflowNotificationTarget() {
   await loadWorkflowRuns(workflowId, runId, { applySelectedSnapshot: true })
   const run = workflowRuns.value.find(item => item.id === runId)
   if (!run) return
-  const nodeSession = latestWorkflowNodeSession(run.node_sessions, nodeId)
+  const nodeSession = executionId
+    ? workflowNodeSessionByExecution(run.node_sessions, nodeId, executionId)
+    : latestWorkflowNodeSession(run.node_sessions, nodeId)
   if (!nodeSession?.session_id) return
-  if (executionId && nodeSession.execution_id !== executionId) return
-  await openWorkflowNodeSession(nodeId)
+  await openWorkflowNodeSession(nodeId, nodeSession)
 }
 
 async function initializeWorkflowPage() {
@@ -1133,7 +1141,7 @@ async function initializeWorkflowPage() {
 }
 
 watch(
-  () => [route.query.workflowId, route.query.runId, route.query.nodeId, route.query.executionId],
+  () => [route.query.profile, route.query.workflowId, route.query.runId, route.query.nodeId, route.query.executionId],
   () => {
     if (workflows.value.length > 0) void openWorkflowNotificationTarget()
   },
@@ -1511,10 +1519,10 @@ function workflowNodeErrorFromRun(run: WorkflowRunRecord, nodeId: string): strin
   return null
 }
 
-async function openWorkflowNodeSession(nodeId: string) {
+async function openWorkflowNodeSession(nodeId: string, targetNodeSession?: WorkflowRunNodeSessionRecord) {
   const run = selectedWorkflowRun.value
   if (!run) return
-  const nodeSession = latestWorkflowNodeSession(run.node_sessions, nodeId)
+  const nodeSession = targetNodeSession || latestWorkflowNodeSession(run.node_sessions, nodeId)
   if (!nodeSession?.session_id) {
     message.warning(t('workflow.runs.noNodeSession'))
     return

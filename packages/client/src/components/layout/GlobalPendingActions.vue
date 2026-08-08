@@ -98,11 +98,11 @@ function resetWorkflowSubscriptions(profile?: string | null) {
 
 type ApprovalChoice = PendingApproval['choices'][number]
 type GlobalPendingAction =
-  | { key: string; kind: 'chat-approval'; title: string; pending: PendingApproval }
-  | { key: string; kind: 'chat-clarify'; title: string; pending: { sessionId: string; clarifyId: string; question: string; choices: string[] | null } }
-  | { key: string; kind: 'group-approval'; title: string; pending: GroupPendingApproval }
-  | { key: string; kind: 'group-clarify'; title: string; pending: GroupPendingClarify }
-  | { key: string; kind: 'workflow-approval'; title: string; workflowId: string; runId: string; nodeId: string; executionId?: string }
+  | { key: string; profile: string; kind: 'chat-approval'; title: string; pending: PendingApproval }
+  | { key: string; profile: string; kind: 'chat-clarify'; title: string; pending: { sessionId: string; clarifyId: string; question: string; choices: string[] | null } }
+  | { key: string; profile: string; kind: 'group-approval'; title: string; pending: GroupPendingApproval }
+  | { key: string; profile: string; kind: 'group-clarify'; title: string; pending: GroupPendingClarify }
+  | { key: string; profile: string; kind: 'workflow-approval'; title: string; workflowId: string; runId: string; nodeId: string; executionId?: string }
 
 function normalizePendingSourceTitle(title: string): string {
   return title.replace(/^(?:\s*branch:\s*)+/i, 'branch: ').trim()
@@ -149,25 +149,26 @@ function pendingSoundActionKeys(): string[] {
 
 function pendingActions(suppressVisibleSources = true): GlobalPendingAction[] {
   const actions: GlobalPendingAction[] = []
+  const profile = profilesStore.activeProfileName || 'default'
   const visibleChatSessionId = suppressVisibleSources && ['hermes.chat', 'hermes.session', 'hermes.globalAgent', 'hermes.globalAgentSession'].includes(String(route.name || ''))
     ? chatStore.activeSessionId
     : null
   const visibleGroupRoomId = suppressVisibleSources && route.name === 'hermes.groupChatRoom' ? groupChatStore.currentRoomId : null
   for (const pending of chatStore.pendingApprovals.values()) {
     if (pending.sessionId === visibleChatSessionId) continue
-    actions.push({ key: `chat-approval:${pending.sessionId}:${pending.approvalId}`, kind: 'chat-approval', title: sessionTitle(pending.sessionId), pending })
+    actions.push({ key: `chat-approval:${pending.sessionId}:${pending.approvalId}`, profile, kind: 'chat-approval', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of chatStore.pendingClarifies.values()) {
     if (pending.sessionId === visibleChatSessionId) continue
-    actions.push({ key: `chat-clarify:${pending.sessionId}:${pending.clarifyId}`, kind: 'chat-clarify', title: sessionTitle(pending.sessionId), pending })
+    actions.push({ key: `chat-clarify:${pending.sessionId}:${pending.clarifyId}`, profile, kind: 'chat-clarify', title: sessionTitle(pending.sessionId), pending })
   }
   for (const pending of groupChatStore.pendingApprovals.values()) {
     if (pending.roomId === visibleGroupRoomId) continue
-    actions.push({ key: `group-approval:${pending.roomId}:${pending.approvalId}`, kind: 'group-approval', title: roomTitle(pending.roomId), pending })
+    actions.push({ key: `group-approval:${pending.roomId}:${pending.approvalId}`, profile, kind: 'group-approval', title: roomTitle(pending.roomId), pending })
   }
   for (const pending of groupChatStore.pendingClarifies.values()) {
     if (pending.roomId === visibleGroupRoomId) continue
-    actions.push({ key: `group-clarify:${pending.roomId}:${pending.clarifyId}`, kind: 'group-clarify', title: roomTitle(pending.roomId), pending })
+    actions.push({ key: `group-clarify:${pending.roomId}:${pending.clarifyId}`, profile, kind: 'group-clarify', title: roomTitle(pending.roomId), pending })
   }
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
@@ -176,6 +177,7 @@ function pendingActions(suppressVisibleSources = true): GlobalPendingAction[] {
       if (visibleWorkflowApprovalKeys.has(key)) continue
       actions.push({
         key,
+        profile,
         kind: 'workflow-approval',
         title: workflows.value.find(workflow => workflow.id === status.workflowId)?.name || status.workflowId,
         workflowId: status.workflowId,
@@ -322,17 +324,19 @@ function systemNotificationCopy(action: GlobalPendingAction): { title: string; b
 }
 
 function pendingSourceClickUrl(action: GlobalPendingAction): string {
+  const profileQuery = `?profile=${encodeURIComponent(action.profile)}`
   if (action.kind === 'chat-approval' || action.kind === 'chat-clarify') {
     const sessionId = encodeURIComponent(action.pending.sessionId)
     const session = chatStore.sessions.find(item => item.id === action.pending.sessionId)
     return session?.source === 'global_agent'
-      ? `/hermes/global-agent/session/${sessionId}`
-      : `/hermes/session/${sessionId}`
+      ? `/hermes/global-agent/session/${sessionId}${profileQuery}`
+      : `/hermes/session/${sessionId}${profileQuery}`
   }
   if (action.kind === 'group-approval' || action.kind === 'group-clarify') {
-    return `/hermes/group-chat/room/${encodeURIComponent(action.pending.roomId)}`
+    return `/hermes/group-chat/room/${encodeURIComponent(action.pending.roomId)}${profileQuery}`
   }
   const query = new URLSearchParams({
+    profile: action.profile,
     workflowId: action.workflowId,
     runId: action.runId,
     nodeId: action.nodeId,
@@ -346,7 +350,7 @@ function notifyPendingAction(action: GlobalPendingAction) {
   void showSystemNotification({
     ...copy,
     icon: '/coding-agents/hermes.png',
-    tag: `hermes-pending-${encodeURIComponent(profilesStore.activeProfileName || 'default')}:${action.key}`,
+    tag: `hermes-pending-${encodeURIComponent(action.profile)}:${action.key}`,
     clickUrl: pendingSourceClickUrl(action),
   })
 }

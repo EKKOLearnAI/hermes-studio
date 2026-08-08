@@ -141,13 +141,13 @@ describe('GlobalPendingActions', () => {
 
     const systemCalls = systemNotificationMock.showSystemNotification.mock.calls as any[][]
     const chatPayload = systemCalls.find(([payload]) => payload.tag.includes('chat-approval'))?.[0]
-    expect(chatPayload?.clickUrl).toBe('/hermes/global-agent/session/session-b')
+    expect(chatPayload?.clickUrl).toBe('/hermes/global-agent/session/session-b?profile=default')
 
     const groupPayload = systemCalls.find(([payload]) => payload.tag.includes('group-approval'))?.[0]
-    expect(groupPayload?.clickUrl).toBe('/hermes/group-chat/room/room-b')
+    expect(groupPayload?.clickUrl).toBe('/hermes/group-chat/room/room-b?profile=default')
 
     const workflowPayload = systemCalls.find(([payload]) => payload.tag.includes('workflow-approval'))?.[0]
-    expect(workflowPayload?.clickUrl).toBe('/hermes/workflow?workflowId=workflow-b&runId=run-b&nodeId=build&executionId=exec-b')
+    expect(workflowPayload?.clickUrl).toBe('/hermes/workflow?profile=default&workflowId=workflow-b&runId=run-b&nodeId=build&executionId=exec-b')
     wrapper.unmount()
   })
 
@@ -362,7 +362,7 @@ describe('GlobalPendingActions', () => {
     expect(created).toHaveLength(0)
     expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledOnce()
     expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledWith(expect.objectContaining({
-      clickUrl: '/hermes/session/session-a',
+      clickUrl: '/hermes/session/session-a?profile=default',
       tag: expect.stringContaining('chat-approval:session-a:approval-a'),
     }))
     wrapper.unmount()
