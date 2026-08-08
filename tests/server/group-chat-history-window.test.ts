@@ -436,6 +436,63 @@ describe('group chat history windows', () => {
     client.disconnect()
   })
 
+  it('bounds long persisted tool message ids without changing external tool call ids', async () => {
+    const resultAttempts = new Map<string, number>()
+    mockSocket.emit.mockImplementation((event: string, payload?: any, ack?: Function) => {
+      if (event === 'message' && payload?.role === 'tool') {
+        const toolCallId = String(payload.tool_call_id)
+        const attempt = (resultAttempts.get(toolCallId) || 0) + 1
+        resultAttempts.set(toolCallId, attempt)
+        if (typeof ack === 'function') ack(attempt === 1
+          ? { error: 'temporary Room persistence failure' }
+          : { id: payload.id })
+      } else if (typeof ack === 'function') {
+        ack({ id: payload?.id })
+      }
+      return mockSocket
+    })
+    const clients = new AgentClients()
+    const client = await clients.createAgent({
+      agentId: 'agent-1', profile: 'default', name: 'Worker', description: '', invited: 0,
+    } as any)
+    const runMessageId = `${'r'.repeat(153)}_part_0`
+    const toolCallIds = [`call_${'x'.repeat(74)}a`, `call_${'x'.repeat(74)}b`]
+
+    for (const toolCallId of toolCallIds) {
+      await (client as any).recordToolStarted(
+        'room-1', 'session-1', { tool_name: 'lookup', tool_call_id: toolCallId, args: {} },
+        runMessageId, 'run-long',
+      )
+      await (client as any).recordToolCompleted('room-1', 'session-1', {
+        event: 'tool.completed', tool_name: 'lookup', tool_call_id: toolCallId, output: toolCallId,
+      })
+    }
+    await (client as any).completePendingToolsForRun('room-1', 'session-1', 'run-long')
+
+    const messagePayloads = mockSocket.emit.mock.calls
+      .filter((call: any[]) => call[0] === 'message')
+      .map((call: any[]) => call[1])
+    expect(messagePayloads.every((payload: any) => payload.id.length <= 160)).toBe(true)
+
+    const toolCallPayloads = messagePayloads.filter((payload: any) => payload.role === 'assistant')
+    expect(toolCallPayloads.map((payload: any) => payload.tool_calls[0].id)).toEqual(toolCallIds)
+    expect(toolCallPayloads.every((payload: any) => payload.id.includes('_toolcall_'))).toBe(true)
+
+    const resultPayloads = messagePayloads.filter((payload: any) => payload.role === 'tool')
+    expect(resultPayloads.map((payload: any) => payload.tool_call_id)).toEqual([
+      toolCallIds[0], toolCallIds[1], toolCallIds[0], toolCallIds[1],
+    ])
+    expect(resultPayloads.every((payload: any) => payload.id.includes('_toolresult_'))).toBe(true)
+    for (const toolCallId of toolCallIds) {
+      const ids = resultPayloads
+        .filter((payload: any) => payload.tool_call_id === toolCallId)
+        .map((payload: any) => payload.id)
+      expect(new Set(ids).size).toBe(1)
+    }
+    expect(new Set(resultPayloads.map((payload: any) => payload.id)).size).toBe(2)
+    client.disconnect()
+  })
+
   it('retries terminal tool persistence with stable ids until bounded success', async () => {
     let resultAttempts = 0
     mockSocket.emit.mockImplementation((event: string, payload?: any, ack?: Function) => {

@@ -1545,7 +1545,7 @@ export class AgentClient implements GroupAgentExecutor {
             },
         }
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolcall_${stableToolIdPart(externalToolCallId)}`,
+            id: groupToolMessageId(runMessageId, 'toolcall', externalToolCallId),
             roomId,
             senderId: this.id || this.agentId,
             senderName: this.name,
@@ -1597,7 +1597,7 @@ export class AgentClient implements GroupAgentExecutor {
             || (typeof ev.error === 'string' && ev.error.trim().length > 0)
         const timestamp = Date.now()
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolresult_${stableToolIdPart(externalToolCallId)}`,
+            id: groupToolMessageId(runMessageId, 'toolresult', externalToolCallId),
             roomId,
             senderId: this.id || this.agentId,
             senderName: this.name,
@@ -1832,12 +1832,40 @@ const TOOL_RESULT_ACK_TIMEOUT_MS = 30_000
 const TOOL_RESULT_FINAL_RETRY_ATTEMPTS = 2
 const TOOL_RESULT_RETRY_DELAY_MS = 50
 const ACKNOWLEDGED_TOOL_CALL_LIMIT = 1_024
+const GROUP_CHAT_MESSAGE_ID_MAX_LENGTH = 160
 
 function stableToolIdPart(value: string): string {
     const raw = String(value || 'item')
     if (/^[a-zA-Z0-9_-]{1,80}$/.test(raw)) return raw
     const hash = createHash('sha256').update(raw).digest('hex').slice(0, 12)
     return `${safeId(raw).slice(0, 67)}_${hash}`
+}
+
+function groupToolMessageId(
+    runMessageId: string,
+    kind: 'toolcall' | 'toolresult',
+    externalToolCallId: string,
+): string {
+    const toolIdPart = stableToolIdPart(externalToolCallId)
+    const candidate = `${runMessageId}_${kind}_${toolIdPart}`
+    if (candidate.length <= GROUP_CHAT_MESSAGE_ID_MAX_LENGTH) return candidate
+
+    const marker = `_${kind}_`
+    const hash = createHash('sha256')
+        .update(`${runMessageId}\u0000${kind}\u0000${externalToolCallId}`)
+        .digest('hex')
+        .slice(0, 20)
+    const hashSuffix = `_h_${hash}`
+    const readableLength = GROUP_CHAT_MESSAGE_ID_MAX_LENGTH - marker.length - hashSuffix.length
+    const safeRunMessageId = String(runMessageId || 'message').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const runLength = Math.min(safeRunMessageId.length, 96, readableLength - 1)
+    let runIdPart = safeRunMessageId.slice(0, runLength)
+    const partSuffix = safeRunMessageId.match(/_part_\d+$/)?.[0] || ''
+    if (partSuffix && safeRunMessageId.length > runLength && partSuffix.length < runLength) {
+        runIdPart = `${safeRunMessageId.slice(0, runLength - partSuffix.length)}${partSuffix}`
+    }
+    const readableToolIdPart = toolIdPart.slice(0, readableLength - runIdPart.length)
+    return `${runIdPart}${marker}${readableToolIdPart}${hashSuffix}`
 }
 
 function delay(ms: number): Promise<void> {
