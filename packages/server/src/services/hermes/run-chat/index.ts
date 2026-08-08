@@ -1494,6 +1494,11 @@ export class ChatRunSocket {
   private emitPendingInteraction(profile: string, event: string, payload: any) {
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved') return
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
+    const source = sessionId
+      ? this.sessionMap.get(sessionId)?.source || getSession(sessionId)?.source
+      : undefined
+    if (source === 'group_chat') return
     this.nsp.to(`pending-interactions:${profile}`).emit(event, payload)
   }
 

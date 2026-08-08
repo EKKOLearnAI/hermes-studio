@@ -141,6 +141,16 @@ export interface GroupPendingApproval {
     requestedAt: number
 }
 
+export interface GroupPendingClarify {
+    roomId: string
+    agentName: string
+    clarifyId: string
+    question: string
+    choices: string[] | null
+    timeoutMs: number
+    requestedAt: number
+}
+
 export const useGroupChatStore = defineStore('groupChat', () => {
     // ─── State ─────────────────────────────────────────────
     const connected = ref(false)
@@ -164,9 +174,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
+    const pendingClarifies = ref<Map<string, GroupPendingClarify>>(new Map())
 
     function pendingApprovalKey(roomId: string, approvalId: string): string {
         return `${roomId}:${approvalId}`
+    }
+    function pendingClarifyKey(roomId: string, clarifyId: string): string {
+        return `${roomId}:${clarifyId}`
     }
     const totalMessages = ref(0)
     const loadedMessageCount = ref(0)
@@ -298,6 +312,68 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
         return null
     })
+    const activePendingClarify = computed(() => {
+        if (!currentRoomId.value) return null
+        for (const clarify of pendingClarifies.value.values()) {
+            if (clarify.roomId === currentRoomId.value) return clarify
+        }
+        return null
+    })
+
+    function upsertPendingApproval(data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; requested_at?: number }) {
+        if (!data.roomId || !data.approval_id) return
+        const description = data.description || ''
+        const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
+        const isMemoryWrite = !Boolean(data.allow_permanent) && (
+            normalizedDescription === 'save to memory' ||
+            normalizedDescription.startsWith('save to memory:') ||
+            normalizedDescription.startsWith('save to memory?')
+        )
+        const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
+            .filter((choice): choice is GroupPendingApproval['choices'][number] =>
+                choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+        pendingApprovals.value.set(pendingApprovalKey(data.roomId, data.approval_id), {
+            roomId: data.roomId,
+            agentName: data.agentName || '',
+            approvalId: data.approval_id,
+            command: data.command || '',
+            description,
+            choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
+            allowPermanent: Boolean(data.allow_permanent),
+            isMemoryWrite,
+            requestedAt: Number(data.requested_at) || Date.now(),
+        })
+    }
+
+    function upsertPendingClarify(data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number; requested_at?: number }) {
+        if (!data.roomId || !data.clarify_id) return
+        pendingClarifies.value.set(pendingClarifyKey(data.roomId, data.clarify_id), {
+            roomId: data.roomId,
+            agentName: data.agentName || '',
+            clarifyId: data.clarify_id,
+            question: data.question || '',
+            choices: Array.isArray(data.choices) ? data.choices.map(String) : null,
+            timeoutMs: Number(data.timeout_ms) || 300_000,
+            requestedAt: Number(data.requested_at) || Date.now(),
+        })
+    }
+
+    function replaceRoomPendingInteractions(roomId: string, approvals: unknown, clarifies: unknown) {
+        for (const [key, pending] of pendingApprovals.value) {
+            if (pending.roomId === roomId) pendingApprovals.value.delete(key)
+        }
+        for (const [key, pending] of pendingClarifies.value) {
+            if (pending.roomId === roomId) pendingClarifies.value.delete(key)
+        }
+        if (Array.isArray(approvals)) {
+            for (const pending of approvals) upsertPendingApproval(pending as any)
+        }
+        if (Array.isArray(clarifies)) {
+            for (const pending of clarifies) upsertPendingClarify(pending as any)
+        }
+        pendingApprovals.value = new Map(pendingApprovals.value)
+        pendingClarifies.value = new Map(pendingClarifies.value)
+    }
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredGroupUserName() || getStoredUsername() || '')
 
@@ -421,6 +497,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             )
         } else {
             contextStatuses.value.clear()
+        }
+        if (typeof res.roomId === 'string' && res.roomId) {
+            replaceRoomPendingInteractions(res.roomId, res.pendingApprovals, res.pendingClarifies)
         }
     }
 
@@ -801,6 +880,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             clearRemoteTypingState()
             contextStatuses.value.clear()
             pendingApprovals.value.clear()
+            pendingClarifies.value.clear()
         })
 
         socket.on('member_updated', (data: { roomId: string; members: MemberInfo[] }) => {
@@ -867,28 +947,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
 
         socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
-            if (!data.approval_id) return
-            const description = data.description || ''
-            const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
-            const isMemoryWrite = !Boolean(data.allow_permanent) && (
-                normalizedDescription === 'save to memory' ||
-                normalizedDescription.startsWith('save to memory:') ||
-                normalizedDescription.startsWith('save to memory?')
-            )
-            const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
-                .filter((choice): choice is GroupPendingApproval['choices'][number] =>
-                    choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
-            pendingApprovals.value.set(pendingApprovalKey(data.roomId, data.approval_id), {
-                roomId: data.roomId,
-                agentName: data.agentName || '',
-                approvalId: data.approval_id,
-                command: data.command || '',
-                description,
-                choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
-                allowPermanent: Boolean(data.allow_permanent),
-                isMemoryWrite,
-                requestedAt: Date.now(),
-            })
+            upsertPendingApproval(data)
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
@@ -896,6 +955,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (!data.roomId || !data.approval_id || data.resolved === false) return
             pendingApprovals.value.delete(pendingApprovalKey(data.roomId, data.approval_id))
             pendingApprovals.value = new Map(pendingApprovals.value)
+        })
+
+        socket.on('clarify.requested', (data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number }) => {
+            upsertPendingClarify(data)
+            pendingClarifies.value = new Map(pendingClarifies.value)
+        })
+
+        socket.on('clarify.resolved', (data: { roomId?: string; clarify_id?: string }) => {
+            if (!data.roomId || !data.clarify_id) return
+            pendingClarifies.value.delete(pendingClarifyKey(data.roomId, data.clarify_id))
+            pendingClarifies.value = new Map(pendingClarifies.value)
         })
 
         socket.on('agent_pairing_requested', (data: { roomId?: string }) => {
@@ -945,6 +1015,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 clearRemoteTypingState()
                 contextStatuses.value.clear()
                 pendingApprovals.value.clear()
+                pendingClarifies.value.clear()
             }
         })
 
@@ -972,6 +1043,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         contextStatuses.value.clear()
         roomSummaryStates.value.clear()
         pendingApprovals.value.clear()
+        pendingClarifies.value.clear()
         inviteGuest.value = false
         activeInviteCode.value = ''
         agentLinkToken.value = ''
@@ -1477,6 +1549,37 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         await respondApprovalFor(pending.roomId, pending.approvalId, choice)
     }
 
+    async function respondClarifyFor(roomId: string, clarifyId: string, response: string) {
+        const key = pendingClarifyKey(roomId, clarifyId)
+        const pending = pendingClarifies.value.get(key)
+        if (!pending) return
+        const socket = await ensureRealtimeSocket()
+        let resolved = false
+        await new Promise<void>((resolve, reject) => {
+            socket.emit('clarify.respond', {
+                roomId: pending.roomId,
+                clarify_id: pending.clarifyId,
+                response,
+            }, (res: any) => {
+                if (res?.error) reject(new Error(res.error))
+                else {
+                    resolved = res?.resolved !== false
+                    resolve()
+                }
+            })
+        })
+        if (resolved) {
+            pendingClarifies.value.delete(key)
+            pendingClarifies.value = new Map(pendingClarifies.value)
+        }
+    }
+
+    async function respondClarify(response: string) {
+        const pending = activePendingClarify.value
+        if (!pending) return
+        await respondClarifyFor(pending.roomId, pending.clarifyId, response)
+    }
+
     return {
         // State
         connected,
@@ -1493,7 +1596,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         contextStatuses,
         roomSummaryStates,
         pendingApprovals,
+        pendingClarifies,
         activePendingApproval,
+        activePendingClarify,
         autoPlaySpeechEnabled,
         activeMessageReference,
         totalMessages,
@@ -1531,6 +1636,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         interruptAgent,
         respondApproval,
         respondApprovalFor,
+        respondClarify,
+        respondClarifyFor,
         createNewRoom,
         joinByCode,
         deleteRoom,

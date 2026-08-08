@@ -889,6 +889,69 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.pendingApprovals.size).toBe(0)
   })
 
+  it('tracks group clarifications and removes them when resolved', async () => {
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    emitSocket('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-1',
+      question: 'Which environment?', choices: ['staging', 'production'], timeout_ms: 300000,
+    })
+
+    expect([...store.pendingClarifies.values()]).toContainEqual(expect.objectContaining({
+      roomId: 'room-1', agentName: 'Agent', clarifyId: 'clarify-1',
+      question: 'Which environment?', choices: ['staging', 'production'],
+    }))
+    emitSocket('clarify.resolved', { roomId: 'room-1', clarify_id: 'clarify-1' })
+    expect(store.pendingClarifies.size).toBe(0)
+  })
+
+  it('responds to a clarification from an inactive room without switching rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.currentRoomId = 'room-a'
+    emitSocket('clarify.requested', {
+      roomId: 'room-b', agentName: 'Agent', clarify_id: 'clarify-b',
+      question: 'Which environment?', choices: null,
+    })
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'clarify.respond') ack?.({ ok: true, resolved: true })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondClarifyFor('room-b', 'clarify-b', 'staging')
+
+    expect(store.currentRoomId).toBe('room-a')
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('clarify.respond', {
+      roomId: 'room-b', clarify_id: 'clarify-b', response: 'staging',
+    }, expect.any(Function))
+    expect(store.pendingClarifies.size).toBe(0)
+  })
+
+  it('restores pending room interactions when joining after a refresh', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data: any, ack?: Function) => {
+      if (event === 'join' && ack) ack({
+        roomId: 'room-1', members: [], agents: [], typingUsers: [], contextStatuses: [],
+        pendingApprovals: [{
+          roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-restored',
+          command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+        }],
+        pendingClarifies: [{
+          roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-restored',
+          question: 'Which environment?', choices: null, timeout_ms: 300000,
+        }],
+      })
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ approvalId: 'approval-restored' }))
+    expect([...store.pendingClarifies.values()]).toContainEqual(expect.objectContaining({ clarifyId: 'clarify-restored' }))
+  })
+
   it('keeps same-id approvals isolated across rooms', async () => {
     const store = await loadStore()
     await store.connect()

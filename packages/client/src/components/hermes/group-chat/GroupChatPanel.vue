@@ -106,6 +106,7 @@ const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
 const pendingAgentPairings = ref<GroupAgentPairingRequest[]>([])
 const isDecidingAgentPairing = ref(false)
+const clarifyResponse = ref('')
 const allowGuestAgentsDraft = ref(false)
 const maxGuestAgentsPerMemberDraft = ref(1)
 const allowRemoteWorkspaceAccessDraft = ref(false)
@@ -492,6 +493,11 @@ function agentOwnerAvatar(agent: RoomAgent) {
 const visibleApproval = computed(() =>
     currentRoomCanManage.value && pendingAgentPairings.value.length === 0
         ? store.activePendingApproval
+        : null,
+)
+const visibleClarify = computed(() =>
+    currentRoomCanManage.value && pendingAgentPairings.value.length === 0
+        ? store.activePendingClarify
         : null,
 )
 const visibleAgentPairing = computed(() =>
@@ -1474,6 +1480,18 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
     }
 }
 
+async function handleClarify(response?: string) {
+    if (!currentRoomCanManage.value) return
+    const finalResponse = response !== undefined ? response : clarifyResponse.value.trim()
+    if (response === undefined && !finalResponse) return
+    try {
+        await store.respondClarify(finalResponse)
+        clarifyResponse.value = ''
+    } catch (err: any) {
+        message.error(err.message || t('common.saveFailed'))
+    }
+}
+
 </script>
 
 <template>
@@ -1855,6 +1873,38 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                                     </NButton>
                                     <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
                                         {{ t('chat.approvalDeny') }}
+                                    </NButton>
+                                </div>
+                            </div>
+                        </Transition>
+                        <Transition name="approval-float">
+                            <div v-if="!visibleApproval && visibleClarify" class="approval-float-panel">
+                                <div class="approval-float-header">
+                                    <span class="approval-float-icon" aria-hidden="true">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <circle cx="12" cy="12" r="10" />
+                                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                                            <line x1="12" y1="17" x2="12.01" y2="17" />
+                                        </svg>
+                                    </span>
+                                    <span>{{ t('chat.clarifyKicker') }}</span>
+                                </div>
+                                <div class="approval-float-title">
+                                    <span v-if="visibleClarify.agentName">@{{ visibleClarify.agentName }} · </span>{{ t('chat.clarifyTitle') }}
+                                </div>
+                                <div class="approval-float-desc">{{ visibleClarify.question }}</div>
+                                <div v-if="visibleClarify.choices?.length" class="approval-float-actions">
+                                    <NButton v-for="choice in visibleClarify.choices" :key="choice" size="small" type="primary" @click="handleClarify(choice)">
+                                        {{ choice }}
+                                    </NButton>
+                                    <NButton size="small" type="error" secondary @click="handleClarify('')">
+                                        {{ t('chat.clarifyDismiss') }}
+                                    </NButton>
+                                </div>
+                                <div class="clarify-float-input-row">
+                                    <NInput v-model:value="clarifyResponse" size="small" :placeholder="t('chat.clarifyPlaceholder')" @keydown.enter.prevent="handleClarify()" />
+                                    <NButton size="small" type="primary" :disabled="!clarifyResponse.trim()" @click="handleClarify()">
+                                        {{ t('chat.clarifySubmit') }}
                                     </NButton>
                                 </div>
                             </div>
@@ -2670,6 +2720,15 @@ export default defineComponent({ components: { CreateRoomForm } })
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-start;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 4px 0;
+    border-top: 1px solid $border-color;
+}
+
+.clarify-float-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     margin-top: 10px;
     padding: 10px 4px 0;

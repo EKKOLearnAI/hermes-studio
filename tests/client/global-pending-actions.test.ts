@@ -14,14 +14,17 @@ const chatState = reactive({
 const groupState = reactive({
   currentRoomId: 'room-a' as string | null,
   pendingApprovals: new Map<string, any>(),
+  pendingClarifies: new Map<string, any>(),
   rooms: [] as any[],
   respondApprovalFor: vi.fn(),
+  respondClarifyFor: vi.fn(),
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
 const settingsState = reactive({ display: { approval_bell: false }, fetchSettings: vi.fn(async () => true) })
 const routeState = reactive({ name: 'hermes.chat' as string })
+const routerPush = vi.fn(async () => undefined)
 const created: any[] = []
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
@@ -35,7 +38,7 @@ vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupSta
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
 vi.mock('@/stores/hermes/settings', () => ({ useSettingsStore: () => settingsState }))
 vi.mock('@/utils/completion-sound', () => ({ playCompletionSound: vi.fn(async () => true) }))
-vi.mock('vue-router', () => ({ useRoute: () => routeState }))
+vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => ({ push: routerPush }) }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
 vi.mock('@/api/hermes/workflow-socket', () => ({
   listWorkflowsSocket: workflowMock.listWorkflowsSocket,
@@ -69,6 +72,11 @@ async function render(node: (() => any) | undefined) {
   return mount(component)
 }
 
+function notificationTitleText(entry: any): string {
+  const title = typeof entry.options.title === 'function' ? entry.options.title() : entry.options.title
+  return typeof title === 'string' ? title : String(title?.children || '')
+}
+
 describe('GlobalPendingActions', () => {
   beforeEach(() => {
     created.splice(0)
@@ -77,6 +85,7 @@ describe('GlobalPendingActions', () => {
     chatState.sessions = []
     chatState.activeSessionId = 'session-a'
     groupState.pendingApprovals = new Map()
+    groupState.pendingClarifies = new Map()
     groupState.rooms = []
     groupState.currentRoomId = 'room-a'
     profileState.activeProfileName = 'default'
@@ -301,7 +310,7 @@ describe('GlobalPendingActions', () => {
     mount(GlobalPendingActions)
     await nextTick()
 
-    expect(created.some(entry => String(entry.options.title).includes('session-a'))).toBe(true)
+    expect(created.some(entry => notificationTitleText(entry).includes('session-a'))).toBe(true)
   })
 
   it('shows and directly handles an approval from an inactive chat session', async () => {
@@ -313,11 +322,33 @@ describe('GlobalPendingActions', () => {
     mount(GlobalPendingActions)
     await nextTick()
 
-    const approvalNotification = created.find(entry => String(entry.options.title).includes('B'))
+    const approvalNotification = created.find(entry => notificationTitleText(entry).includes('B'))
     expect(approvalNotification).toBeTruthy()
+    expect(approvalNotification.options.closable).toBe(false)
+    expect(approvalNotification.options.onClose).toBeUndefined()
+    const title = await render(approvalNotification.options.title)
+    await title.get('button').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ name: 'hermes.session', params: { sessionId: 'session-b' } })
     const action = await render(approvalNotification.options.action)
     await action.get('button').trigger('click')
     expect(chatState.respondApprovalFor).toHaveBeenCalledWith('session-b', 'approval-b', 'once')
+  })
+
+  it('opens a global-agent session from its notification title', async () => {
+    chatState.sessions = [{ id: 'global-session', title: 'Global session', source: 'global_agent' }]
+    chatState.pendingApprovals = new Map([['global-session', {
+      sessionId: 'global-session', approvalId: 'approval-global', description: 'Run command', command: 'pwd', choices: ['once'],
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    const title = await render(created[0].options.title)
+    await title.get('button').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({
+      name: 'hermes.globalAgentSession',
+      params: { sessionId: 'global-session' },
+    })
   })
 
   it('submits a clarify response from the global notification', async () => {
@@ -336,7 +367,28 @@ describe('GlobalPendingActions', () => {
     expect(chatState.respondToClarifyFor).toHaveBeenCalledWith('session-b', 'clarify-b', 'staging')
   })
 
-  it('handles a group-room approval without navigating to that room', async () => {
+  it('opens and responds to a clarification from an inactive group room', async () => {
+    groupState.rooms = [{ id: 'room-b', name: 'Room B' }]
+    groupState.pendingClarifies = new Map([['room-b:clarify-b', {
+      roomId: 'room-b', agentName: 'Builder', clarifyId: 'clarify-b',
+      question: 'Which environment?', choices: null, timeoutMs: 300000,
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    expect(notificationTitleText(created[0])).toContain('Room B')
+    const title = await render(created[0].options.title)
+    await title.get('button').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ name: 'hermes.groupChatRoom', params: { roomId: 'room-b' } })
+    const content = await render(created[0].options.content)
+    await content.get('input').setValue('staging')
+    const action = await render(created[0].options.action)
+    await action.get('button').trigger('click')
+    expect(groupState.respondClarifyFor).toHaveBeenCalledWith('room-b', 'clarify-b', 'staging')
+  })
+
+  it('opens the source room from the title and handles its approval in place', async () => {
     groupState.rooms = [{ id: 'room-b', name: 'Room B' }]
     groupState.pendingApprovals = new Map([['approval-b', {
       roomId: 'room-b', approvalId: 'approval-b', agentName: 'Builder', description: 'Install package', command: 'npm ci', choices: ['once', 'deny'],
@@ -346,7 +398,10 @@ describe('GlobalPendingActions', () => {
     await nextTick()
 
     expect(groupState.connect).toHaveBeenCalled()
-    expect(created[0].options.title).toContain('Room B')
+    expect(notificationTitleText(created[0])).toContain('Room B')
+    const title = await render(created[0].options.title)
+    await title.get('button').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ name: 'hermes.groupChatRoom', params: { roomId: 'room-b' } })
     const action = await render(created[0].options.action)
     await action.get('button').trigger('click')
     expect(groupState.respondApprovalFor).toHaveBeenCalledWith('room-b', 'approval-b', 'once')
@@ -404,7 +459,7 @@ describe('GlobalPendingActions', () => {
     })
     await nextTick()
 
-    const workflowNotification = created.find(entry => String(entry.options.title).includes('Workflow B'))
+    const workflowNotification = created.find(entry => notificationTitleText(entry).includes('Workflow B'))
     expect(workflowNotification).toBeTruthy()
     const action = await render(workflowNotification.options.action)
     const buttons = action.findAll('button')
@@ -425,7 +480,7 @@ describe('GlobalPendingActions', () => {
     })
     await nextTick()
 
-    const workflowNotifications = created.filter(entry => String(entry.options.title).includes('Workflow B'))
+    const workflowNotifications = created.filter(entry => notificationTitleText(entry).includes('Workflow B'))
     expect(workflowNotifications).toHaveLength(2)
     const secondAction = await render(workflowNotifications[1].options.action)
     const buttons = secondAction.findAll('button')
@@ -466,7 +521,7 @@ describe('GlobalPendingActions', () => {
     await Promise.resolve()
     await nextTick()
 
-    expect(created.some(entry => String(entry.options.title).includes('Old Workflow'))).toBe(false)
-    expect(created.some(entry => String(entry.options.title).includes('New Workflow'))).toBe(true)
+    expect(created.some(entry => notificationTitleText(entry).includes('Old Workflow'))).toBe(false)
+    expect(created.some(entry => notificationTitleText(entry).includes('New Workflow'))).toBe(true)
   })
 })

@@ -2,6 +2,22 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('GroupChatPanel workspace save handling', () => {
+  it('keeps free-text input available alongside clarification choices in single and group chat', () => {
+    const sources = [
+      readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8'),
+      readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8'),
+    ]
+
+    for (const source of sources) {
+      const start = source.indexOf('v-if="!visibleApproval && visibleClarify"')
+      const clarifyPanel = source.slice(start, source.indexOf('</Transition>', start))
+
+      expect(clarifyPanel).toContain('visibleClarify.choices')
+      expect(clarifyPanel).toContain('<div class="clarify-float-input-row">')
+      expect(clarifyPanel).not.toContain('<div v-else class="clarify-float-input-row">')
+    }
+  })
+
   it('coerces null picker values before trimming so clearing the input saves an empty workspace', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 

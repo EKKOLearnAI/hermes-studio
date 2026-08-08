@@ -504,6 +504,26 @@ export class AgentClient implements GroupAgentExecutor {
         this.socket!.emit('approval.resolved', event)
     }
 
+    emitClarifyRequested(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('clarify.requested', event)
+            return
+        }
+        this.socket!.emit('clarify.requested', event)
+    }
+
+    emitClarifyResolved(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('clarify.resolved', event)
+            return
+        }
+        this.socket!.emit('clarify.resolved', event)
+    }
+
     async interrupt(roomId: string): Promise<boolean> {
         const sessionId = this.activeSessions.get(roomId)
         if (!sessionId) return true
@@ -1038,6 +1058,10 @@ export class AgentClient implements GroupAgentExecutor {
                         this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'approval.resolved') {
                         this.emitApprovalResolved(roomId, { ...payload, agentSessionId: sessionId })
+                    } else if (event === 'clarify.requested') {
+                        this.emitClarifyRequested(roomId, { ...payload, agentSessionId: sessionId })
+                    } else if (event === 'clarify.resolved') {
+                        this.emitClarifyResolved(roomId, { ...payload, agentSessionId: sessionId })
                     }
                 },
             })
@@ -1421,6 +1445,23 @@ export class AgentClient implements GroupAgentExecutor {
                     agentSessionId: sessionId,
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
+                })
+            } else if (eventType === 'clarify.requested') {
+                this.emitClarifyRequested(roomId, {
+                    event: 'clarify.requested',
+                    agentSessionId: sessionId,
+                    clarify_id: (ev as any).clarify_id,
+                    question: (ev as any).question,
+                    choices: Array.isArray((ev as any).choices) ? (ev as any).choices : null,
+                    timeout_ms: (ev as any).timeout_ms,
+                })
+            } else if (eventType === 'clarify.resolved') {
+                this.emitClarifyResolved(roomId, {
+                    event: 'clarify.resolved',
+                    agentSessionId: sessionId,
+                    clarify_id: (ev as any).clarify_id,
+                    resolved: (ev as any).resolved,
+                    reason: (ev as any).reason,
                 })
             } else {
                 const text = groupBridgeReasoningDeltaFromEvent(ev as Record<string, unknown>)

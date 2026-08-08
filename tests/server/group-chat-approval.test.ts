@@ -11,6 +11,10 @@ import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
 } from '../../packages/server/src/services/ekko-agent/approvals'
+import {
+  cancelPendingEkkoClarifications,
+  waitForEkkoClarification,
+} from '../../packages/server/src/services/ekko-agent/clarifications'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat approval and context baseline', () => {
@@ -30,6 +34,7 @@ describe('group chat approval and context baseline', () => {
 
   afterEach(() => {
     denyPendingEkkoToolApprovals()
+    cancelPendingEkkoClarifications()
     harness?.cleanup()
     vi.restoreAllMocks()
   })
@@ -337,6 +342,75 @@ describe('group chat approval and context baseline', () => {
       approval_id: 'approval-1',
       choice: 'deny',
     })
+  })
+
+  it('relays and routes a clarification response to the pending Ekko Agent session', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const requested = once<any>(human, 'clarify.requested')
+    const clarification = waitForEkkoClarification({
+      clarifyId: 'clarify-ekko',
+      question: 'Which environment?',
+      choices: ['staging', 'production'],
+      timeoutMs: 300_000,
+    }, {
+      sessionId: agentSessionId,
+      onRequested: pending => agent.emit('clarify.requested', {
+        roomId: 'room-1',
+        agentName: 'Agent',
+        agentSessionId,
+        clarify_id: pending.clarifyId,
+        question: pending.question,
+        choices: pending.choices,
+        timeout_ms: pending.timeoutMs,
+      }),
+    })
+
+    await expect(requested).resolves.toMatchObject({
+      event: 'clarify.requested', roomId: 'room-1', agentName: 'Agent',
+      clarify_id: 'clarify-ekko', question: 'Which environment?',
+    })
+    await expect(emitAck(human, 'clarify.respond', {
+      roomId: 'room-1', clarify_id: 'clarify-ekko', response: 'staging',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    await expect(clarification).resolves.toBe('staging')
+  })
+
+  it('routes a clarification response to the Hermes bridge', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const bridgeClarify = vi.spyOn(AgentBridgeClient.prototype, 'clarifyRespond')
+      .mockResolvedValue({ resolved: true } as any)
+    const requested = once<any>(human, 'clarify.requested')
+    agent.emit('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      clarify_id: 'clarify-hermes', question: 'Continue?', choices: null, timeout_ms: 300_000,
+    })
+
+    await expect(requested).resolves.toMatchObject({ clarify_id: 'clarify-hermes', question: 'Continue?' })
+    await expect(emitAck(human, 'clarify.respond', {
+      roomId: 'room-1', clarify_id: 'clarify-hermes', response: 'yes',
+    })).resolves.toEqual({ ok: true, resolved: true })
+    expect(bridgeClarify).toHaveBeenCalledWith('clarify-hermes', 'yes')
+  })
+
+  it('restores pending approvals and clarifications to a room manager on rejoin', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      approval_id: 'approval-restored', command: 'touch file', description: 'needs approval',
+    })
+    agent.emit('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      clarify_id: 'clarify-restored', question: 'Which environment?', choices: null,
+    })
+    await wait()
+
+    const joined = await emitAck<any>(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(joined.pendingApprovals).toEqual([
+      expect.objectContaining({ approval_id: 'approval-restored', command: 'touch file' }),
+    ])
+    expect(joined.pendingClarifies).toEqual([
+      expect.objectContaining({ clarify_id: 'clarify-restored', question: 'Which environment?' }),
+    ])
   })
 
   it('routes approval responses back to the pending Ekko Agent session', async () => {

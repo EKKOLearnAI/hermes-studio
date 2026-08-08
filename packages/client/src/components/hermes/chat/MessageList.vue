@@ -940,7 +940,7 @@ defineExpose({
               {{ t("chat.clarifyDismiss") }}
             </NButton>
           </div>
-          <div v-else class="clarify-float-input-row">
+          <div class="clarify-float-input-row">
             <NInput
               v-model:value="clarifyResponse"
               size="small"

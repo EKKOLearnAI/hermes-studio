@@ -131,6 +131,35 @@ describe('ChatRunSocket global pending interactions', () => {
     }))
   })
 
+  it('does not republish group-chat approvals through the generic chat pending audience', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('gc_run_group', {
+      messages: [], isWorking: true, events: [], queue: [], source: 'group_chat', profile: 'default',
+    })
+
+    ;(server as any).emitToSession(socket, 'gc_run_group', 'approval.requested', {
+      event: 'approval.requested', approval_id: 'approval-group',
+    })
+    ;(server as any).emitToSession(socket, 'gc_run_group', 'clarify.requested', {
+      event: 'clarify.requested', clarify_id: 'clarify-group', question: 'Which environment?',
+    })
+
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'session:gc_run_group', event: 'approval.requested',
+      payload: expect.objectContaining({ session_id: 'gc_run_group', approval_id: 'approval-group' }),
+    }))
+    expect(emitted).not.toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'approval.requested',
+      payload: expect.objectContaining({ approval_id: 'approval-group' }),
+    }))
+    expect(emitted).not.toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'clarify.requested',
+      payload: expect.objectContaining({ clarify_id: 'clarify-group' }),
+    }))
+  })
+
   it('rejects cross-profile resume, approval, and clarify requests before joining or calling the bridge', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { handlers, io, socket } = makeServerHarness()

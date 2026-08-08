@@ -2,9 +2,9 @@
 import { h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { NButton, NInput, useMessage, useNotification, type NotificationReactive } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
-import { useGroupChatStore, type GroupPendingApproval } from '@/stores/hermes/group-chat'
+import { useGroupChatStore, type GroupPendingApproval, type GroupPendingClarify } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { playCompletionSound } from '@/utils/completion-sound'
@@ -20,6 +20,7 @@ const notification = useNotification()
 const message = useMessage()
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 
 const handles = new Map<string, NotificationReactive>()
 const announcedKeys = new Set<string>()
@@ -87,6 +88,7 @@ type GlobalPendingAction =
   | { key: string; kind: 'chat-approval'; title: string; pending: PendingApproval }
   | { key: string; kind: 'chat-clarify'; title: string; pending: { sessionId: string; clarifyId: string; question: string; choices: string[] | null } }
   | { key: string; kind: 'group-approval'; title: string; pending: GroupPendingApproval }
+  | { key: string; kind: 'group-clarify'; title: string; pending: GroupPendingClarify }
   | { key: string; kind: 'workflow-approval'; title: string; workflowId: string; runId: string; nodeId: string; executionId?: string }
 
 function sessionTitle(sessionId: string): string {
@@ -116,6 +118,9 @@ function pendingSoundActionKeys(): string[] {
   for (const pending of groupChatStore.pendingApprovals.values()) {
     keys.push(`group-approval:${pending.roomId}:${pending.approvalId}`)
   }
+  for (const pending of groupChatStore.pendingClarifies.values()) {
+    keys.push(`group-clarify:${pending.roomId}:${pending.clarifyId}`)
+  }
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
     for (const { nodeId, executionId } of status.pendingApprovals || []) {
@@ -142,6 +147,10 @@ function pendingActions(): GlobalPendingAction[] {
   for (const pending of groupChatStore.pendingApprovals.values()) {
     if (pending.roomId === visibleGroupRoomId) continue
     actions.push({ key: `group-approval:${pending.roomId}:${pending.approvalId}`, kind: 'group-approval', title: roomTitle(pending.roomId), pending })
+  }
+  for (const pending of groupChatStore.pendingClarifies.values()) {
+    if (pending.roomId === visibleGroupRoomId) continue
+    actions.push({ key: `group-clarify:${pending.roomId}:${pending.clarifyId}`, kind: 'group-clarify', title: roomTitle(pending.roomId), pending })
   }
   for (const status of Object.values(workflowStatuses)) {
     if (!status.runId) continue
@@ -193,7 +202,7 @@ async function submitApproval(action: Extract<GlobalPendingAction, { kind: 'chat
   }
 }
 
-function clarifyContent(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' }>) {
+function clarifyContent(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' | 'group-clarify' }>) {
   return h('div', { class: 'global-clarify-content' }, [
     h('div', { class: 'global-clarify-question' }, action.pending.question),
     action.pending.choices?.length
@@ -217,12 +226,13 @@ function clarifyContent(action: Extract<GlobalPendingAction, { kind: 'chat-clari
   ])
 }
 
-async function submitClarify(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' }>) {
+async function submitClarify(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' | 'group-clarify' }>) {
   const response = (clarifyDrafts[action.key] || '').trim()
   if (!response || submitting[action.key]) return
   submitting[action.key] = true
   try {
-    chatStore.respondToClarifyFor(action.pending.sessionId, action.pending.clarifyId, response)
+    if (action.kind === 'chat-clarify') chatStore.respondToClarifyFor(action.pending.sessionId, action.pending.clarifyId, response)
+    else await groupChatStore.respondClarifyFor(action.pending.roomId, action.pending.clarifyId, response)
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
   } finally {
@@ -242,10 +252,35 @@ async function submitWorkflowApproval(action: Extract<GlobalPendingAction, { kin
   }
 }
 
+function openPendingSource(action: GlobalPendingAction) {
+  if (action.kind === 'chat-approval' || action.kind === 'chat-clarify') {
+    const sessionId = action.pending.sessionId
+    const session = chatStore.sessions.find(item => item.id === sessionId)
+    void router.push({
+      name: session?.source === 'global_agent' ? 'hermes.globalAgentSession' : 'hermes.session',
+      params: { sessionId },
+    })
+    return
+  }
+  if (action.kind === 'group-approval' || action.kind === 'group-clarify') {
+    void router.push({ name: 'hermes.groupChatRoom', params: { roomId: action.pending.roomId } })
+    return
+  }
+  void router.push({ name: 'hermes.workflow' })
+}
+
+function notificationTitle(action: GlobalPendingAction, clarify: boolean) {
+  return h('button', {
+    type: 'button',
+    class: 'global-pending-title',
+    onClick: () => openPendingSource(action),
+  }, `${action.title} · ${clarify ? t('chat.clarifyTitle') : t('chat.approvalTitle')}`)
+}
+
 function createGlobalNotification(action: GlobalPendingAction): NotificationReactive {
-  const clarify = action.kind === 'chat-clarify'
+  const clarify = action.kind === 'chat-clarify' || action.kind === 'group-clarify'
   return notification.create({
-    title: `${action.title} · ${clarify ? t('chat.clarifyTitle') : t('chat.approvalTitle')}`,
+    title: () => notificationTitle(action, clarify),
     content: clarify
       ? () => clarifyContent(action)
       : action.kind === 'workflow-approval'
@@ -266,8 +301,7 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
           ])
         : () => approvalButtons(action),
     duration: 0,
-    closable: true,
-    onClose: () => false,
+    closable: false,
   })
 }
 
@@ -334,8 +368,16 @@ onUnmounted(() => {
 
 <style scoped>.global-pending-actions-host { display: none; }</style>
 <style>
+.n-notification:has(.global-approval-content, .global-clarify-content) { width: 400px; }
+.global-pending-title { appearance: none; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.global-pending-title:hover { text-decoration-color: currentcolor; }
+.global-pending-title:focus-visible { border-radius: 2px; outline: 2px solid var(--accent-info); outline-offset: 3px; }
 .global-pending-actions, .global-clarify-choices { display: flex; flex-wrap: wrap; gap: 8px; }
-.global-approval-content, .global-clarify-content { display: grid; gap: 10px; max-width: 420px; overflow-wrap: anywhere; }
+.global-approval-content, .global-clarify-content { display: grid; gap: 10px; max-width: 420px; max-height: min(300px, calc(100dvh - 160px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
 .global-approval-content code { display: block; padding: 8px; border-radius: 6px; background: var(--n-color-embedded); white-space: pre-wrap; }
 .global-clarify-question { font-weight: 600; }
+
+@media (max-width: 600px) {
+  .n-notification:has(.global-approval-content, .global-clarify-content) { width: calc(100vw - 32px); }
+}
 </style>

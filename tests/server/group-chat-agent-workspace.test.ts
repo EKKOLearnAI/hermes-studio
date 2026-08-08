@@ -433,6 +433,12 @@ describe('group chat agent workspace bridge runs', () => {
   ] as const)('passes the dynamic group system prompt to the %s runtime', async (agent, codingAgentId) => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('clarify.requested', {
+        clarify_id: `clarify-${agent}`, question: 'Continue?', choices: ['yes', 'no'], timeout_ms: 300000,
+      })
+      options.onEvent?.('clarify.resolved', {
+        clarify_id: `clarify-${agent}`, resolved: true, reason: 'response',
+      })
       options.onEvent?.('message.delta', { delta: 'done' })
       return { ok: true, output: 'done' }
     })
@@ -482,6 +488,12 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runData.group_system_prompt).toBe(runData.instructions)
     expect(runData.group_room_id).toBe('room-runtime')
     expect(runData.group_agent_id).toBe(`agent-${agent}`)
+    expect(mockSocket.emit).toHaveBeenCalledWith('clarify.requested', expect.objectContaining({
+      roomId: 'room-runtime', clarify_id: `clarify-${agent}`, question: 'Continue?',
+    }))
+    expect(mockSocket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
+      roomId: 'room-runtime', clarify_id: `clarify-${agent}`, resolved: true,
+    }))
   })
 
   it('finishes a group-only Codex tool card when chat-run has no matching completed event', async () => {
@@ -841,6 +853,38 @@ describe('group chat agent workspace bridge runs', () => {
     ;(client as any).__testClients = clients
     return client as any
   }
+
+  it('forwards Hermes bridge clarification events through the group-chat socket', async () => {
+    bridgeMock.streamOutput.mockImplementation(async function* (runId: string) {
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: 'session-1',
+        status: 'complete',
+        delta: 'done',
+        cursor: 1,
+        output: 'done',
+        done: true,
+        events: [
+          { event: 'clarify.requested', clarify_id: 'clarify-hermes', question: 'Continue?', choices: ['yes', 'no'], timeout_ms: 300000 },
+          { event: 'clarify.resolved', clarify_id: 'clarify-hermes', resolved: true, reason: 'response' },
+        ],
+        event_cursor: 2,
+      }
+    })
+    const client = await createClient('')
+
+    await client.replyToMention('room-1', {
+      content: '@Worker continue?', senderName: 'Alice', senderId: 'user-1', timestamp: 1,
+    })
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('clarify.requested', expect.objectContaining({
+      roomId: 'room-1', agentName: 'Worker', clarify_id: 'clarify-hermes', question: 'Continue?',
+    }))
+    expect(mockSocket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
+      roomId: 'room-1', agentName: 'Worker', clarify_id: 'clarify-hermes', resolved: true,
+    }))
+  })
 
   it('omits workspace when the room has no workspace', async () => {
     const client = await createClient('')
