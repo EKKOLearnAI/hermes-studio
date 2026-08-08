@@ -95,6 +95,31 @@ describe('group chat baseline behavior', () => {
     expect(joined).toMatchObject({ roomId: 'room-1' })
     expect(joined.messages.map((m: any) => m.id)).toEqual(['msg-1'])
     expect(joined.members.map((m: any) => m.name)).toContain('Alice')
+    expect(joined.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Alice', connectionStatus: 'online' }),
+    ]))
+  })
+
+  it('broadcasts persisted human members as offline after their socket disconnects', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-presence', 'Presence Room', 'PRESENCE1')
+    const alice = await connectGroupChatClient(port, 'user-alice', 'Alice')
+    const bob = await connectGroupChatClient(port, 'user-bob', 'Bob')
+    harness.sockets.push(alice, bob)
+    await emitAck(alice, 'join', { roomId: 'room-presence', inviteCode: 'PRESENCE1' })
+    await emitAck(bob, 'join', { roomId: 'room-presence', inviteCode: 'PRESENCE1' })
+
+    const memberLeft = once<any>(bob, 'member_left')
+    alice.disconnect()
+
+    await expect(memberLeft).resolves.toMatchObject({
+      roomId: 'room-presence',
+      memberId: 'user-alice',
+      members: expect.arrayContaining([
+        expect.objectContaining({ userId: 'user-alice', connectionStatus: 'offline' }),
+        expect.objectContaining({ userId: 'user-bob', connectionStatus: 'online' }),
+      ]),
+    })
   })
 
   it('removes a live human member from the room and notifies that member', async () => {
@@ -392,11 +417,22 @@ describe('group chat baseline behavior', () => {
       completed!.connector.id,
       completed!.credential,
     )).toMatchObject({ id: completed!.connector.id, roomId: 'room-1' })
+    storage.updateRoomAgentRelayMetadata('room-1', roomAgent.id, {
+      connectorId: completed!.connector.id,
+      remoteOrigin: 'http://127.0.0.1:8648',
+    })
     relayStore.revokeGroupAgentConnector(completed!.connector.id, 2_600)
     expect(relayStore.authenticateGroupAgentConnector(
       completed!.connector.id,
       completed!.credential,
     )).toBeNull()
+    expect(storage.getRoomAgents('room-1')).toEqual([])
+
+    const { getDb } = await import('../../packages/server/src/db')
+    getDb()!.prepare('UPDATE gc_room_agents SET removedAt = 0 WHERE id = ?').run(roomAgent.id)
+    expect(storage.getRoomAgents('room-1')).toHaveLength(1)
+    storage.init()
+    expect(storage.getRoomAgents('room-1')).toEqual([])
   })
 
   it('keeps Agent handoffs draft until the target service submits the selected Agent', async () => {
@@ -528,7 +564,8 @@ describe('group chat baseline behavior', () => {
       }),
     ])
     intendedTarget.connect()
-    await expect(ready).resolves.toMatchObject({
+    const readyPayload = await ready
+    expect(readyPayload).toMatchObject({
       protocolVersion: 1,
       roomId: 'room-relay',
       agent: { name: 'Remote Relay Agent' },
@@ -700,6 +737,34 @@ describe('group chat baseline behavior', () => {
       name: 'Updated Relay Agent',
       connectionStatus: 'offline',
     })
+
+    const reconnectingTarget = socketIo(`http://127.0.0.1:${port}/group-chat-agent-relay`, {
+      autoConnect: false,
+      transports: ['websocket'],
+      reconnection: false,
+      auth: {
+        protocolVersion: 1,
+        connectorId: readyPayload.connectorId,
+        credential: readyPayload.credential,
+        targetOrigin: 'http://127.0.0.1:8648',
+      },
+    })
+    const reconnectReady = once<any>(reconnectingTarget as any, 'relay.ready', 15_000)
+    reconnectingTarget.connect()
+    await expect(reconnectReady).resolves.toMatchObject({
+      connectorId: readyPayload.connectorId,
+      roomId: 'room-relay',
+    })
+    const revokedNotice = once<any>(reconnectingTarget as any, 'connector.revoked', 2_000)
+    relayStore.revokeGroupAgentConnector(readyPayload.connectorId)
+
+    await expect(revokedNotice).resolves.toMatchObject({
+      connectorId: readyPayload.connectorId,
+      roomId: 'room-relay',
+    })
+    await vi.waitFor(() => expect(reconnectingTarget.connected).toBe(false))
+    expect(storage.getRoomAgents('room-relay')).toEqual([])
+    reconnectingTarget.disconnect()
     relayServer.shutdown()
   }, 20_000)
 

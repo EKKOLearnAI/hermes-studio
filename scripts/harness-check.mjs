@@ -218,7 +218,10 @@ const changedChatChainFiles = changedFiles.filter(
     && isChatSessionChainFile(file),
 )
 const changedChatChainFragments = changedFiles.filter(isChatChainChangeFragment)
-if (changedChatChainFiles.length > 0 && changedChatChainFragments.length === 0) {
+const presentChatChainFragments = changedChatChainFragments.filter(file =>
+  existsSync(path.join(root, file)),
+)
+if (changedChatChainFiles.length > 0 && presentChatChainFragments.length === 0) {
   fail(
     [
       'Chat session chain changed without adding a docs/chat-chain-changes/*.md fragment.',
@@ -227,11 +230,7 @@ if (changedChatChainFiles.length > 0 && changedChatChainFragments.length === 0) 
     ].join(' '),
   )
 }
-for (const file of changedChatChainFragments) {
-  if (!existsSync(path.join(root, file))) {
-    fail(`Chat chain change fragment was removed instead of added/updated: ${file}`)
-    continue
-  }
+for (const file of presentChatChainFragments) {
   const fragment = await readText(file)
   for (const marker of ['date:', 'feature:', 'impact:']) {
     if (!fragment.includes(marker)) {

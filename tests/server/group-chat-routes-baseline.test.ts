@@ -76,6 +76,10 @@ describe('group chat REST route baseline', () => {
         if (room) Object.assign(room, config)
         return room
       }),
+      updateRoomInviteCode: vi.fn((roomId, inviteCode) => {
+        const room = storage.rooms.get(roomId)
+        if (room) room.inviteCode = inviteCode
+      }),
       updateRoomGuestAgentPolicy: vi.fn((roomId, policy) => {
         const room = storage.rooms.get(roomId)
         if (room) {
@@ -249,6 +253,39 @@ describe('group chat REST route baseline', () => {
         allowRemoteWorkspaceAccess: 1,
       },
     })
+  })
+
+  it('rotates the invite code without removing existing remote Agents', async () => {
+    const remoteAgent = {
+      id: 'remote-row',
+      roomId: 'room-1',
+      agentId: 'remote-agent',
+      name: 'Remote Agent',
+      executorType: 'remote',
+      connectorId: 'connector-1',
+    }
+    storage.rooms.set('room-1', {
+      id: 'room-1',
+      name: 'Owner Room',
+      ownerAuthUserId: 7,
+      inviteCode: 'OLD-CODE',
+    })
+    storage.agents.set('room-1', [remoteAgent])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/invite-code`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user-id': '7',
+      },
+      body: JSON.stringify({ inviteCode: 'NEW-CODE' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(storage.updateRoomInviteCode).toHaveBeenCalledWith('room-1', 'NEW-CODE')
+    expect(storage.getRoomAgents('room-1')).toEqual([remoteAgent])
+    expect(storage.removeRoomAgent).not.toHaveBeenCalled()
+    expect(agentClients.removeAgentFromRoom).not.toHaveBeenCalled()
   })
 
   it('serves the remote workspace API only with an active run-bound grant', async () => {

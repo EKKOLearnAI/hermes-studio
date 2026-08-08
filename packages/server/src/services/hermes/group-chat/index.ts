@@ -363,7 +363,9 @@ interface Member {
     authUserId?: number | null
 }
 
-type MemberView = Pick<Member, 'id' | 'userId' | 'name' | 'description' | 'joinedAt' | 'avatar'>
+type MemberView = Pick<Member, 'id' | 'userId' | 'name' | 'description' | 'joinedAt' | 'avatar'> & {
+    connectionStatus: 'online' | 'offline'
+}
 
 function authenticatedGroupUserId(authUserId: number): string {
     return `auth:${authUserId}`
@@ -570,17 +572,32 @@ class ChatStorage {
     }
 
     init(): void {
-        if (_tablesEnsured) return
         const db = this.db()
         if (!db) return
-        // Tables are now created centrally in initAllHermesTables()
-        // Only create indexes here
-        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
-        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
-        try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
-        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_pending_session_deletes_profile ON gc_pending_session_deletes(profile_name, status, next_attempt_at, created_at)') } catch { /* ignore */ }
-        try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_session_profiles_profile ON gc_session_profiles(profile_name, created_at)') } catch { /* ignore */ }
-        _tablesEnsured = true
+        if (!_tablesEnsured) {
+            // Tables are now created centrally in initAllHermesTables()
+            // Only create indexes here
+            try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
+            try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
+            try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
+            try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_pending_session_deletes_profile ON gc_pending_session_deletes(profile_name, status, next_attempt_at, created_at)') } catch { /* ignore */ }
+            try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_session_profiles_profile ON gc_session_profiles(profile_name, created_at)') } catch { /* ignore */ }
+            _tablesEnsured = true
+        }
+        db.prepare(
+            `UPDATE gc_room_agents
+             SET removedAt = COALESCE((
+                 SELECT c.revokedAt FROM gc_agent_connectors c
+                 WHERE c.id = gc_room_agents.connectorId AND c.status = 'revoked'
+             ), ?)
+             WHERE executorType = 'remote'
+               AND removedAt = 0
+               AND connectorId != ''
+               AND EXISTS (
+                 SELECT 1 FROM gc_agent_connectors c
+                 WHERE c.id = gc_room_agents.connectorId AND c.status = 'revoked'
+               )`
+        ).run(Date.now())
     }
 
     saveSessionProfile(sessionId: string, roomId: string, agentId: string, profileName: string): void {
@@ -1795,7 +1812,12 @@ export class GroupChatServer {
         const storedMembers = typeof this.storage.getRoomMembers === 'function'
             ? this.storage.getRoomMembers(roomId)
             : []
-        if (storedMembers.length > 0) return storedMembers
+        if (storedMembers.length > 0) {
+            return storedMembers.map(member => ({
+                ...member,
+                connectionStatus: room?.members.get(member.userId)?.online === true ? 'online' : 'offline',
+            }))
+        }
         return (room?.getMembersList() || []).map(({
             id,
             userId,
@@ -1803,6 +1825,7 @@ export class GroupChatServer {
             description,
             joinedAt,
             avatar,
+            online,
         }) => ({
             id,
             userId,
@@ -1810,6 +1833,7 @@ export class GroupChatServer {
             description,
             joinedAt,
             avatar,
+            connectionStatus: online ? 'online' : 'offline',
         }))
     }
 

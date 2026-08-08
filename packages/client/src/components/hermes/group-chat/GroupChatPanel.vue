@@ -1688,6 +1688,7 @@ async function handleClarify(response?: string) {
                                     :class="{
                                         'agent-avatar-rail-current-user': member.userId === store.userId,
                                         'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId),
+                                        'agent-avatar-rail-offline': member.connectionStatus === 'offline',
                                     }"
                                     :title="member.userId === store.userId ? t('groupChat.yourName') : member.name"
                                     :aria-label="member.userId === store.userId ? t('groupChat.yourName') : member.name"
@@ -1736,7 +1737,10 @@ async function handleClarify(response?: string) {
                                 <button
                                     type="button"
                                     class="agent-avatar-rail-item"
-                                    :class="{ 'agent-avatar-rail-active': !!agentContextStatus(agent) }"
+                                    :class="{
+                                        'agent-avatar-rail-active': !!agentContextStatus(agent),
+                                        'agent-avatar-rail-offline': agent.connectionStatus === 'offline',
+                                    }"
                                     :aria-label="agent.name"
                                     :aria-busy="!!agentContextStatus(agent)"
                                     @click="handleAgentRailClick(agent)"
@@ -3196,6 +3200,15 @@ export default defineComponent({ components: { CreateRoomForm } })
 .agent-avatar-rail-active {
     border-color: transparent;
     animation: agent-avatar-rainbow-glow 4s linear infinite;
+}
+
+.agent-avatar-rail-offline {
+    border-color: rgba(var(--text-primary-rgb), 0.08);
+
+    .agent-avatar {
+        filter: grayscale(1);
+        opacity: 0.42;
+    }
 }
 
 .agent-avatar-activity-popover {
