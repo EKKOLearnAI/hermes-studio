@@ -408,6 +408,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
       signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         model: body.model || provider.model || APIKEY_IMAGE_TO_IMAGE_MODEL,
+        store: false,
         stream: true,
         input: [{
           role: 'user',

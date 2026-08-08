@@ -97,4 +97,70 @@ describe('media controller', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('forces response storage off for reference-image generation', async () => {
+    vi.stubEnv('AGNES_API_KEY', 'agnes-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'agnes',
+          base_url: 'https://agnes.example/v1',
+          api_key_env: 'AGNES_API_KEY',
+          model: 'agnes-image-2.1-flash',
+        }],
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"response":{"output":[{"result":"aW1hZ2UtYnl0ZXM="}]} }\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: {
+          body: {
+            provider: 'agnes',
+            mode: 'image',
+            prompt: 'redraw this icon',
+            image_base64: 'aW1hZ2UtYnl0ZXM=',
+            mime_type: 'image/png',
+            store: true,
+            output_path: '/tmp/hermes-web-ui-agnes-reference-image.png',
+          },
+        },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://agnes.example/v1/responses',
+        expect.objectContaining({ method: 'POST' }),
+      )
+      const requestInit = fetchMock.mock.calls[0][1] as RequestInit
+      expect(JSON.parse(String(requestInit.body))).toMatchObject({
+        model: 'agnes-image-2.1-flash',
+        store: false,
+        stream: true,
+        tools: [{
+          type: 'image_generation',
+          model: 'gpt-image-2',
+        }],
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 })
