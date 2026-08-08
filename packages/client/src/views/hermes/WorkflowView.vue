@@ -14,6 +14,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
 import { resolveWorkflowRunPageSwipe, type WorkflowRunPagerPage } from '@/utils/workflow-run-pager'
 import {
@@ -111,6 +112,7 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
 const { t } = useI18n()
+const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
@@ -1095,6 +1097,25 @@ function workflowDocumentFromRecord(record: WorkflowRecord): WorkflowDocument {
   }
 }
 
+async function openWorkflowNotificationTarget() {
+  const workflowId = typeof route.query.workflowId === 'string' ? route.query.workflowId : ''
+  const runId = typeof route.query.runId === 'string' ? route.query.runId : ''
+  const nodeId = typeof route.query.nodeId === 'string' ? route.query.nodeId : ''
+  const executionId = typeof route.query.executionId === 'string' ? route.query.executionId : ''
+  if (!workflowId || !runId || !nodeId) return
+
+  const workflow = workflows.value.find(item => item.id === workflowId)
+  if (!workflow) return
+  await applyWorkflow(workflow, false)
+  await loadWorkflowRuns(workflowId, runId, { applySelectedSnapshot: true })
+  const run = workflowRuns.value.find(item => item.id === runId)
+  if (!run) return
+  const nodeSession = latestWorkflowNodeSession(run.node_sessions, nodeId)
+  if (!nodeSession?.session_id) return
+  if (executionId && nodeSession.execution_id !== executionId) return
+  await openWorkflowNodeSession(nodeId)
+}
+
 async function initializeWorkflowPage() {
   await profilesStore.fetchProfiles()
   createWorkflowProfile.value = defaultWorkflowProfile.value
@@ -1104,11 +1125,19 @@ async function initializeWorkflowPage() {
     message.error(error.error || t('workflow.evidence.loadFailed'))
   })
   await loadWorkflows()
+  await openWorkflowNotificationTarget()
   void subscribeWorkflowStatuses().then(applyWorkflowRuntimeStatuses).catch((err) => {
     console.error('Failed to subscribe workflow statuses:', err)
     message.error(err?.message || t('workflow.evidence.loadFailed'))
   })
 }
+
+watch(
+  () => [route.query.workflowId, route.query.runId, route.query.nodeId, route.query.executionId],
+  () => {
+    if (workflows.value.length > 0) void openWorkflowNotificationTarget()
+  },
+)
 
 async function loadWorkflows() {
   workflowsLoading.value = true

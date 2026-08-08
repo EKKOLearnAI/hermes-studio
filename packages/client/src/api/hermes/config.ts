@@ -8,6 +8,7 @@ export interface DisplayConfig {
   chat_input_height?: number | null
   bell_on_complete?: boolean
   approval_bell?: boolean
+  notify_on_approval?: boolean
   notify_on_complete?: boolean
   show_reasoning?: boolean
   streaming?: boolean

@@ -9,6 +9,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
+import { showSystemNotification } from '@/utils/completion-notification'
 import { workflowApprovalKey } from '@/utils/workflow-approval-key'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
@@ -26,6 +27,7 @@ const router = useRouter()
 const handles = new Map<string, NotificationReactive>()
 const announcedKeys = new Set<string>()
 const pendingSoundKeys = new Set<string>()
+const pendingNotificationKeys = new Set<string>()
 const clarifyDrafts = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const copiedCommandKey = ref<string | null>(null)
@@ -42,6 +44,7 @@ function loadApprovalSoundSetting() {
   const generation = ++settingsLoadGeneration
   approvalSoundArmed = false
   pendingSoundKeys.clear()
+  pendingNotificationKeys.clear()
   void settingsStore.fetchSettings({
     shouldCommit: () => generation === settingsLoadGeneration,
   }).then(loaded => {
@@ -49,15 +52,23 @@ function loadApprovalSoundSetting() {
     if (!loaded) {
       approvalSoundArmed = false
       pendingSoundKeys.clear()
+      pendingNotificationKeys.clear()
       return
     }
     approvalSoundArmed = true
     if (pendingSoundKeys.size > 0 && settingsStore.display.approval_bell) void playCompletionSound()
+    if (settingsStore.display.notify_on_approval) {
+      for (const action of pendingActions()) {
+        if (pendingNotificationKeys.has(action.key)) notifyPendingAction(action)
+      }
+    }
     pendingSoundKeys.clear()
+    pendingNotificationKeys.clear()
   }).catch(() => {
     if (generation !== settingsLoadGeneration) return
     approvalSoundArmed = false
     pendingSoundKeys.clear()
+    pendingNotificationKeys.clear()
   })
 }
 
@@ -296,7 +307,48 @@ function openPendingSource(action: GlobalPendingAction) {
     void router.push({ name: 'hermes.groupChatRoom', params: { roomId: action.pending.roomId } })
     return
   }
-  void router.push({ name: 'hermes.workflow' })
+  void router.push({
+    name: 'hermes.workflow',
+    query: { workflowId: action.workflowId, runId: action.runId, nodeId: action.nodeId, executionId: action.executionId },
+  })
+}
+
+function systemNotificationCopy(action: GlobalPendingAction): { title: string; body: string } {
+  const clarify = action.kind === 'chat-clarify' || action.kind === 'group-clarify'
+  return {
+    title: t(clarify ? 'settings.display.approvalNotificationClarifyTitle' : 'settings.display.approvalNotificationTitle'),
+    body: t('settings.display.approvalNotificationBody'),
+  }
+}
+
+function pendingSourceClickUrl(action: GlobalPendingAction): string {
+  if (action.kind === 'chat-approval' || action.kind === 'chat-clarify') {
+    const sessionId = encodeURIComponent(action.pending.sessionId)
+    const session = chatStore.sessions.find(item => item.id === action.pending.sessionId)
+    return session?.source === 'global_agent'
+      ? `/hermes/global-agent/session/${sessionId}`
+      : `/hermes/session/${sessionId}`
+  }
+  if (action.kind === 'group-approval' || action.kind === 'group-clarify') {
+    return `/hermes/group-chat/room/${encodeURIComponent(action.pending.roomId)}`
+  }
+  const query = new URLSearchParams({
+    workflowId: action.workflowId,
+    runId: action.runId,
+    nodeId: action.nodeId,
+    ...(action.executionId ? { executionId: action.executionId } : {}),
+  })
+  return `/hermes/workflow?${query.toString()}`
+}
+
+function notifyPendingAction(action: GlobalPendingAction) {
+  const copy = systemNotificationCopy(action)
+  void showSystemNotification({
+    ...copy,
+    icon: '/coding-agents/hermes.png',
+    tag: `hermes-pending-${encodeURIComponent(profilesStore.activeProfileName || 'default')}:${action.key}`,
+    clickUrl: pendingSourceClickUrl(action),
+  })
 }
 
 function notificationTitle(action: GlobalPendingAction, clarify: boolean) {
@@ -344,12 +396,22 @@ watch(pendingSoundActionKeys, keys => {
   for (const key of pendingSoundKeys) {
     if (!liveKeys.has(key)) pendingSoundKeys.delete(key)
   }
+  for (const key of pendingNotificationKeys) {
+    if (!liveKeys.has(key)) pendingNotificationKeys.delete(key)
+  }
   for (const key of keys) {
     if (announcedKeys.has(key)) continue
     announcedKeys.add(key)
     if (shouldAnnounce) {
       hasNewAction = true
-      if (!approvalSoundArmed) pendingSoundKeys.add(key)
+      if (!approvalSoundArmed) {
+        pendingSoundKeys.add(key)
+        pendingNotificationKeys.add(key)
+      }
+      if (approvalSoundArmed && settingsStore.display.notify_on_approval) {
+        const action = pendingActions().find(candidate => candidate.key === key)
+        if (action) notifyPendingAction(action)
+      }
     }
   }
   pendingBaselineEstablished = true
@@ -388,6 +450,7 @@ onUnmounted(() => {
   visibleWorkflowApprovalKeys.clear()
   settingsLoadGeneration++
   pendingSoundKeys.clear()
+  pendingNotificationKeys.clear()
   stopWorkflowStatus?.()
   disconnectWorkflowSocket()
   groupChatStore.disconnect()

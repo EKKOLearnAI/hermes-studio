@@ -4,7 +4,7 @@ import { NButton, NSwitch, NInputNumber, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { primeCompletionSound } from '@/utils/completion-sound'
-import { requestCompletionNotificationPermission, showCompletionNotification, type CompletionNotificationPermissionResult } from '@/utils/completion-notification'
+import { requestCompletionNotificationPermission, showCompletionNotification, showSystemNotification, type CompletionNotificationPermissionResult } from '@/utils/completion-notification'
 import { clampChatInputHeight, MAX_CHAT_INPUT_HEIGHT, MIN_CHAT_INPUT_HEIGHT } from '@/utils/chat-input-height'
 import SettingRow from './SettingRow.vue'
 
@@ -39,6 +39,44 @@ function notificationPermissionErrorKey(result: CompletionNotificationPermission
 function handleApprovalBellChange(value: boolean) {
   if (value) primeCompletionSound()
   return save({ approval_bell: value })
+}
+
+async function handleNotifyOnApprovalChange(value: boolean) {
+  if (value) {
+    const result = await requestCompletionNotificationPermission()
+    if (!result.granted) {
+      message.error(t(notificationPermissionErrorKey(result)))
+      return
+    }
+  }
+  await save({ notify_on_approval: value })
+  if (value) {
+    void showSystemNotification({
+      title: 'Hermes',
+      body: t('settings.display.notifyOnApprovalTest'),
+      icon: '/coding-agents/hermes.png',
+      tag: `hermes-approval-test-${Date.now()}`,
+    }, { requireBackground: false, deduplicate: false })
+  }
+}
+
+async function testApprovalNotification() {
+  const result = await requestCompletionNotificationPermission()
+  if (!result.granted) {
+    message.error(t(notificationPermissionErrorKey(result)))
+    return
+  }
+  const shown = await showSystemNotification({
+    title: 'Hermes',
+    body: t('settings.display.notifyOnApprovalTest'),
+    icon: '/coding-agents/hermes.png',
+    tag: `hermes-approval-test-${Date.now()}`,
+  }, { requireBackground: false, deduplicate: false })
+  if (!shown) {
+    message.error(t('settings.display.notifyOnApprovalTestFailed'))
+    return
+  }
+  message.success(t('settings.display.notifyOnApprovalTestSent'))
 }
 
 async function handleNotifyOnCompleteChange(value: boolean) {
@@ -102,6 +140,14 @@ async function testCompletionNotification() {
     </SettingRow>
     <SettingRow :label="t('settings.display.approvalBell')" :hint="t('settings.display.approvalBellHint')">
       <NSwitch :value="settingsStore.display.approval_bell" @update:value="handleApprovalBellChange" />
+    </SettingRow>
+    <SettingRow :label="t('settings.display.notifyOnApproval')" :hint="`${t('settings.display.notifyOnApprovalHint')} ${t('settings.display.notifyOnCompleteMacHint')}`">
+      <div class="notify-controls">
+        <NSwitch :value="settingsStore.display.notify_on_approval" @update:value="handleNotifyOnApprovalChange" />
+        <NButton size="tiny" secondary @click="testApprovalNotification">
+          {{ t('settings.display.notifyOnApprovalTestButton') }}
+        </NButton>
+      </div>
     </SettingRow>
     <SettingRow :label="t('settings.display.notifyOnComplete')" :hint="`${t('settings.display.notifyOnCompleteHint')} ${t('settings.display.notifyOnCompleteMacHint')}`">
       <div class="notify-controls">

@@ -22,12 +22,13 @@ const groupState = reactive({
   disconnect: vi.fn(),
 })
 const profileState = reactive({ activeProfileName: 'default' as string | null })
-const settingsState = reactive({ display: { approval_bell: false }, fetchSettings: vi.fn(async () => true) })
+const settingsState = reactive({ display: { approval_bell: false, notify_on_approval: false }, fetchSettings: vi.fn(async () => true) })
 const routeState = reactive({ name: 'hermes.chat' as string })
 const routerPush = vi.fn(async () => undefined)
 const created: any[] = []
 const clipboardMock = vi.hoisted(() => ({ copyToClipboard: vi.fn(async () => true) }))
 const uiMock = vi.hoisted(() => ({ messageError: vi.fn() }))
+const systemNotificationMock = vi.hoisted(() => ({ showSystemNotification: vi.fn(async () => true) }))
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
   approveWorkflowNode: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupSta
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
 vi.mock('@/stores/hermes/settings', () => ({ useSettingsStore: () => settingsState }))
 vi.mock('@/utils/clipboard', () => clipboardMock)
+vi.mock('@/utils/completion-notification', () => systemNotificationMock)
 vi.mock('@/utils/completion-sound', () => ({ playCompletionSound: vi.fn(async () => true) }))
 vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => ({ push: routerPush }) }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
@@ -94,10 +96,79 @@ describe('GlobalPendingActions', () => {
     groupState.currentRoomId = 'room-a'
     profileState.activeProfileName = 'default'
     settingsState.display.approval_bell = false
+    settingsState.display.notify_on_approval = false
     routeState.name = 'hermes.chat'
     vi.clearAllMocks()
     settingsState.fetchSettings.mockImplementation(async () => true)
     workflowMock.statusHandlers.splice(0)
+  })
+
+  it('sends privacy-safe system notifications for new direct, group, and workflow pending keys with exact navigation', async () => {
+    settingsState.display.notify_on_approval = true
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.sessions = [{ id: 'session-b', title: '/secret/path', source: 'global_agent' }]
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'rm -rf /tmp/private', command: 'rm -rf /tmp/private', choices: ['once'],
+    }]])
+    chatState.pendingClarifies = new Map([['session-c', {
+      sessionId: 'session-c', clarifyId: 'clarify-c', question: 'Which secret path?', choices: null,
+    }]])
+    groupState.pendingApprovals = new Map([['room-b:approval-b', {
+      roomId: 'room-b', approvalId: 'approval-b', description: 'Deploy /private', command: 'deploy /private', choices: ['once'],
+    }]])
+    groupState.pendingClarifies = new Map([['room-c:clarify-c', {
+      roomId: 'room-c', clarifyId: 'clarify-c', question: 'Share token?', choices: null,
+    }]])
+    await nextTick()
+
+    workflowMock.statusHandlers[0]?.({
+      workflowId: 'workflow-b', runId: 'run-b', status: 'running',
+      pendingApprovals: [{ nodeId: 'build', executionId: 'exec-b' }],
+    })
+    await nextTick()
+
+    expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledTimes(5)
+    for (const [payload] of systemNotificationMock.showSystemNotification.mock.calls) {
+      expect(payload.title).toMatch(/^settings\.display\.approvalNotification/)
+      expect(payload.body).toMatch(/^settings\.display\.approvalNotification/)
+      expect(JSON.stringify(payload)).not.toContain('rm -rf')
+      expect(JSON.stringify(payload)).not.toContain('/private')
+      expect(JSON.stringify(payload)).not.toContain('Which secret path?')
+      expect(JSON.stringify(payload)).not.toContain('Share token?')
+    }
+
+    const systemCalls = systemNotificationMock.showSystemNotification.mock.calls as any[][]
+    const chatPayload = systemCalls.find(([payload]) => payload.tag.includes('chat-approval'))?.[0]
+    expect(chatPayload?.clickUrl).toBe('/hermes/global-agent/session/session-b')
+
+    const groupPayload = systemCalls.find(([payload]) => payload.tag.includes('group-approval'))?.[0]
+    expect(groupPayload?.clickUrl).toBe('/hermes/group-chat/room/room-b')
+
+    const workflowPayload = systemCalls.find(([payload]) => payload.tag.includes('workflow-approval'))?.[0]
+    expect(workflowPayload?.clickUrl).toBe('/hermes/workflow?workflowId=workflow-b&runId=run-b&nodeId=build&executionId=exec-b')
+    wrapper.unmount()
+  })
+
+  it('does not send system notifications for restored baseline or repeated authoritative keys', async () => {
+    settingsState.display.notify_on_approval = true
+    chatState.pendingApprovals = new Map([['restored', {
+      sessionId: 'restored', approvalId: 'approval-old', description: 'Old', command: 'old', choices: ['once'],
+    }]])
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+    expect(systemNotificationMock.showSystemNotification).not.toHaveBeenCalled()
+
+    chatState.pendingApprovals = new Map([...chatState.pendingApprovals, ['new', {
+      sessionId: 'new', approvalId: 'approval-new', description: 'New', command: 'new', choices: ['once'],
+    }]])
+    await nextTick()
+    expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledTimes(1)
+    chatState.pendingApprovals = new Map(chatState.pendingApprovals)
+    await nextTick()
+    expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('loads persisted display settings when mounted globally', async () => {
