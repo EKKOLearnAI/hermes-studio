@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -93,10 +93,13 @@ describe('group Agent outbound Relay persistence', () => {
     else process.env.HERMES_WEBUI_STATE_DIR = originalStateDir
   })
 
-  async function restorePersistedConnection(errorMessage: string) {
+  async function restorePersistedConnection(errorMessage: string, legacy = false) {
     const connectorId = '11111111-2222-4333-8444-555555555555'
-    const linksFile = join(stateDir, 'group-chat-agent-links.json')
-    writeFileSync(linksFile, `${JSON.stringify([{
+    const linksFile = join(stateDir, 'group-chat', 'group-chat-agent-links.json')
+    const legacyLinksFile = join(stateDir, 'group-chat-agent-links.json')
+    const sourceFile = legacy ? legacyLinksFile : linksFile
+    mkdirSync(join(stateDir, 'group-chat'), { recursive: true })
+    writeFileSync(sourceFile, `${JSON.stringify([{
       cloudOrigin: 'https://cloud.example',
       targetOrigin: 'http://127.0.0.1:8648',
       connectorId,
@@ -113,7 +116,7 @@ describe('group Agent outbound Relay persistence', () => {
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
     await manager.restore()
-    return { connectorId, linksFile, manager }
+    return { connectorId, legacyLinksFile, linksFile, manager }
   }
 
   it('forgets a persisted connector after the cloud rejects its revoked credential', async () => {
@@ -138,6 +141,20 @@ describe('group Agent outbound Relay persistence', () => {
         expect.objectContaining({ connectorId, connected: false }),
       ])
     })
+    expect(JSON.parse(readFileSync(linksFile, 'utf8'))).toHaveLength(1)
+    manager.shutdown()
+  })
+
+  it('migrates the legacy root-level connection file into the group-chat directory', async () => {
+    const { connectorId, legacyLinksFile, linksFile, manager } = await restorePersistedConnection(
+      'websocket connection unavailable',
+      true,
+    )
+
+    await expect(manager.listConnections()).resolves.toEqual([
+      expect.objectContaining({ connectorId, connected: false }),
+    ])
+    expect(existsSync(legacyLinksFile)).toBe(false)
     expect(JSON.parse(readFileSync(linksFile, 'utf8'))).toHaveLength(1)
     manager.shutdown()
   })
