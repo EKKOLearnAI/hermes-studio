@@ -289,31 +289,6 @@ describe('group chat workspace diff persistence', () => {
     server.getIO().close()
   })
 
-  it('cleans persisted workspace diffs when their group messages are pruned', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const server = new GroupChatServer(httpServer)
-    const storage = server.getStorage()
-    storage.saveRoom('room-1', 'Room 1')
-    const { saved, payload } = await saveDiff(storage, 'room-1', 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
-    dbState.db?.prepare('UPDATE gc_messages SET timestamp = ? WHERE id = ?').run(1, saved!.message.id)
-    storage.saveMessageAndRefreshRoom({
-      id: 'keep-message',
-      roomId: 'room-1',
-      senderId: 'user-1',
-      senderName: 'User',
-      content: 'keep',
-      timestamp: 100,
-      role: 'user',
-    })
-
-    storage.pruneMessages('room-1', 1)
-
-    expectWorkspaceChangeDeleted(payload.change_id)
-    expect(countRows('gc_messages', ' WHERE id = ?', saved!.message.id)).toBe(0)
-    expect(countRows('gc_messages', ' WHERE id = ?', 'keep-message')).toBe(1)
-    server.getIO().close()
-  })
-
   it('rolls back diff rows when the group message insert fails', async () => {
     const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
     const server = new GroupChatServer(httpServer)

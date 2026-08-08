@@ -94,7 +94,7 @@ describe('group chat history windows', () => {
     dbMock.current = null
   })
 
-  it('returns a bounded recent UI page while context reads the full retained transcript in canonical order', () => {
+  it('returns bounded UI and context windows in canonical order', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
 
@@ -144,7 +144,7 @@ describe('group chat history windows', () => {
     ])
   })
 
-  it('computes room total tokens from the full retained context transcript, not the UI page window', () => {
+  it('computes room total tokens from the context window, not the UI page window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
 
@@ -165,7 +165,7 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
-  it('continues shared context by timestamp when the summary anchor was pruned', () => {
+  it('retains older messages while limiting shared context to the latest 500', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
 
@@ -188,17 +188,36 @@ describe('group chat history windows', () => {
       lastError: null,
     })
 
-    for (const message of seeded.slice(1)) storage.saveMessageAndRefreshRoom(message as any)
+    let latest: { totalTokens: number } | null = null
+    for (const message of seeded.slice(1)) latest = storage.saveMessageAndRefreshRoom(message as any)
 
-    const retained = storage.getMessagesForContext('room-1')
+    const contextMessages = storage.getMessagesForContext('room-1')
     const context = groupServer.getRoomSummaryService().buildRuntimeContext('room-1')
 
-    expect(retained).toHaveLength(500)
-    expect(retained.some(message => message.id === 'msg-1')).toBe(false)
+    expect(storage.getMessageCount('room-1')).toBe(501)
+    expect(storage.getMessage('msg-1')).not.toBeNull()
+    expect(storage.getRecentMessagesForUI('room-1', 500).map(message => message.id)).toEqual(
+      seeded.slice(1).map(message => message.id),
+    )
+    expect(storage.getRecentMessagesForUI('room-1', 150, 450).map(message => message.id)).toEqual(
+      seeded.slice(1, 51).map(message => message.id),
+    )
+    expect(storage.getRecentMessagesForUI('room-1', 150, 500)).toEqual([])
+    expect(contextMessages).toHaveLength(500)
+    expect(contextMessages.some(message => message.id === 'msg-1')).toBe(false)
     expect(context.summary).toBe('Earlier summary')
     expect(context.history).toHaveLength(500)
     expect(context.history[0]?.id).toBe('msg-2')
     expect(context.history.at(-1)?.id).toBe('msg-501')
+    expect(latest?.totalTokens).toBe(
+      seeded.slice(1).reduce((sum, message) => sum + countTokens(String(message.content)), 0),
+    )
+
+    storage.clearRoomContext('room-1')
+
+    expect(storage.getMessageCount('room-1')).toBe(0)
+    expect(storage.getMessage('msg-1')).toBeNull()
+    expect(storage.getMessagesForContext('room-1')).toEqual([])
   })
 
   it('builds Agent context from the full retained transcript rather than the UI page', () => {
