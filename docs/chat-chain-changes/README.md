@@ -23,3 +23,7 @@ Optional extra notes.
 
 If the PR number is not known yet, use `pr: pending` while the branch is local,
 then update that same fragment after the PR is opened.
+
+Historical fragments may be removed during an explicit documentation-retention
+cleanup. Deleted fragments do not satisfy the requirement for a PR that changes
+the current chat chain; that PR must still add or update a present fragment.
