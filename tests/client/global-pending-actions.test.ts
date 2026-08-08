@@ -26,6 +26,8 @@ const settingsState = reactive({ display: { approval_bell: false }, fetchSetting
 const routeState = reactive({ name: 'hermes.chat' as string })
 const routerPush = vi.fn(async () => undefined)
 const created: any[] = []
+const clipboardMock = vi.hoisted(() => ({ copyToClipboard: vi.fn(async () => true) }))
+const uiMock = vi.hoisted(() => ({ messageError: vi.fn() }))
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
   approveWorkflowNode: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('@/stores/hermes/chat', () => ({ useChatStore: () => chatState }))
 vi.mock('@/stores/hermes/group-chat', () => ({ useGroupChatStore: () => groupState }))
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profileState }))
 vi.mock('@/stores/hermes/settings', () => ({ useSettingsStore: () => settingsState }))
+vi.mock('@/utils/clipboard', () => clipboardMock)
 vi.mock('@/utils/completion-sound', () => ({ playCompletionSound: vi.fn(async () => true) }))
 vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => ({ push: routerPush }) }))
 vi.mock('@/api/hermes/workflows', () => ({ approveWorkflowNode: workflowMock.approveWorkflowNode }))
@@ -53,7 +56,7 @@ vi.mock('naive-ui', async () => {
   return {
     NButton: button,
     NInput: input,
-    useMessage: () => ({ error: vi.fn() }),
+    useMessage: () => ({ error: uiMock.messageError }),
     useNotification: () => ({
       create: vi.fn((options: any) => {
         const entry = { options, destroy: vi.fn() }
@@ -65,6 +68,7 @@ vi.mock('naive-ui', async () => {
 })
 
 import GlobalPendingActions from '@/components/layout/GlobalPendingActions.vue'
+import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
 
 async function render(node: (() => any) | undefined) {
@@ -314,11 +318,6 @@ describe('GlobalPendingActions', () => {
   })
 
   it('renders the exact approval command as a scrollable code block and copies it', async () => {
-    const writeText = vi.fn(async () => undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
     chatState.sessions = [{ id: 'session-b', title: 'branch: branch: Build scripts' }]
     const command = 'rm -rf /tmp/reviewer-snapshot &&\nmkdir -p /tmp/reviewer-snapshot'
     chatState.pendingApprovals = new Map([['session-b', {
@@ -336,7 +335,26 @@ describe('GlobalPendingActions', () => {
     expect(preview.get('pre').attributes('tabindex')).toBe('0')
 
     await preview.get('button').trigger('click')
-    expect(writeText).toHaveBeenCalledWith(command)
+    expect(copyToClipboard).toHaveBeenCalledWith(command)
+    expect(preview.get('button').text()).toBe('common.copied')
+  })
+
+  it('reports a failed approval command copy without showing copied feedback', async () => {
+    clipboardMock.copyToClipboard.mockResolvedValueOnce(false)
+    chatState.pendingApprovals = new Map([['session-b', {
+      sessionId: 'session-b', approvalId: 'approval-b', description: 'Security scan', command: 'npm run build', choices: ['once', 'deny'],
+    }]])
+
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    const content = await render(created[0].options.content)
+    const copyButton = content.get('.global-approval-command button')
+    await copyButton.trigger('click')
+
+    expect(copyToClipboard).toHaveBeenCalledWith('npm run build')
+    expect(uiMock.messageError).toHaveBeenCalledWith('chat.copyFailed')
+    expect(copyButton.text()).toBe('common.copy')
   })
 
   it('shows and directly handles an approval from an inactive chat session', async () => {

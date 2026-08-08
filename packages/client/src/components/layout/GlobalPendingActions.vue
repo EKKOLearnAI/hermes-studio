@@ -7,6 +7,7 @@ import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval, type GroupPendingClarify } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
 import { workflowApprovalKey } from '@/utils/workflow-approval-key'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
@@ -177,12 +178,12 @@ function pendingActions(): GlobalPendingAction[] {
 }
 
 async function copyApprovalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
-  try {
-    await navigator.clipboard.writeText(action.pending.command)
-    copiedCommandKey.value = action.key
-  } catch {
+  const copied = await copyToClipboard(action.pending.command)
+  if (!copied) {
     message.error(t('chat.copyFailed'))
+    return
   }
+  copiedCommandKey.value = action.key
 }
 
 function approvalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
