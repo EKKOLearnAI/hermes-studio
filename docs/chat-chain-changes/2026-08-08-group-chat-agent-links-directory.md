@@ -1,6 +1,6 @@
 ---
 date: 2026-08-08
-pr: pending
+pr: 2424
 feature: Group Chat Agent link state directory
 impact: Outbound Group Chat Agent links are stored with the rest of the Group Chat state.
 ---
