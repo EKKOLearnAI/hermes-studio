@@ -122,27 +122,38 @@ const SYSTEM_NOTIFICATION_LEDGER_KEY = 'hermes-system-notification-ledger-v1'
 const SYSTEM_NOTIFICATION_FOREGROUND_KEY = 'hermes-system-notification-foreground-v1'
 const SYSTEM_NOTIFICATION_LEDGER_TTL = 7 * 24 * 60 * 60 * 1000
 const SYSTEM_NOTIFICATION_FOREGROUND_TTL = 5000
+const SYSTEM_NOTIFICATION_TAB_ID = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random()}`
 
 function isCurrentDocumentForeground(): boolean {
   return typeof document !== 'undefined' && !document.hidden && document.hasFocus()
 }
 
-function recordForegroundHeartbeat() {
-  if (!isCurrentDocumentForeground()) return
+function readForegroundHeartbeats(): Record<string, number> {
   try {
-    localStorage.setItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY, String(Date.now()))
+    const parsed = JSON.parse(localStorage.getItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY) || '{}') as Record<string, number>
+    const now = Date.now()
+    return Object.fromEntries(Object.entries(parsed).filter(([, timestamp]) => Number.isFinite(timestamp) && now - timestamp < SYSTEM_NOTIFICATION_FOREGROUND_TTL))
+  } catch {
+    return {}
+  }
+}
+
+function recordForegroundHeartbeat() {
+  try {
+    const heartbeats = readForegroundHeartbeats()
+    if (isCurrentDocumentForeground()) heartbeats[SYSTEM_NOTIFICATION_TAB_ID] = Date.now()
+    else delete heartbeats[SYSTEM_NOTIFICATION_TAB_ID]
+    localStorage.setItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY, JSON.stringify(heartbeats))
   } catch {
     // Foreground detection falls back to this document when storage is blocked.
   }
 }
 
 function hasFreshForegroundHeartbeat(): boolean {
-  try {
-    const timestamp = Number(localStorage.getItem(SYSTEM_NOTIFICATION_FOREGROUND_KEY) || 0)
-    return Number.isFinite(timestamp) && Date.now() - timestamp < SYSTEM_NOTIFICATION_FOREGROUND_TTL
-  } catch {
-    return false
-  }
+  const heartbeats = readForegroundHeartbeats()
+  return Object.keys(heartbeats).length > 0
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {

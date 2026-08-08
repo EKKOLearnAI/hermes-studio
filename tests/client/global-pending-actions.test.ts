@@ -349,6 +349,25 @@ describe('GlobalPendingActions', () => {
     wrapper.unmount()
   })
 
+  it('still sends a system notification for a new in-context request when Studio is backgrounded', async () => {
+    settingsState.display.notify_on_approval = true
+    const wrapper = mount(GlobalPendingActions)
+    await nextTick()
+
+    chatState.pendingApprovals = new Map([['session-a', {
+      sessionId: 'session-a', approvalId: 'approval-a', description: 'Run', command: 'pwd', choices: ['once'],
+    }]])
+    await nextTick()
+
+    expect(created).toHaveLength(0)
+    expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledOnce()
+    expect(systemNotificationMock.showSystemNotification).toHaveBeenCalledWith(expect.objectContaining({
+      clickUrl: '/hermes/session/session-a',
+      tag: expect.stringContaining('chat-approval:session-a:approval-a'),
+    }))
+    wrapper.unmount()
+  })
+
   it('sounds for a new in-context group approval without duplicating its notification', async () => {
     settingsState.display.approval_bell = true
     routeState.name = 'hermes.groupChatRoom'

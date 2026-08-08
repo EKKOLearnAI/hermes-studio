@@ -95,9 +95,23 @@ describe('system notification adapter', () => {
   })
 
   it('suppresses a hidden tab when another Studio tab has a fresh foreground heartbeat', async () => {
-    localStorage.setItem('hermes-system-notification-foreground-v1', String(Date.now()))
+    localStorage.setItem('hermes-system-notification-foreground-v1', JSON.stringify({ 'other-tab': Date.now() }))
     const { showSystemNotification } = await import('@/utils/completion-notification')
     expect(await showSystemNotification({ title: 'Approval required', tag: 'approval:foreground-tab' })).toBe(false)
     expect(shown).toHaveLength(0)
+  })
+
+  it('does not suppress after this Studio tab leaves the foreground', async () => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })
+    const module = await import('@/utils/completion-notification')
+    window.dispatchEvent(new Event('focus'))
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false })
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(await module.showSystemNotification({ title: 'Approval required', tag: 'approval-after-tab-switch' })).toBe(true)
+    expect(shown).toHaveLength(1)
   })
 })

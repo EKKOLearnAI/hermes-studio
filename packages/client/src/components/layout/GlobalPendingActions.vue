@@ -58,7 +58,7 @@ function loadApprovalSoundSetting() {
     approvalSoundArmed = true
     if (pendingSoundKeys.size > 0 && settingsStore.display.approval_bell) void playCompletionSound()
     if (settingsStore.display.notify_on_approval) {
-      for (const action of pendingActions()) {
+      for (const action of pendingActions(false)) {
         if (pendingNotificationKeys.has(action.key)) notifyPendingAction(action)
       }
     }
@@ -147,12 +147,12 @@ function pendingSoundActionKeys(): string[] {
   return keys
 }
 
-function pendingActions(): GlobalPendingAction[] {
+function pendingActions(suppressVisibleSources = true): GlobalPendingAction[] {
   const actions: GlobalPendingAction[] = []
-  const visibleChatSessionId = ['hermes.chat', 'hermes.session', 'hermes.globalAgent', 'hermes.globalAgentSession'].includes(String(route.name || ''))
+  const visibleChatSessionId = suppressVisibleSources && ['hermes.chat', 'hermes.session', 'hermes.globalAgent', 'hermes.globalAgentSession'].includes(String(route.name || ''))
     ? chatStore.activeSessionId
     : null
-  const visibleGroupRoomId = route.name === 'hermes.groupChatRoom' ? groupChatStore.currentRoomId : null
+  const visibleGroupRoomId = suppressVisibleSources && route.name === 'hermes.groupChatRoom' ? groupChatStore.currentRoomId : null
   for (const pending of chatStore.pendingApprovals.values()) {
     if (pending.sessionId === visibleChatSessionId) continue
     actions.push({ key: `chat-approval:${pending.sessionId}:${pending.approvalId}`, kind: 'chat-approval', title: sessionTitle(pending.sessionId), pending })
@@ -409,7 +409,7 @@ watch(pendingSoundActionKeys, keys => {
         pendingNotificationKeys.add(key)
       }
       if (approvalSoundArmed && settingsStore.display.notify_on_approval) {
-        const action = pendingActions().find(candidate => candidate.key === key)
+        const action = pendingActions(false).find(candidate => candidate.key === key)
         if (action) notifyPendingAction(action)
       }
     }
