@@ -120,6 +120,42 @@ describe('group chat structured agent mentions', () => {
     expect(replyToMention).not.toHaveBeenCalled()
   })
 
+  it('persists tool output containing mention-like text without authorizing or routing mentions', async () => {
+    const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(author)
+    await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    const response = await emitAck<{ id?: string; error?: string }>(author, 'message', {
+      roomId: 'room-1',
+      id: 'tool-result-with-mentions',
+      content: 'source fixture: @all and @Reviewer are plain tool output',
+      role: 'tool',
+      run_id: 'run-1',
+      tool_call_id: 'call-1',
+      tool_name: 'read_file',
+      agentSessionId: groupRuntimeSessionId('room-1', 'default', 'Author'),
+      mentions: [{ type: 'all', displayName: 'ALL' }],
+    })
+
+    expect(response).toEqual({ id: 'tool-result-with-mentions' })
+    expect(harness.db.prepare(`
+      SELECT role, content, mentions, tool_call_id, tool_name
+      FROM gc_messages
+      WHERE id = ?
+    `).get('tool-result-with-mentions')).toEqual({
+      role: 'tool',
+      content: 'source fixture: @all and @Reviewer are plain tool output',
+      mentions: '[]',
+      tool_call_id: 'call-1',
+      tool_name: 'read_file',
+    })
+    expect(processMentions).not.toHaveBeenCalled()
+  })
+
   it('keeps the latest main policy that only a room owner may broadcast with @all', async () => {
     const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
       source: 'agent',

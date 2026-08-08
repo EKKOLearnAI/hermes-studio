@@ -62,6 +62,10 @@ describe('group chat agent workspace bridge runs', () => {
   beforeEach(() => {
     order.length = 0
     vi.clearAllMocks()
+    mockSocket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'message' && ack) ack({ id: data?.id || 'msg-id' })
+      return mockSocket
+    })
     trackerMock.completeWorkspaceRunCheckpointDraft.mockReset()
     trackerMock.completeWorkspaceRunCheckpointDraft.mockReturnValue(null)
     bridgeMock.chat.mockImplementation(async (_sessionId: string) => {
@@ -179,6 +183,212 @@ describe('group chat agent workspace bridge runs', () => {
     expect(codexResponsesSession).not.toBe(codexChatSession)
     expect(hermesWithIgnoredApiMode).toBe(hermesSession)
   }, 15_000)
+
+  it.each([
+    ['codex', 'codex'],
+    ['claude', 'claude-code'],
+    ['ekko', 'ekko-agent'],
+  ] as const)('keeps %s tool output mention text non-routable', async (agent, codingAgentId) => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('tool.started', {
+        tool_call_id: `tool-${agent}`,
+        name: 'read_file',
+        arguments: { path: '/tmp/source.txt' },
+      })
+      options.onEvent?.('tool.completed', {
+        tool_call_id: `tool-${agent}`,
+        name: 'read_file',
+        output: 'source fixture: @all and @Reviewer are plain tool output',
+      })
+      return { ok: true, output: `${agent} answer` }
+    })
+    const clients = new AgentClients()
+    clients.setChatRunService({ runAndWait, abortSession: vi.fn(async () => {}) })
+    const client = await clients.createAgent({
+      agentId: `agent-${agent}`,
+      agent,
+      profile: 'default',
+      name: agent,
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getMessagesForContext: vi.fn(() => []),
+      getContextSnapshot: vi.fn(() => null),
+    })
+
+    await client.replyToMention(`room-${agent}`, {
+      messageId: `message-${agent}`,
+      content: `@${agent} inspect the source`,
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    expect(runAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({ coding_agent_id: codingAgentId }),
+      expect.anything(),
+    )
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: `room-${agent}`,
+        role: 'tool',
+        tool_call_id: `tool-${agent}`,
+        content: 'source fixture: @all and @Reviewer are plain tool output',
+      }),
+      expect.any(Function),
+    )
+    const toolPayload = mockSocket.emit.mock.calls
+      .find(([event, payload]) => event === 'message' && payload?.tool_call_id === `tool-${agent}`)?.[1]
+    expect(toolPayload).not.toHaveProperty('mentions')
+  })
+
+  it('keeps Hermes bridge failed tool output mention text non-routable and preserves the error', async () => {
+    bridgeMock.streamOutput.mockImplementation(async function* (runId: string) {
+      yield {
+        ok: true,
+        run_id: runId,
+        session_id: 'session-1',
+        status: 'complete',
+        delta: 'Hermes answer',
+        cursor: 1,
+        output: 'Hermes answer',
+        done: true,
+        events: [
+          { event: 'tool.started', tool_call_id: 'tool-hermes', name: 'read_file', arguments: { path: '/tmp/source.txt' } },
+          {
+            event: 'tool.failed',
+            tool_call_id: 'tool-hermes',
+            name: 'read_file',
+            output: 'permission denied: @all and @Reviewer are plain tool output',
+            error: 'permission denied',
+          },
+        ],
+        event_cursor: 2,
+      } as any
+    })
+    const client = await createClient('')
+
+    await client.replyToMention('room-1', {
+      messageId: 'message-hermes',
+      content: '@Worker inspect the source',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        roomId: 'room-1',
+        role: 'tool',
+        tool_call_id: 'tool-hermes',
+        content: 'permission denied: @all and @Reviewer are plain tool output',
+        finish_reason: 'error',
+      }),
+      expect.any(Function),
+    )
+    const toolPayload = mockSocket.emit.mock.calls
+      .find(([event, payload]) => event === 'message' && payload?.tool_call_id === 'tool-hermes')?.[1]
+    expect(toolPayload).not.toHaveProperty('mentions')
+  })
+
+  it('clears exhausted ChatRun tool recovery state after surfacing terminal persistence loss', async () => {
+    let toolResultAttempts = 0
+    mockSocket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'message' && data?.role === 'tool') {
+        toolResultAttempts += 1
+        ack?.({ error: 'persistent Room persistence failure' })
+      } else if (event === 'message') {
+        ack?.({ id: data?.id || 'msg-id' })
+      }
+      return mockSocket
+    })
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('tool.started', {
+        tool_call_id: 'tool-codex-terminal-loss',
+        name: 'read_file',
+        arguments: { path: '/tmp/source.txt' },
+      })
+      options.onEvent?.('tool.completed', {
+        tool_call_id: 'tool-codex-terminal-loss',
+        name: 'read_file',
+        output: 'result that cannot be persisted',
+      })
+      return { ok: true, output: 'Codex answer' }
+    })
+    const clients = new AgentClients()
+    clients.setChatRunService({ runAndWait, abortSession: vi.fn(async () => {}) })
+    const client = await clients.createAgent({
+      agentId: 'agent-codex-terminal-loss', agent: 'codex', profile: 'default', name: 'Codex',
+      description: '', invited: 0, backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getMessagesForContext: vi.fn(() => []),
+      getContextSnapshot: vi.fn(() => null),
+    })
+
+    await client.replyToMention('room-codex-terminal-loss', {
+      messageId: 'message-codex-terminal-loss', content: '@Codex inspect the source',
+      senderName: 'Human', senderId: 'human-1', timestamp: 1, role: 'user',
+    })
+
+    expect(toolResultAttempts).toBe(3)
+    expect(client.pendingToolCallIds.size).toBe(0)
+    expect(client.pendingToolBaseIds.size).toBe(0)
+    expect(client.pendingToolRunIds.size).toBe(0)
+    expect(client.pendingToolNames.size).toBe(0)
+    expect(client.pendingToolExternalIds.size).toBe(0)
+    expect(client.pendingToolCompletionEvents.size).toBe(0)
+    client.disconnect()
+  })
+
+  it('clears exhausted Hermes tool recovery state after surfacing terminal persistence loss', async () => {
+    let toolResultAttempts = 0
+    mockSocket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'message' && data?.role === 'tool') {
+        toolResultAttempts += 1
+        ack?.({ error: 'persistent Room persistence failure' })
+      } else if (event === 'message') {
+        ack?.({ id: data?.id || 'msg-id' })
+      }
+      return mockSocket
+    })
+    bridgeMock.streamOutput.mockImplementation(async function* (runId: string) {
+      yield {
+        ok: true, run_id: runId, session_id: 'session-1', status: 'complete',
+        delta: 'Hermes answer', cursor: 1, output: 'Hermes answer', done: true,
+        events: [
+          { event: 'tool.started', tool_call_id: 'tool-hermes-terminal-loss', name: 'read_file', arguments: { path: '/tmp/source.txt' } },
+          { event: 'tool.completed', tool_call_id: 'tool-hermes-terminal-loss', name: 'read_file', output: 'result that cannot be persisted' },
+        ],
+        event_cursor: 2,
+      } as any
+    })
+    const client = await createClient('')
+
+    await client.replyToMention('room-1', {
+      messageId: 'message-hermes-terminal-loss', content: '@Worker inspect the source',
+      senderName: 'Human', senderId: 'human-1', timestamp: 1, role: 'user',
+    })
+
+    expect(toolResultAttempts).toBe(3)
+    expect(client.pendingToolCallIds.size).toBe(0)
+    expect(client.pendingToolBaseIds.size).toBe(0)
+    expect(client.pendingToolRunIds.size).toBe(0)
+    expect(client.pendingToolNames.size).toBe(0)
+    expect(client.pendingToolExternalIds.size).toBe(0)
+    expect(client.pendingToolCompletionEvents.size).toBe(0)
+    client.disconnect()
+  })
 
   it('generates a complete entry mention DTO for an agent reply handoff', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')

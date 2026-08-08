@@ -294,6 +294,10 @@ export class AgentClient implements GroupAgentExecutor {
     private pendingToolBaseIds = new Map<string, string>()
     private pendingToolRunIds = new Map<string, string>()
     private pendingToolNames = new Map<string, string>()
+    private pendingToolExternalIds = new Map<string, string>()
+    private pendingToolCompletionEvents = new Map<string, Record<string, unknown>>()
+    private acknowledgedToolCallIds = new Map<string, number>()
+    private anonymousToolCallSequence = 0
     private bridgeContextCache = new Map<string, BridgeContextCache>()
     private workspaceDiffRuns = new Map<string, WorkspaceDiffRunState>()
     private interruptVersions = new Map<string, number>()
@@ -395,6 +399,13 @@ export class AgentClient implements GroupAgentExecutor {
             this.joinedRooms.clear()
             this.bridgeContextCache.clear()
         }
+        this.pendingToolCallIds.clear()
+        this.pendingToolBaseIds.clear()
+        this.pendingToolRunIds.clear()
+        this.pendingToolNames.clear()
+        this.pendingToolExternalIds.clear()
+        this.pendingToolCompletionEvents.clear()
+        this.acknowledgedToolCallIds.clear()
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -413,10 +424,14 @@ export class AgentClient implements GroupAgentExecutor {
 
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
-        const generatedMentions = this.mentionBuilder?.(roomId, content) || []
+        // Preserve the legacy implicit-assistant call shape, but never classify
+        // runtime Tool payload text as conversational routing intent.
+        const role = typeof extra?.role === 'string' ? extra.role : undefined
+        const canCarryMentions = role === undefined || role === 'user' || role === 'assistant'
+        const generatedMentions = canCarryMentions ? this.mentionBuilder?.(roomId, content) || [] : []
         const mentions = generatedMentions.length > 0
             ? generatedMentions
-            : (extra?.role === 'assistant' ? this.structuredMentionsForAgentReply(roomId, content) : [])
+            : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
         const messageExtra = mentions.length ? { ...extra, mentions } : extra
         if (this.eventSink) {
             return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
@@ -1053,7 +1068,7 @@ export class AgentClient implements GroupAgentExecutor {
                             toolReasoning,
                         ))
                     } else if (event === 'tool.completed' || event === 'tool.failed') {
-                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, { ...payload, event }))
+                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, { ...payload, event }).then(() => undefined))
                     } else if (event === 'approval.requested') {
                         this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'approval.resolved') {
@@ -1065,9 +1080,15 @@ export class AgentClient implements GroupAgentExecutor {
                     }
                 },
             })
-            if (!isCurrent()) return
+            if (!isCurrent()) {
+                await toolEventWrites
+                await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+                this.discardPendingToolsForRun(responseRunId)
+                return
+            }
             await toolEventWrites
-            await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            const toolResultsPersisted = await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            if (!toolResultsPersisted) throw new Error('One or more Tool results could not be persisted after bounded retries')
             if (!result.ok) throw new Error(result.error || 'Run failed')
             const finalContent = String(result.output || currentContent || '').trim()
             if (!sawReasoningDelta) reasoningContent = String(result.reasoning || reasoningContent || '')
@@ -1086,7 +1107,12 @@ export class AgentClient implements GroupAgentExecutor {
             await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', finalContent ? runMessageId : null)
             reportStatus('ready')
         } catch (err) {
-            if (!isCurrent()) return
+            if (!isCurrent()) {
+                await toolEventWrites
+                await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+                this.discardPendingToolsForRun(responseRunId)
+                return
+            }
             await toolEventWrites
             await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
             await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? runMessageId : null)
@@ -1171,6 +1197,8 @@ export class AgentClient implements GroupAgentExecutor {
                         }
                     }
                 }
+                await this.completePendingToolsForRun(roomId, sessionId, runMessageId)
+                this.discardPendingToolsForRun(runMessageId)
                 this.discardWorkspaceDiffRun(workspaceRunState)
                 workspaceRunState = null
                 try {
@@ -1296,6 +1324,9 @@ export class AgentClient implements GroupAgentExecutor {
                 }
             }
 
+            const toolResultsPersisted = await this.completePendingToolsForRun(roomId, sessionId, runMessageId)
+            if (!toolResultsPersisted) throw new Error('One or more Tool results could not be persisted after bounded retries')
+
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
                 if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
@@ -1355,6 +1386,9 @@ export class AgentClient implements GroupAgentExecutor {
             if (workspaceRunState && !bridgeStarted) {
                 await stopStaleStartedRun?.('Interrupted after group chat bridge launch failed')
             } else {
+                if (activeSessionId) {
+                    await this.completePendingToolsForRun(roomId, activeSessionId, runMessageId)
+                }
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
             }
             try {
@@ -1426,7 +1460,7 @@ export class AgentClient implements GroupAgentExecutor {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 await this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, responseRunId, toolReasoning)
                 reasoning = ''
-            } else if (eventType === 'tool.completed') {
+            } else if (eventType === 'tool.completed' || eventType === 'tool.failed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 await this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
             } else if (eventType === 'approval.requested') {
@@ -1484,18 +1518,26 @@ export class AgentClient implements GroupAgentExecutor {
     ): Promise<void> {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const rawToolCallId = String(ev.tool_call_id || '').trim()
-        const toolCallId = groupToolCallId(rawToolCallId, toolName, this.nextToolIndex(roomId, toolName))
+        const externalToolCallId = groupToolCallId(
+            rawToolCallId,
+            toolName,
+            `${roomId}:${sessionId}:${runMessageId}`,
+            this.nextAnonymousToolCallSequence(),
+        )
+        const toolCallId = toolCorrelationId(roomId, sessionId, externalToolCallId)
+        this.acknowledgedToolCallIds.delete(toolCallId)
         if (!rawToolCallId || !this.pendingToolBaseIds.has(toolCallId)) {
             this.trackPendingToolCall(roomId, toolName, toolCallId)
         }
         this.pendingToolBaseIds.set(toolCallId, runMessageId)
         this.pendingToolRunIds.set(toolCallId, responseRunId)
         this.pendingToolNames.set(toolCallId, toolName)
+        this.pendingToolExternalIds.set(toolCallId, externalToolCallId)
         const timestamp = Date.now()
         const rawArgs = ev.args ?? ev.arguments ?? ev.input ?? {}
         const args = normalizeToolArgs(rawArgs)
         const toolCall = {
-            id: toolCallId,
+            id: externalToolCallId,
             type: 'function',
             function: {
                 name: toolName,
@@ -1503,7 +1545,7 @@ export class AgentClient implements GroupAgentExecutor {
             },
         }
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolcall_${safeId(toolCallId)}`,
+            id: `${runMessageId}_toolcall_${stableToolIdPart(externalToolCallId)}`,
             roomId,
             senderId: this.id || this.agentId,
             senderName: this.name,
@@ -1529,16 +1571,25 @@ export class AgentClient implements GroupAgentExecutor {
             .catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message || err}`))
     }
 
-    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): Promise<void> {
+    private async recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): Promise<boolean> {
         const rawId = String(ev.tool_call_id || '').trim()
-        const toolName = String(ev.tool_name || ev.tool || ev.name || this.pendingToolNames.get(rawId) || '')
-        if (rawId) this.removePendingToolCall(roomId, toolName, rawId)
-        const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
+        const scopedRawId = rawId ? toolCorrelationId(roomId, sessionId, rawId) : ''
+        if (scopedRawId && this.acknowledgedToolCallIds.has(scopedRawId)) return true
+        const initialToolName = String(ev.tool_name || ev.tool || ev.name || '')
+        const queuedToolCallId = rawId ? '' : (this.takePendingToolCall(roomId, initialToolName) || '')
+        const externalToolCallId = rawId
+            || this.pendingToolExternalIds.get(queuedToolCallId)
+            || groupToolCallId(
+                null,
+                initialToolName,
+                `${roomId}:${sessionId}:${inferResponseRunId(groupMessageId(roomId, this.profile, this.name))}`,
+                this.nextAnonymousToolCallSequence(),
+            )
+        const toolCallId = scopedRawId || queuedToolCallId || toolCorrelationId(roomId, sessionId, externalToolCallId)
+        const toolName = initialToolName || this.pendingToolNames.get(toolCallId) || ''
         const runMessageId = this.pendingToolBaseIds.get(toolCallId) || groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
         const responseRunId = this.pendingToolRunIds.get(toolCallId) || inferResponseRunId(runMessageId)
-        this.pendingToolBaseIds.delete(toolCallId)
-        this.pendingToolRunIds.delete(toolCallId)
-        this.pendingToolNames.delete(toolCallId)
+        this.pendingToolCompletionEvents.set(toolCallId, ev)
         const output = bridgeToolOutput(ev)
         const failed = ev.event === 'tool.failed'
             || ev.is_error === true
@@ -1546,7 +1597,7 @@ export class AgentClient implements GroupAgentExecutor {
             || (typeof ev.error === 'string' && ev.error.trim().length > 0)
         const timestamp = Date.now()
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolresult_${safeId(toolCallId)}_${Date.now()}`,
+            id: `${runMessageId}_toolresult_${stableToolIdPart(externalToolCallId)}`,
             roomId,
             senderId: this.id || this.agentId,
             senderName: this.name,
@@ -1554,37 +1605,104 @@ export class AgentClient implements GroupAgentExecutor {
             timestamp,
             run_id: responseRunId,
             role: 'tool',
-            tool_call_id: toolCallId,
+            tool_call_id: externalToolCallId,
             tool_name: toolName || null,
             finish_reason: failed ? 'error' : null,
         }
-        return this.sendMessage(roomId, output, msg.id, {
-            role: 'tool',
-            run_id: responseRunId,
-            tool_call_id: toolCallId,
-            tool_name: toolName || null,
-            finish_reason: failed ? 'error' : null,
-            timestamp,
-        }, sessionId)
-            .then(() => undefined)
-            .catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message || err}`))
+        try {
+            await withTimeout(this.sendMessage(roomId, output, msg.id, {
+                role: 'tool',
+                run_id: responseRunId,
+                tool_call_id: externalToolCallId,
+                tool_name: toolName || null,
+                finish_reason: failed ? 'error' : null,
+                timestamp,
+            }, sessionId), TOOL_RESULT_ACK_TIMEOUT_MS, 'Timed out waiting for Tool result persistence acknowledgement')
+            this.removePendingToolCall(roomId, toolName, toolCallId)
+            this.pendingToolBaseIds.delete(toolCallId)
+            this.pendingToolRunIds.delete(toolCallId)
+            this.pendingToolNames.delete(toolCallId)
+            this.pendingToolExternalIds.delete(toolCallId)
+            this.pendingToolCompletionEvents.delete(toolCallId)
+            this.rememberAcknowledgedToolCall(toolCallId)
+            return true
+        } catch (err: any) {
+            logger.warn(`[AgentClients] failed to record tool result: ${err.message || err}`)
+            return false
+        }
     }
 
-    private async completePendingToolsForRun(roomId: string, sessionId: string, responseRunId: string): Promise<void> {
+    private async completePendingToolsForRun(roomId: string, sessionId: string, responseRunId: string): Promise<boolean> {
         const pendingToolCallIds = Array.from(this.pendingToolRunIds.entries())
             .filter(([, pendingRunId]) => pendingRunId === responseRunId)
             .map(([toolCallId]) => toolCallId)
+        let allPersisted = true
         for (const toolCallId of pendingToolCallIds) {
-            await this.recordToolCompleted(roomId, sessionId, {
-                tool_call_id: toolCallId,
-                tool_name: this.pendingToolNames.get(toolCallId) || '',
-                output: '',
-            })
+            const completionEvent = this.pendingToolCompletionEvents.get(toolCallId)
+            const retryEvent = {
+                ...(completionEvent || {
+                    tool_name: this.pendingToolNames.get(toolCallId) || '',
+                    output: '',
+                }),
+                tool_call_id: this.pendingToolExternalIds.get(toolCallId) || toolCallId,
+            }
+            let persisted = false
+            for (let attempt = 0; attempt < TOOL_RESULT_FINAL_RETRY_ATTEMPTS; attempt += 1) {
+                if (await this.recordToolCompleted(roomId, sessionId, retryEvent)) {
+                    persisted = true
+                    break
+                }
+                if (attempt + 1 < TOOL_RESULT_FINAL_RETRY_ATTEMPTS) {
+                    await delay(TOOL_RESULT_RETRY_DELAY_MS * (attempt + 1))
+                }
+            }
+            if (!persisted) {
+                allPersisted = false
+                const toolName = this.pendingToolNames.get(toolCallId) || ''
+                const externalToolCallId = this.pendingToolExternalIds.get(toolCallId) || toolCallId
+                logger.error(`[AgentClients] terminal Tool result persistence loss after bounded retries: room=${roomId} run=${responseRunId} tool=${toolName || 'unknown'} tool_call_id=${externalToolCallId}`)
+                this.removePendingToolCall(roomId, toolName, toolCallId)
+                this.pendingToolBaseIds.delete(toolCallId)
+                this.pendingToolRunIds.delete(toolCallId)
+                this.pendingToolNames.delete(toolCallId)
+                this.pendingToolExternalIds.delete(toolCallId)
+                this.pendingToolCompletionEvents.delete(toolCallId)
+            }
+        }
+        return allPersisted
+    }
+
+    private discardPendingToolsForRun(responseRunId: string): void {
+        const staleToolCallIds = new Set(Array.from(this.pendingToolRunIds.entries())
+            .filter(([, pendingRunId]) => pendingRunId === responseRunId)
+            .map(([toolCallId]) => toolCallId))
+        if (!staleToolCallIds.size) return
+        for (const [key, list] of this.pendingToolCallIds) {
+            const current = list.filter(toolCallId => !staleToolCallIds.has(toolCallId))
+            if (current.length) this.pendingToolCallIds.set(key, current)
+            else this.pendingToolCallIds.delete(key)
+        }
+        for (const toolCallId of staleToolCallIds) {
+            this.pendingToolBaseIds.delete(toolCallId)
+            this.pendingToolRunIds.delete(toolCallId)
+            this.pendingToolNames.delete(toolCallId)
+            this.pendingToolExternalIds.delete(toolCallId)
+            this.pendingToolCompletionEvents.delete(toolCallId)
         }
     }
 
     private pendingToolKey(roomId: string, toolName: string): string {
         return `${roomId}::${toolName || 'tool'}`
+    }
+
+    private rememberAcknowledgedToolCall(toolCallId: string): void {
+        this.acknowledgedToolCallIds.delete(toolCallId)
+        this.acknowledgedToolCallIds.set(toolCallId, Date.now())
+        while (this.acknowledgedToolCallIds.size > ACKNOWLEDGED_TOOL_CALL_LIMIT) {
+            const oldest = this.acknowledgedToolCallIds.keys().next().value
+            if (!oldest) break
+            this.acknowledgedToolCallIds.delete(oldest)
+        }
     }
 
     private trackPendingToolCall(roomId: string, toolName: string, toolCallId: string): void {
@@ -1613,9 +1731,9 @@ export class AgentClient implements GroupAgentExecutor {
         else this.pendingToolCallIds.delete(key)
     }
 
-    private nextToolIndex(roomId: string, toolName: string): number {
-        const key = this.pendingToolKey(roomId, toolName)
-        return (this.pendingToolCallIds.get(key)?.length || 0) + 1
+    private nextAnonymousToolCallSequence(): number {
+        this.anonymousToolCallSequence += 1
+        return this.anonymousToolCallSequence
     }
 
     private bindEvents(): void {
@@ -1696,14 +1814,50 @@ function inferResponseRunId(messageId: string): string {
     return match?.[1] || String(messageId || '')
 }
 
-function groupToolCallId(rawToolCallId: unknown, toolName: string, index: number): string {
+function groupToolCallId(rawToolCallId: unknown, toolName: string, scope: string, sequence: number): string {
     const raw = String(rawToolCallId || '').trim()
     if (raw) return raw
-    return `cli_${safeId(toolName || 'tool')}_${Date.now()}_${index}`
+    return `cli_${safeId(toolName || 'tool')}_${stableToolIdPart(scope)}_${sequence}`
+}
+
+function toolCorrelationId(roomId: string, sessionId: string, externalToolCallId: string): string {
+    return `${roomId}\u0000${sessionId}\u0000${externalToolCallId}`
 }
 
 function safeId(value: string): string {
     return String(value || 'item').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80)
+}
+
+const TOOL_RESULT_ACK_TIMEOUT_MS = 30_000
+const TOOL_RESULT_FINAL_RETRY_ATTEMPTS = 2
+const TOOL_RESULT_RETRY_DELAY_MS = 50
+const ACKNOWLEDGED_TOOL_CALL_LIMIT = 1_024
+
+function stableToolIdPart(value: string): string {
+    const raw = String(value || 'item')
+    if (/^[a-zA-Z0-9_-]{1,80}$/.test(raw)) return raw
+    const hash = createHash('sha256').update(raw).digest('hex').slice(0, 12)
+    return `${safeId(raw).slice(0, 67)}_${hash}`
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+        promise.then(
+            value => {
+                clearTimeout(timeout)
+                resolve(value)
+            },
+            error => {
+                clearTimeout(timeout)
+                reject(error)
+            },
+        )
+    })
 }
 
 function bridgeToolOutput(ev: Record<string, unknown>): string {

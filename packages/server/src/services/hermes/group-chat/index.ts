@@ -2569,6 +2569,7 @@ export class GroupChatServer {
         const userName = member?.name || `User-${socketId.slice(0, 6)}`
         const isHumanMessage = member?.source === 'human'
         const role = isHumanMessage ? 'user' : normalizeMessageRole(data.role)
+        const canCarryMentions = role === 'user' || role === 'assistant'
         let messageContent: unknown = data.content
         let runtimeInput: ContentBlock[] | undefined = Array.isArray(data.content)
             ? data.content as ContentBlock[]
@@ -2588,6 +2589,8 @@ export class GroupChatServer {
             }
         }
         if (
+            canCarryMentions
+            &&
             isAllAgentsMentioned(contentToText(messageContent))
             && !this.canSocketMentionAll(socket, roomId)
         ) {
@@ -2598,7 +2601,9 @@ export class GroupChatServer {
             return
         }
         const content = contentToStorageString(messageContent)
-        const mentionResult = this.normalizeStructuredMentions(roomId, member, contentToText(messageContent), data.mentions)
+        const mentionResult = canCarryMentions
+            ? this.normalizeStructuredMentions(roomId, member, contentToText(messageContent), data.mentions)
+            : {}
         if (mentionResult.error) {
             ack?.({ error: mentionResult.error })
             return
