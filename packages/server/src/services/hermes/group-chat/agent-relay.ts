@@ -351,6 +351,8 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly reasoningEffort: string
   readonly name: string
   readonly description: string
+  readonly avatar: string
+  readonly ownerMemberId: string
   private activeSessions = new Map<string, string>()
   private pendingRun: PendingRelayRun | null = null
   private detached = false
@@ -373,6 +375,8 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     this.reasoningEffort = String(agent.reasoningEffort || '')
     this.name = String(agent.name || this.profile)
     this.description = String(agent.description || '')
+    this.avatar = String(agent.avatar || '')
+    this.ownerMemberId = String(agent.ownerMemberId || '')
   }
 
   get connected(): boolean {
@@ -429,6 +433,16 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
           roomId,
           agentId: this.agentId,
           workspace: sharedWorkspace,
+          agentSnapshot: {
+            name: this.name,
+            agent: this.agent,
+            profile: this.profile,
+            provider: this.provider,
+            model: this.model,
+            description: this.description,
+            avatar: this.avatar,
+            ownerMemberId: this.ownerMemberId,
+          },
         })
       : null
     const request: RelayRunRequest = {

@@ -941,6 +941,7 @@ export class AgentClient implements GroupAgentExecutor {
                 '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
                 `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
                 `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
+                'A successful binary upload returns the workspace path and automatically sends a separate Agent attachment message whose text body is that workspace-relative path and whose image/file block uses the same format as the message composer. JSON write actions do not send attachment messages. Do not repeat a binary-upload attachment as Markdown or JSON in your final reply.',
                 'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
                 'Binary uploads and downloads are limited to 20 MiB per file.',
                 'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',

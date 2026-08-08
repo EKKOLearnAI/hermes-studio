@@ -43,8 +43,20 @@ groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:re
 groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:requestId/failure', agentLinkCtrl.failPairingHandoff)
 groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links', agentLinkCtrl.requestPairing)
 groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/agent-links/:requestId', agentLinkCtrl.pairingStatus)
+/**
+ * Perform a JSON action against the current Agent run's shared group workspace.
+ * Supported actions are list, read, write, mkdir, and delete. JSON write actions
+ * only update the workspace and do not publish an Agent attachment message.
+ */
 groupChatPublicRoutes.post('/api/hermes/group-chat/remote-workspace/v1', remoteWorkspaceCtrl.remoteWorkspaceAction)
 groupChatPublicRoutes.get('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.downloadRemoteWorkspaceFile)
+/**
+ * Upload a binary artifact to the current Agent run's shared group workspace.
+ * Returns its workspace path, checksum, generated attachment block, and messageId.
+ * A successful upload also publishes a separate Agent attachment message to the
+ * room with the workspace-relative path as its text body and the image/file block
+ * in the same attachment format used by the message composer.
+ */
 groupChatPublicRoutes.put('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.uploadRemoteWorkspaceFileContent)
 
 groupChatRoutes.get('/api/hermes/group-chat-link/v1/agents', agentLinkCtrl.localAgents)

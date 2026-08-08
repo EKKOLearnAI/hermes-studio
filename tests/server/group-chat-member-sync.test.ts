@@ -428,6 +428,107 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack).toHaveBeenCalledWith({ error: 'Not in room' })
   })
 
+  it('persists and broadcasts uploaded attachments as the owning Agent', () => {
+    const emit = vi.fn()
+    const saveMessageAndRefreshRoom = vi.fn((message: any) => ({
+      message,
+      totalTokens: 17,
+    }))
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1' })),
+      getRoomAgentByAgentId: vi.fn(() => ({
+        id: 'agent-record-1',
+        agentId: 'agent-1',
+        name: 'Worker',
+      })),
+      saveMessageAndRefreshRoom,
+    }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+
+    const message = server.publishAgentAttachmentMessage({
+      roomId: 'room-1',
+      agentId: 'agent-1',
+      runId: 'run-1',
+      workspacePath: 'renders/final.png',
+      attachment: {
+        type: 'image',
+        name: 'final.png',
+        path: '0123456789abcdef0123456789abcdef.png',
+        media_type: 'image/png',
+      },
+    })
+
+    expect(saveMessageAndRefreshRoom).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Worker',
+      senderType: 'agent',
+      senderAgentRecordId: 'agent-record-1',
+      role: 'assistant',
+      run_id: 'run-1',
+      content: JSON.stringify([
+        { type: 'text', text: 'renders/final.png' },
+        {
+          type: 'image',
+          name: 'final.png',
+          path: '0123456789abcdef0123456789abcdef.png',
+          media_type: 'image/png',
+        },
+      ]),
+    }))
+    expect(message.senderId).toBe('agent-1')
+    expect(emit).toHaveBeenCalledWith('message', message)
+    expect(emit).toHaveBeenCalledWith('room_updated', { roomId: 'room-1', totalTokens: 17 })
+  })
+
+  it('uses the run identity snapshot when the uploading Agent was removed mid-run', () => {
+    const saveMessageAndRefreshRoom = vi.fn((message: any) => ({ message, totalTokens: 9 }))
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1' })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      saveMessageAndRefreshRoom,
+    }
+    server.nsp = { to: vi.fn(() => ({ emit: vi.fn() })) }
+
+    server.publishAgentAttachmentMessage({
+      roomId: 'room-1',
+      agentId: 'remote-agent-1',
+      runId: 'run-1',
+      workspacePath: 'result.md',
+      agentSnapshot: {
+        name: 'Remote Worker',
+        agent: 'hermes',
+        profile: 'default',
+        provider: 'openrouter',
+        model: 'model-1',
+        description: 'Remote Agent',
+        avatar: 'avatar-json',
+        ownerMemberId: 'member-1',
+      },
+      attachment: {
+        type: 'file',
+        name: 'result.md',
+        path: '0123456789abcdef0123456789abcdef.md',
+        media_type: 'text/markdown',
+      },
+    })
+
+    expect(saveMessageAndRefreshRoom).toHaveBeenCalledWith(expect.objectContaining({
+      senderId: 'remote-agent-1',
+      senderName: 'Remote Worker',
+      senderAgentRecordId: '',
+      senderAgentType: 'hermes',
+      senderAgentProfile: 'default',
+      senderAgentProvider: 'openrouter',
+      senderAgentModel: 'model-1',
+      senderAgentDescription: 'Remote Agent',
+      senderAvatar: 'avatar-json',
+      senderOwnerMemberId: 'member-1',
+    }))
+  })
+
   it('rejects stale agent context and stream side-channel events after session rotation', () => {
     const broadcastEmit = vi.fn()
     const roomEmit = vi.fn()

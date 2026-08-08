@@ -160,7 +160,12 @@ const contentBlocks = computed(() => {
     if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null
     try {
         const parsed = JSON.parse(trimmed)
-        return Array.isArray(parsed) ? parsed : null
+        if (!Array.isArray(parsed) || parsed.length === 0) return null
+        return parsed.every((block: any) => (
+            block
+            && typeof block === 'object'
+            && (block.type === 'text' || block.type === 'image' || block.type === 'file')
+        )) ? parsed : null
     } catch {
         return null
     }
@@ -193,7 +198,6 @@ const renderedAttachments = computed(() => {
 })
 const hasAttachments = computed(() => renderedAttachments.value.length > 0)
 const displayBody = computed(() => {
-    if (props.message.role !== 'user') return assistantBody.value
     const blocks = contentBlocks.value
     if (!blocks) return assistantBody.value
     return blocks
@@ -224,7 +228,7 @@ const copyableContent = computed(() => {
 const quotableContent = computed(() => {
     if (isToolMessage.value || props.message.isStreaming || isAgentError.value) return null
     const content = props.message.role === 'assistant'
-        ? assistantBody.value
+        ? displayBody.value
         : parsedMessageReference.value?.reply || parsedMessageReference.value?.content || displayBody.value
     return content.trim() || null
 })
@@ -274,7 +278,7 @@ function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: 
 const canPlaySpeech = computed(() => {
     if (!props.allowSpeech) return false
     if (props.message.role !== 'assistant') return false
-    if (!assistantBody.value.trim()) return false
+    if (!displayBody.value.trim()) return false
     if (messageTtsProfile.value) return true
     if (isServerTtsProvider(voiceSettings.provider.value)) return true
     return speech.isSupported
@@ -541,7 +545,7 @@ function playSpeech(content: string, autoplay = false, profileOverride = '') {
 }
 
 function handleSpeechToggle() {
-    if (canPlaySpeech.value) playSpeech(assistantBody.value)
+    if (canPlaySpeech.value) playSpeech(displayBody.value)
 }
 
 async function copyBubbleContent() {
@@ -608,7 +612,7 @@ onMounted(() => {
     autoPlayHandler = (e: Event) => {
         const event = e as CustomEvent<{ messageId: string; content: string; profile?: string }>
         if (event.detail?.messageId === props.message.id && canPlaySpeech.value) {
-            playSpeech(event.detail.content || assistantBody.value, true, event.detail.profile)
+            playSpeech(event.detail.content || displayBody.value, true, event.detail.profile)
         }
     }
     window.addEventListener('auto-play-speech', autoPlayHandler)

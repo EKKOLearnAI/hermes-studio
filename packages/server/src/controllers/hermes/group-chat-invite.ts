@@ -13,15 +13,15 @@ import {
     getGroupChatAttachmentBytes,
     getGroupChatAttachmentDir,
     getGroupChatAttachmentPath,
+    MAX_GROUP_CHAT_ATTACHMENT_SIZE,
+    MAX_GROUP_CHAT_ROOM_ATTACHMENT_BYTES,
+    withGroupChatAttachmentWriteLock,
 } from '../../services/hermes/group-chat/attachments'
 import { getGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
 
-const MAX_GROUP_CHAT_ATTACHMENT_SIZE = 20 * 1024 * 1024
-const MAX_GROUP_CHAT_ROOM_ATTACHMENT_BYTES = 500 * 1024 * 1024
 const GROUP_CHAT_UPLOAD_WINDOW_MS = 60_000
 const GROUP_CHAT_UPLOADS_PER_ROOM_WINDOW = 30
 const GROUP_CHAT_UPLOAD_RATE_ENTRY_LIMIT = 10_000
-const roomUploadQueues = new Map<string, Promise<unknown>>()
 const roomUploadRates = new Map<string, { count: number; windowStartedAt: number }>()
 const MIME_TYPES: Record<string, string> = {
     '.gif': 'image/gif',
@@ -87,23 +87,12 @@ function consumeRoomUploadRate(roomId: string): boolean {
     return true
 }
 
-async function withRoomUploadLock<T>(roomId: string, task: () => Promise<T>): Promise<T> {
-    const previous = roomUploadQueues.get(roomId) || Promise.resolve()
-    const current = previous.catch(() => undefined).then(task)
-    roomUploadQueues.set(roomId, current)
-    try {
-        return await current
-    } finally {
-        if (roomUploadQueues.get(roomId) === current) roomUploadQueues.delete(roomId)
-    }
-}
-
 async function materializePublishedAttachment(
     roomId: string,
     storedName: string,
     publishedPath: string,
 ): Promise<boolean> {
-    return withRoomUploadLock(roomId, async () => {
+    return withGroupChatAttachmentWriteLock(roomId, async () => {
         const roomPath = getGroupChatAttachmentPath(roomId, storedName)
         if (!roomPath) return false
         const existing = await lstat(roomPath).catch((error: any) => {
@@ -166,7 +155,7 @@ export async function uploadRoomAttachment(ctx: any, room: { id: string }): Prom
         return
     }
 
-    await withRoomUploadLock(room.id, async () => {
+    await withGroupChatAttachmentWriteLock(room.id, async () => {
         const chunks: Buffer[] = []
         let totalSize = 0
         for await (const chunk of ctx.req) {

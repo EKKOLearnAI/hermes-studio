@@ -27,7 +27,7 @@ import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, type
 import { GroupRoomSummaryService, type GroupRoomSummary } from './room-summary'
 import { isAgentMentioned, isAllAgentsMentioned, isReservedMentionName, resolveMentionTargets } from './mention-routing'
 import { isGroupChatRoomOwner } from './access'
-import { normalizeHumanGroupChatContent } from './attachments'
+import { normalizeHumanGroupChatContent, type PublishedGroupChatAttachmentBlock } from './attachments'
 import { revokeGroupAgentConnector } from './agent-relay-store'
 import type { ContentBlock } from '../run-chat/types'
 
@@ -1716,6 +1716,60 @@ export class GroupChatServer {
 
     getChatRunService(): GroupChatRunService | null {
         return this.chatRunService
+    }
+
+    publishAgentAttachmentMessage(input: {
+        roomId: string
+        agentId: string
+        runId: string
+        workspacePath: string
+        attachment: PublishedGroupChatAttachmentBlock
+        agentSnapshot?: {
+            name: string
+            agent: RoomAgent['agent']
+            profile: string
+            provider: string
+            model: string
+            description: string
+            avatar: string
+            ownerMemberId: string
+        }
+    }): ChatMessage {
+        const room = this.storage.getRoom(input.roomId)
+        const agent = this.storage.getRoomAgentByAgentId(input.roomId, input.agentId)
+        const snapshot = input.agentSnapshot
+        if (!room || (!agent && !snapshot?.name)) throw new Error('Group chat Agent is no longer available')
+
+        const message: ChatMessage = {
+            id: this.generateId(),
+            roomId: input.roomId,
+            senderId: agent?.agentId || input.agentId,
+            senderName: agent?.name || snapshot!.name,
+            senderType: 'agent',
+            senderAgentRecordId: agent?.id || '',
+            senderAvatar: agent?.avatar || snapshot?.avatar || '',
+            senderAgentType: agent?.agent || snapshot?.agent,
+            senderAgentProfile: agent?.profile || snapshot?.profile || '',
+            senderAgentProvider: agent?.provider || snapshot?.provider || '',
+            senderAgentModel: agent?.model || snapshot?.model || '',
+            senderAgentDescription: agent?.description || snapshot?.description || '',
+            senderOwnerMemberId: agent?.ownerMemberId || snapshot?.ownerMemberId || '',
+            content: JSON.stringify([
+                { type: 'text', text: input.workspacePath },
+                input.attachment,
+            ]),
+            timestamp: Date.now(),
+            persistedAt: Date.now(),
+            run_id: input.runId || null,
+            role: 'assistant',
+        }
+        const saved = this.storage.saveMessageAndRefreshRoom(message)
+        this.nsp.to(input.roomId).emit('message', saved.message)
+        this.nsp.to(input.roomId).emit('room_updated', {
+            roomId: input.roomId,
+            totalTokens: saved.totalTokens,
+        })
+        return saved.message
     }
 
     authorizeGuestAgentRequestToken(roomId: string, userId: string, token: string): boolean {

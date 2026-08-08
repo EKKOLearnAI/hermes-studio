@@ -659,9 +659,12 @@ function generateOperationIdFromPath(path, method) {
 }
 
 function extractJsDocDescription(content) {
-  const jsDocRegex = /\/\*\*[\s\S]*?\*\//
-  const match = content.match(jsDocRegex)
+  const jsDocRegex = /\/\*\*[\s\S]*?\*\//g
+  const matches = Array.from(content.matchAll(jsDocRegex))
+  const match = matches.at(-1)
   if (match) {
+    const trailingContent = content.slice((match.index || 0) + match[0].length)
+    if (trailingContent.trim()) return null
     const jsDoc = match[0]
     // Extract description text
     const description = jsDoc

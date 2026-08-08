@@ -29,6 +29,7 @@ describe('group chat REST route baseline', () => {
   let updateRoomName: ReturnType<typeof vi.fn>
   let broadcastRoomAgents: ReturnType<typeof vi.fn>
   let removeLiveRoomMember: ReturnType<typeof vi.fn>
+  let publishAgentAttachmentMessage: ReturnType<typeof vi.fn>
   let roomSummaryService: any
   const temporaryDirectories: string[] = []
 
@@ -114,6 +115,7 @@ describe('group chat REST route baseline', () => {
       storage.removeRoomMember(roomId, userId)
       return storage.getRoomMembers(roomId)
     })
+    publishAgentAttachmentMessage = vi.fn(() => ({ id: 'agent-attachment-message-1' }))
     roomSummaryService = {
       runExclusive: vi.fn(async (_roomId: string, task: () => unknown) => task()),
       getState: vi.fn((roomId: string) => ({
@@ -148,6 +150,7 @@ describe('group chat REST route baseline', () => {
       broadcastRoomAgents,
       broadcastGuestAgentPolicy: vi.fn(),
       removeRoomMember: removeLiveRoomMember,
+      publishAgentAttachmentMessage,
       getRoomAgentViews: (roomId: string) => storage.getRoomAgents(roomId),
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
@@ -339,8 +342,15 @@ describe('group chat REST route baseline', () => {
       body: binary,
     })
     expect(upload.status).toBe(200)
-    const uploaded = await upload.json() as { sha256: string }
+    const uploaded = await upload.json() as { sha256: string; messageId: string }
     expect(uploaded.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(uploaded.messageId).toBe('agent-attachment-message-1')
+    expect(publishAgentAttachmentMessage).toHaveBeenCalledWith(expect.objectContaining({
+      roomId: 'room-remote',
+      agentId: 'agent-route',
+      runId: 'run-route',
+      workspacePath: 'artifacts/data.bin',
+    }))
 
     const download = await fetch(`${endpoint}/file?path=${encodeURIComponent('artifacts/data.bin')}`, {
       headers: { Authorization: `Bearer ${token}` },

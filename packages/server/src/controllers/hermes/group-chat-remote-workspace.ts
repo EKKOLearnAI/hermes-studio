@@ -2,12 +2,14 @@ import type { Context } from 'koa'
 import { logger } from '../../services/logger'
 import { getGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
 import { beginRemoteWorkspaceGrantOperation } from '../../services/hermes/group-chat/remote-workspace-auth'
+import { storeAgentGroupChatAttachment } from '../../services/hermes/group-chat/attachments'
 import {
   MAX_REMOTE_WORKSPACE_TRANSFER_BYTES,
   openRemoteWorkspaceDownload,
   performRemoteWorkspaceAction,
   uploadRemoteWorkspaceFile,
 } from '../../services/hermes/group-chat/remote-workspace-files'
+import { resolveGroupWorkspacePath } from '../../services/hermes/group-chat/workspace-files'
 import { buildFileContentHeaders } from '../../services/hermes/file-preview'
 
 function bearerToken(ctx: Context): string {
@@ -46,6 +48,29 @@ function handleRemoteWorkspaceError(ctx: Context, error: any): void {
     error: error?.message || 'Remote workspace action failed',
     code: error?.code || 'remote_workspace_error',
   }
+}
+
+async function publishAgentWorkspaceArtifact(
+  workspace: string,
+  grant: NonNullable<ReturnType<typeof beginRemoteWorkspaceGrantOperation>>['grant'],
+  path: string,
+): Promise<{ messageId: string; attachment: Awaited<ReturnType<typeof storeAgentGroupChatAttachment>> }> {
+  const server = getGroupChatRuntimeServer()
+  if (!server) throw Object.assign(new Error('Group chat not initialized'), {
+    status: 503,
+    code: 'group_chat_unavailable',
+  })
+  const source = await resolveGroupWorkspacePath(workspace, path)
+  const attachment = await storeAgentGroupChatAttachment(grant.roomId, source.fullPath, path)
+  const message = server.publishAgentAttachmentMessage({
+    roomId: grant.roomId,
+    agentId: grant.agentId,
+    runId: grant.runId,
+    workspacePath: path,
+    attachment,
+    ...(grant.agentSnapshot ? { agentSnapshot: grant.agentSnapshot } : {}),
+  })
+  return { messageId: message.id, attachment }
 }
 
 export async function remoteWorkspaceAction(ctx: Context): Promise<void> {
@@ -156,7 +181,8 @@ export async function uploadRemoteWorkspaceFileContent(ctx: Context): Promise<vo
       ctx.req,
       ctx.get('X-Expected-SHA256'),
     )
-    ctx.body = uploaded
+    const publication = await publishAgentWorkspaceArtifact(workspace, grant, uploaded.path)
+    ctx.body = { ...uploaded, ...publication }
     logger.info({
       roomId: grant.roomId,
       agentId: grant.agentId,
