@@ -136,6 +136,18 @@ describe('system notification adapter', () => {
       .filter(key => key?.startsWith('hermes-system-notification-foreground-v2:'))).toEqual([otherTabKey])
   })
 
+  it('removes every stale per-tab heartbeat even when a fresh heartbeat is encountered first', async () => {
+    const staleKey = 'hermes-system-notification-foreground-v2:stale-tab'
+    const freshKey = 'hermes-system-notification-foreground-v2:fresh-tab'
+    localStorage.setItem(staleKey, String(Date.now() - 10_000))
+    localStorage.setItem(freshKey, String(Date.now()))
+    const { showSystemNotification } = await import('@/utils/completion-notification')
+
+    expect(await showSystemNotification({ title: 'Approval required', tag: 'approval:stale-heartbeat-cleanup' })).toBe(false)
+    expect(localStorage.getItem(staleKey)).toBeNull()
+    expect(localStorage.getItem(freshKey)).not.toBeNull()
+  })
+
   it('releases this Studio tab foreground heartbeat immediately when its window blurs', async () => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true })

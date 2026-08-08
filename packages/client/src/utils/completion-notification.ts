@@ -169,14 +169,15 @@ function releaseForegroundHeartbeat() {
 function hasFreshForegroundHeartbeat(): boolean {
   try {
     const now = Date.now()
-    if (hasLegacyForegroundHeartbeat(now)) return true
+    let hasFreshHeartbeat = hasLegacyForegroundHeartbeat(now)
     for (let index = localStorage.length - 1; index >= 0; index -= 1) {
       const key = localStorage.key(index)
       if (!key?.startsWith(SYSTEM_NOTIFICATION_FOREGROUND_TAB_PREFIX)) continue
       const timestamp = Number(localStorage.getItem(key))
-      if (freshHeartbeat(timestamp, now)) return true
-      localStorage.removeItem(key)
+      if (freshHeartbeat(timestamp, now)) hasFreshHeartbeat = true
+      else localStorage.removeItem(key)
     }
+    return hasFreshHeartbeat
   } catch {
     // Foreground detection falls back to this document when storage is blocked.
   }
