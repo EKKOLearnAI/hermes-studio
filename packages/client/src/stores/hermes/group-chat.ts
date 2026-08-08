@@ -22,11 +22,13 @@ import {
     listRooms,
     getRoomDetail,
     joinRoomByCode,
+    acceptRoomInvite,
     addAgent,
     updateAgent,
     listAgents,
     removeAgent,
     removeRoomMember as removeRoomMemberApi,
+    leaveRoomMembership as leaveRoomMembershipApi,
     cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
     clearRoomContext,
@@ -1197,6 +1199,29 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    async function acceptInvite(code: string) {
+        try {
+            const normalizedCode = code.trim()
+            if (!normalizedCode) throw new Error('Invite code is required')
+            const res = await acceptRoomInvite(normalizedCode)
+            inviteGuest.value = false
+            activeInviteCode.value = ''
+            upsertRoom(res.room)
+            currentRoomId.value = res.room.id
+            realtimeJoinedRoomId.value = null
+            realtimeJoinedSocketId.value = null
+            roomName.value = res.room.name
+            disconnect()
+            await connect()
+            await joinRealtimeRoom(res.room.id, { syncMessages: true })
+            await loadRooms()
+            return res.room
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     async function deleteRoom(roomId: string) {
         try {
             await deleteRoomApi(roomId)
@@ -1371,6 +1396,27 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    async function leaveCurrentRoomMembership(roomId: string) {
+        try {
+            snapshotCurrentMessageAgents(agents.value)
+            const res = await leaveRoomMembershipApi(roomId)
+            rooms.value = rooms.value.filter(room => room.id !== roomId)
+            members.value = res.members ?? members.value.filter(member => member.userId !== userId.value)
+            agents.value = res.agents ?? agents.value.filter(agent => agent.ownerMemberId !== userId.value)
+            if (currentRoomId.value === roomId) {
+                disconnect()
+                currentRoomId.value = null
+                messages.value = []
+                members.value = []
+                agents.value = []
+                roomName.value = ''
+            }
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     // ─── Typing ────────────────────────────────────────────
     let _typingTimer: ReturnType<typeof setTimeout> | null = null
     let _typingRoomId: string | null = null
@@ -1511,6 +1557,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         respondApproval,
         createNewRoom,
         joinByCode,
+        acceptInvite,
         deleteRoom,
         cloneRoom,
         clearCurrentRoomContext,
@@ -1521,6 +1568,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         updateAgentInRoom,
         removeAgentFromRoom,
         removeMemberFromRoom,
+        leaveCurrentRoomMembership,
     }
 })
 

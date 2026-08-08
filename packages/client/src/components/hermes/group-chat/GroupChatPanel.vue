@@ -838,6 +838,18 @@ async function handleDeleteRoom(roomId: string) {
     }
 }
 
+async function handleLeaveSharedRoom(roomId: string) {
+    try {
+        await store.leaveCurrentRoomMembership(roomId)
+        if (store.currentRoomId === roomId) {
+            await router.replace({ name: 'hermes.groupChat' })
+        }
+        message.success(t('groupChat.leftSharedRoom'))
+    } catch {
+        message.error(t('common.saveFailed'))
+    }
+}
+
 function buildRoomUrl(roomId: string) {
     const room = store.rooms.find(candidate => candidate.id === roomId)
     const href = room?.inviteCode
@@ -1518,7 +1530,22 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                     <div class="room-info">
-                        <span class="room-name">{{ room.name || room.id }}</span>
+                        <span class="room-name">
+                            {{ room.name || room.id }}
+                            <span
+                                v-if="room.accessType === 'shared'"
+                                class="room-shared-icon"
+                                role="img"
+                                :aria-label="t('groupChat.invitedRoom')"
+                                :title="t('groupChat.invitedRoom')"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                    <circle cx="9" cy="7" r="4" />
+                                    <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                                </svg>
+                            </span>
+                        </span>
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
@@ -1529,6 +1556,14 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             </button>
                         </template>
                         {{ t('groupChat.deleteRoomConfirm') }}
+                    </NPopconfirm>
+                    <NPopconfirm v-else-if="room.accessType === 'shared'" @positive-click="handleLeaveSharedRoom(room.id)">
+                        <template #trigger>
+                            <button class="room-action-btn" :aria-label="t('groupChat.leaveSharedRoom')" @click.stop>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5"/></svg>
+                            </button>
+                        </template>
+                        {{ t('groupChat.leaveSharedRoomConfirm') }}
                     </NPopconfirm>
                 </div>
                 <div v-if="store.rooms.length === 0" class="empty-rooms">
@@ -2908,7 +2943,7 @@ export default defineComponent({ components: { CreateRoomForm } })
         flex: 1;
     }
 
-    .room-name {
+.room-name {
         font-size: 13px;
         color: $text-primary;
         white-space: nowrap;
@@ -2956,6 +2991,13 @@ export default defineComponent({ components: { CreateRoomForm } })
     &:hover .room-action-btn {
         opacity: 1;
     }
+}
+
+.room-shared-icon {
+    display: inline-flex;
+    margin-inline-start: 6px;
+    vertical-align: -2px;
+    color: var(--accent-primary);
 }
 
 .empty-rooms {

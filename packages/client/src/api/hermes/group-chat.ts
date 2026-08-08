@@ -10,6 +10,7 @@ export interface RoomInfo {
     inviteCode: string | null
     canManage?: boolean
     canMentionAll?: boolean
+    accessType?: 'owned' | 'managed' | 'shared'
     ownerMemberId?: string
     summaryProfile: string
     summaryProvider: string
@@ -323,6 +324,12 @@ export async function joinRoomByCode(code: string): Promise<{ room: RoomInfo }> 
     return request(`/api/hermes/group-chat/rooms/join/${encodeURIComponent(code)}`)
 }
 
+export async function acceptRoomInvite(code: string): Promise<{ room: RoomInfo }> {
+    return request(`/api/hermes/group-chat/rooms/join/${encodeURIComponent(code)}/accept`, {
+        method: 'POST',
+    })
+}
+
 export async function updateInviteCode(roomId: string, inviteCode: string): Promise<{ success: boolean }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/invite-code`, {
         method: 'PUT',
@@ -359,6 +366,12 @@ export async function removeAgent(roomId: string, agentId: string): Promise<{ su
 
 export async function removeRoomMember(roomId: string, userId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/members/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+    })
+}
+
+export async function leaveRoomMembership(roomId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/membership`, {
         method: 'DELETE',
     })
 }

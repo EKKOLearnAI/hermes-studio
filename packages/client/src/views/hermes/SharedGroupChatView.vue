@@ -6,6 +6,7 @@ import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { getStoredUserId, type RoomAgent } from '@/api/hermes/group-chat'
+import { getApiKey } from '@/api/client'
 import type { ProfileAvatar as ProfileAvatarData } from '@/api/hermes/profiles'
 import {
     createGuestAgentHandoff,
@@ -59,6 +60,7 @@ const routeInviteCode = computed(() => {
 })
 const joined = computed(() => !!joinedInviteCode.value && !!store.currentRoomId)
 const collectingGuestName = computed(() => !!routeInviteCode.value && joinError.value !== 'invite')
+const canAcceptInvite = computed(() => Boolean(getApiKey()))
 const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
 const guestAgentsAllowed = computed(() => Number(currentRoom.value?.allowGuestAgents || 0) === 1)
 const agentLinkStatusText = computed(() => {
@@ -426,6 +428,20 @@ async function submitGuestName(): Promise<void> {
     await joinInvite(routeInviteCode.value)
 }
 
+async function acceptInvite(): Promise<void> {
+    if (!routeInviteCode.value || joining.value) return
+    joining.value = true
+    joinError.value = ''
+    try {
+        await store.acceptInvite(routeInviteCode.value)
+        joinedInviteCode.value = routeInviteCode.value
+    } catch {
+        joinError.value = 'invite'
+    } finally {
+        joining.value = false
+    }
+}
+
 function randomizeGuestAvatar(): void {
     const randomPart = generateClientUuid()
     guestAvatarDraft.value = { type: 'generated', seed: `guest-${randomPart}` }
@@ -620,13 +636,24 @@ onUnmounted(() => {
                     </p>
                     <NButton
                         attr-type="submit"
-                        type="primary"
+                        :type="canAcceptInvite ? 'default' : 'primary'"
                         size="large"
                         block
                         :loading="joining"
                         :disabled="!guestNameDraft.trim()"
                     >
                         {{ t('groupChat.shareEnterRoom') }}
+                    </NButton>
+                    <NButton
+                        v-if="canAcceptInvite"
+                        attr-type="button"
+                        type="primary"
+                        size="large"
+                        block
+                        :loading="joining"
+                        @click="acceptInvite"
+                    >
+                        {{ t('groupChat.saveSharedRoom') }}
                     </NButton>
                 </form>
 

@@ -197,7 +197,12 @@ async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: st
     })
 }
 
-function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = false) {
+function serializeRoom(
+    room: any,
+    includeManageFields: boolean,
+    canMentionAll = false,
+    accessType: 'owned' | 'managed' | 'shared' = includeManageFields ? 'managed' : 'shared',
+) {
     if (!room) return room
     const { ownerAuthUserId: _ownerAuthUserId, ...rest } = room
     const ownerAuthUserId = Number(room.ownerAuthUserId || 0)
@@ -205,6 +210,7 @@ function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = 
         ...rest,
         canManage: includeManageFields,
         canMentionAll,
+        accessType,
         ownerMemberId: ownerAuthUserId > 0 ? `auth:${ownerAuthUserId}` : '',
     }
     if (Object.prototype.hasOwnProperty.call(room, 'inviteCode')) {
@@ -221,6 +227,40 @@ function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = 
 // validated again by Socket.IO before any room history is returned.
 groupChatPublicRoutes.get('/api/hermes/group-chat/rooms/join/:code', inviteCtrl.resolveInvite)
 
+// Bind a valid invite to the authenticated account. The public resolver and
+// invite socket remain guest-only and never create account list entries.
+groupChatRoutes.post('/api/hermes/group-chat/rooms/join/:code/accept', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const user = ctx.state?.user
+    if (typeof user?.id !== 'number' || user.id <= 0) {
+        ctx.status = 401
+        ctx.body = { error: 'Authentication required' }
+        return
+    }
+    const code = String(ctx.params.code || '').trim()
+    const storage = chatServer.getStorage()
+    const room = code ? storage.getRoomByInviteCode(code) : null
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    storage.addRoomMember(
+        room.id,
+        `auth:${user.id}`,
+        String(user.username || `User-${user.id}`),
+        '',
+        '',
+        user.id,
+        'invite',
+    )
+    ctx.body = { room: serializeRoom(room, false, false, 'shared') }
+})
+
 function persistRoomCreator(
     storage: ReturnType<GroupChatServer['getStorage']>,
     roomId: string,
@@ -231,39 +271,51 @@ function persistRoomCreator(
     if (typeof user?.id !== 'number' || user.id <= 0) return
     storage.setRoomOwnerAuthUserId?.(roomId, user.id)
     const username = memberName?.trim() || String(user.username || `User-${user.id}`)
-    storage.addRoomMember(roomId, `auth:${user.id}`, username, memberDescription?.trim() || '', '', user.id)
+    storage.addRoomMember(roomId, `auth:${user.id}`, username, memberDescription?.trim() || '', '', user.id, 'created')
 }
 
 function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>, user: any) {
-    if (!user) return storage.getAllRooms().map(room => serializeRoom(room, true, true))
+    if (!user) return storage.getAllRooms().map(room => serializeRoom(room, true, true, 'managed'))
     if (user.role === 'super_admin') {
         return storage.getAllRooms().map(room => serializeRoom(
             room,
             true,
             isGroupChatRoomOwner(storage, room.id, user),
+            'managed',
         ))
     }
-    const byId = new Map<string, { room: any; includeWorkspace: boolean }>()
-    const addRoom = (room: any, includeWorkspace: boolean) => {
+    const byId = new Map<string, { room: any; includeWorkspace: boolean; accessType: 'owned' | 'managed' | 'shared' }>()
+    const priority = { shared: 1, managed: 2, owned: 3 }
+    const addRoom = (room: any, includeWorkspace: boolean, accessType: 'owned' | 'managed' | 'shared') => {
         if (!room) return
         const existing = byId.get(room.id)
-        if (!existing || includeWorkspace) byId.set(room.id, { room, includeWorkspace: includeWorkspace || existing?.includeWorkspace === true })
+        if (!existing || priority[accessType] >= priority[existing.accessType]) {
+            byId.set(room.id, {
+                room,
+                includeWorkspace: includeWorkspace || existing?.includeWorkspace === true,
+                accessType,
+            })
+        }
     }
-    for (const room of storage.getRoomsForProfiles(userProfiles(user))) addRoom(room, true)
+    for (const room of storage.getRoomsForProfiles(userProfiles(user))) addRoom(room, true, 'managed')
     if (typeof user.id === 'number') {
         if (typeof storage.getOwnedRoomsForAuthUser === 'function') {
-            for (const room of storage.getOwnedRoomsForAuthUser(user.id)) addRoom(room, true)
+            for (const room of storage.getOwnedRoomsForAuthUser(user.id)) addRoom(room, true, 'owned')
         }
         if (typeof storage.getRoomsForAuthUser === 'function') {
-            for (const room of storage.getRoomsForAuthUser(user.id)) addRoom(room, canManageRoom(storage, room.id, user))
+            for (const room of storage.getRoomsForAuthUser(user.id)) {
+                const shared = room.membershipSource === 'invite'
+                addRoom(room, !shared && canManageRoom(storage, room.id, user), shared ? 'shared' : 'managed')
+            }
         }
     }
     return [...byId.values()]
         .sort((a, b) => Number(b.room.lastActiveAt || 0) - Number(a.room.lastActiveAt || 0) || a.room.id.localeCompare(b.room.id))
-        .map(({ room, includeWorkspace }) => serializeRoom(
+        .map(({ room, includeWorkspace, accessType }) => serializeRoom(
             room,
             includeWorkspace,
             isGroupChatRoomOwner(storage, room.id, user),
+            accessType,
         ))
 }
 
@@ -952,6 +1004,55 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/members/:userId', a
         chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     }
 
+    const members = chatServer.removeRoomMember(roomId, userId)
+    if (!members) {
+        ctx.status = 404
+        ctx.body = { error: 'Member not found' }
+        return
+    }
+    const agents = removedAgents.length
+        ? chatServer.broadcastRoomAgents(roomId)
+        : chatServer.getRoomAgentViews(roomId, false)
+    ctx.body = { success: true, members, agents }
+})
+
+// A durable invite membership can be left by its account holder. Owners and
+// profile-derived access are intentionally not removable through this path.
+groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/membership', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const user = ctx.state?.user
+    if (typeof user?.id !== 'number' || user.id <= 0) {
+        ctx.status = 401
+        ctx.body = { error: 'Authentication required' }
+        return
+    }
+    const roomId = String(ctx.params.roomId || '').trim()
+    const storage = chatServer.getStorage()
+    const room = storage.getRoom(roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    const userId = `auth:${user.id}`
+    const member = storage.getMemberByUserId?.(roomId, userId)
+    if (!member || member.membershipSource !== 'invite') {
+        ctx.status = 403
+        ctx.body = { error: 'Only accepted invite memberships can be left' }
+        return
+    }
+    const removedAgents = storage.getRoomAgents(roomId)
+        .filter(agent => agent.executorType === 'remote' && agent.ownerMemberId === userId)
+    for (const agent of removedAgents) {
+        if (agent.connectorId) revokeGroupAgentConnector(agent.connectorId)
+        storage.removeRoomMembersForAgent(roomId, agent)
+        storage.removeRoomAgent(roomId, agent.id)
+        chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+    }
     const members = chatServer.removeRoomMember(roomId, userId)
     if (!members) {
         ctx.status = 404

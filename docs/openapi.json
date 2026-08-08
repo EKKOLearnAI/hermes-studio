@@ -5385,6 +5385,42 @@
         ]
       }
     },
+    "/api/hermes/group-chat/rooms/join/{code}/accept": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create accept",
+        "description": "POST /api/hermes/group-chat/rooms/join/:code/accept",
+        "operationId": "createAccept",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms/{roomId}": {
       "get": {
         "tags": [
@@ -6214,6 +6250,39 @@
           },
           {
             "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/membership": {
+      "delete": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Delete membership",
+        "description": "DELETE /api/hermes/group-chat/rooms/:roomId/membership",
+        "operationId": "deleteMembership",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
             "in": "path",
             "required": true,
             "schema": {

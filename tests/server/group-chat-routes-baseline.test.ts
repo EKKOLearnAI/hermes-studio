@@ -50,6 +50,26 @@ describe('group chat REST route baseline', () => {
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
       getRoomMembers: vi.fn((roomId) => storage.members.get(roomId) || []),
       getMemberByUserId: vi.fn((roomId, userId) => (storage.members.get(roomId) || []).find((member: any) => member.userId === userId) || null),
+      getMemberByAuthUserId: vi.fn((roomId, authUserId) => (storage.members.get(roomId) || []).find((member: any) => member.authUserId === authUserId) || null),
+      addRoomMember: vi.fn((roomId, userId, userName, description, _avatar, authUserId, membershipSource = '') => {
+        const members = storage.members.get(roomId) || []
+        const existing = members.find((member: any) => member.userId === userId || member.authUserId === authUserId)
+        if (existing) {
+          Object.assign(existing, { userId, name: userName, description, authUserId, membershipSource })
+          return
+        }
+        members.push({
+          id: `member-${userId}`,
+          userId,
+          name: userName,
+          description,
+          joinedAt: 1,
+          avatar: '',
+          authUserId,
+          membershipSource,
+        })
+        storage.members.set(roomId, members)
+      }),
       removeRoomMember: vi.fn((roomId, userId) => storage.members.set(
         roomId,
         (storage.members.get(roomId) || []).filter((member: any) => member.userId !== userId),
@@ -371,6 +391,75 @@ describe('group chat REST route baseline', () => {
         { id: 'room-new-created', lastActiveAt: 200 },
       ],
     })
+  })
+
+  it('accepts a valid invite into an idempotent account membership and exposes only the shared access type', async () => {
+    storage.rooms.set('room-shared', {
+      id: 'room-shared',
+      name: 'Shared Room',
+      inviteCode: 'ROOM1',
+      ownerAuthUserId: 1,
+      workspace: '/owner-only/workspace',
+      lastActiveAt: 900,
+    })
+    storage.getRoomsForAuthUser.mockImplementation((authUserId: number) => authUserId === 8
+      ? [{ ...storage.rooms.get('room-shared'), membershipSource: 'invite' }]
+      : [])
+    storage.getRoomsForProfiles.mockReturnValue([])
+
+    const accept = () => fetch(`${baseUrl}/api/hermes/group-chat/rooms/join/ROOM1/accept`, {
+      method: 'POST',
+      headers: { 'x-test-user-id': '8' },
+    })
+    const first = await accept()
+    const second = await accept()
+
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+    expect(storage.addRoomMember).toHaveBeenCalledTimes(2)
+    expect(storage.members.get('room-shared')).toHaveLength(1)
+    await expect(first.json()).resolves.toEqual({
+      room: expect.objectContaining({
+        id: 'room-shared',
+        accessType: 'shared',
+        inviteCode: null,
+        workspace: '',
+        canManage: false,
+      }),
+    })
+
+    const list = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      headers: { 'x-test-user-id': '8' },
+    })
+    await expect(list.json()).resolves.toEqual({
+      rooms: [expect.objectContaining({ id: 'room-shared', accessType: 'shared' })],
+    })
+  })
+
+  it('lets a shared member leave without removing an owner or managed membership', async () => {
+    storage.rooms.set('room-shared', {
+      id: 'room-shared',
+      name: 'Shared Room',
+      inviteCode: 'ROOM1',
+      ownerAuthUserId: 1,
+    })
+    storage.members.set('room-shared', [{
+      id: 'member-auth:8',
+      userId: 'auth:8',
+      name: 'Member',
+      description: '',
+      authUserId: 8,
+      membershipSource: 'invite',
+    }])
+
+    const left = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-shared/membership`, {
+      method: 'DELETE',
+      headers: { 'x-test-user-id': '8' },
+    })
+
+    expect(left.status).toBe(200)
+    expect(removeLiveRoomMember).toHaveBeenCalledWith('room-shared', 'auth:8')
+    expect(storage.members.get('room-shared')).toEqual([])
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {

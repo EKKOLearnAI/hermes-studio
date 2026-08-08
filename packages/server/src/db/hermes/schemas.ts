@@ -704,6 +704,7 @@ export const GC_ROOM_MEMBERS_SCHEMA: Record<string, string> = {
   updatedAt: 'INTEGER NOT NULL',
   avatar: "TEXT NOT NULL DEFAULT ''",
   authUserId: 'INTEGER',
+  membershipSource: "TEXT NOT NULL DEFAULT ''",
 }
 
 export const GC_PENDING_SESSION_DELETES_TABLE = 'gc_pending_session_deletes'

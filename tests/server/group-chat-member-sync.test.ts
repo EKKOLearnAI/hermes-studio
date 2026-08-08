@@ -1042,6 +1042,7 @@ describe('Group Chat member/agent identity sync', () => {
       'family profile',
       '',
       42,
+      'created',
     )
     expect(ctx.body.room).toEqual(expect.objectContaining({ name: 'Family Room' }))
   })

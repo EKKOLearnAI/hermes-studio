@@ -232,6 +232,7 @@ export interface RoomInfo {
     allowRemoteWorkspaceAccess: number
     createdAt: number
     lastActiveAt?: number
+    membershipSource?: string
 }
 
 const ROOM_SELECT_COLUMNS = [
@@ -343,6 +344,7 @@ interface Member {
     source?: 'human' | 'agent'
     avatar: string
     authUserId?: number | null
+    membershipSource?: string
 }
 
 type MemberView = Pick<Member, 'id' | 'userId' | 'name' | 'description' | 'joinedAt' | 'avatar'>
@@ -698,7 +700,8 @@ class ChatStorage {
         if (!Number.isFinite(authUserId) || authUserId <= 0) return []
         return (this.db()?.prepare(
             `SELECT ${ROOM_SELECT_COLUMNS.split(', ').map(column => `r.${column}`).join(', ')},
-                    ${roomActivityAtSql('messages')} AS lastActiveAt
+                    ${roomActivityAtSql('messages')} AS lastActiveAt,
+                    CASE WHEN MAX(CASE WHEN m.membershipSource = 'invite' THEN 1 ELSE 0 END) = 1 THEN 'invite' ELSE '' END AS membershipSource
              FROM gc_rooms r
              INNER JOIN gc_room_members m ON m.roomId = r.id
              LEFT JOIN gc_messages messages ON messages.roomId = r.id
@@ -1339,7 +1342,7 @@ class ChatStorage {
 
     getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[] {
         const members = (this.db()?.prepare(
-            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar, m.authUserId
+            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar, m.authUserId, m.membershipSource
              FROM gc_room_members m
              WHERE m.roomId = ?
                AND NOT EXISTS (
@@ -1357,6 +1360,7 @@ class ChatStorage {
             joinedAt: number
             avatar: string
             authUserId?: number | null
+            membershipSource?: string
         }[]
 
         for (const member of members) {
@@ -1368,7 +1372,7 @@ class ChatStorage {
                 // ignore individual lookup failures
             }
         }
-        return members.map(({ authUserId: _authUserId, ...member }) => member)
+        return members.map(({ authUserId: _authUserId, membershipSource: _membershipSource, ...member }) => member)
     }
 
     removeRoomMembersForAgent(roomId: string, agent: Pick<RoomAgent, 'agentId' | 'name'>): void {
@@ -1385,7 +1389,15 @@ class ChatStorage {
         ).run(roomId, userId)
     }
 
-    addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = '', authUserId?: number): void {
+    addRoomMember(
+        roomId: string,
+        userId: string,
+        userName: string,
+        description: string,
+        avatar: string = '',
+        authUserId?: number,
+        membershipSource = '',
+    ): void {
         const existing = this.getMemberByUserId(roomId, userId) ||
             (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
         this.assertParticipantNameAvailable(roomId, userName, { excludeMemberId: existing?.id })
@@ -1405,26 +1417,32 @@ class ChatStorage {
                 : existing.authUserId ?? null
             // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
-                'UPDATE gc_room_members SET userId = ?, userName = ?, description = ?, avatar = ?, authUserId = ?, updatedAt = ? WHERE id = ?'
-            ).run(userId, userName, description, nextAvatar, nextAuthUserId, Date.now(), existing.id)
+                `UPDATE gc_room_members
+                 SET userId = ?, userName = ?, description = ?, avatar = ?, authUserId = ?,
+                     membershipSource = CASE WHEN ? != '' THEN ? ELSE membershipSource END,
+                     updatedAt = ?
+                 WHERE id = ?`
+            ).run(userId, userName, description, nextAvatar, nextAuthUserId, membershipSource, membershipSource, Date.now(), existing.id)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const now = Date.now()
         this.db()?.prepare(
-            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar, authUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar, authUserId ?? null)
+            `INSERT INTO gc_room_members (
+                id, roomId, userId, userName, description, joinedAt, updatedAt, avatar, authUserId, membershipSource
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar, authUserId ?? null, membershipSource)
     }
 
     getMemberByUserId(roomId: string, userId: string): Member | null {
         return (this.db()?.prepare(
-            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND userId = ?'
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId, membershipSource FROM gc_room_members WHERE roomId = ? AND userId = ?'
         ).get(roomId, userId) as any) ?? null
     }
 
     getMemberByAuthUserId(roomId: string, authUserId: number): Member | null {
         return (this.db()?.prepare(
-            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND authUserId = ? ORDER BY updatedAt DESC LIMIT 1'
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId, membershipSource FROM gc_room_members WHERE roomId = ? AND authUserId = ? ORDER BY updatedAt DESC LIMIT 1'
         ).get(roomId, authUserId) as any) ?? null
     }
 
