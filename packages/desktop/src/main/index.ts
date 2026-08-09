@@ -498,11 +498,13 @@ function installDesktopZoomShortcuts(target: BrowserWindow): void {
     const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, target.webContents.getZoomLevel() + delta))
     target.webContents.setZoomLevel(next)
     saveDesktopZoomLevel(next)
+    if (target === mainWindow) browserManager?.applyDesktopZoom()
   }
   const resetZoom = (): void => {
     if (target.isDestroyed()) return
     target.webContents.setZoomLevel(0)
     saveDesktopZoomLevel(0)
+    if (target === mainWindow) browserManager?.applyDesktopZoom()
   }
   target.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !input.control) return
@@ -519,7 +521,10 @@ function installDesktopZoomShortcuts(target: BrowserWindow): void {
     }
   })
   const saved = loadDesktopZoomLevel()
-  if (saved !== 0) target.webContents.setZoomLevel(saved)
+  if (saved !== 0) {
+    target.webContents.setZoomLevel(saved)
+    if (target === mainWindow) browserManager?.applyDesktopZoom()
+  }
 }
 
 async function createWindow(): Promise<void> {
