@@ -957,10 +957,11 @@ class ChatStorage {
         if (!entry) return this.seedRoomTokenCache(roomId)
         if (stored.tool_name === 'workspace_diff') return entry.total
         const tokens = this.estimateMessageTokens(stored)
-        const prev = existing ? entry.contributions.get(existing.id) : undefined
-        if (prev !== undefined) {
+        const prevId = existing?.id
+        const prev = prevId ? entry.contributions.get(prevId) : undefined
+        if (prev !== undefined && prevId) {
             entry.total += tokens - prev
-            entry.contributions.set(existing.id, tokens)
+            entry.contributions.set(prevId, tokens)
         } else {
             entry.total += tokens
             entry.contributions.set(stored.id, tokens)
