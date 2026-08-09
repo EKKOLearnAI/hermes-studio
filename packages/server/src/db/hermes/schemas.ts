@@ -581,6 +581,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
+  tokenAccountingVersion: 'INTEGER NOT NULL DEFAULT 0',
   sessionSeed: "TEXT NOT NULL DEFAULT '0'",
   workspace: "TEXT NOT NULL DEFAULT ''",
   ownerAuthUserId: 'INTEGER',

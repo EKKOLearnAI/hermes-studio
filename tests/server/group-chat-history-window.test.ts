@@ -248,6 +248,71 @@ describe('group chat history windows', () => {
     expect(details).not.toContain('USE TEMP B-TREE')
   })
 
+  it('rebuilds a legacy cached total before applying an incremental message update', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const oversized = makeMessage({
+      id: 'legacy-large',
+      content: 'a '.repeat(131_073),
+      timestamp: 1,
+    })
+    storage.addMessage(oversized as any)
+    // Simulate a pre-upgrade cache populated by the old exact-tokenizer path.
+    storage.updateRoomTotalTokens('room-1', 131_074)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET tokenAccountingVersion = 0 WHERE id = ?',
+    ).run('room-1')
+
+    const replacement = makeMessage({ id: 'legacy-large', content: 'a', timestamp: 2 })
+    const saved = storage.saveMessageAndRefreshRoom(replacement as any)
+
+    expect(saved.totalTokens).toBe(countTokens('a'))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(countTokens('a'))
+  })
+
+  it('marks new rooms with the current token-accounting version', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    const row = dbMock.current!.prepare(
+      'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+    ).get('room-1') as { tokenAccountingVersion: number }
+
+    expect(row.tokenAccountingVersion).toBe(1)
+  })
+
+  it('marks rooms from the legacy schema for bounded token-accounting rebuild', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('legacy-room', 'Legacy Room')
+    dbMock.current!.exec('ALTER TABLE gc_rooms DROP COLUMN tokenAccountingVersion')
+
+    initAllHermesTables()
+
+    const row = dbMock.current!.prepare(
+      'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+    ).get('legacy-room') as { tokenAccountingVersion: number }
+    expect(row.tokenAccountingVersion).toBe(0)
+  })
+
+  it('rebuilds legacy totals in both rooms before moving a message', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.saveRoom('room-2', 'Room 2')
+    const source = makeMessage({ id: 'moving', roomId: 'room-1', content: 'source', timestamp: 1 })
+    const target = makeMessage({ id: 'target', roomId: 'room-2', content: 'target', timestamp: 1 })
+    storage.addMessage(source as any)
+    storage.addMessage(target as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = 999999, tokenAccountingVersion = 0 WHERE id IN (?, ?)',
+    ).run('room-1', 'room-2')
+
+    const moved = makeMessage({ id: 'moving', roomId: 'room-2', content: 'moved', timestamp: 2 })
+    const saved = storage.saveMessageAndRefreshRoom(moved as any)
+
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(0)
+    expect(saved.totalTokens).toBe(countTokens('target') + countTokens('moved'))
+  })
+
   it('updates room token totals without retokenizing the complete context window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

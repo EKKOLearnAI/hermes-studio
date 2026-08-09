@@ -242,6 +242,7 @@ export interface RoomInfo {
     maxHistoryTokens: number
     tailMessageCount: number
     totalTokens: number
+    tokenAccountingVersion: number
     sessionSeed: string
     workspace: string
     ownerAuthUserId: number | null
@@ -266,6 +267,7 @@ const ROOM_SELECT_COLUMNS = [
     'maxHistoryTokens',
     'tailMessageCount',
     'totalTokens',
+    'tokenAccountingVersion',
     'sessionSeed',
     'workspace',
     'ownerAuthUserId',
@@ -445,6 +447,7 @@ function maxAgentMentionDepth(): number {
 
 const GROUP_CHAT_MESSAGE_WINDOW = 500
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
+const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
 class ChatStorage {
     private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
@@ -766,8 +769,9 @@ class ChatStorage {
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
                 id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
-                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt,
+                tokenAccountingVersion
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
@@ -780,6 +784,7 @@ class ChatStorage {
             config?.workspace || '',
             ownerAuthUserId,
             Date.now(),
+            GROUP_CHAT_TOKEN_ACCOUNTING_VERSION,
         )
     }
 
@@ -1131,6 +1136,24 @@ class ChatStorage {
         return rows.map(row => String(row.id))
     }
 
+    private ensureCurrentRoomTokenAccounting(roomId: string): void {
+        const db = this.db()
+        if (!db) return
+        const room = db.prepare(
+            'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+        ).get(roomId) as { tokenAccountingVersion: number } | undefined
+        if (!room || Number(room.tokenAccountingVersion) >= GROUP_CHAT_TOKEN_ACCOUNTING_VERSION) return
+
+        const totalTokens = this.contextWindowMessageIdsForTokenDelta(roomId)
+            .reduce((total, id) => {
+                const message = this.getMessage(id)
+                return total + (message ? this.messageUsageTokens(message) : 0)
+            }, 0)
+        db.prepare(
+            'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = ? WHERE id = ?',
+        ).run(totalTokens, GROUP_CHAT_TOKEN_ACCOUNTING_VERSION, roomId)
+    }
+
     private incrementalRoomTotalTokens(
         roomId: string,
         changedMessageId: string,
@@ -1167,6 +1190,8 @@ class ChatStorage {
                 return { message: existing, totalTokens }
             }
             const movedFromRoomId = existing && existing.roomId !== msg.roomId ? existing.roomId : null
+            this.ensureCurrentRoomTokenAccounting(msg.roomId)
+            if (movedFromRoomId) this.ensureCurrentRoomTokenAccounting(movedFromRoomId)
             const previousSourceIds = movedFromRoomId
                 ? this.contextWindowMessageIdsForTokenDelta(movedFromRoomId)
                 : null
