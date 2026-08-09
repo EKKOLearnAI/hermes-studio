@@ -17,18 +17,8 @@ export function countTextTokens(text: string): number {
 }
 
 function heuristicTokens(text: string): number {
-  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return Math.ceil(text.length * 1.5)
-  let cjk = 0
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index)
-    if (
-      (code >= 0x2e80 && code <= 0x9fff)
-      || (code >= 0xac00 && code <= 0xd7af)
-      || (code >= 0x3000 && code <= 0x303f)
-      || (code >= 0xff00 && code <= 0xffef)
-    ) cjk += 1
-  }
-  return Math.ceil(cjk * 1.5 + (text.length - cjk) / 4)
+  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return text.length * 3
+  return Buffer.byteLength(text, 'utf8')
 }
 
 function exceedsExactTokenBudget(text: string): boolean {

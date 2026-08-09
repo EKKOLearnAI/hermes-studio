@@ -182,21 +182,16 @@ function hasPathologicalRun(text: string): boolean {
   return false
 }
 
-function isCjkCodeUnit(code: number): boolean {
-  return (code >= 0x2e80 && code <= 0x9fff)
-    || (code >= 0xac00 && code <= 0xd7af)
-    || (code >= 0x3000 && code <= 0x303f)
-    || (code >= 0xff00 && code <= 0xffef)
-}
-
 function heuristicTokens(text: string): number {
   if (text.length === 0) return 0
-  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return Math.ceil(text.length * 1.5)
-  let cjk = 0
-  for (let i = 0; i < text.length; i += 1) {
-    if (isCjkCodeUnit(text.charCodeAt(i))) cjk += 1
-  }
-  return Math.ceil(cjk * 1.5 + (text.length - cjk) / 4)
+  // A tokenizer cannot emit more tokens than the UTF-8 byte sequence contains:
+  // each token consumes at least one byte. Buffer.byteLength is bounded by the
+  // 8 Mi code-unit gate; above it, three bytes per UTF-16 code unit is a safe
+  // constant-time upper bound (including unpaired surrogates; valid pairs use
+  // four bytes for two units). This avoids both adversarial underestimation and
+  // unbounded main-thread scans.
+  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return text.length * 3
+  return Buffer.byteLength(text, 'utf8')
 }
 
 export function countTokens(text: string): number {

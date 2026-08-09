@@ -886,8 +886,8 @@ describe('countTokens', () => {
     expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
     expect(countTokens(atBoundary)).toBe(encoder.encode(atBoundary).length)
     expect(countTokensForModel(atBoundary, 'gpt-4o')).toBeGreaterThan(0)
-    expect(countTokens(aboveBoundary)).toBe(Math.ceil(aboveBoundary.length / 4))
-    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(Math.ceil(aboveBoundary.length / 4))
+    expect(countTokens(aboveBoundary)).toBe(Buffer.byteLength(aboveBoundary, 'utf8'))
+    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(Buffer.byteLength(aboveBoundary, 'utf8'))
   })
 
   it('applies the 256 KiB cap by UTF-8 bytes for separated multibyte text', async () => {
@@ -896,10 +896,7 @@ describe('countTokens', () => {
     const encoder = getEncoding('cl100k_base')
     const atBoundary = '汉 '.repeat(65_536)
     const aboveBoundary = `${atBoundary}a`
-    const heuristic = (text: string) => {
-      const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-      return Math.ceil(cjk * 1.5 + (text.length - cjk) / 4)
-    }
+    const heuristic = (text: string) => Buffer.byteLength(text, 'utf8')
 
     expect(atBoundary.length).toBe(131_072)
     expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
@@ -930,8 +927,7 @@ describe('countTokens', () => {
     const cjk = '汉'.repeat(400_000)
     const tokens = countTokens(ascii + cjk)
 
-    expect(tokens).toBeGreaterThan(600_000)
-    expect(tokens).toBeLessThan(800_000)
+    expect(tokens).toBe(Buffer.byteLength(ascii + cjk, 'utf8'))
   })
 
   it('does not let a periodic adversarial layout hide CJK from oversized estimation', async () => {
@@ -946,10 +942,9 @@ describe('countTokens', () => {
     }
     const text = adversarial.join('')
     const ascii = 64 * 1024
-    const expected = Math.ceil((length - ascii) * 1.5 + ascii / 4)
+    const expected = Buffer.byteLength(text, 'utf8')
 
-    expect(countTokens(text)).toBeGreaterThan(expected * 0.9)
-    expect(countTokens(text)).toBeLessThan(expected * 1.1)
+    expect(countTokens(text)).toBe(expected)
   })
 
   it('keeps oversized token estimation work bounded independently of input length', async () => {
