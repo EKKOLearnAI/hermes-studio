@@ -952,6 +952,20 @@ describe('countTokens', () => {
     expect(countTokens(text)).toBeLessThan(expected * 1.1)
   })
 
+  it('keeps oversized token estimation work bounded independently of input length', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const small = 'a'.repeat(8 * 1024 * 1024)
+    const large = 'a'.repeat(128 * 1024 * 1024)
+    const smallStart = performance.now()
+    countTokens(small)
+    const smallMs = performance.now() - smallStart
+    const largeStart = performance.now()
+    countTokens(large)
+    const largeMs = performance.now() - largeStart
+
+    expect(largeMs).toBeLessThan(Math.max(100, smallMs * 4))
+  })
+
   it('still uses the exact tokenizer for long space-separated text', async () => {
     const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard

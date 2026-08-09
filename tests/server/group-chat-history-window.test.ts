@@ -201,6 +201,23 @@ describe('group chat history windows', () => {
       .toEqual(expected)
   })
 
+  it('uses SQLite UTF-8 binary order for supplementary-plane cursor ids', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const ids = ['中', '\uE000', '😀']
+    for (const id of ids) {
+      storage.addMessage(makeMessage({ id, content: id, timestamp: 100 }) as any)
+    }
+
+    const ordered = sortGroupMessagesCanonical(ids.map(id => ({ id, timestamp: 100 })))
+      .map(message => message.id)
+    const through = '😀'
+
+    expect(ordered).toEqual(['中', '\uE000', '😀'])
+    expect(storage.getMessagesForContext('room-1', { throughMessageId: through }).map(message => message.id))
+      .toEqual(ordered)
+  })
+
   it('computes room total tokens from the context window, not the UI page window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

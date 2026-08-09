@@ -153,6 +153,12 @@ const MAX_LETTER_RUN = 2000
 // it. Normal prompts and the existing 50 KB exact-tokenizer coverage remain
 // unchanged.
 const MAX_EXACT_TOKEN_TEXT_BYTES = 256 * 1024
+// Keep fallback work bounded even when an internal tool or bridge hands us a
+// very large string. Up to this limit we scan the complete distribution for a
+// useful estimate. Above it we use the conservative all-CJK upper estimate;
+// this is O(1), deterministic, and cannot be defeated by an adversarial sample
+// layout. The persisted content is not changed by token accounting.
+const MAX_HEURISTIC_SCAN_TEXT_UNITS = 8 * 1024 * 1024
 
 function exceedsExactTokenBudget(text: string): boolean {
   if (text.length > MAX_EXACT_TOKEN_TEXT_BYTES) return true
@@ -185,6 +191,7 @@ function isCjkCodeUnit(code: number): boolean {
 
 function heuristicTokens(text: string): number {
   if (text.length === 0) return 0
+  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return Math.ceil(text.length * 1.5)
   let cjk = 0
   for (let i = 0; i < text.length; i += 1) {
     if (isCjkCodeUnit(text.charCodeAt(i))) cjk += 1

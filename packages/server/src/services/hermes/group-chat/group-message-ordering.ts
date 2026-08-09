@@ -41,7 +41,11 @@ export function groupRunOrder(id: string): { baseId: string; phase: number } {
 }
 
 function compareStorageIds(a: string, b: string): number {
-    return a < b ? -1 : a > b ? 1 : 0
+    // SQLite's default BINARY collation compares the UTF-8 bytes stored in
+    // TEXT values. JavaScript relational comparison uses UTF-16 code units,
+    // which disagrees for supplementary-plane characters versus some BMP
+    // characters and can make SQL cursor prefilters silently drop messages.
+    return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'))
 }
 
 export function sortGroupMessagesCanonical<T extends CanonicalGroupMessage>(messages: readonly T[]): T[] {

@@ -1031,13 +1031,19 @@ class ChatStorage {
             storedMessage.reasoning_details ?? null,
             storedMessage.reasoning_content ?? null,
         )
-        return this.mapStoredMessageRow({
+        const persistedMessage = this.mapStoredMessageRow({
             ...storedMessage,
             content: persistedContent,
             persistedAt,
             mentions: mentionsJson,
             tool_calls: toolCallsJson,
         })
+        // The storage column is historically NOT NULL and stores absent
+        // metadata as "[]". Preserve the caller-visible three-state protocol
+        // for the live routing path even though the on-disk representation is
+        // legacy-compatible.
+        if (storedMessage.mentions === undefined) persistedMessage.mentions = undefined
+        return persistedMessage
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
