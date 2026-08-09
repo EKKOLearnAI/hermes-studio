@@ -1,6 +1,6 @@
 ---
 date: 2026-08-09
-pr: pending
+pr: 2442
 feature: Accurate Global Agent runtime avatars
 impact: Global Agent sessions show their actual Hermes or Ekko runtime, while MCU device pages omit the inactive battery row.
 ---
