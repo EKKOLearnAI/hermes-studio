@@ -5,6 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
+import { publishEvent } from '../event-outbox'
 import { getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger, bridgeLogger } from '../../logger'
 import { normalizeTokenUsage, recordSessionUsage } from '../../usage-recorder'
@@ -1670,6 +1671,30 @@ async function applyBridgeChunkAsync(
     workspace_run_change: workspaceRunChange,
   }
   emit(eventName, payload)
+
+  // Outbound event outbox. Recorded only after the run result has been flushed
+  // and session stats written, so a receiver that reacts to `completed` cannot
+  // observe an unsaved run. Publishing is a local insert; delivery happens on
+  // the dispatcher's own schedule and never blocks this path.
+  publishEvent({
+    type: terminalError ? 'chat.run.failed' : 'chat.run.completed',
+    dedupeKey: `chat.run.${terminalError ? 'failed' : 'completed'}:${sessionId}:${chunk.run_id || runMarker}`,
+    profile,
+    source: runSource || 'chat',
+    subject: {
+      session_id: sessionId,
+      run_id: chunk.run_id ? String(chunk.run_id) : undefined,
+    },
+    summary: {
+      status: terminalError ? 'failed' : 'completed',
+      model: modelContext.model || undefined,
+      provider: modelContext.provider || undefined,
+      input_tokens: usage.inputTokens,
+      output_tokens: usage.outputTokens,
+      // The message itself is deliberately absent: identifiers only.
+      error_kind: terminalError ? 'run_error' : undefined,
+    },
+  })
 
   // Workflow node progression is owned by the DAG scheduler. Use the immutable
   // source of the run being finalized: state.source may already describe the

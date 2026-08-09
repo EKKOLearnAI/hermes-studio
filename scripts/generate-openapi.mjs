@@ -74,6 +74,7 @@ const tagMappings = {
   'routes/hermes/mcp.ts': { name: 'MCP', description: 'MCP server and tool management' },
   'routes/hermes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
   'routes/hermes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
+  'routes/hermes/outbound-webhooks.ts': { name: 'Event Outbox', description: 'Outbound webhook endpoints and capability discovery' },
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },

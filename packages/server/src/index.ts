@@ -380,6 +380,11 @@ export async function bootstrap() {
   sessionDeleter.start(activeProfile)
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
 
+  // Outbound event outbox — resumes deliveries this process never finished.
+  const { startEventOutboxDispatcher } = await import('./services/hermes/event-outbox/dispatcher')
+  startEventOutboxDispatcher()
+  console.log('[bootstrap] event outbox dispatcher started')
+
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {

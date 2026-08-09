@@ -730,6 +730,89 @@ export const GC_SESSION_PROFILES_SCHEMA: Record<string, string> = {
 }
 
 // ============================================================================
+// Outbound Event Outbox (event-outbox-store.ts)
+// ============================================================================
+
+export const EVENT_OUTBOX_TABLE = 'event_outbox'
+
+/**
+ * One row per operational event, written in the same transaction as the change
+ * it describes. `dedupe_key` is what makes a retry or a replayed run collapse
+ * onto the existing row instead of emitting the event twice.
+ */
+export const EVENT_OUTBOX_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  type: 'TEXT NOT NULL',
+  dedupe_key: 'TEXT NOT NULL',
+  schema_version: 'INTEGER NOT NULL DEFAULT 1',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  source: "TEXT NOT NULL DEFAULT ''",
+  subject_json: "TEXT NOT NULL DEFAULT '{}'",
+  summary_json: "TEXT NOT NULL DEFAULT '{}'",
+  occurred_at: 'INTEGER NOT NULL',
+  created_at: 'INTEGER NOT NULL',
+}
+
+export const EVENT_OUTBOX_INDEXES = {
+  uniq_event_outbox_dedupe: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_event_outbox_dedupe ON event_outbox(dedupe_key)',
+  idx_event_outbox_type: 'CREATE INDEX IF NOT EXISTS idx_event_outbox_type ON event_outbox(type)',
+  idx_event_outbox_created_at: 'CREATE INDEX IF NOT EXISTS idx_event_outbox_created_at ON event_outbox(created_at)',
+}
+
+export const OUTBOUND_WEBHOOK_ENDPOINTS_TABLE = 'outbound_webhook_endpoints'
+
+/**
+ * A webhook destination. `secret` holds the HMAC key when the user pasted one;
+ * `secret_env` names an environment variable to read instead, so deployments
+ * that keep secrets outside the database can do so. Neither is ever returned
+ * by the API.
+ */
+export const OUTBOUND_WEBHOOK_ENDPOINTS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  name: 'TEXT NOT NULL',
+  url: 'TEXT NOT NULL',
+  secret: "TEXT NOT NULL DEFAULT ''",
+  secret_env: "TEXT NOT NULL DEFAULT ''",
+  event_types_json: "TEXT NOT NULL DEFAULT '[]'",
+  profiles_json: "TEXT NOT NULL DEFAULT '[]'",
+  enabled: 'INTEGER NOT NULL DEFAULT 1',
+  max_attempts: 'INTEGER NOT NULL DEFAULT 8',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const OUTBOUND_WEBHOOK_ENDPOINTS_INDEXES = {
+  idx_outbound_webhook_endpoints_enabled: 'CREATE INDEX IF NOT EXISTS idx_outbound_webhook_endpoints_enabled ON outbound_webhook_endpoints(enabled)',
+}
+
+export const EVENT_OUTBOX_DELIVERIES_TABLE = 'event_outbox_deliveries'
+
+/**
+ * One row per (event, endpoint) pair, so the same event can reach several
+ * destinations and each keeps its own attempt count and status. Surviving a
+ * restart is exactly this table being read back at startup.
+ */
+export const EVENT_OUTBOX_DELIVERIES_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  event_id: 'TEXT NOT NULL',
+  endpoint_id: 'TEXT NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'pending'",
+  attempts: 'INTEGER NOT NULL DEFAULT 0',
+  next_attempt_at: 'INTEGER NOT NULL DEFAULT 0',
+  last_status_code: 'INTEGER NOT NULL DEFAULT 0',
+  last_error: "TEXT NOT NULL DEFAULT ''",
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  delivered_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const EVENT_OUTBOX_DELIVERIES_INDEXES = {
+  uniq_event_outbox_deliveries_pair: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_event_outbox_deliveries_pair ON event_outbox_deliveries(event_id, endpoint_id)',
+  idx_event_outbox_deliveries_due: 'CREATE INDEX IF NOT EXISTS idx_event_outbox_deliveries_due ON event_outbox_deliveries(status, next_attempt_at)',
+  idx_event_outbox_deliveries_endpoint: 'CREATE INDEX IF NOT EXISTS idx_event_outbox_deliveries_endpoint ON event_outbox_deliveries(endpoint_id, created_at)',
+}
+
+// ============================================================================
 // Schema Sync Utilities
 // ============================================================================
 
@@ -1217,6 +1300,20 @@ export function initAllHermesTables(): void {
     syncTable(WORKFLOW_RUN_LOOP_EPOCHS_TABLE, WORKFLOW_RUN_LOOP_EPOCHS_SCHEMA, {
       indexes: WORKFLOW_RUN_LOOP_EPOCHS_INDEXES,
     })
+
+    // Outbound event outbox
+    syncTable(EVENT_OUTBOX_TABLE, EVENT_OUTBOX_SCHEMA, {
+      indexes: EVENT_OUTBOX_INDEXES,
+    })
+    createIndexes(db, EVENT_OUTBOX_INDEXES)
+    syncTable(OUTBOUND_WEBHOOK_ENDPOINTS_TABLE, OUTBOUND_WEBHOOK_ENDPOINTS_SCHEMA, {
+      indexes: OUTBOUND_WEBHOOK_ENDPOINTS_INDEXES,
+    })
+    createIndexes(db, OUTBOUND_WEBHOOK_ENDPOINTS_INDEXES)
+    syncTable(EVENT_OUTBOX_DELIVERIES_TABLE, EVENT_OUTBOX_DELIVERIES_SCHEMA, {
+      indexes: EVENT_OUTBOX_DELIVERIES_INDEXES,
+    })
+    createIndexes(db, EVENT_OUTBOX_DELIVERIES_INDEXES)
 
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
