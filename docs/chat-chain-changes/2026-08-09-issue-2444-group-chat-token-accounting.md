@@ -1,6 +1,6 @@
 ---
 date: 2026-08-09
-pr: pending
+pr: 2445
 feature: Bounded Group Chat token accounting
 impact: Group Chat message persistence updates the cached context-window token total incrementally and uses bounded estimation for oversized text so HTTP health checks remain responsive under large tool results.
 ---
