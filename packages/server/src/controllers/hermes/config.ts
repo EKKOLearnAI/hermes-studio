@@ -224,12 +224,15 @@ function normalizeAuxiliaryConfig(value: unknown, options: { resetAuto?: boolean
   return normalized
 }
 
-function cleanMoaSlot(value: unknown): { provider: string; model: string } | null {
+function cleanMoaSlot(value: unknown): { provider: string; model: string; reasoning_effort?: string } | null {
   if (!isPlainRecord(value)) return null
   const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
   const model = typeof value.model === 'string' ? value.model.trim() : ''
+  const reasoningEffort = typeof value.reasoning_effort === 'string' && value.reasoning_effort.trim()
+    ? value.reasoning_effort.trim()
+    : undefined
   if (!provider || !model || provider.toLowerCase() === 'moa') return null
-  return { provider, model }
+  return { provider, model, ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}) }
 }
 
 function coerceMoaNumber(value: unknown, fallback: number): number {
@@ -258,7 +261,7 @@ function normalizeMoaPreset(value: unknown): Record<string, any> {
   const rawRefs = Array.isArray(raw.reference_models)
     ? raw.reference_models
     : isPlainRecord(raw.reference_models) ? [raw.reference_models] : []
-  const referenceModels = rawRefs.map(cleanMoaSlot).filter((slot): slot is { provider: string; model: string } => !!slot)
+  const referenceModels = rawRefs.map(cleanMoaSlot).filter((slot): slot is { provider: string; model: string; reasoning_effort?: string } => !!slot)
   const aggregator = cleanMoaSlot(raw.aggregator) || { ...DEFAULT_MOA_AGGREGATOR }
   return {
     enabled: raw.enabled === undefined ? true : Boolean(raw.enabled),
