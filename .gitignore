@@ -52,3 +52,13 @@ CLAUDE.md
 # Client source map artifacts
 packages/client/src/**/*.js
 .hermes/
+
+# Playwright MCP session artifacts
+.playwright-mcp/
+# Windows reserved-name junk from earlier test
+NUL
+
+# Playwright MCP session artifacts
+.playwright-mcp/
+# Windows reserved-name junk from earlier test
+NUL
