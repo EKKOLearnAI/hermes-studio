@@ -577,7 +577,7 @@ export class CodingAgentRunManager {
     return { runId: run.id, pid: proc.pid }
   }
 
-  send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string } {
+  send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string; messageId?: number } {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
     const text = String(input || '').trim()
@@ -586,21 +586,21 @@ export class CodingAgentRunManager {
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
-    this.addUserMessage(run, options.storageInput ?? text)
+    const messageId = this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
     this.startWorkspaceRunDiff(run)
     if (run.launch.agentId === 'claude-code') {
       this.startClaudePrintTurn(run, text, systemPrompt, images)
-      return { runId: run.id }
+      return { runId: run.id, messageId }
     }
     if (run.launch.agentId === 'codex') {
       this.startCodexExecTurn(run, text, systemPrompt, images)
-      return { runId: run.id }
+      return { runId: run.id, messageId }
     }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
     run.pty.write(`${text}\r`)
-    return { runId: run.id }
+    return { runId: run.id, messageId }
   }
 
   stop(sessionId: string, options: { reportClosed?: boolean } = {}): boolean {
@@ -845,6 +845,7 @@ export class CodingAgentRunManager {
     })
     const id = addMessage({ session_id: run.launch.sessionId, role: 'user', content, timestamp })
     logger.debug({ runId: run.id, sessionId: run.launch.sessionId, messageId: id }, '[coding-agent-run] recorded user message')
+    return id
   }
 
   private touch(run: ManagedCodingAgentRun) {
@@ -1869,6 +1870,7 @@ export class CodingAgentRunManager {
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
+      ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,
     })

@@ -494,6 +494,25 @@ describe('i18n locale coverage', () => {
     expect(untranslated).toEqual([])
   })
 
+  it('defines every Webhook settings string in every raw non-English locale', () => {
+    const englishWebhooks = flattenLeafPaths(en.settings.webhooks)
+    const issues = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+      const localizedWebhooks = flattenLeafPaths(
+        (localeMessages.settings as Record<string, unknown>)?.webhooks,
+      )
+      return [...englishWebhooks.entries()].flatMap(([key, englishValue]) => {
+        const localeValue = localizedWebhooks.get(key)
+        if (localeValue === undefined) return [`${locale}: settings.webhooks.${key} missing`]
+        return interpolationNames(localeValue).join(',') === interpolationNames(englishValue).join(',')
+          ? []
+          : [`${locale}: settings.webhooks.${key} interpolation mismatch`]
+      })
+    })
+
+    expect(issues).toEqual([])
+  })
+
   it('keeps Skills Usage summary and table labels compact across locales', () => {
     const oversized = Object.entries(messages).flatMap(([locale, localeMessages]) =>
       Object.entries(SKILLS_USAGE_COMPACT_LABEL_LIMITS).flatMap(([key, maxLength]) => {

@@ -32,6 +32,7 @@ import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from '.
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
+import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../chat-webhooks'
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { respondToEkkoClarification } from '../../ekko-agent/clarifications'
@@ -172,6 +173,14 @@ function isEkkoAgentExecution(data?: { coding_agent_id?: string; agent_id?: stri
   return data?.coding_agent_id === 'ekko-agent' || data?.agent_id === 'ekko-agent'
 }
 
+function webhookAgentForRun(data?: { coding_agent_id?: string; agent_id?: string }): ChatRunWebhookAgent {
+  const agent = data?.coding_agent_id || data?.agent_id
+  if (agent === 'ekko-agent') return 'ekko'
+  if (agent === 'codex') return 'codex'
+  if (agent === 'claude-code') return 'claude-code'
+  return 'bridge'
+}
+
 export interface ChatRunAndWaitResult {
   ok: boolean
   event: 'run.completed' | 'run.failed'
@@ -297,6 +306,8 @@ export class ChatRunSocket {
       group_system_prompt?: string
       group_room_id?: string
       group_agent_id?: string
+      workflow_id?: string
+      workflow_node_id?: string
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       queue_id?: string
@@ -324,12 +335,13 @@ export class ChatRunSocket {
       try {
         runProfile = resolveRunProfile(data.session_id, data.profile)
       } catch (err) {
-        socket.emit('run.failed', {
+        const payload = {
           event: 'run.failed',
           session_id: data.session_id,
           queue_id: data.queue_id,
           error: err instanceof Error ? err.message : String(err),
-        })
+        }
+        socket.emit('run.failed', payload)
         return
       }
       if (data.category_id !== undefined) {
@@ -382,6 +394,8 @@ export class ChatRunSocket {
             groupSystemPrompt: data.group_system_prompt,
             groupRoomId: data.group_room_id,
             groupAgentId: data.group_agent_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
             profile: runProfile,
             workspace: data.workspace,
             source,
@@ -401,12 +415,25 @@ export class ChatRunSocket {
             reasoningEffort: data.reasoning_effort,
             originSocketId: socket.id,
           })
-          this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
+          const queuedPayload = {
             event: 'run.queued',
             session_id: data.session_id,
+            queue_id: queueId,
             queue_length: state.queue.length,
             queued_messages: this.serializeQueuedMessages(state.queue),
+          }
+          observeChatRunWebhookEvent({
+            event: 'run.queued',
+            sessionId: data.session_id,
+            profile: runProfile,
+            source,
+            agent: webhookAgentForRun(data),
+            payload: queuedPayload,
+            roomId: data.group_room_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
           })
+          this.nsp.to(`session:${data.session_id}`).emit('run.queued', queuedPayload)
           logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
           return
         }
@@ -418,6 +445,25 @@ export class ChatRunSocket {
       try {
         await this.handleRun(socket, data, runProfile)
       } catch (err) {
+        const payload = {
+          event: 'run.failed',
+          session_id: data.session_id,
+          queue_id: data.queue_id,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        if (data.session_id) {
+          observeChatRunWebhookEvent({
+            event: 'run.failed',
+            sessionId: data.session_id,
+            profile: runProfile,
+            source: resolveRunSource(data.source, data.session_id),
+            agent: webhookAgentForRun(data),
+            payload,
+            roomId: data.group_room_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
+          })
+        }
         if (data.session_id) {
           const state = this.sessionMap.get(data.session_id)
           if (state && !state.runId && !state.abortController && !state.activeRunMarker) {
@@ -425,12 +471,7 @@ export class ChatRunSocket {
             state.profile = undefined
           }
         }
-        socket.emit('run.failed', {
-          event: 'run.failed',
-          session_id: data.session_id,
-          queue_id: data.queue_id,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        socket.emit('run.failed', payload)
       }
     })
 
@@ -605,6 +646,8 @@ export class ChatRunSocket {
       group_system_prompt?: string
       group_room_id?: string
       group_agent_id?: string
+      workflow_id?: string
+      workflow_node_id?: string
       workspace?: string | null
       category_id?: number | null
       source?: string
@@ -636,6 +679,13 @@ export class ChatRunSocket {
     skipUserMessage = false,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
+    if (data.session_id) {
+      const state = getOrCreateSession(this.sessionMap, data.session_id)
+      state.webhookAgent = webhookAgentForRun(data)
+      state.webhookRoomId = data.group_room_id
+      state.webhookWorkflowId = data.workflow_id
+      state.webhookWorkflowNodeId = data.workflow_node_id
+    }
     if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input) && data.allow_command_passthrough !== true) return
 
     if (!isCodingAgentExecution(source, data)) {
@@ -672,6 +722,19 @@ export class ChatRunSocket {
           queue_id: data.queue_id,
           error: `Agent Bridge is not reachable: ${bridgeReady.error}`,
         }
+        if (data.session_id) {
+          observeChatRunWebhookEvent({
+            event: 'run.failed',
+            sessionId: data.session_id,
+            profile,
+            source,
+            agent: webhookAgentForRun(data),
+            payload,
+            roomId: data.group_room_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
+          })
+        }
         if (queueRemaining > 0) payload.queue_remaining = queueRemaining
         socket.emit('run.failed', payload)
         if (data.session_id && data.background_delegation_id && data.background_claim_id) {
@@ -693,6 +756,17 @@ export class ChatRunSocket {
         : getSystemPrompt(undefined, { source })
 
       const onEvent = (event: string, payload: any) => {
+        observeChatRunWebhookEvent({
+          event,
+          sessionId: String(data.session_id || payload?.session_id || ''),
+          profile,
+          source,
+          agent: 'bridge',
+          payload,
+          roomId: data.group_room_id,
+          workflowId: data.workflow_id,
+          workflowNodeId: data.workflow_node_id,
+        })
         data.onEvent?.(event, payload)
         this.emitPendingInteraction(profile, event, payload)
       }
@@ -708,6 +782,17 @@ export class ChatRunSocket {
 
     if (isEkkoAgentExecution(data)) {
       const onEvent = (event: string, payload: any) => {
+        observeChatRunWebhookEvent({
+          event,
+          sessionId: String(data.session_id || payload?.session_id || ''),
+          profile,
+          source,
+          agent: 'ekko',
+          payload,
+          roomId: data.group_room_id,
+          workflowId: data.workflow_id,
+          workflowNodeId: data.workflow_node_id,
+        })
         data.onEvent?.(event, payload)
         this.emitPendingInteraction(profile, event, payload)
       }
@@ -723,13 +808,51 @@ export class ChatRunSocket {
       return
     }
 
-    await handleCodingAgentRun(
+    const started = await handleCodingAgentRun(
       this.nsp,
       socket,
       data,
       profile,
       this.sessionMap,
     )
+    if (!started) return
+    if (data.session_id) {
+      observeChatRunWebhookEvent({
+        event: 'message.created',
+        sessionId: data.session_id,
+        profile,
+        source,
+        agent: webhookAgentForRun(data),
+        payload: {
+          event: 'message.created',
+          queue_id: data.queue_id,
+          message_id: started.messageId,
+          role: data.display_role === 'command' ? 'command' : 'user',
+          content: data.display_input === null
+            ? data.storage_message || contentBlocksToString(data.input)
+            : contentBlocksToString(data.display_input ?? data.input),
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+        roomId: data.group_room_id,
+        workflowId: data.workflow_id,
+        workflowNodeId: data.workflow_node_id,
+      })
+      observeChatRunWebhookEvent({
+        event: 'run.started',
+        sessionId: data.session_id,
+        profile,
+        source,
+        agent: webhookAgentForRun(data),
+        payload: {
+          event: 'run.started',
+          run_id: started.runId,
+          queue_id: data.queue_id,
+        },
+        roomId: data.group_room_id,
+        workflowId: data.workflow_id,
+        workflowNodeId: data.workflow_node_id,
+      })
+    }
   }
 
   private backgroundPendingCount(state: SessionState): number {
@@ -1033,6 +1156,14 @@ export class ChatRunSocket {
           provider: session?.provider,
           workspace: session?.workspace,
           source,
+          onEvent: (event, payload) => observeChatRunWebhookEvent({
+            event,
+            sessionId: sid,
+            profile,
+            source: String(source || 'cli'),
+            agent: 'bridge',
+            payload,
+          }),
         },
         this.sessionMap,
         this.bridge,
@@ -1109,6 +1240,8 @@ export class ChatRunSocket {
       group_system_prompt: next.groupSystemPrompt,
       group_room_id: next.groupRoomId,
       group_agent_id: next.groupAgentId,
+      workflow_id: next.workflowId,
+      workflow_node_id: next.workflowNodeId,
       workspace: next.workspace,
       source: next.source,
       session_source: next.sessionSource,
@@ -1150,6 +1283,8 @@ export class ChatRunSocket {
       group_system_prompt?: string
       group_room_id?: string
       group_agent_id?: string
+      workflow_id?: string
+      workflow_node_id?: string
       workspace?: string | null
       source?: string
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
@@ -1234,6 +1369,17 @@ export class ChatRunSocket {
             choice,
             resolved: Boolean((result as any)?.resolved),
           }
+          observeChatRunWebhookEvent({
+            event: 'approval.resolved',
+            sessionId,
+            profile,
+            source,
+            agent: webhookAgentForRun(data),
+            payload: resolvedPayload,
+            roomId: data.group_room_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
+          })
           this.nsp.to(`session:${sessionId}`).emit('approval.resolved', resolvedPayload)
           onEvent('approval.resolved', resolvedPayload)
         } catch (err) {
@@ -1306,7 +1452,22 @@ export class ChatRunSocket {
       } as unknown as Socket
 
       this.handleRun(fakeSocket, { ...data, onEvent }, profile)
-        .catch(err => finish({ ok: false, event: 'run.failed', error: err instanceof Error ? err.message : String(err) }))
+        .catch(err => {
+          const error = err instanceof Error ? err.message : String(err)
+          const payload = { event: 'run.failed', session_id: sessionId, error }
+          observeChatRunWebhookEvent({
+            event: 'run.failed',
+            sessionId,
+            profile,
+            source,
+            agent: webhookAgentForRun(data),
+            payload,
+            roomId: data.group_room_id,
+            workflowId: data.workflow_id,
+            workflowNodeId: data.workflow_node_id,
+          })
+          finish({ ok: false, event: 'run.failed', error })
+        })
     })
   }
 
@@ -1349,8 +1510,21 @@ export class ChatRunSocket {
   emitExternalEvent(sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
-    this.observePetEvent(profile, event, tagged)
     const state = this.sessionMap.get(sessionId)
+    const session = getSession(sessionId)
+    const storedAgent = String(session?.agent || '')
+    observeChatRunWebhookEvent({
+      event,
+      sessionId,
+      profile,
+      source: state?.source || session?.source || 'coding_agent',
+      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'ekko-agent' ? 'ekko' : 'claude-code'),
+      payload: tagged,
+      roomId: state?.webhookRoomId,
+      workflowId: state?.webhookWorkflowId,
+      workflowNodeId: state?.webhookWorkflowNodeId,
+    })
+    this.observePetEvent(profile, event, tagged)
     if (state?.isWorking) {
       state.events.push({ event, data: tagged })
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
@@ -1483,6 +1657,20 @@ export class ChatRunSocket {
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
+    const state = this.sessionMap.get(sessionId)
+    const session = getSession(sessionId)
+    const storedAgent = String(session?.agent || '')
+    observeChatRunWebhookEvent({
+      event,
+      sessionId,
+      profile,
+      source: state?.source || session?.source || 'chat',
+      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'ekko-agent' ? 'ekko' : 'bridge'),
+      payload: tagged,
+      roomId: state?.webhookRoomId,
+      workflowId: state?.webhookWorkflowId,
+      workflowNodeId: state?.webhookWorkflowNodeId,
+    })
     this.observePetEvent(profile, event, tagged)
     this.emitPendingInteraction(profile, event, tagged)
     this.nsp.to(`session:${sessionId}`).emit(event, tagged)

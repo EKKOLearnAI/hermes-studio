@@ -116,6 +116,32 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
 // ============================================================================
+// Chat Run Webhooks
+// ============================================================================
+
+export const CHAT_WEBHOOK_ENDPOINTS_TABLE = 'chat_webhook_endpoints'
+
+export const CHAT_WEBHOOK_ENDPOINTS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  name: 'TEXT NOT NULL',
+  url: 'TEXT NOT NULL',
+  secret: "TEXT NOT NULL DEFAULT ''",
+  event_types_json: "TEXT NOT NULL DEFAULT '[]'",
+  profiles_json: "TEXT NOT NULL DEFAULT '[]'",
+  enabled: 'INTEGER NOT NULL DEFAULT 1',
+  include_content: 'INTEGER NOT NULL DEFAULT 0',
+  include_user_content: 'INTEGER NOT NULL DEFAULT 0',
+  allow_private_network: 'INTEGER NOT NULL DEFAULT 0',
+  max_retries: 'INTEGER NOT NULL DEFAULT 3',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const CHAT_WEBHOOK_ENDPOINTS_INDEXES = {
+  idx_chat_webhook_endpoints_enabled: 'CREATE INDEX IF NOT EXISTS idx_chat_webhook_endpoints_enabled ON chat_webhook_endpoints(enabled)',
+}
+
+// ============================================================================
 // Workspace Run Changes
 // ============================================================================
 
@@ -1210,6 +1236,9 @@ export function initAllHermesTables(): void {
     createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(CHAT_WEBHOOK_ENDPOINTS_TABLE, CHAT_WEBHOOK_ENDPOINTS_SCHEMA, {
+      indexes: CHAT_WEBHOOK_ENDPOINTS_INDEXES,
+    })
     syncTable(WORKSPACE_RUN_CHANGES_TABLE, WORKSPACE_RUN_CHANGES_SCHEMA, {
       indexes: WORKSPACE_RUN_CHANGES_INDEXES,
     })

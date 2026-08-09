@@ -532,6 +532,15 @@ export async function handleEkkoAgentRun(
       content: storageText,
       timestamp: now,
     })
+    data.onEvent?.('message.created', {
+      event: 'message.created',
+      session_id: sessionId,
+      queue_id: data.queue_id,
+      message_id: messageId,
+      role,
+      content: displayText,
+      timestamp: now,
+    })
     state.messages.push({
       id: data.queue_id || messageId || state.messages.length + 1,
       session_id: sessionId,
@@ -1455,6 +1464,7 @@ export async function handleEkkoAgentRun(
     emit('run.completed', {
       event: 'run.completed',
       run_id: runId || result.runId,
+      message_id: assistantMessageId || undefined,
       output: assistantText,
       context: result.context,
       contextTokens: contextEstimate?.contextTokens,

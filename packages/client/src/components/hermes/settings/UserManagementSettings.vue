@@ -195,6 +195,7 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => [
     title: t('common.edit'),
     key: 'actions',
     width: 280,
+    fixed: 'right',
     render: (row) => h(NSpace, { size: 8 }, {
       default: () => [
         h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => t('common.edit') }),
@@ -233,6 +234,7 @@ onMounted(loadUsers)
       :loading="loading"
       :bordered="false"
       :single-line="false"
+      :scroll-x="1080"
       size="small"
     />
 

@@ -7,6 +7,7 @@ import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopAppRelayClient } from './app-relay/client'
 import { closeGlobalEkkoAgent } from './ekko-agent/manager'
+import { stopChatWebhookDispatcher } from './hermes/chat-webhooks'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -102,6 +103,8 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         await chatRunServer.close()
         logger.info('ChatRunSocket closed')
       }
+      stopChatWebhookDispatcher()
+      logger.info('Chat webhook dispatcher stopped')
 
       if (stopAgentBridge) {
         try {

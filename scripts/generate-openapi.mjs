@@ -65,6 +65,7 @@ const tagMappings = {
   'routes/hermes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
   'routes/hermes/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
   'routes/hermes/chat-run.ts': { name: 'Chat Run', description: 'Chat run HTTP and Socket.IO bridge operations' },
+  'routes/hermes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Outgoing Chat Run webhook endpoint management' },
   'routes/hermes/config.ts': { name: 'Config', description: 'Configuration management' },
   'routes/hermes/files.ts': { name: 'Files', description: 'Hermes file browser' },
   'routes/hermes/download.ts': { name: 'Download', description: 'File download' },
