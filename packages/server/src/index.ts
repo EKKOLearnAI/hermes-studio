@@ -323,10 +323,10 @@ export async function bootstrap() {
     },
   }))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
+    if ((ctx.method === 'GET' || ctx.method === 'HEAD') &&
+      !ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/upload') {
       ctx.set('Cache-Control', SPA_ENTRY_CACHE_CONTROL)
       await send(ctx, 'index.html', { root: distDir })
     }

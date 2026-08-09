@@ -116,18 +116,6 @@ describe('Auth Service', () => {
       expect(ctx.status).toBe(200)
     })
 
-    it('skips /webhook because it is treated as a public non-API path', async () => {
-      const { requireAuth } = await loadAuth()
-      const middleware = requireAuth('secret')
-      const ctx = createMockCtx('/webhook')
-      const next = vi.fn(async () => {})
-
-      await middleware(ctx, next)
-
-      expect(next).toHaveBeenCalledOnce()
-      expect(ctx.status).toBe(200)
-    })
-
     it('skips non-API paths', async () => {
       const { requireAuth } = await loadAuth()
       const middleware = requireAuth('secret')

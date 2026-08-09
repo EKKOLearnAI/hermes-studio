@@ -149,10 +149,6 @@
       "description": "File upload"
     },
     {
-      "name": "Webhook",
-      "description": "Incoming webhooks"
-    },
-    {
       "name": "Auth",
       "description": "Authentication management"
     },
@@ -15099,47 +15095,6 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/webhook": {
-      "post": {
-        "tags": [
-          "Webhook"
-        ],
-        "summary": "Create webhook",
-        "description": "POST /webhook",
-        "operationId": "handleWebhook",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "event": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
           }
         }
       }

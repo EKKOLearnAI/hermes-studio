@@ -2,7 +2,6 @@ import type { Context, Next } from 'koa'
 
 // Shared route modules
 import { healthRoutes } from './health'
-import { webhookRoutes } from './webhook'
 import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
@@ -62,7 +61,6 @@ import { petRoutes } from './hermes/pets'
 export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, next: Next) => Promise<void>>) {
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
-  app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
   app.use(devicePublicRoutes.routes())
   app.use(claudeCodeProxyRoutes.routes())
