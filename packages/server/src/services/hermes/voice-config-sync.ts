@@ -13,6 +13,7 @@ import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { chmod } from 'fs/promises'
 import { join } from 'path'
+import { isLocalSttModelUsable } from './local-stt-model-manager'
 
 export type VoiceConfigSyncStatus = 'hermes-studio' | 'fallback' | 'unchanged'
 
@@ -105,6 +106,17 @@ function buildVoiceConfigPatch(profile: string, curlConfigPath: string): VoiceCo
   if (!activeSttProvider || activeSttProvider === 'browser') {
     patch.stt = { provider: 'local' }
     patch.result.stt = 'fallback'
+  } else if (activeSttProvider === 'local' && isLocalSttModelUsable()) {
+    patch.stt = {
+      provider: 'hermes-studio',
+      providers: {
+        'hermes-studio': studioProviderConfig(
+          studioSttCommand(profile, curlConfigPath),
+          'txt',
+        ),
+      },
+    }
+    patch.result.stt = 'hermes-studio'
   } else {
     const setting = getSttProviderSetting(profile, activeSttProvider, { includeSecrets: true })
     if (!setting?.secrets.apiKey?.trim()) {

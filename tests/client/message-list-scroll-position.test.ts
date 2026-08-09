@@ -47,6 +47,7 @@ vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
     },
     template: `
       <div class="virtual-message-list-stub">
+        <slot v-if="messages.length === 0" name="empty" />
         <slot name="before" />
         <slot name="item" v-for="message in messages" :key="message.id" :message="message" />
       </div>
@@ -151,6 +152,37 @@ describe('MessageList session scroll position', () => {
     await flushSessionScroll()
 
     expect(wrapper.getComponent({ name: 'VirtualMessageList' }).props('virtualized')).toBe(false)
+  })
+
+  it.each([
+    {
+      runtime: 'Hermes',
+      session: { source: 'global_agent', agent: 'hermes' },
+      logo: '/coding-agents/hermes.png',
+      alt: 'Hermes',
+    },
+    {
+      runtime: 'Ekko',
+      session: { source: 'global_agent', agent: 'ekko-agent', codingAgentId: 'ekko-agent' },
+      logo: '/coding-agents/ekko-agent.png',
+      alt: 'Ekko Agent',
+    },
+  ])('renders the $runtime logo for an empty Global Agent session', async ({ session, logo, alt }) => {
+    const chatStore = useChatStore()
+    const activeSession = { ...makeSession(`empty-${alt}`), ...session, messages: [] } as Session
+    chatStore.activeSessionId = activeSession.id
+    chatStore.activeSession = activeSession
+
+    const wrapper = mount(MessageList, {
+      global: {
+        stubs: { Transition: false },
+      },
+    })
+    await flushSessionScroll()
+
+    const emptyLogo = wrapper.get('.empty-logo')
+    expect(emptyLogo.attributes('src')).toBe(logo)
+    expect(emptyLogo.attributes('alt')).toBe(alt)
   })
 
   it('shows a history link instead of loading more after the live chat message cap', async () => {

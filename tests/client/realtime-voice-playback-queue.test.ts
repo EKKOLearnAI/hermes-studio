@@ -16,9 +16,16 @@ const testState = vi.hoisted(() => ({
   browserRecognition: null as any,
   recorder: null as any,
   pcmRecorder: null as any,
+  localPcmRecorder: null as any,
+  localPcmOptions: null as any,
   pcmOnChunk: null as null | ((audio: Blob) => void),
+  localPcmOnChunk: null as null | ((audio: Blob) => void),
   sttSettingsResponse: { providers: [], activeProvider: 'browser' } as any,
   transcribeSpeech: vi.fn(),
+  startLocalSttStream: vi.fn(),
+  pushLocalSttStreamChunk: vi.fn(),
+  finishLocalSttStream: vi.fn(),
+  cancelLocalSttStream: vi.fn(),
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -78,25 +85,35 @@ vi.mock('@/composables/useMicRecorder', async () => {
 vi.mock('@/composables/usePcmStreamRecorder', async () => {
   const { ref, shallowRef } = await import('vue')
   return {
-    usePcmStreamRecorder: (options: { onChunk?: (audio: Blob) => void }) => {
-      testState.pcmOnChunk = options.onChunk || null
-      return (testState.pcmRecorder = {
+    usePcmStreamRecorder: (options: { onChunk?: (audio: Blob) => void; maxSegmentDurationMs?: number }) => {
+      const isLocalStream = options.maxSegmentDurationMs === 1_000
+      if (options.onChunk) {
+        if (isLocalStream) testState.localPcmOnChunk = options.onChunk
+        else testState.pcmOnChunk = options.onChunk
+      }
+      const recorder: any = {
         status: ref('idle'),
         error: ref<Error | null>(null),
         level: ref(0),
         hasSpeech: ref(false),
         stream: shallowRef(null),
         start: vi.fn().mockImplementation(async () => {
-          testState.pcmRecorder.status.value = 'recording'
+          recorder.status.value = 'recording'
         }),
         stop: vi.fn().mockImplementation(async () => {
-          testState.pcmRecorder.status.value = 'idle'
+          recorder.status.value = 'idle'
           return new Blob([new Uint8Array(256)], { type: 'audio/wav' })
         }),
         cancel: vi.fn().mockImplementation(() => {
-          testState.pcmRecorder.status.value = 'idle'
+          recorder.status.value = 'idle'
         }),
-      })
+      }
+      if (isLocalStream) {
+        testState.localPcmRecorder = recorder
+        testState.localPcmOptions = options
+      }
+      else testState.pcmRecorder = recorder
+      return recorder
     },
   }
 })
@@ -107,6 +124,10 @@ vi.mock('@/api/hermes/stt-settings', () => ({
 
 vi.mock('@/api/hermes/stt', () => ({
   transcribeSpeech: testState.transcribeSpeech,
+  startLocalSttStream: testState.startLocalSttStream,
+  pushLocalSttStreamChunk: testState.pushLocalSttStreamChunk,
+  finishLocalSttStream: testState.finishLocalSttStream,
+  cancelLocalSttStream: testState.cancelLocalSttStream,
 }))
 
 vi.mock('@/composables/useSttSettings', async () => {
@@ -223,7 +244,10 @@ describe('RealtimeVoiceStage prepared playback queue', () => {
     testState.browserRecognition = null
     testState.recorder = null
     testState.pcmRecorder = null
+    testState.localPcmRecorder = null
+    testState.localPcmOptions = null
     testState.pcmOnChunk = null
+    testState.localPcmOnChunk = null
     testState.store.messages.splice(0)
     testState.store.isStreaming = true
     testState.store.sendMessage.mockReset()
@@ -236,6 +260,24 @@ describe('RealtimeVoiceStage prepared playback queue', () => {
       model: 'gpt-4o-transcribe',
       durationMs: 10,
     })
+    testState.startLocalSttStream.mockReset()
+    testState.startLocalSttStream.mockResolvedValue({ sessionId: 'local-stream-1' })
+    testState.pushLocalSttStreamChunk.mockReset()
+    testState.pushLocalSttStreamChunk.mockResolvedValue({
+      sessionId: 'local-stream-1',
+      text: '本地流式字幕',
+      model: 'local-model',
+      durationMs: 10,
+    })
+    testState.finishLocalSttStream.mockReset()
+    testState.finishLocalSttStream.mockResolvedValue({
+      sessionId: 'local-stream-1',
+      text: '本地流式字幕完成',
+      model: 'local-model',
+      durationMs: 10,
+    })
+    testState.cancelLocalSttStream.mockReset()
+    testState.cancelLocalSttStream.mockResolvedValue({ success: true })
     vi.stubGlobal('Audio', MockAudio)
     Object.defineProperty(window, 'hermesDesktop', {
       configurable: true,
@@ -538,6 +580,52 @@ describe('RealtimeVoiceStage prepared playback queue', () => {
     expect(testState.store.sendMessage).toHaveBeenCalledWith('备用识别文本')
     expect(wrapper.classes()).toContain('voice-stage--thinking')
     expect(wrapper.get('[data-testid="realtime-voice-caption"]').text()).toBe('备用识别文本')
+    wrapper.unmount()
+  })
+
+  it('uses incremental PCM streaming and a final result when local STT is active', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { isDesktop: true },
+    })
+    testState.sttSettingsResponse = {
+      activeProvider: 'local',
+      providers: [{
+        provider: 'local',
+        settings: { model: 'local-model' },
+        secrets: {},
+        updatedAt: Date.now(),
+      }],
+    }
+    const wrapper = mount(RealtimeVoiceStage)
+
+    await vi.advanceTimersByTimeAsync(180)
+    await settle()
+
+    expect(testState.startLocalSttStream).toHaveBeenCalledOnce()
+    expect(testState.localPcmRecorder.start).toHaveBeenCalledOnce()
+    expect(testState.localPcmOptions.continuous).toBe(true)
+    expect(testState.pcmRecorder.start).not.toHaveBeenCalled()
+    expect(testState.browserRecognition.start).not.toHaveBeenCalled()
+
+    const chunk = new Blob([new Uint8Array(256)], { type: 'audio/wav' })
+    testState.localPcmOnChunk?.(chunk)
+    await settle()
+    expect(testState.pushLocalSttStreamChunk).toHaveBeenCalledWith('local-stream-1', chunk)
+    expect(wrapper.get('[data-testid="realtime-voice-caption"]').text()).toBe('本地流式字幕')
+
+    testState.localPcmRecorder.stop.mockResolvedValueOnce(null)
+    testState.localPcmRecorder.hasSpeech.value = true
+    testState.localPcmRecorder.level.value = 0.2
+    await settle()
+    await vi.advanceTimersByTimeAsync(1_500)
+    await settle()
+
+    expect(testState.localPcmRecorder.stop).toHaveBeenCalledOnce()
+    expect(testState.finishLocalSttStream).toHaveBeenCalledWith('local-stream-1')
+    expect(testState.transcribeSpeech).not.toHaveBeenCalled()
+    expect(testState.store.sendMessage).toHaveBeenCalledWith('本地流式字幕完成')
     wrapper.unmount()
   })
 

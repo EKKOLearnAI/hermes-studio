@@ -272,6 +272,49 @@ describe('bridge run final context usage', () => {
     }))
   })
 
+  it('does not prepend the Studio guidance a second time when the caller already composed it', async () => {
+    // The chat-run socket composes getSystemPrompt() and hands the result down as
+    // `instructions`. Composing again duplicated the whole guidance block —
+    // MCP usage plus output-format rules — in the system message of every request.
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'gpt-test',
+      provider: 'openai',
+      workspace: '/tmp/hermes-bridge-final-context/default/workspace',
+    })
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const sessionMap = new Map([['session-1', makeState()]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({ token_count: 1, fixed_context_tokens: 1, message_count: 1, tool_count: 0, system_prompt_chars: 1 }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const composed = 'system prompt\nAGENT SOUL'
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1', instructions: composed },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(getSystemPromptMock).not.toHaveBeenCalled()
+    const sent = String(bridge.chat.mock.calls[0]?.[3] ?? '')
+    expect(sent).toContain(composed)
+    expect(sent.split('system prompt').length - 1).toBe(1)
+  })
+
   it('refreshes full context tokens when a bridge run completes', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)

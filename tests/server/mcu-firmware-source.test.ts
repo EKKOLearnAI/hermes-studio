@@ -24,6 +24,12 @@ describe('MCU firmware remote reliability', () => {
     }
   })
 
+  it('does not show an inactive battery row on the device settings page', () => {
+    for (const source of readFirmwareSources()) {
+      expect(source).not.toContain('appendInfoRow(html, F("电量"), F("未启用"));')
+    }
+  })
+
   it('keeps voice streaming buffers bounded and statically reusable', () => {
     for (const source of readFirmwareSources()) {
       expect(source).toContain('constexpr size_t kListeningPreRollFrames = 4096;')

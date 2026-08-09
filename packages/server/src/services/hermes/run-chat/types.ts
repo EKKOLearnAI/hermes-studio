@@ -40,6 +40,8 @@ export interface QueuedRun {
   groupSystemPrompt?: string
   groupRoomId?: string
   groupAgentId?: string
+  workflowId?: string
+  workflowNodeId?: string
   profile: string
   workspace?: string | null
   source?: ChatRunSource
@@ -95,6 +97,10 @@ export interface SessionState {
   queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource
+  webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex'
+  webhookRoomId?: string
+  webhookWorkflowId?: string
+  webhookWorkflowNodeId?: string
   bridgePendingAssistantContent?: string
   bridgeAssistantMessageId?: string
   bridgePendingReasoningContent?: string

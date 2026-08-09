@@ -86,6 +86,7 @@
     "katex": "^0.17.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
+    "sherpa-onnx-node": "1.13.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },
@@ -153,5 +154,13 @@
     "vue-tsc": "^3.2.8",
     "vue-virtual-scroller": "^3.0.4",
     "ws": "^8.20.0"
+  },
+  "overrides": {
+    "sherpa-onnx-darwin-arm64": "1.13.3",
+    "sherpa-onnx-darwin-x64": "1.13.3",
+    "sherpa-onnx-linux-arm64": "1.13.3",
+    "sherpa-onnx-linux-x64": "1.13.3",
+    "sherpa-onnx-win-ia32": "1.13.3",
+    "sherpa-onnx-win-x64": "1.13.3"
   }
 }

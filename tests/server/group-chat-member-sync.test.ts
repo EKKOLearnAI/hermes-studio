@@ -590,9 +590,9 @@ describe('Group Chat member/agent identity sync', () => {
       agentSessionId: currentSessionId,
     })
 
-    expect(updateRoomTotalTokens).toHaveBeenCalledWith('room-1', 456)
+    expect(updateRoomTotalTokens).not.toHaveBeenCalled()
     expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', agentName: 'Worker', status: 'replying' }))
-    expect(broadcastEmit).toHaveBeenCalledWith('room_updated', { roomId: 'room-1', totalTokens: 456 })
+    expect(broadcastEmit).not.toHaveBeenCalledWith('room_updated', expect.anything())
     expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'current-stream', senderName: 'Worker' }))
   })
 

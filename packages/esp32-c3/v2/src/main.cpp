@@ -2883,7 +2883,6 @@ void sendStatusPage() {
   appendInfoRow(html, F("语音模式"), listeningModeEnabled ? F("自动监听") : F("按住说话"));
   appendInfoRow(html, F("Agent"), mcuAgentRuntimeLabel());
   appendInfoRow(html, F("自动待机"), idlePowerSaveMinutes == 0 ? String(F("关闭")) : String(idlePowerSaveMinutes) + F(" 分钟"));
-  appendInfoRow(html, F("电量"), F("未启用"));
   if (selectedProfile.length() > 0) {
     appendInfoRow(html, F("最近 Profile"), selectedProfile);
   }

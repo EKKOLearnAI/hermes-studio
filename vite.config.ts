@@ -81,7 +81,6 @@ export default defineConfig({
       '/v1': createProxyConfig(),
       '/health': createProxyConfig(),
       '/upload': createProxyConfig(),
-      '/webhook': createProxyConfig(),
       '/socket.io': {
         target: BACKEND,
         ws: true,

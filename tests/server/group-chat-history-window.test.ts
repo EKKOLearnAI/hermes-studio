@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { createServer, type Server as HttpServer } from 'http'
+import { createServer, request as httpRequest, type Server as HttpServer } from 'http'
+import Koa from 'koa'
 
 const dbMock = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -38,6 +39,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 
 import { countTokens } from '../../packages/server/src/lib/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
+import { healthRoutes } from '../../packages/server/src/routes/health'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
@@ -144,6 +146,78 @@ describe('group chat history windows', () => {
     ])
   })
 
+  it('bounds same-timestamp overflow while retaining the newest context messages', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (let index = 0; index < 2_000; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `same-time-${String(index).padStart(4, '0')}`,
+        content: `same timestamp ${index}`,
+        timestamp: 100,
+      }) as any)
+    }
+
+    const context = storage.getMessagesForContext('room-1')
+
+    expect(context.length).toBeLessThanOrEqual(600)
+    expect(context.at(-1)?.id).toBe('same-time-1999')
+  })
+
+  it('honors throughMessageId inside a 2,000-message equal-timestamp group', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (let index = 0; index < 2_000; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `same-time-${String(index).padStart(4, '0')}`,
+        content: `same timestamp ${index}`,
+        timestamp: 100,
+      }) as any)
+    }
+
+    const context = storage.getMessagesForContext('room-1', {
+      throughMessageId: 'same-time-0500',
+    })
+
+    expect(context).toHaveLength(501)
+    expect(context[0]?.id).toBe('same-time-0000')
+    expect(context.at(-1)?.id).toBe('same-time-0500')
+    expect(context.some(message => message.id > 'same-time-0500')).toBe(false)
+  })
+
+  it('uses the same binary id order as SQLite for equal-timestamp cursors', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (const id of ['A', 'a', '1', '_', '中']) {
+      storage.addMessage(makeMessage({ id, content: id, timestamp: 100 }) as any)
+    }
+
+    const ordered = sortGroupMessagesCanonical(
+      ['A', 'a', '1', '_', '中'].map(id => ({ id, timestamp: 100 })),
+    ).map(message => message.id)
+    const through = 'A'
+    const expected = ordered.slice(0, ordered.indexOf(through) + 1)
+
+    expect(storage.getMessagesForContext('room-1', { throughMessageId: through }).map(message => message.id))
+      .toEqual(expected)
+  })
+
+  it('uses SQLite UTF-8 binary order for supplementary-plane cursor ids', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const ids = ['中', '\uE000', '😀']
+    for (const id of ids) {
+      storage.addMessage(makeMessage({ id, content: id, timestamp: 100 }) as any)
+    }
+
+    const ordered = sortGroupMessagesCanonical(ids.map(id => ({ id, timestamp: 100 })))
+      .map(message => message.id)
+    const through = '😀'
+
+    expect(ordered).toEqual(['中', '\uE000', '😀'])
+    expect(storage.getMessagesForContext('room-1', { throughMessageId: through }).map(message => message.id))
+      .toEqual(ordered)
+  })
+
   it('computes room total tokens from the context window, not the UI page window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -163,6 +237,477 @@ describe('group chat history windows', () => {
     expect(storage.getMessagesForContext('room-1')).toHaveLength(160)
     expect(latest?.totalTokens).toBe(expectedTotalTokens)
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
+  })
+
+  it('accounts from the normalized content that was actually persisted', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const dataImage = `data:image/png;base64,${'A'.repeat(300_000)}`
+
+    const inserted = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'normalized-tool',
+      role: 'tool',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      content: JSON.stringify({
+        _multimodal: true,
+        content: [{ type: 'image_url', image_url: { url: dataImage } }],
+      }),
+      timestamp: 1,
+    }) as any)
+
+    expect(inserted.message.content).toBe('[screenshot]')
+    expect(inserted.totalTokens).toBe(countTokens('[screenshot]'))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(countTokens('[screenshot]'))
+
+    const updated = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'normalized-tool',
+      role: 'tool',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      content: 'small canonical update',
+      timestamp: 1,
+    }) as any)
+    expect(updated.totalTokens).toBe(countTokens('small canonical update'))
+
+    for (let index = 0; index < 500; index += 1) {
+      storage.saveMessageAndRefreshRoom(makeMessage({
+        id: `evict-${String(index).padStart(3, '0')}`,
+        content: `replacement ${index}`,
+        timestamp: index + 2,
+      }) as any)
+    }
+    const expectedAfterEviction = Array.from(
+      { length: 500 },
+      (_value, index) => countTokens(`replacement ${index}`),
+    ).reduce((sum, tokens) => sum + tokens, 0)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedAfterEviction)
+  })
+
+  it('migrates the context-window index onto an existing messages table', () => {
+    dbMock.current!.exec('DROP INDEX idx_gc_messages_context_window')
+
+    initAllHermesTables()
+
+    const migrated = dbMock.current!.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`,
+    ).get('idx_gc_messages_context_window') as { sql: string } | undefined
+    expect(migrated?.sql).toContain("WHERE COALESCE(tool_name, '') <> 'workspace_diff'")
+  })
+
+  it('uses the context-window index without a table scan or temporary sort', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (let index = 0; index < 600; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `indexed-${index}`,
+        content: `indexed message ${index}`,
+        timestamp: index + 1,
+      }) as any)
+    }
+
+    const boundaryPlan = dbMock.current!.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT timestamp FROM gc_messages
+       WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'
+       ORDER BY timestamp DESC, id DESC
+       LIMIT 1 OFFSET ?`,
+    ).all('room-1', 499) as Array<{ detail: string }>
+    const idPlan = dbMock.current!.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT id FROM gc_messages
+       WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff' AND timestamp >= ?
+       ORDER BY timestamp DESC, id DESC
+       LIMIT ?`,
+    ).all('room-1', 100, 600) as Array<{ detail: string }>
+    const details = [...boundaryPlan, ...idPlan].map(row => row.detail).join('\n')
+
+    expect(details).toContain('idx_gc_messages_context_window')
+    expect(details).not.toContain('SCAN gc_messages')
+    expect(details).not.toContain('USE TEMP B-TREE')
+  })
+
+  it('rebuilds a legacy cached total before applying an incremental message update', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const oversized = makeMessage({
+      id: 'legacy-large',
+      content: 'a '.repeat(131_073),
+      timestamp: 1,
+    })
+    storage.addMessage(oversized as any)
+    // Simulate a pre-upgrade cache populated by the old exact-tokenizer path.
+    storage.updateRoomTotalTokens('room-1', 131_074)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET tokenAccountingVersion = 0 WHERE id = ?',
+    ).run('room-1')
+
+    const replacement = makeMessage({ id: 'legacy-large', content: 'a', timestamp: 2 })
+    const saved = storage.saveMessageAndRefreshRoom(replacement as any)
+
+    expect(saved.totalTokens).toBe(countTokens('a'))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(countTokens('a'))
+  })
+
+  it('marks new rooms with the current token-accounting version', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    const row = dbMock.current!.prepare(
+      'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+    ).get('room-1') as { tokenAccountingVersion: number }
+
+    expect(row.tokenAccountingVersion).toBe(1)
+  })
+
+  it('marks rooms from the legacy schema for bounded token-accounting rebuild', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('legacy-room', 'Legacy Room')
+    dbMock.current!.exec('ALTER TABLE gc_rooms DROP COLUMN tokenAccountingVersion')
+
+    initAllHermesTables()
+
+    const row = dbMock.current!.prepare(
+      'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+    ).get('legacy-room') as { tokenAccountingVersion: number }
+    expect(row.tokenAccountingVersion).toBe(0)
+  })
+
+  it('rebuilds legacy totals in both rooms before moving a message', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.saveRoom('room-2', 'Room 2')
+    const source = makeMessage({ id: 'moving', roomId: 'room-1', content: 'source', timestamp: 1 })
+    const target = makeMessage({ id: 'target', roomId: 'room-2', content: 'target', timestamp: 1 })
+    storage.addMessage(source as any)
+    storage.addMessage(target as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = 999999, tokenAccountingVersion = 0 WHERE id IN (?, ?)',
+    ).run('room-1', 'room-2')
+
+    const moved = makeMessage({ id: 'moving', roomId: 'room-2', content: 'moved', timestamp: 2 })
+    const saved = storage.saveMessageAndRefreshRoom(moved as any)
+
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(0)
+    expect(saved.totalTokens).toBe(countTokens('target') + countTokens('moved'))
+  })
+
+  it('updates room token totals without retokenizing the complete context window', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    const seeded = Array.from({ length: 500 }, (_value, index) => makeMessage({
+      id: `msg-${index + 1}`,
+      content: `history-${index + 1}`,
+      timestamp: index + 1,
+    }))
+    for (const message of seeded) storage.addMessage(message as any)
+
+    const initialTotal = seeded.reduce((sum, message) => sum + countTokens(String(message.content)), 0)
+    storage.updateRoomTotalTokens('room-1', initialTotal)
+    const fullWindowRead = vi.spyOn(storage, 'getMessagesForContext')
+
+    const incoming = makeMessage({ id: 'msg-501', content: 'newest-message', timestamp: 501 })
+    const saved = storage.saveMessageAndRefreshRoom(incoming as any)
+
+    expect(fullWindowRead).not.toHaveBeenCalled()
+    expect(saved.totalTokens).toBe(
+      initialTotal
+      - countTokens(String(seeded[0].content))
+      + countTokens(String(incoming.content)),
+    )
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(saved.totalTokens)
+  })
+
+  it('adjusts the cached room total when an existing message is updated', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const first = makeMessage({ id: 'msg-1', content: 'short', timestamp: 1 })
+    const initial = storage.saveMessageAndRefreshRoom(first as any).totalTokens
+    const updated = makeMessage({ id: 'msg-1', content: 'a substantially longer updated message', timestamp: 2 })
+
+    const saved = storage.saveMessageAndRefreshRoom(updated as any)
+
+    expect(saved.totalTokens).toBe(
+      initial - countTokens(String(first.content)) + countTokens(String(updated.content)),
+    )
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(saved.totalTokens)
+  })
+
+  it('updates both cached room totals when an existing message moves between rooms', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.saveRoom('room-2', 'Room 2')
+    const original = makeMessage({ id: 'shared-id', roomId: 'room-1', content: 'source room content', timestamp: 1 })
+    const originalTokens = storage.saveMessageAndRefreshRoom(original as any).totalTokens
+    const moved = makeMessage({ id: 'shared-id', roomId: 'room-2', content: 'target room content', timestamp: 2 })
+
+    const result = storage.saveMessageAndRefreshRoom(moved as any)
+
+    expect(originalTokens).toBe(countTokens(String(original.content)))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(0)
+    expect(result.totalTokens).toBe(countTokens(String(moved.content)))
+    expect(storage.getRoom('room-2')?.totalTokens).toBe(result.totalTokens)
+  })
+
+  it('includes every same-timestamp boundary message in the incremental token total', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const seeded = Array.from({ length: 501 }, (_value, index) => makeMessage({
+      id: `boundary-${index}`,
+      content: `boundary message ${index}`,
+      timestamp: index < 3 ? 1 : index - 1,
+    }))
+    for (const message of seeded.slice(0, 500)) storage.addMessage(message as any)
+    const initialWindow = storage.getMessagesForContext('room-1')
+    const initialTotal = initialWindow.reduce((sum, message) => sum + countTokens(String(message.content)), 0)
+    storage.updateRoomTotalTokens('room-1', initialTotal)
+
+    const saved = storage.saveMessageAndRefreshRoom(seeded[500] as any)
+    const expected = storage.getMessagesForContext('room-1')
+      .reduce((sum, message) => sum + countTokens(String(message.content)), 0)
+
+    expect(saved.totalTokens).toBe(expected)
+  })
+
+  it('persists a production-sized tool result without multi-second tokenization stalls', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
+    const content = unit.repeat(Math.ceil(6_204_367 / unit.length)).slice(0, 6_204_367)
+    const start = performance.now()
+
+    const saved = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'large-tool-result',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'api_request',
+      tool_call_id: 'call-large',
+      content,
+      timestamp: 1,
+    }) as any)
+    const elapsedMs = performance.now() - start
+
+    expect(saved.totalTokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(1_000)
+  })
+
+  it('does not reread a production-sized tool result for each later message', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
+    const content = unit.repeat(Math.ceil(6_204_367 / unit.length)).slice(0, 6_204_367)
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'large-tool-result',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'api_request',
+      tool_call_id: 'call-large',
+      content,
+      timestamp: 1,
+    }) as any)
+
+    const start = performance.now()
+    for (let index = 0; index < 50; index += 1) {
+      storage.saveMessageAndRefreshRoom(makeMessage({
+        id: `small-${index}`,
+        content: `small message ${index}`,
+        timestamp: index + 2,
+      }) as any)
+    }
+    const elapsedMs = performance.now() - start
+
+    expect(elapsedMs).toBeLessThan(500)
+  })
+
+  it('keeps a livez response within budget under production-sized group chat load', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (let index = 0; index < 500; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `history-${index}`,
+        content: `history message ${index}`,
+        timestamp: index + 1,
+      }) as any)
+    }
+    storage.updateRoomTotalTokens(
+      'room-1',
+      Array.from({ length: 500 }, (_value, index) => countTokens(`history message ${index}`))
+        .reduce((sum, tokens) => sum + tokens, 0),
+    )
+
+    const healthApp = new Koa()
+    healthApp.use(healthRoutes.routes())
+    const healthServer = createServer(healthApp.callback())
+    await new Promise<void>(resolve => healthServer.listen(0, '127.0.0.1', resolve))
+    const address = healthServer.address()
+    if (!address || typeof address === 'string') throw new Error('missing health port')
+    const startedAt = performance.now()
+    const response = new Promise<{ body: string; elapsedMs: number }>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port: address.port, path: '/livez' }, res => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => { body += chunk })
+        res.on('end', () => resolve({ body, elapsedMs: performance.now() - startedAt }))
+      })
+      req.on('error', reject)
+      req.end()
+    })
+
+    await new Promise(resolve => setImmediate(resolve))
+    const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
+    const content = unit.repeat(Math.ceil(6_204_367 / unit.length)).slice(0, 6_204_367)
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'large-tool-result',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'api_request',
+      tool_call_id: 'call-large',
+      content,
+      timestamp: 501,
+    }) as any)
+    for (let index = 0; index < 50; index += 1) {
+      storage.saveMessageAndRefreshRoom(makeMessage({
+        id: `follow-up-${index}`,
+        content: `follow up ${index}`,
+        timestamp: index + 502,
+      }) as any)
+    }
+
+    const health = await response.finally(() => healthServer.close())
+    expect(health.body).toBe('{"status":"ok"}')
+    expect(health.elapsedMs).toBeLessThan(1_000)
+  })
+
+  it('keeps room token totals unchanged when saving an excluded workspace diff', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const initial = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'msg-1',
+      content: 'context message',
+      timestamp: 1,
+    }) as any).totalTokens
+    const fullWindowRead = vi.spyOn(storage, 'getMessagesForContext')
+
+    const result = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      status: 'completed',
+      workspace: '/tmp/workspace',
+      draft: {
+        change_id: 'change-1',
+        run_id: 'run-1',
+        session_id: 'session-1',
+        room_id: 'room-1',
+        message_id: 'pending',
+        assistant_message_id: '',
+        workspace: 'workspace',
+        workspace_kind: 'git',
+        started_at: 1,
+        finished_at: 2,
+        files_changed: 0,
+        additions: 0,
+        deletions: 0,
+        truncated: false,
+        total_patch_bytes: 0,
+        status: 'completed',
+        files: [],
+      },
+    } as any)
+
+    expect(result?.totalTokens).toBe(initial)
+    expect(fullWindowRead).not.toHaveBeenCalled()
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(initial)
+  })
+
+  it('rebuilds a legacy cached total before saving an excluded workspace diff', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.addMessage(makeMessage({
+      id: 'legacy-context',
+      content: 'authoritative context',
+      timestamp: 1,
+    }) as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = 0 WHERE id = ?',
+    ).run(999_999, 'room-1')
+
+    const result = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      sessionId: 'session-1',
+      runId: 'legacy-run',
+      status: 'completed',
+      workspace: '/tmp/workspace',
+      draft: {
+        change_id: 'legacy-change',
+        run_id: 'legacy-run',
+        session_id: 'session-1',
+        room_id: 'room-1',
+        message_id: 'pending',
+        assistant_message_id: '',
+        workspace: 'workspace',
+        workspace_kind: 'git',
+        started_at: 1,
+        finished_at: 2,
+        files_changed: 0,
+        additions: 0,
+        deletions: 0,
+        truncated: false,
+        total_patch_bytes: 0,
+        status: 'completed',
+        files: [],
+      },
+    } as any)
+
+    const expected = countTokens('authoritative context')
+    expect(result?.totalTokens).toBe(expected)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
+  })
+
+  it('rebuilds a legacy cached total before replaying an existing workspace diff', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.addMessage(makeMessage({
+      id: 'legacy-context',
+      content: 'authoritative context',
+      timestamp: 1,
+    }) as any)
+    storage.addMessage(makeMessage({
+      id: 'existing-workspace-diff',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: '{"kind":"workspace_diff"}',
+      timestamp: 2,
+    }) as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = 0 WHERE id = ?',
+    ).run(999_999, 'room-1')
+
+    const replayed = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'existing-workspace-diff',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: '{"kind":"workspace_diff"}',
+      timestamp: 2,
+    }) as any)
+
+    const expected = countTokens('authoritative context')
+    expect(replayed.totalTokens).toBe(expected)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
   })
 
   it('retains older messages while limiting shared context to the latest 500', () => {

@@ -242,6 +242,7 @@ export interface RoomInfo {
     maxHistoryTokens: number
     tailMessageCount: number
     totalTokens: number
+    tokenAccountingVersion: number
     sessionSeed: string
     workspace: string
     ownerAuthUserId: number | null
@@ -266,6 +267,7 @@ const ROOM_SELECT_COLUMNS = [
     'maxHistoryTokens',
     'tailMessageCount',
     'totalTokens',
+    'tokenAccountingVersion',
     'sessionSeed',
     'workspace',
     'ownerAuthUserId',
@@ -444,6 +446,8 @@ function maxAgentMentionDepth(): number {
 }
 
 const GROUP_CHAT_MESSAGE_WINDOW = 500
+const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
+const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
 class ChatStorage {
     private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
@@ -765,8 +769,9 @@ class ChatStorage {
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
                 id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
-                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt,
+                tokenAccountingVersion
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
@@ -779,6 +784,7 @@ class ChatStorage {
             config?.workspace || '',
             ownerAuthUserId,
             Date.now(),
+            GROUP_CHAT_TOKEN_ACCOUNTING_VERSION,
         )
     }
 
@@ -874,28 +880,14 @@ class ChatStorage {
         return String(content)
     }
 
-    private estimateUsageTokensFromMessages(messages: ChatMessage[]): { inputTokens: number; outputTokens: number } {
-        const inputTokens = messages
-            .filter(m => (m.role || 'user') === 'user')
-            .reduce((sum, m) => sum + countTokens(this.contentToUsageText(m.content)), 0)
-        const outputTokens = messages
-            .filter(m => m.role === 'assistant' || m.role === 'tool')
-            .reduce((sum, m) => {
-                const reasoning = (m as { reasoning_content?: unknown; reasoning?: unknown }).reasoning_content
-                    ?? (m as { reasoning?: unknown }).reasoning
-                return (
-                    sum
-                    + countTokens(this.contentToUsageText(m.content))
-                    + countTokens(String(m.tool_calls || ''))
-                    + countTokens(String(reasoning || ''))
-                )
-            }, 0)
-        return { inputTokens, outputTokens }
-    }
-
-    private estimateRoomTotalTokens(roomId: string, messages: ChatMessage[]): number {
-        const usage = this.estimateUsageTokensFromMessages(messages)
-        return usage.inputTokens + usage.outputTokens
+    private messageUsageTokens(message: Pick<ChatMessage, 'role' | 'content' | 'tool_calls' | 'reasoning' | 'reasoning_content'>): number {
+        const role = message.role || 'user'
+        if (role === 'user') return countTokens(this.contentToUsageText(message.content))
+        if (role !== 'assistant' && role !== 'tool') return 0
+        const reasoning = message.reasoning_content ?? message.reasoning
+        return countTokens(this.contentToUsageText(message.content))
+            + countTokens(String(message.tool_calls || ''))
+            + countTokens(String(reasoning || ''))
     }
 
     // ─── Messages ─────────────────────────────────────────────
@@ -916,11 +908,11 @@ class ChatStorage {
         }
         if (options.throughMessageId) {
             const through = db.prepare(
-                'SELECT timestamp FROM gc_messages WHERE roomId = ? AND id = ?'
-            ).get(roomId, options.throughMessageId) as { timestamp: number } | undefined
+                'SELECT timestamp, id FROM gc_messages WHERE roomId = ? AND id = ?'
+            ).get(roomId, options.throughMessageId) as { timestamp: number; id: string } | undefined
             if (through) {
-                where.push('timestamp <= ?')
-                params.push(through.timestamp)
+                where.push('(timestamp, id) <= (?, ?)')
+                params.push(through.timestamp, through.id)
             }
         }
 
@@ -933,8 +925,14 @@ class ChatStorage {
         ).get(...params, boundedLimit - 1) as { timestamp: number } | undefined
         return db.prepare(
             `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages
-             WHERE ${predicate}${boundary ? ' AND timestamp >= ?' : ''}`
-        ).all(...params, ...(boundary ? [boundary.timestamp] : [])) as any[]
+             WHERE ${predicate}${boundary ? ' AND timestamp >= ?' : ''}
+             ORDER BY timestamp DESC, id DESC
+             LIMIT ?`
+        ).all(
+            ...params,
+            ...(boundary ? [boundary.timestamp] : []),
+            boundedLimit + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
+        ) as any[]
     }
 
     getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
@@ -985,6 +983,8 @@ class ChatStorage {
         const storedMessage = this.snapshotMessageSender(msg, existing ?? this.getMessage(msg.id))
         const toolCallsJson = storedMessage.tool_calls ? JSON.stringify(storedMessage.tool_calls) : null
         const mentionsJson = JSON.stringify(storedMessage.mentions || [])
+        const persistedContent = messageContentForStorage(storedMessage.role, storedMessage.content)
+        const persistedAt = storedMessage.persistedAt ?? Date.now()
         this.db()?.prepare(
             `INSERT INTO gc_messages (
                 id, roomId, senderId, senderName, senderType, senderAgentRecordId,
@@ -1017,9 +1017,9 @@ class ChatStorage {
             storedMessage.senderName,
             storedMessage.senderType || 'member',
             storedMessage.senderAgentRecordId || '',
-            messageContentForStorage(storedMessage.role, storedMessage.content),
+            persistedContent,
             storedMessage.timestamp,
-            storedMessage.persistedAt ?? Date.now(),
+            persistedAt,
             mentionsJson,
             storedMessage.run_id ?? null,
             storedMessage.role || 'user',
@@ -1031,7 +1031,19 @@ class ChatStorage {
             storedMessage.reasoning_details ?? null,
             storedMessage.reasoning_content ?? null,
         )
-        return this.mapStoredMessageRow(storedMessage)
+        const persistedMessage = this.mapStoredMessageRow({
+            ...storedMessage,
+            content: persistedContent,
+            persistedAt,
+            mentions: mentionsJson,
+            tool_calls: toolCallsJson,
+        })
+        // The storage column is historically NOT NULL and stores absent
+        // metadata as "[]". Preserve the caller-visible three-state protocol
+        // for the live routing path even though the on-disk representation is
+        // legacy-compatible.
+        if (storedMessage.mentions === undefined) persistedMessage.mentions = undefined
+        return persistedMessage
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
@@ -1049,6 +1061,7 @@ class ChatStorage {
                 db.exec('ROLLBACK')
                 return null
             }
+            this.ensureCurrentRoomTokenAccounting(args.roomId)
             const workspaceLabel = basename(args.workspace) || 'workspace'
             const redactedDraft: SaveWorkspaceRunChangeInput = {
                 ...args.draft,
@@ -1105,15 +1118,79 @@ class ChatStorage {
                 tool_name: 'workspace_diff',
             }
             const storedMessage = this.upsertMessage(message)
-            const messages = this.getMessagesForContext(args.roomId)
-            const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
-            this.updateRoomTotalTokens(args.roomId, totalTokens)
+            // workspace_diff messages are deliberately excluded from the shared
+            // context window, so they cannot change its token total.
+            const totalTokens = Number(this.getRoom(args.roomId)?.totalTokens || 0)
             db.exec('COMMIT')
             return { message: storedMessage, totalTokens, change }
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err
         }
+    }
+
+    private contextWindowMessageIdsForTokenDelta(roomId: string): string[] {
+        const db = this.db()
+        if (!db) return []
+        const boundary = db.prepare(
+            `SELECT timestamp FROM gc_messages
+             WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'
+             ORDER BY timestamp DESC, id DESC
+             LIMIT 1 OFFSET ?`,
+        ).get(roomId, GROUP_CHAT_MESSAGE_WINDOW - 1) as { timestamp: number } | undefined
+        const rows = db.prepare(
+            `SELECT id FROM gc_messages
+             WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'${boundary ? ' AND timestamp >= ?' : ''}
+             ORDER BY timestamp DESC, id DESC
+             LIMIT ?`,
+        ).all(
+            roomId,
+            ...(boundary ? [boundary.timestamp] : []),
+            GROUP_CHAT_MESSAGE_WINDOW + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
+        ) as Array<{ id: string }>
+        return rows.map(row => String(row.id))
+    }
+
+    private ensureCurrentRoomTokenAccounting(roomId: string): void {
+        const db = this.db()
+        if (!db) return
+        const room = db.prepare(
+            'SELECT tokenAccountingVersion FROM gc_rooms WHERE id = ?',
+        ).get(roomId) as { tokenAccountingVersion: number } | undefined
+        if (!room || Number(room.tokenAccountingVersion) >= GROUP_CHAT_TOKEN_ACCOUNTING_VERSION) return
+
+        const totalTokens = this.contextWindowMessageIdsForTokenDelta(roomId)
+            .reduce((total, id) => {
+                const message = this.getMessage(id)
+                return total + (message ? this.messageUsageTokens(message) : 0)
+            }, 0)
+        db.prepare(
+            'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = ? WHERE id = ?',
+        ).run(totalTokens, GROUP_CHAT_TOKEN_ACCOUNTING_VERSION, roomId)
+    }
+
+    private incrementalRoomTotalTokens(
+        roomId: string,
+        changedMessageId: string,
+        existing: ChatMessage | null,
+        storedMessage: ChatMessage,
+        previousIds: string[],
+        nextIds: string[],
+    ): number {
+        const previous = new Set(previousIds)
+        const next = new Set(nextIds)
+        let total = Number(this.getRoom(roomId)?.totalTokens || 0)
+        for (const id of previous) {
+            if (next.has(id) && id !== changedMessageId) continue
+            const message = id === changedMessageId ? existing : this.getMessage(id)
+            if (message) total -= this.messageUsageTokens(message)
+        }
+        for (const id of next) {
+            if (previous.has(id) && id !== changedMessageId) continue
+            const message = id === changedMessageId ? storedMessage : this.getMessage(id)
+            if (message) total += this.messageUsageTokens(message)
+        }
+        return Math.max(0, total)
     }
 
     saveMessageAndRefreshRoom(msg: ChatMessage, options: { preserveExistingTimestamp?: boolean } = {}): { message: ChatMessage; totalTokens: number } {
@@ -1123,19 +1200,45 @@ class ChatStorage {
         try {
             const existing = this.getMessage(msg.id)
             if (existing?.tool_name === 'workspace_diff') {
-                const messages = this.getMessagesForContext(existing.roomId)
-                const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
+                this.ensureCurrentRoomTokenAccounting(existing.roomId)
+                const totalTokens = Number(this.getRoom(existing.roomId)?.totalTokens || 0)
                 db.exec('COMMIT')
                 return { message: existing, totalTokens }
             }
+            const movedFromRoomId = existing && existing.roomId !== msg.roomId ? existing.roomId : null
+            this.ensureCurrentRoomTokenAccounting(msg.roomId)
+            if (movedFromRoomId) this.ensureCurrentRoomTokenAccounting(movedFromRoomId)
+            const previousSourceIds = movedFromRoomId
+                ? this.contextWindowMessageIdsForTokenDelta(movedFromRoomId)
+                : null
+            const previousIds = this.contextWindowMessageIdsForTokenDelta(msg.roomId)
             const safeMsg = msg.tool_name === 'workspace_diff'
                 ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
                 : msg
             const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
             const storedMessage = this.upsertMessage(message, existing)
-            const messages = this.getMessagesForContext(msg.roomId)
-            const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
+            const nextIds = this.contextWindowMessageIdsForTokenDelta(msg.roomId)
+            const totalTokens = this.incrementalRoomTotalTokens(
+                msg.roomId,
+                storedMessage.id,
+                existing,
+                storedMessage,
+                previousIds,
+                nextIds,
+            )
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
+            if (movedFromRoomId && previousSourceIds) {
+                const nextSourceIds = this.contextWindowMessageIdsForTokenDelta(movedFromRoomId)
+                const sourceTotalTokens = this.incrementalRoomTotalTokens(
+                    movedFromRoomId,
+                    storedMessage.id,
+                    existing,
+                    storedMessage,
+                    previousSourceIds,
+                    nextSourceIds,
+                )
+                this.updateRoomTotalTokens(movedFromRoomId, sourceTotalTokens)
+            }
             db.exec('COMMIT')
             return { message: storedMessage, totalTokens }
         } catch (err) {
@@ -2918,11 +3021,6 @@ export class GroupChatServer {
             agentName,
             status,
         })
-
-        if (typeof data.totalTokens === 'number' && Number.isFinite(data.totalTokens) && data.totalTokens >= 0) {
-            this.storage.updateRoomTotalTokens(roomId, Math.floor(data.totalTokens))
-            this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens: Math.floor(data.totalTokens) })
-        }
     }
 
     private async handleInterruptAgent(socket: Socket, data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void): Promise<void> {

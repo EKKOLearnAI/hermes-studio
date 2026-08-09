@@ -22,6 +22,7 @@ import {
   GroupAgentRelayServer,
 } from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
+import { startChatWebhookDispatcher } from './services/hermes/chat-webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
@@ -296,6 +297,7 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
+  startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
 
   app.use(securityHeaders())
@@ -321,10 +323,10 @@ export async function bootstrap() {
     },
   }))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
+    if ((ctx.method === 'GET' || ctx.method === 'HEAD') &&
+      !ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/upload') {
       ctx.set('Cache-Control', SPA_ENTRY_CACHE_CONTROL)
       await send(ctx, 'index.html', { root: distDir })
     }

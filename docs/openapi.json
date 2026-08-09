@@ -21,6 +21,10 @@
       "description": "Chat run HTTP and Socket.IO bridge operations"
     },
     {
+      "name": "Chat Webhooks",
+      "description": "Outgoing Chat Run webhook endpoint management"
+    },
+    {
       "name": "Codex Auth",
       "description": "OpenAI Codex OAuth"
     },
@@ -143,10 +147,6 @@
     {
       "name": "Upload",
       "description": "File upload"
-    },
-    {
-      "name": "Webhook",
-      "description": "Incoming webhooks"
     },
     {
       "name": "Auth",
@@ -12851,6 +12851,205 @@
         ]
       }
     },
+    "/api/hermes/stt/local-model": {
+      "get": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Get local-model",
+        "description": "GET /api/hermes/stt/local-model",
+        "operationId": "status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-model/download": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create download",
+        "description": "POST /api/hermes/stt/local-model/download",
+        "operationId": "download",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-stream": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create local-stream",
+        "description": "POST /api/hermes/stt/local-stream",
+        "operationId": "startLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}": {
+      "delete": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Delete :sessionId",
+        "description": "DELETE /api/hermes/stt/local-stream/:sessionId",
+        "operationId": "cancelLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}/chunk": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create chunk",
+        "description": "POST /api/hermes/stt/local-stream/:sessionId/chunk",
+        "operationId": "pushLocalStreamChunk",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}/finish": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create finish",
+        "description": "POST /api/hermes/stt/local-stream/:sessionId/finish",
+        "operationId": "finishLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/stt/profile-status": {
       "get": {
         "tags": [
@@ -13899,6 +14098,256 @@
         }
       }
     },
+    "/api/hermes/webhooks/endpoints": {
+      "get": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Get endpoints",
+        "description": "GET /api/hermes/webhooks/endpoints",
+        "operationId": "listEndpoints",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Create endpoints",
+        "description": "POST /api/hermes/webhooks/endpoints",
+        "operationId": "createEndpoint",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/webhooks/endpoints/{id}": {
+      "patch": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Update :id",
+        "description": "PATCH /api/hermes/webhooks/endpoints/:id",
+        "operationId": "updateEndpoint",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/hermes/webhooks/endpoints/:id",
+        "operationId": "removeEndpoint",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/webhooks/endpoints/{id}/test": {
+      "post": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Create test",
+        "description": "POST /api/hermes/webhooks/endpoints/:id/test",
+        "operationId": "testEndpoint",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/webhooks/local-test-events": {
+      "get": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Get local-test-events",
+        "description": "GET /api/hermes/webhooks/local-test-events",
+        "operationId": "localTestEvents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Delete local-test-events",
+        "description": "DELETE /api/hermes/webhooks/local-test-events",
+        "operationId": "clearLocalTestEvents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/webhooks/local-test-target": {
+      "get": {
+        "tags": [
+          "Chat Webhooks"
+        ],
+        "summary": "Get local-test-target",
+        "description": "GET /api/hermes/webhooks/local-test-target",
+        "operationId": "localTestTarget",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/hermes/weixin/qrcode": {
       "get": {
         "tags": [
@@ -14650,14 +15099,14 @@
         }
       }
     },
-    "/webhook": {
+    "/webhook-test/{token}": {
       "post": {
         "tags": [
-          "Webhook"
+          "Chat Webhooks"
         ],
-        "summary": "Create webhook",
-        "description": "POST /webhook",
-        "operationId": "handleWebhook",
+        "summary": "Create :token",
+        "description": "POST /webhook-test/:token",
+        "operationId": "receiveLocalTestWebhook",
         "security": [
           {
             "BearerAuth": []
@@ -14674,17 +15123,24 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {
-                  "event": {
-                    "type": "string"
-                  }
-                }
+                "properties": {},
+                "additionalProperties": true
               }
             }
           }

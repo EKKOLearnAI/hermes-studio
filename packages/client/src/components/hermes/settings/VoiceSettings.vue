@@ -13,6 +13,7 @@ import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.v
 import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
 import VoiceApiConfigurator from './voice/VoiceApiConfigurator.vue'
 import HermesVoiceConfigSummary from './voice/HermesVoiceConfigSummary.vue'
+import LocalSttModelCard from './voice/LocalSttModelCard.vue'
 import type { VoiceApiConnection, VoiceApiKind, VoiceApiProvider, VoiceApiSavePayload } from '@/types/voice-api'
 import type { StoredSttProvider } from '@/api/hermes/stt-settings'
 
@@ -53,7 +54,7 @@ const ttsStudioAvailable = computed(() => {
 })
 const sttStudioAvailable = computed(() => {
   const connection = voiceApi.activeSttConnection.value
-  return !!connection && connection.provider !== 'browser' && connection.hasSecret
+  return !!connection && connection.provider !== 'browser' && (connection.provider === 'local' ? connection.available === true : connection.hasSecret)
 })
 
 onMounted(async () => {
@@ -229,7 +230,7 @@ async function handleSttTest(connection: VoiceApiConnection) {
     return
   }
 
-  if (!connection.hasSecret) {
+  if (connection.provider !== 'local' && !connection.hasSecret) {
     setCardTestState(connection.id, 'error', t('settings.voice.keyMissingForTest'))
     return
   }
@@ -270,6 +271,25 @@ async function handleCardTest(connection: VoiceApiConnection) {
     return
   }
   await handleSttTest(connection)
+}
+
+async function handleLocalSetActive() {
+  try {
+    await voiceApi.refresh()
+    const connection = voiceApi.localSttConnection.value
+    if (!connection?.available) {
+      message.error(t('settings.voice.localSttModelUnavailable'))
+      return
+    }
+    await handleSetActive(connection)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('settings.voice.localSttModelUnavailable'))
+  }
+}
+
+async function handleLocalTest() {
+  const connection = voiceApi.localSttConnection.value
+  if (connection?.available) await handleSttTest(connection)
 }
 </script>
 
@@ -360,8 +380,15 @@ async function handleCardTest(connection: VoiceApiConnection) {
       </header>
 
       <div class="provider-list">
+        <LocalSttModelCard
+          :active="voiceApi.activeSttId.value === 'stt-local'"
+          :test-state="cardTestStates['stt-local']"
+          @set-active="handleLocalSetActive"
+          @test="handleLocalTest"
+          @ready="voiceApi.refresh"
+        />
         <VoiceApiCard
-          v-for="conn in voiceApi.sttConnections.value"
+          v-for="conn in voiceApi.configurableSttConnections.value"
           :key="conn.id"
           :connection="conn"
           :test-state="cardTestStates[conn.id]"

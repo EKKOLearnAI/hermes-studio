@@ -1985,7 +1985,7 @@ export function sendCodingAgentRunInput(
   systemPrompt?: string,
   images: CodingAgentImageInput[] = [],
   storageInput?: string,
-): { runId: string } {
+): { runId: string; messageId?: number } {
   return codingAgentRunManager.send(sessionId, input, { systemPrompt, images, storageInput })
 }
 

@@ -1460,6 +1460,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
       try {
         const runResult = await chatRun.runAndWait({
           session_id: sessionId, source: 'workflow', session_source: 'workflow', input: assembledInput,
+          workflow_id: workflowId, workflow_node_id: node.id,
           profile, workspace: workspace, model: node.data.model || undefined,
           provider: node.data.provider || undefined, mode: node.data.agent === 'hermes' ? undefined : 'scoped',
           coding_agent_id: target.codingAgentId, agent_id: target.codingAgentId,
@@ -1968,6 +1969,8 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             session_id: nodeSessionId,
             source: 'workflow',
             session_source: 'workflow',
+            workflow_id: workflowId,
+            workflow_node_id: node.id,
             input: assembledInput,
             profile,
             workspace: workspace,
