@@ -28,6 +28,7 @@ const DEFAULT_VOICE_ACTIVITY_THRESHOLD = 0.035
 const MIN_FINAL_CHUNK_MS = 350
 const MIN_VOICE_ACTIVITY_MS = 350
 const STREAM_WARMUP_MS = 500
+const AUDIO_DRAIN_TIMEOUT_GRACE_MS = 50
 const SUPPORT_ERROR_MESSAGE = 'Streaming microphone capture is not supported in this browser.'
 
 export function encodePcmWav(
@@ -83,6 +84,7 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
   let capturedSampleCount = 0
   let consecutiveVoiceSampleCount = 0
   let sessionToken = 0
+  let finishPendingAudioDrain: (() => void) | null = null
 
   function setError(cause: unknown) {
     const normalized = cause instanceof Error
@@ -98,6 +100,7 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
   }
 
   function clearAudioGraph() {
+    finishPendingAudioDrain?.()
     if (processor) processor.onaudioprocess = null
     try { processor?.disconnect() } catch { /* already disconnected */ }
     try { source?.disconnect() } catch { /* already disconnected */ }
@@ -238,6 +241,33 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
     bufferedSamples.push(mono)
     bufferedSampleCount += mono.length
     emitReadySegment()
+    finishPendingAudioDrain?.()
+  }
+
+  function drainPendingAudioFrame() {
+    const currentContext = context
+    const currentProcessor = processor
+    if (!currentContext || currentContext.state !== 'running' || !currentProcessor) return Promise.resolve()
+
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const bufferSize = currentProcessor.bufferSize || 4_096
+      const timeout = setTimeout(
+        finish,
+        Math.ceil(bufferSize / sampleRate * 1_000) + AUDIO_DRAIN_TIMEOUT_GRACE_MS,
+      )
+
+      function finish() {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (finishPendingAudioDrain === finish) finishPendingAudioDrain = null
+        resolve()
+      }
+
+      finishPendingAudioDrain?.()
+      finishPendingAudioDrain = finish
+    })
   }
 
   async function start() {
@@ -303,6 +333,10 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
 
   async function stop() {
     sessionToken += 1
+    // ScriptProcessor delivers microphone input one buffer behind real time.
+    // Wait for one final callback so a button release cannot cut off the last
+    // phoneme before the continuous stream tail is encoded.
+    await drainPendingAudioFrame()
     const remainingDurationMs = bufferedSampleCount / sampleRate * 1_000
     const flushContinuousTail = options.continuous
       && Boolean(options.onChunk)

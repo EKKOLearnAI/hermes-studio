@@ -125,6 +125,7 @@ let runtimeShuttingDown = false
 const LOCAL_STT_CHILD_SOURCE = String.raw`
 const path = require('node:path')
 const streams = new Map()
+const FINAL_FLUSH_SILENCE_SECONDS = 0.8
 let sherpa = null
 let recognizer = null
 let recognizerRoot = ''
@@ -202,7 +203,7 @@ process.on('message', (message) => {
       stream.acceptWaveform({ sampleRate: wave.sampleRate, samples: wave.samples })
       stream.acceptWaveform({
         sampleRate: wave.sampleRate,
-        samples: new Float32Array(Math.round(wave.sampleRate * 0.4)),
+        samples: new Float32Array(Math.round(wave.sampleRate * FINAL_FLUSH_SILENCE_SECONDS)),
       })
       stream.inputFinished()
       decodeReady(stream)
@@ -224,7 +225,7 @@ process.on('message', (message) => {
       if (!state) throw new Error('Local STT stream session is not active')
       state.stream.acceptWaveform({
         sampleRate: state.sampleRate,
-        samples: new Float32Array(Math.round(state.sampleRate * 0.4)),
+        samples: new Float32Array(Math.round(state.sampleRate * FINAL_FLUSH_SILENCE_SECONDS)),
       })
       state.stream.inputFinished()
       decodeReady(state.stream)

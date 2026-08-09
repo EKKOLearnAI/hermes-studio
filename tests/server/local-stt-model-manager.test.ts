@@ -212,6 +212,20 @@ describe('local STT model manager', () => {
     expect(child.exitCode).toBe(0)
   })
 
+  it('flushes enough trailing silence for the streaming recognizer to emit final words', async () => {
+    spawnMock.mockReturnValue(createFakeModelProcess())
+    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    installSparseTestModel(manager)
+
+    const session = await manager.createLocalSttStreamSession('7:default')
+    await manager.finishLocalSttStreamSession(session.sessionId, '7:default')
+
+    const childSource = spawnMock.mock.calls[0]?.[1]?.[2]
+    expect(childSource).toContain('const FINAL_FLUSH_SILENCE_SECONDS = 0.8')
+    expect(childSource).toContain('state.sampleRate * FINAL_FLUSH_SILENCE_SECONDS')
+    await manager.shutdownLocalSttRuntime()
+  })
+
   it('does not allow another profile owner to use a local stream session', async () => {
     spawnMock.mockReturnValue(createFakeModelProcess())
     const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
