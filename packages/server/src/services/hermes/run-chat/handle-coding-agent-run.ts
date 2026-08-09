@@ -136,7 +136,7 @@ export async function handleCodingAgentRun(
     const runPrompt = [
       groupSystemPrompt || (includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : ''),
     ].filter(Boolean).join('\n')
-    const sent = Array.isArray(data.input)
+    const sent = await (Array.isArray(data.input)
       ? sendCodingAgentRunInput(
         sessionId,
         codingInput.text,
@@ -144,7 +144,7 @@ export async function handleCodingAgentRun(
         codingInput.images,
         contentBlocksToString(data.input),
       )
-      : sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt)
+      : sendCodingAgentRunInput(sessionId, codingInput.text, runPrompt))
     return sent
   } catch (err) {
     if (!codingAgentRunManager.isSessionProcessing(sessionId)) {
