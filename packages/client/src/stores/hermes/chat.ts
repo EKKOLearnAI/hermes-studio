@@ -3064,12 +3064,60 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  /**
+   * busy_input_mode='interrupt': stop the current run and wait for abort.completed
+   * before the new message is sent, so the follow-up message is handled immediately
+   * instead of being queued behind a possibly multi-minute run.
+   * - Local stream (streamStates ctrl): abort locally, no server event to wait for.
+   * - Server-side bridge run: emit abort + wait for abort.completed (synced).
+   * Returns true when the abort was confirmed synced (or nothing was running),
+   * false on timeout/absence of socket.
+   */
+  function interruptAndWaitForAbort(sessionId: string, timeoutMs = 20000): Promise<boolean> {
+    const ctrl = streamStates.value.get(sessionId)
+    if (ctrl) {
+      setAbortState(sessionId, { aborting: true, synced: null })
+      ctrl.abort()
+      const msgs = getSessionMsgs(sessionId)
+      const lastMsg = msgs[msgs.length - 1]
+      if (lastMsg?.isStreaming) {
+        updateMessage(sessionId, lastMsg.id, { isStreaming: false })
+      }
+      return Promise.resolve(true)
+    }
+    if (!serverWorking.value.has(sessionId)) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const socket = getChatRunSocket(runtimeTransport())
+      if (!socket) {
+        resolve(false)
+        return
+      }
+      let settled = false
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true
+          resolve(false)
+        }
+      }, timeoutMs)
+      const onCompleted = (data: any) => {
+        if (data?.session_id !== sessionId) return
+        if (!settled) {
+          settled = true
+          clearTimeout(timer)
+          resolve(Boolean(data?.synced))
+        }
+      }
+      socket.once('abort.completed', onCompleted)
+      socket.emit('abort', { session_id: sessionId })
+    })
+  }
+
   async function sendMessage(content: string, attachments?: Attachment[]) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
     primeNotificationSoundIfEnabled()
 
-    const trimmedContent = content.trim()
+    let trimmedContent = content.trim()
 
     if (!activeSession.value) {
       const session = createSession()
@@ -3082,6 +3130,17 @@ export const useChatStore = defineStore('chat', () => {
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
       : false
     const isCodingAgentSession = isCodingAgentLikeSession(activeSession.value)
+    const busyInputMode = useSettingsStore().display.busy_input_mode || 'queue'
+    // busy_input_mode='steer': while a bridge run is live, rewrite the message into
+    // a /steer command so it is injected into the current run instead of queued.
+    // Coding-agent sessions and explicit slash commands pass through unchanged.
+    const steerRewrite = busyInputMode === 'steer'
+      && !isCodingAgentSession
+      && isSessionLive(sid)
+      && !isKnownBridgeSessionCommand(trimmedContent)
+    if (steerRewrite) {
+      trimmedContent = `/steer ${trimmedContent}`
+    }
     const isBridgeSlashCommand = !isCodingAgentSession && isKnownBridgeSessionCommand(trimmedContent)
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(trimmedContent)
     const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(trimmedContent)
@@ -3096,11 +3155,17 @@ export const useChatStore = defineStore('chat', () => {
       : trimmedContent
     const shouldOptimisticallyShowRunStatus = !isCodingAgentSession && !isBridgeForkCommand
     const wasLiveBeforeSend = isSessionLive(sid)
+    // busy_input_mode='interrupt': stop the current run first so the new message
+    // is handled immediately instead of being queued. Skipped for bridge slash
+    // commands (they already bypass the queue by design).
+    const interruptBeforeSend = busyInputMode === 'interrupt'
+      && wasLiveBeforeSend
+      && !isBridgeSlashCommand
     if (isBridgeForkCommand) {
       if (pendingForkCommands.value.has(sid)) return
       pendingForkCommands.value = new Set(pendingForkCommands.value).add(sid)
     }
-    const shouldQueue = wasLiveBeforeSend && (
+    const shouldQueue = !interruptBeforeSend && wasLiveBeforeSend && (
       !isBridgeSlashCommand ||
       isBridgePlanCommand ||
       isBridgeSkillCommand ||
@@ -3129,6 +3194,12 @@ export const useChatStore = defineStore('chat', () => {
       if (shouldOptimisticallyShowRunStatus) serverWorking.value.add(sid)
     }
     clearMessageReference(sid)
+
+    // busy_input_mode='interrupt': abort the current run and wait for it to
+    // settle before submitting the new message, so it is processed immediately.
+    if (interruptBeforeSend) {
+      await interruptAndWaitForAbort(sid)
+    }
 
     let runSubmitted = false
     try {

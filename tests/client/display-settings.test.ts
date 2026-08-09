@@ -75,6 +75,23 @@ vi.mock('naive-ui', async () => {
         return () => h('button', { type: 'button', onClick: () => emit('click') }, slots.default?.())
       },
     }),
+    NSelect: defineComponent({
+      props: {
+        value: { type: String, required: false, default: '' },
+      },
+      emits: ['update:value'],
+      setup(props, { emit }) {
+        return () => h('select', {
+          'data-testid': 'busy-input-mode',
+          value: props.value ?? '',
+          onChange: (event: Event) => emit('update:value', (event.target as HTMLSelectElement).value),
+        }, [
+          h('option', { value: 'queue' }, 'queue'),
+          h('option', { value: 'interrupt' }, 'interrupt'),
+          h('option', { value: 'steer' }, 'steer'),
+        ])
+      },
+    }),
     useMessage: () => ({
       success: vi.fn(),
       error: vi.fn(),
@@ -175,7 +192,7 @@ describe('DisplaySettings', () => {
     expect(mockSettingsStore.saveSection).not.toHaveBeenCalledWith('display', { notify_on_approval: true })
   })
 
-  it('does not expose the unwired busy input mode toggle', () => {
+  it('exposes the busy input mode selector with the configured mode', () => {
     const wrapper = mount(DisplaySettings, {
       global: {
         stubs: {
@@ -189,8 +206,28 @@ describe('DisplaySettings', () => {
       },
     })
 
-    expect(wrapper.text()).not.toContain('settings.display.busyInputMode')
-    expect(wrapper.text()).not.toContain('settings.display.busyInputModeHint')
+    expect(wrapper.text()).toContain('settings.display.busyInputMode')
+    expect(wrapper.text()).toContain('settings.display.busyInputModeHint')
+  })
+
+  it('saves the chosen busy input mode', async () => {
+    const wrapper = mount(DisplaySettings, {
+      global: {
+        stubs: {
+          SettingRow: {
+            props: ['label', 'hint'],
+            template: '<div class="setting-row"><div class="setting-row-label">{{ label }}</div><div class="setting-row-hint">{{ hint }}</div><slot /></div>',
+          },
+          NSelect: true,
+          NSwitch: true,
+        },
+      },
+    })
+
+    const select = wrapper.get('[data-testid="busy-input-mode"]')
+    await select.setValue('steer')
+    await flushPromises()
+    expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('display', { busy_input_mode: 'steer' })
   })
 
   it('saves a clamped chat input height and can reset back to automatic height', async () => {

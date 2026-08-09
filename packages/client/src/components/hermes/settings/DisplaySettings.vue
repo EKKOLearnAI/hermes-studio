@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NSwitch, NInputNumber, useMessage } from 'naive-ui'
+import { NButton, NSwitch, NInputNumber, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { primeCompletionSound } from '@/utils/completion-sound'
@@ -28,6 +28,17 @@ function handleChatInputHeightChange(value: number | null) {
 
 function resetChatInputHeight() {
   return save({ chat_input_height: null })
+}
+
+const busyInputModeOptions = computed(() => [
+  { label: t('settings.display.busyInputModeQueue'), value: 'queue' },
+  { label: t('settings.display.busyInputModeInterrupt'), value: 'interrupt' },
+  { label: t('settings.display.busyInputModeSteer'), value: 'steer' },
+])
+
+function handleBusyInputModeChange(value: string | null) {
+  const mode = value === 'interrupt' || value === 'steer' ? value : 'queue'
+  return save({ busy_input_mode: mode })
 }
 
 function notificationPermissionErrorKey(result: CompletionNotificationPermissionResult): string {
@@ -158,6 +169,15 @@ async function testCompletionNotification() {
           {{ t('settings.display.notifyOnCompleteTestButton') }}
         </NButton>
       </div>
+    </SettingRow>
+    <SettingRow :label="t('settings.display.busyInputMode')" :hint="t('settings.display.busyInputModeHint')">
+      <NSelect
+        :value="settingsStore.display.busy_input_mode || 'queue'"
+        :options="busyInputModeOptions"
+        style="width: 160px"
+        size="small"
+        @update:value="handleBusyInputModeChange"
+      />
     </SettingRow>
     <SettingRow :label="t('settings.display.chatInputHeight')" :hint="t('settings.display.chatInputHeightHint')">
       <div class="chat-input-height-controls">
