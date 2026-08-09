@@ -163,6 +163,27 @@ describe('group chat history windows', () => {
     expect(context.at(-1)?.id).toBe('same-time-1999')
   })
 
+  it('honors throughMessageId inside a 2,000-message equal-timestamp group', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (let index = 0; index < 2_000; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `same-time-${String(index).padStart(4, '0')}`,
+        content: `same timestamp ${index}`,
+        timestamp: 100,
+      }) as any)
+    }
+
+    const context = storage.getMessagesForContext('room-1', {
+      throughMessageId: 'same-time-0500',
+    })
+
+    expect(context).toHaveLength(501)
+    expect(context[0]?.id).toBe('same-time-0000')
+    expect(context.at(-1)?.id).toBe('same-time-0500')
+    expect(context.some(message => message.id > 'same-time-0500')).toBe(false)
+  })
+
   it('computes room total tokens from the context window, not the UI page window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

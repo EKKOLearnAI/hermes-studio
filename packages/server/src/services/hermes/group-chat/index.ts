@@ -903,11 +903,11 @@ class ChatStorage {
         }
         if (options.throughMessageId) {
             const through = db.prepare(
-                'SELECT timestamp FROM gc_messages WHERE roomId = ? AND id = ?'
-            ).get(roomId, options.throughMessageId) as { timestamp: number } | undefined
+                'SELECT timestamp, id FROM gc_messages WHERE roomId = ? AND id = ?'
+            ).get(roomId, options.throughMessageId) as { timestamp: number; id: string } | undefined
             if (through) {
-                where.push('timestamp <= ?')
-                params.push(through.timestamp)
+                where.push('(timestamp, id) <= (?, ?)')
+                params.push(through.timestamp, through.id)
             }
         }
 
