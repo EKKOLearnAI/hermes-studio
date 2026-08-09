@@ -64,7 +64,7 @@ function createEmptyPreset(): MoaPreset {
   return {
     enabled: true,
     reference_models: [],
-    aggregator: { provider: '', model: '' },
+    aggregator: { provider: '', model: '', reasoning_effort: undefined },
     reference_temperature: 0.6,
     aggregator_temperature: 0.4,
     max_tokens: 4096,
@@ -78,6 +78,17 @@ function cloneMoaConfig(config: MoaConfig): MoaConfig {
 function clonePreset(preset: MoaPreset): MoaPreset {
   return JSON.parse(JSON.stringify(preset))
 }
+
+const reasoningEffortOptions = [
+  { label: 'None', value: 'none' },
+  { label: 'Minimal', value: 'minimal' },
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'High', value: 'high' },
+  { label: 'XHigh', value: 'xhigh' },
+  { label: 'Max', value: 'max' },
+  { label: 'Ultra', value: 'ultra' },
+]
 
 function slotLabel(slot?: MoaModelSlot): string {
   if (!slot?.provider || !slot?.model) return t('models.combinationNotSet')
@@ -177,10 +188,11 @@ async function saveEditor() {
     ...clonePreset(formPreset.value),
     reference_models: formPreset.value.reference_models
       .filter(slot => slot.provider.trim() && slot.model.trim())
-      .map(slot => ({ provider: slot.provider.trim(), model: slot.model.trim() })),
+      .map(slot => ({ provider: slot.provider.trim(), model: slot.model.trim(), reasoning_effort: slot.reasoning_effort || undefined })),
     aggregator: {
       provider: formPreset.value.aggregator.provider.trim(),
       model: formPreset.value.aggregator.model.trim(),
+      reasoning_effort: formPreset.value.aggregator.reasoning_effort || undefined,
     },
     max_tokens: Math.max(1, Math.floor(Number(formPreset.value.max_tokens) || 4096)),
   }
@@ -362,6 +374,14 @@ watch(() => profilesStore.activeProfileName, () => {
           <div class="slot-editor-list">
             <div v-for="(slot, index) in formPreset.reference_models" :key="index" class="slot-editor-row">
               <span class="slot-pair">{{ slotLabel(slot) }}</span>
+              <NSelect
+                v-model:value="slot.reasoning_effort"
+                :options="reasoningEffortOptions"
+                size="small"
+                clearable
+                :placeholder="t('models.combinationReasoningEffort')"
+                :style="{ width: '130px' }"
+              />
               <span class="slot-row-actions">
                 <NButton size="small" quaternary @click="openModelPicker('reference', index)">
                   {{ t('common.edit') }}
@@ -380,6 +400,14 @@ watch(() => profilesStore.activeProfileName, () => {
           </div>
           <div class="slot-editor-row aggregator-row">
             <span class="slot-pair">{{ slotLabel(formPreset.aggregator) }}</span>
+            <NSelect
+              v-model:value="formPreset.aggregator.reasoning_effort"
+              :options="reasoningEffortOptions"
+              size="small"
+              clearable
+              :placeholder="t('models.combinationReasoningEffort')"
+              :style="{ width: '130px' }"
+            />
             <span class="slot-row-actions">
               <NButton size="small" quaternary @click="openModelPicker('aggregator')">
                 {{ t('common.edit') }}

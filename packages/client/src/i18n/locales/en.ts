@@ -1708,6 +1708,7 @@ export default {
     combinationReferenceTemperature: 'Reference temperature',
     combinationAggregatorTemperature: 'Aggregator temperature',
     combinationMaxTokens: 'Max tokens',
+    combinationReasoningEffort: 'Reasoning effort',
     combinationNotSet: 'Not set',
     combinationSaved: 'Model ensemble saved',
     combinationLoadFailed: 'Failed to load model ensemble',

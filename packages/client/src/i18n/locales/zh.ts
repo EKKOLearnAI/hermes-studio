@@ -1708,6 +1708,7 @@ export default {
     combinationReferenceTemperature: '参考温度',
     combinationAggregatorTemperature: '汇总温度',
     combinationMaxTokens: '最大 Token',
+    combinationReasoningEffort: '思考强度',
     combinationNotSet: '未设置',
     combinationSaved: '组合模型已保存',
     combinationLoadFailed: '加载组合模型失败',
