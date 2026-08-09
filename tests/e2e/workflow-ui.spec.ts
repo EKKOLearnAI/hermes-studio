@@ -1457,7 +1457,7 @@ test('workflow schedule mutations keep each concurrent toggle result', async ({ 
 test('a stale schedule list response cannot overwrite a successful create', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page, {
-    workflowScheduleDelays: { 'wf-schedule-stale-list': 350 },
+    workflowScheduleDelays: { 'wf-schedule-stale-list': 1_500 },
     workflowScheduleGetSnapshotAtRequest: true,
     workflows: [{ id: 'wf-schedule-stale-list', name: 'Stale list workflow', profile: 'research', workspace: null, nodes: [], edges: [], viewport: null, created_at: 1, updated_at: 1 }],
   })
@@ -1469,7 +1469,7 @@ test('a stale schedule list response cannot overwrite a successful create', asyn
   await modal.getByRole('textbox').nth(1).fill('UTC')
   await modal.getByRole('button', { name: 'Create schedule' }).click()
   await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
-  await page.waitForTimeout(450)
+  await page.waitForTimeout(1_600)
   await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
 })
 
