@@ -898,6 +898,87 @@ class ChatStorage {
         return usage.inputTokens + usage.outputTokens
     }
 
+    // ─── Incremental token accounting (#2444) ────────────────────────────────
+    //
+    // saveMessageAndRefreshRoom used to reload the whole GROUP_CHAT_MESSAGE_WINDOW
+    // and re-run the tokenizer over it on EVERY persisted message — O(window)
+    // synchronous work per write. Under sustained group-chat activity that
+    // starved the event loop (94%+ sampled CPU in the production profile). The
+    // cache below keeps each room's running total incrementally: a save adds or
+    // updates exactly one message's contribution and evicts the oldest when the
+    // window slides past GROUP_CHAT_MESSAGE_WINDOW, mirroring
+    // getMessagesForContext(excludeWorkspaceDiff: true).
+    private roomTokenCache = new Map<string, {
+        total: number
+        order: string[]                 // message ids in the window, oldest first
+        contributions: Map<string, number>
+    }>()
+
+    /** Token contribution of ONE message — mirrors estimateUsageTokensFromMessages per-message. */
+    private estimateMessageTokens(msg: ChatMessage): number {
+        const textTokens = countTokens(this.contentToUsageText(msg.content))
+        if ((msg.role || 'user') === 'user') return textTokens
+        const reasoning = (msg as { reasoning_content?: unknown; reasoning?: unknown }).reasoning_content
+            ?? (msg as { reasoning?: unknown }).reasoning
+        return textTokens
+            + countTokens(String(msg.tool_calls || ''))
+            + countTokens(String(reasoning || ''))
+    }
+
+    /** Cold-start: one bounded full pass over the current window, then cache it. */
+    private seedRoomTokenCache(roomId: string): number {
+        const messages = this.getMessagesForContext(roomId)
+        let total = 0
+        const order: string[] = []
+        const contributions = new Map<string, number>()
+        for (const m of messages) {
+            const tokens = this.estimateMessageTokens(m)
+            contributions.set(m.id, tokens)
+            order.push(m.id)
+            total += tokens
+        }
+        this.roomTokenCache.set(roomId, { total, order, contributions })
+        return total
+    }
+
+    private roomTokenTotal(roomId: string): number {
+        const cached = this.roomTokenCache.get(roomId)
+        return cached ? cached.total : this.seedRoomTokenCache(roomId)
+    }
+
+    /**
+     * Apply one persisted message to the room's running total. O(1) on a warm
+     * cache (one message's contribution + FIFO eviction past the window);
+     * a cold cache does one bounded seed pass. Workspace-diff rows are excluded
+     * from the context window, so they are excluded here too.
+     */
+    private applyMessageTokenDelta(roomId: string, stored: ChatMessage, existing: ChatMessage | null): number {
+        const entry = this.roomTokenCache.get(roomId)
+        if (!entry) return this.seedRoomTokenCache(roomId)
+        if (stored.tool_name === 'workspace_diff') return entry.total
+        const tokens = this.estimateMessageTokens(stored)
+        const prev = existing ? entry.contributions.get(existing.id) : undefined
+        if (prev !== undefined) {
+            entry.total += tokens - prev
+            entry.contributions.set(existing.id, tokens)
+        } else {
+            entry.total += tokens
+            entry.contributions.set(stored.id, tokens)
+            entry.order.push(stored.id)
+        }
+        while (entry.order.length > GROUP_CHAT_MESSAGE_WINDOW) {
+            const evictedId = entry.order.shift()!
+            const evictedTokens = entry.contributions.get(evictedId) ?? 0
+            entry.total -= evictedTokens
+            entry.contributions.delete(evictedId)
+        }
+        return entry.total
+    }
+
+    private invalidateRoomTokenCache(roomId: string): void {
+        this.roomTokenCache.delete(roomId)
+    }
+
     // ─── Messages ─────────────────────────────────────────────
 
     private getRecentMessageRows(
@@ -1105,8 +1186,7 @@ class ChatStorage {
                 tool_name: 'workspace_diff',
             }
             const storedMessage = this.upsertMessage(message)
-            const messages = this.getMessagesForContext(args.roomId)
-            const totalTokens = this.estimateRoomTotalTokens(args.roomId, messages)
+            const totalTokens = this.applyMessageTokenDelta(args.roomId, storedMessage, null)
             this.updateRoomTotalTokens(args.roomId, totalTokens)
             db.exec('COMMIT')
             return { message: storedMessage, totalTokens, change }
@@ -1123,8 +1203,7 @@ class ChatStorage {
         try {
             const existing = this.getMessage(msg.id)
             if (existing?.tool_name === 'workspace_diff') {
-                const messages = this.getMessagesForContext(existing.roomId)
-                const totalTokens = this.estimateRoomTotalTokens(existing.roomId, messages)
+                const totalTokens = this.roomTokenTotal(existing.roomId)
                 db.exec('COMMIT')
                 return { message: existing, totalTokens }
             }
@@ -1133,8 +1212,7 @@ class ChatStorage {
                 : msg
             const message = existing && options.preserveExistingTimestamp ? { ...safeMsg, timestamp: existing.timestamp } : safeMsg
             const storedMessage = this.upsertMessage(message, existing)
-            const messages = this.getMessagesForContext(msg.roomId)
-            const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
+            const totalTokens = this.applyMessageTokenDelta(msg.roomId, storedMessage, existing)
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
             db.exec('COMMIT')
             return { message: storedMessage, totalTokens }
@@ -1181,6 +1259,7 @@ class ChatStorage {
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
             db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
+            this.invalidateRoomTokenCache(roomId)
         })
     }
 
@@ -1386,6 +1465,7 @@ class ChatStorage {
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_rooms WHERE id = ?').run(roomId)
+            this.invalidateRoomTokenCache(roomId)
         })
     }
 

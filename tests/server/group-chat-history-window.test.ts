@@ -165,6 +165,36 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
+  it('does bounded tokenizer work per persisted message instead of re-tokenizing the whole window (#2444)', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    // Seed a populated room so the incremental cache is warm.
+    const seeded = Array.from({ length: 200 }, (_value, index) => makeMessage({
+      id: `msg-${index + 1}`,
+      content: `message-${index + 1} ${'padding'.repeat(20)}`,
+      timestamp: index + 1,
+    }))
+    for (const message of seeded) storage.saveMessageAndRefreshRoom(message as any)
+
+    const contextCompressor = await import('../../packages/server/src/lib/context-compressor')
+    const spy = vi.spyOn(contextCompressor, 'countTokens')
+    spy.mockClear()
+
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'msg-final',
+      content: 'one more message',
+      timestamp: 10000,
+    }) as any)
+
+    const tokenizerCallsForOneSave = spy.mock.calls.length
+    spy.mockRestore()
+
+    // Incremental accounting tokenizes only the new message (1-2 calls), not
+    // the whole 200-message window (~200 calls before the fix).
+    expect(tokenizerCallsForOneSave).toBeLessThan(10)
+  })
+
   it('retains older messages while limiting shared context to the latest 500', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
