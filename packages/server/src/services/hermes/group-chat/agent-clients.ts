@@ -24,6 +24,16 @@ import { buildAgentInstructions, buildNonOwnerRequestSecurityPrompt } from '../c
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
+// Group-chat Hermes turns used a hardcoded 120s deadline in the bridge path;
+// long real tasks (read → fix → test → commit → docs) reliably died at 120s
+// with "chat-run timed out after 120000ms" (#2386). Configurable via env,
+// mirroring HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH in group-chat/index.ts.
+export function groupChatAgentTurnTimeoutMs(): number {
+    const value = Number(process.env.HERMES_GROUP_CHAT_AGENT_TURN_TIMEOUT_MS)
+    if (!Number.isFinite(value) || value <= 0) return 120_000
+    return Math.floor(value)
+}
+
 // ─── Types ────────────────────────────────────────────────────
 
 export interface AgentConfig {
@@ -1286,7 +1296,7 @@ export class AgentClient implements GroupAgentExecutor {
 
             this.emitMessageStreamStart(roomId, streamMessageId, sessionId, runMessageId)
             streamStarted = true
-            for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
+            for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: groupChatAgentTurnTimeoutMs() })) {
                 if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
                     await stopStaleStartedRun?.()
                     return
