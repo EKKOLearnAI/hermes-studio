@@ -59,16 +59,18 @@ describe('group chat approval and context baseline', () => {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
-  it('relays context status and updates room token count', async () => {
+  it('relays context status without overwriting the persisted room token count', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const statusEvent = once<any>(human, 'context_status')
-    const roomUpdated = once<any>(human, 'room_updated')
+    const roomUpdated = vi.fn()
+    human.on('room_updated', roomUpdated)
 
     agent.emit('context_status', { roomId: 'room-1', agentName: 'Agent', status: 'replying', totalTokens: 123, agentSessionId })
 
     expect(await statusEvent).toEqual({ roomId: 'room-1', agentName: 'Agent', status: 'replying' })
-    expect(await roomUpdated).toEqual({ roomId: 'room-1', totalTokens: 123 })
-    expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({ totalTokens: 123 })
+    await wait()
+    expect(roomUpdated).not.toHaveBeenCalled()
+    expect(groupServer.getStorage().getRoom('room-1')).toMatchObject({ totalTokens: 0 })
   })
 
   it('ignores context status emitted by human sockets', async () => {
