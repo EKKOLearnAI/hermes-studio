@@ -176,10 +176,36 @@ function hasPathologicalRun(text: string): boolean {
   return false
 }
 
+const MAX_HEURISTIC_SAMPLE_CHARS = 64 * 1024
+const HEURISTIC_SAMPLE_BLOCKS = 256
+
+function isCjkCodeUnit(code: number): boolean {
+  return (code >= 0x2e80 && code <= 0x9fff)
+    || (code >= 0xac00 && code <= 0xd7af)
+    || (code >= 0x3000 && code <= 0x303f)
+    || (code >= 0xff00 && code <= 0xffef)
+}
+
 function heuristicTokens(text: string): number {
-  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-  const other = text.length - cjk
-  return Math.ceil(cjk * 1.5 + other / 4)
+  const sampleLength = Math.min(text.length, MAX_HEURISTIC_SAMPLE_CHARS)
+  if (sampleLength === 0) return 0
+  let cjk = 0
+  if (sampleLength === text.length) {
+    for (let i = 0; i < sampleLength; i += 1) {
+      if (isCjkCodeUnit(text.charCodeAt(i))) cjk += 1
+    }
+  } else {
+    const blockCount = Math.min(HEURISTIC_SAMPLE_BLOCKS, sampleLength)
+    const blockLength = Math.floor(sampleLength / blockCount)
+    for (let block = 0; block < blockCount; block += 1) {
+      const segmentStart = Math.floor(block * text.length / blockCount)
+      for (let offset = 0; offset < blockLength; offset += 1) {
+        if (isCjkCodeUnit(text.charCodeAt(segmentStart + offset))) cjk += 1
+      }
+    }
+  }
+  const weightedSample = cjk * 1.5 + (sampleLength - cjk) / 4
+  return Math.ceil(weightedSample * (text.length / sampleLength))
 }
 
 export function countTokens(text: string): number {

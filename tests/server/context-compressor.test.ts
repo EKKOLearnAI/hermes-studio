@@ -908,6 +908,32 @@ describe('countTokens', () => {
     expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(heuristic(aboveBoundary))
   })
 
+  it('does not materialize a full regex match array for oversized heuristic input', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const oversized = '汉字 mixed text '.repeat(100_000)
+    const originalMatch = String.prototype.match
+    const matchSpy = vi.spyOn(String.prototype, 'match').mockImplementation(function (this: string, regexp: any) {
+      if (this.length > 262_144) {
+        throw new Error('oversized input must not use String.match')
+      }
+      return originalMatch.call(String(this), regexp)
+    } as typeof String.prototype.match)
+
+    expect(() => countTokens(oversized)).not.toThrow()
+    expect(() => countTokensForModel(oversized, 'gpt-4o')).not.toThrow()
+    expect(matchSpy).not.toHaveBeenCalled()
+  })
+
+  it('samples oversized heterogeneous text across its full length', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const ascii = 'a'.repeat(400_000)
+    const cjk = '汉'.repeat(400_000)
+    const tokens = countTokens(ascii + cjk)
+
+    expect(tokens).toBeGreaterThan(600_000)
+    expect(tokens).toBeLessThan(800_000)
+  })
+
   it('still uses the exact tokenizer for long space-separated text', async () => {
     const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard
