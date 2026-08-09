@@ -239,6 +239,49 @@ const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]>
   ru: ['platform.weixinToken'],
 }
 
+const WORKFLOW_SCHEDULE_LOCALIZED_KEYS = [
+  'workflow.schedule.title',
+  'workflow.schedule.manage',
+  'workflow.schedule.createTitle',
+  'workflow.schedule.editTitle',
+  'workflow.schedule.create',
+  'workflow.schedule.save',
+  'workflow.schedule.edit',
+  'workflow.schedule.delete',
+  'workflow.schedule.deleteConfirm',
+  'workflow.schedule.deleted',
+  'workflow.schedule.enable',
+  'workflow.schedule.disable',
+  'workflow.schedule.enabled',
+  'workflow.schedule.disabled',
+  'workflow.schedule.empty',
+  'workflow.schedule.cron',
+  'workflow.schedule.cronPlaceholder',
+  'workflow.schedule.timezone',
+  'workflow.schedule.timezonePlaceholder',
+  'workflow.schedule.initialInput',
+  'workflow.schedule.initialInputPlaceholder',
+  'workflow.schedule.startNodes',
+  'workflow.schedule.startNodesPlaceholder',
+  'workflow.schedule.timeout',
+  'workflow.schedule.timeoutPlaceholder',
+  'workflow.schedule.policies',
+  'workflow.schedule.lastScheduled',
+  'workflow.schedule.nextRun',
+  'workflow.schedule.lastRun',
+  'workflow.schedule.never',
+  'workflow.schedule.loadFailed',
+  'workflow.schedule.saveFailed',
+  'workflow.schedule.saved',
+  'workflow.schedule.deleteFailed',
+  'workflow.schedule.required',
+  'workflow.schedule.reset',
+  'workflow.schedule.presets.hourly',
+  'workflow.schedule.presets.daily',
+  'workflow.schedule.presets.weekly',
+  'workflow.schedule.presets.monthly',
+]
+
 const PLATFORM_SETTINGS_LOCALIZED_KEYS = [
   'platform.requireMention',
   'platform.requireMentionGroup',
@@ -473,6 +516,27 @@ describe('i18n locale coverage', () => {
     })
 
     expect(untranslated).toEqual([])
+  })
+
+  it('localizes every Workflow Schedule string in every raw non-English locale instead of copying English', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return WORKFLOW_SCHEDULE_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue !== 'string' || !localeValue.trim()) return [`${locale}: ${key} missing`]
+        return localeValue === getPath(en, key) ? [`${locale}: ${key} copies English`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
+
+  it('uses Chinese Schedule translations for the customer-facing entry points', () => {
+    expect(getPath(zh, 'workflow.schedule.manage')).toBe('管理定时计划')
+    expect(getPath(zh, 'workflow.schedule.timezone')).toBe('时区')
+    expect(getPath(zhTW, 'workflow.schedule.manage')).toBe('管理排程')
+    expect(getPath(zhTW, 'workflow.schedule.timezone')).toBe('時區')
   })
 
   it('localizes platform settings copy in every raw non-English locale instead of falling back to English', () => {
