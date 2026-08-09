@@ -1151,16 +1151,29 @@ class ChatStorage {
     }
 
     private withImmediateTransaction(db: any, fn: () => void): void {
-        if (db.inTransaction || db.isTransaction) {
-            fn()
-            return
+        const savepoint = `sp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+        const isNested = !!(db.inTransaction || db.isTransaction)
+        if (isNested) {
+            db.exec(`SAVEPOINT ${savepoint}`)
+        } else {
+            db.exec('BEGIN IMMEDIATE')
         }
-        db.exec('BEGIN IMMEDIATE')
         try {
             fn()
-            db.exec('COMMIT')
+            if (isNested) {
+                db.exec(`RELEASE ${savepoint}`)
+            } else {
+                db.exec('COMMIT')
+            }
         } catch (err) {
-            try { db.exec('ROLLBACK') } catch { /* ignore */ }
+            try {
+                if (isNested) {
+                    db.exec(`ROLLBACK TO ${savepoint}`)
+                    db.exec(`RELEASE ${savepoint}`)
+                } else {
+                    db.exec('ROLLBACK')
+                }
+            } catch { /* ignore */ }
             throw err
         }
     }
