@@ -40,6 +40,10 @@ export function groupRunOrder(id: string): { baseId: string; phase: number } {
     return { baseId: value, phase: 2 }
 }
 
+function compareStorageIds(a: string, b: string): number {
+    return a < b ? -1 : a > b ? 1 : 0
+}
+
 export function sortGroupMessagesCanonical<T extends CanonicalGroupMessage>(messages: readonly T[]): T[] {
     const baseMinTimestamp = new Map<string, number>()
     for (const msg of messages) {
@@ -53,10 +57,10 @@ export function sortGroupMessagesCanonical<T extends CanonicalGroupMessage>(mess
         const at = baseMinTimestamp.get(ao.baseId) ?? a.timestamp
         const bt = baseMinTimestamp.get(bo.baseId) ?? b.timestamp
         if (at !== bt) return at - bt
-        if (ao.baseId !== bo.baseId) return ao.baseId.localeCompare(bo.baseId)
+        if (ao.baseId !== bo.baseId) return compareStorageIds(ao.baseId, bo.baseId)
         if (ao.phase !== bo.phase) return ao.phase - bo.phase
         if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
-        return a.id.localeCompare(b.id)
+        return compareStorageIds(a.id, b.id)
     })
 }
 

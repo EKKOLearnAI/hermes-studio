@@ -983,6 +983,8 @@ class ChatStorage {
         const storedMessage = this.snapshotMessageSender(msg, existing ?? this.getMessage(msg.id))
         const toolCallsJson = storedMessage.tool_calls ? JSON.stringify(storedMessage.tool_calls) : null
         const mentionsJson = JSON.stringify(storedMessage.mentions || [])
+        const persistedContent = messageContentForStorage(storedMessage.role, storedMessage.content)
+        const persistedAt = storedMessage.persistedAt ?? Date.now()
         this.db()?.prepare(
             `INSERT INTO gc_messages (
                 id, roomId, senderId, senderName, senderType, senderAgentRecordId,
@@ -1015,9 +1017,9 @@ class ChatStorage {
             storedMessage.senderName,
             storedMessage.senderType || 'member',
             storedMessage.senderAgentRecordId || '',
-            messageContentForStorage(storedMessage.role, storedMessage.content),
+            persistedContent,
             storedMessage.timestamp,
-            storedMessage.persistedAt ?? Date.now(),
+            persistedAt,
             mentionsJson,
             storedMessage.run_id ?? null,
             storedMessage.role || 'user',
@@ -1029,7 +1031,13 @@ class ChatStorage {
             storedMessage.reasoning_details ?? null,
             storedMessage.reasoning_content ?? null,
         )
-        return this.mapStoredMessageRow(storedMessage)
+        return this.mapStoredMessageRow({
+            ...storedMessage,
+            content: persistedContent,
+            persistedAt,
+            mentions: mentionsJson,
+            tool_calls: toolCallsJson,
+        })
     }
 
     saveWorkspaceDiffMessageForRun(args: SaveWorkspaceDiffMessageArgs): { message: ChatMessage; totalTokens: number; change: WorkspaceRunChangeSummary } | null {
@@ -1186,6 +1194,7 @@ class ChatStorage {
         try {
             const existing = this.getMessage(msg.id)
             if (existing?.tool_name === 'workspace_diff') {
+                this.ensureCurrentRoomTokenAccounting(existing.roomId)
                 const totalTokens = Number(this.getRoom(existing.roomId)?.totalTokens || 0)
                 db.exec('COMMIT')
                 return { message: existing, totalTokens }

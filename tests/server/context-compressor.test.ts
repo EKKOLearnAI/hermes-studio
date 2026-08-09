@@ -934,6 +934,24 @@ describe('countTokens', () => {
     expect(tokens).toBeLessThan(800_000)
   })
 
+  it('does not let a periodic adversarial layout hide CJK from oversized estimation', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const length = 800_000
+    const adversarial = new Array<string>(length).fill('汉')
+    const blockCount = 256
+    const blockLength = Math.floor((64 * 1024) / blockCount)
+    for (let block = 0; block < blockCount; block += 1) {
+      const start = Math.floor(block * length / blockCount)
+      for (let offset = 0; offset < blockLength; offset += 1) adversarial[start + offset] = 'a'
+    }
+    const text = adversarial.join('')
+    const ascii = 64 * 1024
+    const expected = Math.ceil((length - ascii) * 1.5 + ascii / 4)
+
+    expect(countTokens(text)).toBeGreaterThan(expected * 0.9)
+    expect(countTokens(text)).toBeLessThan(expected * 1.1)
+  })
+
   it('still uses the exact tokenizer for long space-separated text', async () => {
     const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard

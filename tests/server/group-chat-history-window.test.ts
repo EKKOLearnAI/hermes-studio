@@ -184,6 +184,23 @@ describe('group chat history windows', () => {
     expect(context.some(message => message.id > 'same-time-0500')).toBe(false)
   })
 
+  it('uses the same binary id order as SQLite for equal-timestamp cursors', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    for (const id of ['A', 'a', '1', '_', '中']) {
+      storage.addMessage(makeMessage({ id, content: id, timestamp: 100 }) as any)
+    }
+
+    const ordered = sortGroupMessagesCanonical(
+      ['A', 'a', '1', '_', '中'].map(id => ({ id, timestamp: 100 })),
+    ).map(message => message.id)
+    const through = 'A'
+    const expected = ordered.slice(0, ordered.indexOf(through) + 1)
+
+    expect(storage.getMessagesForContext('room-1', { throughMessageId: through }).map(message => message.id))
+      .toEqual(expected)
+  })
+
   it('computes room total tokens from the context window, not the UI page window', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -203,6 +220,51 @@ describe('group chat history windows', () => {
     expect(storage.getMessagesForContext('room-1')).toHaveLength(160)
     expect(latest?.totalTokens).toBe(expectedTotalTokens)
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
+  })
+
+  it('accounts from the normalized content that was actually persisted', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const dataImage = `data:image/png;base64,${'A'.repeat(300_000)}`
+
+    const inserted = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'normalized-tool',
+      role: 'tool',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      content: JSON.stringify({
+        _multimodal: true,
+        content: [{ type: 'image_url', image_url: { url: dataImage } }],
+      }),
+      timestamp: 1,
+    }) as any)
+
+    expect(inserted.message.content).toBe('[screenshot]')
+    expect(inserted.totalTokens).toBe(countTokens('[screenshot]'))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(countTokens('[screenshot]'))
+
+    const updated = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'normalized-tool',
+      role: 'tool',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      content: 'small canonical update',
+      timestamp: 1,
+    }) as any)
+    expect(updated.totalTokens).toBe(countTokens('small canonical update'))
+
+    for (let index = 0; index < 500; index += 1) {
+      storage.saveMessageAndRefreshRoom(makeMessage({
+        id: `evict-${String(index).padStart(3, '0')}`,
+        content: `replacement ${index}`,
+        timestamp: index + 2,
+      }) as any)
+    }
+    const expectedAfterEviction = Array.from(
+      { length: 500 },
+      (_value, index) => countTokens(`replacement ${index}`),
+    ).reduce((sum, tokens) => sum + tokens, 0)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedAfterEviction)
   })
 
   it('migrates the context-window index onto an existing messages table', () => {
@@ -590,6 +652,44 @@ describe('group chat history windows', () => {
 
     const expected = countTokens('authoritative context')
     expect(result?.totalTokens).toBe(expected)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
+  })
+
+  it('rebuilds a legacy cached total before replaying an existing workspace diff', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.addMessage(makeMessage({
+      id: 'legacy-context',
+      content: 'authoritative context',
+      timestamp: 1,
+    }) as any)
+    storage.addMessage(makeMessage({
+      id: 'existing-workspace-diff',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: '{"kind":"workspace_diff"}',
+      timestamp: 2,
+    }) as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = 0 WHERE id = ?',
+    ).run(999_999, 'room-1')
+
+    const replayed = storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'existing-workspace-diff',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: '{"kind":"workspace_diff"}',
+      timestamp: 2,
+    }) as any)
+
+    const expected = countTokens('authoritative context')
+    expect(replayed.totalTokens).toBe(expected)
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
   })
 
