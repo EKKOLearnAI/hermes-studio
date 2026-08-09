@@ -5,7 +5,7 @@ import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAg
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { ProviderApiMode } from '@/api/hermes/system'
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
@@ -1217,6 +1217,9 @@ export const useChatStore = defineStore('chat', () => {
   const runtimeMode = ref<ChatRuntimeMode>(activeRuntimeMode)
   const seenSessionCommandEvents = new WeakSet<RunEvent>()
   const sessions = ref<Session[]>([])
+  // Per-session approval mode (manual|smart|off), populated from
+  // session.command approval_mode responses. Defaults to 'manual'.
+  const approvalModeBySession = reactive(new Map<string, string>())
   const activeSessionId = ref<string | null>(null)
   const focusMessageId = ref<string | null>(null)
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
@@ -2603,6 +2606,10 @@ export const useChatStore = defineStore('chat', () => {
         if (m.isStreaming) updateMessage(sid, m.id, { isStreaming: false })
         if (m.role === 'tool' && m.toolStatus === 'running') m.toolStatus = 'error'
       })
+    }
+
+    if (action === 'approval_mode' && (evt as any).mode) {
+      approvalModeBySession.set(sid, String((evt as any).mode))
     }
 
     if (action === 'branch' && (evt as any).ok !== false) {
@@ -4829,6 +4836,16 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function setSessionApprovalMode(sid: string, mode: 'manual' | 'smart' | 'off') {
+    const socket = getChatRunSocket(runtimeTransport())
+    if (!socket) return
+    socket.emit('run', {
+      input: `/approval_mode ${mode}`,
+      session_id: sid,
+      profile: activeSession.value?.profile || undefined,
+    })
+  }
+
   // Tab visibility: re-sync when returning to foreground
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
@@ -5035,6 +5052,8 @@ export const useChatStore = defineStore('chat', () => {
     archiveSession,
     sendMessage,
     stopStreaming,
+    approvalModeBySession,
+    setSessionApprovalMode,
     respondApproval,
     respondApprovalFor,
     respondToClarify,

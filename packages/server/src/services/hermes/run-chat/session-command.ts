@@ -14,6 +14,7 @@ type CommandName =
   | 'usage'
   | 'status'
   | 'yolo'
+  | 'approval_mode'
   | 'abort'
   | 'queue'
   | 'skill'
@@ -81,6 +82,8 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   usage: 'usage',
   status: 'status',
   yolo: 'yolo',
+  approval_mode: 'approval_mode',
+  'approval-mode': 'approval_mode',
   abort: 'abort',
   queue: 'queue',
   skill: 'skill',
@@ -456,6 +459,46 @@ export async function handleSessionCommand(
           action: 'yolo',
           terminal: !state.isWorking,
           message: `YOLO command failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+      return
+    }
+
+    case 'approval_mode': {
+      const mode = command.args.trim().toLowerCase()
+      if (mode && !['manual', 'smart', 'off'].includes(mode)) {
+        emitCommand({
+          ok: false,
+          action: 'approval_mode',
+          terminal: !state.isWorking,
+          message: 'Usage: /approval_mode <manual|smart|off>',
+        })
+        return
+      }
+      try {
+        const result = await ctx.bridge.command(sessionId, mode ? `approval_mode ${mode}` : 'approval_mode', ctx.profile)
+        if (!result.handled) {
+          emitCommand({
+            ok: false,
+            action: 'approval_mode',
+            terminal: !state.isWorking,
+            message: result.message || 'Approval mode is not available in the running Hermes Agent runtime.',
+          })
+          return
+        }
+        const effective = result.mode || mode
+        emitCommand({
+          action: 'approval_mode',
+          terminal: !state.isWorking,
+          mode: effective,
+          message: result.message || `Approval mode set to '${effective}' for this session.`,
+        })
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: 'approval_mode',
+          terminal: !state.isWorking,
+          message: `Approval mode command failed: ${err instanceof Error ? err.message : String(err)}`,
         })
       }
       return

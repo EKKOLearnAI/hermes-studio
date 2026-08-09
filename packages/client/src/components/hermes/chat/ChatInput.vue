@@ -110,6 +110,65 @@ function handleModelButtonClick() {
   emit('modelClick')
 }
 
+// ---------------------------------------------------------------------------
+// Approval mode switcher (manual / smart / off)
+// ---------------------------------------------------------------------------
+const approvalModeOptions = computed<DropdownOption[]>(() => [
+  {
+    label: t('chat.approvalModeManual'),
+    key: 'manual',
+    icon: () => h('span', { class: 'settings-check', 'aria-hidden': 'true' }, '🔒'),
+  },
+  {
+    label: t('chat.approvalModeSmart'),
+    key: 'smart',
+    icon: () => h('span', { class: 'settings-check', 'aria-hidden': 'true' }, '🤖'),
+  },
+  {
+    label: t('chat.approvalModeOff'),
+    key: 'off',
+    icon: () => h('span', { class: 'settings-check', 'aria-hidden': 'true' }, '⚡'),
+  },
+])
+
+const currentApprovalMode = computed<string>(() => {
+  const sid = chatStore.activeSessionId
+  return sid ? (chatStore.approvalModeBySession.get(sid) || 'manual') : 'manual'
+})
+
+const approvalModeLabel = computed(() => {
+  const labels: Record<string, string> = {
+    manual: t('chat.approvalModeManual'),
+    smart: t('chat.approvalModeSmart'),
+    off: t('chat.approvalModeOff'),
+  }
+  return labels[currentApprovalMode.value] || t('chat.approvalModeManual')
+})
+
+async function handleApprovalModeSelect(key: string | number) {
+  const mode = String(key)
+  if (!['manual', 'smart', 'off'].includes(mode)) return
+  const sid = chatStore.activeSessionId
+  if (!sid) return
+
+  if (mode === 'off') {
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t('chat.approvalModeOffConfirmTitle'),
+        content: t('chat.approvalModeOffConfirmContent'),
+        positiveText: t('chat.approvalModeOffConfirmOk'),
+        negativeText: t('chat.approvalModeOffConfirmCancel'),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onClose: () => resolve(false),
+      })
+    })
+    if (!ok) return
+  }
+
+  chatStore.setSessionApprovalMode(sid, mode as 'manual' | 'smart' | 'off')
+}
+
 const compactModelLabel = computed(() => {
   const label = props.modelLabel || t('models.selectModel')
   const parts = label.split('/').filter(Boolean)
@@ -1585,6 +1644,34 @@ function isImage(type: string): boolean {
             {{ props.modelLabel || t('models.selectModel') }}
           </NTooltip>
 
+          <NDropdown
+            trigger="click"
+            :options="approvalModeOptions"
+            :show-arrow="true"
+            @select="handleApprovalModeSelect"
+          >
+            <NTooltip trigger="hover" :disabled="isMobileViewport">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="tiny"
+                  class="input-approval-mode-button"
+                  :class="{ 'input-approval-mode-button--off': currentApprovalMode === 'off' }"
+                  :aria-label="approvalModeLabel"
+                >
+                  <template #icon>
+                    <span class="input-approval-mode-icon" aria-hidden="true">
+                      {{ currentApprovalMode === 'off' ? '⚡' : currentApprovalMode === 'smart' ? '🤖' : '🔒' }}
+                    </span>
+                  </template>
+                  <span class="input-approval-mode-label">{{ approvalModeLabel }}</span>
+                  <svg class="toolbar-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </NButton>
+              </template>
+              {{ t('chat.approvalModeTooltip') }}
+            </NTooltip>
+          </NDropdown>
+
         </div>
         <div class="input-actions">
           <VoiceDialogueControls
@@ -1921,6 +2008,48 @@ function isImage(type: string): boolean {
 }
 
 .input-model-label {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.input-approval-mode-button {
+  color: $text-secondary;
+  border-radius: 999px;
+  max-width: 170px;
+  padding: 0 4px 0 6px;
+
+  :deep(.n-button__content) {
+    gap: 4px;
+    min-width: 0;
+  }
+
+  :deep(.n-button__state-border),
+  :deep(.n-button__border),
+  :deep(.n-button__ripple) {
+    display: none;
+  }
+
+  &--off {
+    color: #e64545;
+
+    .input-approval-mode-icon {
+      filter: drop-shadow(0 0 4px rgba(230, 69, 69, 0.55));
+    }
+  }
+}
+
+.input-approval-mode-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.input-approval-mode-label {
   display: inline-block;
   min-width: 0;
   overflow: hidden;

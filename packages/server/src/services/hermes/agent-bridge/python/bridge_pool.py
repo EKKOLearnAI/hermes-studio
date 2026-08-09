@@ -1964,6 +1964,86 @@ class AgentPool:
                         "commands will require approval."
                     ),
                 }
+            if name in {"approval_mode", "approval-mode"}:
+                try:
+                    from tools.approval import (
+                        clear_session_approval_mode,
+                        disable_session_yolo,
+                        enable_session_yolo,
+                        get_session_approval_mode,
+                        is_session_yolo_enabled,
+                        set_session_approval_mode,
+                    )
+                except ImportError:
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": False,
+                        "type": "approval_mode",
+                        "message": (
+                            "/approval_mode requires a newer Hermes Agent "
+                            "runtime with session-scoped approval mode support."
+                        ),
+                    }
+
+                arg_mode = arg.strip().lower()
+                if not arg_mode:
+                    # Query current effective mode (no mutation).
+                    effective = (
+                        get_session_approval_mode(session_id)
+                        or (
+                            "off"
+                            if is_session_yolo_enabled(session_id)
+                            else "manual"
+                        )
+                    )
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": True,
+                        "type": "approval_mode",
+                        "action": "approval_mode",
+                        "mode": effective,
+                        "message": (
+                            f"Approval mode for this session: '{effective}'."
+                        ),
+                    }
+                if arg_mode == "manual":
+                    # Explicit manual override: also clears any yolo bypass so
+                    # the session actually returns to user approval.
+                    disable_session_yolo(session_id)
+                    clear_session_approval_mode(session_id)
+                elif arg_mode in {"smart", "off"}:
+                    set_session_approval_mode(session_id, arg_mode)
+                    if arg_mode == "off":
+                        # off == complete authorization; mirror the yolo
+                        # bypass so every approval entry point sees it.
+                        enable_session_yolo(session_id)
+                else:
+                    return {
+                        "session_id": session_id,
+                        "command": name,
+                        "handled": False,
+                        "type": "approval_mode",
+                        "action": "approval_mode",
+                        "mode": "",
+                        "message": (
+                            "Invalid approval mode. Expected: manual, smart, or off."
+                        ),
+                    }
+
+                effective = get_session_approval_mode(session_id) or "manual"
+                return {
+                    "session_id": session_id,
+                    "command": name,
+                    "handled": True,
+                    "type": "approval_mode",
+                    "action": "approval_mode",
+                    "mode": effective,
+                    "message": (
+                        f"Approval mode set to '{effective}' for this session."
+                    ),
+                }
             if name == "learn":
                 try:
                     from agent.learn_prompt import build_learn_prompt
