@@ -12851,6 +12851,205 @@
         ]
       }
     },
+    "/api/hermes/stt/local-model": {
+      "get": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Get local-model",
+        "description": "GET /api/hermes/stt/local-model",
+        "operationId": "status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-model/download": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create download",
+        "description": "POST /api/hermes/stt/local-model/download",
+        "operationId": "download",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-stream": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create local-stream",
+        "description": "POST /api/hermes/stt/local-stream",
+        "operationId": "startLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}": {
+      "delete": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Delete :sessionId",
+        "description": "DELETE /api/hermes/stt/local-stream/:sessionId",
+        "operationId": "cancelLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}/chunk": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create chunk",
+        "description": "POST /api/hermes/stt/local-stream/:sessionId/chunk",
+        "operationId": "pushLocalStreamChunk",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/stt/local-stream/{sessionId}/finish": {
+      "post": {
+        "tags": [
+          "STT"
+        ],
+        "summary": "Create finish",
+        "description": "POST /api/hermes/stt/local-stream/:sessionId/finish",
+        "operationId": "finishLocalStream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/stt/profile-status": {
       "get": {
         "tags": [

@@ -124,6 +124,32 @@ describe('usePcmStreamRecorder', () => {
     expect(finalChunk?.size).toBeGreaterThan(44)
   })
 
+  it('preserves every sample across continuous one-second chunks and a short final tail', async () => {
+    const { stream } = mockStream()
+    getUserMedia.mockResolvedValue(stream)
+    const onChunk = vi.fn()
+    const recorder = usePcmStreamRecorder({
+      continuous: true,
+      maxSegmentDurationMs: 1_000,
+      onChunk,
+    })
+
+    await recorder.start()
+    const context = FakeAudioContext.instances[0]
+    for (let index = 0; index < 12; index += 1) {
+      context.processor.emit(new Float32Array(4_096).fill(0.1))
+    }
+
+    expect(onChunk).toHaveBeenCalledOnce()
+    const firstChunk = onChunk.mock.calls[0][0] as Blob
+    const finalChunk = await recorder.stop()
+
+    expect(await wavSampleCount(firstChunk)).toBe(16_000)
+    expect(finalChunk).not.toBeNull()
+    expect(await wavSampleCount(finalChunk as Blob)).toBe(384)
+    expect(await wavSampleCount(firstChunk) + await wavSampleCount(finalChunk as Blob)).toBe(16_384)
+  })
+
   it('drops pure silence instead of sending it to STT', async () => {
     const { stream } = mockStream()
     getUserMedia.mockResolvedValue(stream)
@@ -196,4 +222,9 @@ function readBlob(blob: Blob) {
     reader.onerror = () => reject(reader.error)
     reader.readAsArrayBuffer(blob)
   })
+}
+
+async function wavSampleCount(blob: Blob) {
+  const view = new DataView(await readBlob(blob))
+  return view.getUint32(40, true) / 2
 }

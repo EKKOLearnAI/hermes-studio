@@ -16,6 +16,39 @@ export interface TranscribeSpeechResponse {
   durationMs: number
 }
 
+export interface LocalSttStreamResponse {
+  sessionId: string
+  text: string
+  model: string
+  durationMs: number
+}
+
+export async function startLocalSttStream(): Promise<{ sessionId: string }> {
+  return request<{ sessionId: string }>('/api/hermes/stt/local-stream', {
+    method: 'POST',
+  })
+}
+
+export async function pushLocalSttStreamChunk(sessionId: string, audio: Blob): Promise<LocalSttStreamResponse> {
+  return request<LocalSttStreamResponse>(`/api/hermes/stt/local-stream/${encodeURIComponent(sessionId)}/chunk`, {
+    method: 'POST',
+    headers: { 'Content-Type': audio.type || 'audio/wav' },
+    body: audio,
+  })
+}
+
+export async function finishLocalSttStream(sessionId: string): Promise<LocalSttStreamResponse> {
+  return request<LocalSttStreamResponse>(`/api/hermes/stt/local-stream/${encodeURIComponent(sessionId)}/finish`, {
+    method: 'POST',
+  })
+}
+
+export async function cancelLocalSttStream(sessionId: string): Promise<{ success: true }> {
+  return request<{ success: true }>(`/api/hermes/stt/local-stream/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function transcribeSpeech(req: TranscribeSpeechRequest): Promise<TranscribeSpeechResponse> {
   if (!req.provider) {
     throw new Error('STT provider is required')

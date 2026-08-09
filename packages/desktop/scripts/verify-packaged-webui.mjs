@@ -16,17 +16,52 @@ export function targetArchName(arch) {
   return String(arch)
 }
 
+function sherpaPlatformName(platform) {
+  return platform === 'win32' ? 'win' : platform
+}
+
+function sherpaRuntimeFiles(platform) {
+  if (platform === 'win32') {
+    return [
+      'sherpa-onnx.node',
+      'onnxruntime.dll',
+      'onnxruntime_providers_shared.dll',
+      'sherpa-onnx-c-api.dll',
+      'sherpa-onnx-cxx-api.dll',
+    ]
+  }
+  if (platform === 'darwin') {
+    return [
+      'sherpa-onnx.node',
+      'libonnxruntime.dylib',
+      'libsherpa-onnx-c-api.dylib',
+      'libsherpa-onnx-cxx-api.dylib',
+    ]
+  }
+  return [
+    'sherpa-onnx.node',
+    'libonnxruntime.so',
+    'libsherpa-onnx-c-api.so',
+    'libsherpa-onnx-cxx-api.so',
+  ]
+}
+
 export default async function verifyPackagedWebUi(context) {
   const webUiRoot = join(packagedResourcesDirectory(context), 'webui')
   const nodePtyRoot = join(webUiRoot, 'node_modules', 'node-pty')
   const nodePtyTarget = `${context.electronPlatformName}-${targetArchName(context.arch)}`
   const nodePtyPrebuild = join(nodePtyRoot, 'prebuilds', nodePtyTarget)
+  const sherpaTarget = `sherpa-onnx-${sherpaPlatformName(context.electronPlatformName)}-${targetArchName(context.arch)}`
+  const sherpaRoot = join(webUiRoot, 'node_modules', sherpaTarget)
   const required = [
     join(webUiRoot, 'package.json'),
     join(webUiRoot, 'bin', 'hermes-web-ui.mjs'),
     join(webUiRoot, 'dist', 'server', 'index.js'),
     join(nodePtyRoot, 'package.json'),
     join(webUiRoot, 'node_modules', 'socket.io', 'package.json'),
+    join(webUiRoot, 'node_modules', 'sherpa-onnx-node', 'package.json'),
+    join(sherpaRoot, 'package.json'),
+    ...sherpaRuntimeFiles(context.electronPlatformName).map(file => join(sherpaRoot, file)),
   ]
   const missing = required.filter(path => !existsSync(path))
 

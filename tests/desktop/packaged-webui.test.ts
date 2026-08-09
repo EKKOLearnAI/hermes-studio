@@ -12,8 +12,15 @@ function packagedRoot(): string {
   return root
 }
 
-function createPackagedWebUi(appOutDir: string): void {
+function createPackagedWebUi(appOutDir: string, platform = 'win32', arch = 'x64'): void {
   const webUiRoot = join(appOutDir, 'resources', 'webui')
+  const sherpaPlatform = platform === 'win32' ? 'win' : platform
+  const sherpaRoot = `node_modules/sherpa-onnx-${sherpaPlatform}-${arch}`
+  const sherpaFiles = platform === 'win32'
+    ? ['sherpa-onnx.node', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'sherpa-onnx-c-api.dll', 'sherpa-onnx-cxx-api.dll']
+    : platform === 'darwin'
+      ? ['sherpa-onnx.node', 'libonnxruntime.dylib', 'libsherpa-onnx-c-api.dylib', 'libsherpa-onnx-cxx-api.dylib']
+      : ['sherpa-onnx.node', 'libonnxruntime.so', 'libsherpa-onnx-c-api.so', 'libsherpa-onnx-cxx-api.so']
   const files = [
     'package.json',
     'bin/hermes-web-ui.mjs',
@@ -21,6 +28,9 @@ function createPackagedWebUi(appOutDir: string): void {
     'node_modules/node-pty/package.json',
     'node_modules/node-pty/prebuilds/win32-x64/pty.node',
     'node_modules/socket.io/package.json',
+    'node_modules/sherpa-onnx-node/package.json',
+    `${sherpaRoot}/package.json`,
+    ...sherpaFiles.map(file => `${sherpaRoot}/${file}`),
   ]
   for (const file of files) {
     const target = join(webUiRoot, file)
@@ -90,9 +100,22 @@ describe('packaged desktop Web UI', () => {
     } as never)).rejects.toThrow('Packaged Web UI is incomplete')
   })
 
-  it('accepts source-built node-pty runtime files on Linux', async () => {
+  it('rejects a package that omitted the target sherpa-onnx runtime', async () => {
     const appOutDir = packagedRoot()
     createPackagedWebUi(appOutDir)
+    rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', 'sherpa-onnx-win-x64'), { recursive: true, force: true })
+
+    await expect(verifyPackagedWebUi({
+      appOutDir,
+      electronPlatformName: 'win32',
+      arch: 1,
+      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+    } as never)).rejects.toThrow('sherpa-onnx-win-x64')
+  })
+
+  it('accepts source-built node-pty runtime files on Linux', async () => {
+    const appOutDir = packagedRoot()
+    createPackagedWebUi(appOutDir, 'linux', 'arm64')
     createCompiledLinuxNodePty(appOutDir)
 
     await expect(verifyPackagedWebUi({
@@ -105,7 +128,7 @@ describe('packaged desktop Web UI', () => {
 
   it('rejects a missing source-built node-pty module on Linux', async () => {
     const appOutDir = packagedRoot()
-    createPackagedWebUi(appOutDir)
+    createPackagedWebUi(appOutDir, 'linux', 'arm64')
     createCompiledLinuxNodePty(appOutDir)
     rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node'))
 

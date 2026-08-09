@@ -3,6 +3,7 @@ import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
+import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopAppRelayClient } from './app-relay/client'
 import { closeGlobalEkkoAgent } from './ekko-agent/manager'
@@ -74,6 +75,13 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         logger.info('Preview runtime stopped')
       } catch (err) {
         logger.warn(err, 'Failed to stop preview runtime (non-fatal)')
+      }
+
+      try {
+        await shutdownLocalSttRuntime()
+        logger.info('Local STT runtime stopped')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop local STT runtime (non-fatal)')
       }
 
       if (shouldStopManagedGatewaysOnShutdown()) {

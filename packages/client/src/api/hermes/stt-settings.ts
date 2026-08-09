@@ -2,6 +2,7 @@ import { request } from '../client'
 
 export type SttProvider =
   | 'browser'
+  | 'local'
   | 'openai'
   | 'custom'
   | 'doubao'
@@ -47,6 +48,7 @@ export interface FetchSttSettingsResponse {
 
 function normalizeActiveProvider(value: unknown): SttProvider | null {
   return value === 'browser' ||
+    value === 'local' ||
     value === 'openai' ||
     value === 'custom' ||
     value === 'doubao' ||
