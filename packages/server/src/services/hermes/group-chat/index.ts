@@ -1166,6 +1166,10 @@ class ChatStorage {
                 db.exec('COMMIT')
                 return { message: existing, totalTokens }
             }
+            const movedFromRoomId = existing && existing.roomId !== msg.roomId ? existing.roomId : null
+            const previousSourceIds = movedFromRoomId
+                ? this.contextWindowMessageIdsForTokenDelta(movedFromRoomId)
+                : null
             const previousIds = this.contextWindowMessageIdsForTokenDelta(msg.roomId)
             const safeMsg = msg.tool_name === 'workspace_diff'
                 ? { ...msg, role: 'user', tool_call_id: null, tool_calls: null, tool_name: null }
@@ -1182,6 +1186,18 @@ class ChatStorage {
                 nextIds,
             )
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
+            if (movedFromRoomId && previousSourceIds) {
+                const nextSourceIds = this.contextWindowMessageIdsForTokenDelta(movedFromRoomId)
+                const sourceTotalTokens = this.incrementalRoomTotalTokens(
+                    movedFromRoomId,
+                    storedMessage.id,
+                    existing,
+                    storedMessage,
+                    previousSourceIds,
+                    nextSourceIds,
+                )
+                this.updateRoomTotalTokens(movedFromRoomId, sourceTotalTokens)
+            }
             db.exec('COMMIT')
             return { message: storedMessage, totalTokens }
         } catch (err) {

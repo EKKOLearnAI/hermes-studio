@@ -876,6 +876,38 @@ describe('countTokens', () => {
     expect(elapsedMs).toBeLessThan(250)
   })
 
+  it('uses the exact tokenizer through the 256 KiB UTF-8 boundary and falls back above it', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { getEncoding } = await import('js-tiktoken')
+    const encoder = getEncoding('cl100k_base')
+    const atBoundary = 'a '.repeat(131_072)
+    const aboveBoundary = `${atBoundary}a`
+
+    expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
+    expect(countTokens(atBoundary)).toBe(encoder.encode(atBoundary).length)
+    expect(countTokensForModel(atBoundary, 'gpt-4o')).toBeGreaterThan(0)
+    expect(countTokens(aboveBoundary)).toBe(Math.ceil(aboveBoundary.length / 4))
+    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(Math.ceil(aboveBoundary.length / 4))
+  })
+
+  it('applies the 256 KiB cap by UTF-8 bytes for separated multibyte text', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { getEncoding } = await import('js-tiktoken')
+    const encoder = getEncoding('cl100k_base')
+    const atBoundary = '汉 '.repeat(65_536)
+    const aboveBoundary = `${atBoundary}a`
+    const heuristic = (text: string) => {
+      const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
+      return Math.ceil(cjk * 1.5 + (text.length - cjk) / 4)
+    }
+
+    expect(atBoundary.length).toBe(131_072)
+    expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
+    expect(countTokens(atBoundary)).toBe(encoder.encode(atBoundary).length)
+    expect(countTokens(aboveBoundary)).toBe(heuristic(aboveBoundary))
+    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(heuristic(aboveBoundary))
+  })
+
   it('still uses the exact tokenizer for long space-separated text', async () => {
     const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard

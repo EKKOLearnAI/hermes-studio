@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { createServer, request as httpRequest, type Server as HttpServer } from 'http'
+import Koa from 'koa'
 
 const dbMock = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
@@ -38,6 +39,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 
 import { countTokens } from '../../packages/server/src/lib/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
+import { healthRoutes } from '../../packages/server/src/routes/health'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
@@ -182,6 +184,17 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expectedTotalTokens)
   })
 
+  it('migrates the context-window index onto an existing messages table', () => {
+    dbMock.current!.exec('DROP INDEX idx_gc_messages_context_window')
+
+    initAllHermesTables()
+
+    const migrated = dbMock.current!.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`,
+    ).get('idx_gc_messages_context_window') as { sql: string } | undefined
+    expect(migrated?.sql).toContain("WHERE COALESCE(tool_name, '') <> 'workspace_diff'")
+  })
+
   it('uses the context-window index without a table scan or temporary sort', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -254,6 +267,22 @@ describe('group chat history windows', () => {
       initial - countTokens(String(first.content)) + countTokens(String(updated.content)),
     )
     expect(storage.getRoom('room-1')?.totalTokens).toBe(saved.totalTokens)
+  })
+
+  it('updates both cached room totals when an existing message moves between rooms', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.saveRoom('room-2', 'Room 2')
+    const original = makeMessage({ id: 'shared-id', roomId: 'room-1', content: 'source room content', timestamp: 1 })
+    const originalTokens = storage.saveMessageAndRefreshRoom(original as any).totalTokens
+    const moved = makeMessage({ id: 'shared-id', roomId: 'room-2', content: 'target room content', timestamp: 2 })
+
+    const result = storage.saveMessageAndRefreshRoom(moved as any)
+
+    expect(originalTokens).toBe(countTokens(String(original.content)))
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(0)
+    expect(result.totalTokens).toBe(countTokens(String(moved.content)))
+    expect(storage.getRoom('room-2')?.totalTokens).toBe(result.totalTokens)
   })
 
   it('includes every same-timestamp boundary message in the incremental token total', () => {
@@ -344,12 +373,9 @@ describe('group chat history windows', () => {
         .reduce((sum, tokens) => sum + tokens, 0),
     )
 
-    const healthServer = createServer((_req, res) => {
-      setImmediate(() => {
-        res.setHeader('content-type', 'application/json')
-        res.end('{"status":"ok"}')
-      })
-    })
+    const healthApp = new Koa()
+    healthApp.use(healthRoutes.routes())
+    const healthServer = createServer(healthApp.callback())
     await new Promise<void>(resolve => healthServer.listen(0, '127.0.0.1', resolve))
     const address = healthServer.address()
     if (!address || typeof address === 'string') throw new Error('missing health port')
