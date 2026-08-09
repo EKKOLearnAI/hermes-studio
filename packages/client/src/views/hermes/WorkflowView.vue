@@ -385,6 +385,7 @@ let workflowRunsLoadSeq = 0
 let workflowRunsLoadingSeq = 0
 let workflowSchedulesLoadSeq = 0
 let workflowSchedulesLoadingSeq = 0
+let workflowSchedulesMutationSeq = 0
 let edgePreviewTimer: number | null = null
 let workflowBudgetClock: number | null = null
 
@@ -1705,10 +1706,24 @@ function setPersistedWorkflowScheduleStartNodes(workflow: WorkflowDocument) {
 
 function clearWorkflowSchedules() {
   workflowSchedulesLoadSeq += 1
+  workflowSchedulesMutationSeq += 1
   workflowSchedulesLoadingSeq = 0
   workflowSchedules.value = []
   workflowSchedulesLoading.value = false
+  workflowScheduleSubmitting.value = false
   workflowScheduleLoadError.value = ''
+}
+
+function isCurrentWorkflowScheduleMutation(workflowId: string, mutationSeq: number) {
+  return activeWorkflowId.value === workflowId && workflowSchedulesMutationSeq === mutationSeq
+}
+
+function handleWorkflowScheduleModalVisibility(visible: boolean) {
+  workflowScheduleModalVisible.value = visible
+  if (!visible) {
+    workflowSchedulesMutationSeq += 1
+    workflowScheduleSubmitting.value = false
+  }
 }
 
 async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent = false) {
@@ -1749,6 +1764,8 @@ function editWorkflowSchedule(schedule: WorkflowScheduleRecord) {
 async function saveWorkflowSchedule() {
   const workflowId = activeWorkflowId.value
   if (!workflowId || workflowScheduleSubmitting.value) return
+  const mutationSeq = ++workflowSchedulesMutationSeq
+  const editingScheduleId = editingWorkflowScheduleId.value
   const schedule = workflowScheduleCron.value.trim()
   const timezone = workflowScheduleTimezone.value.trim()
   if (!schedule || !timezone) { message.warning(t('workflow.schedule.required')); return }
@@ -1762,9 +1779,10 @@ async function saveWorkflowSchedule() {
       start_node_ids: [...workflowScheduleStartNodeIds.value],
       timeout_ms: workflowScheduleTimeoutMinutes.value == null ? null : Math.round(workflowScheduleTimeoutMinutes.value * 60_000),
     }
-    const saved = editingWorkflowScheduleId.value
-      ? await updateWorkflowSchedule(workflowId, editingWorkflowScheduleId.value, input)
+    const saved = editingScheduleId
+      ? await updateWorkflowSchedule(workflowId, editingScheduleId, input)
       : await createWorkflowSchedule(workflowId, input)
+    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
     const index = workflowSchedules.value.findIndex(item => item.id === saved.id)
     workflowSchedules.value = index < 0
       ? [...workflowSchedules.value, saved]
@@ -1772,29 +1790,47 @@ async function saveWorkflowSchedule() {
     resetWorkflowScheduleForm()
     message.success(t('workflow.schedule.saved'))
   } catch (err: any) {
-    message.error(err?.message || t('workflow.schedule.saveFailed'))
+    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+      message.error(err?.message || t('workflow.schedule.saveFailed'))
+    }
   } finally {
-    workflowScheduleSubmitting.value = false
+    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+      workflowScheduleSubmitting.value = false
+    }
   }
 }
 
 async function toggleWorkflowSchedule(schedule: WorkflowScheduleRecord) {
-  if (!activeWorkflowId.value) return
+  const workflowId = activeWorkflowId.value
+  if (!workflowId) return
+  const mutationSeq = ++workflowSchedulesMutationSeq
   try {
-    const saved = await updateWorkflowSchedule(activeWorkflowId.value, schedule.id, { enabled: !schedule.enabled })
+    const saved = await updateWorkflowSchedule(workflowId, schedule.id, { enabled: !schedule.enabled })
+    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
     workflowSchedules.value = workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
     if (editingWorkflowScheduleId.value === saved.id) workflowScheduleEnabled.value = saved.enabled
-  } catch (err: any) { message.error(err?.message || t('workflow.schedule.saveFailed')) }
+  } catch (err: any) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+      message.error(err?.message || t('workflow.schedule.saveFailed'))
+    }
+  }
 }
 
 async function removeWorkflowSchedule(schedule: WorkflowScheduleRecord) {
-  if (!activeWorkflowId.value) return
+  const workflowId = activeWorkflowId.value
+  if (!workflowId) return
+  const mutationSeq = ++workflowSchedulesMutationSeq
   try {
-    await deleteWorkflowSchedule(activeWorkflowId.value, schedule.id)
+    await deleteWorkflowSchedule(workflowId, schedule.id)
+    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
     workflowSchedules.value = workflowSchedules.value.filter(item => item.id !== schedule.id)
     if (editingWorkflowScheduleId.value === schedule.id) resetWorkflowScheduleForm()
     message.success(t('workflow.schedule.deleted'))
-  } catch (err: any) { message.error(err?.message || t('workflow.schedule.deleteFailed')) }
+  } catch (err: any) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+      message.error(err?.message || t('workflow.schedule.deleteFailed'))
+    }
+  }
 }
 
 function formatWorkflowScheduleTime(timestamp: number | null): string {
@@ -3274,7 +3310,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
       preset="card"
       :title="t('workflow.schedule.title')"
       :style="{ width: 'min(720px, calc(100vw - 32px))' }"
-      @update:show="workflowScheduleModalVisible = $event"
+      @update:show="handleWorkflowScheduleModalVisibility"
     >
       <div class="workflow-schedules-layout">
         <section class="workflow-schedules-list">

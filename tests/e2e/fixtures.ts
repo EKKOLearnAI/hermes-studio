@@ -58,6 +58,7 @@ interface MockHermesApiOptions {
   workflowSchedules?: unknown[]
   workflowScheduleError?: string
   workflowScheduleDelays?: Record<string, number>
+  workflowScheduleMutationDelays?: Partial<Record<'POST' | 'PATCH' | 'DELETE', number>>
   workflowImportDocument?: unknown
   workflowImportPreviewError?: string
   channelCredentials?: boolean
@@ -326,19 +327,26 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       if (request.method() === 'POST') {
         const schedule = { id: `schedule-${workflowSchedules.length + 1}`, workflow_id: workflowId, profile: 'research', concurrency_policy: 'skip', misfire_policy: 'skip', last_scheduled_at: null, next_run_at: Date.now() + 3_600_000, last_run_id: null, last_error: null, created_at: Date.now(), updated_at: Date.now(), ...body }
         workflowSchedules = [...workflowSchedules, schedule]
+        const delay = options.workflowScheduleMutationDelays?.POST || 0
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
         await route.fulfill(jsonResponse({ schedule }, 201))
         return
       }
       if (request.method() === 'PATCH') {
         const current = workflowSchedules.find(item => item.id === scheduleId && item.workflow_id === workflowId)
-        await route.fulfill(current
-          ? jsonResponse({ schedule: { ...current, ...body, updated_at: Date.now() } })
+        const saved = current ? { ...current, ...body, updated_at: Date.now() } : null
+        if (saved) workflowSchedules = workflowSchedules.map(item => item.id === scheduleId ? saved : item)
+        const delay = options.workflowScheduleMutationDelays?.PATCH || 0
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+        await route.fulfill(saved
+          ? jsonResponse({ schedule: saved })
           : jsonResponse({ error: 'workflow schedule not found' }, 404))
-        if (current) workflowSchedules = workflowSchedules.map(item => item.id === scheduleId ? { ...item, ...body, updated_at: Date.now() } : item)
         return
       }
       if (request.method() === 'DELETE') {
         workflowSchedules = workflowSchedules.filter(item => item.id !== scheduleId || item.workflow_id !== workflowId)
+        const delay = options.workflowScheduleMutationDelays?.DELETE || 0
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
         await route.fulfill(jsonResponse({ ok: true }))
         return
       }
