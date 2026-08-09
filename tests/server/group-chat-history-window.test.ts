@@ -547,6 +547,52 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(initial)
   })
 
+  it('rebuilds a legacy cached total before saving an excluded workspace diff', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    storage.addMessage(makeMessage({
+      id: 'legacy-context',
+      content: 'authoritative context',
+      timestamp: 1,
+    }) as any)
+    dbMock.current!.prepare(
+      'UPDATE gc_rooms SET totalTokens = ?, tokenAccountingVersion = 0 WHERE id = ?',
+    ).run(999_999, 'room-1')
+
+    const result = storage.saveWorkspaceDiffMessageForRun({
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      sessionId: 'session-1',
+      runId: 'legacy-run',
+      status: 'completed',
+      workspace: '/tmp/workspace',
+      draft: {
+        change_id: 'legacy-change',
+        run_id: 'legacy-run',
+        session_id: 'session-1',
+        room_id: 'room-1',
+        message_id: 'pending',
+        assistant_message_id: '',
+        workspace: 'workspace',
+        workspace_kind: 'git',
+        started_at: 1,
+        finished_at: 2,
+        files_changed: 0,
+        additions: 0,
+        deletions: 0,
+        truncated: false,
+        total_patch_bytes: 0,
+        status: 'completed',
+        files: [],
+      },
+    } as any)
+
+    const expected = countTokens('authoritative context')
+    expect(result?.totalTokens).toBe(expected)
+    expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
+  })
+
   it('retains older messages while limiting shared context to the latest 500', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

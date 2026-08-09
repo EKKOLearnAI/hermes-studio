@@ -1047,6 +1047,7 @@ class ChatStorage {
                 db.exec('ROLLBACK')
                 return null
             }
+            this.ensureCurrentRoomTokenAccounting(args.roomId)
             const workspaceLabel = basename(args.workspace) || 'workspace'
             const redactedDraft: SaveWorkspaceRunChangeInput = {
                 ...args.draft,
