@@ -1304,7 +1304,12 @@ export function initAllHermesTables(): void {
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
-    syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+    syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA, {
+      indexes: {
+        idx_gc_messages_context_window:
+          "CREATE INDEX idx_gc_messages_context_window ON gc_messages(roomId, timestamp DESC, id DESC) WHERE COALESCE(tool_name, '') <> 'workspace_diff'",
+      },
+    })
     syncTable(GC_ACTIVITY_MIGRATIONS_TABLE, GC_ACTIVITY_MIGRATIONS_SCHEMA)
     migrateGroupChatActivityTimes(db, Date.now())
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)

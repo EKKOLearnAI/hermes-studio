@@ -146,6 +146,19 @@ function getEncoder() {
 // pathological case up front and use the cheap heuristic instead. Normal text
 // (even very long, but space-separated) keeps the exact tiktoken path.
 const MAX_LETTER_RUN = 2000
+// Exact js-tiktoken encoding is synchronous. Even well-separated text takes
+// seconds once tool output reaches megabyte scale, starving unrelated HTTP
+// requests on the server thread. Token totals are estimates, so cap exact
+// encoding to a bounded input size and use the existing linear heuristic above
+// it. Normal prompts and the existing 50 KB exact-tokenizer coverage remain
+// unchanged.
+const MAX_EXACT_TOKEN_TEXT_BYTES = 256 * 1024
+
+function exceedsExactTokenBudget(text: string): boolean {
+  if (text.length > MAX_EXACT_TOKEN_TEXT_BYTES) return true
+  return text.length > MAX_EXACT_TOKEN_TEXT_BYTES / 3
+    && Buffer.byteLength(text, 'utf8') > MAX_EXACT_TOKEN_TEXT_BYTES
+}
 
 function hasPathologicalRun(text: string): boolean {
   let maxRun = 0
@@ -170,7 +183,7 @@ function heuristicTokens(text: string): number {
 }
 
 export function countTokens(text: string): number {
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  if (exceedsExactTokenBudget(text) || hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     return getEncoder().encode(text).length
   } catch {
@@ -179,7 +192,7 @@ export function countTokens(text: string): number {
 }
 
 export function countTokensForModel(text: string, model: string): number {
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  if (exceedsExactTokenBudget(text) || hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     const enc = encodingForModel(model as any)
     return enc.encode(text).length

@@ -855,6 +855,27 @@ describe('countTokens', () => {
     expect(elapsedMs).toBeLessThan(250)
   })
 
+  it('bounds token estimation time for very large non-pathological text', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
+    const text = unit.repeat(Math.ceil(1_000_000 / unit.length)).slice(0, 1_000_000)
+    const start = performance.now()
+    const tokens = countTokens(text)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
+  it('bounds token estimation time for large separated multibyte text', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const text = '汉 '.repeat(100_000)
+    const start = performance.now()
+    const tokens = countTokens(text)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
   it('still uses the exact tokenizer for long space-separated text', async () => {
     const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard
