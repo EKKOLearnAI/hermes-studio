@@ -57,6 +57,7 @@ interface MockHermesApiOptions {
   workflowRuns?: unknown[]
   workflowSchedules?: unknown[]
   workflowScheduleError?: string
+  workflowScheduleDelays?: Record<string, number>
   workflowImportDocument?: unknown
   workflowImportPreviewError?: string
   channelCredentials?: boolean
@@ -315,6 +316,8 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       const workflowId = parts[4]
       const scheduleId = parts[6]
       if (request.method() === 'GET') {
+        const delay = options.workflowScheduleDelays?.[workflowId] || 0
+        if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
         await route.fulfill(jsonResponse({ schedules: workflowSchedules.filter(item => item.workflow_id === workflowId) }))
         return
       }

@@ -334,6 +334,7 @@ const workflowRuns = ref<WorkflowRunRecord[]>([])
 const workflowSchedules = ref<WorkflowScheduleRecord[]>([])
 const workflowSchedulesLoading = ref(false)
 const workflowScheduleLoadError = ref('')
+const persistedWorkflowScheduleStartNodes = ref<Record<string, WorkflowSelectOption[]>>({})
 const workflowScheduleModalVisible = ref(false)
 const workflowScheduleSubmitting = ref(false)
 const editingWorkflowScheduleId = ref<string | null>(null)
@@ -382,6 +383,8 @@ let mobileQuery: MediaQueryList | null = null
 let applyingWorkflow = false
 let workflowRunsLoadSeq = 0
 let workflowRunsLoadingSeq = 0
+let workflowSchedulesLoadSeq = 0
+let workflowSchedulesLoadingSeq = 0
 let edgePreviewTimer: number | null = null
 let workflowBudgetClock: number | null = null
 
@@ -400,7 +403,7 @@ const workflowSchedulePresetOptions = computed(() => [
   { label: t('workflow.schedule.presets.weekly'), value: '@weekly' },
   { label: t('workflow.schedule.presets.monthly'), value: '@monthly' },
 ])
-const workflowScheduleStartNodeOptions = computed(() => nodes.value.map(node => ({ label: node.data.title || node.id, value: node.id })))
+const workflowScheduleStartNodeOptions = computed(() => persistedWorkflowScheduleStartNodes.value[activeWorkflowId.value] || [])
 const workflowScheduleFormTitle = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.editTitle' : 'workflow.schedule.createTitle'))
 const workflowScheduleSubmitLabel = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.save' : 'workflow.schedule.create'))
 const workflowRunBudgetValid = computed(() => isWorkflowRunBudgetValid(
@@ -1184,6 +1187,10 @@ async function loadWorkflows() {
       records = await listWorkflowsSocket()
     }
     const docs = records.map(workflowDocumentFromRecord)
+    persistedWorkflowScheduleStartNodes.value = Object.fromEntries(docs.map(workflow => [
+      workflow.id,
+      workflow.nodes.map(node => ({ label: node.data.title || node.id, value: node.id })),
+    ]))
     const previousActiveId = activeWorkflowId.value
     workflows.value = docs
     if (docs.length === 0) {
@@ -1689,17 +1696,42 @@ function resetWorkflowScheduleForm(schedule?: WorkflowScheduleRecord) {
   workflowScheduleTimeoutMinutes.value = schedule?.timeout_ms == null ? null : schedule.timeout_ms / 60_000
 }
 
-async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent = false) {
-  if (!workflowId) { workflowSchedules.value = []; workflowScheduleLoadError.value = ''; return }
-  if (!silent) workflowSchedulesLoading.value = true
+function setPersistedWorkflowScheduleStartNodes(workflow: WorkflowDocument) {
+  persistedWorkflowScheduleStartNodes.value = {
+    ...persistedWorkflowScheduleStartNodes.value,
+    [workflow.id]: workflow.nodes.map(node => ({ label: node.data.title || node.id, value: node.id })),
+  }
+}
+
+function clearWorkflowSchedules() {
+  workflowSchedulesLoadSeq += 1
+  workflowSchedulesLoadingSeq = 0
+  workflowSchedules.value = []
+  workflowSchedulesLoading.value = false
   workflowScheduleLoadError.value = ''
+}
+
+async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent = false) {
+  if (!workflowId) {
+    clearWorkflowSchedules()
+    return
+  }
+  const requestSeq = ++workflowSchedulesLoadSeq
+  if (!silent) {
+    workflowSchedulesLoadingSeq = requestSeq
+    workflowSchedulesLoading.value = true
+  }
+  if (activeWorkflowId.value === workflowId) workflowScheduleLoadError.value = ''
   try {
-    workflowSchedules.value = await listWorkflowSchedules(workflowId)
+    const schedules = await listWorkflowSchedules(workflowId)
+    if (requestSeq !== workflowSchedulesLoadSeq || activeWorkflowId.value !== workflowId) return
+    workflowSchedules.value = schedules
   } catch (err: any) {
+    if (requestSeq !== workflowSchedulesLoadSeq || activeWorkflowId.value !== workflowId) return
     workflowScheduleLoadError.value = err?.message || t('workflow.schedule.loadFailed')
     if (!silent) message.error(workflowScheduleLoadError.value)
   } finally {
-    if (!silent) workflowSchedulesLoading.value = false
+    if (!silent && workflowSchedulesLoadingSeq === requestSeq) workflowSchedulesLoading.value = false
   }
 }
 
@@ -1726,7 +1758,7 @@ async function saveWorkflowSchedule() {
       schedule,
       timezone,
       enabled: workflowScheduleEnabled.value,
-      input: workflowScheduleInput.value.trim() || null,
+      input: workflowScheduleInput.value.trim() === '' ? null : workflowScheduleInput.value,
       start_node_ids: [...workflowScheduleStartNodeIds.value],
       timeout_ms: workflowScheduleTimeoutMinutes.value == null ? null : Math.round(workflowScheduleTimeoutMinutes.value * 60_000),
     }
@@ -1751,6 +1783,7 @@ async function toggleWorkflowSchedule(schedule: WorkflowScheduleRecord) {
   try {
     const saved = await updateWorkflowSchedule(activeWorkflowId.value, schedule.id, { enabled: !schedule.enabled })
     workflowSchedules.value = workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
+    if (editingWorkflowScheduleId.value === saved.id) workflowScheduleEnabled.value = saved.enabled
   } catch (err: any) { message.error(err?.message || t('workflow.schedule.saveFailed')) }
 }
 
@@ -2111,6 +2144,7 @@ async function applyWorkflow(
 ) {
   applyingWorkflow = true
   selectedWorkflowRunId.value = null
+  clearWorkflowSchedules()
   activeWorkflowId.value = workflow.id
   workflowName.value = workflow.name
   workflowWorkspace.value = workflow.workspace
@@ -2131,7 +2165,6 @@ async function applyWorkflow(
   applyingWorkflow = false
   ensureSkillOptionsForVisibleNodes()
   void loadWorkflowRuns(workflow.id)
-  void loadWorkflowSchedules(workflow.id, true)
   if (closeMobile && isMobile.value) showWorkflowSidebar.value = false
 }
 
@@ -2202,6 +2235,7 @@ async function confirmPendingWorkflowImport() {
   try {
     const record = await confirmWorkflowImport(preview.token, workflowImportProfile.value)
     const imported = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(imported)
     workflows.value = [imported, ...workflows.value.filter(item => item.id !== imported.id)]
     workflowImportConfirmVisible.value = false
     workflowImportPreview.value = null
@@ -2245,6 +2279,7 @@ async function submitCreateWorkflow() {
       viewport: defaultViewport,
     })
     const workflow = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(workflow)
     workflows.value = [workflow, ...workflows.value]
     createWorkflowDrawerVisible.value = false
     await applyWorkflow(workflow, true)
@@ -2382,6 +2417,7 @@ async function saveActiveWorkflow(options: { quiet?: boolean } = {}): Promise<bo
       viewport: currentWorkflowViewport(),
     })
     const savedWorkflow = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(savedWorkflow)
     workflows.value = workflows.value.map(workflow => (
       workflow.id === savedWorkflow.id
         ? { ...savedWorkflow, updatedAt: previous?.updatedAt ?? savedWorkflow.updatedAt }
