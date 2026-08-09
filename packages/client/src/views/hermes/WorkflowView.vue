@@ -385,7 +385,11 @@ let workflowRunsLoadSeq = 0
 let workflowRunsLoadingSeq = 0
 let workflowSchedulesLoadSeq = 0
 let workflowSchedulesLoadingSeq = 0
+let workflowSchedulesGeneration = 0
+let workflowScheduleSaveSeq = 0
 let workflowSchedulesMutationSeq = 0
+const workflowScheduleMutationTokens = new Map<string, number>()
+const workflowSchedulePendingIds = ref<Set<string>>(new Set())
 let edgePreviewTimer: number | null = null
 let workflowBudgetClock: number | null = null
 
@@ -1705,25 +1709,62 @@ function setPersistedWorkflowScheduleStartNodes(workflow: WorkflowDocument) {
 }
 
 function clearWorkflowSchedules() {
+  workflowSchedulesGeneration += 1
   workflowSchedulesLoadSeq += 1
-  workflowSchedulesMutationSeq += 1
   workflowSchedulesLoadingSeq = 0
+  workflowScheduleSaveSeq += 1
+  workflowScheduleMutationTokens.clear()
+  workflowSchedulePendingIds.value = new Set()
   workflowSchedules.value = []
   workflowSchedulesLoading.value = false
   workflowScheduleSubmitting.value = false
   workflowScheduleLoadError.value = ''
 }
 
-function isCurrentWorkflowScheduleMutation(workflowId: string, mutationSeq: number) {
-  return activeWorkflowId.value === workflowId && workflowSchedulesMutationSeq === mutationSeq
+function isCurrentWorkflowScheduleLifecycle(workflowId: string, generation: number) {
+  return workflowScheduleModalVisible.value
+    && activeWorkflowId.value === workflowId
+    && workflowSchedulesGeneration === generation
+}
+
+function invalidateWorkflowScheduleLoads() {
+  workflowSchedulesLoadSeq += 1
+}
+
+function isWorkflowScheduleMutating(scheduleId: string) {
+  return workflowSchedulePendingIds.value.has(scheduleId)
+}
+
+function setWorkflowScheduleMutating(scheduleId: string, pending: boolean) {
+  const next = new Set(workflowSchedulePendingIds.value)
+  if (pending) next.add(scheduleId)
+  else next.delete(scheduleId)
+  workflowSchedulePendingIds.value = next
+}
+
+function beginWorkflowScheduleMutation(scheduleId: string) {
+  const mutationToken = ++workflowSchedulesMutationSeq
+  const generation = workflowSchedulesGeneration
+  workflowScheduleMutationTokens.set(scheduleId, mutationToken)
+  setWorkflowScheduleMutating(scheduleId, true)
+  invalidateWorkflowScheduleLoads()
+  return { generation, mutationToken }
+}
+
+function isCurrentWorkflowScheduleMutation(workflowId: string, scheduleId: string, generation: number, mutationToken: number) {
+  return isCurrentWorkflowScheduleLifecycle(workflowId, generation)
+    && workflowScheduleMutationTokens.get(scheduleId) === mutationToken
+}
+
+function finishWorkflowScheduleMutation(scheduleId: string, mutationToken: number) {
+  if (workflowScheduleMutationTokens.get(scheduleId) !== mutationToken) return
+  workflowScheduleMutationTokens.delete(scheduleId)
+  setWorkflowScheduleMutating(scheduleId, false)
 }
 
 function handleWorkflowScheduleModalVisibility(visible: boolean) {
   workflowScheduleModalVisible.value = visible
-  if (!visible) {
-    workflowSchedulesMutationSeq += 1
-    workflowScheduleSubmitting.value = false
-  }
+  if (!visible) clearWorkflowSchedules()
 }
 
 async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent = false) {
@@ -1732,6 +1773,7 @@ async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent
     return
   }
   const requestSeq = ++workflowSchedulesLoadSeq
+  const generation = workflowSchedulesGeneration
   if (!silent) {
     workflowSchedulesLoadingSeq = requestSeq
     workflowSchedulesLoading.value = true
@@ -1739,10 +1781,10 @@ async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent
   if (activeWorkflowId.value === workflowId) workflowScheduleLoadError.value = ''
   try {
     const schedules = await listWorkflowSchedules(workflowId)
-    if (requestSeq !== workflowSchedulesLoadSeq || activeWorkflowId.value !== workflowId) return
+    if (requestSeq !== workflowSchedulesLoadSeq || !isCurrentWorkflowScheduleLifecycle(workflowId, generation)) return
     workflowSchedules.value = schedules
   } catch (err: any) {
-    if (requestSeq !== workflowSchedulesLoadSeq || activeWorkflowId.value !== workflowId) return
+    if (requestSeq !== workflowSchedulesLoadSeq || !isCurrentWorkflowScheduleLifecycle(workflowId, generation)) return
     workflowScheduleLoadError.value = err?.message || t('workflow.schedule.loadFailed')
     if (!silent) message.error(workflowScheduleLoadError.value)
   } finally {
@@ -1758,17 +1800,21 @@ async function openWorkflowScheduleModal() {
 }
 
 function editWorkflowSchedule(schedule: WorkflowScheduleRecord) {
+  if (isWorkflowScheduleMutating(schedule.id)) return
   resetWorkflowScheduleForm(schedule)
 }
 
 async function saveWorkflowSchedule() {
   const workflowId = activeWorkflowId.value
   if (!workflowId || workflowScheduleSubmitting.value) return
-  const mutationSeq = ++workflowSchedulesMutationSeq
   const editingScheduleId = editingWorkflowScheduleId.value
   const schedule = workflowScheduleCron.value.trim()
   const timezone = workflowScheduleTimezone.value.trim()
   if (!schedule || !timezone) { message.warning(t('workflow.schedule.required')); return }
+  const scheduleId = editingScheduleId || '__create__'
+  if (isWorkflowScheduleMutating(scheduleId)) return
+  const saveToken = ++workflowScheduleSaveSeq
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(scheduleId)
   workflowScheduleSubmitting.value = true
   try {
     const input = {
@@ -1782,54 +1828,57 @@ async function saveWorkflowSchedule() {
     const saved = editingScheduleId
       ? await updateWorkflowSchedule(workflowId, editingScheduleId, input)
       : await createWorkflowSchedule(workflowId, input)
-    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
+    if (!isCurrentWorkflowScheduleMutation(workflowId, scheduleId, generation, mutationToken)) return
     const index = workflowSchedules.value.findIndex(item => item.id === saved.id)
     workflowSchedules.value = index < 0
       ? [...workflowSchedules.value, saved]
       : workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
-    resetWorkflowScheduleForm()
+    if (editingWorkflowScheduleId.value === editingScheduleId) resetWorkflowScheduleForm()
     message.success(t('workflow.schedule.saved'))
   } catch (err: any) {
-    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, scheduleId, generation, mutationToken)) {
       message.error(err?.message || t('workflow.schedule.saveFailed'))
     }
   } finally {
-    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
-      workflowScheduleSubmitting.value = false
-    }
+    finishWorkflowScheduleMutation(scheduleId, mutationToken)
+    if (workflowScheduleSaveSeq === saveToken) workflowScheduleSubmitting.value = false
   }
 }
 
 async function toggleWorkflowSchedule(schedule: WorkflowScheduleRecord) {
   const workflowId = activeWorkflowId.value
-  if (!workflowId) return
-  const mutationSeq = ++workflowSchedulesMutationSeq
+  if (!workflowId || isWorkflowScheduleMutating(schedule.id)) return
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(schedule.id)
   try {
     const saved = await updateWorkflowSchedule(workflowId, schedule.id, { enabled: !schedule.enabled })
-    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
+    if (!isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) return
     workflowSchedules.value = workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
     if (editingWorkflowScheduleId.value === saved.id) workflowScheduleEnabled.value = saved.enabled
   } catch (err: any) {
-    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) {
       message.error(err?.message || t('workflow.schedule.saveFailed'))
     }
+  } finally {
+    finishWorkflowScheduleMutation(schedule.id, mutationToken)
   }
 }
 
 async function removeWorkflowSchedule(schedule: WorkflowScheduleRecord) {
   const workflowId = activeWorkflowId.value
-  if (!workflowId) return
-  const mutationSeq = ++workflowSchedulesMutationSeq
+  if (!workflowId || isWorkflowScheduleMutating(schedule.id)) return
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(schedule.id)
   try {
     await deleteWorkflowSchedule(workflowId, schedule.id)
-    if (!isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) return
+    if (!isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) return
     workflowSchedules.value = workflowSchedules.value.filter(item => item.id !== schedule.id)
     if (editingWorkflowScheduleId.value === schedule.id) resetWorkflowScheduleForm()
     message.success(t('workflow.schedule.deleted'))
   } catch (err: any) {
-    if (isCurrentWorkflowScheduleMutation(workflowId, mutationSeq)) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) {
       message.error(err?.message || t('workflow.schedule.deleteFailed'))
     }
+  } finally {
+    finishWorkflowScheduleMutation(schedule.id, mutationToken)
   }
 }
 
@@ -3328,10 +3377,10 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             <div class="workflow-schedule-meta">{{ t('workflow.schedule.lastRun') }}: {{ schedule.last_run_id || t('workflow.schedule.never') }}</div>
             <div v-if="schedule.last_error" class="workflow-schedule-error">{{ schedule.last_error }}</div>
             <div class="workflow-schedule-actions">
-              <NButton size="tiny" @click="editWorkflowSchedule(schedule)">{{ t('workflow.schedule.edit') }}</NButton>
-              <NButton size="tiny" @click="toggleWorkflowSchedule(schedule)">{{ schedule.enabled ? t('workflow.schedule.disable') : t('workflow.schedule.enable') }}</NButton>
-              <NPopconfirm @positive-click="removeWorkflowSchedule(schedule)">
-                <template #trigger><NButton size="tiny" type="error">{{ t('workflow.schedule.delete') }}</NButton></template>
+              <NButton size="tiny" :disabled="isWorkflowScheduleMutating(schedule.id)" @click="editWorkflowSchedule(schedule)">{{ t('workflow.schedule.edit') }}</NButton>
+              <NButton size="tiny" :disabled="isWorkflowScheduleMutating(schedule.id)" @click="toggleWorkflowSchedule(schedule)">{{ schedule.enabled ? t('workflow.schedule.disable') : t('workflow.schedule.enable') }}</NButton>
+              <NPopconfirm :disabled="isWorkflowScheduleMutating(schedule.id)" @positive-click="removeWorkflowSchedule(schedule)">
+                <template #trigger><NButton size="tiny" type="error" :disabled="isWorkflowScheduleMutating(schedule.id)">{{ t('workflow.schedule.delete') }}</NButton></template>
                 {{ t('workflow.schedule.deleteConfirm') }}
               </NPopconfirm>
             </div>

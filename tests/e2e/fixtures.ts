@@ -58,6 +58,7 @@ interface MockHermesApiOptions {
   workflowSchedules?: unknown[]
   workflowScheduleError?: string
   workflowScheduleDelays?: Record<string, number>
+  workflowScheduleGetSnapshotAtRequest?: boolean
   workflowScheduleMutationDelays?: Partial<Record<'POST' | 'PATCH' | 'DELETE', number>>
   workflowImportDocument?: unknown
   workflowImportPreviewError?: string
@@ -317,9 +318,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       const workflowId = parts[4]
       const scheduleId = parts[6]
       if (request.method() === 'GET') {
+        const schedules = options.workflowScheduleGetSnapshotAtRequest
+          ? workflowSchedules.filter(item => item.workflow_id === workflowId)
+          : null
         const delay = options.workflowScheduleDelays?.[workflowId] || 0
         if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
-        await route.fulfill(jsonResponse({ schedules: workflowSchedules.filter(item => item.workflow_id === workflowId) }))
+        await route.fulfill(jsonResponse({ schedules: schedules ?? workflowSchedules.filter(item => item.workflow_id === workflowId) }))
         return
       }
       let body: Record<string, any> = {}
