@@ -97,18 +97,33 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'failed' })
     })
 
-    it('requeues dispatched attempts after restart and durably deduplicates target delivery', () => {
+    it('completes an acknowledged dispatch after restart and durably deduplicates target delivery', () => {
         const storage = harness.groupServer.getStorage()
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
         const attemptId = String(claimed.attemptId)
         expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
         expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
         storage.init()
-        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'claimed', attemptCount: 2 })
-        expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'pending' })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed', attemptCount: 1 })
+        expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'completed' })
+        expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('already')
+        expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('already')
+        expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('already')
+    })
+
+    it('completes a target-accepted dispatch after restart without replaying the Agent', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
         expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
         expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
-        expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('already')
+        storage.init()
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'resumed',
+            continueUsed: 1,
+        })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed' })
+        expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'completed' })
     })
 
     it('clears durable attempts and outbox records with room history', () => {

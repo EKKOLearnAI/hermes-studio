@@ -82,4 +82,32 @@ describe('group chat durable continuation route', () => {
         expect(retry.status).toBe(502)
         expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 1 })
     })
+
+    it('replays a pending outbox through the dispatcher after the request path has returned', async () => {
+        const storage = groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            stopReason: 'continue_failed',
+        })
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'failed' })
+    })
+
+    it('completes a claimed route through target acknowledgement and outbox finalization', async () => {
+        const storage = groupServer.getStorage()
+        vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
+            const attemptId = String(message.continuationAttemptId)
+            expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
+            expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
+            return { targetCount: 1, deliveredCount: 1, errors: [] }
+        })
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'resumed',
+            continueUsed: 1,
+        })
+        expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(claimed.attemptId)).toEqual({ status: 'completed' })
+    })
 })

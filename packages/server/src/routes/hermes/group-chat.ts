@@ -1246,37 +1246,17 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         ctx.body = { error: 'Handoff source message is no longer available', chain: failed || storage.getHandoffChain(roomId, chainId) }
         return
     }
-    try {
-        const delivery = await chatServer.agentClients.processMentions(roomId, {
-            messageId: source.id,
-            content: String(source.content || ''),
-            input: String(source.content || ''),
-            senderName: source.senderName,
-            senderId: source.senderId,
-            timestamp: source.timestamp,
-            role: source.role,
-            mentionDepth: Math.max(0, Number(chain.currentDepth || 0) - 1),
-            handoffChainId: chain.chainId,
-            continuationAttemptId: String(chain.attemptId),
-            mentions: chain.targetAgentId
-                ? [{ type: 'agent', participantId: String(chain.targetAgentId) }]
-                : source.mentions,
-        })
-        if (delivery.targetCount === 0 || delivery.deliveredCount !== delivery.targetCount || delivery.errors.length > 0) {
-            const error = delivery.errors.join('; ') || 'Target Agent is not connected'
-            const failed = storage.failHandoffContinuation(roomId, chainId, error)
-            ctx.status = 502
-            ctx.body = { success: false, error, chain: failed || storage.getHandoffChain(roomId, chainId) }
-            return
-        }
-        const completed = storage.completeHandoffContinuation(roomId, chainId)
-        if (!completed) throw new Error('Continuation delivery was accepted but could not be durably completed')
+    await chatServer.dispatchPendingHandoffs()
+    const completed = storage.getHandoffChain(roomId, chainId)
+    if (completed?.status === 'resumed') {
         ctx.body = { success: true, chain: completed }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const failed = storage.failHandoffContinuation(roomId, chainId, message)
-        ctx.status = 502
-        ctx.body = { success: false, error: message, chain: failed || storage.getHandoffChain(roomId, chainId) }
+        return
+    }
+    ctx.status = 502
+    ctx.body = {
+        success: false,
+        error: completed?.lastError || 'Continuation delivery is pending retry',
+        chain: completed || storage.getHandoffChain(roomId, chainId),
     }
 })
 
