@@ -1245,13 +1245,13 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         ctx.body = { error: 'Handoff source message is no longer available' }
         return
     }
-    const chain = storage.continueHandoffOnce(roomId, chainId)
+    const chain = storage.claimHandoffContinuation(roomId, chainId)
     if (!chain) {
         ctx.status = 409
         ctx.body = { error: 'Handoff chain is no longer available' }
         return
     }
-    chatServer.agentClients.processMentions(roomId, {
+    const delivery = await chatServer.agentClients.processMentions(roomId, {
         messageId: source.id,
         content: String(source.content || ''),
         input: String(source.content || ''),
@@ -1265,10 +1265,16 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         mentions: chain.targetAgentId
             ? [{ type: 'agent', participantId: String(chain.targetAgentId) }]
             : source.mentions,
-    }).catch((err: any) => {
-        console.error(`[GroupChat] failed to continue handoff ${chainId}: ${err?.message || err}`)
     })
-    ctx.body = { success: true, chain }
+    if (delivery.targetCount === 0 || delivery.deliveredCount !== delivery.targetCount || delivery.errors.length > 0) {
+        const error = delivery.errors.join('; ') || 'Target Agent is not connected'
+        const failedChain = storage.failHandoffContinuation(roomId, chainId, error)
+        ctx.status = 502
+        ctx.body = { success: false, error, chain: failedChain || storage.getHandoffChain(roomId, chainId) }
+        return
+    }
+    const completedChain = storage.completeHandoffContinuation(roomId, chainId)
+    ctx.body = { success: true, chain: completedChain }
 })
 
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId', async (ctx) => {

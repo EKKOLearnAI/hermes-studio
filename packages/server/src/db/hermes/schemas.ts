@@ -632,6 +632,7 @@ export const GC_HANDOFF_CHAINS_SCHEMA: Record<string, string> = {
   targetAgentId: "TEXT NOT NULL DEFAULT ''",
   status: "TEXT NOT NULL DEFAULT 'active'",
   stopReason: "TEXT NOT NULL DEFAULT ''",
+  lastError: 'TEXT',
   continueUsed: 'INTEGER NOT NULL DEFAULT 0',
   createdAt: 'INTEGER NOT NULL',
   updatedAt: 'INTEGER NOT NULL',

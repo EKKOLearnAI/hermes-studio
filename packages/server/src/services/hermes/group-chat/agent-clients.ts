@@ -67,6 +67,12 @@ export type MentionMessage = {
     targetOwnerMemberId?: string
 }
 
+export type MentionDeliveryResult = {
+    targetCount: number
+    deliveredCount: number
+    errors: string[]
+}
+
 export type StructuredMention =
     | { type: 'agent'; participantId: string }
     | { type: 'all' }
@@ -2271,12 +2277,14 @@ export class AgentClients {
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
      */
-    async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
+    async processMentions(roomId: string, msg: MentionMessage): Promise<MentionDeliveryResult> {
         const agents = this.getConnectedAgents(roomId)
         const mentioned = msg.mentions
             ? this.resolveStructuredMentionTargets(agents, msg.mentions, msg.senderId)
             : resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0 && msg.role !== 'user') return
+        if (mentioned.length === 0 && msg.role !== 'user') {
+            return { targetCount: 0, deliveredCount: 0, errors: [] }
+        }
 
         if (mentioned.length > 0) {
             logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
@@ -2284,8 +2292,9 @@ export class AgentClients {
 
         this.queueMention(roomId, mentioned, msg)
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
-            await this._drainRoomQueue(roomId)
+            return await this._drainRoomQueue(roomId)
         }
+        return { targetCount: mentioned.length, deliveredCount: 0, errors: ['Room is already processing another mention'] }
     }
 
     private resolveStructuredMentionTargets(
@@ -2331,8 +2340,10 @@ export class AgentClients {
         }
     }
 
-    private async _drainRoomQueue(roomId: string): Promise<void> {
-        if (this._processingRooms.has(roomId) || this._pausedRooms.has(roomId)) return
+    private async _drainRoomQueue(roomId: string): Promise<MentionDeliveryResult> {
+        if (this._processingRooms.has(roomId) || this._pausedRooms.has(roomId)) {
+            return { targetCount: 0, deliveredCount: 0, errors: ['Room is paused or already processing'] }
+        }
         this._processingRooms.add(roomId)
         try {
             while (!this._pausedRooms.has(roomId)) {
@@ -2358,16 +2369,23 @@ export class AgentClients {
                         this.finishAgentActivity(roomId, agent.name)
                     }
                 }))
+                const errors: string[] = []
+                let deliveredCount = 0
                 for (let index = 0; index < results.length; index += 1) {
                     const result = results[index]
                     if (result.status === 'rejected') {
+                        errors.push(`${next.agents[index]?.name || 'agent'}: ${result.reason?.message || result.reason}`)
                         logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${result.reason?.message || result.reason}`)
+                    } else {
+                        deliveredCount += 1
                     }
                 }
+                return { targetCount: next.agents.length, deliveredCount, errors }
             }
         } finally {
             this._processingRooms.delete(roomId)
         }
+        return { targetCount: 0, deliveredCount: 0, errors: [] }
     }
 }
 

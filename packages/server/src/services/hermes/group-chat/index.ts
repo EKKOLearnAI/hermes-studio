@@ -888,11 +888,29 @@ class ChatStorage {
         ).all(roomId) || []) as any[]
     }
 
-    continueHandoffOnce(roomId: string, chainId: string): any | null {
+    claimHandoffContinuation(roomId: string, chainId: string): any | null {
         const result = this.db()?.prepare(
-            `UPDATE gc_handoff_chains SET continueUsed = 1, status = 'resumed', stopReason = '', updatedAt = ?
+            `UPDATE gc_handoff_chains SET status = 'continuing', updatedAt = ?
              WHERE roomId = ? AND chainId = ? AND status = 'stopped' AND continueUsed = 0`,
         ).run(Date.now(), roomId, chainId)
+        return result?.changes ? this.getHandoffChain(roomId, chainId) : null
+    }
+
+    completeHandoffContinuation(roomId: string, chainId: string): any | null {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_chains SET continueUsed = 1, status = 'resumed',
+             stopReason = '', lastError = NULL, updatedAt = ?
+             WHERE roomId = ? AND chainId = ? AND status = 'continuing' AND continueUsed = 0`,
+        ).run(Date.now(), roomId, chainId)
+        return result?.changes ? this.getHandoffChain(roomId, chainId) : null
+    }
+
+    failHandoffContinuation(roomId: string, chainId: string, error: string): any | null {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_chains SET status = 'stopped',
+             stopReason = 'continue_failed', lastError = ?, updatedAt = ?
+             WHERE roomId = ? AND chainId = ? AND status = 'continuing' AND continueUsed = 0`,
+        ).run(error.slice(0, 2000), Date.now(), roomId, chainId)
         return result?.changes ? this.getHandoffChain(roomId, chainId) : null
     }
 

@@ -1608,6 +1608,12 @@ async function handleContinueHandoff(chainId: string): Promise<void> {
         stoppedHandoffChains.value = stoppedHandoffChains.value.filter(chain => chain.chainId !== chainId)
         message.success(t('groupChat.agentHandoffContinued'))
     } catch (err: any) {
+        try {
+            const result = await listStoppedRoomAgentHandoffs(store.currentRoomId)
+            stoppedHandoffChains.value = result.chains
+        } catch {
+            // Keep the original continuation error.
+        }
         message.error(err?.message || t('common.saveFailed'))
     } finally {
         isContinuingHandoff.value = false
@@ -2857,7 +2863,12 @@ async function handleClarify(response?: string) {
                             </div>
                             <NButton type="primary" @click="handleSaveHandoffConfig">{{ t('common.save') }}</NButton>
                             <div v-for="chain in stoppedHandoffChains" :key="chain.chainId" class="form-hint">
-                                {{ t('groupChat.agentHandoffStopped') }}
+                                <div>{{ t('groupChat.agentHandoffStopped') }}</div>
+                                <div>{{ t('groupChat.agentHandoffDepthState', { current: chain.currentDepth, max: chain.unlimited ? '∞' : chain.maxDepth }) }}</div>
+                                <div>{{ t('groupChat.agentHandoffTarget', { target: chain.targetAgentId || '—' }) }}</div>
+                                <div>{{ t('groupChat.agentHandoffReason', { reason: chain.stopReason || '—' }) }}</div>
+                                <div>{{ t('groupChat.agentHandoffContinueState', { state: chain.continueUsed ? 'used' : 'available', updated: formatSummaryTime(chain.updatedAt) }) }}</div>
+                                <div v-if="chain.lastError" class="summary-error">{{ chain.lastError }}</div>
                                 <NButton text type="primary" :loading="isContinuingHandoff" @click="handleContinueHandoff(chain.chainId)">
                                     {{ t('groupChat.agentHandoffContinue') }}
                                 </NButton>
