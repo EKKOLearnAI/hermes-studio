@@ -364,6 +364,78 @@ describe('ekko-agent context usage events', () => {
       .toBeLessThan(events.findIndex(item => item.event === 'run.completed'))
   }, 15_000)
 
+  it('treats an Ekko boundary interrupt as completion instead of an empty provider response', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-boundary-interrupt', maxSteps: 3 })
+      return {
+        runId: 'run-boundary-interrupt',
+        output: {
+          role: 'assistant',
+          content: '',
+          finishReason: 'boundary_interrupt',
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'stop at the next safe boundary',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'run.completed',
+      payload: expect.objectContaining({
+        run_id: 'run-boundary-interrupt',
+        output: '',
+      }),
+    })
+    expect(events.some(item => item.event === 'run.failed')).toBe(false)
+  }, 15_000)
+
+  it('still reports a genuine Ekko empty model response as a run failure', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-empty-response', maxSteps: 3 })
+      return {
+        runId: 'run-empty-response',
+        output: {
+          role: 'assistant',
+          content: '',
+          finishReason: 'stop',
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'return a response',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        run_id: 'run-empty-response',
+        error: 'Model provider returned an empty response after streaming and non-streaming attempts.',
+      }),
+    })
+    expect(events.some(item => item.event === 'run.completed')).toBe(false)
+  }, 15_000)
+
   it('completes an Ekko workspace diff on run failure without inventing an assistant id', async () => {
     const change = {
       change_id: 'change-failed',

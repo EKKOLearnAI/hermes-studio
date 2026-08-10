@@ -1675,6 +1675,18 @@ describe('GlobalAgentServer', () => {
       payload: { session_id: 's1', delta: 'hi' },
     })
     expect(frontendSocket.emit).toHaveBeenCalledWith('message.delta', { session_id: 's1', delta: 'hi' })
+
+    agentSocket.__handlers.get('socket.event')?.({
+      id: bridgeId,
+      namespace: '/chat-run',
+      event: 'run.queue_insertion.updated',
+      payload: {
+        session_id: 's1', queue_id: 'q1', phase: 'waiting_for_tool_batch', guarantee: 'strict',
+      },
+    })
+    expect(frontendSocket.emit).toHaveBeenCalledWith('run.queue_insertion.updated', {
+      session_id: 's1', queue_id: 'q1', phase: 'waiting_for_tool_batch', guarantee: 'strict',
+    })
   })
 
   it('broadcasts MCU session clears as chat session commands for frontend clients', async () => {

@@ -83,6 +83,27 @@ export interface AgentRuntimeRunInput {
   onEvent?: (event: AgentRuntimeEvent) => void
 }
 
+/**
+ * Requests that the matching foreground run stop without cancelling an
+ * in-flight tool batch. The session identifier is the runtime context key used
+ * by the run; callers should include expectedRunId once they have observed the
+ * run.started event so a stale request cannot affect a newer run.
+ */
+export interface AgentRuntimeBoundaryInterruptRequest {
+  sessionId: string
+  expectedRunId?: string
+}
+
+export type AgentRuntimeBoundaryPhase = 'model' | 'tool_batch'
+
+export type AgentRuntimeBoundaryInterruptResult =
+  | {
+      status: 'accepted' | 'already_pending'
+      runId: string
+      phase: AgentRuntimeBoundaryPhase
+    }
+  | { status: 'not_running' | 'run_mismatch' | 'ambiguous' }
+
 export type AgentRuntimeStep =
   | { type: 'model'; step: number; message: AgentOutputMessage }
   | { type: 'tool'; step: number; toolCallId: string; toolName: string; result: AgentToolResult }

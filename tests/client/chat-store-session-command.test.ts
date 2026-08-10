@@ -6,7 +6,8 @@ const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(),
   registerSessionHandlers: vi.fn(),
   unregisterSessionHandlers: vi.fn(),
-  getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
+  socketEmit: vi.fn(),
+  getChatRunSocket: vi.fn(() => ({ emit: chatApi.socketEmit })),
   resumeSession: vi.fn((sessionId: string, onResumed: (data: any) => void) => {
     onResumed({ session_id: sessionId, messages: [], isWorking: false, events: [], queueLength: 0 })
     return {} as any
@@ -120,6 +121,73 @@ describe('chat store session.command fanout', () => {
         commandAction: 'resume',
       }),
     ])
+  })
+
+  it('requests safe insertion for a queued message and mirrors server state across windows', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'cli'
+    session.agent = 'hermes'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    chatApi.sessionCommandHandlers[0]({
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'goal',
+      action: 'resume',
+      started: true,
+      terminal: false,
+    })
+    const handlers = chatApi.registerSessionHandlers.mock.calls.at(-1)?.[1]
+    handlers.onRunQueued({
+      event: 'run.queued',
+      session_id: 'session-1',
+      queue_length: 1,
+      queued_messages: [
+        { id: 'queue-follow-up', role: 'user', content: 'follow up', timestamp: 2, queued: true },
+      ],
+    })
+
+    store.insertQueuedMessage('session-1', 'queue-follow-up')
+    expect(chatApi.socketEmit).toHaveBeenCalledWith('insert_queued_run', {
+      session_id: 'session-1',
+      queue_id: 'queue-follow-up',
+    })
+
+    handlers.onQueueInsertionUpdated({
+      event: 'run.queue_insertion.updated',
+      session_id: 'session-1',
+      generation: 'generation-1',
+      run_id: 'run-1',
+      queue_id: 'queue-follow-up',
+      runtime: 'hermes',
+      phase: 'waiting_for_tool_batch',
+      guarantee: 'strict',
+      requested_at: 123,
+    })
+    expect(store.queueInsertionStates.get('session-1')).toEqual({
+      generation: 'generation-1',
+      runId: 'run-1',
+      queueId: 'queue-follow-up',
+      runtime: 'hermes',
+      phase: 'waiting_for_tool_batch',
+      guarantee: 'strict',
+      requestedAt: 123,
+    })
+
+    handlers.onQueueInsertionUpdated({
+      event: 'run.queue_insertion.updated',
+      session_id: 'session-1',
+      generation: 'generation-1',
+      queue_id: 'queue-follow-up',
+      runtime: 'hermes',
+      phase: 'starting_queued_message',
+      guarantee: 'strict',
+      requested_at: 123,
+    })
+    expect(store.queueInsertionStates.get('session-1')).toBeUndefined()
   })
 
   it('does not clear the transcript for goal done commands', () => {

@@ -61,6 +61,7 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'resume',
   'abort',
   'cancel_queued_run',
+  'insert_queued_run',
   'approval.respond',
   'clarify.respond',
 ])
@@ -88,6 +89,7 @@ const CHAT_RUN_SERVER_EVENTS = [
   'session.command',
   'session.title.updated',
   'run.queued',
+  'run.queue_insertion.updated',
   'approval.requested',
   'approval.resolved',
   'clarify.requested',
@@ -1095,6 +1097,9 @@ export class GlobalAgentServer {
     })
     socket.on('cancel_queued_run', (payload: unknown) => {
       void this.emitFrontendChatEvent(socket, 'cancel_queued_run', payload)
+    })
+    socket.on('insert_queued_run', (payload: unknown) => {
+      void this.emitFrontendChatEvent(socket, 'insert_queued_run', payload)
     })
     socket.on('approval.respond', (payload: unknown) => {
       void this.emitFrontendChatEvent(socket, 'approval.respond', payload)

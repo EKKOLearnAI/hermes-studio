@@ -10,7 +10,7 @@ export interface GlobalAgentSocketOpenRequest {
 
 export interface GlobalAgentSocketCommand {
   id: string
-  event: 'run' | 'resume' | 'abort' | 'cancel_queued_run' | 'approval.respond' | 'clarify.respond'
+  event: 'run' | 'resume' | 'abort' | 'cancel_queued_run' | 'insert_queued_run' | 'approval.respond' | 'clarify.respond'
   stream?: boolean
   payload?: unknown
 }

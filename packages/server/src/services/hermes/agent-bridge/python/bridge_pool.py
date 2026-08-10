@@ -167,6 +167,11 @@ class AgentSession:
     background_events: list[dict[str, Any]] = field(default_factory=list)
     background_event_seq: int = 0
     background_tasks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    boundary_phase: str = "idle"
+    boundary_pending_run_id: str | None = None
+    boundary_reached_run_id: str | None = None
+    boundary_supported: bool = False
+    boundary_error: str | None = None
 
 
 class AgentPool:
@@ -228,6 +233,154 @@ class AgentPool:
             "started_at": kwargs.get("started_at"),
             "ended_at": kwargs.get("ended_at"),
         })
+
+    @staticmethod
+    def _boundary_interrupt_setter() -> Callable[[bool, int | None], None]:
+        from run_agent import _set_interrupt
+
+        if not callable(_set_interrupt):
+            raise RuntimeError("Hermes runtime does not expose _set_interrupt")
+        return _set_interrupt
+
+    @staticmethod
+    def _set_boundary_interrupt_flag(agent: Any) -> None:
+        redirect_lock = getattr(agent, "_pending_redirect_lock", None)
+        if redirect_lock is not None:
+            with redirect_lock:
+                agent._interrupt_requested = True
+                agent._interrupt_message = None
+                agent._pending_redirect = None
+            return
+        agent._interrupt_requested = True
+        agent._interrupt_message = None
+        agent._pending_redirect = None
+
+    def _signal_boundary_model_interrupt(self, agent: Any) -> None:
+        """Interrupt only the foreground model request, never tools or children."""
+        self._set_boundary_interrupt_flag(agent)
+        if getattr(agent, "api_mode", None) == "codex_app_server":
+            codex_session = getattr(agent, "_codex_session", None)
+            request_interrupt = getattr(codex_session, "request_interrupt", None)
+            if not callable(request_interrupt):
+                raise RuntimeError("Codex app-server runtime does not expose request_interrupt")
+            request_interrupt()
+        execution_thread_id = getattr(agent, "_execution_thread_id", None)
+        if execution_thread_id is not None:
+            self._boundary_interrupt_setter()(True, execution_thread_id)
+            agent._interrupt_thread_signal_pending = False
+        else:
+            agent._interrupt_thread_signal_pending = True
+        abort_active_request = getattr(agent, "_active_request_abort", None)
+        if callable(abort_active_request):
+            try:
+                abort_active_request("boundary_interrupt_abort")
+            except Exception:
+                pass
+
+    def _clear_boundary_tool_interrupt_signal(self, agent: Any) -> None:
+        """Keep a model-phase race from leaking its thread signal into tools."""
+        execution_thread_id = getattr(agent, "_execution_thread_id", None)
+        if execution_thread_id is not None:
+            self._boundary_interrupt_setter()(False, execution_thread_id)
+        agent._interrupt_thread_signal_pending = False
+
+    def _install_boundary_interrupt(self, session: AgentSession) -> bool:
+        """Wrap one AIAgent instance at the runtime-owned whole-batch boundary."""
+        agent = session.agent
+        original = getattr(agent, "_execute_tool_calls", None)
+        wrapper_installed = bool(
+            callable(original)
+            and getattr(original, "_hermes_bridge_boundary_wrapper", False)
+        )
+
+        try:
+            if not callable(original):
+                raise RuntimeError("Hermes runtime does not expose _execute_tool_calls")
+            if not wrapper_installed:
+                parameters = list(inspect.signature(original).parameters.values())
+                names = [parameter.name for parameter in parameters]
+                if names[:3] != ["assistant_message", "messages", "effective_task_id"]:
+                    raise RuntimeError(
+                        "unsupported _execute_tool_calls signature: " + ",".join(names)
+                    )
+            if not hasattr(agent, "_interrupt_requested"):
+                raise RuntimeError("Hermes runtime does not expose _interrupt_requested")
+            model_active = getattr(agent, "_model_request_active", None)
+            if model_active is None or not callable(getattr(model_active, "is_set", None)):
+                raise RuntimeError("Hermes runtime does not expose _model_request_active")
+            if getattr(agent, "api_mode", None) == "codex_app_server":
+                codex_session = getattr(agent, "_codex_session", None)
+                if not callable(getattr(codex_session, "request_interrupt", None)):
+                    raise RuntimeError(
+                        "Codex app-server runtime does not expose request_interrupt"
+                    )
+            self._boundary_interrupt_setter()
+        except Exception as exc:
+            session.boundary_supported = False
+            session.boundary_error = str(exc)
+            return False
+
+        if wrapper_installed:
+            session.boundary_supported = True
+            session.boundary_error = None
+            return True
+
+        def execute_tool_calls_at_boundary(*args: Any, **kwargs: Any) -> Any:
+            run_id: str | None = None
+            with session.lock:
+                if session.running and session.current_run_id:
+                    run_id = session.current_run_id
+                    session.boundary_phase = "tool_batch"
+                    if session.boundary_pending_run_id == run_id:
+                        # A model-phase request may win just before Hermes
+                        # dispatches its returned tool calls. Clear only the
+                        # execution-thread bit so the already-issued batch can
+                        # still finish; keep _interrupt_requested latched for
+                        # the outer loop check after this wrapper returns.
+                        self._clear_boundary_tool_interrupt_signal(agent)
+            try:
+                return original(*args, **kwargs)
+            finally:
+                with session.lock:
+                    if run_id and session.current_run_id == run_id:
+                        session.boundary_phase = "model"
+                        if session.boundary_pending_run_id == run_id:
+                            self._set_boundary_interrupt_flag(agent)
+                            session.boundary_reached_run_id = run_id
+
+        execute_tool_calls_at_boundary._hermes_bridge_boundary_wrapper = True  # type: ignore[attr-defined]
+        agent._execute_tool_calls = execute_tool_calls_at_boundary
+        session.boundary_supported = True
+        session.boundary_error = None
+        return True
+
+    @staticmethod
+    def _boundary_result_for_run(session: AgentSession, run_id: str) -> bool:
+        return (
+            session.boundary_pending_run_id == run_id
+            or session.boundary_reached_run_id == run_id
+        )
+
+    @staticmethod
+    def _reset_boundary_run(session: AgentSession, run_id: str) -> None:
+        if session.current_run_id != run_id:
+            return
+        session.boundary_phase = "idle"
+        session.boundary_pending_run_id = None
+
+    @staticmethod
+    def _cancel_boundary_run(session: AgentSession) -> None:
+        session.boundary_pending_run_id = None
+        session.boundary_reached_run_id = None
+
+    @staticmethod
+    def _clear_completed_boundary_interrupt(agent: Any) -> None:
+        clear_interrupt = getattr(agent, "clear_interrupt", None)
+        if callable(clear_interrupt):
+            try:
+                clear_interrupt()
+            except Exception:
+                pass
 
     def get_or_create(
         self,
@@ -360,6 +513,10 @@ class AgentPool:
                         "background_delegation_enabled": background_delegation_enabled is not False,
                     },
                 )
+                self._install_boundary_interrupt(session)
+                session.config["boundary_interrupt_supported"] = session.boundary_supported
+                if session.boundary_error:
+                    session.config["boundary_interrupt_error"] = session.boundary_error
                 self._sessions[session_id] = session
                 return session
 
@@ -1469,6 +1626,12 @@ class AgentPool:
         # has completed. Rechecking on every run also recovers from a forced
         # plugin reload that clears the manager's callback registry.
         self._install_usage_hook()
+        self._install_boundary_interrupt(session)
+        session.config["boundary_interrupt_supported"] = session.boundary_supported
+        if session.boundary_error:
+            session.config["boundary_interrupt_error"] = session.boundary_error
+        else:
+            session.config.pop("boundary_interrupt_error", None)
         with session.lock:
             if session.running:
                 raise RuntimeError(f"session {session_id} is already running")
@@ -1478,6 +1641,9 @@ class AgentPool:
                 self._runs[run_id] = record
             session.running = True
             session.current_run_id = run_id
+            session.boundary_phase = "model"
+            session.boundary_pending_run_id = None
+            session.boundary_reached_run_id = None
             session.last_used_at = time.time()
             session_cwd_bound = _bind_session_workspace_cwd(session.session_id, workspace)
             try:
@@ -1604,6 +1770,13 @@ class AgentPool:
                     if _did_override_reasoning:
                         session.agent.reasoning_config = _saved_reasoning_config
                 result = _jsonable(result if isinstance(result, dict) else {"value": result})
+                with session.lock:
+                    boundary_interrupted = self._boundary_result_for_run(session, record.run_id)
+                    if boundary_interrupted:
+                        result["interrupted"] = True
+                        result["boundary_interrupt"] = True
+                        result["finish_reason"] = "boundary_interrupt"
+                        session.boundary_reached_run_id = record.run_id
                 result_for_tail_sync = result
                 self._sync_result_tail_to_session_db(
                     session,
@@ -1660,11 +1833,21 @@ class AgentPool:
                     record.status = "interrupted" if result.get("interrupted") else "complete"
                     record.result = result
                     record.ended_at = time.time()
+                    if boundary_interrupted:
+                        record.events.append({
+                            "event": "run.boundary_interrupt",
+                            "run_id": record.run_id,
+                            "finish_reason": "boundary_interrupt",
+                        })
+                        self._clear_completed_boundary_interrupt(session.agent)
+                    self._reset_boundary_run(session, record.run_id)
                     session.running = False
                     session.current_run_id = None
                     session.last_used_at = time.time()
                 self._apply_pending_session_model_switch(session)
             except Exception as exc:
+                with session.lock:
+                    boundary_interrupted = self._boundary_result_for_run(session, record.run_id)
                 if not tail_synced:
                     try:
                         fallback_result = result_for_tail_sync or self._result_from_agent_messages_for_sync(session)
@@ -1679,10 +1862,26 @@ class AgentPool:
                     except Exception:
                         pass
                 with session.lock:
-                    record.status = "error"
-                    record.error = str(exc)
-                    record.result = {"error": str(exc), "traceback": traceback.format_exc()}
+                    if boundary_interrupted:
+                        record.status = "interrupted"
+                        record.error = None
+                        record.result = {
+                            "interrupted": True,
+                            "boundary_interrupt": True,
+                            "finish_reason": "boundary_interrupt",
+                        }
+                        record.events.append({
+                            "event": "run.boundary_interrupt",
+                            "run_id": record.run_id,
+                            "finish_reason": "boundary_interrupt",
+                        })
+                        self._clear_completed_boundary_interrupt(session.agent)
+                    else:
+                        record.status = "error"
+                        record.error = str(exc)
+                        record.result = {"error": str(exc), "traceback": traceback.format_exc()}
                     record.ended_at = time.time()
+                    self._reset_boundary_run(session, record.run_id)
                     session.running = False
                     session.current_run_id = None
                     session.last_used_at = time.time()
@@ -1809,6 +2008,8 @@ class AgentPool:
             session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"unknown session: {session_id}")
+        with session.lock:
+            self._cancel_boundary_run(session)
         background_delegation_ids = self._background_delegation_ids_for_session(session_id)
         with self._lock:
             self._suppressed_background_delegations.update(background_delegation_ids)
@@ -1835,6 +2036,90 @@ class AgentPool:
             "background_interrupted": background_interrupted,
             "background_delegation_ids": background_delegation_ids,
         }
+
+    def request_boundary_interrupt(
+        self,
+        session_id: str,
+        expected_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            return {
+                "status": "not_running",
+                "session_id": session_id,
+                "guarantee": "strict",
+            }
+
+        with session.lock:
+            if not session.boundary_supported:
+                return {
+                    "status": "unsupported",
+                    "session_id": session_id,
+                    "guarantee": "none",
+                    "reason": session.boundary_error or "boundary interrupt is unavailable",
+                }
+            run_id = session.current_run_id
+            if not session.running or not run_id:
+                return {
+                    "status": "not_running",
+                    "session_id": session_id,
+                    "guarantee": "strict",
+                }
+            cleaned_expected_run_id = str(expected_run_id or "").strip()
+            if cleaned_expected_run_id and cleaned_expected_run_id != run_id:
+                return {
+                    "status": "run_mismatch",
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "guarantee": "strict",
+                }
+            phase = session.boundary_phase
+            if phase not in {"model", "tool_batch"}:
+                return {
+                    "status": "unsupported",
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "guarantee": "none",
+                    "reason": f"unsupported boundary phase: {phase}",
+                }
+            if (
+                session.boundary_pending_run_id == run_id
+                or session.boundary_reached_run_id == run_id
+            ):
+                return {
+                    "status": "already_pending",
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "phase": phase,
+                    "guarantee": "strict",
+                }
+
+            session.boundary_pending_run_id = run_id
+            if phase == "model":
+                try:
+                    self._signal_boundary_model_interrupt(session.agent)
+                except Exception as exc:
+                    session.boundary_pending_run_id = None
+                    self._clear_completed_boundary_interrupt(session.agent)
+                    session.boundary_supported = False
+                    session.boundary_error = str(exc)
+                    session.config["boundary_interrupt_supported"] = False
+                    session.config["boundary_interrupt_error"] = str(exc)
+                    return {
+                        "status": "unsupported",
+                        "session_id": session_id,
+                        "run_id": run_id,
+                        "guarantee": "none",
+                        "reason": str(exc),
+                    }
+            return {
+                "status": "accepted",
+                "session_id": session_id,
+                "run_id": run_id,
+                "phase": phase,
+                "guarantee": "strict",
+            }
 
     def steer(self, session_id: str, text: str) -> dict[str, Any]:
         with self._lock:
@@ -2337,6 +2622,8 @@ class AgentPool:
             }
         if session.running and hasattr(session.agent, "interrupt"):
             try:
+                with session.lock:
+                    self._cancel_boundary_run(session)
                 session.agent.interrupt("Session destroyed")
             except Exception:
                 pass
@@ -2367,6 +2654,8 @@ class AgentPool:
             if not session.running or not hasattr(session.agent, "interrupt"):
                 continue
             try:
+                with session.lock:
+                    self._cancel_boundary_run(session)
                 session.agent.interrupt("Agent bridge shutting down")
                 interrupted_sessions += 1
             except Exception:
@@ -2438,6 +2727,13 @@ class AgentPool:
                 "exists": True,
                 "running": session.running,
                 "current_run_id": session.current_run_id,
+                "boundary_interrupt": {
+                    "supported": session.boundary_supported,
+                    "phase": session.boundary_phase,
+                    "pending_run_id": session.boundary_pending_run_id,
+                    "reached_run_id": session.boundary_reached_run_id,
+                    "error": session.boundary_error,
+                },
                 "created_at": session.created_at,
                 "last_used_at": session.last_used_at,
                 "message_count": len(session.history),
@@ -2453,6 +2749,13 @@ class AgentPool:
                     "session_id": s.session_id,
                     "running": s.running,
                     "current_run_id": s.current_run_id,
+                    "boundary_interrupt": {
+                        "supported": s.boundary_supported,
+                        "phase": s.boundary_phase,
+                        "pending_run_id": s.boundary_pending_run_id,
+                        "reached_run_id": s.boundary_reached_run_id,
+                        "error": s.boundary_error,
+                    },
                     "created_at": s.created_at,
                     "last_used_at": s.last_used_at,
                     "message_count": len(s.history),

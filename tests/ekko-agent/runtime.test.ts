@@ -20,7 +20,7 @@ import type {
   ModelResponse,
 } from '../../packages/ekko-agent/src/index'
 
-function modelClient(responder: (request: ModelRequest, call: number) => ModelResponse): ModelClient {
+function modelClient(responder: (request: ModelRequest, call: number) => ModelResponse | Promise<ModelResponse>): ModelClient {
   let call = 0
   return {
     provider: 'test',
@@ -741,6 +741,172 @@ describe('ekko-agent runtime', () => {
 
     await expect(runtime.run({ messages: ['hi'], signal: controller.signal })).rejects.toThrow('Run aborted.')
     expect(client.create).not.toHaveBeenCalled()
+  })
+
+  it('interrupts a matching model request as a graceful boundary completion', async () => {
+    let signalModelStarted!: (signal: AbortSignal | undefined) => void
+    const modelStarted = new Promise<AbortSignal | undefined>((resolve) => {
+      signalModelStarted = resolve
+    })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: {
+        streaming: false,
+        tools: true,
+        vision: false,
+        jsonMode: false,
+        systemPrompt: true,
+      },
+      create: vi.fn(request => new Promise<ModelResponse>((_resolve, reject) => {
+        signalModelStarted(request.signal)
+        const rejectAborted = () => {
+          const error = new Error('Run aborted.')
+          error.name = 'AbortError'
+          reject(error)
+        }
+        request.signal?.addEventListener('abort', rejectAborted, { once: true })
+        if (request.signal?.aborted) rejectAborted()
+      })),
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const eventTypes: string[] = []
+    let runId = ''
+    const run = runtime.run({
+      messages: ['hi'],
+      metadata: { session_id: 'session-1' },
+      onEvent: event => {
+        eventTypes.push(event.type)
+        if (event.type === 'run.started') runId = event.runId
+      },
+    })
+
+    const modelSignal = await modelStarted
+    expect(modelSignal).toBeInstanceOf(AbortSignal)
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'accepted', runId, phase: 'model' })
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'already_pending', runId, phase: 'model' })
+    expect(modelSignal?.aborted).toBe(true)
+
+    const result = await run
+
+    expect(result.output).toMatchObject({ content: '', finishReason: 'boundary_interrupt' })
+    expect(result.steps).toEqual([])
+    expect(eventTypes).toContain('run.completed')
+    expect(eventTypes).not.toContain('run.failed')
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'not_running' })
+  })
+
+  it('finishes the whole tool batch before honoring repeated boundary interrupts', async () => {
+    let releaseFirstTool!: () => void
+    let signalFirstToolStarted!: () => void
+    const firstToolStarted = new Promise<void>((resolve) => {
+      signalFirstToolStarted = resolve
+    })
+    const firstToolRelease = new Promise<void>((resolve) => {
+      releaseFirstTool = resolve
+    })
+    const toolOrder: string[] = []
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'first', description: 'first tool', parameters: { type: 'object' } },
+      async execute() {
+        toolOrder.push('first:start')
+        signalFirstToolStarted()
+        await firstToolRelease
+        toolOrder.push('first:end')
+        return { ok: true, content: 'first result' }
+      },
+    })
+    tools.register({
+      definition: { name: 'second', description: 'second tool', parameters: { type: 'object' } },
+      async execute() {
+        toolOrder.push('second')
+        return { ok: true, content: 'second result' }
+      },
+    })
+    const client = modelClient((_request, call) => call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'call-1', name: 'first', arguments: {} },
+            { id: 'call-2', name: 'second', arguments: {} },
+          ],
+          finishReason: 'tool_calls',
+        }
+      : { content: 'must not request another model step' })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+    let runId = ''
+    const run = runtime.run({
+      messages: ['use tools'],
+      metadata: { session_id: 'session-2' },
+      onEvent: event => {
+        if (event.type === 'run.started') runId = event.runId
+      },
+    })
+
+    await firstToolStarted
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-2',
+      expectedRunId: runId,
+    })).toEqual({ status: 'accepted', runId, phase: 'tool_batch' })
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-2',
+      expectedRunId: runId,
+    })).toEqual({ status: 'already_pending', runId, phase: 'tool_batch' })
+    releaseFirstTool()
+
+    const result = await run
+
+    expect(toolOrder).toEqual(['first:start', 'first:end', 'second'])
+    expect(client.create).toHaveBeenCalledTimes(1)
+    expect(result.output.finishReason).toBe('boundary_interrupt')
+    expect(result.steps.map(step => step.type)).toEqual(['model', 'tool', 'tool'])
+    expect(result.messages.filter(message => message.role === 'tool')).toMatchObject([
+      { toolCallId: 'call-1', content: 'first result' },
+      { toolCallId: 'call-2', content: 'second result' },
+    ])
+  })
+
+  it('does not interrupt a newer or mismatched run', async () => {
+    let releaseModel!: () => void
+    let signalModelStarted!: () => void
+    const modelStarted = new Promise<void>((resolve) => {
+      signalModelStarted = resolve
+    })
+    const modelRelease = new Promise<void>((resolve) => {
+      releaseModel = resolve
+    })
+    const client = modelClient(async () => {
+      signalModelStarted()
+      await modelRelease
+      return { content: 'done' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const run = runtime.run({
+      messages: ['hi'],
+      metadata: { session_id: 'session-3' },
+    })
+
+    await modelStarted
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-3',
+      expectedRunId: 'stale-run-id',
+    })).toEqual({ status: 'run_mismatch' })
+    releaseModel()
+
+    await expect(run).resolves.toMatchObject({
+      output: { content: 'done' },
+    })
   })
 
   it('defaults maxSteps to 90', async () => {

@@ -77,6 +77,23 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
+export type QueueInsertionRuntime = 'hermes' | 'ekko'
+export type QueueInsertionPhase =
+  | 'requesting'
+  | 'waiting_for_tool_batch'
+  | 'stopping_current_turn'
+  | 'starting_queued_message'
+
+export interface QueueInsertionControl {
+  generation: string
+  queueId: string
+  runId?: string
+  runtime: QueueInsertionRuntime
+  phase: QueueInsertionPhase
+  guarantee: 'strict'
+  requestedAt: number
+}
+
 export interface SessionState {
   messages: SessionMessage[]
   messageTotal?: number
@@ -95,6 +112,7 @@ export interface SessionState {
   bridgeContext?: BridgeContextState
   isAborting?: boolean
   queue: QueuedRun[]
+  queueInsertion?: QueueInsertionControl
   responseRun?: ResponseRunState
   source?: ChatRunSource
   webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex'

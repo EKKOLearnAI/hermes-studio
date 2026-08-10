@@ -1373,7 +1373,8 @@ export async function handleEkkoAgentRun(
     }
     assistantReasoning = agentReasoningText(result.output.reasoning) || assistantReasoning
     const hadToolActivity = result.steps.some(step => step.type === 'tool')
-    if (!assistantText.trim() && !assistantReasoning.trim() && !hadToolActivity) {
+    const boundaryInterrupted = result.output.finishReason === 'boundary_interrupt'
+    if (!boundaryInterrupted && !assistantText.trim() && !assistantReasoning.trim() && !hadToolActivity) {
       const error = 'Model provider returned an empty response after streaming and non-streaming attempts.'
       logger.warn({
         session_id: sessionId,

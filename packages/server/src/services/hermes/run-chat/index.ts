@@ -8,6 +8,7 @@
  */
 
 import type { Server, Socket } from 'socket.io'
+import { randomUUID } from 'crypto'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
@@ -28,7 +29,15 @@ import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
-import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
+import type {
+  ChatCodingAgentId,
+  ContentBlock,
+  QueueInsertionControl,
+  QueueInsertionPhase,
+  QueueInsertionRuntime,
+  QueuedRun,
+  SessionState,
+} from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
@@ -36,6 +45,7 @@ import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../chat-we
 import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { respondToEkkoClarification } from '../../ekko-agent/clarifications'
+import { getGlobalEkkoAgent } from '../../ekko-agent/manager'
 
 export type { ContentBlock } from './types'
 
@@ -475,6 +485,16 @@ export class ChatRunSocket {
       }
     })
 
+    socket.on('insert_queued_run', (data: { session_id?: string; queue_id?: string }) => {
+      if (!data.session_id || !data.queue_id) return
+      try {
+        requireSocketSessionAccess(data.session_id)
+      } catch {
+        return
+      }
+      void this.requestQueuedRunInsertion(data.session_id, data.queue_id)
+    })
+
     socket.on('cancel_queued_run', (data: { session_id?: string; queue_id?: string }) => {
       if (!data.session_id || !data.queue_id) return
       try {
@@ -487,6 +507,15 @@ export class ChatRunSocket {
       const before = state.queue.length
       state.queue = state.queue.filter(item => item.queue_id !== data.queue_id)
       if (state.queue.length === before) return
+      if (state.queueInsertion?.queueId === data.queue_id) {
+        const nextVisible = state.queue.find(item => this.isQueueInsertionCandidate(item))
+        if (nextVisible) {
+          state.queueInsertion.queueId = nextVisible.queue_id
+          this.emitQueueInsertionUpdate(data.session_id, state.queueInsertion)
+        } else {
+          this.clearQueueInsertion(data.session_id, state, 'queued_message_removed')
+        }
+      }
       this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
         event: 'run.queued',
         session_id: data.session_id,
@@ -756,6 +785,7 @@ export class ChatRunSocket {
         : getSystemPrompt(undefined, { source })
 
       const onEvent = (event: string, payload: any) => {
+        if (data.session_id) this.observeQueueInsertionRunEvent(data.session_id, event, payload)
         observeChatRunWebhookEvent({
           event,
           sessionId: String(data.session_id || payload?.session_id || ''),
@@ -782,6 +812,7 @@ export class ChatRunSocket {
 
     if (isEkkoAgentExecution(data)) {
       const onEvent = (event: string, payload: any) => {
+        if (data.session_id) this.observeQueueInsertionRunEvent(data.session_id, event, payload)
         observeChatRunWebhookEvent({
           event,
           sessionId: String(data.session_id || payload?.session_id || ''),
@@ -1107,6 +1138,15 @@ export class ChatRunSocket {
       contextTokens: state.contextTokens,
       queueLength: state.queue?.length || 0,
       queueMessages: this.serializeQueuedMessages(state.queue || []),
+      queueInsertion: state.queueInsertion ? {
+        generation: state.queueInsertion.generation,
+        run_id: state.queueInsertion.runId,
+        queue_id: state.queueInsertion.queueId,
+        runtime: state.queueInsertion.runtime,
+        phase: state.queueInsertion.phase,
+        guarantee: state.queueInsertion.guarantee,
+        requested_at: state.queueInsertion.requestedAt,
+      } : null,
       backgroundTasks: Object.values(state.backgroundTasks || {}),
       backgroundPending: this.backgroundPendingCount(state),
     })
@@ -1156,14 +1196,17 @@ export class ChatRunSocket {
           provider: session?.provider,
           workspace: session?.workspace,
           source,
-          onEvent: (event, payload) => observeChatRunWebhookEvent({
-            event,
-            sessionId: sid,
-            profile,
-            source: String(source || 'cli'),
-            agent: 'bridge',
-            payload,
-          }),
+          onEvent: (event, payload) => {
+            this.observeQueueInsertionRunEvent(sid, event, payload)
+            observeChatRunWebhookEvent({
+              event,
+              sessionId: sid,
+              profile,
+              source: String(source || 'cli'),
+              agent: 'bridge',
+              payload,
+            })
+          },
         },
         this.sessionMap,
         this.bridge,
@@ -1203,6 +1246,167 @@ export class ChatRunSocket {
     return getSystemPrompt(undefined, { source: sessionRow?.source })
   }
 
+  // --- Queue insertion ---
+
+  private isQueueInsertionCandidate(item: QueuedRun): boolean {
+    return item.displayInput !== null
+      && item.goalContinuation !== true
+      && !item.backgroundDelegationId
+      && item.autonomous !== true
+  }
+
+  private queueInsertionRuntime(sessionId: string, state: SessionState): QueueInsertionRuntime | null {
+    const storedAgent = String(getSession(sessionId)?.agent || '').trim()
+    const activeAgent = state.webhookAgent
+      || (storedAgent === 'ekko-agent' ? 'ekko' : storedAgent === 'claude' ? 'claude-code' : storedAgent === 'codex' ? 'codex' : 'bridge')
+    if (activeAgent === 'ekko') return 'ekko'
+    if (activeAgent !== 'bridge') return null
+    if (state.source === 'coding_agent') return null
+    return state.source === 'cli' || state.source === 'global_agent' ? 'hermes' : null
+  }
+
+  private emitQueueInsertionUpdate(
+    sessionId: string,
+    control: QueueInsertionControl,
+    phase: QueueInsertionPhase | 'cancelled' = control.phase,
+    reason?: string,
+  ) {
+    this.nsp.to(`session:${sessionId}`).emit('run.queue_insertion.updated', {
+      event: 'run.queue_insertion.updated',
+      session_id: sessionId,
+      generation: control.generation,
+      run_id: control.runId,
+      queue_id: control.queueId,
+      runtime: control.runtime,
+      phase,
+      guarantee: control.guarantee,
+      requested_at: control.requestedAt,
+      ...(reason ? { reason } : {}),
+    })
+  }
+
+  private clearQueueInsertion(sessionId: string, state: SessionState, reason: string) {
+    const control = state.queueInsertion
+    if (!control) return
+    state.queueInsertion = undefined
+    this.emitQueueInsertionUpdate(sessionId, control, 'cancelled', reason)
+  }
+
+  private emitQueuedRunSnapshot(sessionId: string, state: SessionState) {
+    this.nsp.to(`session:${sessionId}`).emit('run.queued', {
+      event: 'run.queued',
+      session_id: sessionId,
+      queue_length: state.queue.length,
+      queued_messages: this.serializeQueuedMessages(state.queue),
+    })
+  }
+
+  private async requestQueuedRunInsertion(sessionId: string, queueId: string) {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.isWorking) return
+    const selectedIndex = state.queue.findIndex(item => item.queue_id === queueId && this.isQueueInsertionCandidate(item))
+    if (selectedIndex < 0) return
+
+    if (state.queueInsertion) {
+      this.emitQueueInsertionUpdate(sessionId, state.queueInsertion)
+      return
+    }
+
+    const runtime = this.queueInsertionRuntime(sessionId, state)
+    if (!runtime) return
+
+    if (selectedIndex > 0) {
+      const [selected] = state.queue.splice(selectedIndex, 1)
+      state.queue.unshift(selected)
+      this.emitQueuedRunSnapshot(sessionId, state)
+    }
+
+    const control: QueueInsertionControl = {
+      generation: randomUUID(),
+      queueId,
+      runId: state.runId,
+      runtime,
+      phase: 'requesting',
+      guarantee: 'strict',
+      requestedAt: Date.now(),
+    }
+    state.queueInsertion = control
+    this.emitQueueInsertionUpdate(sessionId, control)
+    logger.info({ sessionId, queueId, runtime, runId: control.runId }, '[chat-run-socket] queue insertion requested')
+
+    if (control.runId) {
+      await this.activateQueueInsertion(sessionId, control.generation)
+    }
+  }
+
+  private async activateQueueInsertion(sessionId: string, generation: string) {
+    const state = this.sessionMap.get(sessionId)
+    const control = state?.queueInsertion
+    if (!state || !control || control.generation !== generation || control.phase !== 'requesting' || !control.runId) return
+
+    try {
+      const result = control.runtime === 'ekko'
+        ? getGlobalEkkoAgent(state.profile || 'default').requestBoundaryInterrupt({
+            sessionId,
+            expectedRunId: control.runId,
+          })
+        : await this.bridge.requestBoundaryInterrupt(sessionId, control.runId, state.profile)
+
+      const current = this.sessionMap.get(sessionId)?.queueInsertion
+      if (!current || current.generation !== generation) return
+      if (result.status !== 'accepted' && result.status !== 'already_pending') {
+        this.clearQueueInsertion(sessionId, state, result.status === 'unsupported'
+          ? String('reason' in result && result.reason ? result.reason : 'runtime_unsupported')
+          : result.status)
+        return
+      }
+
+      current.phase = result.phase === 'tool_batch'
+        ? 'waiting_for_tool_batch'
+        : 'stopping_current_turn'
+      this.emitQueueInsertionUpdate(sessionId, current)
+      logger.info({
+        sessionId,
+        queueId: current.queueId,
+        runtime: current.runtime,
+        runId: current.runId,
+        phase: current.phase,
+      }, '[chat-run-socket] queue insertion armed')
+    } catch (err) {
+      const currentState = this.sessionMap.get(sessionId)
+      if (currentState?.queueInsertion?.generation !== generation) return
+      const reason = err instanceof Error ? err.message : String(err)
+      this.clearQueueInsertion(sessionId, currentState, reason)
+      logger.warn(err, '[chat-run-socket] failed to request queue insertion for session %s', sessionId)
+    }
+  }
+
+  private observeQueueInsertionRunEvent(sessionId: string, event: string, payload: any) {
+    const state = this.sessionMap.get(sessionId)
+    const control = state?.queueInsertion
+    if (!state || !control) return
+
+    if (event === 'run.started') {
+      const runId = typeof payload?.run_id === 'string' ? payload.run_id : ''
+      if (!runId || control.phase !== 'requesting') return
+      if (control.runId && control.runId !== runId) return
+      control.runId = runId
+      this.emitQueueInsertionUpdate(sessionId, control)
+      void this.activateQueueInsertion(sessionId, control.generation)
+      return
+    }
+
+    if (event !== 'run.completed' && event !== 'run.failed') return
+    const runId = typeof payload?.run_id === 'string' ? payload.run_id : ''
+    if (control.runId && runId && control.runId !== runId) return
+    if (control.phase !== 'requesting') {
+      payload.interrupted = true
+      payload.stop_reason = 'queue_insertion'
+      payload.boundary_guarantee = control.guarantee
+    }
+    if (state.queue.length === 0) this.clearQueueInsertion(sessionId, state, 'queue_empty')
+  }
+
   // --- Queue ---
 
   private dequeueNextQueuedRun(socket: Socket, sessionId: string, fallbackProfile = 'default') {
@@ -1210,6 +1414,12 @@ export class ChatRunSocket {
     if (!state?.queue.length) return false
 
     const next = state.queue.shift()!
+    if (state.queueInsertion) {
+      state.queueInsertion.phase = 'starting_queued_message'
+      state.queueInsertion.queueId = next.queue_id
+      this.emitQueueInsertionUpdate(sessionId, state.queueInsertion)
+      state.queueInsertion = undefined
+    }
     state.isWorking = true
     state.profile = next.profile || fallbackProfile
     state.source = next.source
@@ -1574,6 +1784,7 @@ export class ChatRunSocket {
       state.contextTokens = 0
       state.events = []
       state.queue = []
+      state.queueInsertion = undefined
       state.bridgePendingAssistantContent = undefined
       state.bridgePendingReasoningContent = undefined
       state.bridgePendingToolCallMarkup = undefined
@@ -1615,6 +1826,7 @@ export class ChatRunSocket {
       contextTokens: 0,
       queueLength: 0,
       queueMessages: [],
+      queueInsertion: null,
     })
     this.nsp.emit('run.queued', {
       event: 'run.queued',

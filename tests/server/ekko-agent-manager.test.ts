@@ -102,6 +102,43 @@ describe('GlobalEkkoAgent', () => {
     expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default'))).toBe(true)
   })
 
+  it('exposes the runtime-owned boundary interrupt without creating queue policy', async () => {
+    const agent = createTestAgent({ memory: false })
+    let signalModelStarted!: () => void
+    const modelStarted = new Promise<void>((resolve) => {
+      signalModelStarted = resolve
+    })
+    const client: ModelClient = {
+      ...modelClient('unused'),
+      create: vi.fn(request => new Promise((_resolve, reject) => {
+        signalModelStarted()
+        request.signal?.addEventListener('abort', () => {
+          const error = new Error('Run aborted.')
+          error.name = 'AbortError'
+          reject(error)
+        }, { once: true })
+      })),
+    }
+    let runId = ''
+    const run = agent.run({
+      messages: ['hi'],
+      modelClient: client,
+      metadata: { session_id: 'session-boundary' },
+      onEvent: event => {
+        if (event.type === 'run.started') runId = event.runId
+      },
+    })
+
+    await modelStarted
+    expect(agent.requestBoundaryInterrupt({
+      sessionId: 'session-boundary',
+      expectedRunId: runId,
+    })).toEqual({ status: 'accepted', runId, phase: 'model' })
+    await expect(run).resolves.toMatchObject({
+      output: { finishReason: 'boundary_interrupt' },
+    })
+  })
+
   it('imports Hermes profile skills when the Ekko skills root does not exist', async () => {
     const hermesRoot = join(baseDirectory, 'hermes')
     await mkdir(join(hermesRoot, 'skills', 'default-skill'), { recursive: true })
