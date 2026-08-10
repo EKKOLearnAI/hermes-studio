@@ -126,6 +126,22 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'completed' })
     })
 
+    it('reclaims an expired dispatcher lease without waiting for a process restart', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const leased = storage.claimHandoffOutbox(attemptId)
+        expect(leased).toMatchObject({ attemptId, status: 'dispatching' })
+        harness.db.prepare(
+            `UPDATE gc_handoff_outbox SET availableAt = 0 WHERE attemptId = ?`,
+        ).run(attemptId)
+
+        expect(storage.claimHandoffOutbox(attemptId)).toMatchObject({
+            attemptId,
+            status: 'dispatching',
+        })
+    })
+
     it('clears durable attempts and outbox records with room history', () => {
         const storage = harness.groupServer.getStorage()
         storage.claimHandoffContinuation('room-1', 'chain-1')

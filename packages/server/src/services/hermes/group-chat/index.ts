@@ -992,7 +992,7 @@ class ChatStorage {
                 `SELECT o.*, a.targetAgentId
                  FROM gc_handoff_outbox o
                  JOIN gc_handoff_attempts a ON a.attemptId = o.attemptId
-                 WHERE o.status = 'pending' AND o.availableAt <= ?
+                 WHERE o.status IN ('pending', 'dispatching') AND o.availableAt <= ?
                    AND a.status = 'claimed'
                    ${attemptId ? 'AND o.attemptId = ?' : ''}
                  ORDER BY o.availableAt ASC, o.createdAt ASC
@@ -1001,7 +1001,7 @@ class ChatStorage {
             if (!row) return null
             const claimed = db.prepare(
                 `UPDATE gc_handoff_outbox SET status = 'dispatching', availableAt = ?, updatedAt = ?
-                 WHERE attemptId = ? AND status = 'pending' AND availableAt <= ?`,
+                 WHERE attemptId = ? AND status IN ('pending', 'dispatching') AND availableAt <= ?`,
             ).run(leaseUntil, now, row.attemptId, now)
             if (!claimed.changes) return null
             db.prepare(
