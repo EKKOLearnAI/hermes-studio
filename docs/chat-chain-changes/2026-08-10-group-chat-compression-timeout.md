@@ -1,6 +1,6 @@
 ---
 date: 2026-08-10
-pr: pending
+pr: 2457
 feature: Configurable Group Chat compression timeout
 impact: Group Chat rolling summaries retain their five-minute Ekko model budget by default and deployments can safely override it without changing Agent turn limits.
 ---
