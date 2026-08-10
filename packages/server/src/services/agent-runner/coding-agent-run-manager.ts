@@ -743,7 +743,9 @@ export class CodingAgentRunManager {
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
         ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
-        : codingAgentGatewayErrorMessage(finalText)
+        : run.launch.agentId === 'claude-code' && run.acceptingPrintEvent
+          ? null
+          : codingAgentGatewayErrorMessage(finalText)
       const chatCompletionEvent = terminalError ? 'run.failed' : 'run.completed'
       const chatCompletionPayload: Record<string, unknown> = {
         event: chatCompletionEvent,
@@ -999,7 +1001,10 @@ export class CodingAgentRunManager {
       })
     })
 
-    child.on('exit', (code) => {
+    // `exit` can fire before stdout has closed, allowing a zero exit to win
+    // over a final structured `isApiErrorMessage` record still in the pipe.
+    // `close` fires only after the stdio streams are closed and drained.
+    child.on('close', (code) => {
       if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
@@ -1051,13 +1056,21 @@ export class CodingAgentRunManager {
       return
     }
 
+    if (typeof event.session_id === 'string' && event.session_id.trim()) {
+      this.recordClaudeNativeSessionId(run, event.session_id.trim())
+    }
+
+    if (run.printCompleted) return
+
     if (event.type === 'stream_event' && event.event) {
       this.handleClaudeAnthropicStreamEvent(run, event.event)
       return
     }
 
-    if (typeof event.session_id === 'string' && event.session_id.trim()) {
-      this.recordClaudeNativeSessionId(run, event.session_id.trim())
+    if (event.type === 'assistant' && event.isApiErrorMessage === true) {
+      const errorText = claudeContentToText(event.message?.content).trim() || responseErrorMessage(event.error) || 'Claude Code API error'
+      this.failClaudePrintTurn(run, errorText)
+      return
     }
 
     if ((event.type === 'assistant' || event.type === 'user') && event.message) {
@@ -1299,6 +1312,50 @@ export class CodingAgentRunManager {
         output_index: 0,
         content_index: 0,
         part: { type: 'output_text', text: '', annotations: [] },
+      },
+    })
+  }
+
+  private failClaudePrintTurn(run: ManagedCodingAgentRun, errorText: string) {
+    if (run.printCompleted) return
+    run.printCompleted = true
+    const existingText = run.printText || ''
+    const appendedError = appendedTextDelta(existingText, errorText)
+    const delta = !existingText
+      ? errorText
+      : existingText === errorText
+        ? ''
+        : appendedError || `\n\n${errorText}`
+    if (delta) {
+      this.ensureClaudePrintText(run)
+      run.printText = `${existingText}${delta}`
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.output_text.delta',
+        data: {
+          type: 'response.output_text.delta',
+          item_id: run.printMessageId,
+          output_index: 0,
+          content_index: 0,
+          delta,
+        },
+      })
+    }
+    const assistantMessage = [...run.state.messages]
+      .reverse()
+      .find(message => message.runMarker === run.runMarker && message.role === 'assistant' && !message.tool_calls?.length)
+    if (assistantMessage) assistantMessage.finish_reason = 'error'
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.failed',
+      data: {
+        type: 'response.failed',
+        response: {
+          id: run.printResponseId,
+          object: 'response',
+          status: 'failed',
+          model: run.launch.model,
+          error: { message: errorText },
+          output: [],
+        },
       },
     })
   }

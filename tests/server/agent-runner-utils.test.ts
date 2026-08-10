@@ -63,6 +63,218 @@ describe('coding agent completion errors', () => {
     expect(codingAgentGatewayErrorMessage(`  ${error}\n`)).toBe(error)
     expect(codingAgentGatewayErrorMessage('Provider returned HTTP 502')).toBe('Provider returned HTTP 502')
     expect(codingAgentGatewayErrorMessage('Here is a normal answer mentioning API Error: 529 as an example')).toBeNull()
+    expect(codingAgentGatewayErrorMessage('API Error: is a phrase used in this example')).toBeNull()
+  })
+
+  it('does not fail a normal native Claude reply whose text begins with a numeric API Error example', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-claude-api-example-${suffix}`
+    const chatSessionId = `chat-session-claude-api-example-${suffix}`
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      apiMode: 'anthropic_messages',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+
+    const run = (manager as any).runs.get(agentSessionId)
+    run.acceptingPrintEvent = true
+    manager.handleResponseEvent(agentSessionId, {
+      type: 'response.completed',
+      data: {
+        response: {
+          id: `resp-${suffix}`,
+          status: 'completed',
+          model: 'test-model',
+          output: [{
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'API Error: 529 is the example requested by the user.' }],
+          }],
+        },
+      },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(getSessionDetail(chatSessionId)?.messages.at(-1)).toEqual(expect.objectContaining({
+      content: 'API Error: 529 is the example requested by the user.',
+      finish_reason: 'stop',
+    }))
+    expect(emitted).toHaveBeenCalledWith(chatSessionId, 'run.completed', expect.anything())
+    expect(emitted).not.toHaveBeenCalledWith(chatSessionId, 'run.failed', expect.anything())
+    manager.shutdown()
+  })
+
+  it('waits for Claude stdout to close before settling a zero-exit child', async () => {
+    initAllHermesTables()
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'claude-api-error-close-'))
+    const fixturePath = join(fixtureDir, 'delayed-api-error.cjs')
+    const nativeError = JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      error: 'unknown',
+      message: {
+        role: 'assistant',
+        stop_reason: 'stop_sequence',
+        content: [{ type: 'text', text: 'API Error: stream ended without terminal event' }],
+      },
+    })
+    writeFileSync(fixturePath, [
+      "const { spawn } = require('child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(`setTimeout(() => process.stdout.write(${JSON.stringify(`${nativeError}\n`)}), 75)`) }], { stdio: ['ignore', 1, 2] })`,
+      'process.exit(0)',
+    ].join('\n'))
+
+    const manager = new CodingAgentRunManager()
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-claude-close-${suffix}`
+    const chatSessionId = `chat-session-claude-close-${suffix}`
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    try {
+      manager.start({
+        agentSessionId,
+        agentId: 'claude-code',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'test-model',
+        apiMode: 'anthropic_messages',
+        sessionId: chatSessionId,
+        command: process.execPath,
+        args: [fixturePath],
+        shellCommand: process.execPath,
+        workspaceDir: process.cwd(),
+        state,
+      })
+      manager.send(chatSessionId, 'test delayed final stdout')
+
+      await vi.waitFor(() => {
+        expect(emitted).toHaveBeenCalledWith(chatSessionId, 'run.failed', expect.objectContaining({
+          error: 'API Error: stream ended without terminal event',
+        }))
+      }, { timeout: 2_000 })
+
+      expect(emitted).not.toHaveBeenCalledWith(chatSessionId, 'run.completed', expect.anything())
+      expect(getSessionDetail(chatSessionId)?.messages.at(-1)).toEqual(expect.objectContaining({
+        content: 'API Error: stream ended without terminal event',
+        finish_reason: 'error',
+      }))
+    } finally {
+      manager.shutdown()
+      rmSync(fixtureDir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists a native Claude API error as an explicit failed terminal message', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-claude-api-error-${suffix}`
+    const chatSessionId = `chat-session-claude-api-error-${suffix}`
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId,
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      apiMode: 'anthropic_messages',
+      sessionId: chatSessionId,
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state,
+    })
+
+    const run = (manager as any).runs.get(agentSessionId)
+    run.currentChild = { exitCode: null, signalCode: null, killed: false }
+    ;(manager as any).handleClaudePrintLine(run, JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      error: 'unknown',
+      message: {
+        role: 'assistant',
+        stop_reason: 'stop_sequence',
+        content: [{ type: 'text', text: 'API Error: stream ended without terminal event' }],
+      },
+    }))
+
+    expect(run.pendingChatCompletionEvent).toBe('run.failed')
+    expect(emitted).not.toHaveBeenCalledWith(chatSessionId, 'run.failed', expect.anything())
+
+    const terminalEventCount = emitted.mock.calls.length
+    const terminalMessages = JSON.stringify(state.messages)
+    const terminalText = run.printText
+    ;(manager as any).handleClaudePrintLine(run, JSON.stringify({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'late text after failure' },
+      },
+    }))
+    ;(manager as any).handleClaudePrintLine(run, JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'late-tool', name: 'write_file', input: { path: 'late.txt' } }],
+      },
+    }))
+    ;(manager as any).handleClaudePrintLine(run, JSON.stringify({
+      type: 'result',
+      result: 'late successful result',
+    }))
+
+    expect(emitted.mock.calls).toHaveLength(terminalEventCount)
+    expect(JSON.stringify(state.messages)).toBe(terminalMessages)
+    expect(run.printText).toBe(terminalText)
+
+    run.currentChild = undefined
+    await (manager as any).emitAndMarkPrintChatRunCompletedAfterUsage(
+      run,
+      run.pendingChatCompletionEvent,
+      run.pendingChatCompletionPayload,
+    )
+    ;(manager as any).completeClaudePrintTurn(run)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const messages = getSessionDetail(chatSessionId)?.messages || []
+    expect(messages.at(-1)).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: 'API Error: stream ended without terminal event',
+      finish_reason: 'error',
+    }))
+    expect(emitted).toHaveBeenCalledWith(chatSessionId, 'run.failed', expect.objectContaining({
+      error: 'API Error: stream ended without terminal event',
+    }))
+    expect(emitted).not.toHaveBeenCalledWith(chatSessionId, 'run.completed', expect.anything())
+    manager.shutdown()
   })
 })
 
