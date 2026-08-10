@@ -2309,6 +2309,15 @@ export class AgentClients {
                     errors: ['Continuation target Agent is not connected'],
                 }
             }
+            const admission = this._storage?.admitHandoffTarget?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+                msg as unknown as Record<string, unknown>,
+                { agentId: mentioned[0].agentId, name: mentioned[0].name },
+            )
+            if (!admission) {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target admission was rejected'] }
+            }
             const receipt = this._storage?.claimHandoffDelivery?.(
                 msg.continuationAttemptId,
                 mentioned[0].agentId,
@@ -2331,6 +2340,12 @@ export class AgentClients {
         this.queueMention(roomId, mentioned, msg)
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
+        }
+        if (msg.continuationAttemptId && mentioned.length === 1) {
+            const executionId = `handoff:${msg.continuationAttemptId}`
+            this._storage?.markHandoffTargetRunning?.(msg.continuationAttemptId, executionId, Date.now() + 60_000)
+            this._storage?.markHandoffTargetInvocationStarted?.(msg.continuationAttemptId)
+            this._storage?.completeHandoffTarget?.(msg.continuationAttemptId, `continuation:${msg.continuationAttemptId}`)
         }
         return { targetCount: mentioned.length, deliveredCount: mentioned.length, errors: [] }
     }

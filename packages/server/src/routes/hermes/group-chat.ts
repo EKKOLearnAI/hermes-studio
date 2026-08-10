@@ -1235,6 +1235,16 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
     }
     const chain = storage.claimHandoffContinuation(roomId, chainId)
     if (!chain || !chain.attemptId) {
+        if (existing.status === 'claimed' && existing.attemptId) {
+            ctx.status = 202
+            ctx.body = {
+                success: true,
+                attemptId: existing.attemptId,
+                status: existing.status,
+                chain: existing,
+            }
+            return
+        }
         ctx.status = 409
         ctx.body = { error: 'Handoff chain is already being continued or is no longer available', chain: existing }
         return
@@ -1246,17 +1256,12 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         ctx.body = { error: 'Handoff source message is no longer available', chain: failed || storage.getHandoffChain(roomId, chainId) }
         return
     }
-    await chatServer.dispatchPendingHandoffs()
-    const completed = storage.getHandoffChain(roomId, chainId)
-    if (completed?.status === 'resumed') {
-        ctx.body = { success: true, chain: completed }
-        return
-    }
-    ctx.status = 502
+    ctx.status = 202
     ctx.body = {
-        success: false,
-        error: completed?.lastError || 'Continuation delivery is pending retry',
-        chain: completed || storage.getHandoffChain(roomId, chainId),
+        success: true,
+        attemptId: chain.attemptId,
+        status: 'continuing',
+        chain: storage.getHandoffChain(roomId, chainId),
     }
 })
 
