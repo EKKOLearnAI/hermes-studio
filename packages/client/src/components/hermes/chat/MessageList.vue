@@ -347,6 +347,12 @@ function removeQueuedMessage(messageId: string) {
   chatStore.removeQueuedMessage(sid, messageId);
 }
 
+function promoteQueuedMessage(messageId: string) {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return;
+  chatStore.promoteQueuedMessage(sid, messageId);
+}
+
 function queuedPreview(content: string): string {
   const reference = parseMessageReference(content);
   const visibleContent = reference?.reply || reference?.content || content;
@@ -970,6 +976,16 @@ defineExpose({
               <span class="queue-text">{{ queuedPreview(message.content) }}</span>
               <button
                 type="button"
+                class="queue-promote"
+                @click="promoteQueuedMessage(message.id)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <line x1="12" y1="19" x2="12" y2="6" />
+                  <polyline points="5 11 12 4 19 11" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 class="queue-remove"
                 :title="t('chat.removeQueuedMessage')"
                 @click="removeQueuedMessage(message.id)"
@@ -1270,6 +1286,26 @@ defineExpose({
   }
 }
 
+.queue-promote {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-muted;
+  background: transparent;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $success;
+    background: rgba($success, 0.1);
+  }
+}
+
 @media (max-width: 640px) {
   .message-float-stack {
     left: 8px;
@@ -1335,6 +1371,11 @@ defineExpose({
   }
 
   .queue-remove {
+    width: 22px;
+    height: 22px;
+  }
+
+  .queue-promote {
     width: 22px;
     height: 22px;
   }

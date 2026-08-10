@@ -2727,6 +2727,14 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function promoteQueuedMessage(sessionId: string, messageId: string) {
+    if (!(queuedUserMessages.value.get(sessionId) || []).some(message => message.id === messageId)) return
+    getChatRunSocket(runtimeTransport())?.emit('run.promote', {
+      session_id: sessionId,
+      queue_id: messageId,
+    })
+  }
+
   function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
     if (!Array.isArray(rawMessages)) return []
     return rawMessages.flatMap((raw) => {
@@ -3222,6 +3230,9 @@ export const useChatStore = defineStore('chat', () => {
           models: group.models,
         })),
         queue_id: userMsg.id,
+        // 普通发送默认排队不打断;只有用户通过"立即发送"/ESC 显式放行时
+        // (promoteQueuedMessage 走 run.promote)才打断当前回复。
+        preempt: false,
         workspace: activeSession.value?.workspace || undefined,
         category_id: activeSession.value?.categoryId ?? null,
         source: sessionSource,
@@ -5017,6 +5028,7 @@ export const useChatStore = defineStore('chat', () => {
     subagentStreams,
     getSubagentStream,
     removeQueuedMessage,
+    promoteQueuedMessage,
     setMessageReference,
     clearMessageReference,
     isLoadingSessions,
