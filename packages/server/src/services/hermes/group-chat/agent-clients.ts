@@ -60,6 +60,7 @@ export type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    handoffChainId?: string
     mentions?: StructuredMention[]
     /** Trusted, target-specific ownership context added by AgentClients. */
     targetOwnerMemberId?: string
@@ -1115,6 +1116,7 @@ export class AgentClient implements GroupAgentExecutor {
                     role: 'assistant',
                     run_id: responseRunId,
                     mentionDepth: nextMentionDepth(msg),
+                    handoffChainId: msg.handoffChainId || msg.messageId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1315,6 +1317,7 @@ export class AgentClient implements GroupAgentExecutor {
                                 role: 'assistant',
                                 run_id: runMessageId,
                                 mentionDepth: nextMentionDepth(msg),
+                                handoffChainId: msg.handoffChainId || msg.messageId || '',
                                 reasoning: toolReasoning || null,
                                 reasoning_content: toolReasoning || null,
                             }, sessionId)
@@ -1376,6 +1379,7 @@ export class AgentClient implements GroupAgentExecutor {
                     role: 'assistant',
                     run_id: runMessageId,
                     mentionDepth: nextMentionDepth(msg),
+                    handoffChainId: msg.handoffChainId || msg.messageId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1446,6 +1450,7 @@ export class AgentClient implements GroupAgentExecutor {
             role: 'assistant',
             ...(responseRunId ? { run_id: responseRunId } : {}),
             mentionDepth: nextMentionDepth(sourceMsg),
+            handoffChainId: sourceMsg.handoffChainId || sourceMsg.messageId || '',
             finish_reason: 'error',
             reasoning: reasoningContent || null,
             reasoning_content: reasoningContent || null,

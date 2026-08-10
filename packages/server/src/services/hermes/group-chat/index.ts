@@ -30,6 +30,12 @@ import { isGroupChatRoomOwner } from './access'
 import { normalizeHumanGroupChatContent, type PublishedGroupChatAttachmentBlock } from './attachments'
 import { revokeGroupAgentConnector } from './agent-relay-store'
 import type { ContentBlock } from '../run-chat/types'
+import {
+    DEFAULT_GROUP_CHAT_AGENT_HANDOFF_DEPTH,
+    resolveGroupChatAgentHandoffPolicy,
+    shouldRouteGroupChatAgentHandoff,
+    type GroupChatAgentHandoffPolicy,
+} from './handoff-depth'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -61,6 +67,7 @@ interface ChatMessage {
     persistedAt?: number
     mentions?: StructuredMention[]
     mentionDepth?: number
+    handoffChainId?: string
     agentSessionId?: string
 }
 
@@ -69,6 +76,7 @@ type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
     content: string | Array<Record<string, unknown>>
     id?: string
     mentionDepth?: number
+    handoffChainId?: string
 }
 
 interface PendingGroupApprovalRoute {
@@ -250,6 +258,9 @@ export interface RoomInfo {
     guestAgentApproval: 'owner'
     maxGuestAgentsPerMember: number
     allowRemoteWorkspaceAccess: number
+    agentHandoffEnabled: number
+    agentHandoffMaxDepth: number | null
+    agentHandoffUnlimited: number
     createdAt: number
     lastActiveAt?: number
 }
@@ -275,6 +286,9 @@ const ROOM_SELECT_COLUMNS = [
     'guestAgentApproval',
     'maxGuestAgentsPerMember',
     'allowRemoteWorkspaceAccess',
+    'agentHandoffEnabled',
+    'agentHandoffMaxDepth',
+    'agentHandoffUnlimited',
     'createdAt',
 ].join(', ')
 
@@ -338,6 +352,12 @@ export interface RoomSummaryConfig {
     summaryModel?: string
     summaryApiMode?: string
     summaryEveryTurns?: number
+}
+
+export interface RoomAgentHandoffConfig {
+    agentHandoffEnabled?: boolean
+    agentHandoffMaxDepth?: number | null
+    agentHandoffUnlimited?: boolean
 }
 
 interface SaveWorkspaceDiffMessageArgs {
@@ -437,12 +457,6 @@ function normalizeMessageRole(role: unknown): string {
 function normalizeMentionDepth(depth: unknown): number {
     const value = Number(depth)
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
-}
-
-function maxAgentMentionDepth(): number {
-    const value = Number(process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
-    if (!Number.isFinite(value) || value <= 0) return 4
-    return Math.min(10, Math.floor(value))
 }
 
 const GROUP_CHAT_MESSAGE_WINDOW = 500
@@ -763,15 +777,16 @@ class ChatStorage {
         ).all(authUserId) || []) as any[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: RoomSummaryConfig & { workspace?: string; ownerAuthUserId?: number | null }): void {
+    saveRoom(id: string, name: string, inviteCode?: string, config?: RoomSummaryConfig & RoomAgentHandoffConfig & { workspace?: string; ownerAuthUserId?: number | null }): void {
         const rawOwnerAuthUserId = Number(config?.ownerAuthUserId ?? 0)
         const ownerAuthUserId = Number.isFinite(rawOwnerAuthUserId) && rawOwnerAuthUserId > 0 ? Math.floor(rawOwnerAuthUserId) : null
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
                 id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
                 summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt,
+                agentHandoffEnabled, agentHandoffMaxDepth, agentHandoffUnlimited,
                 tokenAccountingVersion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
@@ -784,6 +799,9 @@ class ChatStorage {
             config?.workspace || '',
             ownerAuthUserId,
             Date.now(),
+            config?.agentHandoffEnabled === false ? 0 : 1,
+            config?.agentHandoffMaxDepth == null ? null : Math.max(1, Math.floor(Number(config.agentHandoffMaxDepth))),
+            config?.agentHandoffUnlimited ? 1 : 0,
             GROUP_CHAT_TOKEN_ACCOUNTING_VERSION,
         )
     }
@@ -812,7 +830,7 @@ class ChatStorage {
         return this.getRoom(roomId) || null
     }
 
-    updateRoomConfig(roomId: string, config: RoomSummaryConfig): void {
+    updateRoomConfig(roomId: string, config: RoomSummaryConfig & RoomAgentHandoffConfig): void {
         const sets: string[] = []
         const vals: any[] = []
         if (config.summaryProfile !== undefined) { sets.push('summaryProfile = ?'); vals.push(config.summaryProfile) }
@@ -820,9 +838,46 @@ class ChatStorage {
         if (config.summaryModel !== undefined) { sets.push('summaryModel = ?'); vals.push(config.summaryModel) }
         if (config.summaryApiMode !== undefined) { sets.push('summaryApiMode = ?'); vals.push(config.summaryApiMode) }
         if (config.summaryEveryTurns !== undefined) { sets.push('summaryEveryTurns = ?'); vals.push(config.summaryEveryTurns) }
+        if (config.agentHandoffEnabled !== undefined) { sets.push('agentHandoffEnabled = ?'); vals.push(config.agentHandoffEnabled ? 1 : 0) }
+        if (config.agentHandoffMaxDepth !== undefined) {
+            sets.push('agentHandoffMaxDepth = ?')
+            vals.push(config.agentHandoffMaxDepth == null ? null : Math.max(1, Math.floor(Number(config.agentHandoffMaxDepth))))
+        }
+        if (config.agentHandoffUnlimited !== undefined) { sets.push('agentHandoffUnlimited = ?'); vals.push(config.agentHandoffUnlimited ? 1 : 0) }
         if (sets.length === 0) return
         vals.push(roomId)
         this.db()?.prepare(`UPDATE gc_rooms SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+    }
+
+    getRoomAgentHandoffPolicy(roomId: string): GroupChatAgentHandoffPolicy {
+        const room = this.getRoom(roomId)
+        return resolveGroupChatAgentHandoffPolicy({
+            enabled: room?.agentHandoffEnabled == null || Number(room.agentHandoffEnabled) === 1,
+            maxDepth: room?.agentHandoffMaxDepth,
+            unlimited: Number(room?.agentHandoffUnlimited || 0) === 1,
+        }, process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
+    }
+
+    recordHandoffStop(roomId: string, chainId: string, sourceMessageId: string, depth: number, targetAgentId: string, policy: GroupChatAgentHandoffPolicy): void {
+        const now = Date.now()
+        this.db()?.prepare(
+            `INSERT INTO gc_handoff_chains
+              (chainId, roomId, sourceMessageId, currentDepth, maxDepth, unlimited, targetAgentId, status, stopReason, createdAt, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped', 'max_depth', ?, ?)
+             ON CONFLICT(chainId) DO UPDATE SET currentDepth = excluded.currentDepth, targetAgentId = excluded.targetAgentId, status = 'stopped', stopReason = excluded.stopReason, updatedAt = excluded.updatedAt`
+        ).run(chainId, roomId, sourceMessageId, depth, policy.maxDepth, policy.unlimited ? 1 : 0, targetAgentId, now, now)
+    }
+
+    getHandoffChain(roomId: string, chainId: string): any | null {
+        return this.db()?.prepare('SELECT * FROM gc_handoff_chains WHERE roomId = ? AND chainId = ?').get(roomId, chainId) || null
+    }
+
+    continueHandoffOnce(roomId: string, chainId: string): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_chains SET continueUsed = 1, status = 'continued', stopReason = '', updatedAt = ?
+             WHERE roomId = ? AND chainId = ? AND status = 'stopped' AND continueUsed = 0`,
+        ).run(Date.now(), roomId, chainId)
+        return Boolean(result?.changes)
     }
 
     updateRoomName(roomId: string, name: string): void {
@@ -2854,8 +2909,15 @@ export class GroupChatServer {
         // canSocketManageRoom, so invite guests cannot mutate settings, approve
         // tools, or interrupt an Agent.
         const canRouteHumanMentions = savedMsg.role === 'user' && member?.source === 'human'
+        const handoffPolicy = typeof this.storage.getRoomAgentHandoffPolicy === 'function'
+            ? this.storage.getRoomAgentHandoffPolicy(roomId)
+            : resolveGroupChatAgentHandoffPolicy({}, process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
+        const canContinueChain = data.handoffChainId
+            ? typeof this.storage.getHandoffChain === 'function'
+                && this.storage.getHandoffChain(roomId, data.handoffChainId)?.status === 'continued'
+            : false
         const shouldRouteMentions = canRouteHumanMentions ||
-            (isAgentReply && mentionDepth < maxAgentMentionDepth())
+            (isAgentReply && (canContinueChain || shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)))
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse mentions and invoke agents directly.
@@ -2870,10 +2932,26 @@ export class GroupChatServer {
                 timestamp: savedMsg.timestamp,
                 role: savedMsg.role,
                 mentionDepth,
+                handoffChainId: data.handoffChainId || savedMsg.id,
                 mentions: savedMsg.mentions,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
             })
+        } else if (
+            isAgentReply
+            && data.handoffChainId
+            && typeof this.storage.recordHandoffStop === 'function'
+            && !shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)
+            && !canContinueChain
+        ) {
+            this.storage.recordHandoffStop(
+                roomId,
+                data.handoffChainId,
+                savedMsg.id,
+                mentionDepth,
+                String(savedMsg.senderId || ''),
+                handoffPolicy,
+            )
         } else if (savedMsg.role === 'user' && typeof this.agentClients.processSummaryCheck === 'function') {
             this.agentClients.processSummaryCheck(roomId, savedMsg.id).catch((err) => {
                 logger.error(`[GroupChat] summary check error: ${err.message}`)
