@@ -163,7 +163,9 @@ function ensureRecognizer(root) {
 }
 
 function readWave(audioPath) {
-  const wave = sherpa.readWave(audioPath)
+  // Electron disallows Node-API external buffers, so request an owned
+  // Float32Array that also remains compatible with the regular Node runtime.
+  const wave = sherpa.readWave(audioPath, false)
   if (!wave || !wave.samples || !wave.samples.length || !wave.sampleRate) {
     throw new Error('Recorded audio is empty or is not a supported WAV file')
   }

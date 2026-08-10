@@ -226,6 +226,19 @@ describe('local STT model manager', () => {
     await manager.shutdownLocalSttRuntime()
   })
 
+  it('disables external wave buffers for Electron compatibility', async () => {
+    spawnMock.mockReturnValue(createFakeModelProcess())
+    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    installSparseTestModel(manager)
+
+    const session = await manager.createLocalSttStreamSession('7:default')
+    await manager.finishLocalSttStreamSession(session.sessionId, '7:default')
+
+    const childSource = spawnMock.mock.calls[0]?.[1]?.[2]
+    expect(childSource).toContain('sherpa.readWave(audioPath, false)')
+    await manager.shutdownLocalSttRuntime()
+  })
+
   it('does not allow another profile owner to use a local stream session', async () => {
     spawnMock.mockReturnValue(createFakeModelProcess())
     const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
