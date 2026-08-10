@@ -9,9 +9,13 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { getRoomSummary, updateRoomConfig, updateRoomSummary } from '@/api/hermes/group-chat'
 import {
     decideGroupAgentPairing,
+    leaveLocalGroupAgentRoom,
+    listLocalGroupAgentConnections,
     listPendingGroupAgentPairings,
+    renameLocalGroupAgentRoom,
     updateGuestAgentPolicy,
     type GroupAgentPairingRequest,
+    type LocalGroupAgentConnection,
 } from '@/api/hermes/group-chat-agent-link'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
@@ -39,6 +43,7 @@ import {
     parseStoredAvatar,
 } from '@/utils/group-agent-avatar'
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
+import { buildRemoteGroupChatRooms, type RemoteGroupChatRoom } from '@/utils/group-chat-remote-rooms'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -108,6 +113,9 @@ const isSavingRoomName = ref(false)
 const inviteCodeDraft = ref('')
 const isSavingInviteCode = ref(false)
 const pendingAgentPairings = ref<GroupAgentPairingRequest[]>([])
+const remoteRoomConnections = ref<LocalGroupAgentConnection[]>([])
+const localRoomsCollapsed = ref(false)
+const remoteRoomsCollapsed = ref(false)
 const isDecidingAgentPairing = ref(false)
 const clarifyResponse = ref('')
 const allowGuestAgentsDraft = ref(false)
@@ -115,6 +123,7 @@ const maxGuestAgentsPerMemberDraft = ref(1)
 const allowRemoteWorkspaceAccessDraft = ref(false)
 const isSavingGuestAgentPolicy = ref(false)
 let agentPairingRefreshTimer: ReturnType<typeof setInterval> | null = null
+let remoteRoomRefreshTimer: ReturnType<typeof setInterval> | null = null
 const selectedAgentType = ref<GroupAgentType>('hermes')
 const selectedProfile = ref<string | null>(null)
 const selectedAgentProvider = ref('')
@@ -132,6 +141,15 @@ const contextRoomId = ref<string | null>(null)
 const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
+const remoteRoomContext = ref<RemoteGroupChatRoom | null>(null)
+const showRemoteRoomContextMenu = ref(false)
+const remoteRoomContextMenuX = ref(0)
+const remoteRoomContextMenuY = ref(0)
+const showRemoteRoomRenameModal = ref(false)
+const remoteRoomNameDraft = ref('')
+const remoteRoomBeingRenamed = ref<RemoteGroupChatRoom | null>(null)
+const remoteRoomBeingLeft = ref<RemoteGroupChatRoom | null>(null)
+const isUpdatingRemoteRoom = ref(false)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
     addFiles?: (files: File[]) => void
     insertMention?: (name: string, participantId?: string) => void
@@ -741,6 +759,30 @@ function openSettingsPage() {
     router.push({ name: 'hermes.settings' })
 }
 
+const remoteRooms = computed(() => buildRemoteGroupChatRooms(
+    remoteRoomConnections.value,
+))
+
+async function refreshRemoteRooms() {
+    if (props.standalone) return
+    try {
+        remoteRoomConnections.value = (await listLocalGroupAgentConnections()).connections
+    } catch {
+        // Keep the last successful list during transient local API failures.
+    }
+}
+
+function handleWindowFocus() {
+    void refreshRemoteRooms()
+}
+
+function handleSelectRemoteRoom(room: RemoteGroupChatRoom) {
+    if (!room.inviteCode) return
+    const url = `${room.cloudOrigin}/#/share/group-chat/${encodeURIComponent(room.inviteCode)}`
+    window.open(url, '_blank', 'noopener,noreferrer')
+    if (window.innerWidth <= 768) showSidebar.value = false
+}
+
 function hasDraggedFiles(event: DragEvent) {
     return Array.from(event.dataTransfer?.types || []).includes('Files')
 }
@@ -884,16 +926,90 @@ const roomContextMenuOptions = computed<DropdownOption[]>(() => {
     return options
 })
 
+const remoteRoomContextMenuOptions = computed<DropdownOption[]>(() => [
+    { label: t('groupChat.renameRemoteRoom'), key: 'rename' },
+    { label: t('groupChat.leaveRemoteRoom'), key: 'leave' },
+])
+
 function handleRoomContextMenu(event: MouseEvent, roomId: string) {
     event.preventDefault()
+    showRemoteRoomContextMenu.value = false
     contextRoomId.value = roomId
     roomContextMenuX.value = event.clientX
     roomContextMenuY.value = event.clientY
     showRoomContextMenu.value = true
 }
 
+function handleRemoteRoomContextMenu(event: MouseEvent, room: RemoteGroupChatRoom) {
+    event.preventDefault()
+    showRoomContextMenu.value = false
+    remoteRoomContext.value = room
+    remoteRoomContextMenuX.value = event.clientX
+    remoteRoomContextMenuY.value = event.clientY
+    showRemoteRoomContextMenu.value = true
+}
+
 function handleRoomContextClickOutside() {
     showRoomContextMenu.value = false
+}
+
+function handleRemoteRoomContextClickOutside() {
+    showRemoteRoomContextMenu.value = false
+}
+
+function handleRemoteRoomContextSelect(key: string) {
+    showRemoteRoomContextMenu.value = false
+    const room = remoteRoomContext.value
+    if (!room) return
+    if (key === 'rename') {
+        remoteRoomBeingRenamed.value = room
+        remoteRoomNameDraft.value = room.roomName
+        showRemoteRoomRenameModal.value = true
+    } else if (key === 'leave') {
+        remoteRoomBeingLeft.value = room
+    }
+}
+
+async function confirmRemoteRoomRename() {
+    const room = remoteRoomBeingRenamed.value
+    const name = remoteRoomNameDraft.value.trim()
+    const connectorId = room?.connectorIds[0]
+    if (!room || !connectorId || !name || isUpdatingRemoteRoom.value) return
+    isUpdatingRemoteRoom.value = true
+    try {
+        await renameLocalGroupAgentRoom(connectorId, name)
+        await refreshRemoteRooms()
+        showRemoteRoomRenameModal.value = false
+        remoteRoomBeingRenamed.value = null
+        message.success(t('groupChat.remoteRoomRenamed'))
+    } catch {
+        message.error(t('groupChat.remoteRoomRenameFailed'))
+    } finally {
+        isUpdatingRemoteRoom.value = false
+    }
+}
+
+async function confirmLeaveRemoteRoom() {
+    const room = remoteRoomBeingLeft.value
+    const connectorId = room?.connectorIds[0]
+    if (!room || !connectorId || isUpdatingRemoteRoom.value) return
+    isUpdatingRemoteRoom.value = true
+    try {
+        const result = await leaveLocalGroupAgentRoom(connectorId)
+        remoteRoomBeingLeft.value = null
+        await refreshRemoteRooms()
+        if (result.notified < result.removed) {
+            message.warning(t('groupChat.remoteRoomLeavePartial', {
+                count: result.removed - result.notified,
+            }))
+        } else {
+            message.success(t('groupChat.remoteRoomLeft'))
+        }
+    } catch {
+        message.error(t('groupChat.remoteRoomLeaveFailed'))
+    } finally {
+        isUpdatingRemoteRoom.value = false
+    }
 }
 
 function handleRoomContextSelect(key: string) {
@@ -1096,13 +1212,16 @@ onMounted(() => {
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
+    window.addEventListener('focus', handleWindowFocus)
     handleWorkspacePanelResize()
     if (!props.standalone && profilesStore.profiles.length === 0) {
         void profilesStore.fetchProfiles()
     }
     if (!props.standalone) {
         agentPairingRefreshTimer = setInterval(() => void refreshPendingAgentPairings(), 3_000)
+        remoteRoomRefreshTimer = setInterval(() => void refreshRemoteRooms(), 5_000)
         void refreshPendingAgentPairings()
+        void refreshRemoteRooms()
     }
 })
 
@@ -1112,6 +1231,7 @@ onUnmounted(() => {
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
+    window.removeEventListener('focus', handleWindowFocus)
     stopWorkspaceResize()
     roomFadeAnimation?.cancel()
     if (showWorkspacePanel.value) closeWorkspacePanel()
@@ -1119,6 +1239,8 @@ onUnmounted(() => {
     roomFadeAnimation = null
     if (agentPairingRefreshTimer) clearInterval(agentPairingRefreshTimer)
     agentPairingRefreshTimer = null
+    if (remoteRoomRefreshTimer) clearInterval(remoteRoomRefreshTimer)
+    remoteRoomRefreshTimer = null
 })
 
 async function loadRoomSummaryState(roomId: string) {
@@ -1523,34 +1645,87 @@ async function handleClarify(response?: string) {
                 />
             </div>
             <div class="room-list">
-                <div
-                    v-for="room in store.rooms"
-                    :key="room.id"
-                    class="room-item"
-                    :class="{ active: store.currentRoomId === room.id }"
-                    @click="handleSelectRoom(room.id)"
-                    @contextmenu="handleRoomContextMenu($event, room.id)"
-                >
-                    <svg class="room-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                    <div class="room-info">
-                        <span class="room-name">{{ room.name || room.id }}</span>
-                        <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
-                        <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
+                <section v-if="store.rooms.length" class="room-section">
+                    <button
+                        class="room-section-title"
+                        type="button"
+                        :aria-expanded="!localRoomsCollapsed"
+                        @click="localRoomsCollapsed = !localRoomsCollapsed"
+                    >
+                        <span>{{ t('groupChat.localRooms') }}</span>
+                        <svg class="room-section-chevron" :class="{ collapsed: localRoomsCollapsed }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
+                        </svg>
+                    </button>
+                    <div v-show="!localRoomsCollapsed" class="room-section-content">
+                        <div
+                            v-for="room in store.rooms"
+                            :key="room.id"
+                            class="room-item"
+                            :class="{ active: store.currentRoomId === room.id }"
+                            @click="handleSelectRoom(room.id)"
+                            @contextmenu="handleRoomContextMenu($event, room.id)"
+                        >
+                            <svg class="room-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            <div class="room-info">
+                                <span class="room-name">{{ room.name || room.id }}</span>
+                                <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
+                                <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
+                            </div>
+                            <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
+                                <template #trigger>
+                                    <button class="room-action-btn danger" @click.stop>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    </button>
+                                </template>
+                                {{ t('groupChat.deleteRoomConfirm') }}
+                            </NPopconfirm>
+                        </div>
                     </div>
-                    <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
-                        <template #trigger>
-                            <button class="room-action-btn danger" @click.stop>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>
-                        </template>
-                        {{ t('groupChat.deleteRoomConfirm') }}
-                    </NPopconfirm>
-                </div>
-                <div v-if="store.rooms.length === 0" class="empty-rooms">
-                    {{ t('groupChat.noRooms') }}
-                </div>
+                </section>
+
+                <section v-if="remoteRooms.length" class="room-section">
+                    <button
+                        class="room-section-title"
+                        type="button"
+                        :aria-expanded="!remoteRoomsCollapsed"
+                        @click="remoteRoomsCollapsed = !remoteRoomsCollapsed"
+                    >
+                        <span>{{ t('groupChat.remoteRooms') }}</span>
+                        <svg class="room-section-chevron" :class="{ collapsed: remoteRoomsCollapsed }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
+                        </svg>
+                    </button>
+                    <div v-show="!remoteRoomsCollapsed" class="room-section-content">
+                        <button
+                            v-for="room in remoteRooms"
+                            :key="room.key"
+                            class="room-item remote-room-item"
+                            :class="{ unavailable: !room.inviteCode }"
+                            type="button"
+                            :aria-disabled="!room.inviteCode"
+                            @click="handleSelectRemoteRoom(room)"
+                            @contextmenu="handleRemoteRoomContextMenu($event, room)"
+                        >
+                            <svg class="room-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            <span class="room-info">
+                                <span class="room-name">{{ room.roomName }}</span>
+                                <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
+                                <span class="room-origin">{{ room.cloudOrigin }}</span>
+                            </span>
+                            <span
+                                class="remote-room-state"
+                                :class="{ online: room.connected }"
+                                :title="room.connected ? t('groupChat.agentLinkConnected') : t('groupChat.remoteRoomOffline')"
+                                :aria-label="room.connected ? t('groupChat.agentLinkConnected') : t('groupChat.remoteRoomOffline')"
+                            >{{ room.connected ? '●' : '○' }}</span>
+                        </button>
+                    </div>
+                </section>
             </div>
             <div class="page-sidebar-bottom">
                 <button class="page-sidebar-menu-btn" type="button" @click="openSettingsPage">
@@ -1574,6 +1749,18 @@ async function handleClarify(response?: string) {
             :show="showRoomContextMenu"
             @select="handleRoomContextSelect"
             @clickoutside="handleRoomContextClickOutside"
+        />
+
+        <NDropdown
+            v-if="!props.standalone"
+            placement="bottom-start"
+            trigger="manual"
+            :x="remoteRoomContextMenuX"
+            :y="remoteRoomContextMenuY"
+            :options="remoteRoomContextMenuOptions"
+            :show="showRemoteRoomContextMenu"
+            @select="handleRemoteRoomContextSelect"
+            @clickoutside="handleRemoteRoomContextClickOutside"
         />
 
         <!-- Main chat area -->
@@ -1704,23 +1891,14 @@ async function handleClarify(response?: string) {
                             </template>
                             <div class="agent-avatar-activity-popover">
                                 <span class="agent-avatar-activity-text">{{ member.name }}</span>
-                                <NPopconfirm
-                                    :width="320"
-                                    content-style="white-space: normal; line-height: 1.6;"
-                                    @positive-click="handleRemoveMember(member)"
+                                <button
+                                    type="button"
+                                    class="agent-avatar-stop"
+                                    :aria-label="t('groupChat.removeMember')"
+                                    @click.stop="handleRemoveMember(member)"
                                 >
-                                    <template #trigger>
-                                        <button
-                                            type="button"
-                                            class="agent-avatar-stop"
-                                            :aria-label="t('groupChat.removeMember')"
-                                            @click.stop
-                                        >
-                                            <span>{{ t('groupChat.removeMember') }}</span>
-                                        </button>
-                                    </template>
-                                    {{ t('groupChat.removeMemberConfirm', { name: member.name }) }}
-                                </NPopconfirm>
+                                    <span>{{ t('groupChat.removeMember') }}</span>
+                                </button>
                             </div>
                         </NPopover>
                         <span v-if="store.agents.length" class="agent-avatar-rail-divider" aria-hidden="true"></span>
@@ -2283,6 +2461,57 @@ async function handleClarify(response?: string) {
                     </div>
                 </div>
             </div>
+            <NModal
+                v-model:show="showRemoteRoomRenameModal"
+                preset="dialog"
+                :title="t('groupChat.renameRemoteRoom')"
+                style="width: 460px; max-width: 92vw"
+                @after-leave="remoteRoomBeingRenamed = null"
+            >
+                <NInput
+                    v-model:value="remoteRoomNameDraft"
+                    :placeholder="t('groupChat.roomNamePlaceholder')"
+                    :maxlength="120"
+                    @keyup.enter="confirmRemoteRoomRename"
+                />
+                <p class="form-hint">{{ t('groupChat.renameRemoteRoomHint') }}</p>
+                <template #action>
+                    <NSpace justify="end">
+                        <NButton :disabled="isUpdatingRemoteRoom" @click="showRemoteRoomRenameModal = false">
+                            {{ t('common.cancel') }}
+                        </NButton>
+                        <NButton
+                            type="primary"
+                            :loading="isUpdatingRemoteRoom"
+                            :disabled="!remoteRoomNameDraft.trim()"
+                            @click="confirmRemoteRoomRename"
+                        >
+                            {{ t('groupChat.renameRemoteRoom') }}
+                        </NButton>
+                    </NSpace>
+                </template>
+            </NModal>
+            <NModal
+                :show="Boolean(remoteRoomBeingLeft)"
+                preset="dialog"
+                :title="t('groupChat.leaveRemoteRoom')"
+                style="width: 480px; max-width: 92vw"
+                @update:show="visible => { if (!visible && !isUpdatingRemoteRoom) remoteRoomBeingLeft = null }"
+            >
+                <p class="manual-room-link-hint">
+                    {{ t('groupChat.leaveRemoteRoomConfirm', { name: remoteRoomBeingLeft?.roomName || '' }) }}
+                </p>
+                <template #action>
+                    <NSpace justify="end">
+                        <NButton :disabled="isUpdatingRemoteRoom" @click="remoteRoomBeingLeft = null">
+                            {{ t('common.cancel') }}
+                        </NButton>
+                        <NButton type="error" :loading="isUpdatingRemoteRoom" @click="confirmLeaveRemoteRoom">
+                            {{ t('groupChat.leaveRemoteRoom') }}
+                        </NButton>
+                    </NSpace>
+                </template>
+            </NModal>
             <NModal
                 v-model:show="showManualRoomLinkModal"
                 preset="dialog"
@@ -2937,6 +3166,40 @@ export default defineComponent({ components: { CreateRoomForm } })
     padding: 8px;
 }
 
+.room-section + .room-section {
+    margin-top: 14px;
+}
+
+.room-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 4px 10px 6px;
+    border: 0;
+    background: transparent;
+    color: $text-muted;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-align: start;
+    text-transform: uppercase;
+    cursor: pointer;
+
+    &:hover {
+        color: $text-secondary;
+    }
+}
+
+.room-section-chevron {
+    transition: transform $transition-fast;
+
+    &.collapsed {
+        transform: rotate(-90deg);
+    }
+}
+
 .room-item {
     display: flex;
     align-items: center;
@@ -3017,6 +3280,39 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     &:hover .room-action-btn {
         opacity: 1;
+    }
+}
+
+.remote-room-item {
+    box-sizing: border-box;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+
+    &.unavailable {
+        opacity: 0.6;
+    }
+
+    .room-origin {
+        overflow: hidden;
+        color: $text-muted;
+        font-family: $font-code;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.remote-room-state {
+    flex-shrink: 0;
+    color: $text-muted;
+    font-size: 11px;
+
+    &.online {
+        color: $success;
     }
 }
 

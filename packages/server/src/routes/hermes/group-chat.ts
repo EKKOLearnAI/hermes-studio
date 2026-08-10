@@ -64,6 +64,8 @@ groupChatRoutes.get('/api/hermes/group-chat-link/v1/connections', agentLinkCtrl.
 groupChatRoutes.post('/api/hermes/group-chat-link/v1/connect', agentLinkCtrl.connectLocalAgent)
 groupChatRoutes.post('/api/hermes/group-chat-link/v1/connect-handoff', agentLinkCtrl.connectLocalAgentHandoff)
 groupChatRoutes.put('/api/hermes/group-chat-link/v1/connections/:connectorId', agentLinkCtrl.updateLocalAgent)
+groupChatRoutes.put('/api/hermes/group-chat-link/v1/connections/:connectorId/room-alias', agentLinkCtrl.renameLocalRoom)
+groupChatRoutes.post('/api/hermes/group-chat-link/v1/connections/:connectorId/leave-room', agentLinkCtrl.leaveLocalRoom)
 groupChatRoutes.post('/api/hermes/group-chat-link/v1/disconnect', agentLinkCtrl.disconnectLocalAgent)
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agent-link-requests', agentLinkCtrl.pendingPairings)
 groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agent-link-requests/:requestId/decision', agentLinkCtrl.decidePairing)
@@ -619,6 +621,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (c
     }
 
     storage.updateRoomInviteCode(ctx.params.roomId, inviteCode)
+    chatServer.broadcastRoomMetadata(ctx.params.roomId)
     ctx.body = { success: true }
 })
 

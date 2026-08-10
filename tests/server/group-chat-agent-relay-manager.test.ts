@@ -21,14 +21,20 @@ function createRejectedRelaySocket(message: string) {
       onceHandlers.set(event, handler)
       return socket
     }),
-    emit: vi.fn(() => socket),
+    emit: vi.fn((event: string, _payload?: unknown, ack?: (value: unknown) => void) => {
+      if (event === 'connector.revoke') ack?.({ ok: true })
+      return socket
+    }),
     disconnect: vi.fn(() => socket),
   }
   queueMicrotask(() => onceHandlers.get('connect_error')?.(new Error(message)))
   return socket
 }
 
-function createReadyRelaySocket(connectorId: string) {
+function createReadyRelaySocket(
+  connectorId: string,
+  options: { credential?: string; roomId?: string; roomName?: string; inviteCode?: string } = {},
+) {
   const onHandlers = new Map<string, Array<(value: unknown) => void>>()
   const onceHandlers = new Map<string, (value: unknown) => void>()
   const socket = {
@@ -45,7 +51,10 @@ function createReadyRelaySocket(connectorId: string) {
       onceHandlers.set(event, handler)
       return socket
     }),
-    emit: vi.fn(() => socket),
+    emit: vi.fn((event: string, _payload?: unknown, ack?: (value: unknown) => void) => {
+      if (event === 'connector.revoke') ack?.({ ok: true })
+      return socket
+    }),
     disconnect: vi.fn(() => {
       socket.connected = false
       socket.active = false
@@ -57,6 +66,10 @@ function createReadyRelaySocket(connectorId: string) {
   }
   queueMicrotask(() => onceHandlers.get('relay.ready')?.({
     connectorId,
+    roomId: options.roomId || 'room-relay',
+    roomName: options.roomName || 'Relay Room',
+    inviteCode: options.inviteCode || 'RELAY1',
+    ...(options.credential ? { credential: options.credential } : {}),
     agent: {
       agent: 'hermes',
       profile: 'default',
@@ -142,6 +155,149 @@ describe('group Agent outbound Relay persistence', () => {
       ])
     })
     expect(JSON.parse(readFileSync(linksFile, 'utf8'))).toHaveLength(1)
+    manager.shutdown()
+  })
+
+  it('persists room metadata returned by the cloud Relay', async () => {
+    const connectorId = '11111111-2222-4333-8444-555555555555'
+    let relaySocket: ReturnType<typeof createReadyRelaySocket> | undefined
+    ioMock.mockImplementation(() => {
+      relaySocket = createReadyRelaySocket(connectorId, {
+        credential: 'r'.repeat(48),
+        roomId: 'room-1',
+        roomName: 'Product Room',
+        inviteCode: 'PRODUCT1',
+      })
+      return relaySocket
+    })
+    const { GroupAgentOutboundRelayManager } = await import(
+      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+    )
+    const manager = new GroupAgentOutboundRelayManager(() => null)
+
+    await expect(manager.connect({
+      cloudOrigin: 'https://cloud.example',
+      targetOrigin: 'http://127.0.0.1:8648',
+      pairingTicket: 'pairing-ticket',
+      agent: {
+        agent: 'hermes',
+        profile: 'default',
+        provider: '',
+        model: '',
+        apiMode: '',
+        reasoningEffort: '',
+        name: 'Remote Agent',
+        description: '',
+        avatar: '',
+      },
+    })).resolves.toEqual({
+      connectorId,
+      roomId: 'room-1',
+      roomName: 'Product Room',
+      inviteCode: 'PRODUCT1',
+    })
+
+    const linksFile = join(stateDir, 'group-chat', 'group-chat-agent-links.json')
+    expect(JSON.parse(readFileSync(linksFile, 'utf8'))).toEqual([
+      expect.objectContaining({
+        cloudOrigin: 'https://cloud.example',
+        roomId: 'room-1',
+        roomName: 'Product Room',
+        inviteCode: 'PRODUCT1',
+      }),
+    ])
+    await expect(manager.listConnections()).resolves.toEqual([
+      expect.objectContaining({
+        connectorId,
+        cloudOrigin: 'https://cloud.example',
+        roomId: 'room-1',
+        roomName: 'Product Room',
+        inviteCode: 'PRODUCT1',
+        connected: true,
+      }),
+    ])
+
+    relaySocket!.trigger('room.metadata', {
+      roomId: 'room-1',
+      roomName: 'Renamed Product Room',
+      inviteCode: 'PRODUCT2',
+    })
+    await vi.waitFor(async () => {
+      await expect(manager.listConnections()).resolves.toEqual([
+        expect.objectContaining({
+          roomId: 'room-1',
+          roomName: 'Renamed Product Room',
+          inviteCode: 'PRODUCT2',
+        }),
+      ])
+    })
+    expect(JSON.parse(readFileSync(linksFile, 'utf8'))).toEqual([
+      expect.objectContaining({
+        roomId: 'room-1',
+        roomName: 'Renamed Product Room',
+        inviteCode: 'PRODUCT2',
+      }),
+    ])
+    manager.shutdown()
+  })
+
+  it('renames and leaves a remote room across all of its Agent connectors', async () => {
+    const connectorIds = [
+      '11111111-2222-4333-8444-555555555555',
+      '66666666-7777-4888-8999-000000000000',
+    ]
+    const relaySockets: ReturnType<typeof createReadyRelaySocket>[] = []
+    ioMock.mockImplementation(() => {
+      const connectorId = connectorIds[relaySockets.length]
+      const socket = createReadyRelaySocket(connectorId, {
+        credential: 'r'.repeat(48),
+        roomId: 'room-1',
+        roomName: 'Product Room',
+        inviteCode: 'PRODUCT1',
+      })
+      relaySockets.push(socket)
+      return socket
+    })
+    const { GroupAgentOutboundRelayManager } = await import(
+      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+    )
+    const manager = new GroupAgentOutboundRelayManager(() => null)
+    const agent = {
+      agent: 'hermes' as const,
+      profile: 'default',
+      provider: '',
+      model: '',
+      apiMode: '',
+      reasoningEffort: '',
+      name: 'Remote Agent',
+      description: '',
+      avatar: '',
+    }
+
+    await manager.connect({
+      cloudOrigin: 'https://cloud.example',
+      targetOrigin: 'http://127.0.0.1:8648',
+      pairingTicket: 'pairing-ticket-one',
+      agent,
+    })
+    await manager.connect({
+      cloudOrigin: 'https://cloud.example',
+      targetOrigin: 'http://127.0.0.1:8648',
+      pairingTicket: 'pairing-ticket-two',
+      agent,
+    })
+
+    await expect(manager.renameRoom(connectorIds[0], 'My Product Room')).resolves.toBe(2)
+    await expect(manager.listConnections()).resolves.toEqual([
+      expect.objectContaining({ connectorId: connectorIds[0], roomAlias: 'My Product Room' }),
+      expect.objectContaining({ connectorId: connectorIds[1], roomAlias: 'My Product Room' }),
+    ])
+
+    await expect(manager.leaveRoom(connectorIds[0])).resolves.toEqual({ removed: 2, notified: 2 })
+    await expect(manager.listConnections()).resolves.toEqual([])
+    expect(relaySockets[0].emit).toHaveBeenCalledWith('connector.revoke', {}, expect.any(Function))
+    expect(relaySockets[1].emit).toHaveBeenCalledWith('connector.revoke', {}, expect.any(Function))
+    expect(JSON.parse(readFileSync(join(stateDir, 'group-chat', 'group-chat-agent-links.json'), 'utf8'))).toEqual([])
     manager.shutdown()
   })
 

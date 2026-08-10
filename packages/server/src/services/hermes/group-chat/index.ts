@@ -1926,14 +1926,18 @@ export class GroupChatServer {
         if (!normalizedName) return null
         this.storage.updateRoomName(roomId, normalizedName)
         if (runtimeRoom) runtimeRoom.name = normalizedName
+        return this.broadcastRoomMetadata(roomId)
+    }
+
+    broadcastRoomMetadata(roomId: string): RoomInfo | null {
         const room = this.storage.getRoom(roomId) || null
-        if (room) {
-            this.nsp.to(roomId).emit('room_updated', {
-                roomId,
-                name: room.name,
-                totalTokens: room.totalTokens,
-            })
-        }
+        if (!room) return null
+        this.nsp.to(roomId).emit('room_updated', {
+            roomId,
+            name: room.name,
+            inviteCode: room.inviteCode,
+            totalTokens: room.totalTokens,
+        })
         return room
     }
 

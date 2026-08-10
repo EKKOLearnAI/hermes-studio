@@ -37,6 +37,10 @@ export type LocalGroupAgentConnection = {
   connectorId: string
   cloudOrigin: string
   targetOrigin: string
+  roomId?: string
+  roomName?: string
+  roomAlias?: string
+  inviteCode?: string
   agent: RemoteGroupAgentDescriptor
   connected: boolean
 }
@@ -50,7 +54,7 @@ export function connectLocalGroupAgent(input: {
   targetOrigin: string
   pairingTicket: string
   agent: RemoteGroupAgentDescriptor
-}): Promise<{ ok: boolean; connectorId: string }> {
+}): Promise<{ ok: boolean; connectorId: string; roomId?: string; roomName?: string; inviteCode?: string }> {
   return request('/api/hermes/group-chat-link/v1/connect', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -76,6 +80,24 @@ export function disconnectLocalGroupAgent(connectorId: string): Promise<{ ok: bo
   return request('/api/hermes/group-chat-link/v1/disconnect', {
     method: 'POST',
     body: JSON.stringify({ connectorId }),
+  })
+}
+
+export function renameLocalGroupAgentRoom(
+  connectorId: string,
+  name: string,
+): Promise<{ ok: boolean; updated: number }> {
+  return request(`/api/hermes/group-chat-link/v1/connections/${encodeURIComponent(connectorId)}/room-alias`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function leaveLocalGroupAgentRoom(
+  connectorId: string,
+): Promise<{ ok: boolean; removed: number; notified: number }> {
+  return request(`/api/hermes/group-chat-link/v1/connections/${encodeURIComponent(connectorId)}/leave-room`, {
+    method: 'POST',
   })
 }
 

@@ -520,6 +520,7 @@ describe('group chat baseline behavior', () => {
     vi.spyOn(AgentClient.prototype, 'joinRoom').mockResolvedValue({
       roomId: 'room-relay',
       roomName: 'Relay Room',
+      inviteCode: 'RELAY1',
       members: [],
       messages: [],
       rooms: ['room-relay'],
@@ -568,6 +569,8 @@ describe('group chat baseline behavior', () => {
     expect(readyPayload).toMatchObject({
       protocolVersion: 1,
       roomId: 'room-relay',
+      roomName: 'Relay Room',
+      inviteCode: 'RELAY1',
       agent: { name: 'Remote Relay Agent' },
     })
     expect(relayStore.getGroupAgentPairingRequestForRequester(
@@ -754,6 +757,7 @@ describe('group chat baseline behavior', () => {
     await expect(reconnectReady).resolves.toMatchObject({
       connectorId: readyPayload.connectorId,
       roomId: 'room-relay',
+      roomName: 'Relay Room',
     })
     const revokedNotice = once<any>(reconnectingTarget as any, 'connector.revoked', 2_000)
     relayStore.revokeGroupAgentConnector(readyPayload.connectorId)

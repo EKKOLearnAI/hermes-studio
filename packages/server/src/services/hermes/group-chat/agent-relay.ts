@@ -1054,6 +1054,17 @@ export class GroupAgentRelayServer {
         description: roomAgent.description,
         invited: 1,
         backgroundDelegationEnabled: false,
+      }, {
+        onRoomUpdated: (data) => {
+          if (String(data?.roomId || '') !== roomAgent?.roomId) return
+          const updatedRoom = storage.getRoom(roomAgent.roomId)
+          if (!updatedRoom) return
+          socket.emit('room.metadata', {
+            roomId: updatedRoom.id,
+            roomName: updatedRoom.name,
+            inviteCode: updatedRoom.inviteCode,
+          })
+        },
       })
       await proxy.connect()
       await proxy.joinRoom(roomAgent.roomId)
@@ -1073,6 +1084,8 @@ export class GroupAgentRelayServer {
         socket.data.newCredential = completed.credential
       }
       if (!connector) throw relayError('Relay connection is incomplete')
+      const relayRoom = storage.getRoom(connector.roomId)
+      if (!relayRoom) throw relayError('Remote Agent room no longer exists', 'GROUP_AGENT_REGISTRATION_MISSING')
 
       const previous = this.executors.get(connector.id)
       previous?.disconnect()
@@ -1092,6 +1105,8 @@ export class GroupAgentRelayServer {
         connectorId: connector.id,
         credential: socket.data.newCredential,
         roomId: connector.roomId,
+        roomName: String(relayRoom.name || connector.roomId),
+        inviteCode: String(relayRoom.inviteCode || ''),
         agent: {
           agentId: roomAgent.agentId,
           agent: roomAgent.agent,
@@ -1286,6 +1301,10 @@ type PersistedOutboundLink = {
   targetOrigin: string
   connectorId: string
   credential: string
+  roomId?: string
+  roomName?: string
+  roomAlias?: string
+  inviteCode?: string
   agent: RemoteGroupAgentDescriptor
 }
 
@@ -1332,6 +1351,9 @@ class OutboundRelayConnection {
         try {
           const connectorId = String(data.connectorId || this.link.connectorId).trim()
           const credential = String(data.credential || this.link.credential).trim()
+          const roomId = boundedRelayText(data.roomId || this.link.roomId || '', 160, 'room id')
+          const roomName = boundedRelayText(data.roomName || this.link.roomName || roomId, 120, 'room name')
+          const inviteCode = boundedRelayText(data.inviteCode || this.link.inviteCode || '', 160, 'invite code')
           const relayAgent = normalizeRemoteGroupAgentDescriptor(data.agent)
           if (
             !UUID_PATTERN.test(connectorId)
@@ -1344,6 +1366,9 @@ class OutboundRelayConnection {
             ...this.link,
             connectorId,
             credential,
+            ...(roomId ? { roomId } : {}),
+            ...(roomName ? { roomName } : {}),
+            ...(inviteCode ? { inviteCode } : {}),
             agent: this.link.agent,
           }
           this.socket!.auth = {
@@ -1382,6 +1407,14 @@ class OutboundRelayConnection {
   }
 
   async revoke(): Promise<boolean> {
+    if (!this.socket?.connected) {
+      this.close()
+      try {
+        await this.connect()
+      } catch {
+        return false
+      }
+    }
     const socket = this.socket
     if (!socket?.connected) return false
     return new Promise(resolve => {
@@ -1437,6 +1470,29 @@ class OutboundRelayConnection {
       if (!connectorId || connectorId !== this.link.connectorId) return
       void this.manager.handleConnectorRevoked(connectorId, this)
     })
+    socket.on('room.metadata', (data: Record<string, unknown>) => {
+      try {
+        const roomId = boundedRelayText(data?.roomId || '', 160, 'room id')
+        if (!roomId || (this.link.roomId && this.link.roomId !== roomId)) return
+        const roomName = boundedRelayText(data?.roomName || roomId, 120, 'room name')
+        const inviteCode = boundedRelayText(data?.inviteCode || '', 160, 'invite code')
+        if (
+          this.link.roomId === roomId
+          && this.link.roomName === roomName
+          && String(this.link.inviteCode || '') === inviteCode
+        ) return
+        this.link = {
+          ...this.link,
+          roomId,
+          roomName,
+          ...(inviteCode ? { inviteCode } : {}),
+        }
+        if (!inviteCode) delete this.link.inviteCode
+        void this.manager.persist(this.link)
+      } catch {
+        // Ignore malformed metadata from the Relay without dropping the connection.
+      }
+    })
     socket.on('run.request', (request: RelayRunRequest) => void this.handleRun(request))
     socket.on('run.interrupt', (data: { runId?: string }) => {
       const request = this.activeRequest
@@ -1481,6 +1537,14 @@ class OutboundRelayConnection {
         error: error instanceof Error ? error.message : 'Invalid Relay run request',
       })
       return
+    }
+    if (this.link.roomId !== request.room.id || this.link.roomName !== request.room.name) {
+      this.link = {
+        ...this.link,
+        roomId: request.room.id,
+        roomName: request.room.name,
+      }
+      await this.manager.persist(this.link)
     }
     this.activeRequest = request
     sink.begin(request.runId, request.workspaceApi?.token ? [request.workspaceApi.token] : [])
@@ -1681,7 +1745,7 @@ export class GroupAgentOutboundRelayManager {
     targetOrigin: string
     pairingTicket: string
     agent: RemoteGroupAgentDescriptor
-  }): Promise<{ connectorId: string; roomId?: string }> {
+  }): Promise<{ connectorId: string; roomId?: string; roomName?: string; inviteCode?: string }> {
     const cloudOrigin = normalizeOrigin(input.cloudOrigin)
     const targetOrigin = normalizeOrigin(input.targetOrigin)
     const ticket = String(input.pairingTicket || '').trim()
@@ -1700,7 +1764,12 @@ export class GroupAgentOutboundRelayManager {
       const link = await connection.connect()
       this.connections.delete(key)
       this.connections.set(link.connectorId, connection)
-      return { connectorId: link.connectorId }
+      return {
+        connectorId: link.connectorId,
+        ...(link.roomId ? { roomId: link.roomId } : {}),
+        ...(link.roomName ? { roomName: link.roomName } : {}),
+        ...(link.inviteCode ? { inviteCode: link.inviteCode } : {}),
+      }
     } catch (error) {
       connection.close()
       this.connections.delete(key)
@@ -1730,6 +1799,10 @@ export class GroupAgentOutboundRelayManager {
     connectorId: string
     cloudOrigin: string
     targetOrigin: string
+    roomId?: string
+    roomName?: string
+    roomAlias?: string
+    inviteCode?: string
     agent: RemoteGroupAgentDescriptor
     connected: boolean
   }>> {
@@ -1739,6 +1812,10 @@ export class GroupAgentOutboundRelayManager {
         connectorId: link.connectorId,
         cloudOrigin: link.cloudOrigin,
         targetOrigin: link.targetOrigin,
+        ...(link.roomId ? { roomId: link.roomId } : {}),
+        ...(link.roomName ? { roomName: link.roomName } : {}),
+        ...(link.roomAlias ? { roomAlias: link.roomAlias } : {}),
+        ...(link.inviteCode ? { inviteCode: link.inviteCode } : {}),
         agent: link.agent,
         connected: this.connections.get(link.connectorId)?.connected === true,
       }))
@@ -1759,6 +1836,49 @@ export class GroupAgentOutboundRelayManager {
     })
   }
 
+  async renameRoom(connectorId: string, roomAlias: string): Promise<number> {
+    const alias = String(roomAlias || '').trim()
+    if (!alias || alias.length > 120) throw new Error('Room display name must be between 1 and 120 characters')
+    return this.withPersistenceLock(async () => {
+      const links = await this.readPersisted()
+      const seed = links.find(link => link.connectorId === connectorId)
+      if (!seed) throw new Error('Agent room connection not found on this Hermes service')
+      let updated = 0
+      const next = links.map(link => {
+        if (!this.sameRoomLink(link, seed)) return link
+        updated += 1
+        return { ...link, roomAlias: alias }
+      })
+      await this.writePersisted(next)
+      return updated
+    })
+  }
+
+  async leaveRoom(connectorId: string): Promise<{ removed: number; notified: number }> {
+    const links = await this.withPersistenceLock(async () => this.readPersisted())
+    const seed = links.find(link => link.connectorId === connectorId)
+    if (!seed) return { removed: 0, notified: 0 }
+    const targets = links.filter(link => this.sameRoomLink(link, seed))
+    const notices = await Promise.all(targets.map(async link => {
+      const connection = this.connections.get(link.connectorId)
+      if (!connection) return false
+      return connection.revoke().catch(() => false)
+    }))
+
+    for (const link of targets) {
+      this.connections.get(link.connectorId)?.close()
+      this.connections.delete(link.connectorId)
+    }
+    await this.withPersistenceLock(async () => {
+      const current = await this.readPersisted()
+      await this.writePersisted(current.filter(link => !this.sameRoomLink(link, seed)))
+    })
+    return {
+      removed: targets.length,
+      notified: notices.filter(Boolean).length,
+    }
+  }
+
   async updateConnection(
     connectorId: string,
     agent: RemoteGroupAgentDescriptor,
@@ -1766,6 +1886,10 @@ export class GroupAgentOutboundRelayManager {
     connectorId: string
     cloudOrigin: string
     targetOrigin: string
+    roomId?: string
+    roomName?: string
+    roomAlias?: string
+    inviteCode?: string
     agent: RemoteGroupAgentDescriptor
     connected: boolean
   }> {
@@ -1786,6 +1910,10 @@ export class GroupAgentOutboundRelayManager {
       connectorId: link.connectorId,
       cloudOrigin: link.cloudOrigin,
       targetOrigin: link.targetOrigin,
+      ...(link.roomId ? { roomId: link.roomId } : {}),
+      ...(link.roomName ? { roomName: link.roomName } : {}),
+      ...(link.roomAlias ? { roomAlias: link.roomAlias } : {}),
+      ...(link.inviteCode ? { inviteCode: link.inviteCode } : {}),
       agent: link.agent,
       connected: connection.connected,
     }
@@ -1820,6 +1948,11 @@ export class GroupAgentOutboundRelayManager {
       const links = await this.readPersisted()
       await this.writePersisted(links.filter(link => link.connectorId !== connectorId))
     })
+  }
+
+  private sameRoomLink(link: PersistedOutboundLink, seed: PersistedOutboundLink): boolean {
+    if (!seed.roomId || !link.roomId) return link.connectorId === seed.connectorId
+    return link.cloudOrigin === seed.cloudOrigin && link.roomId === seed.roomId
   }
 
   private async withPersistenceLock<T>(task: () => Promise<T>): Promise<T> {
@@ -1876,12 +2009,28 @@ export class GroupAgentOutboundRelayManager {
           const link = raw as Record<string, unknown>
           const connectorId = String(link.connectorId || '').trim()
           const credential = String(link.credential || '').trim()
+          const roomId = typeof link.roomId === 'string' && link.roomId.trim().length <= 160
+            ? link.roomId.trim()
+            : ''
+          const roomName = typeof link.roomName === 'string' && link.roomName.trim().length <= 120
+            ? link.roomName.trim()
+            : ''
+          const roomAlias = typeof link.roomAlias === 'string' && link.roomAlias.trim().length <= 120
+            ? link.roomAlias.trim()
+            : ''
+          const inviteCode = typeof link.inviteCode === 'string' && link.inviteCode.trim().length <= 160
+            ? link.inviteCode.trim()
+            : ''
           if (!UUID_PATTERN.test(connectorId) || !/^[a-zA-Z0-9_-]{40,128}$/.test(credential)) continue
           links.push({
             cloudOrigin: normalizeOrigin(link.cloudOrigin),
             targetOrigin: normalizeOrigin(link.targetOrigin),
             connectorId,
             credential,
+            ...(roomId ? { roomId } : {}),
+            ...(roomName ? { roomName } : {}),
+            ...(roomAlias ? { roomAlias } : {}),
+            ...(inviteCode ? { inviteCode } : {}),
             agent: normalizeRemoteGroupAgentDescriptor(link.agent),
           })
         } catch {

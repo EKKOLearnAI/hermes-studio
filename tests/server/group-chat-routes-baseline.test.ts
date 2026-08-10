@@ -27,6 +27,7 @@ describe('group chat REST route baseline', () => {
   let agentClients: any
   let clearRoomRuntimeState: ReturnType<typeof vi.fn>
   let updateRoomName: ReturnType<typeof vi.fn>
+  let broadcastRoomMetadata: ReturnType<typeof vi.fn>
   let broadcastRoomAgents: ReturnType<typeof vi.fn>
   let removeLiveRoomMember: ReturnType<typeof vi.fn>
   let publishAgentAttachmentMessage: ReturnType<typeof vi.fn>
@@ -110,6 +111,7 @@ describe('group chat REST route baseline', () => {
       if (room) room.name = name
       return room || null
     })
+    broadcastRoomMetadata = vi.fn((roomId: string) => storage.getRoom(roomId) || null)
     broadcastRoomAgents = vi.fn((roomId: string) => storage.getRoomAgents(roomId))
     removeLiveRoomMember = vi.fn((roomId: string, userId: string) => {
       storage.removeRoomMember(roomId, userId)
@@ -147,6 +149,7 @@ describe('group chat REST route baseline', () => {
       agentClients,
       clearRoomRuntimeState,
       updateRoomName,
+      broadcastRoomMetadata,
       broadcastRoomAgents,
       broadcastGuestAgentPolicy: vi.fn(),
       removeRoomMember: removeLiveRoomMember,
@@ -286,9 +289,36 @@ describe('group chat REST route baseline', () => {
 
     expect(res.status).toBe(200)
     expect(storage.updateRoomInviteCode).toHaveBeenCalledWith('room-1', 'NEW-CODE')
+    expect(broadcastRoomMetadata).toHaveBeenCalledWith('room-1')
     expect(storage.getRoomAgents('room-1')).toEqual([remoteAgent])
     expect(storage.removeRoomAgent).not.toHaveBeenCalled()
     expect(agentClients.removeAgentFromRoom).not.toHaveBeenCalled()
+  })
+
+  it('generates a fresh invite code when cloning a room', async () => {
+    storage.rooms.set('room-source', {
+      id: 'room-source',
+      name: 'Source Room',
+      inviteCode: 'SOURCE-CODE',
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'summary-model',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+      workspace: '',
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Cloned Room' }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.room).toMatchObject({ name: 'Cloned Room' })
+    expect(body.room.inviteCode).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/)
+    expect(body.room.inviteCode).not.toBe('SOURCE-CODE')
   })
 
   it('serves the remote workspace API only with an active run-bound grant', async () => {

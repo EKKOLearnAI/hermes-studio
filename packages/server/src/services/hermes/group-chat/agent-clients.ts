@@ -193,6 +193,7 @@ export interface AgentEventHandler {
     onStopTyping?: (data: { roomId: string; userId: string; userName: string }) => void
     onMemberJoined?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
     onMemberLeft?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
+    onRoomUpdated?: (data: { roomId: string; name?: string; inviteCode?: string | null }) => void
 }
 
 export interface GroupAgentEventSink {
@@ -1768,6 +1769,10 @@ export class AgentClient implements GroupAgentExecutor {
 
         s.on('member_left', (data: any) => {
             this.handlers.onMemberLeft?.(data)
+        })
+
+        s.on('room_updated', (data: any) => {
+            this.handlers.onRoomUpdated?.(data)
         })
 
         // Auto rejoin rooms on reconnect
