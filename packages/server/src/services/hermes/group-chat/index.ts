@@ -625,7 +625,23 @@ class ChatStorage {
             `UPDATE gc_handoff_attempts
              SET status = 'completed', updatedAt = ?
              WHERE status = 'dispatched'
-               AND attemptId IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status = 'completed')`,
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status IN ('accepted', 'completed'))`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_deliveries SET status = 'completed', updatedAt = ?
+             WHERE status = 'accepted'
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_outbox SET status = 'completed', updatedAt = ?
+             WHERE status IN ('dispatched', 'dispatching')
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_chains
+             SET status = 'resumed', continueUsed = 1, stopReason = '', lastError = NULL, updatedAt = ?
+             WHERE status = 'claimed'
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_attempts
@@ -636,7 +652,7 @@ class ChatStorage {
         db.prepare(
             `UPDATE gc_handoff_outbox
              SET status = 'pending', availableAt = ?, updatedAt = ?
-             WHERE status = 'dispatched'
+             WHERE status IN ('dispatched', 'dispatching')
                AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'claimed')`,
         ).run(now, now)
         db.prepare(
@@ -966,6 +982,68 @@ class ChatStorage {
         return this.db()?.prepare('SELECT * FROM gc_handoff_attempts WHERE attemptId = ?').get(attemptId) || null
     }
 
+    claimHandoffOutbox(attemptId?: string): any | null {
+        const db = this.db()
+        if (!db) return null
+        const now = Date.now()
+        const leaseUntil = now + 30_000
+        return this.withImmediateTransaction(db, () => {
+            const row = db.prepare(
+                `SELECT o.*, a.targetAgentId
+                 FROM gc_handoff_outbox o
+                 JOIN gc_handoff_attempts a ON a.attemptId = o.attemptId
+                 WHERE o.status = 'pending' AND o.availableAt <= ?
+                   AND a.status = 'claimed'
+                   ${attemptId ? 'AND o.attemptId = ?' : ''}
+                 ORDER BY o.availableAt ASC, o.createdAt ASC
+                 LIMIT 1`,
+            ).get(...(attemptId ? [now, attemptId] : [now])) as any
+            if (!row) return null
+            const claimed = db.prepare(
+                `UPDATE gc_handoff_outbox SET status = 'dispatching', availableAt = ?, updatedAt = ?
+                 WHERE attemptId = ? AND status = 'pending' AND availableAt <= ?`,
+            ).run(leaseUntil, now, row.attemptId, now)
+            if (!claimed.changes) return null
+            db.prepare(
+                `UPDATE gc_handoff_attempts
+                 SET leaseUntil = ?, attemptCount = attemptCount + 1, updatedAt = ?
+                 WHERE attemptId = ? AND status = 'claimed'`,
+            ).run(leaseUntil, now, row.attemptId)
+            return { ...row, status: 'dispatching', leaseUntil }
+        })
+    }
+
+    requeueHandoffOutbox(attemptId: string, error: string, maxAttempts = 3): void {
+        const db = this.db()
+        if (!db) return
+        const now = Date.now()
+        const attempt = this.getHandoffAttempt(attemptId)
+        if (!attempt || attempt.status === 'completed') return
+        const message = error.slice(0, 2000)
+        if (Number(attempt.attemptCount || 0) >= maxAttempts) {
+            const chain = db.prepare('SELECT roomId, chainId FROM gc_handoff_chains WHERE attemptId = ?').get(attemptId) as any
+            db.prepare(`UPDATE gc_handoff_attempts SET status = 'failed', lastError = ?, updatedAt = ? WHERE attemptId = ?`)
+                .run(message, now, attemptId)
+            db.prepare(`UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ? WHERE attemptId = ?`)
+                .run(now, attemptId)
+            if (chain) {
+                db.prepare(
+                    `UPDATE gc_handoff_chains SET status = 'stopped', stopReason = 'continue_failed', lastError = ?, updatedAt = ?
+                     WHERE roomId = ? AND chainId = ? AND attemptId = ? AND continueUsed = 0`,
+                ).run(message, now, chain.roomId, chain.chainId, attemptId)
+            }
+            return
+        }
+        db.prepare(`UPDATE gc_handoff_attempts SET status = 'claimed', lastError = ?, leaseUntil = ?, updatedAt = ? WHERE attemptId = ?`)
+            .run(message, now + 1_000, now, attemptId)
+        db.prepare(`UPDATE gc_handoff_outbox SET status = 'pending', availableAt = ?, updatedAt = ? WHERE attemptId = ?`)
+            .run(now + 1_000, now, attemptId)
+    }
+
+    finishHandoffOutbox(attemptId: string): void {
+        this.db()?.prepare(`UPDATE gc_handoff_outbox SET status = 'completed', updatedAt = ? WHERE attemptId = ?`).run(Date.now(), attemptId)
+    }
+
     claimHandoffDelivery(attemptId: string, targetAgentId: string): 'accepted' | 'already' | null {
         const db = this.db()
         if (!db) return null
@@ -984,6 +1062,7 @@ class ChatStorage {
                  WHERE d.attemptId = ?`,
             ).get(attemptId) as any
             if (!row || String(row.targetAgentId) !== targetAgentId) return null
+            if (row.status === 'accepted' && row.attemptStatus === 'dispatched') return 'already'
             // A restart reopens the durable attempt. Allow exactly one
             // recovered queue admission; while dispatched/completed, replay is
             // an idempotent no-op.
@@ -1501,15 +1580,15 @@ class ChatStorage {
         deleteWorkspaceRunChangesForRoom(db, roomId)
     }
 
-    private withImmediateTransaction(db: any, fn: () => void): void {
+    private withImmediateTransaction<T>(db: any, fn: () => T): T {
         if (db.inTransaction || db.isTransaction) {
-            fn()
-            return
+            return fn()
         }
         db.exec('BEGIN IMMEDIATE')
         try {
-            fn()
+            const result = fn()
             db.exec('COMMIT')
+            return result
         } catch (err) {
             try { db.exec('ROLLBACK') } catch { /* ignore */ }
             throw err
@@ -1933,6 +2012,8 @@ export class GroupChatServer {
     readonly agentClients = new AgentClients()
     private roomSummaryService: GroupRoomSummaryService
     private _restoreScheduled = false
+    private handoffDispatcherTimer: ReturnType<typeof setInterval> | null = null
+    private handoffDispatcherRunning = false
     private chatRunService: GroupChatRunService | null = null
     /** roomId -> (userId -> { userName, timer }) */
     private typingState = new Map<string, Map<string, { userName: string; timer: ReturnType<typeof setTimeout> }>>()
@@ -2062,6 +2143,12 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('message', msg)
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         })
+        this.handoffDispatcherTimer = setInterval(() => {
+            void this.dispatchPendingHandoffs().catch((error) => {
+                logger.warn(`[GroupChat] handoff dispatcher tick failed: ${error instanceof Error ? error.message : String(error)}`)
+            })
+        }, 1_000)
+        this.handoffDispatcherTimer.unref?.()
         // Restore agent connections — call restoreAgents() after server is listening
         this._restoreScheduled = false
     }
@@ -2072,6 +2159,54 @@ export class GroupChatServer {
 
     getStorage(): ChatStorage {
         return this.storage
+    }
+
+    async dispatchPendingHandoffs(): Promise<number> {
+        if (this.handoffDispatcherRunning) return 0
+        this.handoffDispatcherRunning = true
+        let dispatched = 0
+        try {
+            while (true) {
+                const outbox = this.storage.claimHandoffOutbox()
+                if (!outbox) break
+                const attemptId = String(outbox.attemptId)
+                try {
+                    const payload = JSON.parse(String(outbox.payload || '{}')) as any
+                    const delivery = await this.agentClients.processMentions(String(outbox.roomId), {
+                        ...payload,
+                        continuationAttemptId: attemptId,
+                    })
+                    if (delivery.targetCount === 0 || delivery.deliveredCount !== delivery.targetCount || delivery.errors.length > 0) {
+                        throw new Error(delivery.errors.join('; ') || 'Continuation target Agent is not connected')
+                    }
+                    const attempt = this.storage.getHandoffAttempt(attemptId)
+                    const chain = attempt
+                        ? this.storage.getHandoffChain(String(attempt.roomId), String(attempt.chainId))
+                        : null
+                    if (!chain || !this.storage.completeHandoffContinuation(String(chain.roomId), String(chain.chainId))) {
+                        throw new Error('Continuation delivery was accepted but could not be durably completed')
+                    }
+                    this.storage.finishHandoffOutbox(attemptId)
+                    dispatched++
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error)
+                    const attempt = this.storage.getHandoffAttempt(attemptId)
+                    if (/target Agent is not connected/i.test(message)) {
+                        this.storage.failHandoffContinuation(
+                            String(attempt?.roomId || outbox.roomId),
+                            String(attempt?.chainId || ''),
+                            message,
+                        )
+                    } else {
+                        this.storage.requeueHandoffOutbox(attemptId, message)
+                    }
+                    dispatched++
+                }
+            }
+        } finally {
+            this.handoffDispatcherRunning = false
+        }
+        return dispatched
     }
 
     private consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string } | null {
