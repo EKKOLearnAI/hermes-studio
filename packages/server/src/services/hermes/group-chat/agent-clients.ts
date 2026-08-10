@@ -76,7 +76,6 @@ export type StructuredMentionEntry =
     | { type: 'agent'; participantId: string; displayName: string }
     | { type: 'all'; displayName: 'all' }
 
-
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
         id: msg.messageId || '',
@@ -446,7 +445,15 @@ export class AgentClient implements GroupAgentExecutor {
         const mentions = generatedMentions.length > 0
             ? generatedMentions
             : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
-        const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
+        const messageExtra = mentions.length ? { ...extra, mentions } : extra
+        if (role === 'assistant' && messageId) {
+            this.storage?.registerTrustedAgentMessageMetadata?.(
+                roomId,
+                messageId,
+                extra?.mentionDepth,
+                extra?.handoffChainId,
+            )
+        }
         if (this.eventSink) {
             return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
         }
@@ -2302,14 +2309,22 @@ export class AgentClients {
                     errors: ['Continuation target Agent is not connected'],
                 }
             }
+            const receipt = this._storage?.claimHandoffDelivery?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+            )
+            if (receipt === 'already') {
+                return { targetCount: 1, deliveredCount: 1, errors: [] }
+            }
+            if (receipt !== 'accepted') {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation delivery receipt could not be created'] }
+            }
             const accepted = this._storage?.acceptHandoffAttempt?.(
                 msg.continuationAttemptId,
                 mentioned[0].agentId,
             )
-            if (accepted === 'already') {
-                return { targetCount: 1, deliveredCount: 1, errors: [] }
-            }
-            if (accepted !== 'accepted') {
+            if (accepted !== 'accepted' && accepted !== 'already') {
+                this._storage?.releaseHandoffDelivery?.(msg.continuationAttemptId)
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation attempt is no longer dispatchable'] }
             }
         }

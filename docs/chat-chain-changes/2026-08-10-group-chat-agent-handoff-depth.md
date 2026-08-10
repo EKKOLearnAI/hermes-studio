@@ -1,6 +1,6 @@
 ---
 date: 2026-08-10
-pr: pending
+pr: 2463
 feature: Room-level Agent handoff depth
 impact: Group Chat Rooms can persist bounded, disabled, or unlimited Agent handoff policies and recover continuation delivery through a durable attempt/outbox state machine.
 ---
@@ -16,6 +16,10 @@ impact: Group Chat Rooms can persist bounded, disabled, or unlimited Agent hando
   target acceptance is atomically deduplicated by attempt ID.
 - Records failed delivery as retryable, expires abandoned leases during startup,
   and removes attempts/outbox records when a Room is cleared or deleted.
+- Requeues leased `dispatched` attempts after restart and persists target
+  delivery receipts so replay of one attempt is idempotent.
+- Ignores Agent-supplied depth and chain fields; only server-issued metadata
+  for the exact message may authorize another Agent handoff.
 - The client can read stopped-chain depth, target, reason, error, update time,
   and continuation state before retrying.
 - Keeps Mention permissions and the existing human-to-Agent routing unchanged.
