@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.39"
+    "version": "0.6.40"
   },
   "servers": [
     {
@@ -4765,6 +4765,93 @@
                 "type": "object",
                 "properties": {
                   "agent": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat-link/v1/connections/{connectorId}/leave-room": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create leave-room",
+        "description": "POST /api/hermes/group-chat-link/v1/connections/:connectorId/leave-room",
+        "operationId": "leaveLocalRoom",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat-link/v1/connections/{connectorId}/room-alias": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update room-alias",
+        "description": "PUT /api/hermes/group-chat-link/v1/connections/:connectorId/room-alias",
+        "operationId": "renameLocalRoom",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "connectorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
                     "type": "string"
                   }
                 }

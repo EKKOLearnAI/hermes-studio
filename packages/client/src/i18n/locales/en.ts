@@ -3090,6 +3090,19 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_40_1: 'This release covers all 40 PRs merged after v0.6.39, spanning secure remote Group Chat, local speech recognition, Workflow scheduling, global approvals, Chat Run webhooks, MCU, and Coding Agent reliability',
+    new_0_6_40_2: 'Group Chat adds secure shared rooms and remote Agents, stabilizes Agent handoff, presence, and revocation, preserves offline owner avatars, and offers manual room-link copy when clipboard APIs are unavailable (#2408, #2410, #2411, #2415, #2423)',
+    new_0_6_40_3: 'Remote Agents can transfer files and upload to cloud workspaces. Requests from non-owners now enforce tighter workspace, sensitive-information, and private-memory boundaries, with corrected ownership and approval routing (#2413, #2430, #2433, #2435)',
+    new_0_6_40_4: 'Group Chat stops migrating legacy Agent Links and separates collapsible local and remote room lists, with local aliases for remote rooms, share-page navigation, and complete leave cleanup (#2424, #2459)',
+    new_0_6_40_5: 'Group Chat keeps history without automatic pruning, safely persists Tool results containing mentions with bounded message IDs, and fixes orphaned tools, approval alignment and routing, plus event-loop starvation during token accounting (#2390, #2420, #2426, #2427, #2429, #2445)',
+    new_0_6_40_6: 'Recent-session and Group Chat activity feedback is more immediate, and the Tool panel expands with a smooth animation (#2389, #2414)',
+    new_0_6_40_7: 'Global approvals can adopt existing prompts, show clearer command previews, and send system notifications for pending actions (#2406, #2425, #2432)',
+    new_0_6_40_8: 'New sherpa-onnx Chinese-English local streaming STT preserves final words with trailing silence and uses Electron-compatible audio buffers on macOS and Windows (#2447, #2448, #2461)',
+    new_0_6_40_9: 'Workflow adds durable scheduled runs and a complete schedule-management UI for creating, editing, enabling, disabling, and deleting schedules (#2434, #2441)',
+    new_0_6_40_10: 'Chat Run lifecycle webhooks arrive while the unused legacy endpoint is removed, and the server gains a lightweight liveness endpoint (#2422, #2452, #2453)',
+    new_0_6_40_11: 'MCU can select between Ekko and Hermes Agent runtimes, while Global Agent avatars and MCU status indicators now resolve accurately (#2438, #2442)',
+    new_0_6_40_12: 'Coding Agent now requires an execution identity and fixes Windows run-persistence isolation, MCP timeouts, cross-model reasoning replay, context-usage estimates, and duplicate Studio guidance (#2387, #2392, #2395, #2396, #2398, #2416)',
+    new_0_6_40_13: 'MoA presets expose per-model reasoning effort, and image generation disables Responses storage to avoid unnecessary remote retention (#2439, #2449)',
     new_0_6_39_1: 'Ekko Agent now initializes explicitly, runs bounded Node.js or Python code behind tool approvals, and can pause foreground runs for text or multiple-choice clarification before resuming (#2362, #2368)',
     new_0_6_39_2: 'Group Chat waits for room-join acknowledgement before sending, fixing intermittent “Not in room” errors around reconnects. Typing is now a throttled heartbeat shown only as a text-free breathing light on other members’ avatars (#2373)',
     new_0_6_39_3: 'Coding Agent tool events in Single Chat and Group Chat now follow the native CLI lifecycle and emit one start after arguments complete, removing duplicate or stranded tool cards and one-character-at-a-time tool JSON lag in large rooms (#2366, #2372)',
