@@ -62,6 +62,8 @@ export type MentionMessage = {
     mentionDepth?: number
     handoffChainId?: string
     mentions?: StructuredMention[]
+    /** Server-issued durable continuation identity; never accepted from an Agent socket. */
+    continuationAttemptId?: string
     /** Trusted, target-specific ownership context added by AgentClients. */
     targetOwnerMemberId?: string
 }
@@ -239,6 +241,12 @@ export interface GroupAgentExecutor {
     setStorage(storage: any): void
     setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void
     setChatRunService(service: GroupChatRunService | null): void
+}
+
+export interface MentionDeliveryResult {
+    targetCount: number
+    deliveredCount: number
+    errors: string[]
 }
 
 export interface GroupChatRunService {
@@ -2273,21 +2281,43 @@ export class AgentClients {
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
      */
-    async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
+    async processMentions(roomId: string, msg: MentionMessage): Promise<MentionDeliveryResult> {
         const agents = this.getConnectedAgents(roomId)
         const mentioned = msg.mentions
             ? this.resolveStructuredMentionTargets(agents, msg.mentions, msg.senderId)
             : resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0 && msg.role !== 'user') return
+        if (mentioned.length === 0 && msg.role !== 'user') {
+            return { targetCount: 0, deliveredCount: 0, errors: [] }
+        }
 
         if (mentioned.length > 0) {
             logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
         }
 
+        if (msg.continuationAttemptId) {
+            if (mentioned.length !== 1) {
+                return {
+                    targetCount: mentioned.length,
+                    deliveredCount: 0,
+                    errors: ['Continuation target Agent is not connected'],
+                }
+            }
+            const accepted = this._storage?.acceptHandoffAttempt?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+            )
+            if (accepted === 'already') {
+                return { targetCount: 1, deliveredCount: 1, errors: [] }
+            }
+            if (accepted !== 'accepted') {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation attempt is no longer dispatchable'] }
+            }
+        }
         this.queueMention(roomId, mentioned, msg)
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
         }
+        return { targetCount: mentioned.length, deliveredCount: mentioned.length, errors: [] }
     }
 
     private resolveStructuredMentionTargets(
