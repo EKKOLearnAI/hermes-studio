@@ -1,6 +1,6 @@
 ---
 date: 2026-08-10
-pr: pending
+pr: 2459
 feature: Local and remote group chat room list
 impact: Invited Agent links retain their cloud room identity, and the main group chat sidebar separates locally hosted rooms from deduplicated remote rooms.
 ---
