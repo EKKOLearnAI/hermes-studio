@@ -90,6 +90,14 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },
+  "optionalDependencies": {
+    "sherpa-onnx-darwin-arm64": "1.13.3",
+    "sherpa-onnx-darwin-x64": "1.13.3",
+    "sherpa-onnx-linux-arm64": "1.13.3",
+    "sherpa-onnx-linux-x64": "1.13.3",
+    "sherpa-onnx-win-ia32": "1.13.3",
+    "sherpa-onnx-win-x64": "1.13.3"
+  },
   "devDependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",
     "@koa/bodyparser": "^5.0.0",
