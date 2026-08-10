@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
@@ -43,6 +43,7 @@ const JSON_MAX_NODES = 1000
 const JSON_MAX_KEYS_PER_OBJECT = 50
 const JSON_MAX_ITEMS_PER_ARRAY = 50
 const JSON_TRUNCATED_KEY = '__truncated__'
+const STREAMING_MARKDOWN_RENDER_INTERVAL_MS = 100
 
 const props = withDefaults(defineProps<{
     message: ChatMessage
@@ -149,7 +150,6 @@ const thinkingStreamingNow = computed(() => {
 })
 const thinkingOverride = ref<boolean | null>(null)
 const thinkingExpanded = computed(() => {
-    if (thinkingStreamingNow.value) return true
     if (thinkingOverride.value !== null) return thinkingOverride.value
     return false
 })
@@ -204,6 +204,27 @@ const displayBody = computed(() => {
         .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
         .map((block: any) => block.text)
         .join('\n')
+})
+const renderedDisplayBody = ref(displayBody.value)
+let streamingMarkdownTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearStreamingMarkdownTimer() {
+    if (streamingMarkdownTimer === null) return
+    clearTimeout(streamingMarkdownTimer)
+    streamingMarkdownTimer = null
+}
+
+watch([displayBody, () => props.message.isStreaming], ([body, isStreaming]) => {
+    if (!isStreaming) {
+        clearStreamingMarkdownTimer()
+        renderedDisplayBody.value = body
+        return
+    }
+    if (streamingMarkdownTimer !== null) return
+    streamingMarkdownTimer = setTimeout(() => {
+        streamingMarkdownTimer = null
+        renderedDisplayBody.value = displayBody.value
+    }, STREAMING_MARKDOWN_RENDER_INTERVAL_MS)
 })
 const parsedMessageReference = computed(() =>
     props.message.role !== 'assistant' && props.message.role !== 'tool'
@@ -619,6 +640,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+    clearStreamingMarkdownTimer()
     if (autoPlayHandler) window.removeEventListener('auto-play-speech', autoPlayHandler)
     if (speech.currentMessageId.value === props.message.id || speech.currentCustomMessageId.value === props.message.id) speech.stop()
 })
@@ -760,7 +782,7 @@ onBeforeUnmount(() => {
                     <MarkdownRenderer :content="referencedContentMarkdown" :mention-names="mentionNames" />
                     <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" />
                 </template>
-                <MarkdownRenderer v-else-if="displayBody" :content="displayBody" :mention-names="mentionNames" />
+                <MarkdownRenderer v-else-if="renderedDisplayBody" :content="renderedDisplayBody" :mention-names="mentionNames" />
                 <ToolChangeCard
                     v-for="change in assistantWorkspaceChanges"
                     :key="change.change_id"
@@ -775,7 +797,7 @@ onBeforeUnmount(() => {
                     @toggle="toggleWorkspaceChange(change.change_id)"
                     @select="file => openWorkspaceDiffFileForPayload(file, change)"
                 />
-                <span v-if="message.isStreaming && !displayBody" class="streaming-dots">
+                <span v-if="message.isStreaming && !renderedDisplayBody" class="streaming-dots">
                     <span></span><span></span><span></span>
                 </span>
             </div>

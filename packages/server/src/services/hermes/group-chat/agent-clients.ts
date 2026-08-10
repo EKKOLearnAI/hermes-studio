@@ -227,6 +227,7 @@ export interface GroupAgentExecutor {
     getActiveSessionId(roomId: string): string | undefined
     isActiveSession(roomId: string, sessionId: string): boolean
     respondApproval?(approvalId: string, choice: string): Promise<boolean>
+    respondClarify?(clarifyId: string, response: string): Promise<boolean>
     replyToMention(
         roomId: string,
         msg: MentionMessage,
@@ -1488,6 +1489,7 @@ export class AgentClient implements GroupAgentExecutor {
                     description: (ev as any).description,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : undefined,
                     allow_permanent: (ev as any).allow_permanent,
+                    timeout_ms: (ev as any).timeout_ms,
                 })
             } else if (eventType === 'approval.resolved') {
                 this.emitApprovalResolved(roomId, {

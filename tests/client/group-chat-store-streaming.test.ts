@@ -226,6 +226,51 @@ describe('group chat store streaming merge', () => {
     })
   })
 
+  it('batches rapid content and reasoning deltas without replacing the live message', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-batched' }))
+    const liveMessage = store.messages[0]
+    const renderedMessage = store.sortedMessages[0]
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'hello' })
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' world' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'think' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' twice' })
+
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.messages[0].content).toBe('')
+    expect(store.messages[0].reasoning).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(49)
+    expect(store.messages[0].content).toBe('')
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.sortedMessages[0]).toBe(renderedMessage)
+    expect(store.messages[0]).toMatchObject({
+      content: 'hello world',
+      reasoning: 'think twice',
+      reasoning_content: 'think twice',
+      isStreaming: true,
+    })
+  })
+
+  it('flushes a queued delta immediately when the stream ends', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-ending' }))
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-ending', delta: 'complete' })
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'msg-ending' })
+
+    expect(store.messages[0]).toMatchObject({
+      content: 'complete',
+      isStreaming: false,
+    })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('preserves streamed content when the final message payload is blank', async () => {
     const store = await createJoinedStore()
 

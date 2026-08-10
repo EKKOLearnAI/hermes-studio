@@ -52,6 +52,7 @@ function mountToolMessage(message: Partial<ChatMessage>) {
 
 describe('GroupMessageItem tool details', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     setActivePinia(createPinia())
     Object.defineProperty(window, 'isSecureContext', {
       configurable: true,
@@ -112,6 +113,68 @@ describe('GroupMessageItem tool details', () => {
       content: 'Use this group answer',
       sender: 'Worker',
     })
+  })
+
+  it('keeps streaming Agent reasoning collapsed until the user expands it', async () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'group-thinking',
+          roomId: 'room-1',
+          senderId: 'agent-1',
+          senderName: 'Worker',
+          role: 'assistant',
+          content: '',
+          reasoning: 'Inspecting several possible approaches.',
+          isStreaming: true,
+          timestamp: Date.now(),
+        },
+        agents: [{ id: 'agent-row', roomId: 'room-1', agentId: 'agent-1', profile: 'worker', name: 'Worker', description: '', invited: 1 }],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.thinking-body').exists()).toBe(false)
+    expect(wrapper.get('.thinking-label').text()).toBe('chat.thinkingInProgress')
+    await wrapper.get('.thinking-header').trigger('click')
+    expect(wrapper.get('.thinking-body markdown-renderer-stub').attributes('content'))
+      .toBe('Inspecting several possible approaches.')
+  })
+
+  it('throttles streaming body Markdown and commits the final body immediately', async () => {
+    vi.useFakeTimers()
+    const baseMessage: ChatMessage = {
+      id: 'group-streaming-body',
+      roomId: 'room-1',
+      senderId: 'agent-1',
+      senderName: 'Worker',
+      role: 'assistant',
+      content: 'A',
+      isStreaming: true,
+      timestamp: Date.now(),
+    }
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: baseMessage,
+        agents: [],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    expect(wrapper.get('.msg-content markdown-renderer-stub').attributes('content')).toBe('A')
+    await wrapper.setProps({ message: { ...baseMessage, content: 'AB' } })
+    expect(wrapper.get('.msg-content markdown-renderer-stub').attributes('content')).toBe('A')
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(wrapper.get('.msg-content markdown-renderer-stub').attributes('content')).toBe('AB')
+
+    await wrapper.setProps({ message: { ...baseMessage, content: 'ABC', isStreaming: false } })
+    expect(wrapper.get('.msg-content markdown-renderer-stub').attributes('content')).toBe('ABC')
+    wrapper.unmount()
   })
 
   it('normalizes non-string runtime tool payloads before rendering', async () => {

@@ -526,6 +526,10 @@ describe('group chat baseline behavior', () => {
       rooms: ['room-relay'],
     })
     const proxySendMessage = vi.spyOn(AgentClient.prototype, 'sendMessage').mockResolvedValue('cloud-message')
+    const proxyApprovalRequested = vi.spyOn(AgentClient.prototype, 'emitApprovalRequested').mockImplementation(() => {})
+    const proxyApprovalResolved = vi.spyOn(AgentClient.prototype, 'emitApprovalResolved').mockImplementation(() => {})
+    const proxyClarifyRequested = vi.spyOn(AgentClient.prototype, 'emitClarifyRequested').mockImplementation(() => {})
+    const proxyClarifyResolved = vi.spyOn(AgentClient.prototype, 'emitClarifyResolved').mockImplementation(() => {})
 
     const wrongTarget = socketIo(`http://127.0.0.1:${port}/group-chat-agent-relay`, {
       autoConnect: false,
@@ -636,6 +640,10 @@ describe('group chat baseline behavior', () => {
         agentSessionId: 'remote-session',
         extra: {
           role: 'assistant',
+          mentions: [
+            { type: 'agent', participantId: 'agent-first', displayName: 'First' },
+            { type: 'agent', participantId: 'agent-second', displayName: 'Second' },
+          ],
           roomId: 'another-room',
           content: 'forged content',
           id: 'forged-id',
@@ -651,7 +659,13 @@ describe('group chat baseline behavior', () => {
       'room-relay',
       'safe remote reply',
       expect.stringMatching(/^gcr_[a-f0-9]{32}$/),
-      { role: 'assistant' },
+      {
+        role: 'assistant',
+        mentions: [
+          { type: 'agent', participantId: 'agent-first', displayName: 'First' },
+          { type: 'agent', participantId: 'agent-second', displayName: 'Second' },
+        ],
+      },
       'remote-session',
     )
     const workspaceDiffMessage = storage.getRecentMessagesForUI('room-relay')
@@ -668,6 +682,84 @@ describe('group chat baseline behavior', () => {
         }),
       ],
     })
+
+    const interactionRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const interactionReply = executor.replyToMention('room-relay', {
+      messageId: 'interaction-source-message',
+      content: '@Remote Relay Agent ask before continuing',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const interactionRun = await interactionRunRequested
+    intendedTarget.emit('run.accepted', { runId: interactionRun.runId })
+    await expect(emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: interactionRun.runId,
+      seq: 1,
+      event: 'approval.requested',
+      data: {
+        approval_id: 'remote-approval',
+        command: 'touch relay.txt',
+        choices: ['once', 'deny'],
+        timeout_ms: 300_000,
+        agentSessionId: 'remote-session',
+      },
+    })).resolves.toEqual({ ok: true })
+    const cloudApprovalId = String(proxyApprovalRequested.mock.calls.at(-1)?.[1]?.approval_id || '')
+    expect(cloudApprovalId).toMatch(/^gca_[a-f0-9]{32}$/)
+
+    await expect(emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: interactionRun.runId,
+      seq: 2,
+      event: 'clarify.requested',
+      data: {
+        clarify_id: 'remote-clarify',
+        question: 'Which environment?',
+        choices: ['staging', 'production'],
+        timeout_ms: 300_000,
+        agentSessionId: 'remote-session',
+      },
+    })).resolves.toEqual({ ok: true })
+    const cloudClarifyId = String(proxyClarifyRequested.mock.calls.at(-1)?.[1]?.clarify_id || '')
+    expect(cloudClarifyId).toMatch(/^gcc_[a-f0-9]{32}$/)
+
+    intendedTarget.once('approval.respond', (data: any, ack: (response: any) => void) => {
+      expect(data).toEqual({ approvalId: 'remote-approval', choice: 'once' })
+      ack({ resolved: true })
+    })
+    await expect(executor.respondApproval!(cloudApprovalId, 'once')).resolves.toBe(true)
+    intendedTarget.once('clarify.respond', (data: any, ack: (response: any) => void) => {
+      expect(data).toEqual({ clarifyId: 'remote-clarify', response: 'staging' })
+      ack({ resolved: true })
+    })
+    await expect(executor.respondClarify!(cloudClarifyId, 'staging')).resolves.toBe(true)
+
+    await expect(emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: interactionRun.runId,
+      seq: 3,
+      event: 'approval.resolved',
+      data: { approval_id: 'remote-approval', choice: 'once', agentSessionId: 'remote-session' },
+    })).resolves.toEqual({ ok: true })
+    await expect(emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: interactionRun.runId,
+      seq: 4,
+      event: 'clarify.resolved',
+      data: {
+        clarify_id: 'remote-clarify',
+        resolved: true,
+        reason: 'response',
+        agentSessionId: 'remote-session',
+      },
+    })).resolves.toEqual({ ok: true })
+    expect(proxyApprovalResolved).toHaveBeenCalledWith('room-relay', expect.objectContaining({
+      approval_id: cloudApprovalId,
+    }))
+    expect(proxyClarifyResolved).toHaveBeenCalledWith('room-relay', expect.objectContaining({
+      clarify_id: cloudClarifyId,
+    }))
+    intendedTarget.emit('run.completed', { runId: interactionRun.runId })
+    await interactionReply
 
     const nameConflict = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
       agent: 'codex',

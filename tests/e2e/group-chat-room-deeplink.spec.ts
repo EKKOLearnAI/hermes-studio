@@ -36,6 +36,7 @@ const messagesByRoom: Record<string, unknown[]> = {
     { id: 'alpha-msg', roomId: 'room-alpha', senderId: 'user-1', senderName: 'Alice', content: 'Alpha room message', timestamp: 1_790_000_000, role: 'user' },
     { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
+    { id: 'alpha-reasoning', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Reasoning is available on demand.', reasoning: 'Inspecting several possible approaches.', isStreaming: true, timestamp: 1_790_000_003, role: 'assistant' },
   ],
   'room-beta': [
     { id: 'beta-msg', roomId: 'room-beta', senderId: 'user-1', senderName: 'Bob', content: 'Beta room message', timestamp: 1_790_000_100, role: 'user' },
@@ -257,6 +258,16 @@ test.describe('group chat room deep links', () => {
     await expect(page.getByText('Beta room message')).toBeVisible()
     expect((await page.locator('.run-card').first().boundingBox())?.width).toBeGreaterThanOrEqual(259)
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+  })
+
+  test('keeps streaming Agent reasoning collapsed until explicitly expanded', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const message = page.locator('.group-message', { hasText: 'Reasoning is available on demand.' })
+    await expect(message.locator('.thinking-block')).toBeVisible()
+    await expect(message.locator('.thinking-body')).toHaveCount(0)
+    await message.locator('.thinking-header').click()
+    await expect(message.locator('.thinking-body')).toContainText('Inspecting several possible approaches.')
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
