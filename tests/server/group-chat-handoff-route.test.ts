@@ -67,19 +67,19 @@ describe('group chat durable continuation route', () => {
         dbState.current = null
     })
 
-    it('returns an auditable failure and leaves the chain retryable when the target is offline', async () => {
+    it('returns a stable asynchronous continuation acknowledgement', async () => {
         const endpoint = `${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`
         const response = await fetch(endpoint, { method: 'POST' })
-        expect(response.status).toBe(502)
+        expect(response.status).toBe(202)
         const body = await response.json() as any
         expect(body).toMatchObject({
-            success: false,
-            chain: { status: 'stopped', stopReason: 'continue_failed', continueUsed: 0 },
+            success: true,
+            status: 'continuing',
+            chain: { status: 'claimed', continueUsed: 0 },
         })
-        expect(db.prepare('SELECT status FROM gc_handoff_attempts').all()).toEqual([{ status: 'failed' }])
 
         const retry = await fetch(endpoint, { method: 'POST' })
-        expect(retry.status).toBe(502)
+        expect(retry.status).toBe(202)
         expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 1 })
     })
 
@@ -99,7 +99,12 @@ describe('group chat durable continuation route', () => {
         vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             const attemptId = String(message.continuationAttemptId)
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
+            const payload = JSON.parse(String(db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
+            storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
             expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
+            storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+            storage.markHandoffTargetInvocationStarted(attemptId)
+            storage.completeHandoffTarget(attemptId, `continuation:${attemptId}`)
             return { targetCount: 1, deliveredCount: 1, errors: [] }
         })
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
@@ -127,7 +132,12 @@ describe('group chat durable continuation route', () => {
         const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             expect(message.continuationAttemptId).toBe(attemptId)
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
+            const payload = JSON.parse(String(db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
+            storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
             expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
+            storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+            storage.markHandoffTargetInvocationStarted(attemptId)
+            storage.completeHandoffTarget(attemptId, `continuation:${attemptId}`)
             return { targetCount: 1, deliveredCount: 1, errors: [] }
         })
 

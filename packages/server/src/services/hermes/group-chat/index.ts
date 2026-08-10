@@ -89,6 +89,7 @@ interface PendingGroupApprovalRoute {
     description: string
     choices: string[]
     allowPermanent: boolean
+    timeoutMs: number
     requestedAt: number
 }
 
@@ -459,6 +460,28 @@ function normalizeMentionDepth(depth: unknown): number {
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
+function maxAgentMentionDepth(): number {
+    const value = Number(process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
+    if (!Number.isFinite(value) || value <= 0) return 4
+    return Math.min(10, Math.floor(value))
+}
+
+function normalizePendingInteractionTimeout(value: unknown): number {
+    const timeoutMs = Number(value)
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return 300_000
+    return Math.min(600_000, Math.max(1_000, Math.trunc(timeoutMs)))
+}
+
+function isExpiredInteractionError(value: unknown): boolean {
+    const message = String(value || '').toLowerCase()
+    return message.includes('unknown approval request')
+        || message.includes('unknown clarification request')
+        || message.includes('approval is no longer pending')
+        || message.includes('approval is not pending')
+        || message.includes('clarification is no longer pending')
+        || message.includes('clarification is not pending')
+}
+
 const GROUP_CHAT_MESSAGE_WINDOW = 500
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
@@ -619,35 +642,47 @@ class ChatStorage {
                )`
         ).run(Date.now())
         const now = Date.now()
-        // A dispatched attempt is a lease. Recover it on restart unless the
-        // target has already durably acknowledged the same attempt.
+        // A source-side receipt is only durable admission. It is never
+        // completion: only a target inbox row with terminal evidence can
+        // advance the source chain to resumed.
         db.prepare(
             `UPDATE gc_handoff_attempts
              SET status = 'completed', updatedAt = ?
-             WHERE status = 'dispatched'
-               AND attemptId IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status IN ('accepted', 'completed'))`,
+             WHERE status IN ('admitted', 'dispatched')
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_inbox WHERE status = 'completed')`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_deliveries SET status = 'completed', updatedAt = ?
              WHERE status = 'accepted'
-               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_inbox WHERE status = 'completed')`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_outbox SET status = 'completed', updatedAt = ?
-             WHERE status IN ('dispatched', 'dispatching')
-               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
+             WHERE status IN ('delivered', 'dispatched', 'dispatching')
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_inbox WHERE status = 'completed')`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_chains
              SET status = 'resumed', continueUsed = 1, stopReason = '', lastError = NULL, updatedAt = ?
              WHERE status = 'claimed'
-               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'completed')`,
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_inbox WHERE status = 'completed')`,
         ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_inbox
+             SET status = 'failed_manual', lastError = 'Target invocation was in flight during restart',
+                 stateVersion = stateVersion + 1, leaseUntil = 0, updatedAt = ?
+             WHERE status = 'running' AND invocationStartedAt IS NOT NULL`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_inbox
+             SET status = 'admitted', executionId = NULL, leaseUntil = 0, updatedAt = ?
+             WHERE status = 'running' AND invocationStartedAt IS NULL AND leaseUntil < ?`,
+        ).run(now, now)
         db.prepare(
             `UPDATE gc_handoff_attempts
              SET status = 'claimed', leaseUntil = ?, attemptCount = attemptCount + 1, updatedAt = ?
-             WHERE status = 'dispatched'
-               AND attemptId NOT IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status = 'completed')`,
+             WHERE status IN ('dispatching', 'dispatched')
+               AND attemptId NOT IN (SELECT attemptId FROM gc_handoff_inbox WHERE status IN ('completed', 'failed_manual', 'cancelled'))`,
         ).run(now + 30_000, now)
         db.prepare(
             `UPDATE gc_handoff_outbox
@@ -954,6 +989,8 @@ class ChatStorage {
                 ? [{ type: 'agent', participantId: String(chain.targetAgentId) }]
                 : source.mentions,
         })
+        const targetSnapshot = JSON.stringify({ agentId: String(chain.targetAgentId || '') })
+        const payloadDigest = createHash('sha256').update(payload).digest('hex')
         this.withImmediateTransaction(db, () => {
             if (chain.attemptId) {
                 db.prepare(`DELETE FROM gc_handoff_outbox WHERE attemptId = ?`).run(chain.attemptId)
@@ -961,9 +998,9 @@ class ChatStorage {
             }
             db.prepare(
                 `INSERT INTO gc_handoff_attempts
-                   (attemptId, chainId, roomId, targetAgentId, status, leaseUntil, attemptCount, createdAt, updatedAt)
-                 VALUES (?, ?, ?, ?, 'claimed', ?, 1, ?, ?)`,
-            ).run(attemptId, chainId, roomId, String(chain.targetAgentId || ''), now + 30_000, now, now)
+                   (attemptId, chainId, roomId, sourceInstanceId, targetAgentId, targetSnapshot, payloadDigest, status, leaseUntil, attemptCount, createdAt, updatedAt)
+                 VALUES (?, ?, ?, 'studio', ?, ?, ?, 'claimed', ?, 1, ?, ?)`,
+            ).run(attemptId, chainId, roomId, String(chain.targetAgentId || ''), targetSnapshot, payloadDigest, now + 30_000, now, now)
             db.prepare(
                 `INSERT INTO gc_handoff_outbox
                    (attemptId, roomId, payload, status, availableAt, createdAt, updatedAt)
@@ -1080,6 +1117,82 @@ class ChatStorage {
         this.db()?.prepare(`DELETE FROM gc_handoff_deliveries WHERE attemptId = ? AND status = 'accepted'`).run(attemptId)
     }
 
+    admitHandoffTarget(
+        attemptId: string,
+        targetAgentId: string,
+        payload: Record<string, unknown>,
+        targetSnapshot: Record<string, unknown> = {},
+    ): { status: 'admitted' | 'already'; inboxId: string; receipt: string; stateVersion: number } | null {
+        const db = this.db()
+        if (!db) return null
+        const attempt = this.getHandoffAttempt(attemptId)
+        if (!attempt || String(attempt.targetAgentId) !== targetAgentId) return null
+        const payloadText = JSON.stringify(payload)
+        const payloadDigest = createHash('sha256').update(payloadText).digest('hex')
+        const snapshotText = JSON.stringify(targetSnapshot)
+        if (String(attempt.sourceInstanceId || 'studio') !== 'studio'
+            || (String(attempt.payloadDigest || '') && String(attempt.payloadDigest) !== payloadDigest)
+            || (String(attempt.targetSnapshot || '{}') !== snapshotText)) return null
+        const now = Date.now()
+        return this.withImmediateTransaction(db, () => {
+            const existing = db.prepare(
+                'SELECT inboxId, receipt, status, stateVersion, payloadDigest, targetSnapshot FROM gc_handoff_inbox WHERE sourceInstanceId = ? AND attemptId = ?',
+            ).get('studio', attemptId) as any
+            if (existing) {
+                if (String(existing.payloadDigest) !== payloadDigest || String(existing.targetSnapshot) !== snapshotText) return null
+                return {
+                    status: 'already',
+                    inboxId: String(existing.inboxId),
+                    receipt: String(existing.receipt),
+                    stateVersion: Number(existing.stateVersion),
+                }
+            }
+            const inboxId = randomUUID()
+            const receipt = randomBytes(24).toString('hex')
+            db.prepare(
+                `INSERT INTO gc_handoff_inbox
+                 (inboxId, sourceInstanceId, attemptId, targetAgentId, targetSnapshot, payloadDigest, payload, receipt, status, stateVersion, createdAt, updatedAt)
+                 VALUES (?, 'studio', ?, ?, ?, ?, ?, ?, 'admitted', 1, ?, ?)`,
+            ).run(inboxId, attemptId, targetAgentId, snapshotText, payloadDigest, payloadText, receipt, now, now)
+            return { status: 'admitted', inboxId, receipt, stateVersion: 1 }
+        })
+    }
+
+    getHandoffTargetStatus(attemptId: string, receipt?: string): any | null {
+        const row = this.db()?.prepare(
+            'SELECT * FROM gc_handoff_inbox WHERE sourceInstanceId = ? AND attemptId = ?',
+        ).get('studio', attemptId) as any
+        if (!row || (receipt && String(row.receipt) !== receipt)) return null
+        return row
+    }
+
+    markHandoffTargetRunning(attemptId: string, executionId: string, leaseUntil: number): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_inbox
+             SET status = 'running', stateVersion = stateVersion + 1, executionId = ?, leaseUntil = ?, updatedAt = ?
+             WHERE sourceInstanceId = 'studio' AND attemptId = ? AND status = 'admitted'`,
+        ).run(executionId, leaseUntil, Date.now(), attemptId)
+        return Boolean(result?.changes)
+    }
+
+    markHandoffTargetInvocationStarted(attemptId: string): boolean {
+        const now = Date.now()
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_inbox SET invocationStartedAt = ?, updatedAt = ?
+             WHERE sourceInstanceId = 'studio' AND attemptId = ? AND status = 'running' AND invocationStartedAt IS NULL`,
+        ).run(now, now, attemptId)
+        return Boolean(result?.changes)
+    }
+
+    completeHandoffTarget(attemptId: string, terminalMessageId: string): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_inbox
+             SET status = 'completed', stateVersion = stateVersion + 1, terminalMessageId = ?, leaseUntil = 0, updatedAt = ?
+             WHERE sourceInstanceId = 'studio' AND attemptId = ? AND status IN ('admitted', 'running')`,
+        ).run(terminalMessageId, Date.now(), attemptId)
+        return Boolean(result?.changes)
+    }
+
     registerTrustedAgentMessageMetadata(roomId: string, messageId: string, mentionDepth: unknown, handoffChainId: unknown): void {
         const depth = typeof mentionDepth === 'number' && Number.isFinite(mentionDepth)
             ? Math.max(0, Math.floor(mentionDepth))
@@ -1102,29 +1215,36 @@ class ChatStorage {
         const now = Date.now()
         const attempt = this.getHandoffAttempt(attemptId)
         if (!attempt || String(attempt.targetAgentId) !== targetAgentId) return null
-        if (attempt.status === 'dispatched' || attempt.status === 'completed') return 'already'
+        const target = this.getHandoffTargetStatus(attemptId)
+        if (!target || !['admitted', 'running', 'completed'].includes(String(target.status))) return null
+        if (attempt.status === 'admitted' || attempt.status === 'dispatched' || attempt.status === 'completed') return 'already'
         if (attempt.status !== 'claimed' || Number(attempt.leaseUntil) < now) return null
         const result = db.prepare(
             `UPDATE gc_handoff_attempts
-             SET status = 'dispatched', updatedAt = ?
+             SET status = 'admitted', updatedAt = ?
              WHERE attemptId = ? AND status = 'claimed' AND leaseUntil >= ?`,
         ).run(now, attemptId, now)
         if (!result.changes) return null
-        db.prepare(`UPDATE gc_handoff_outbox SET status = 'dispatched', updatedAt = ? WHERE attemptId = ?`).run(now, attemptId)
+        db.prepare(`UPDATE gc_handoff_outbox SET status = 'delivered', updatedAt = ? WHERE attemptId = ?`).run(now, attemptId)
         return 'accepted'
     }
 
     completeHandoffContinuation(roomId: string, chainId: string): any | null {
         const chain = this.getHandoffChain(roomId, chainId)
         if (!chain || !chain.attemptId) return null
+        const target = this.getHandoffTargetStatus(String(chain.attemptId))
+        if (!target || String(target.status) !== 'completed' || !String(target.terminalMessageId || '')) return null
         const now = Date.now()
         const result = this.db()?.prepare(
             `UPDATE gc_handoff_attempts SET status = 'completed', updatedAt = ?
-             WHERE attemptId = ? AND status = 'dispatched'`,
+             WHERE attemptId = ? AND status IN ('admitted', 'dispatched')`,
         ).run(now, chain.attemptId)
         if (!result?.changes && this.getHandoffAttempt(chain.attemptId)?.status !== 'completed') return null
         this.db()?.prepare(
             `UPDATE gc_handoff_deliveries SET status = 'completed', updatedAt = ? WHERE attemptId = ?`,
+        ).run(now, chain.attemptId)
+        this.db()?.prepare(
+            `UPDATE gc_handoff_outbox SET status = 'completed', updatedAt = ? WHERE attemptId = ?`,
         ).run(now, chain.attemptId)
         this.db()?.prepare(
             `UPDATE gc_handoff_chains
@@ -1606,10 +1726,29 @@ class ChatStorage {
                  WHERE roomId = ? AND status != 'revoked'`,
             ).run(Date.now(), Date.now(), roomId)
             db.prepare('DELETE FROM gc_agent_pairing_requests WHERE roomId = ?').run(roomId)
-            db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
-            db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
-            db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
-            db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
+            const now = Date.now()
+            db.prepare(
+                `UPDATE gc_handoff_inbox
+                 SET status = CASE WHEN status IN ('completed', 'failed_terminal', 'failed_manual', 'cancelled') THEN status ELSE 'cancelled' END,
+                     tombstone = CASE WHEN status IN ('completed', 'failed_terminal', 'failed_manual', 'cancelled') THEN tombstone ELSE ? END,
+                     stateVersion = stateVersion + 1, updatedAt = ?
+                 WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)`,
+            ).run(`room:${roomId}:cleared`, now, roomId)
+            db.prepare(
+                `UPDATE gc_handoff_deliveries SET status = 'failed', updatedAt = ?
+                 WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)`,
+            ).run(now, roomId)
+            db.prepare(
+                `UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ? WHERE roomId = ? AND status NOT IN ('completed', 'failed')`,
+            ).run(now, roomId)
+            db.prepare(
+                `UPDATE gc_handoff_attempts SET status = 'failed_manual', lastError = 'Room cleared', updatedAt = ?
+                 WHERE roomId = ? AND status NOT IN ('completed', 'failed_manual')`,
+            ).run(now, roomId)
+            db.prepare(
+                `UPDATE gc_handoff_chains SET status = 'stopped', stopReason = 'room_cleared', lastError = 'Room cleared', updatedAt = ?
+                 WHERE roomId = ? AND status NOT IN ('resumed', 'stopped')`,
+            ).run(now, roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
@@ -2030,8 +2169,10 @@ export class GroupChatServer {
     }>>()
     /** room-scoped approval locator -> validated room and runtime session that requested it. */
     private pendingApprovalRoutes = new Map<string, PendingGroupApprovalRoute>()
+    private pendingApprovalTimers = new Map<string, ReturnType<typeof setTimeout>>()
     /** room-scoped clarification locator -> validated room and runtime session that requested it. */
     private pendingClarifyRoutes = new Map<string, PendingGroupClarifyRoute>()
+    private pendingClarifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
     private pendingApprovalRouteKey(roomId: string, approvalId: string): string {
         return `${roomId}:${approvalId}`
@@ -2039,6 +2180,58 @@ export class GroupChatServer {
 
     private pendingClarifyRouteKey(roomId: string, clarifyId: string): string {
         return `${roomId}:${clarifyId}`
+    }
+
+    private takePendingApprovalRoute(routeKey: string): PendingGroupApprovalRoute | undefined {
+        const route = this.pendingApprovalRoutes.get(routeKey)
+        this.pendingApprovalRoutes.delete(routeKey)
+        const timer = this.pendingApprovalTimers.get(routeKey)
+        if (timer) clearTimeout(timer)
+        this.pendingApprovalTimers.delete(routeKey)
+        return route
+    }
+
+    private takePendingClarifyRoute(routeKey: string): PendingGroupClarifyRoute | undefined {
+        const route = this.pendingClarifyRoutes.get(routeKey)
+        this.pendingClarifyRoutes.delete(routeKey)
+        const timer = this.pendingClarifyTimers.get(routeKey)
+        if (timer) clearTimeout(timer)
+        this.pendingClarifyTimers.delete(routeKey)
+        return route
+    }
+
+    private schedulePendingApprovalExpiry(routeKey: string, route: PendingGroupApprovalRoute): void {
+        const existing = this.pendingApprovalTimers.get(routeKey)
+        if (existing) clearTimeout(existing)
+        const timer = setTimeout(() => {
+            if (this.pendingApprovalRoutes.get(routeKey) !== route) return
+            this.expirePendingAgentInteractions(
+                route.roomId,
+                route.agentName,
+                [route.approvalId],
+                [],
+                'Approval timed out',
+            )
+        }, route.timeoutMs + 1_000)
+        timer.unref?.()
+        this.pendingApprovalTimers.set(routeKey, timer)
+    }
+
+    private schedulePendingClarifyExpiry(routeKey: string, route: PendingGroupClarifyRoute): void {
+        const existing = this.pendingClarifyTimers.get(routeKey)
+        if (existing) clearTimeout(existing)
+        const timer = setTimeout(() => {
+            if (this.pendingClarifyRoutes.get(routeKey) !== route) return
+            this.expirePendingAgentInteractions(
+                route.roomId,
+                route.agentName,
+                [],
+                [route.clarifyId],
+                'Clarification timed out',
+            )
+        }, route.timeoutMs + 1_000)
+        timer.unref?.()
+        this.pendingClarifyTimers.set(routeKey, timer)
     }
 
     private pendingApprovalSnapshots(roomId: string | null, socket: Socket) {
@@ -2054,6 +2247,7 @@ export class GroupChatServer {
                 description: route.description,
                 choices: route.choices,
                 allow_permanent: route.allowPermanent,
+                timeout_ms: route.timeoutMs,
                 requested_at: route.requestedAt,
             }))
     }
@@ -2662,7 +2856,7 @@ export class GroupChatServer {
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
-        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
+        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
         socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
@@ -3519,11 +3713,13 @@ export class GroupChatServer {
         })
     }
 
-    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; agentSessionId?: string }): void {
+    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
         const choices = Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny']
+        const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
+        this.takePendingApprovalRoute(routeKey)
         const pendingRoute: PendingGroupApprovalRoute = {
             roomId,
             agentName,
@@ -3534,9 +3730,11 @@ export class GroupChatServer {
             description: data.description || '',
             choices,
             allowPermanent: Boolean(data.allow_permanent),
+            timeoutMs: normalizePendingInteractionTimeout(data.timeout_ms),
             requestedAt: Date.now(),
         }
-        this.pendingApprovalRoutes.set(this.pendingApprovalRouteKey(roomId, data.approval_id), pendingRoute)
+        this.pendingApprovalRoutes.set(routeKey, pendingRoute)
+        this.schedulePendingApprovalExpiry(routeKey, pendingRoute)
         if (!pendingRoute.ownerMemberId) {
             logger.warn(`[GroupChat] approval ${data.approval_id} has no Agent owner in room ${roomId}`)
         }
@@ -3549,6 +3747,7 @@ export class GroupChatServer {
             description: data.description || '',
             choices,
             allow_permanent: Boolean(data.allow_permanent),
+            timeout_ms: pendingRoute.timeoutMs,
         })
     }
 
@@ -3559,7 +3758,7 @@ export class GroupChatServer {
         const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
         const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
         if (pendingRoute?.roomId === roomId && pendingRoute.agentName === agentName) {
-            this.pendingApprovalRoutes.delete(routeKey)
+            this.takePendingApprovalRoute(routeKey)
         }
         const ownerMemberId = pendingRoute?.ownerMemberId || this.groupAgentOwnerMemberId(roomId, agentName)
         this.emitToAgentApprovalOwner({ roomId, ownerMemberId }, 'approval.resolved', {
@@ -3603,9 +3802,20 @@ export class GroupChatServer {
         if (remoteExecutor?.respondApproval) {
             try {
                 const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
-                if (resolved) this.pendingApprovalRoutes.delete(routeKey)
+                if (resolved) this.takePendingApprovalRoute(routeKey)
                 ack?.({ ok: true, resolved })
             } catch (err: any) {
+                if (isExpiredInteractionError(err?.message || err)) {
+                    this.expirePendingAgentInteractions(
+                        roomId,
+                        pendingRoute.agentName,
+                        [data.approval_id],
+                        [],
+                        err?.message || 'Approval expired',
+                    )
+                    ack?.({ ok: true, resolved: true, stale: true })
+                    return
+                }
                 ack?.({ error: err.message || 'approval response failed' })
             }
             return
@@ -3622,17 +3832,28 @@ export class GroupChatServer {
                 ack?.({ error: 'Approval does not belong to the active Agent session' })
                 return
             }
-            this.pendingApprovalRoutes.delete(routeKey)
+            this.takePendingApprovalRoute(routeKey)
             ack?.({ ok: true, resolved: true })
             return
         }
         try {
             const result = await new AgentBridgeClient().approvalRespond(data.approval_id, data.choice || 'deny')
             const resolved = Boolean((result as any)?.resolved)
-            if (resolved) this.pendingApprovalRoutes.delete(routeKey)
+            if (resolved) this.takePendingApprovalRoute(routeKey)
             ack?.({ ok: true, resolved })
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to respond approval ${data.approval_id}: ${err.message}`)
+            if (isExpiredInteractionError(err?.message || err)) {
+                this.expirePendingAgentInteractions(
+                    roomId,
+                    pendingRoute.agentName,
+                    [data.approval_id],
+                    [],
+                    err?.message || 'Approval expired',
+                )
+                ack?.({ ok: true, resolved: true, stale: true })
+                return
+            }
             ack?.({ error: err.message || 'approval response failed' })
         }
     }
@@ -3641,9 +3862,9 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.clarify_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        const timeoutMs = Number.isFinite(Number(data.timeout_ms)) && Number(data.timeout_ms) > 0
-            ? Number(data.timeout_ms)
-            : 300_000
+        const timeoutMs = normalizePendingInteractionTimeout(data.timeout_ms)
+        const routeKey = this.pendingClarifyRouteKey(roomId, data.clarify_id)
+        this.takePendingClarifyRoute(routeKey)
         const route: PendingGroupClarifyRoute = {
             roomId,
             agentName,
@@ -3654,7 +3875,8 @@ export class GroupChatServer {
             timeoutMs,
             requestedAt: Date.now(),
         }
-        this.pendingClarifyRoutes.set(this.pendingClarifyRouteKey(roomId, data.clarify_id), route)
+        this.pendingClarifyRoutes.set(routeKey, route)
+        this.schedulePendingClarifyExpiry(routeKey, route)
         this.emitToRoomManagers(roomId, 'clarify.requested', {
             event: 'clarify.requested',
             roomId,
@@ -3670,7 +3892,7 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.clarify_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        this.pendingClarifyRoutes.delete(this.pendingClarifyRouteKey(roomId, data.clarify_id))
+        this.takePendingClarifyRoute(this.pendingClarifyRouteKey(roomId, data.clarify_id))
         this.emitToRoomManagers(roomId, 'clarify.resolved', {
             event: 'clarify.resolved',
             roomId,
@@ -3702,6 +3924,30 @@ export class GroupChatServer {
             return
         }
         const response = typeof data.response === 'string' ? data.response : String(data.response ?? '')
+        const remoteExecutor = this.agentClients.getAgents(roomId).find(agent =>
+            agent.name === pendingRoute.agentName && typeof agent.respondClarify === 'function'
+        )
+        if (remoteExecutor?.respondClarify) {
+            try {
+                const resolved = await remoteExecutor.respondClarify(data.clarify_id, response)
+                if (resolved) this.takePendingClarifyRoute(routeKey)
+                ack?.({ ok: true, resolved })
+            } catch (err: any) {
+                if (isExpiredInteractionError(err?.message || err)) {
+                    this.expirePendingAgentInteractions(
+                        roomId,
+                        pendingRoute.agentName,
+                        [],
+                        [data.clarify_id],
+                        err?.message || 'Clarification expired',
+                    )
+                    ack?.({ ok: true, resolved: true, stale: true })
+                    return
+                }
+                ack?.({ error: err.message || 'clarification response failed' })
+            }
+            return
+        }
         const ekkoResult = pendingRoute.agentSessionId
             ? respondToEkkoClarification(pendingRoute.agentSessionId, data.clarify_id, response)
             : null
@@ -3710,18 +3956,67 @@ export class GroupChatServer {
                 ack?.({ error: 'Clarification does not belong to the active Agent session' })
                 return
             }
-            this.pendingClarifyRoutes.delete(routeKey)
+            this.takePendingClarifyRoute(routeKey)
             ack?.({ ok: true, resolved: true })
             return
         }
         try {
             const result = await new AgentBridgeClient().clarifyRespond(data.clarify_id, response)
             const resolved = Boolean((result as any)?.resolved)
-            if (resolved) this.pendingClarifyRoutes.delete(routeKey)
+            if (resolved) this.takePendingClarifyRoute(routeKey)
             ack?.({ ok: true, resolved })
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to respond clarification ${data.clarify_id}: ${err.message}`)
+            if (isExpiredInteractionError(err?.message || err)) {
+                this.expirePendingAgentInteractions(
+                    roomId,
+                    pendingRoute.agentName,
+                    [],
+                    [data.clarify_id],
+                    err?.message || 'Clarification expired',
+                )
+                ack?.({ ok: true, resolved: true, stale: true })
+                return
+            }
             ack?.({ error: err.message || 'clarification response failed' })
+        }
+    }
+
+    expirePendingAgentInteractions(
+        roomId: string,
+        agentName: string,
+        approvalIds: string[],
+        clarifyIds: string[],
+        reason: string,
+    ): void {
+        const boundedReason = String(reason || 'Pending interaction expired').slice(0, 500)
+        for (const approvalId of new Set(approvalIds)) {
+            const routeKey = this.pendingApprovalRouteKey(roomId, approvalId)
+            const route = this.pendingApprovalRoutes.get(routeKey)
+            if (!route || route.agentName !== agentName) continue
+            this.takePendingApprovalRoute(routeKey)
+            this.emitToAgentApprovalOwner(route, 'approval.resolved', {
+                event: 'approval.resolved',
+                roomId,
+                agentName,
+                approval_id: approvalId,
+                choice: 'deny',
+                reason: boundedReason,
+            })
+        }
+        for (const clarifyId of new Set(clarifyIds)) {
+            const routeKey = this.pendingClarifyRouteKey(roomId, clarifyId)
+            const route = this.pendingClarifyRoutes.get(routeKey)
+            if (!route || route.agentName !== agentName) continue
+            this.takePendingClarifyRoute(routeKey)
+            this.emitToRoomManagers(roomId, 'clarify.resolved', {
+                event: 'clarify.resolved',
+                roomId,
+                agentName,
+                clarify_id: clarifyId,
+                resolved: false,
+                reason: boundedReason,
+            })
         }
     }
 
@@ -3729,7 +4024,7 @@ export class GroupChatServer {
         const pendingRoutes = this.pendingApprovalRoutes
         if (!pendingRoutes) return
         for (const [routeKey, route] of pendingRoutes) {
-            if (route.roomId === roomId) pendingRoutes.delete(routeKey)
+            if (route.roomId === roomId) this.takePendingApprovalRoute(routeKey)
         }
     }
 
@@ -3737,7 +4032,7 @@ export class GroupChatServer {
         const pendingRoutes = this.pendingClarifyRoutes
         if (!pendingRoutes) return
         for (const [routeKey, route] of pendingRoutes) {
-            if (route.roomId === roomId) pendingRoutes.delete(routeKey)
+            if (route.roomId === roomId) this.takePendingClarifyRoute(routeKey)
         }
     }
 
