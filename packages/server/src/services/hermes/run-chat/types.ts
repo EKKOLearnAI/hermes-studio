@@ -95,10 +95,14 @@ export interface SessionState {
   bridgeContext?: BridgeContextState
   isAborting?: boolean
   /** [preempt patch] 幂等保护:同一轮 abort 的 markAbortCompleted 只执行一次。
-   *  handleAbort 与 bridge terminal chunk 的 markAbortCompleted 会并发触发,
-   *  不加保护会把刚启动的下一条 run 的 activeRunMarker/runId 清掉。 */
-  abortFinalized?: boolean
-  queue: QueuedRun[]
+     *  handleAbort 与 bridge terminal chunk 的 markAbortCompleted 会并发触发,
+     *  不加保护会把刚启动的下一条 run 的 activeRunMarker/runId 清掉。 */
+    abortFinalized?: boolean
+    /** [queue-fix patch] run.promote 串行链:同一 session 的"立即发送"排队执行。
+     *  并发 promote 会同时触发 handleAbort,而 abortFinalized 幂等保护只放行
+     *  第一个 markAbortCompleted,其余被吞导致队列卡死、前端队列残留。 */
+    promoteChain?: Promise<void>
+    queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource
   webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex'

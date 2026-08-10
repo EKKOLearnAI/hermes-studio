@@ -533,23 +533,37 @@ export class ChatRunSocket {
     // [user-controlled patch] 立即发送:把指定排队消息提升到队首并打断当前 run,
     // 使其马上开始回复(markAbortCompleted 出队队首即该消息)。前端"立即发送"
     // 按钮与 ESC 放行都走这个事件。
-    socket.on('run.promote', async (data: { session_id?: string; queue_id?: string }) => {
+    // [queue-fix patch] 并发 promote 会同时触发 handleAbort,而 abortFinalized
+    // 幂等保护只放行第一个 markAbortCompleted,其余被吞 → 消息留在队列不执行,
+    // 前端队列残留。这里把同一 session 的 promote 串成链,前一个彻底结束
+    // (出队+启动下一 run)再处理下一个。
+    socket.on('run.promote', (data: { session_id?: string; queue_id?: string }) => {
       if (!data.session_id || !data.queue_id) return
       const state = this.sessionMap.get(data.session_id)
       if (!state || !state.queue.length) return
-      const targetIndex = state.queue.findIndex(item => item.queue_id === data.queue_id)
-      if (targetIndex === -1) {
-        logger.info('[chat-run-socket] promote miss %s for session %s (queue: %d)', data.queue_id, data.session_id, state.queue.length)
-        return
+      const runPromote = async () => {
+        const sid = data.session_id as string
+        const qid = data.queue_id as string
+        const current = this.sessionMap.get(sid)
+        if (!current || !current.queue.length) return
+        const targetIndex = current.queue.findIndex(item => item.queue_id === qid)
+        if (targetIndex === -1) {
+          logger.info('[chat-run-socket] promote miss %s for session %s (queue: %d)', qid, sid, current.queue.length)
+          return
+        }
+        const [target] = current.queue.splice(targetIndex, 1)
+        current.queue.unshift(target)
+        logger.info('[chat-run-socket] promote %s to head for session %s (queue: %d)', qid, sid, current.queue.length)
+        await handleAbort(this.nsp, socket, sid, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
+        const after = this.sessionMap.get(sid)
+        if (after && !after.isWorking && after.queue.length > 0) {
+          this.dequeueNextQueuedRun(socket, sid, target.profile || 'default')
+        }
       }
-      const [target] = state.queue.splice(targetIndex, 1)
-      state.queue.unshift(target)
-      logger.info('[chat-run-socket] promote %s to head for session %s (queue: %d)', data.queue_id, data.session_id, state.queue.length)
-      await handleAbort(this.nsp, socket, data.session_id, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
-      const after = this.sessionMap.get(data.session_id)
-      if (after && !after.isWorking && after.queue.length > 0) {
-        this.dequeueNextQueuedRun(socket, data.session_id, target.profile || 'default')
-      }
+      const previous = state.promoteChain || Promise.resolve()
+      state.promoteChain = previous.then(runPromote, runPromote).catch((err: unknown) => {
+        logger.warn(err, '[chat-run-socket] promote chain error for session %s', data.session_id)
+      })
     })
 
     socket.on('resume', async (data: { session_id?: string }) => {

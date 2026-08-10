@@ -12,6 +12,7 @@ import {
 } from '../../ekko-agent/manager'
 import { flushBridgePendingToDb } from './bridge-message'
 import { flushResponseRunToDb } from './response-stream'
+import { contentBlocksToString } from './content-blocks'
 import { replaceState } from './compression'
 import { calcAndUpdateUsage } from './usage'
 import type { QueuedRun, SessionState } from './types'
@@ -248,6 +249,17 @@ export async function markAbortCompleted(
       event: 'run.queued',
       queue_length: state.queue.length,
       dequeued_queue_id: next.queue_id,
+      // [queue-fix patch] 与 dequeueNextQueuedRun 一致:携带剩余队列的完整序列化,
+      // 前端 replaceQueuedUserMessages 直接整表替换,不依赖本地 filter 猜删。
+      queued_messages: state.queue
+        .filter(item => item.displayInput !== null)
+        .map(item => ({
+          id: item.queue_id,
+          role: item.displayRole || (typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user'),
+          content: contentBlocksToString(item.displayInput ?? item.input),
+          timestamp: Math.floor(Date.now() / 1000),
+          queued: true,
+        })),
     })
     state.events = []
     runQueuedItem(socket, sessionId, next, profile || 'default')
