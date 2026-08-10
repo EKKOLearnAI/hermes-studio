@@ -396,6 +396,14 @@ export async function continueRoomAgentHandoff(roomId: string, chainId: string):
     })
 }
 
+export async function getRoomAgentHandoff(roomId: string, chainId: string): Promise<{ chain: any }> {
+    return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/handoffs/${encodeURIComponent(chainId)}`)
+}
+
+export async function listStoppedRoomAgentHandoffs(roomId: string): Promise<{ chains: any[] }> {
+    return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/handoffs`)
+}
+
 export async function updateRoomWorkspace(roomId: string, workspace: string): Promise<{ room: RoomInfo }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/workspace`, {
         method: 'PUT',

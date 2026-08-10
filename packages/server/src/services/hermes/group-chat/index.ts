@@ -32,6 +32,8 @@ import { revokeGroupAgentConnector } from './agent-relay-store'
 import type { ContentBlock } from '../run-chat/types'
 import {
     DEFAULT_GROUP_CHAT_AGENT_HANDOFF_DEPTH,
+    isStrictBoolean,
+    isValidHandoffDepth,
     resolveGroupChatAgentHandoffPolicy,
     shouldRouteGroupChatAgentHandoff,
     type GroupChatAgentHandoffPolicy,
@@ -68,6 +70,7 @@ interface ChatMessage {
     mentions?: StructuredMention[]
     mentionDepth?: number
     handoffChainId?: string
+    handoffContinuation?: boolean
     agentSessionId?: string
 }
 
@@ -77,6 +80,7 @@ type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
     id?: string
     mentionDepth?: number
     handoffChainId?: string
+    handoffContinuation?: boolean
 }
 
 interface PendingGroupApprovalRoute {
@@ -778,6 +782,9 @@ class ChatStorage {
     }
 
     saveRoom(id: string, name: string, inviteCode?: string, config?: RoomSummaryConfig & RoomAgentHandoffConfig & { workspace?: string; ownerAuthUserId?: number | null }): void {
+        if (config?.agentHandoffEnabled !== undefined && !isStrictBoolean(config.agentHandoffEnabled)) throw new Error('agentHandoffEnabled must be boolean')
+        if (config?.agentHandoffUnlimited !== undefined && !isStrictBoolean(config.agentHandoffUnlimited)) throw new Error('agentHandoffUnlimited must be boolean')
+        if (config?.agentHandoffMaxDepth !== undefined && !isValidHandoffDepth(config.agentHandoffMaxDepth)) throw new Error('agentHandoffMaxDepth must be between 1 and 100 or null')
         const rawOwnerAuthUserId = Number(config?.ownerAuthUserId ?? 0)
         const ownerAuthUserId = Number.isFinite(rawOwnerAuthUserId) && rawOwnerAuthUserId > 0 ? Math.floor(rawOwnerAuthUserId) : null
         this.db()?.prepare(
@@ -831,6 +838,9 @@ class ChatStorage {
     }
 
     updateRoomConfig(roomId: string, config: RoomSummaryConfig & RoomAgentHandoffConfig): void {
+        if (config.agentHandoffEnabled !== undefined && !isStrictBoolean(config.agentHandoffEnabled)) throw new Error('agentHandoffEnabled must be boolean')
+        if (config.agentHandoffUnlimited !== undefined && !isStrictBoolean(config.agentHandoffUnlimited)) throw new Error('agentHandoffUnlimited must be boolean')
+        if (config.agentHandoffMaxDepth !== undefined && !isValidHandoffDepth(config.agentHandoffMaxDepth)) throw new Error('agentHandoffMaxDepth must be between 1 and 100 or null')
         const sets: string[] = []
         const vals: any[] = []
         if (config.summaryProfile !== undefined) { sets.push('summaryProfile = ?'); vals.push(config.summaryProfile) }
@@ -872,12 +882,18 @@ class ChatStorage {
         return this.db()?.prepare('SELECT * FROM gc_handoff_chains WHERE roomId = ? AND chainId = ?').get(roomId, chainId) || null
     }
 
-    continueHandoffOnce(roomId: string, chainId: string): boolean {
+    getStoppedHandoffChains(roomId: string): any[] {
+        return (this.db()?.prepare(
+            `SELECT * FROM gc_handoff_chains WHERE roomId = ? AND status = 'stopped' ORDER BY updatedAt DESC`,
+        ).all(roomId) || []) as any[]
+    }
+
+    continueHandoffOnce(roomId: string, chainId: string): any | null {
         const result = this.db()?.prepare(
-            `UPDATE gc_handoff_chains SET continueUsed = 1, status = 'continued', stopReason = '', updatedAt = ?
+            `UPDATE gc_handoff_chains SET continueUsed = 1, status = 'resumed', stopReason = '', updatedAt = ?
              WHERE roomId = ? AND chainId = ? AND status = 'stopped' AND continueUsed = 0`,
         ).run(Date.now(), roomId, chainId)
-        return Boolean(result?.changes)
+        return result?.changes ? this.getHandoffChain(roomId, chainId) : null
     }
 
     updateRoomName(roomId: string, name: string): void {
@@ -1335,6 +1351,7 @@ class ChatStorage {
             ).run(Date.now(), Date.now(), roomId)
             db.prepare('DELETE FROM gc_agent_pairing_requests WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
@@ -1539,6 +1556,7 @@ class ChatStorage {
         this.withImmediateTransaction(db, () => {
             this.deleteWorkspaceDiffChanges(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_members WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
@@ -2912,12 +2930,9 @@ export class GroupChatServer {
         const handoffPolicy = typeof this.storage.getRoomAgentHandoffPolicy === 'function'
             ? this.storage.getRoomAgentHandoffPolicy(roomId)
             : resolveGroupChatAgentHandoffPolicy({}, process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
-        const canContinueChain = data.handoffChainId
-            ? typeof this.storage.getHandoffChain === 'function'
-                && this.storage.getHandoffChain(roomId, data.handoffChainId)?.status === 'continued'
-            : false
+        const isContinuation = data.handoffContinuation === true
         const shouldRouteMentions = canRouteHumanMentions ||
-            (isAgentReply && (canContinueChain || shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)))
+            (isAgentReply && (isContinuation || shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)))
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse mentions and invoke agents directly.
@@ -2942,14 +2957,17 @@ export class GroupChatServer {
             && data.handoffChainId
             && typeof this.storage.recordHandoffStop === 'function'
             && !shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)
-            && !canContinueChain
+            && !isContinuation
         ) {
+            const targetAgentId = Array.isArray(savedMsg.mentions)
+                ? savedMsg.mentions.find(mention => mention.type === 'agent')?.participantId
+                : undefined
             this.storage.recordHandoffStop(
                 roomId,
                 data.handoffChainId,
                 savedMsg.id,
                 mentionDepth,
-                String(savedMsg.senderId || ''),
+                String(targetAgentId || ''),
                 handoffPolicy,
             )
         } else if (savedMsg.role === 'user' && typeof this.agentClients.processSummaryCheck === 'function') {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
     DEFAULT_GROUP_CHAT_AGENT_HANDOFF_DEPTH,
+    isStrictBoolean,
+    isValidHandoffDepth,
     recommendedGroupChatAgentHandoffDepth,
     resolveGroupChatAgentHandoffPolicy,
     shouldRouteGroupChatAgentHandoff,
@@ -29,5 +31,15 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(shouldRouteGroupChatAgentHandoff(4, { enabled: true, maxDepth: 4, unlimited: false })).toBe(false)
         expect(shouldRouteGroupChatAgentHandoff(4, { enabled: true, maxDepth: null, unlimited: true })).toBe(true)
         expect(shouldRouteGroupChatAgentHandoff(0, { enabled: false, maxDepth: 4, unlimited: false })).toBe(false)
+    })
+
+    it('rejects coercible API values instead of treating strings as truthy', () => {
+        expect(isStrictBoolean(true)).toBe(true)
+        expect(isStrictBoolean(false)).toBe(true)
+        expect(isStrictBoolean('false')).toBe(false)
+        expect(isValidHandoffDepth(1)).toBe(true)
+        expect(isValidHandoffDepth(null)).toBe(true)
+        expect(isValidHandoffDepth('4')).toBe(false)
+        expect(isValidHandoffDepth(101)).toBe(false)
     })
 })

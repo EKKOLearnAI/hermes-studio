@@ -6,6 +6,19 @@ export interface GroupChatAgentHandoffPolicy {
     unlimited: boolean
 }
 
+export function isStrictBoolean(value: unknown): value is boolean {
+    return typeof value === 'boolean'
+}
+
+export function isValidHandoffDepth(value: unknown): value is number | null {
+    return value === null || (
+        typeof value === 'number'
+        && Number.isInteger(value)
+        && value >= 1
+        && value <= 100
+    )
+}
+
 function finiteInteger(value: unknown): number | null {
     if (value === null || value === undefined || value === '') return null
     const number = Number(value)

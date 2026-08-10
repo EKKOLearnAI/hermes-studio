@@ -61,6 +61,7 @@ export type MentionMessage = {
     input?: string | ContentBlock[]
     mentionDepth?: number
     handoffChainId?: string
+    handoffContinuation?: boolean
     mentions?: StructuredMention[]
     /** Trusted, target-specific ownership context added by AgentClients. */
     targetOwnerMemberId?: string

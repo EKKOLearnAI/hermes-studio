@@ -5,6 +5,7 @@ import {
     type GroupChatServer,
 } from '../../services/hermes/group-chat'
 import { isReservedMentionName } from '../../services/hermes/group-chat/mention-routing'
+import { isStrictBoolean, isValidHandoffDepth } from '../../services/hermes/group-chat/handoff-depth'
 import { deleteGroupChatAttachments } from '../../services/hermes/group-chat/attachments'
 import { revokeGroupAgentConnector } from '../../services/hermes/group-chat/agent-relay-store'
 import { assertAllowedWorkspaceFolder } from '../../services/hermes/workspace-path'
@@ -491,6 +492,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         summaryApiMode: sourceRoom.summaryApiMode,
         summaryEveryTurns: sourceRoom.summaryEveryTurns,
         workspace: sourceRoom.workspace || '',
+        agentHandoffEnabled: Number(sourceRoom.agentHandoffEnabled) === 1,
+        agentHandoffMaxDepth: sourceRoom.agentHandoffMaxDepth,
+        agentHandoffUnlimited: Number(sourceRoom.agentHandoffUnlimited) === 1,
     })
     persistRoomCreator(storage, roomId, ctx.state?.user)
 
@@ -1140,6 +1144,13 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
         ctx.body = { error: 'No room config changes supplied' }
         return
     }
+    if ((agentHandoffEnabled !== undefined && !isStrictBoolean(agentHandoffEnabled))
+        || (agentHandoffUnlimited !== undefined && !isStrictBoolean(agentHandoffUnlimited))
+        || (agentHandoffMaxDepth !== undefined && !isValidHandoffDepth(agentHandoffMaxDepth))) {
+        ctx.status = 400
+        ctx.body = { error: 'Invalid agent handoff configuration types' }
+        return
+    }
 
     const normalizedName = hasNameUpdate && typeof name === 'string' ? name.trim() : room.name
     if (hasNameUpdate && (typeof name !== 'string' || !normalizedName || normalizedName.length > 120)) {
@@ -1170,8 +1181,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
             return
         }
     }
-    if (agentHandoffMaxDepth !== undefined && agentHandoffMaxDepth !== null
-        && (!Number.isInteger(Number(agentHandoffMaxDepth)) || Number(agentHandoffMaxDepth) < 1 || Number(agentHandoffMaxDepth) > 100)) {
+    if (agentHandoffMaxDepth !== undefined && !isValidHandoffDepth(agentHandoffMaxDepth)) {
         ctx.status = 400
         ctx.body = { error: 'agentHandoffMaxDepth must be between 1 and 100 or null' }
         return
@@ -1223,12 +1233,90 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         ctx.body = { error: 'Access denied' }
         return
     }
-    if (!storage.continueHandoffOnce(roomId, chainId)) {
+    const existingChain = storage.getHandoffChain(roomId, chainId)
+    if (!existingChain || existingChain.status !== 'stopped' || Number(existingChain.continueUsed) !== 0) {
         ctx.status = 409
         ctx.body = { error: 'Handoff chain is no longer available' }
         return
     }
-    ctx.body = { success: true, chain: storage.getHandoffChain(roomId, chainId) }
+    const source = storage.getMessage(existingChain.sourceMessageId)
+    if (!source) {
+        ctx.status = 409
+        ctx.body = { error: 'Handoff source message is no longer available' }
+        return
+    }
+    const chain = storage.continueHandoffOnce(roomId, chainId)
+    if (!chain) {
+        ctx.status = 409
+        ctx.body = { error: 'Handoff chain is no longer available' }
+        return
+    }
+    chatServer.agentClients.processMentions(roomId, {
+        messageId: source.id,
+        content: String(source.content || ''),
+        input: String(source.content || ''),
+        senderName: source.senderName,
+        senderId: source.senderId,
+        timestamp: source.timestamp,
+        role: source.role,
+        mentionDepth: Math.max(0, Number(chain.currentDepth || 0) - 1),
+        handoffChainId: chain.chainId,
+        handoffContinuation: true,
+        mentions: chain.targetAgentId
+            ? [{ type: 'agent', participantId: String(chain.targetAgentId) }]
+            : source.mentions,
+    }).catch((err: any) => {
+        console.error(`[GroupChat] failed to continue handoff ${chainId}: ${err?.message || err}`)
+    })
+    ctx.body = { success: true, chain }
+})
+
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const { roomId, chainId } = ctx.params
+    const storage = chatServer.getStorage()
+    if (!storage.getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canReadRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    const chain = storage.getHandoffChain(roomId, chainId)
+    if (!chain) {
+        ctx.status = 404
+        ctx.body = { error: 'Handoff chain not found' }
+        return
+    }
+    ctx.body = { chain }
+})
+
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const { roomId } = ctx.params
+    const storage = chatServer.getStorage()
+    if (!storage.getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canReadRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    ctx.body = { chains: storage.getStoppedHandoffChains(roomId) }
 })
 
 // Update room workspace
