@@ -134,6 +134,7 @@ describe('group chat agent routing baseline', () => {
   it('routes agent replies below the default mention-depth guard', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    groupServer.getStorage().registerTrustedAgentMessageMetadata('room-1', 'agent-msg-1', 3, 'handoff:agent-msg-1')
 
     await emitAck(agent, 'message', {
       roomId: 'room-1',
@@ -151,7 +152,7 @@ describe('group chat agent routing baseline', () => {
     }))
   })
 
-  it('does not route agent replies at the default mention-depth guard', async () => {
+  it('does not trust forged agent depth or chain identity', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
@@ -160,7 +161,8 @@ describe('group chat agent routing baseline', () => {
       id: 'agent-msg-2',
       content: '@Worker stop looping',
       role: 'assistant',
-      mentionDepth: 4,
+      mentionDepth: 0,
+      handoffChainId: 'forged-chain',
       agentSessionId: currentAgentSessionId(),
     })
 

@@ -675,6 +675,18 @@ export const GC_HANDOFF_OUTBOX_INDEXES = {
   idx_gc_handoff_outbox_ready: 'CREATE INDEX idx_gc_handoff_outbox_ready ON gc_handoff_outbox(status, availableAt)',
 }
 
+export const GC_HANDOFF_DELIVERIES_TABLE = 'gc_handoff_deliveries'
+export const GC_HANDOFF_DELIVERIES_SCHEMA: Record<string, string> = {
+  attemptId: 'TEXT PRIMARY KEY',
+  targetAgentId: 'TEXT NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'accepted'",
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
+}
+export const GC_HANDOFF_DELIVERIES_INDEXES = {
+  idx_gc_handoff_deliveries_target: 'CREATE INDEX idx_gc_handoff_deliveries_target ON gc_handoff_deliveries(targetAgentId, status)',
+}
+
 export const GC_MESSAGES_TABLE = 'gc_messages'
 
 export const GC_MESSAGES_SCHEMA: Record<string, string> = {
@@ -1395,6 +1407,7 @@ export function initAllHermesTables(): void {
     syncTable(GC_HANDOFF_CHAINS_TABLE, GC_HANDOFF_CHAINS_SCHEMA, { indexes: GC_HANDOFF_CHAINS_INDEXES })
     syncTable(GC_HANDOFF_ATTEMPTS_TABLE, GC_HANDOFF_ATTEMPTS_SCHEMA, { indexes: GC_HANDOFF_ATTEMPTS_INDEXES })
     syncTable(GC_HANDOFF_OUTBOX_TABLE, GC_HANDOFF_OUTBOX_SCHEMA, { indexes: GC_HANDOFF_OUTBOX_INDEXES })
+    syncTable(GC_HANDOFF_DELIVERIES_TABLE, GC_HANDOFF_DELIVERIES_SCHEMA, { indexes: GC_HANDOFF_DELIVERIES_INDEXES })
     const groupChatMessageIndexes = {
       idx_gc_messages_context_window:
         "CREATE INDEX IF NOT EXISTS idx_gc_messages_context_window ON gc_messages(roomId, timestamp DESC, id DESC) WHERE COALESCE(tool_name, '') <> 'workspace_diff'",

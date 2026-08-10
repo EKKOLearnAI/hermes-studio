@@ -44,6 +44,7 @@ describe('group chat structured agent mentions', () => {
     ]]))
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Author')
     const forgedFutureTimestamp = Date.now() + 86_400_000
+    groupServer.getStorage().registerTrustedAgentMessageMetadata('room-1', 'agent-handoff-1', 1, 'trusted-chain')
     await emitAck(author, 'message', {
       roomId: 'room-1',
       id: 'agent-handoff-1',

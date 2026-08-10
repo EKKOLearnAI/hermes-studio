@@ -464,6 +464,7 @@ const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
 class ChatStorage {
+    private readonly trustedAgentMessageMetadata = new Map<string, { mentionDepth: number; handoffChainId: string }>()
     private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
 
     private db() { return getDb() }
@@ -618,6 +619,26 @@ class ChatStorage {
                )`
         ).run(Date.now())
         const now = Date.now()
+        // A dispatched attempt is a lease. Recover it on restart unless the
+        // target has already durably acknowledged the same attempt.
+        db.prepare(
+            `UPDATE gc_handoff_attempts
+             SET status = 'completed', updatedAt = ?
+             WHERE status = 'dispatched'
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status = 'completed')`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_attempts
+             SET status = 'claimed', leaseUntil = ?, attemptCount = attemptCount + 1, updatedAt = ?
+             WHERE status = 'dispatched'
+               AND attemptId NOT IN (SELECT attemptId FROM gc_handoff_deliveries WHERE status = 'completed')`,
+        ).run(now + 30_000, now)
+        db.prepare(
+            `UPDATE gc_handoff_outbox
+             SET status = 'pending', availableAt = ?, updatedAt = ?
+             WHERE status = 'dispatched'
+               AND attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE status = 'claimed')`,
+        ).run(now, now)
         db.prepare(
             `UPDATE gc_handoff_attempts SET status = 'failed', lastError = 'Continuation lease expired during restart', updatedAt = ?
              WHERE status = 'claimed' AND leaseUntil < ?`,
@@ -945,6 +966,57 @@ class ChatStorage {
         return this.db()?.prepare('SELECT * FROM gc_handoff_attempts WHERE attemptId = ?').get(attemptId) || null
     }
 
+    claimHandoffDelivery(attemptId: string, targetAgentId: string): 'accepted' | 'already' | null {
+        const db = this.db()
+        if (!db) return null
+        const now = Date.now()
+        try {
+            db.prepare(
+                `INSERT INTO gc_handoff_deliveries (attemptId, targetAgentId, status, createdAt, updatedAt)
+                 VALUES (?, ?, 'accepted', ?, ?)`,
+            ).run(attemptId, targetAgentId, now, now)
+            return 'accepted'
+        } catch {
+            const row = db.prepare(
+                `SELECT d.targetAgentId, d.status, a.status AS attemptStatus
+                 FROM gc_handoff_deliveries d
+                 LEFT JOIN gc_handoff_attempts a ON a.attemptId = d.attemptId
+                 WHERE d.attemptId = ?`,
+            ).get(attemptId) as any
+            if (!row || String(row.targetAgentId) !== targetAgentId) return null
+            // A restart reopens the durable attempt. Allow exactly one
+            // recovered queue admission; while dispatched/completed, replay is
+            // an idempotent no-op.
+            if (row.status === 'accepted' && row.attemptStatus === 'claimed') {
+                db.prepare(
+                    `UPDATE gc_handoff_deliveries SET updatedAt = ? WHERE attemptId = ?`,
+                ).run(now, attemptId)
+                return 'accepted'
+            }
+            return 'already'
+        }
+    }
+
+    releaseHandoffDelivery(attemptId: string): void {
+        this.db()?.prepare(`DELETE FROM gc_handoff_deliveries WHERE attemptId = ? AND status = 'accepted'`).run(attemptId)
+    }
+
+    registerTrustedAgentMessageMetadata(roomId: string, messageId: string, mentionDepth: unknown, handoffChainId: unknown): void {
+        const depth = typeof mentionDepth === 'number' && Number.isFinite(mentionDepth)
+            ? Math.max(0, Math.floor(mentionDepth))
+            : null
+        const chainId = typeof handoffChainId === 'string' ? handoffChainId.trim() : ''
+        if (depth == null || !chainId) return
+        this.trustedAgentMessageMetadata.set(`${roomId}:${messageId}`, { mentionDepth: depth, handoffChainId: chainId })
+    }
+
+    consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string } | null {
+        const key = `${roomId}:${messageId}`
+        const metadata = this.trustedAgentMessageMetadata.get(key) || null
+        this.trustedAgentMessageMetadata.delete(key)
+        return metadata
+    }
+
     acceptHandoffAttempt(attemptId: string, targetAgentId: string): 'accepted' | 'already' | null {
         const db = this.db()
         if (!db) return null
@@ -972,6 +1044,9 @@ class ChatStorage {
              WHERE attemptId = ? AND status = 'dispatched'`,
         ).run(now, chain.attemptId)
         if (!result?.changes && this.getHandoffAttempt(chain.attemptId)?.status !== 'completed') return null
+        this.db()?.prepare(
+            `UPDATE gc_handoff_deliveries SET status = 'completed', updatedAt = ? WHERE attemptId = ?`,
+        ).run(now, chain.attemptId)
         this.db()?.prepare(
             `UPDATE gc_handoff_chains
              SET continueUsed = 1, status = 'resumed', stopReason = '', lastError = NULL, updatedAt = ?
@@ -1452,6 +1527,7 @@ class ChatStorage {
                  WHERE roomId = ? AND status != 'revoked'`,
             ).run(Date.now(), Date.now(), roomId)
             db.prepare('DELETE FROM gc_agent_pairing_requests WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
             db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
@@ -1660,6 +1736,7 @@ class ChatStorage {
         this.withImmediateTransaction(db, () => {
             this.deleteWorkspaceDiffChanges(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
             db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
@@ -1990,6 +2067,10 @@ export class GroupChatServer {
 
     getStorage(): ChatStorage {
         return this.storage
+    }
+
+    private consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string } | null {
+        return this.storage.consumeTrustedAgentMessageMetadata?.(roomId, messageId) || null
     }
 
     getRoomSummaryService(): GroupRoomSummaryService {
@@ -3026,8 +3107,18 @@ export class GroupChatServer {
         this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         ack?.({ id: savedMsg.id })
 
-        const mentionDepth = normalizeMentionDepth(data.mentionDepth)
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const trustedMetadata = isAgentReply
+            ? this.consumeTrustedAgentMessageMetadata(roomId, savedMsg.id)
+            : null
+        // Agent sockets are untrusted transport. Only metadata issued by this
+        // server for the exact message may participate in chained routing.
+        const mentionDepth = isAgentReply
+            ? (trustedMetadata?.mentionDepth ?? Number.MAX_SAFE_INTEGER)
+            : normalizeMentionDepth(data.mentionDepth)
+        const handoffChainId = isAgentReply
+            ? (trustedMetadata?.handoffChainId || '')
+            : (data.handoffChainId || savedMsg.id)
         // Any human who has successfully joined the room may interact with its
         // Agents. Room management remains separately protected by
         // canSocketManageRoom, so invite guests cannot mutate settings, approve
@@ -3052,7 +3143,7 @@ export class GroupChatServer {
                 timestamp: savedMsg.timestamp,
                 role: savedMsg.role,
                 mentionDepth,
-                handoffChainId: data.handoffChainId || savedMsg.id,
+                handoffChainId,
                 mentions: savedMsg.mentions,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)

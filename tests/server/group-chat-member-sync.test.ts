@@ -1293,6 +1293,9 @@ describe('Group Chat member/agent identity sync', () => {
         { id: 'row-1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: '丫鬟' },
         { id: 'row-2', roomId: 'room-1', agentId: 'agent-2', profile: 'default', name: 'Reviewer' },
       ]),
+      consumeTrustedAgentMessageMetadata: vi.fn()
+        .mockReturnValueOnce({ mentionDepth: 1, handoffChainId: 'trusted-chain' })
+        .mockReturnValueOnce({ mentionDepth: 4, handoffChainId: 'trusted-chain' }),
       saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
