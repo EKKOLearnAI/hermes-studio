@@ -22,6 +22,9 @@ export interface RoomInfo {
     guestAgentApproval?: 'owner'
     maxGuestAgentsPerMember?: number
     allowRemoteWorkspaceAccess?: number
+    agentHandoffEnabled?: number
+    agentHandoffMaxDepth?: number | null
+    agentHandoffUnlimited?: number
     createdAt?: number
     lastActiveAt?: number
 }
@@ -36,6 +39,9 @@ export interface RoomSummaryConfig {
 
 export interface RoomConfigInput extends Partial<RoomSummaryConfig> {
     name?: string
+    agentHandoffEnabled?: boolean
+    agentHandoffMaxDepth?: number | null
+    agentHandoffUnlimited?: boolean
 }
 
 export interface RoomSummaryState {
@@ -381,6 +387,12 @@ export async function updateRoomConfig(roomId: string, config: RoomConfigInput):
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
+    })
+}
+
+export async function continueRoomAgentHandoff(roomId: string, chainId: string): Promise<{ success: boolean; chain: unknown }> {
+    return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/handoffs/${encodeURIComponent(chainId)}/continue`, {
+        method: 'POST',
     })
 }
 

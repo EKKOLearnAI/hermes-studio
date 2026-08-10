@@ -615,6 +615,30 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
   maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
   allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
+  agentHandoffEnabled: 'INTEGER NOT NULL DEFAULT 1',
+  agentHandoffMaxDepth: 'INTEGER',
+  agentHandoffUnlimited: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const GC_HANDOFF_CHAINS_TABLE = 'gc_handoff_chains'
+
+export const GC_HANDOFF_CHAINS_SCHEMA: Record<string, string> = {
+  chainId: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  sourceMessageId: 'TEXT NOT NULL',
+  currentDepth: 'INTEGER NOT NULL DEFAULT 0',
+  maxDepth: 'INTEGER',
+  unlimited: 'INTEGER NOT NULL DEFAULT 0',
+  targetAgentId: "TEXT NOT NULL DEFAULT ''",
+  status: "TEXT NOT NULL DEFAULT 'active'",
+  stopReason: "TEXT NOT NULL DEFAULT ''",
+  continueUsed: 'INTEGER NOT NULL DEFAULT 0',
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
+}
+
+export const GC_HANDOFF_CHAINS_INDEXES = {
+  idx_gc_handoff_chains_room: 'CREATE INDEX idx_gc_handoff_chains_room ON gc_handoff_chains(roomId, updatedAt)',
 }
 
 export const GC_MESSAGES_TABLE = 'gc_messages'
@@ -1334,6 +1358,7 @@ export function initAllHermesTables(): void {
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
+    syncTable(GC_HANDOFF_CHAINS_TABLE, GC_HANDOFF_CHAINS_SCHEMA, { indexes: GC_HANDOFF_CHAINS_INDEXES })
     const groupChatMessageIndexes = {
       idx_gc_messages_context_window:
         "CREATE INDEX IF NOT EXISTS idx_gc_messages_context_window ON gc_messages(roomId, timestamp DESC, id DESC) WHERE COALESCE(tool_name, '') <> 'workspace_diff'",

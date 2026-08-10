@@ -6142,6 +6142,16 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "agentHandoffEnabled": {
+                    "type": "boolean"
+                  },
+                  "agentHandoffMaxDepth": {
+                    "nullable": true,
+                    "type": "number"
+                  },
+                  "agentHandoffUnlimited": {
+                    "type": "boolean"
+                  },
                   "name": {
                     "type": "string"
                   },
@@ -6213,6 +6223,50 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/handoffs/{chainId}/continue": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create continue",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/continue",
+        "operationId": "createContinue",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chainId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/group-chat/rooms/{roomId}/invite-code": {
