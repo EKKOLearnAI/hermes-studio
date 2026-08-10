@@ -10,24 +10,6 @@ import { sortGroupMessagesCanonical } from './group-message-ordering'
 
 export type GroupRoomSummaryStatus = 'idle' | 'summarizing' | 'success' | 'failed'
 
-export const DEFAULT_GROUP_CHAT_COMPRESSION_TIMEOUT_MS = 300_000
-const MIN_GROUP_CHAT_COMPRESSION_TIMEOUT_MS = 5_000
-const MAX_GROUP_CHAT_COMPRESSION_TIMEOUT_MS = 30 * 60_000
-
-export function groupChatCompressionTimeoutMs(
-  rawValue: unknown = process.env.HERMES_GROUP_CHAT_COMPRESSION_TIMEOUT_MS,
-): number {
-  const parsed = Number(rawValue)
-  const timeoutMs = Number.isFinite(parsed) ? Math.floor(parsed) : 0
-  if (
-    timeoutMs < MIN_GROUP_CHAT_COMPRESSION_TIMEOUT_MS
-    || timeoutMs > MAX_GROUP_CHAT_COMPRESSION_TIMEOUT_MS
-  ) {
-    return DEFAULT_GROUP_CHAT_COMPRESSION_TIMEOUT_MS
-  }
-  return timeoutMs
-}
-
 export interface GroupRoomSummary {
   roomId: string
   summary: string
@@ -377,7 +359,7 @@ export class GroupRoomSummaryService {
       apiKey: runtimeConfig.apiKey,
       model: input.model,
       apiMode: runtimeConfig.apiMode,
-      timeoutMs: groupChatCompressionTimeoutMs(),
+      timeoutMs: 300_000,
     })
     const result = await getGlobalEkkoAgent(input.profile).runIsolated(
       {
