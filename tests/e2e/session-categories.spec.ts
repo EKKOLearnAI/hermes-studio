@@ -184,7 +184,13 @@ test('moves a session to another category from its context menu', async ({ page 
   await page.goto('/#/hermes/chat')
   await page.getByRole('link', { name: /General Notes/ }).last().click({ button: 'right' })
   await page.locator('.n-dropdown-option').filter({ hasText: 'Move to category' }).hover()
-  await page.locator('.n-dropdown-option').filter({ hasText: /^Work$/ }).click()
+  const workOption = page.locator('.n-dropdown-option:visible')
+    .filter({ hasText: /^Work$/ })
+    .locator(':scope > .n-dropdown-option-body')
+  await expect(workOption).toBeVisible()
+  // A pointer move can cross a sibling menu item and replace this submenu
+  // before Playwright clicks it. Click the already-visible option directly.
+  await workOption.evaluate((element: HTMLElement) => element.click())
 
   await expect(page.getByText('Category updated')).toBeVisible()
   await expect(page.locator('.session-group-header').filter({ hasText: 'Work' })).toBeVisible()
