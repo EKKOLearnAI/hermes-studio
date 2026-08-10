@@ -79,16 +79,16 @@ function clonePreset(preset: MoaPreset): MoaPreset {
   return JSON.parse(JSON.stringify(preset))
 }
 
-const reasoningEffortOptions = [
-  { label: 'None', value: 'none' },
-  { label: 'Minimal', value: 'minimal' },
-  { label: 'Low', value: 'low' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'High', value: 'high' },
-  { label: 'XHigh', value: 'xhigh' },
-  { label: 'Max', value: 'max' },
-  { label: 'Ultra', value: 'ultra' },
-]
+const reasoningEffortOptions = computed(() => [
+  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
+  { label: t('chat.reasoningEffort.options.ultra'), value: 'ultra' },
+])
 
 function slotLabel(slot?: MoaModelSlot): string {
   if (!slot?.provider || !slot?.model) return t('models.combinationNotSet')
@@ -379,7 +379,7 @@ watch(() => profilesStore.activeProfileName, () => {
                 :options="reasoningEffortOptions"
                 size="small"
                 clearable
-                :placeholder="t('models.combinationReasoningEffort')"
+                :placeholder="t('chat.reasoningEffort.tooltip')"
                 :style="{ width: '130px' }"
               />
               <span class="slot-row-actions">
@@ -405,7 +405,7 @@ watch(() => profilesStore.activeProfileName, () => {
               :options="reasoningEffortOptions"
               size="small"
               clearable
-              :placeholder="t('models.combinationReasoningEffort')"
+              :placeholder="t('chat.reasoningEffort.tooltip')"
               :style="{ width: '130px' }"
             />
             <span class="slot-row-actions">
@@ -681,15 +681,11 @@ watch(() => profilesStore.activeProfileName, () => {
 
 .slot-editor-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 130px auto;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
   border-top: 1px solid $border-light;
-}
-
-.aggregator-row {
-  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .slot-pair {

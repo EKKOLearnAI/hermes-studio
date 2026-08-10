@@ -647,6 +647,7 @@ export default {
         high: 'مرتفع',
         max: 'الأقصى',
         xhigh: 'مرتفع جداً',
+        ultra: 'فائق',
       },
     },
     autoPlaySpeech: 'تشغيل الصوت تلقائياً',

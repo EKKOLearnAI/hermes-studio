@@ -628,6 +628,7 @@ export default {
         high: 'Alto',
         max: 'Max',
         xhigh: 'Extra alto',
+        ultra: 'Ultra',
       },
     },
     showToolCalls: 'Mostrar llamadas de herramientas',

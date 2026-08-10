@@ -628,6 +628,7 @@ export default {
         high: '높음',
         max: 'Max',
         xhigh: '매우 높음',
+        ultra: '울트라',
       },
     },
     showToolCalls: '도구 호출 표시',

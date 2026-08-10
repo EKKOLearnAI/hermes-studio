@@ -628,6 +628,7 @@ export default {
         high: '高',
         max: 'Max',
         xhigh: '最高',
+        ultra: 'ウルトラ',
       },
     },
     showToolCalls: 'ツール呼び出しを表示',

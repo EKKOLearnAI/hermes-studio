@@ -184,6 +184,18 @@ const PROVIDER_MODEL_REFRESH_LOCALIZED_KEYS = [
   'models.restoreModelsFailed',
 ]
 
+const REASONING_EFFORT_LOCALIZED_KEYS = [
+  'chat.reasoningEffort.tooltip',
+  'chat.reasoningEffort.options.none',
+  'chat.reasoningEffort.options.minimal',
+  'chat.reasoningEffort.options.low',
+  'chat.reasoningEffort.options.medium',
+  'chat.reasoningEffort.options.high',
+  'chat.reasoningEffort.options.xhigh',
+  'chat.reasoningEffort.options.max',
+  'chat.reasoningEffort.options.ultra',
+]
+
 const GROUP_CHAT_AGENT_LINK_LOCALIZED_KEYS = [
   'groupChat.agentLinkButton',
   'groupChat.agentOwner',
@@ -459,6 +471,16 @@ describe('i18n locale coverage', () => {
     })
 
     expect(untranslated).toEqual([])
+  })
+
+  it('defines every reasoning-effort option in every raw locale', () => {
+    const missing = Object.entries(rawMessages).flatMap(([locale, localeMessages]) =>
+      REASONING_EFFORT_LOCALIZED_KEYS
+        .filter(key => !hasPath(localeMessages, key))
+        .map(key => `${locale}: ${key}`),
+    )
+
+    expect(missing).toEqual([])
   })
 
   it('localizes Agent linking and pairing copy in every raw non-English locale', () => {

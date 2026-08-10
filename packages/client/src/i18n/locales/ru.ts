@@ -535,6 +535,7 @@ export default {
         high: 'Высокая',
         max: 'Max',
         xhigh: 'Очень высокая',
+        ultra: 'Ультра',
       },
     },
     autoPlaySpeech: 'Автовоспроизведение речи',
