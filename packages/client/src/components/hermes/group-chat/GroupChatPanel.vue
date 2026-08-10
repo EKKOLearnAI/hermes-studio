@@ -97,6 +97,10 @@ const summaryConfig = ref<RoomSummaryConfig>({
     summaryApiMode: 'chat_completions',
     summaryEveryTurns: 20,
 })
+const agentHandoffEnabledDraft = ref(true)
+const agentHandoffMaxDepthDraft = ref<number | null>(4)
+const agentHandoffUnlimitedDraft = ref(false)
+const agentHandoffRecommendation = computed(() => Math.max(4, store.agents.length + 1))
 const roomSummaryState = ref<RoomSummaryState | null>(null)
 const roomSummaryAnchor = ref<RoomSummaryAnchor | null>(null)
 const roomSummaryDraft = ref('')
@@ -1445,6 +1449,9 @@ async function handleOpenRoomSettings() {
             summaryApiMode: room.summaryApiMode || 'chat_completions',
             summaryEveryTurns: room.summaryEveryTurns || 20,
         }
+        agentHandoffEnabledDraft.value = Number(room.agentHandoffEnabled ?? 1) === 1
+        agentHandoffMaxDepthDraft.value = room.agentHandoffMaxDepth ?? 4
+        agentHandoffUnlimitedDraft.value = Number(room.agentHandoffUnlimited ?? 0) === 1
     }
     showRoomSettingsModal.value = true
     if (!store.currentRoomId) return
@@ -1555,7 +1562,12 @@ async function handleSaveSummaryConfig() {
     if (!store.currentRoomId) return
     if (!currentRoomCanManage.value) return
     try {
-        const res = await updateRoomConfig(store.currentRoomId, { ...summaryConfig.value })
+        const res = await updateRoomConfig(store.currentRoomId, {
+            ...summaryConfig.value,
+            agentHandoffEnabled: agentHandoffEnabledDraft.value,
+            agentHandoffMaxDepth: agentHandoffMaxDepthDraft.value,
+            agentHandoffUnlimited: agentHandoffUnlimitedDraft.value,
+        })
         const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
         if (idx >= 0 && res.room) store.rooms[idx] = res.room
         message.success(t('groupChat.summaryConfigSaved'))
@@ -2781,6 +2793,31 @@ async function handleClarify(response?: string) {
                             >
                                 {{ t('groupChat.saveSummaryConfig') }}
                             </NButton>
+                        </section>
+                        <section class="settings-section">
+                            <h4>{{ t('groupChat.agentHandoffTitle') }}</h4>
+                            <div class="guest-agent-policy-row">
+                                <div>
+                                    <strong>{{ t('groupChat.agentHandoffEnabled') }}</strong>
+                                    <p class="form-hint">{{ t('groupChat.agentHandoffRecommendation', { count: agentHandoffRecommendation }) }}</p>
+                                </div>
+                                <NSwitch v-model:value="agentHandoffEnabledDraft" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">{{ t('groupChat.agentHandoffMaxDepth') }}</label>
+                                <NInputNumber
+                                    v-model:value="agentHandoffMaxDepthDraft"
+                                    :min="1"
+                                    :max="100"
+                                    :disabled="agentHandoffUnlimitedDraft || !agentHandoffEnabledDraft"
+                                    style="width: 100%"
+                                />
+                            </div>
+                            <div class="guest-agent-policy-row">
+                                <strong>{{ t('groupChat.agentHandoffUnlimited') }}</strong>
+                                <NSwitch v-model:value="agentHandoffUnlimitedDraft" :disabled="!agentHandoffEnabledDraft" />
+                            </div>
+                            <NButton type="primary" @click="handleSaveSummaryConfig">{{ t('common.save') }}</NButton>
                         </section>
                     <section class="settings-section summary-state-section">
                         <div class="summary-state-heading">
