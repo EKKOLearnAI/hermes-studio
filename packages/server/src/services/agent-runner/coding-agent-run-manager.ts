@@ -107,6 +107,7 @@ interface ManagedCodingAgentRun {
   codexToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
   codexChatText?: string
   codexPendingUsage?: any
+  codexPendingError?: string
   terminalUsageRefresh?: Promise<void>
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
@@ -1366,6 +1367,7 @@ export class CodingAgentRunManager {
     run.printMessageId = `msg_${responseId}`
     run.printTextStarted = false
     run.printText = ''
+    run.codexPendingError = undefined
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
@@ -1457,29 +1459,33 @@ export class CodingAgentRunManager {
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
-      if (run.stoppedByUser) return
-      if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
-        return
-      }
-      if (code === 0) {
-        this.completeCodexExecTurn(run, run.codexPendingUsage)
-        return
-      }
-      this.handleClaudePrintResponseEvent(run, {
+      this.finishCodexExecTurn(run, code)
+    })
+  }
+
+  private finishCodexExecTurn(run: ManagedCodingAgentRun, code: number | null) {
+    if (run.stoppedByUser) return
+    if (run.pendingChatCompletionEvent) {
+      void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+      return
+    }
+    if (code === 0) {
+      this.completeCodexExecTurn(run, run.codexPendingUsage)
+      return
+    }
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.failed',
+      data: {
         type: 'response.failed',
-        data: {
-          type: 'response.failed',
-          response: {
-            id: run.printResponseId,
-            object: 'response',
-            status: 'failed',
-            model: run.launch.model,
-            error: { message: exitErrorMessage('Codex', code, run.currentChildStderr) },
-            output: [],
-          },
+        response: {
+          id: run.printResponseId,
+          object: 'response',
+          status: 'failed',
+          model: run.launch.model,
+          error: { message: run.codexPendingError || exitErrorMessage('Codex', code, run.currentChildStderr) },
+          output: [],
         },
-      })
+      },
     })
   }
 
@@ -1529,8 +1535,12 @@ export class CodingAgentRunManager {
       run.codexPendingUsage = event.usage
       return
     }
-    if (type === 'turn.failed' || type === 'error') {
+    if (type === 'turn.failed') {
       this.failCodexExecTurn(run, event.error?.message || event.message || 'Codex run failed')
+      return
+    }
+    if (type === 'error') {
+      this.deferCodexExecError(run, event.error?.message || event.message || 'Codex run failed')
     }
   }
 
@@ -1565,9 +1575,24 @@ export class CodingAgentRunManager {
       run.codexPendingUsage = params.usage
       return
     }
-    if (method === 'turn/failed' || method === 'error') {
+    if (method === 'turn/failed') {
       this.failCodexExecTurn(run, params.error?.message || params.message || 'Codex run failed')
+      return
     }
+    if (method === 'error') {
+      this.deferCodexExecError(run, params.error?.message || params.message || 'Codex run failed')
+    }
+  }
+
+  private deferCodexExecError(run: ManagedCodingAgentRun, message: string) {
+    // Codex emits broad `error` events for recoverable stream retries as well as
+    // failures. Let the native process exit status arbitrate the turn: exit 0
+    // discards this provisional error, while a non-zero exit reports it.
+    if (childIsRunning(run.currentChild)) {
+      run.codexPendingError = message
+      return
+    }
+    this.failCodexExecTurn(run, message)
   }
 
   private failCodexExecTurn(run: ManagedCodingAgentRun, message: string) {

@@ -488,6 +488,111 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('lets recovered native Codex errors complete successfully when the child exits zero', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-native-retry',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-codex-native-retry',
+      command: 'codex',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get('agent-session-codex-native-retry')
+    run.currentChild = { exitCode: null, signalCode: null, killed: false }
+
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'error',
+      message: 'Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)',
+    }))
+
+    expect(run.terminalEventHandled).not.toBe(true)
+    expect(run.pendingChatCompletionEvent).toBeUndefined()
+    expect(run.codexPendingError).toBe('Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)')
+    expect(emitted).not.toHaveBeenCalledWith('chat-session-codex-native-retry', 'run.failed', expect.anything())
+
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      method: 'error',
+      params: { message: 'Reconnecting... 2/5' },
+    }))
+
+    expect(run.terminalEventHandled).not.toBe(true)
+    expect(run.pendingChatCompletionEvent).toBeUndefined()
+    expect(run.codexPendingError).toBe('Reconnecting... 2/5')
+
+    ;(manager as any).appendCodexFinalText(run, 'recovered final answer')
+    run.currentChild = undefined
+    ;(manager as any).finishCodexExecTurn(run, 0)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(run.terminalEventHandled).toBe(true)
+    expect(run.pendingChatCompletionEvent).toBeUndefined()
+    expect(emitted).toHaveBeenCalledWith('chat-session-codex-native-retry', 'run.completed', expect.objectContaining({
+      output: 'recovered final answer',
+      error: undefined,
+    }))
+    expect(emitted).not.toHaveBeenCalledWith('chat-session-codex-native-retry', 'run.failed', expect.anything())
+    ;(manager as any).finishCodexExecTurn(run, 0)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(emitted.mock.calls.filter(([, event]) => event === 'run.completed')).toHaveLength(1)
+    manager.shutdown()
+  })
+
+  it('reports a provisional native Codex error when the child exits non-zero', async () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [] }
+    const emitted = vi.fn()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = emitted
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-native-error-exit',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      sessionId: 'chat-session-codex-native-error-exit',
+      command: 'codex',
+      args: [],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get('agent-session-codex-native-error-exit')
+    run.currentChild = { exitCode: null, signalCode: null, killed: false }
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'error',
+      message: 'native transport retries exhausted',
+    }))
+
+    run.currentChild = undefined
+    ;(manager as any).finishCodexExecTurn(run, 1)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(emitted).toHaveBeenCalledWith('chat-session-codex-native-error-exit', 'run.failed', expect.objectContaining({
+      error: 'native transport retries exhausted',
+    }))
+    expect(emitted).not.toHaveBeenCalledWith('chat-session-codex-native-error-exit', 'run.completed', expect.anything())
+    expect(emitted.mock.calls.filter(([, event]) => event === 'run.failed')).toHaveLength(1)
+    manager.shutdown()
+  })
+
   it('keeps native Codex turn failures authoritative while the child is still running', () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
