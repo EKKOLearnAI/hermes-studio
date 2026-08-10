@@ -2885,7 +2885,6 @@ export default {
     agentAlreadyInRoom: '该智能体已在房间中',
     agentAddFailedCount: '{count} 个智能体未添加：{details}',
     editAgentTitle: '编辑 {name}',
-    deleteAgentConfirm: '确定删除 {name} 吗？',
     removeMember: '移出群聊',
     memberRemoved: '已将 {name} 移出群聊',
     memberRemovedNotice: '你已被群主移出群聊。邀请码仍有效时可以重新进入。',

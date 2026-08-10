@@ -2546,7 +2546,6 @@ export default {
     agentAlreadyInRoom: 'このエージェントはすでにルームにいます',
     agentAddFailedCount: '{count} 件のエージェントを追加できませんでした：{details}',
     editAgentTitle: '{name} を編集',
-    deleteAgentConfirm: '{name} を削除しますか？',
     removeMember: '退出させる',
     memberRemoved: '{name} をルームから退出させました',
     memberRemovedNotice: 'ルームオーナーによって退出させられました。招待が有効な間は再参加できます。',

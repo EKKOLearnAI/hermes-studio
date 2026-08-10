@@ -2546,7 +2546,6 @@ export default {
     agentAlreadyInRoom: '이 에이전트는 이미 방에 있습니다',
     agentAddFailedCount: '에이전트 {count}개를 추가하지 못했습니다: {details}',
     editAgentTitle: '{name} 편집',
-    deleteAgentConfirm: '{name}을(를) 삭제할까요?',
     removeMember: '내보내기',
     memberRemoved: '{name} 님을 방에서 내보냈습니다',
     memberRemovedNotice: '방 소유자가 회원님을 내보냈습니다. 초대가 유효한 동안 다시 참여할 수 있습니다.',

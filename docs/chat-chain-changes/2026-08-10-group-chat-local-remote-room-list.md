@@ -24,3 +24,8 @@ notifies every reachable cloud connector to revoke and remove its Agent, stops
 local reconnection, and removes every matching link from the local file. When a
 cloud service is temporarily unreachable, local records are still removed and
 the UI reports how many remote revocations could not be delivered.
+
+Member removal and Agent deletion from the shared avatar rail execute directly
+without an extra confirmation popover. Agent deletion from the edit dialog uses
+the same direct behavior. Because the local and invite-only views share the
+panel, both entry points remain consistent.

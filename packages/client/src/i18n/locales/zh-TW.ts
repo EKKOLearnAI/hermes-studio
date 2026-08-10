@@ -2793,7 +2793,6 @@ export default {
     agentAlreadyInRoom: '該智慧代理已在房間中',
     agentAddFailedCount: '{count} 個智慧代理未新增：{details}',
     editAgentTitle: '編輯 {name}',
-    deleteAgentConfirm: '確定刪除 {name} 嗎？',
     removeMember: '移出群聊',
     memberRemoved: '已將 {name} 移出群聊',
     memberRemovedNotice: '你已被群主移出群聊。邀請碼仍有效時可以重新進入。',

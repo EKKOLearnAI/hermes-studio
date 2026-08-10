@@ -2487,7 +2487,6 @@ export default {
     agentAlreadyInRoom: 'Агент уже в комнате',
     agentAddFailedCount: 'Не добавлено агентов: {count} — {details}',
     editAgentTitle: 'Изменить {name}',
-    deleteAgentConfirm: 'Удалить {name}?',
     removeMember: 'Исключить',
     memberRemoved: '{name} исключён из комнаты',
     memberRemovedNotice: 'Владелец исключил вас из комнаты. Пока приглашение действует, вы можете войти снова.',

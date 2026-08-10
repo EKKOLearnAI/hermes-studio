@@ -1955,29 +1955,20 @@ async function handleClarify(response?: string) {
                                     </svg>
                                     <span>{{ t('common.stop') }}</span>
                                 </button>
-                                <NPopconfirm
+                                <button
                                     v-if="canRemoveAgent(agent)"
-                                    :width="320"
-                                    content-style="white-space: normal; line-height: 1.6;"
-                                    @positive-click="handleRemoveAgent(agent)"
+                                    type="button"
+                                    class="agent-avatar-stop"
+                                    :aria-label="t('common.delete')"
+                                    @click.stop="handleRemoveAgent(agent)"
                                 >
-                                    <template #trigger>
-                                        <button
-                                            type="button"
-                                            class="agent-avatar-stop"
-                                            :aria-label="t('common.delete')"
-                                            @click.stop
-                                        >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                                <path d="M3 6h18" />
-                                                <path d="M8 6V4h8v2" />
-                                                <path d="M19 6l-1 14H6L5 6" />
-                                            </svg>
-                                            <span>{{ t('common.delete') }}</span>
-                                        </button>
-                                    </template>
-                                    {{ t('groupChat.deleteAgentConfirm', { name: agent.name }) }}
-                                </NPopconfirm>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M3 6h18" />
+                                        <path d="M8 6V4h8v2" />
+                                        <path d="M19 6l-1 14H6L5 6" />
+                                    </svg>
+                                    <span>{{ t('common.delete') }}</span>
+                                </button>
                             </div>
                         </NPopover>
                     </div>
@@ -2400,19 +2391,15 @@ async function handleClarify(response?: string) {
                         />
                     </div>
                     <div class="modal-actions" :class="{ 'agent-modal-actions': editingAgent }">
-                        <NPopconfirm
+                        <NButton
                             v-if="editingAgent"
-                            :width="320"
-                            content-style="white-space: normal; line-height: 1.6;"
-                            @positive-click="handleRemoveAgent(editingAgent)"
+                            type="error"
+                            secondary
+                            :disabled="isSavingAgent"
+                            @click="handleRemoveAgent(editingAgent)"
                         >
-                            <template #trigger>
-                                <NButton type="error" secondary :disabled="isSavingAgent">
-                                    {{ t('common.delete') }}
-                                </NButton>
-                            </template>
-                            {{ t('groupChat.deleteAgentConfirm', { name: editingAgent.name }) }}
-                        </NPopconfirm>
+                            {{ t('common.delete') }}
+                        </NButton>
                         <NSpace justify="end">
                             <NButton :disabled="isSavingAgent" @click="closeAgentModal">{{ t('common.cancel') }}</NButton>
                             <NButton

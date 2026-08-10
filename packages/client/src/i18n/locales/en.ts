@@ -2883,7 +2883,6 @@ export default {
     agentAlreadyInRoom: 'Agent already in this room',
     agentAddFailedCount: '{count} agent(s) were not added: {details}',
     editAgentTitle: 'Edit {name}',
-    deleteAgentConfirm: 'Delete {name}?',
     removeMember: 'Remove',
     memberRemoved: '{name} was removed from the room',
     memberRemovedNotice: 'The room owner removed you from this room. You can enter again while the invite remains valid.',

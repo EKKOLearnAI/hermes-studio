@@ -2831,7 +2831,6 @@ export default {
     agentAlreadyInRoom: 'الوكيل موجود في هذه الغرفة',
     agentAddFailedCount: 'لم تتم إضافة {count} وكيل: {details}',
     editAgentTitle: 'تعديل {name}',
-    deleteAgentConfirm: 'هل تريد حذف {name}؟',
     removeMember: 'إزالة',
     memberRemoved: 'تمت إزالة {name} من الغرفة',
     memberRemovedNotice: 'قام مالك الغرفة بإزالتك. يمكنك الانضمام مجددًا ما دامت الدعوة صالحة.',
