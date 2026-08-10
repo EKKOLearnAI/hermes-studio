@@ -118,8 +118,8 @@ export function isSensitivePath(relativePath: string): boolean {
 }
 
 /**
- * Resolve a relative path to an absolute path under the hermes home directory.
- * Validates path safety (no traversal).
+ * Resolve a path to an absolute path under the hermes home directory.
+ * Accepts both relative and absolute paths; validates path safety (no traversal).
  */
 export function resolveHermesPath(relativePath: string, profile?: string): string {
   const homeDir = homeDirForProfile(profile)
@@ -127,7 +127,7 @@ export function resolveHermesPath(relativePath: string, profile?: string): strin
     return homeDir
   }
   const normalized = normalize(relativePath).replace(/\\/g, '/')
-  if (normalized.startsWith('..') || normalized.includes('/../') || normalized.startsWith('/')) {
+  if (normalized.startsWith('..') || normalized.includes('/../')) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
   const resolved = resolve(homeDir, normalized)
