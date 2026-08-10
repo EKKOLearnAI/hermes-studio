@@ -3042,6 +3042,7 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_41_1: '修正透過 npm 安裝 Hermes Web UI 後本機 STT 無法穩定辨識的問題：在 macOS、Windows 與 Linux 上將 sherpa-onnx 原生執行階段固定為與 Node.js 封裝相同的版本（#2464）',
     new_0_6_40_1: '本版本涵蓋 v0.6.39 之後合併的全部 40 個 PR，包含安全遠端群聊、本機語音辨識、Workflow 排程、全域審批、Chat Run Webhook、MCU 與 Coding Agent 穩定性',
     new_0_6_40_2: '群聊新增安全共享房間與遠端 Agent，穩定 Agent 交接、在線狀態與撤銷流程，保留離線歸屬人頭像，並在剪貼簿 API 不可用時提供房間連結手動複製（#2408、#2410、#2411、#2415、#2423）',
     new_0_6_40_3: '遠端 Agent 支援檔案傳輸與雲端 workspace 上傳；非歸屬人請求會套用更嚴格的 workspace、敏感資訊與私人記憶邊界，並修正歸屬與審批路由（#2413、#2430、#2433、#2435）',

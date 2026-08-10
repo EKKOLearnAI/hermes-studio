@@ -2681,6 +2681,7 @@ jobTriggered: 'Job acionado',
   },
 
   changelog: {
+    new_0_6_41_1: 'O STT local agora funciona de forma confiável em instalações npm do Hermes Web UI ao fixar os runtimes nativos do sherpa-onnx na mesma versão do wrapper Node.js no macOS, Windows e Linux (#2464)',
     new_0_6_40_1: 'Esta versão cobre todos os 40 PRs mesclados desde v0.6.39: salas remotas seguras, STT local, agendamento de Workflow, aprovações globais, webhooks de Chat Run, MCU e confiabilidade do Coding Agent',
     new_0_6_40_2: 'O chat em grupo adiciona salas compartilhadas seguras e Agents remotos, estabiliza transferência, presença e revogação de Agents, preserva avatares de proprietários offline e permite copiar manualmente o link quando a API da área de transferência não está disponível (#2408, #2410, #2411, #2415, #2423)',
     new_0_6_40_3: 'Agents remotos podem transferir arquivos e enviar para workspaces na nuvem. Solicitações de não proprietários aplicam limites mais rígidos ao workspace, informações sensíveis e memória privada, com rotas de propriedade e aprovação corrigidas (#2413, #2430, #2433, #2435)',

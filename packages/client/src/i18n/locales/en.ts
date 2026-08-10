@@ -3090,6 +3090,7 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_41_1: 'Local STT now works reliably in npm-installed Hermes Web UI by pinning sherpa-onnx native runtimes to the same version as the Node.js wrapper on macOS, Windows, and Linux (#2464)',
     new_0_6_40_1: 'This release covers all 40 PRs merged after v0.6.39, spanning secure remote Group Chat, local speech recognition, Workflow scheduling, global approvals, Chat Run webhooks, MCU, and Coding Agent reliability',
     new_0_6_40_2: 'Group Chat adds secure shared rooms and remote Agents, stabilizes Agent handoff, presence, and revocation, preserves offline owner avatars, and offers manual room-link copy when clipboard APIs are unavailable (#2408, #2410, #2411, #2415, #2423)',
     new_0_6_40_3: 'Remote Agents can transfer files and upload to cloud workspaces. Requests from non-owners now enforce tighter workspace, sensitive-information, and private-memory boundaries, with corrected ownership and approval routing (#2413, #2430, #2433, #2435)',
