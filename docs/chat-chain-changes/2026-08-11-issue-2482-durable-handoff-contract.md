@@ -2,17 +2,20 @@
 date: 2026-08-11
 pr: pending
 feature: Issue #2482 durable handoff contract spike
-impact: Defines the design-only Local/Remote durable handoff protocol and its real crash-injection RED matrix; no production integration is included.
+impact: Design-only concentrated rework; no production integration is included.
 ---
 
-Issue #2482 Stage A freezes independent Source outbox and Target SQLite inbox
-boundaries, authenticated `admit/getStatus`, monotonic state versions, stable
-execution identity, terminal-publication evidence, manual replacement lineage,
-and deletion tombstones. Socket callbacks, Promise resolution, memory queues,
-and synthetic message IDs are explicitly not completion evidence.
+Issue #2482 Stage A now defines the complete Local/Remote durable handoff
+contract: persistent Source chain identity bound to the independent Target
+inbox and authenticated peer, a two-phase claim/invocation protocol with
+explicit crash recovery, authenticated cross-database cancellation, auditable
+replacement/deletion lineage, and real terminal message publication in the
+same Target transaction as `completed`.
 
-The spike remains design-only until an independent `DESIGN_PASS`. Its RED
-matrix covers lost admission responses, lost completion callbacks, concurrent
-dispatch, pre-invocation and post-invocation crashes, Local/Remote parity,
-payload/snapshot conflicts, offline/busy retry, replacement, tombstones, and
-the full source-to-terminal-publication path.
+The Source attempt is the sole Source receipt fact; the outbox no longer has a
+second receipt copy. Local and Remote share the same state/version/error
+semantics, while opaque random receipt values may differ. R1–R12 now include
+chain/auth conflicts, post-invocation deletion/crash, and full message
+publication evidence. Stage B, production code, PR, packaging, release,
+installation, and deployment remain prohibited until independent
+`DESIGN_PASS`.
