@@ -331,12 +331,18 @@ async function requestPairingWithDevice(target: LanDeviceInfo, pairingCode = '')
 }
 
 export async function deviceLinkInfoController(ctx: any) {
+  ctx.set('Access-Control-Allow-Origin', '*')
   const info = await getPublicSystemInfo()
   ctx.body = {
     ...info,
     http_port: config.port,
     endpoint_kind: getLanEndpointKind(config.port),
     relay_url: config.remoteRelay.url,
+    app_relay: {
+      protocol: 'socket.io',
+      namespace: '/app-relay',
+      direct: true,
+    },
   }
 }
 

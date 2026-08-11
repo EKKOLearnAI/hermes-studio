@@ -54,6 +54,42 @@ describe('devices controller', () => {
     vi.resetModules()
   })
 
+  it('allows cross-origin reads of public device link info', async () => {
+    vi.doMock('../../packages/server/src/services/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
+        '../../packages/server/src/services/system-info',
+      )
+      return {
+        ...actual,
+        getPublicSystemInfo: async () => ({
+          device_id: 'hwui_local',
+          device_public_key: keyPair.publicKey,
+          computer_name: 'local',
+          os: { type: 'TestOS', platform: 'linux', release: '1', arch: 'x64' },
+          hermes_agent_version: 'v1',
+          hermes_web_ui_version: '1',
+        }),
+      }
+    })
+
+    const set = vi.fn()
+    const ctx: any = { set }
+    const { deviceLinkInfoController } = await import('../../packages/server/src/controllers/devices')
+
+    await deviceLinkInfoController(ctx)
+
+    expect(set).toHaveBeenCalledWith('Access-Control-Allow-Origin', '*')
+    expect(ctx.body).toEqual(expect.objectContaining({
+      device_id: 'hwui_local',
+      http_port: expect.any(Number),
+      app_relay: {
+        protocol: 'socket.io',
+        namespace: '/app-relay',
+        direct: true,
+      },
+    }))
+  })
+
   it('returns the inbound pairing status for a signed device status request', async () => {
     const { requestInboundDeviceLink, updateInboundStatus } = await import('../../packages/server/src/db/hermes/devices-store')
     requestInboundDeviceLink(device)

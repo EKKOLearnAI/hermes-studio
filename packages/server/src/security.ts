@@ -48,6 +48,23 @@ function isSameHostOrigin(origin: string, host: string): boolean {
   }
 }
 
+function isLocalAppDevelopmentOrigin(origin: string | undefined | null): boolean {
+  const normalized = normalizeOrigin(origin)
+  if (!normalized) return false
+  try {
+    const url = new URL(normalized)
+    const hostname = url.hostname.toLowerCase()
+    return url.port === '5173' && (
+      hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === '[::1]'
+      || hostname === '::1'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function isOriginAllowed(origin: string | undefined | null, host: string | undefined | null, corsOrigins = ''): boolean {
   const originValue = String(origin || '').trim()
   if (!originValue) return true
@@ -76,14 +93,16 @@ export function createSocketIoCorsOrigin(corsOrigins = '') {
       callback(null, true)
       return
     }
-    callback(null, isOriginAllowed(origin, '', corsOrigins))
+    callback(null, isOriginAllowed(origin, '', corsOrigins) || isLocalAppDevelopmentOrigin(origin))
   }
 }
 
 export function shouldRejectUpgradeOrigin(req: IncomingMessage, corsOrigins = ''): boolean {
   const origin = req.headers.origin
   if (!origin) return false
-  return !isOriginAllowed(Array.isArray(origin) ? origin[0] : origin, req.headers.host, corsOrigins)
+  const selectedOrigin = Array.isArray(origin) ? origin[0] : origin
+  return !isOriginAllowed(selectedOrigin, req.headers.host, corsOrigins)
+    && !isLocalAppDevelopmentOrigin(selectedOrigin)
 }
 
 export function writeForbiddenOrigin(socket: { write: (chunk: string) => void; destroy: () => void }): void {

@@ -38,3 +38,33 @@ account to this machine.
 The cloud App access token authorizes access to a paired machine. Calls to the
 local Web UI still carry a local Hermes user token, so the normal local user and
 profile permissions remain authoritative.
+
+## LAN App Relay server
+
+Hermes Studio also serves the App-facing Socket.IO protocol at `/app-relay` on
+its own HTTP origin. The App uses the same `http.request`, `socket.open`,
+`socket.event`, and `socket.close` events and receives the same response shapes
+whether it connects to the cloud relay or directly to a Studio machine.
+
+The transport paths differ only after the App-facing server accepts a request:
+
+- Cloud: App -> cloud Relay server -> Studio Relay client -> local HTTP or
+  `/chat-run`.
+- LAN: App -> Studio Relay server -> local HTTP or `/chat-run`.
+
+The LAN path does not start or call an App Relay client. The App first connects
+with the selected machine ID. An unauthenticated connection may only send a
+`POST /api/auth/login` through `http.request`; after a successful response the
+same Socket.IO connection is promoted with the returned local Hermes user token.
+All later loopback requests and chat sockets use that token. The public
+`/api/devices/link-info` response advertises this capability as:
+
+```json
+{
+  "app_relay": {
+    "protocol": "socket.io",
+    "namespace": "/app-relay",
+    "direct": true
+  }
+}
+```

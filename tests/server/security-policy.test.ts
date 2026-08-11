@@ -45,6 +45,7 @@ describe('server security policy', () => {
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'https://evil.example', host: '127.0.0.1:8648' } } as any, '')).toBe(true)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'null', host: '127.0.0.1:8648' } } as any, '')).toBe(true)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://127.0.0.1:8648', host: '127.0.0.1:8648' } } as any, '')).toBe(false)
+    expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://localhost:5173', host: '192.168.10.102:8647' } } as any, '')).toBe(false)
     expect(shouldRejectUpgradeOrigin({ headers: { host: '127.0.0.1:8648' } } as any, '')).toBe(false)
   })
 
