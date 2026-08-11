@@ -29,6 +29,7 @@ import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
+import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessages } from './resume-payload'
 import type {
   ChatCodingAgentId,
   ContentBlock,
@@ -1119,7 +1120,7 @@ export class ChatRunSocket {
     const sessionDetail = getSessionMetadata(sid)
     socket.emit('resumed', {
       session_id: sid,
-      messages: state.messages,
+      messages: buildResumeMessages(state.messages),
       messageTotal: state.messageTotal,
       messageLoadedCount: state.messageLoadedCount,
       messagePageLimit: state.messagePageLimit,
@@ -1132,7 +1133,7 @@ export class ChatRunSocket {
       workspace: sessionDetail?.workspace || null,
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
-      events: resumeEvents,
+      events: buildResumeEvents(resumeEvents),
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
       contextTokens: state.contextTokens,
@@ -1739,7 +1740,7 @@ export class ChatRunSocket {
       state.events.push({ event, data: tagged })
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
     }
-    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+    this.nsp.to(`session:${sessionId}`).emit(event, buildOutboundRunEvent(event, tagged))
     const waiters = this.runWaiters.get(sessionId)
     if (waiters) {
       for (const waiter of waiters) waiter(event, tagged)

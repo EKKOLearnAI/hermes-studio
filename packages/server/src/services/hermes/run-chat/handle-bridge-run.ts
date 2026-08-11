@@ -32,6 +32,7 @@ import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 import { markAbortCompleted } from './abort'
+import { buildOutboundRunEvent } from './resume-payload'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
@@ -561,9 +562,10 @@ export async function handleBridgeRun(
     const tagged = { ...payload, session_id }
     observePetEvent(profile, event, tagged)
     data.onEvent?.(event, tagged)
-    nsp.to(`session:${session_id}`).emit(event, tagged)
+    const outbound = buildOutboundRunEvent(event, tagged)
+    nsp.to(`session:${session_id}`).emit(event, outbound)
     if (!data.onEvent && !nsp.adapter.rooms.get(`session:${session_id}`)?.size && socket.connected) {
-      socket.emit(event, tagged)
+      socket.emit(event, outbound)
     }
   }
   if (shouldEmitWorkspaceUpdate) {
@@ -874,9 +876,10 @@ export async function resumeBridgeRun(
     const tagged = { ...payload, session_id: sessionId }
     observePetEvent(profile, event, tagged)
     args.onEvent?.(event, tagged)
-    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    const outbound = buildOutboundRunEvent(event, tagged)
+    nsp.to(`session:${sessionId}`).emit(event, outbound)
     if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
-      socket.emit(event, tagged)
+      socket.emit(event, outbound)
     }
   }
 
