@@ -7,6 +7,7 @@ const originalWebuiStateDir = process.env.HERMES_WEBUI_STATE_DIR
 afterEach(() => {
   vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
   vi.doUnmock('../../packages/server/src/services/config-helpers')
+  vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
   vi.clearAllMocks()
   vi.unstubAllEnvs()
   vi.resetModules()
@@ -107,6 +108,11 @@ describe('media controller', () => {
     vi.doMock('../../packages/server/src/services/config-helpers', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({})),
     }))
+    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+      resolveAuthorizedProviderRuntimeCredentials: vi.fn(async () => {
+        throw new Error('MiniMax authorization is unavailable')
+      }),
+    }))
     const { minimaxTextToVideo } = await import('../../packages/server/src/controllers/hermes/media')
     const ctx: any = {
       state: { serverTokenAuth: true },
@@ -200,8 +206,7 @@ describe('media controller', () => {
     }
   })
 
-  it('generates a text-to-video through the MiniMax CN endpoint when region is cn_zh', async () => {
-    vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
+  it('uses refreshed MiniMax authorization credentials and their CN endpoint', async () => {
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
@@ -209,6 +214,15 @@ describe('media controller', () => {
     }))
     vi.doMock('../../packages/server/src/services/config-helpers', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({})),
+    }))
+    const resolveAuthorizedProviderRuntimeCredentials = vi.fn(async () => ({
+      provider: 'minimax-oauth',
+      apiKey: 'fresh-minimax-token',
+      baseUrl: 'https://api.minimaxi.com/anthropic',
+      source: 'oauth-refresh',
+    }))
+    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+      resolveAuthorizedProviderRuntimeCredentials,
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlString = String(url)
@@ -241,7 +255,7 @@ describe('media controller', () => {
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
-        request: { body: { prompt: 'a city skyline at night', region: 'cn_zh' } },
+        request: { body: { prompt: 'a city skyline at night' } },
         get: vi.fn(() => ''),
         status: 200,
         body: undefined,
@@ -250,8 +264,20 @@ describe('media controller', () => {
       await minimaxTextToVideo(ctx)
 
       expect(ctx.status).toBe(200)
-      expect(ctx.body).toMatchObject({ task_id: 'task_cn', region: 'cn_zh' })
+      expect(ctx.body).toMatchObject({
+        task_id: 'task_cn',
+        region: 'cn_zh',
+        token_source: 'oauth-refresh',
+      })
+      expect(resolveAuthorizedProviderRuntimeCredentials).toHaveBeenCalledWith({
+        profile: 'default',
+        provider: 'minimax-oauth',
+        model: 'MiniMax-Hailuo-2.3',
+      })
       expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimaxi.com/v1/video_generation')
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({
+        headers: expect.objectContaining({ Authorization: 'Bearer fresh-minimax-token' }),
+      })
     } finally {
       globalThis.fetch = originalFetch
       globalThis.setTimeout = originalSetTimeout

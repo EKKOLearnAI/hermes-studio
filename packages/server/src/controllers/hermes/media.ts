@@ -5,6 +5,7 @@ import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '.
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -144,21 +145,24 @@ function resolveXaiToken(profile: string): { token: string; source: string } | n
   return null
 }
 
-function resolveMiniMaxToken(profile: string): { token: string; source: string } | null {
+async function resolveMiniMaxToken(profile: string): Promise<{ token: string; source: string; region?: 'global_en' | 'cn_zh' } | null> {
   const envToken = String(process.env.MINIMAX_API_KEY || '').trim()
   if (envToken) return { token: envToken, source: 'MINIMAX_API_KEY' }
 
-  const auth = readJsonFile(authPathForProfile(profile)) as AuthJson | null
-  const providerToken = String(auth?.providers?.['minimax-oauth']?.access_token || '').trim()
-  if (providerToken) return { token: providerToken, source: 'minimax-oauth' }
-
-  const pool = auth?.credential_pool?.['minimax-oauth']
-  if (Array.isArray(pool)) {
-    const poolToken = String(pool.find(entry => entry?.access_token)?.access_token || '').trim()
-    if (poolToken) return { token: poolToken, source: 'minimax-oauth' }
+  try {
+    const credentials = await resolveAuthorizedProviderRuntimeCredentials({
+      profile,
+      provider: 'minimax-oauth',
+      model: MINIMAX_VIDEO_DEFAULT_MODEL,
+    })
+    return {
+      token: credentials.apiKey,
+      source: credentials.source || 'minimax-oauth',
+      region: credentials.baseUrl?.includes('api.minimaxi.com') ? 'cn_zh' : 'global_en',
+    }
+  } catch {
+    return null
   }
-
-  return null
 }
 
 function mimeFromPath(path: string): string | null {
@@ -702,7 +706,7 @@ export async function minimaxTextToVideo(ctx: Context) {
     return
   }
 
-  const tokenInfo = resolveMiniMaxToken(profile)
+  const tokenInfo = await resolveMiniMaxToken(profile)
   if (!tokenInfo) {
     ctx.status = 401
     ctx.body = {
@@ -721,7 +725,7 @@ export async function minimaxTextToVideo(ctx: Context) {
   }
 
   try {
-    const region = String(body.region || 'global_en').trim() === 'cn_zh' ? 'cn_zh' : 'global_en'
+    const region = String(body.region || tokenInfo.region || 'global_en').trim() === 'cn_zh' ? 'cn_zh' : 'global_en'
     const urls = minimaxVideoUrls(region)
     const rawTimeoutMs = Number(body.timeout_ms || DEFAULT_TIMEOUT_MS)
     const timeoutMs = Number.isFinite(rawTimeoutMs)
