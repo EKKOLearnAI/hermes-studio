@@ -451,6 +451,36 @@ describe('group chat agent workspace bridge runs', () => {
     expect(replyToMention).not.toHaveBeenCalled()
   })
 
+  it('routes only the leading participant on a final handoff line', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const author = await clients.createAgent({
+      agentId: 'agent-author',
+      profile: 'default',
+      name: 'Author',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    })
+    clients.rooms.set('room-1', new Map([
+      ['agent-author', author],
+      ['agent-lead', { agentId: 'agent-lead', name: 'Lead' }],
+      ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer' }],
+    ]))
+
+    await author.sendMessage(
+      'room-1',
+      'The previous review is obsolete.\n\n@Lead please continue; the earlier @Reviewer mention is explanatory.',
+      'leading-handoff-1',
+    )
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
+      roomId: 'room-1',
+      id: 'leading-handoff-1',
+      mentions: [{ type: 'agent', participantId: 'agent-lead', displayName: 'Lead' }],
+    }), expect.any(Function))
+  })
+
   it('dispatches a Codex group agent through chat-run without invoking the Hermes bridge', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const runAndWait = vi.fn(async (_data: any, options: any) => {
