@@ -11,10 +11,11 @@ npm run harness:check
 
 Before reporting a branch as pushed or handing an immutable candidate to review,
 also run `npm run candidate:evidence -- --base <sha> --remote <remote>
---branch <branch> --ledger docs/harness/task-contracts.json --problem-key <key>
---issue <number> --method <id> --json`. This command validates the active contract,
-fetches the named remote branch, and fails unless the worktree is clean and all
-three candidate heads agree.
+--branch <branch> --problem-key <key> --issue <number> --method <id> --json`.
+This command fetches the fixed trusted Base `origin/main`, reads
+the fixed canonical ledger, validates its append-only transition from a trusted
+Git anchor, fetches both the trusted Base and candidate branch, and fails unless
+the worktree is clean and all candidate identities agree.
 
 Install validation dependencies with `npm ci --include=dev --ignore-scripts`.
 The explicit `--include=dev` keeps validation reproducible when the environment

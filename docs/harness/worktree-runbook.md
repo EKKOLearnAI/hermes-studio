@@ -32,13 +32,14 @@ After pushing, do not rely on the `git push` message or a local remote-tracking
 ref. Verify the candidate through a fresh fetch:
 
 ```bash
-npm run candidate:evidence -- --base <base-sha> --remote <remote> --branch <branch> \
-  --ledger docs/harness/task-contracts.json --problem-key <key> \
+npm run candidate:evidence -- --base <base-sha> \
+  --remote <remote> --branch <branch> --problem-key <key> \
   --issue <number> --method <id> --json
 ```
 
-The command is the source of truth for Base, HEAD, Tree, Patch SHA-256 and the
-remote equality check used in a handoff.
+The command is the source of truth for Base, HEAD, Tree, Patch SHA-256, the
+trusted canonical-ledger transition, and the remote equality check used in a
+handoff. It does not accept a caller-selected ledger path.
 
 ## Install
 

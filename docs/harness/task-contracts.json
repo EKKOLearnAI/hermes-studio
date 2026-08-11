@@ -31,16 +31,33 @@
     {
       "key": "engineering-anti-loop-and-candidate-evidence",
       "status": "active",
-      "maxTotalReworks": 1,
+      "maxTotalReworks": 2,
       "methods": [
         {
           "id": "repository-executable-gates",
+          "status": "stopped",
+          "issues": [2489],
+          "reworks": 1
+        },
+        {
+          "id": "anchored-append-only-ledger-transition",
           "status": "active",
           "issues": [2489],
           "reworks": 0
         }
       ],
-      "restarts": []
+      "restarts": [
+        {
+          "fromMethod": "repository-executable-gates",
+          "toMethod": "anchored-append-only-ledger-transition",
+          "authorizedBy": "product-owner",
+          "reason": "Replace candidate-controlled ledger snapshots with a trusted anchored append-only transition after independent QA reproduced the bypass.",
+          "budgetChange": {
+            "from": 1,
+            "to": 2
+          }
+        }
+      ]
     }
   ]
 }
