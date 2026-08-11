@@ -390,7 +390,7 @@ describe('group chat agent workspace bridge runs', () => {
     client.disconnect()
   })
 
-  it('generates a complete entry mention DTO for an agent reply handoff', async () => {
+  it('generates a complete entry mention DTO only from the final handoff line', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -406,7 +406,11 @@ describe('group chat agent workspace bridge runs', () => {
       ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer' }],
     ]))
 
-    await author.sendMessage('room-1', '@Reviewer please verify this.', 'handoff-1')
+    await author.sendMessage(
+      'room-1',
+      'I mentioned @Reviewer above only to explain the previous routing mistake.\n\n@Reviewer please verify this.',
+      'handoff-1',
+    )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
@@ -415,7 +419,7 @@ describe('group chat agent workspace bridge runs', () => {
     }), expect.any(Function))
   })
 
-  it('does not generate a structured mention for the replying agent itself', async () => {
+  it('keeps conversational @name references as text without generating routing metadata', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -432,13 +436,17 @@ describe('group chat agent workspace bridge runs', () => {
       ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer', replyToMention }],
     ]))
 
-    await author.sendMessage('room-1', '@Author status: waiting for @Reviewer.', 'self-mention-1')
+    await author.sendMessage(
+      'room-1',
+      'I previously mentioned @Reviewer twice: @Reviewer. This is an explanation, not a handoff.',
+      'self-mention-1',
+    )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
       id: 'self-mention-1',
-      content: '@Author status: waiting for @Reviewer.',
-      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+      content: 'I previously mentioned @Reviewer twice: @Reviewer. This is an explanation, not a handoff.',
+      mentions: [],
     }), expect.any(Function))
     expect(replyToMention).not.toHaveBeenCalled()
   })

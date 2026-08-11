@@ -73,6 +73,15 @@ export type StructuredMentionEntry =
     | { type: 'agent'; participantId: string; displayName: string }
     | { type: 'all'; displayName: 'all' }
 
+function terminalHandoffLine(content: string): string {
+    const finalLine = content
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .at(-1) || ''
+    return finalLine.startsWith('@') ? finalLine : ''
+}
+
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
         id: msg.messageId || '',
@@ -436,7 +445,7 @@ export class AgentClient implements GroupAgentExecutor {
         const mentions = generatedMentions.length > 0
             ? generatedMentions
             : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
-        const messageExtra = mentions.length ? { ...extra, mentions } : extra
+        const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
         if (this.eventSink) {
             return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
         }
@@ -460,7 +469,9 @@ export class AgentClient implements GroupAgentExecutor {
     private structuredMentionsForAgentReply(roomId: string, content: string): StructuredMentionEntry[] {
         const rawAgents = this.storage?.getRoomAgents?.(roomId)
         const agents = Array.isArray(rawAgents) ? rawAgents : []
-        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        const handoffLine = terminalHandoffLine(content)
+        if (!handoffLine) return []
+        if (isAllAgentsMentioned(handoffLine)) return [{ type: 'all', displayName: 'all' }]
         const byName = new Map<string, Array<{ agentId: string; name: string }>>()
         for (const agent of agents) {
             const participantId = String(agent?.agentId || '').trim()
@@ -471,7 +482,7 @@ export class AgentClient implements GroupAgentExecutor {
             byName.set(displayName, matches)
         }
         return [...byName.values()]
-            .filter(matches => matches.length === 1 && isAgentMentioned(content, matches[0].name))
+            .filter(matches => matches.length === 1 && isAgentMentioned(handoffLine, matches[0].name))
             .map(matches => ({ type: 'agent' as const, participantId: matches[0].agentId, displayName: matches[0].name }))
     }
 
@@ -2045,9 +2056,11 @@ export class AgentClients {
 
     private buildAgentReplyMentions(roomId: string, content: string, senderParticipantId: string): StructuredMentionEntry[] {
         const agents = this.getAgents(roomId)
-        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        const handoffLine = terminalHandoffLine(content)
+        if (!handoffLine) return []
+        if (isAllAgentsMentioned(handoffLine)) return [{ type: 'all', displayName: 'all' }]
         return agents
-            .filter(agent => agent.agentId !== senderParticipantId && isAgentMentioned(content, agent.name))
+            .filter(agent => agent.agentId !== senderParticipantId && isAgentMentioned(handoffLine, agent.name))
             .map(agent => ({
                 type: 'agent' as const,
                 participantId: agent.agentId,
