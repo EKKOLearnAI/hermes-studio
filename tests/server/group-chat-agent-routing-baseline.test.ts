@@ -23,6 +23,7 @@ describe('group chat agent routing baseline', () => {
     vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
     groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
     groupServer.getStorage().addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
+    groupServer.getStorage().addRoomAgent('room-1', 'agent-reviewer', 'default', 'Reviewer', '', 0)
   })
 
   afterEach(() => {
@@ -138,10 +139,11 @@ describe('group chat agent routing baseline', () => {
     await emitAck(agent, 'message', {
       roomId: 'room-1',
       id: 'agent-msg-1',
-      content: '@Worker chain handoff',
+      content: '@Reviewer chain handoff',
       role: 'assistant',
       mentionDepth: 3,
       agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
     expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
@@ -158,10 +160,11 @@ describe('group chat agent routing baseline', () => {
     await emitAck(agent, 'message', {
       roomId: 'room-1',
       id: 'agent-msg-2',
-      content: '@Worker stop looping',
+      content: '@Reviewer stop looping',
       role: 'assistant',
       mentionDepth: 4,
       agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
     expect(processMentions).not.toHaveBeenCalled()

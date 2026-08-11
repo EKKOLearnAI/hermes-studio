@@ -2772,6 +2772,7 @@ export class GroupChatServer {
             return senderIsAgent ? { mentions: [] } : {}
         }
         if (!Array.isArray(rawMentions)) return { error: 'Invalid structured mentions' }
+        if (rawMentions.length === 0) return { mentions: [] }
         const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
         const visibleAllMention = isAllAgentsMentioned(content)
         const visibleParticipantIds = new Set(
@@ -2868,12 +2869,13 @@ export class GroupChatServer {
                 return
             }
         }
-        if (
-            canCarryMentions
-            &&
-            isAllAgentsMentioned(contentToText(messageContent))
-            && !this.canSocketMentionAll(socket, roomId)
-        ) {
+        const requestsAllMention = Array.isArray(data.mentions)
+            ? data.mentions.some(mention => Boolean(mention)
+                && typeof mention === 'object'
+                && !Array.isArray(mention)
+                && (mention as Record<string, unknown>).type === 'all')
+            : isAllAgentsMentioned(contentToText(messageContent))
+        if (canCarryMentions && requestsAllMention && !this.canSocketMentionAll(socket, roomId)) {
             ack?.({
                 code: 'GROUP_CHAT_ALL_MENTION_FORBIDDEN',
                 error: 'Only the room owner can mention @all',
@@ -2921,13 +2923,14 @@ export class GroupChatServer {
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const hasStructuredAgentTargets = isAgentReply && (savedMsg.mentions?.length || 0) > 0
         // Any human who has successfully joined the room may interact with its
         // Agents. Room management remains separately protected by
         // canSocketManageRoom, so invite guests cannot mutate settings, approve
         // tools, or interrupt an Agent.
         const canRouteHumanMentions = savedMsg.role === 'user' && member?.source === 'human'
         const shouldRouteMentions = canRouteHumanMentions ||
-            (isAgentReply && mentionDepth < maxAgentMentionDepth())
+            (hasStructuredAgentTargets && mentionDepth < maxAgentMentionDepth())
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse mentions and invoke agents directly.

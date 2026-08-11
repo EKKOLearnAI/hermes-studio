@@ -156,6 +156,32 @@ describe('group chat structured agent mentions', () => {
     expect(processMentions).not.toHaveBeenCalled()
   })
 
+  it('persists an agent explanation containing @all when explicit metadata says it has no routing targets', async () => {
+    const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(author)
+    await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    const response = await emitAck<{ id?: string; error?: string }>(author, 'message', {
+      roomId: 'room-1',
+      id: 'assistant-explanation-with-all',
+      content: 'The previous @all broadcast was a mistake. This sentence is explanatory text.',
+      role: 'assistant',
+      agentSessionId: groupRuntimeSessionId('room-1', 'default', 'Author'),
+      mentions: [],
+    })
+
+    expect(response).toEqual({ id: 'assistant-explanation-with-all' })
+    expect(harness.db.prepare('SELECT content, mentions FROM gc_messages WHERE id = ?').get('assistant-explanation-with-all')).toEqual({
+      content: 'The previous @all broadcast was a mistake. This sentence is explanatory text.',
+      mentions: '[]',
+    })
+    expect(processMentions).not.toHaveBeenCalled()
+  })
+
   it('keeps the latest main policy that only a room owner may broadcast with @all', async () => {
     const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
       source: 'agent',
@@ -203,8 +229,11 @@ describe('group chat structured agent mentions', () => {
       mentions: [],
     })
 
-    expect(response.error).toBe('Invalid structured mentions')
-    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('empty-agent-handoff')).toEqual({ count: 0 })
+    expect(response).toEqual({ id: 'empty-agent-handoff' })
+    expect(harness.db.prepare('SELECT content, mentions FROM gc_messages WHERE id = ?').get('empty-agent-handoff')).toEqual({
+      content: '@Reviewer please independently verify this.',
+      mentions: '[]',
+    })
     expect(processMentions).not.toHaveBeenCalled()
   })
 

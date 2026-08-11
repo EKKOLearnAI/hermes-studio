@@ -73,6 +73,7 @@ export type StructuredMentionEntry =
     | { type: 'agent'; participantId: string; displayName: string }
     | { type: 'all'; displayName: 'all' }
 
+
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
         id: msg.messageId || '',
@@ -436,7 +437,7 @@ export class AgentClient implements GroupAgentExecutor {
         const mentions = generatedMentions.length > 0
             ? generatedMentions
             : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
-        const messageExtra = mentions.length ? { ...extra, mentions } : extra
+        const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
         if (this.eventSink) {
             return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
         }

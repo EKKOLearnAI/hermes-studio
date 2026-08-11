@@ -390,7 +390,7 @@ describe('group chat agent workspace bridge runs', () => {
     client.disconnect()
   })
 
-  it('generates a complete entry mention DTO for an agent reply handoff', async () => {
+  it('generates one complete entry mention DTO for repeated mentions of the same participant anywhere in a reply', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -406,7 +406,11 @@ describe('group chat agent workspace bridge runs', () => {
       ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer' }],
     ]))
 
-    await author.sendMessage('room-1', '@Reviewer please verify this.', 'handoff-1')
+    await author.sendMessage(
+      'room-1',
+      'Please ask @Reviewer to verify this; @Reviewer owns the final check.',
+      'handoff-1',
+    )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
@@ -432,7 +436,11 @@ describe('group chat agent workspace bridge runs', () => {
       ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer', replyToMention }],
     ]))
 
-    await author.sendMessage('room-1', '@Author status: waiting for @Reviewer.', 'self-mention-1')
+    await author.sendMessage(
+      'room-1',
+      '@Author status: waiting for @Reviewer.',
+      'self-mention-1',
+    )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
@@ -441,6 +449,39 @@ describe('group chat agent workspace bridge runs', () => {
       mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     }), expect.any(Function))
     expect(replyToMention).not.toHaveBeenCalled()
+  })
+
+  it('routes each distinct participant once regardless of mention position or repetition', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const clients = new AgentClients() as any
+    const author = await clients.createAgent({
+      agentId: 'agent-author',
+      profile: 'default',
+      name: 'Author',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    })
+    clients.rooms.set('room-1', new Map([
+      ['agent-author', author],
+      ['agent-lead', { agentId: 'agent-lead', name: 'Lead' }],
+      ['agent-reviewer', { agentId: 'agent-reviewer', name: 'Reviewer' }],
+    ]))
+
+    await author.sendMessage(
+      'room-1',
+      'Lead with this, @Lead; then ask @Reviewer to verify it. @Lead owns follow-up and @Reviewer signs off.',
+      'deduplicated-handoff-1',
+    )
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
+      roomId: 'room-1',
+      id: 'deduplicated-handoff-1',
+      mentions: [
+        { type: 'agent', participantId: 'agent-lead', displayName: 'Lead' },
+        { type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' },
+      ],
+    }), expect.any(Function))
   })
 
   it('dispatches a Codex group agent through chat-run without invoking the Hermes bridge', async () => {
