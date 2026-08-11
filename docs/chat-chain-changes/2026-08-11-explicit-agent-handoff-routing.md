@@ -1,6 +1,6 @@
 ---
 date: 2026-08-11
-pr: pending
+pr: 2495
 feature: explicit Group Chat Agent handoff routing
 impact: Agent explanations may mention participant names without launching another run; only a final explicit handoff line is upgraded to structured routing metadata.
 ---
