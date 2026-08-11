@@ -9185,6 +9185,62 @@
         }
       }
     },
+    "/api/hermes/media/minimax-text-to-video": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Create minimax-text-to-video",
+        "description": "POST /api/hermes/media/minimax-text-to-video",
+        "operationId": "minimaxTextToVideo",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "output_path": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "prompt"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/memory": {
       "get": {
         "tags": [
