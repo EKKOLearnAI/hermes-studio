@@ -38,7 +38,10 @@ import {
   runtimeManifestMatchesHermesAgentVersion,
 } from './runtime-version'
 import { extractTarGzipArchive } from './runtime-archive'
-import { repairMovedHermesRuntime } from './runtime-relocation'
+import {
+  repairMovedHermesRuntime,
+  windowsRuntimeNeedsRelocationRepair,
+} from './runtime-relocation'
 import { t } from './desktop-i18n'
 
 const DEFAULT_RUNTIME_BASE_URL = 'https://download.ekkolearnai.com'
@@ -88,6 +91,7 @@ type ActiveRuntimeVersion = {
   runtimeRootDirectory?: string
   pendingRuntimeRootDirectory?: string
   runtimeMigrationError?: string
+  runtimeActivationError?: string
   webUiDirectory?: string
   platform?: string
   updatedAt?: string
@@ -243,25 +247,24 @@ export function repairUpdatedDesktopRuntimeLaunchers(): boolean {
   if (process.platform !== 'win32') return false
 
   const runtimeRoot = desktopRuntimeDir()
-  const pythonRoot = runtimePythonEnvironmentRoot(runtimeRoot)
-  const commandWrapper = join(pythonRoot, 'Scripts', 'hermes.cmd')
-  const executable = join(pythonRoot, 'Scripts', 'hermes.exe')
-  if (existsSync(commandWrapper) || !existsSync(executable)) return false
+  if (!windowsRuntimeNeedsRelocationRepair(runtimeRoot)) return false
 
   try {
     const repair = repairMovedHermesRuntime(runtimeRoot, runtimeRoot, runtimeRoot)
-    const repaired = existsSync(commandWrapper)
+    const repaired = !windowsRuntimeNeedsRelocationRepair(runtimeRoot)
+      && (repair.editableFilesRewritten > 0 || repair.launchersRewritten > 0)
     if (repaired) {
       console.log(
-        `[runtime] restored Windows Runtime launchers after Hermes CLI update: `
+        `[runtime] repaired cached Windows Runtime: `
+        + `${repair.editableFilesRewritten} path reference(s), `
         + `${repair.launchersRewritten} launcher(s)`,
       )
     }
     return repaired
   } catch (err) {
     console.warn(
-      `[runtime] failed to restore Windows Runtime launchers after Hermes CLI update; `
-      + `using the locally generated executable: ${err instanceof Error ? err.message : String(err)}`,
+      `[runtime] failed to repair cached Windows Runtime: `
+      + `${err instanceof Error ? err.message : String(err)}`,
     )
     return false
   }
@@ -602,7 +605,10 @@ export async function migratePendingRuntimeRoot(
   }
 }
 
-export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): void {
+export function writeActiveRuntimeVersion(
+  runtimeRoot = desktopRuntimeDir(),
+  options: { clearRuntimeActivationError?: boolean } = {},
+): void {
   const manifest = readCachedRuntimeManifest(runtimeRoot)
   const hermesRuntimeVersion = manifest?.hermesAgentVersion || desktopRuntimeVersion()
   const selectedWebUiDirectory = webuiDir()
@@ -646,6 +652,7 @@ export function writeActiveRuntimeVersion(runtimeRoot = desktopRuntimeDir()): vo
     delete next.webUiVersion
   }
   delete next.webUiDirectory
+  if (options.clearRuntimeActivationError) delete next.runtimeActivationError
   writeActiveRuntimeManifest(next)
 }
 
@@ -791,6 +798,6 @@ export async function ensureDesktopRuntime(
     }, null, 2))
   }
   onProgress?.({ stage: 'ready', message: t('runtime.ready') })
-  writeActiveRuntimeVersion(runtimeRoot)
+  writeActiveRuntimeVersion(runtimeRoot, { clearRuntimeActivationError: true })
   console.log(`[runtime] Hermes runtime ready at ${runtimeRoot}`)
 }

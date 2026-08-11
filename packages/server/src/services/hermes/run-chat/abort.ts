@@ -19,7 +19,7 @@ import type { QueuedRun, SessionState } from './types'
 const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent did not confirm stop before timeout. Local run state was released so you can continue.'
 
 function isBridgeRunSource(source?: string): boolean {
-  return source === 'cli' || source === 'global_agent' || source === 'workflow'
+  return source === 'cli' || source === 'global_agent' || source === 'workflow' || source === 'group_chat'
 }
 
 function settleInterruptedBackgroundTasks(state: SessionState): Array<Record<string, unknown>> {
@@ -68,6 +68,19 @@ export async function handleAbort(
   ) {
     logger.info({ sessionId }, '[chat-run-socket][abort] ignored: no active run')
     if (state) {
+      if (state.queueInsertion) {
+        emitToSession(nsp, socket, sessionId, 'run.queue_insertion.updated', {
+          event: 'run.queue_insertion.updated',
+          generation: state.queueInsertion.generation,
+          run_id: state.queueInsertion.runId,
+          queue_id: state.queueInsertion.queueId,
+          runtime: state.queueInsertion.runtime,
+          phase: 'cancelled',
+          guarantee: state.queueInsertion.guarantee,
+          reason: 'hard_stop',
+        })
+        state.queueInsertion = undefined
+      }
       state.isWorking = false
       state.isAborting = false
       state.abortController = undefined
@@ -84,6 +97,20 @@ export async function handleAbort(
 
   const activeState = state
   if (!activeState) return
+
+  if (activeState.queueInsertion) {
+    emitToSession(nsp, socket, sessionId, 'run.queue_insertion.updated', {
+      event: 'run.queue_insertion.updated',
+      generation: activeState.queueInsertion.generation,
+      run_id: activeState.queueInsertion.runId,
+      queue_id: activeState.queueInsertion.queueId,
+      runtime: activeState.queueInsertion.runtime,
+      phase: 'cancelled',
+      guarantee: activeState.queueInsertion.guarantee,
+      reason: 'hard_stop',
+    })
+    activeState.queueInsertion = undefined
+  }
 
   const runId = activeState.runId
   activeState.isAborting = true

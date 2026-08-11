@@ -124,7 +124,7 @@ export interface HermesDesktopBridge {
   ensureAuth?: () => Promise<boolean>
   retryBootstrap: (source?: 'cf' | 'github') => Promise<void>
   selectRuntimeDirectory?: (defaultPath?: string) => Promise<string | null>
-  notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string }) => Promise<boolean>
+  notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string; clickUrl?: string }) => Promise<boolean>
   openChatWindow?: (sessionId: string, profile?: string) => Promise<void>
   getWindowState: () => Promise<{ isMaximized: boolean }>
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close') => Promise<{ isMaximized: boolean }>

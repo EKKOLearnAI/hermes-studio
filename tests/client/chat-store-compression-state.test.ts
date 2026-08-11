@@ -838,6 +838,100 @@ describe('chat store compression state', () => {
     expect(dispatchSpy).not.toHaveBeenCalled()
   })
 
+  it('does not report an intentional queue insertion completion as an empty provider response', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    handlers.onRunCompleted({
+      event: 'run.completed',
+      output: '',
+      run_id: 'run-queue-insertion',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      boundary_guarantee: 'strict',
+      queue_remaining: 1,
+    })
+    await nextTick()
+
+    expect(store.activeSession?.messages.some(
+      (message: Message) => message.role === 'system' && message.content.includes('Agent returned no output'),
+    )).toBe(false)
+  })
+
+  it('does not report a socket queue insertion completion as an empty provider response', async () => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('first run')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
+    onEvent({
+      event: 'run.completed',
+      session_id: 'session-1',
+      output: '',
+      run_id: 'run-queue-insertion-socket',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      boundary_guarantee: 'strict',
+      queue_remaining: 1,
+    })
+    await nextTick()
+
+    expect(store.activeSession?.messages.some(
+      (message: Message) => message.role === 'system' && message.content.includes('Agent returned no output'),
+    )).toBe(false)
+  })
+
+  it('does not report an intentional queue insertion failure from a session handler', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+
+    handlers.onRunFailed({
+      event: 'run.failed',
+      error: 'Agent reported failure',
+      run_id: 'run-queue-insertion-failure',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      boundary_guarantee: 'strict',
+      queue_remaining: 1,
+    })
+    await nextTick()
+
+    expect(store.activeSession?.messages.some(
+      (message: Message) => message.systemType === 'error',
+    )).toBe(false)
+  })
+
+  it('does not report an intentional queue insertion failure from the active socket', async () => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('first run')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
+    onEvent({
+      event: 'run.failed',
+      session_id: 'session-1',
+      error: 'Agent reported failure',
+      run_id: 'run-queue-insertion-failure-socket',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      boundary_guarantee: 'strict',
+      queue_remaining: 1,
+    })
+    await nextTick()
+
+    expect(store.activeSession?.messages.some(
+      (message: Message) => message.systemType === 'error',
+    )).toBe(false)
+  })
+
   it('renders parsed_content-only completion as a new assistant message after reconnect resume and auto-plays it', async () => {
     vi.useFakeTimers()
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')

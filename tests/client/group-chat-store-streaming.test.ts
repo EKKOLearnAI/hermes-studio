@@ -43,6 +43,7 @@ const groupChatApiMock = vi.hoisted(() => {
 })
 const clientApiMock = vi.hoisted(() => ({
   getApiKey: vi.fn(() => 'test-token'),
+  getBaseUrlValue: vi.fn(() => ''),
   getActiveProfileName: vi.fn(() => 'research'),
   getStoredUsername: vi.fn(() => null),
 }))
@@ -110,6 +111,7 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.getStoredUserId.mockReturnValue('user-1')
     groupChatApiMock.getStoredUserName.mockReturnValue('tester')
     clientApiMock.getApiKey.mockReturnValue('test-token')
+    clientApiMock.getBaseUrlValue.mockReturnValue('')
     clientApiMock.getActiveProfileName.mockReturnValue('research')
     clientApiMock.getStoredUsername.mockReturnValue(null)
     authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
@@ -121,6 +123,90 @@ describe('group chat store streaming merge', () => {
       return groupChatApiMock.socket
     })
     groupChatApiMock.socket.disconnect.mockClear()
+  })
+
+  it('settles a historical Tool call without a persisted result instead of spinning forever', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-orphan_part_0_toolcall_call-orphan',
+        run_id: 'run-orphan',
+        senderName: 'QA Engineer',
+        tool_calls: [{
+          id: 'call-orphan',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-orphan',
+        toolStatus: 'interrupted',
+      }),
+    ])
+  })
+
+  it('keeps an unmatched Tool call running while its streamed message is live', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-live_part_0',
+      run_id: 'run-live',
+    }))
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+    emitSocket('message', assistantMessage({
+      id: 'run-live_part_0_toolcall_call-live',
+      run_id: 'run-live',
+      isStreaming: true,
+      tool_calls: [{
+        id: 'call-live',
+        type: 'function',
+        function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+      }],
+      finish_reason: 'tool_calls',
+    }))
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')).toEqual(
+      expect.objectContaining({ toolStatus: 'running' }),
+    )
+  })
+
+  it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-old_part_0_toolcall_call-old',
+        run_id: 'run-old',
+        senderName: 'bot',
+        timestamp: 1,
+        tool_calls: [{
+          id: 'call-old',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'old' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+      assistantMessage({
+        id: 'run-live_part_0_toolcall_call-live',
+        run_id: 'run-live',
+        senderName: 'bot',
+        timestamp: 2,
+        tool_calls: [{
+          id: 'call-live',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'live' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-old')?.toolStatus)
+      .toBe('interrupted')
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')?.toolStatus)
+      .toBe('running')
   })
 
   it('preserves streamed reasoning when the final message supplies content only', async () => {
@@ -138,6 +224,51 @@ describe('group chat store streaming merge', () => {
       reasoning_content: 'thinking...',
       isStreaming: false,
     })
+  })
+
+  it('batches rapid content and reasoning deltas without replacing the live message', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-batched' }))
+    const liveMessage = store.messages[0]
+    const renderedMessage = store.sortedMessages[0]
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'hello' })
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' world' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'think' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' twice' })
+
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.messages[0].content).toBe('')
+    expect(store.messages[0].reasoning).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(49)
+    expect(store.messages[0].content).toBe('')
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.sortedMessages[0]).toBe(renderedMessage)
+    expect(store.messages[0]).toMatchObject({
+      content: 'hello world',
+      reasoning: 'think twice',
+      reasoning_content: 'think twice',
+      isStreaming: true,
+    })
+  })
+
+  it('flushes a queued delta immediately when the stream ends', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-ending' }))
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-ending', delta: 'complete' })
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'msg-ending' })
+
+    expect(store.messages[0]).toMatchObject({
+      content: 'complete',
+      isStreaming: false,
+    })
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('preserves streamed content when the final message payload is blank', async () => {
@@ -331,6 +462,38 @@ describe('group chat store streaming merge', () => {
         toolCallId: 'call-1',
         toolName: 'terminal_exec',
         toolStatus: 'done',
+      }),
+    ])
+  })
+
+  it('projects a failed tool completion as an error', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolcall_call-1',
+      run_id: 'run-1',
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'read_file', arguments: '{"path":"secret.txt"}' },
+      }],
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-1_part_0_toolresult_call-1',
+      run_id: 'run-1',
+      role: 'tool',
+      tool_call_id: 'call-1',
+      tool_name: 'read_file',
+      content: 'permission denied',
+      finish_reason: 'error',
+    }))
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-1',
+        toolName: 'read_file',
+        toolResult: 'permission denied',
+        toolStatus: 'error',
       }),
     ])
   })
@@ -712,7 +875,52 @@ describe('group chat store streaming merge', () => {
     expect(store.userName).toBe('Alice Display')
   })
 
-  it('adds auth and active profile headers to group chat uploads', async () => {
+  it('restores the browser-persisted identity when switching from an account to an invite guest', async () => {
+    groupChatApiMock.getStoredUserId.mockReturnValue('browser-guest-id')
+    authApiMock.fetchCurrentUser.mockResolvedValue({
+      id: 42,
+      username: 'alice-login',
+      role: 'admin',
+      status: 'active',
+      created_at: 1,
+      updated_at: 1,
+      last_login_at: null,
+      avatar: '',
+    })
+    authApiMock.fetchCurrentUser.mockClear()
+    groupChatApiMock.joinRoomByCode.mockResolvedValue({ room })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        ack({
+          members: [{ id: 'member-guest', userId: 'browser-guest-id', name: 'Guest', description: '', joinedAt: 1 }],
+          agents: [],
+          messages: [],
+          typingUsers: [],
+          contextStatuses: [],
+        })
+      }
+      return groupChatApiMock.socket
+    })
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+
+    await store.connect()
+    expect(store.userId).toBe('auth:42')
+    store.disconnect()
+
+    await store.joinByCode('ROOM1', { guest: true })
+
+    expect(store.userId).toBe('browser-guest-id')
+    expect(groupChatApiMock.connectGroupChat).toHaveBeenLastCalledWith({
+      userId: 'browser-guest-id',
+      userName: 'tester',
+      authUserId: undefined,
+      inviteCode: 'ROOM1',
+    })
+    expect(authApiMock.fetchCurrentUser).toHaveBeenCalledOnce()
+  })
+
+  it('uploads authenticated room attachments only through the group chat endpoint', async () => {
     const store = await createJoinedStore()
     fetchMock.mockResolvedValue({
       ok: true,
@@ -736,10 +944,10 @@ describe('group chat store streaming merge', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, options] = fetchMock.mock.calls[0]
-    expect(url).toBe('/upload')
+    expect(url).toBe('/api/hermes/group-chat/rooms/room-1/attachments')
     expect(options.method).toBe('POST')
     expect(options.headers.Authorization).toBe('Bearer test-token')
-    expect(options.headers['X-Hermes-Profile']).toBe('research')
+    expect(options.headers['X-Hermes-Profile']).toBeUndefined()
     expect(options.body).toBeInstanceOf(FormData)
   })
 })

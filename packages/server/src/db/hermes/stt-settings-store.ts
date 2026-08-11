@@ -6,6 +6,7 @@ import {
 import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 
 export type StoredSttProvider =
+  | 'local'
   | 'openai'
   | 'custom'
   | 'doubao'
@@ -50,6 +51,7 @@ const STORED_MARKER = '[stored]'
 const MAX_PROMPT_LENGTH = 1000
 const MAX_BASE_URL_PRESETS = 20
 const PROVIDERS: StoredSttProvider[] = [
+  'local',
   'openai',
   'custom',
   'doubao',
@@ -62,6 +64,7 @@ const PROVIDERS: StoredSttProvider[] = [
 const ACTIVE_PROVIDERS: ActiveSttProvider[] = ['browser', ...PROVIDERS]
 const PROVIDER_SQL_PLACEHOLDERS = PROVIDERS.map(() => '?').join(', ')
 const PROVIDER_LABELS: Record<StoredSttProvider, string> = {
+  local: 'Local STT',
   openai: 'OpenAI STT',
   custom: 'Custom STT',
   doubao: 'Doubao STT',

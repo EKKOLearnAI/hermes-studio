@@ -4,9 +4,15 @@ const bridgeMock = vi.hoisted(() => ({
   clarifyRespond: vi.fn(),
   statusIfLoaded: vi.fn(),
 }))
+const respondToEkkoClarificationMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
+}))
+
+vi.mock('../../packages/server/src/services/ekko-agent/clarifications', () => ({
+  respondToEkkoClarification: respondToEkkoClarificationMock,
+  waitForEkkoClarification: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
@@ -17,11 +23,13 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
-  getSession: vi.fn(() => null),
+const sessionStoreMock = vi.hoisted(() => ({
+  getSession: vi.fn(() => ({ id: 'session-1', profile: 'default' })),
   getSessionMetadata: vi.fn(() => null),
   getSessionDetail: vi.fn(() => null),
 }))
+
+vi.mock('../../packages/server/src/db/hermes/session-store', () => sessionStoreMock)
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
@@ -64,12 +72,37 @@ function createSocketHarness() {
   return { handlers, io, namespace, namespaceEmit, socket }
 }
 
-describe('ChatRunSocket clarify responses', () => {
+describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
   beforeEach(() => {
     vi.resetModules()
+    sessionStoreMock.getSession.mockReset()
+    sessionStoreMock.getSession.mockReturnValue({ id: 'session-1', profile: 'default' })
     bridgeMock.clarifyRespond.mockReset()
     bridgeMock.statusIfLoaded.mockReset()
+    respondToEkkoClarificationMock.mockReset()
+    respondToEkkoClarificationMock.mockReturnValue({ handled: false, resolved: false })
     bridgeMock.statusIfLoaded.mockResolvedValue({ ok: true, exists: false, running: false, loaded: false })
+  })
+
+  it('routes Ekko clarification responses without calling the Hermes bridge', async () => {
+    respondToEkkoClarificationMock.mockReturnValueOnce({ handled: true, resolved: true })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('clarify.respond')?.({
+      session_id: 'session-1',
+      clarify_id: 'ekko-clarify-1',
+      response: 'B',
+    })
+
+    expect(respondToEkkoClarificationMock).toHaveBeenCalledWith(
+      'session-1',
+      'ekko-clarify-1',
+      'B',
+    )
+    expect(bridgeMock.clarifyRespond).not.toHaveBeenCalled()
   })
 
   it('forwards clarify.respond events to the bridge and emits clarify.resolved', async () => {

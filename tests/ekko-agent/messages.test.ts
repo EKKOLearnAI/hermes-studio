@@ -6,8 +6,10 @@ import {
   createToolResultMessage,
   createUserMessage,
   modelResponseToAgentMessage,
+  normalizeAgentReasoning,
   normalizeAgentMessage,
   normalizeAgentMessages,
+  serializeAgentReasoningDetails,
 } from '../../packages/ekko-agent/src/index'
 import type { ModelEvent } from '../../packages/ekko-agent/src/index'
 
@@ -87,6 +89,39 @@ describe('ekko-agent unified messages', () => {
     })
   })
 
+  it('round-trips unified reasoning metadata through persisted reasoning_details', () => {
+    const reasoning = normalizeAgentReasoning(
+      'Checked the constraints.',
+      {
+        version: 1,
+        estimatedTokens: 42,
+        native: {
+          format: 'openai-responses-items',
+          data: [{
+            type: 'reasoning',
+            id: 'rs_1',
+            encrypted_content: 'encrypted-reasoning',
+          }],
+        },
+      },
+    )
+    const serialized = serializeAgentReasoningDetails(reasoning)
+
+    expect(normalizeAgentReasoning('Checked the constraints.', serialized)).toEqual(reasoning)
+    expect(JSON.parse(serialized ?? '')).toEqual({
+      version: 1,
+      estimatedTokens: 42,
+      native: {
+        format: 'openai-responses-items',
+        data: [{
+          type: 'reasoning',
+          id: 'rs_1',
+          encrypted_content: 'encrypted-reasoning',
+        }],
+      },
+    })
+  })
+
   it('collects stream events into one assistant output message', async () => {
     async function *events(): AsyncIterable<ModelEvent> {
       yield { type: 'text-delta', text: 'Hel' }
@@ -127,7 +162,7 @@ describe('ekko-agent unified messages', () => {
         id: 'res_1',
         model: 'stream-model',
         content: 'Hello',
-        reasoning: 'thinking step',
+        reasoning: { text: 'thinking step' },
         toolCalls: [{
           id: 'call_1',
           name: 'lookup',

@@ -111,6 +111,7 @@ export interface MemberInfo {
     userId: string
     name: string
     description: string
+    kind?: 'human' | 'agent'
 }
 
 export interface BuildContextInput {

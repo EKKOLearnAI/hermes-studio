@@ -17,7 +17,12 @@ import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
+import {
+  getGroupAgentOutboundRelayManager,
+  GroupAgentRelayServer,
+} from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
+import { startChatWebhookDispatcher } from './services/hermes/chat-webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
@@ -26,6 +31,7 @@ import { refreshConfiguredProviderModelCatalogsInBackground } from './services/h
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
+import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
 import { logger } from './services/logger'
@@ -61,6 +67,7 @@ let servers: any[] = []
 let chatRunServer: any = null
 let workflowSocketServer: WorkflowSocketServer | null = null
 let petStateSocketServer: PetStateSocketServer | null = null
+let groupAgentRelayServer: GroupAgentRelayServer | null = null
 let agentBridgeManager: any = null
 let desktopShutdownHandler: ShutdownHandler | null = null
 
@@ -279,6 +286,9 @@ export async function bootstrap() {
     console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
   }
 
+  setupGlobalEkkoAgent()
+  console.log('[bootstrap] ekko-agent setup complete')
+
   if (!isDesktopRuntime()) {
     await startRuntimeServicesBeforeListen()
   }
@@ -287,6 +297,7 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
+  startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
 
   app.use(securityHeaders())
@@ -312,10 +323,10 @@ export async function bootstrap() {
     },
   }))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
+    if ((ctx.method === 'GET' || ctx.method === 'HEAD') &&
+      !ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/upload') {
       ctx.set('Cache-Control', SPA_ENTRY_CACHE_CONTROL)
       await send(ctx, 'index.html', { root: distDir })
     }
@@ -336,12 +347,14 @@ export async function bootstrap() {
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
+  groupAgentRelayServer = new GroupAgentRelayServer(groupChatServer.getIO(), groupChatServer)
 
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
   chatRunServer = new ChatRunSocket(groupChatServer.getIO())
   setChatRunServer(chatRunServer)
   groupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
+  void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.
   // Persist a fail-closed terminal state before exposing workflow sockets, then abort
@@ -351,6 +364,8 @@ export async function bootstrap() {
   if (recoveredWorkflows.runs > 0) {
     logger.warn('Recovered %d orphaned workflow runs and aborted %d sessions', recoveredWorkflows.runs, recoveredWorkflows.sessions)
   }
+  const { getWorkflowScheduleService } = await import('./services/workflow-schedule-service')
+  getWorkflowScheduleService().start()
 
   workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
   workflowSocketServer.init()

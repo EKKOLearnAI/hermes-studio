@@ -35,6 +35,45 @@ describe('run-chat usage token estimates', () => {
     expect(usage.outputTokens).toBe(countTokens('calling tool') + countTokens(String(messages[0].tool_calls || '')))
   })
 
+  it('counts assistant reasoning_content toward output tokens', () => {
+    const reasoning = 'long thinking payload that providers echo back'
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'final answer',
+        reasoning_content: reasoning,
+      },
+    ]
+
+    const usage = estimateUsageTokensFromMessages(messages)
+
+    expect(usage.inputTokens).toBe(0)
+    expect(usage.outputTokens).toBe(
+      countTokens('final answer') + countTokens(reasoning),
+    )
+  })
+
+  it('uses one stored reasoning token estimate without double-counting aliases or native details', () => {
+    const messages = [{
+      role: 'assistant',
+      content: 'final answer',
+      reasoning: 'duplicate reasoning text',
+      reasoning_content: 'duplicate reasoning text',
+      reasoning_details: JSON.stringify({
+        version: 1,
+        estimatedTokens: 123,
+        native: {
+          format: 'openai-responses-items',
+          data: [{ type: 'reasoning', encrypted_content: 'opaque-data' }],
+        },
+      }),
+    }]
+
+    const usage = estimateUsageTokensFromMessages(messages)
+
+    expect(usage.outputTokens).toBe(countTokens('final answer') + 123)
+  })
+
   it('adds cached bridge fixed context when updating full context usage', () => {
     const emit = vi.fn()
     const state = {

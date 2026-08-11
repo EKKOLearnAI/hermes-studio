@@ -31,6 +31,99 @@ function safeJsonParse(value: string): any {
     return {}
   }
 }
+
+type ToolInputSchema = Record<string, any>
+export type AnthropicToolInputSchemas = Map<string, ToolInputSchema>
+
+export function createAnthropicToolInputSchemas(tools: unknown): AnthropicToolInputSchemas {
+  const schemas: AnthropicToolInputSchemas = new Map()
+  if (!Array.isArray(tools)) return schemas
+  for (const tool of tools) {
+    const name = String(tool?.name || '').trim()
+    const schema = tool?.input_schema
+    if (name && schema && typeof schema === 'object' && !Array.isArray(schema)) {
+      schemas.set(name, schema)
+    }
+  }
+  return schemas
+}
+
+function schemaExplicitlyUsesValue(schema: ToolInputSchema | undefined, value: unknown): boolean {
+  if (!schema) return false
+  if (Object.prototype.hasOwnProperty.call(schema, 'default') && Object.is(schema.default, value)) return true
+  if (Object.prototype.hasOwnProperty.call(schema, 'const') && Object.is(schema.const, value)) return true
+  if (Array.isArray(schema.enum) && schema.enum.some((entry: unknown) => Object.is(entry, value))) return true
+  return ['anyOf', 'oneOf', 'allOf'].some(key => (
+    Array.isArray(schema[key]) &&
+    schema[key].some((entry: unknown) => (
+      entry &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      schemaExplicitlyUsesValue(entry as ToolInputSchema, value)
+    ))
+  ))
+}
+
+function schemaAcceptsNull(schema: ToolInputSchema | undefined): boolean {
+  if (!schema) return false
+  if (schema.type === 'null' || (Array.isArray(schema.type) && schema.type.includes('null'))) return true
+  if (schemaExplicitlyUsesValue(schema, null)) return true
+  return ['anyOf', 'oneOf'].some(key => (
+    Array.isArray(schema[key]) &&
+    schema[key].some((entry: unknown) => (
+      entry &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      schemaAcceptsNull(entry as ToolInputSchema)
+    ))
+  ))
+}
+
+function normalizeOptionalToolInput(value: unknown, schema: ToolInputSchema | undefined): unknown {
+  if (Array.isArray(value)) {
+    const itemSchema = schema?.items && typeof schema.items === 'object' && !Array.isArray(schema.items)
+      ? schema.items as ToolInputSchema
+      : undefined
+    return value.map(item => normalizeOptionalToolInput(item, itemSchema))
+  }
+  if (!value || typeof value !== 'object') return value
+
+  const properties = schema?.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
+    ? schema.properties as Record<string, ToolInputSchema>
+    : {}
+  const required = new Set(Array.isArray(schema?.required) ? schema.required.map(String) : [])
+  const normalized: Record<string, unknown> = {}
+
+  for (const [key, entry] of Object.entries(value)) {
+    const propertySchema = properties[key]
+    const optional = !required.has(key)
+    // Responses-compatible models sometimes materialize an omitted optional
+    // argument as "" or null. Claude tools distinguish that placeholder from
+    // an absent field, so remove it unless the schema gives it explicit meaning.
+    const isUnusedEmptyString = entry === '' && !schemaExplicitlyUsesValue(propertySchema, '')
+    const isUnusedNull = entry === null && !schemaAcceptsNull(propertySchema)
+    if (optional && (isUnusedEmptyString || isUnusedNull)) continue
+    normalized[key] = normalizeOptionalToolInput(entry, propertySchema)
+  }
+  return normalized
+}
+
+export function normalizeAnthropicToolArguments(
+  rawArguments: string,
+  toolName: string,
+  schemas: AnthropicToolInputSchemas,
+): string {
+  const schema = schemas.get(toolName)
+  if (!schema || !rawArguments) return rawArguments
+  try {
+    const parsed = JSON.parse(rawArguments)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return rawArguments
+    return JSON.stringify(normalizeOptionalToolInput(parsed, schema))
+  } catch {
+    return rawArguments
+  }
+}
+
 export function shouldPreserveReasoningContent(target: AnthropicAdapterTarget): boolean {
   const identifier = `${target.provider} ${target.model} ${target.baseUrl}`.toLowerCase()
   return [
@@ -370,19 +463,29 @@ function responseOutputText(item: any): string {
   return ''
 }
 
-export function openAiResponsesToAnthropicMessage(data: any, target: AnthropicAdapterTarget): any {
+export function openAiResponsesToAnthropicMessage(
+  data: any,
+  target: AnthropicAdapterTarget,
+  anthropicTools?: unknown,
+): any {
   const content: any[] = []
   const output = Array.isArray(data?.output) ? data.output : []
+  const toolInputSchemas = createAnthropicToolInputSchemas(anthropicTools)
 
   for (const item of output) {
     const text = responseOutputText(item)
     if (text) content.push({ type: 'text', text })
     if (item?.type === 'function_call') {
+      const name = String(item.name || 'tool')
       content.push({
         type: 'tool_use',
         id: String(item.call_id || item.id || `toolu_${content.length}`),
-        name: String(item.name || 'tool'),
-        input: safeJsonParse(String(item.arguments || '{}')),
+        name,
+        input: safeJsonParse(normalizeAnthropicToolArguments(
+          String(item.arguments || '{}'),
+          name,
+          toolInputSchemas,
+        )),
       })
     }
   }

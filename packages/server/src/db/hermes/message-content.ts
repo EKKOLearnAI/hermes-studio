@@ -36,6 +36,22 @@ function summarizeMultimodalEnvelope(value: Record<string, unknown>): string | n
   return summarizeContentParts(parts)
 }
 
+function isPathAttachmentContent(parts: unknown[]): boolean {
+  let sawAttachment = false
+  if (!parts.length) return false
+  for (const part of parts) {
+    if (!isContentPart(part)) return false
+    if (part.type === 'text') {
+      if (typeof part.text !== 'string') return false
+      continue
+    }
+    if (part.type !== 'image' && part.type !== 'file') return false
+    if (typeof part.path !== 'string' || !part.path.trim()) return false
+    sawAttachment = true
+  }
+  return sawAttachment
+}
+
 function redactDataImages(value: unknown): unknown {
   if (typeof value === 'string') return value.replace(DATA_IMAGE_RE, '[screenshot]')
   if (Array.isArray(value)) return value.map(redactDataImages)
@@ -61,6 +77,9 @@ function summarizeKnownMultimodalContent(value: unknown): string | null {
 }
 
 function serializeStructuredMessageContent(value: unknown): string | null {
+  if (Array.isArray(value) && isPathAttachmentContent(value)) {
+    return JSON.stringify(redactDataImages(value))
+  }
   const summary = summarizeKnownMultimodalContent(value)
   if (summary != null) return summary
   if (Array.isArray(value) || isPlainRecord(value)) return JSON.stringify(redactDataImages(value))
@@ -84,9 +103,8 @@ export function normalizeMessageContentForStorage(content: unknown): string {
     if (shouldTryParseStructuredString(content)) {
       try {
         const parsed = JSON.parse(content.trim())
-        const summary = summarizeKnownMultimodalContent(parsed)
-        if (summary != null) return summary
-        return JSON.stringify(redactDataImages(parsed))
+        const normalized = serializeStructuredMessageContent(parsed)
+        if (normalized != null) return normalized
       } catch {
         // Fall back to direct redaction below.
       }

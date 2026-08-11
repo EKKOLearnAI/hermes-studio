@@ -2,7 +2,6 @@ import type { Context, Next } from 'koa'
 
 // Shared route modules
 import { healthRoutes } from './health'
-import { webhookRoutes } from './webhook'
 import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
@@ -43,8 +42,9 @@ import { ttsRoutes, ttsProtectedRoutes } from './hermes/tts'
 import { sttProtectedRoutes } from './hermes/stt'
 import { mcuFirmwareRoutes } from './hermes/mcu-firmware'
 import { mediaRoutes } from './hermes/media'
-import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { chatRunRoutes } from './hermes/chat-run'
+import { chatWebhookPublicRoutes, chatWebhookRoutes } from './hermes/chat-webhooks'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
 import { journeyRoutes } from './hermes/journey'
 import { mcpRoutes } from './hermes/mcp'
@@ -61,7 +61,6 @@ import { petRoutes } from './hermes/pets'
 export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, next: Next) => Promise<void>>) {
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
-  app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
   app.use(devicePublicRoutes.routes())
   app.use(claudeCodeProxyRoutes.routes())
@@ -69,6 +68,8 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(ttsRoutes.routes())
   app.use(apiDocsRoutes.routes())
   app.use(petdexPublicRoutes.routes())
+  app.use(groupChatPublicRoutes.routes())
+  app.use(chatWebhookPublicRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))
@@ -100,6 +101,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(minimaxAuthRoutes.routes())
   app.use(weixinRoutes.routes())
   app.use(chatRunRoutes.routes())
+  app.use(chatWebhookRoutes.routes())
   app.use(groupChatRoutes.routes())
   app.use(fileRoutes.routes())
   app.use(downloadRoutes.routes())

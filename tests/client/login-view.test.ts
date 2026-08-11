@@ -10,11 +10,13 @@ const mockClearApiKey = vi.hoisted(() => vi.fn())
 const mockHasApiKey = vi.hoisted(() => vi.fn())
 const mockIsDesktopShell = vi.hoisted(() => vi.fn())
 const mockActivateUserTheme = vi.hoisted(() => vi.fn())
+const mockRoute = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     replace: mockReplace,
   }),
+  useRoute: () => mockRoute,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -51,6 +53,7 @@ describe('LoginView password login', () => {
     delete (window as any).__LOGIN_TOKEN__
     vi.clearAllMocks()
     mockIsDesktopShell.mockReturnValue(false)
+    mockRoute.query = {}
     mockHasApiKey.mockReturnValue(false)
     mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
   })
@@ -94,6 +97,20 @@ describe('LoginView password login', () => {
     expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
     expect(mockActivateUserTheme).toHaveBeenCalledWith(7, theme)
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
+  })
+
+  it('returns to the Agent link page after the first login', async () => {
+    const redirect = '/group-chat-link?cloudOrigin=http%3A%2F%2F47.243.215.84%3A8088&requestId=handoff-id'
+    mockRoute.query = { redirect }
+    mockLoginWithPassword.mockResolvedValue({ token: 'jwt-token', userId: 7, theme: null })
+    const wrapper = mount(LoginView)
+
+    const inputs = wrapper.findAll('input.login-input')
+    await inputs[0].setValue('admin')
+    await inputs[1].setValue('123456')
+    await wrapper.find('form.login-form').trigger('submit')
+
+    expect(mockReplace).toHaveBeenCalledWith(redirect)
   })
 
   it('shows the default login hint', () => {

@@ -74,12 +74,14 @@ Required JSON fields:
 
 Optional JSON fields:
 
-- `model`: MiniMax text-to-video model. Defaults to `MiniMax-Hailuo-2.3`.
-- `duration`: number of seconds for the generated video, if supported by the model.
-- `prompt_optimizer`: whether to let the API optimize the prompt.
-- `fast_pretreatment`: whether to enable fast preprocessing.
-- `resolution`: the desired resolution for the generated video.
+- `model`: MiniMax text-to-video model. Defaults to `MiniMax-H3`; v1 models remain available when selected explicitly.
+- `duration`: integer video length in seconds. `MiniMax-H3` accepts 4 through 15 and defaults to 5.
+- `resolution`: output resolution. `MiniMax-H3` uses `2K` by default.
+- `ratio`: output aspect ratio. `MiniMax-H3` defaults to `16:9` and accepts `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, or `9:16` for text-to-video.
+- `prompt_optimizer`: whether to let the v1 API optimize the prompt.
+- `fast_pretreatment`: whether to enable v1 fast preprocessing.
 - `callback_url`: a callback URL that receives the generation result.
+- `aigc_watermark`: optional China-region watermark flag for `MiniMax-H3`.
 - `region`: `global_en` (default) or `cn_zh` to select the API region.
 - `output_path`: local path where the server should save the mp4. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/<task_id>.mp4` and creates the `media` directory if needed.
 - `timeout_ms`: maximum wait time. Defaults to 600000.

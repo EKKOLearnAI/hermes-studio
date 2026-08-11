@@ -199,6 +199,35 @@ describe('desktop runtime manager', () => {
     )
   })
 
+  it('repairs a cached Windows venv home even when the command wrapper already exists', async () => {
+    setPlatform('win32')
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const runtimeRoot = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    const pyvenvConfig = join(runtimeRoot, 'python', 'venv', 'pyvenv.cfg')
+    createRuntimeFiles(runtimeRoot, { standardWindowsVenv: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: runtimeRoot,
+      platform: runtimePlatformKey(),
+    }))
+
+    const {
+      isDesktopRuntimeReady,
+      repairUpdatedDesktopRuntimeLaunchers,
+    } = await import('../../packages/desktop/src/main/runtime-manager')
+
+    expect(isDesktopRuntimeReady()).toBe(true)
+    expect(readFileSync(pyvenvConfig, 'utf-8')).toContain('home = ../base')
+    expect(repairUpdatedDesktopRuntimeLaunchers()).toBe(true)
+    expect(readFileSync(pyvenvConfig, 'utf-8')).toContain(
+      `home = ${join(runtimeRoot, 'python', 'base')}`,
+    )
+    expect(repairUpdatedDesktopRuntimeLaunchers()).toBe(false)
+  })
+
   it('restores relocatable Windows launchers after Hermes CLI update replaces them with executables', async () => {
     setPlatform('win32')
     const home = process.env.HERMES_WEB_UI_HOME!
@@ -321,6 +350,31 @@ describe('desktop runtime manager', () => {
 
     expect(active.desktopAppVersion).toBe('0.6.21')
     expect(active.webUiVersion).toBe('0.6.31')
+  })
+
+  it('keeps the Runtime activation error when startup writes the fallback version', async () => {
+    const home = process.env.HERMES_WEB_UI_HOME!
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    const fallbackRuntime = join(home, 'desktop-runtime', 'hermes', '0.16.0', runtimePlatformKey())
+    const selectedRuntime = join(home, 'desktop-runtime', 'hermes', '0.17.0', runtimePlatformKey())
+    const activeVersionPath = join(home, 'desktop-runtime', 'active-version.json')
+    createRuntimeFiles(fallbackRuntime)
+    mkdirSync(join(home, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      desktopAppVersion: '0.6.21',
+      hermesRuntimeVersion: '0.17.0',
+      runtimeDirectory: selectedRuntime,
+      runtimeActivationError: 'Selected Runtime is incomplete; falling back.',
+      platform: runtimePlatformKey(),
+    }))
+
+    const { writeActiveRuntimeVersion } = await import('../../packages/desktop/src/main/runtime-manager')
+    writeActiveRuntimeVersion(fallbackRuntime)
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
+
+    expect(active.runtimeDirectory).toBe(fallbackRuntime)
+    expect(active.runtimeActivationError).toBe('Selected Runtime is incomplete; falling back.')
   })
 
   it('copies a pending Runtime migration before switching the active directory', async () => {

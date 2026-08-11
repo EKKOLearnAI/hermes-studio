@@ -6,6 +6,7 @@ const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
 const getRuntimeStateMock = vi.hoisted(() => vi.fn())
+const userCanAccessProfileMock = vi.hoisted(() => vi.fn((_user: unknown, _profile: string) => true))
 const getSessionMock = vi.hoisted(() => vi.fn((sessionId?: string) => sessionId
   ? { id: sessionId, profile: 'default', source: 'cli', model: 'gpt-test', provider: 'openai' }
   : undefined))
@@ -14,6 +15,8 @@ const bridgeMock = vi.hoisted(() => ({
   statusIfLoaded: vi.fn(),
   releaseBackgroundNotification: vi.fn(async () => ({ ok: true, released: true })),
   close: vi.fn(async () => {}),
+  approvalRespond: vi.fn(async () => ({ resolved: true })),
+  clarifyRespond: vi.fn(async () => ({ resolved: true })),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
@@ -64,7 +67,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
   getProfileDir: vi.fn(() => '/tmp/hermes-default'),
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+  listProfileNamesFromDisk: vi.fn(() => ['default', 'research']),
 }))
 
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
@@ -73,7 +76,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
-  userCanAccessProfile: vi.fn(() => true),
+  userCanAccessProfile: userCanAccessProfileMock,
 }))
 
 function makeServerHarness() {
@@ -102,6 +105,115 @@ function makeServerHarness() {
   }
   return { emitted, handlers, io, namespace, socket }
 }
+
+describe('ChatRunSocket global pending interactions', () => {
+  it('publishes approval and clarify lifecycle events to the authenticated profile audience', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    ;(server as any).emitToSession(socket, 'session-b', 'approval.requested', {
+      event: 'approval.requested', approval_id: 'approval-b',
+    })
+    ;(server as any).emitToSession(socket, 'session-b', 'clarify.resolved', {
+      event: 'clarify.resolved', clarify_id: 'clarify-b', resolved: true,
+    })
+
+    expect(socket.join).toHaveBeenCalledWith('pending-interactions:default')
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'approval.requested',
+      payload: expect.objectContaining({ session_id: 'session-b', approval_id: 'approval-b' }),
+    }))
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'clarify.resolved',
+      payload: expect.objectContaining({ session_id: 'session-b', clarify_id: 'clarify-b' }),
+    }))
+  })
+
+  it('does not republish group-chat approvals through the generic chat pending audience', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('gc_run_group', {
+      messages: [], isWorking: true, events: [], queue: [], source: 'group_chat', profile: 'default',
+    })
+
+    ;(server as any).emitToSession(socket, 'gc_run_group', 'approval.requested', {
+      event: 'approval.requested', approval_id: 'approval-group',
+    })
+    ;(server as any).emitToSession(socket, 'gc_run_group', 'clarify.requested', {
+      event: 'clarify.requested', clarify_id: 'clarify-group', question: 'Which environment?',
+    })
+
+    expect(emitted).toContainEqual(expect.objectContaining({
+      room: 'session:gc_run_group', event: 'approval.requested',
+      payload: expect.objectContaining({ session_id: 'gc_run_group', approval_id: 'approval-group' }),
+    }))
+    expect(emitted).not.toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'approval.requested',
+      payload: expect.objectContaining({ approval_id: 'approval-group' }),
+    }))
+    expect(emitted).not.toContainEqual(expect.objectContaining({
+      room: 'pending-interactions:default', event: 'clarify.requested',
+      payload: expect.objectContaining({ clarify_id: 'clarify-group' }),
+    }))
+  })
+
+  it('rejects cross-profile resume, approval, and clarify requests before joining or calling the bridge', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    ;(socket.data as any).user = { id: 7, username: 'limited-user', role: 'user' }
+    userCanAccessProfileMock.mockImplementation((_user: unknown, profile: string) => profile === 'default')
+    getSessionMock.mockImplementation((sessionId?: string) => sessionId === 'research-session'
+      ? { id: sessionId, profile: 'research', source: 'cli', model: 'gpt-test', provider: 'openai' }
+      : sessionId
+        ? { id: sessionId, profile: 'default', source: 'cli', model: 'gpt-test', provider: 'openai' }
+        : undefined)
+    bridgeMock.approvalRespond.mockClear()
+    bridgeMock.clarifyRespond.mockClear()
+    const server = new ChatRunSocket(io as any)
+    const state = {
+      messages: [], isWorking: true, queue: [],
+      events: [{ event: 'clarify.requested', data: { clarify_id: 'clarify-default' } }],
+    }
+    ;(server as any).sessionMap.set('default-session', state)
+
+    ;(server as any).onConnection(socket)
+    socket.join.mockClear()
+    await handlers.get('resume')?.({ session_id: 'research-session' })
+    await handlers.get('approval.respond')?.({
+      session_id: 'research-session', approval_id: 'approval-research', choice: 'once',
+    })
+    await handlers.get('clarify.respond')?.({
+      session_id: 'research-session', clarify_id: 'clarify-research', response: 'secret',
+    })
+    await handlers.get('cancel_queued_run')?.({ session_id: 'research-session', queue_id: 'queue-research' })
+    await handlers.get('abort')?.({ session_id: 'research-session' })
+
+    bridgeMock.clarifyRespond.mockResolvedValueOnce({ resolved: false })
+    await handlers.get('clarify.respond')?.({
+      session_id: 'default-session', clarify_id: 'clarify-default', response: 'retry me',
+    })
+
+    expect(socket.join).not.toHaveBeenCalled()
+    expect(resumeBridgeRunMock).not.toHaveBeenCalled()
+    expect(bridgeMock.approvalRespond).not.toHaveBeenCalled()
+    expect(bridgeMock.clarifyRespond).toHaveBeenCalledTimes(1)
+    expect(state.events).toEqual([
+      { event: 'clarify.requested', data: { clarify_id: 'clarify-default' } },
+    ])
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({
+      session_id: 'research-session', error: expect.stringContaining('not available'),
+    }))
+    expect(socket.emit).toHaveBeenCalledWith('approval.resolved', expect.objectContaining({
+      approval_id: 'approval-research', resolved: false,
+    }))
+    expect(socket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
+      clarify_id: 'clarify-research', resolved: false,
+    }))
+  })
+})
 
 describe('ensureBridgeReadyForChatRun', () => {
   beforeEach(() => {

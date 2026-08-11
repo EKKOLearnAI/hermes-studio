@@ -7,6 +7,8 @@ import { compileWorkflowGraphPreflight } from '../../services/workflow-manager'
 import { cancelWorkflowImport, consumeWorkflowImportPreview, exportWorkflowDefinition, finalizeConsumedWorkflowImport, previewWorkflowImport } from '../../services/workflow-portability'
 import { assertWorkflowImportCapabilities } from '../../services/workflow-import-capabilities'
 import { getAvailableModelGroupsForProfile } from './models'
+import { createWorkflowSchedule, deleteWorkflowSchedule, getWorkflowSchedule, listWorkflowSchedules, updateWorkflowSchedule } from '../../db/hermes/workflow-schedule-store'
+import { assertWorkflowScheduleCron, nextWorkflowScheduleAt, normalizeWorkflowSchedule } from '../../services/workflow-schedule-service'
 
 const MAX_BATCH_DELETE = 200
 
@@ -137,6 +139,78 @@ function validateWorkflowDefinitionMutation(nodes: unknown[], edges: unknown[]):
     return
   }
   compileWorkflowGraphPreflight(nodes, edges)
+}
+
+
+function scheduleId(ctx: Context): string {
+  return String(ctx.params?.scheduleId || '').trim()
+}
+
+function scheduleOwnerUserId(ctx: Context): number | null {
+  const value = Number(ctx.state?.user?.id)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function workflowScheduleInput(body: Record<string, unknown>, workflow: { profile: string }) {
+  const schedule = normalizeWorkflowSchedule(String(body.schedule || ''))
+  const timezone = String(body.timezone || 'UTC').trim()
+  if (!schedule) throw new Error('schedule is required')
+  assertWorkflowScheduleCron(schedule)
+  try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }) } catch { throw new Error('timezone must be an IANA timezone') }
+  const start = optionalStringArray(body.start_node_ids ?? body.startNodeIds, 'start_node_ids')
+  const input = optionalNullableString(body.input, 'input')
+  const timeout = optionalWorkflowTimeoutMs(body.timeout_ms ?? body.timeoutMs)
+  const enabled = optionalBoolean(body.enabled, 'enabled')
+  if (start.error || input.error || timeout.error || enabled.error) throw new Error(start.error || input.error || timeout.error || enabled.error)
+  return { profile: workflow.profile, schedule, timezone, enabled: enabled.value ?? true, input: input.value ?? null, start_node_ids: start.value ?? [], timeout_ms: timeout.value ?? null, next_run_at: nextWorkflowScheduleAt(schedule, timezone, Date.now()) }
+}
+
+export async function listSchedules(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) { ctx.status = 404; ctx.body = { error: 'workflow not found' }; return }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+  ctx.body = { schedules: listWorkflowSchedules(id) }
+}
+
+export async function createSchedule(ctx: Context) {
+  const id = requiredId(ctx)
+  if (!id) return
+  const workflow = getWorkflowManager().get(id)
+  if (!workflow) { ctx.status = 404; ctx.body = { error: 'workflow not found' }; return }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+  try {
+    const value = workflowScheduleInput(bodyRecord(ctx), workflow)
+    ctx.status = 201
+    ctx.body = { schedule: createWorkflowSchedule({ workflow_id: id, owner_user_id: scheduleOwnerUserId(ctx), ...value }) }
+  } catch (err: any) { ctx.status = 400; ctx.body = { error: err?.message || 'invalid schedule' } }
+}
+
+export async function updateSchedule(ctx: Context) {
+  const id = requiredId(ctx)
+  const sid = scheduleId(ctx)
+  if (!id || !sid) return
+  const workflow = getWorkflowManager().get(id)
+  const current = getWorkflowSchedule(sid)
+  if (!workflow || !current || current.workflow_id !== id) { ctx.status = 404; ctx.body = { error: 'workflow schedule not found' }; return }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+  try {
+    const value = workflowScheduleInput({ ...current, ...bodyRecord(ctx) }, workflow)
+    ctx.body = { schedule: updateWorkflowSchedule(sid, value) }
+  } catch (err: any) { ctx.status = 400; ctx.body = { error: err?.message || 'invalid schedule' } }
+}
+
+export async function removeSchedule(ctx: Context) {
+  const id = requiredId(ctx)
+  const sid = scheduleId(ctx)
+  if (!id || !sid) return
+  const workflow = getWorkflowManager().get(id)
+  const current = getWorkflowSchedule(sid)
+  if (!workflow || !current || current.workflow_id !== id) { ctx.status = 404; ctx.body = { error: 'workflow schedule not found' }; return }
+  if (denyProfileAccess(ctx, workflow.profile)) return
+  deleteWorkflowSchedule(sid)
+  ctx.body = { ok: true }
 }
 
 export async function exportDefinition(ctx: Context) {

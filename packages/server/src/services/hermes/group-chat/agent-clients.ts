@@ -15,17 +15,18 @@ import type { ContentBlock } from '../run-chat/types'
 import type { StoredMessage } from '../context-engine/types'
 import type { GroupRoomSummaryService, GroupRuntimeContext } from './room-summary'
 import {
+    isAgentMentioned,
     isAllAgentsMentioned,
     resolveMentionTargets,
     stripMentionRoutingTokens,
 } from './mention-routing'
-import { buildAgentInstructions } from '../context-engine/prompt'
+import { buildAgentInstructions, buildNonOwnerRequestSecurityPrompt } from '../context-engine/prompt'
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 // ─── Types ────────────────────────────────────────────────────
 
-interface AgentConfig {
+export interface AgentConfig {
     agentId?: string
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
     profile: string
@@ -50,7 +51,7 @@ interface MessageData {
     run_id?: string | null
 }
 
-type MentionMessage = {
+export type MentionMessage = {
     messageId?: string
     content: string
     senderName: string
@@ -59,7 +60,19 @@ type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    mentions?: StructuredMention[]
+    /** Trusted, target-specific ownership context added by AgentClients. */
+    targetOwnerMemberId?: string
 }
+
+export type StructuredMention =
+    | { type: 'agent'; participantId: string }
+    | { type: 'all' }
+
+export type StructuredMentionEntry =
+    | { type: 'agent'; participantId: string; displayName: string }
+    | { type: 'all'; displayName: 'all' }
+
 
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
@@ -83,7 +96,7 @@ export type GroupAgentSessionConfig = {
     reasoningEffort?: string
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
-type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
+export type WorkspaceDiffBroadcaster = (roomId: string, message: MessageData & Record<string, unknown>, totalTokens: number) => void
 type AgentActivityBroadcaster = (
     roomId: string,
     agentName: string,
@@ -161,13 +174,13 @@ export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown
     return text ? text : null
 }
 
-interface MemberData {
+export interface MemberData {
     id: string
     name: string
     joinedAt: number
 }
 
-interface JoinResult {
+export interface JoinResult {
     roomId: string
     roomName: string
     members: MemberData[]
@@ -181,6 +194,50 @@ export interface AgentEventHandler {
     onStopTyping?: (data: { roomId: string; userId: string; userName: string }) => void
     onMemberJoined?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
     onMemberLeft?: (data: { roomId: string; memberId: string; memberName: string; members: MemberData[] }) => void
+    onRoomUpdated?: (data: { roomId: string; name?: string; inviteCode?: string | null }) => void
+}
+
+export interface GroupAgentEventSink {
+    readonly connected: boolean
+    readonly id?: string
+    sendMessage(
+        roomId: string,
+        content: string,
+        messageId?: string,
+        extra?: Record<string, unknown>,
+        agentSessionId?: string,
+    ): Promise<string>
+    emit(event: string, payload: Record<string, unknown>): void
+    disconnect?(): void
+}
+
+export interface GroupAgentExecutor {
+    readonly agentId: string
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly profile: string
+    readonly provider: string
+    readonly model: string
+    readonly apiMode: string
+    readonly reasoningEffort: string
+    readonly name: string
+    readonly description: string
+    readonly connected: boolean
+    disconnect(): void
+    sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
+    interrupt(roomId: string): Promise<boolean>
+    getActiveSessionId(roomId: string): string | undefined
+    isActiveSession(roomId: string, sessionId: string): boolean
+    respondApproval?(approvalId: string, choice: string): Promise<boolean>
+    respondClarify?(clarifyId: string, response: string): Promise<boolean>
+    replyToMention(
+        roomId: string,
+        msg: MentionMessage,
+        runtimeContext?: GroupRuntimeContext,
+        onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
+    ): Promise<void>
+    setStorage(storage: any): void
+    setWorkspaceDiffBroadcaster(broadcaster: WorkspaceDiffBroadcaster | null): void
+    setChatRunService(service: GroupChatRunService | null): void
 }
 
 export interface GroupChatRunService {
@@ -197,7 +254,7 @@ export interface GroupChatRunService {
             group_agent_id?: string
             workspace?: string | null
             source?: string
-            session_source?: 'workflow'
+            session_source?: 'group_chat'
             coding_agent_id?: 'claude-code' | 'codex' | 'ekko-agent'
             mode?: 'scoped'
             profile?: string
@@ -222,7 +279,7 @@ export interface GroupChatRunService {
 
 // ─── Agent Client (single connection) ─────────────────────────
 
-class AgentClient {
+export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
     readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
     readonly profile: string
@@ -242,14 +299,20 @@ class AgentClient {
     private pendingToolBaseIds = new Map<string, string>()
     private pendingToolRunIds = new Map<string, string>()
     private pendingToolNames = new Map<string, string>()
+    private pendingToolExternalIds = new Map<string, string>()
+    private pendingToolCompletionEvents = new Map<string, Record<string, unknown>>()
+    private acknowledgedToolCallIds = new Map<string, number>()
+    private anonymousToolCallSequence = 0
     private bridgeContextCache = new Map<string, BridgeContextCache>()
     private workspaceDiffRuns = new Map<string, WorkspaceDiffRunState>()
     private interruptVersions = new Map<string, number>()
     private activeSessions = new Map<string, string>()
     private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private chatRunService: GroupChatRunService | null = null
+    private readonly eventSink: GroupAgentEventSink | null
+    private mentionBuilder: ((roomId: string, content: string) => StructuredMentionEntry[]) | null = null
 
-    constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
+    constructor(config: AgentConfig, handlers: AgentEventHandler = {}, eventSink: GroupAgentEventSink | null = null) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.agent = config.agent || 'hermes'
         this.profile = config.profile
@@ -261,14 +324,15 @@ class AgentClient {
         this.description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
         this.handlers = handlers
+        this.eventSink = eventSink
     }
 
     get connected(): boolean {
-        return this.socket?.connected ?? false
+        return this.eventSink?.connected ?? this.socket?.connected ?? false
     }
 
     get id(): string | undefined {
-        return this.socket?.id
+        return this.eventSink?.id || this.socket?.id
     }
 
     setStorage(storage: any): void {
@@ -283,7 +347,15 @@ class AgentClient {
         this.chatRunService = service
     }
 
+    setMentionBuilder(builder: ((roomId: string, content: string) => StructuredMentionEntry[]) | null): void {
+        this.mentionBuilder = builder
+    }
+
     async connect(port?: number): Promise<void> {
+        if (this.eventSink) {
+            this.ensureConnected()
+            return
+        }
         const actualPort = port ?? parseInt(process.env.PORT || '8648', 10)
         const token = await getToken()
 
@@ -325,12 +397,20 @@ class AgentClient {
     }
 
     disconnect(): void {
+        this.eventSink?.disconnect?.()
         if (this.socket) {
             this.socket.disconnect()
             this.socket = null
             this.joinedRooms.clear()
             this.bridgeContextCache.clear()
         }
+        this.pendingToolCallIds.clear()
+        this.pendingToolBaseIds.clear()
+        this.pendingToolRunIds.clear()
+        this.pendingToolNames.clear()
+        this.pendingToolExternalIds.clear()
+        this.pendingToolCompletionEvents.clear()
+        this.acknowledgedToolCallIds.clear()
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -349,8 +429,26 @@ class AgentClient {
 
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string> {
         this.ensureConnected()
+        // Preserve the legacy implicit-assistant call shape, but never classify
+        // runtime Tool payload text as conversational routing intent.
+        const role = typeof extra?.role === 'string' ? extra.role : undefined
+        const canCarryMentions = role === undefined || role === 'user' || role === 'assistant'
+        const generatedMentions = canCarryMentions ? this.mentionBuilder?.(roomId, content) || [] : []
+        const mentions = generatedMentions.length > 0
+            ? generatedMentions
+            : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
+        const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
+        if (this.eventSink) {
+            return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
+        }
         return new Promise((resolve, reject) => {
-            this.socket!.emit('message', { roomId, content, id: messageId, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }, (res: { id?: string; error?: string }) => {
+            this.socket!.emit('message', {
+                roomId,
+                content,
+                id: messageId,
+                ...messageExtra,
+                ...(agentSessionId ? { agentSessionId } : {}),
+            }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     reject(new Error(res.error))
                 } else {
@@ -360,29 +458,90 @@ class AgentClient {
         })
     }
 
+    private structuredMentionsForAgentReply(roomId: string, content: string): StructuredMentionEntry[] {
+        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const agents = Array.isArray(rawAgents) ? rawAgents : []
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        const byName = new Map<string, Array<{ agentId: string; name: string }>>()
+        for (const agent of agents) {
+            const participantId = String(agent?.agentId || '').trim()
+            const displayName = String(agent?.name || '').trim()
+            if (!participantId || !displayName || participantId === this.agentId) continue
+            const matches = byName.get(displayName) || []
+            matches.push({ agentId: participantId, name: displayName })
+            byName.set(displayName, matches)
+        }
+        return [...byName.values()]
+            .filter(matches => matches.length === 1 && isAgentMentioned(content, matches[0].name))
+            .map(matches => ({ type: 'agent' as const, participantId: matches[0].agentId, displayName: matches[0].name }))
+    }
+
     startTyping(roomId: string): void {
         this.ensureConnected()
+        if (this.eventSink) {
+            this.eventSink.emit('typing', { roomId })
+            return
+        }
         this.socket!.emit('typing', { roomId })
     }
 
     stopTyping(roomId: string): void {
         this.ensureConnected()
+        if (this.eventSink) {
+            this.eventSink.emit('stop_typing', { roomId })
+            return
+        }
         this.socket!.emit('stop_typing', { roomId })
     }
 
     emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>, agentSessionId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('context_status', { roomId, agentName: this.name, status, ...extra, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, agentName: this.name, status, ...extra, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('context_status', payload)
+            return
+        }
+        this.socket!.emit('context_status', payload)
     }
 
     emitApprovalRequested(roomId: string, payload: Record<string, unknown>): void {
         this.ensureConnected()
-        this.socket!.emit('approval.requested', { roomId, agentName: this.name, ...payload })
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('approval.requested', event)
+            return
+        }
+        this.socket!.emit('approval.requested', event)
     }
 
     emitApprovalResolved(roomId: string, payload: Record<string, unknown>): void {
         this.ensureConnected()
-        this.socket!.emit('approval.resolved', { roomId, agentName: this.name, ...payload })
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('approval.resolved', event)
+            return
+        }
+        this.socket!.emit('approval.resolved', event)
+    }
+
+    emitClarifyRequested(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('clarify.requested', event)
+            return
+        }
+        this.socket!.emit('clarify.requested', event)
+    }
+
+    emitClarifyResolved(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        const event = { roomId, agentName: this.name, ...payload }
+        if (this.eventSink) {
+            this.eventSink.emit('clarify.resolved', event)
+            return
+        }
+        this.socket!.emit('clarify.resolved', event)
     }
 
     async interrupt(roomId: string): Promise<boolean> {
@@ -435,32 +594,52 @@ class AgentClient {
 
     emitMessageStreamStart(roomId: string, messageId: string, agentSessionId?: string, responseRunId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_start', {
+        const payload = {
             roomId,
             id: messageId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             timestamp: Date.now(),
             ...(responseRunId ? { run_id: responseRunId } : {}),
             ...(agentSessionId ? { agentSessionId } : {}),
-        })
+        }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_start', payload)
+            return
+        }
+        this.socket!.emit('message_stream_start', payload)
     }
 
     emitMessageStreamDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_stream_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_delta', payload)
+            return
+        }
+        this.socket!.emit('message_stream_delta', payload)
     }
 
     emitMessageReasoningDelta(roomId: string, messageId: string, delta: string, agentSessionId?: string): void {
         if (!delta) return
         this.ensureConnected()
-        this.socket!.emit('message_reasoning_delta', { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, delta, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_reasoning_delta', payload)
+            return
+        }
+        this.socket!.emit('message_reasoning_delta', payload)
     }
 
     emitMessageStreamEnd(roomId: string, messageId: string, agentSessionId?: string): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_end', { roomId, id: messageId, ...(agentSessionId ? { agentSessionId } : {}) })
+        const payload = { roomId, id: messageId, ...(agentSessionId ? { agentSessionId } : {}) }
+        if (this.eventSink) {
+            this.eventSink.emit('message_stream_end', payload)
+            return
+        }
+        this.socket!.emit('message_stream_end', payload)
     }
 
     getJoinedRooms(): string[] {
@@ -571,7 +750,7 @@ class AgentClient {
     }
 
     private ensureConnected(): void {
-        if (!this.socket?.connected) {
+        if (!this.connected) {
             throw new Error(`Agent "${this.name}" is not connected`)
         }
     }
@@ -684,18 +863,18 @@ class AgentClient {
      */
     private groupRuntimeInput(msg: MentionMessage, runtimeContext: GroupRuntimeContext): string | ContentBlock[] {
         const routedPrefix = isAllAgentsMentioned(msg.content)
-            ? '群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。'
-            : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+            ? 'Group chat system: this message mentioned every Agent with @all. You are one of the targets, so reply directly.'
+            : `Group chat system: this message mentioned you (${this.name}). Reply directly even if it also mentions other participants; do not return an empty response.`
         const transcript = runtimeContext.history
-            .map(item => `${item.role === 'assistant' ? '智能体' : '成员'}「${item.senderName}」：${item.content}`)
+            .map(item => `${item.role === 'assistant' ? 'Agent' : 'Member'} "${item.senderName}": ${item.content}`)
             .join('\n\n')
         const context = [
             routedPrefix,
             runtimeContext.summary
-                ? `以下是截至总结锚点的群聊总结：\n<group_chat_summary>\n${runtimeContext.summary}\n</group_chat_summary>`
+                ? `The following group chat summary covers everything through the summary anchor:\n<group_chat_summary>\n${runtimeContext.summary}\n</group_chat_summary>`
                 : '',
             transcript
-                ? `以下是总结锚点之后、当前消息之前的群聊记录：\n<group_chat_history>\n${transcript}\n</group_chat_history>`
+                ? `The following group chat history begins after the summary anchor and ends before the current message:\n<group_chat_history>\n${transcript}\n</group_chat_history>`
                 : '',
         ].filter(Boolean).join('\n\n')
         const rawInput = msg.input || msg.content
@@ -708,17 +887,18 @@ class AgentClient {
                     const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name) || msg.content
                     if (markedCurrent) return { ...block, text }
                     markedCurrent = true
-                    return { ...block, text: `当前消息：${text}` }
+                    return { ...block, text: `Current message: ${text}` }
                 }),
             ]
         }
-        return `${context}\n\n当前消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+        return `${context}\n\nCurrent message: ${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
     }
 
-    private groupSystemPrompt(roomId: string): string {
+    private groupSystemPrompt(roomId: string, msg?: MentionMessage): string {
         const room = this.storage?.getRoom?.(roomId)
         const rawMembers = this.storage?.getRoomMembers?.(roomId)
-        const rawAgents = this.storage?.getRoomAgents?.(roomId)
+        const rawAgents = this.storage?.getMentionableRoomAgents?.(roomId)
+            ?? this.storage?.getRoomAgents?.(roomId)
         const humanMembers = Array.isArray(rawMembers) ? rawMembers : []
         const roomAgents = Array.isArray(rawAgents) ? rawAgents : []
         const members = [
@@ -726,20 +906,64 @@ class AgentClient {
                 userId: String(member.userId || member.id || ''),
                 name: String(member.name || ''),
                 description: String(member.description || ''),
+                kind: 'human' as const,
             })),
             ...roomAgents.map((agent: any) => ({
                 userId: String(agent.agentId || agent.id || ''),
                 name: String(agent.name || ''),
                 description: String(agent.description || ''),
+                kind: 'agent' as const,
             })),
         ].filter(member => member.name)
-        return buildAgentInstructions({
+        const instructions = buildAgentInstructions({
             agentName: this.name,
             roomName: String(room?.name || roomId),
             agentDescription: this.description,
             memberNames: members.map(member => member.name),
             members,
         })
+        const promptParts = [instructions]
+        const remoteWorkspaceApi = room?.remoteWorkspaceApi
+        if (
+            remoteWorkspaceApi
+            && remoteWorkspaceApi.access === 'read-write'
+            && typeof remoteWorkspaceApi.endpoint === 'string'
+            && typeof remoteWorkspaceApi.token === 'string'
+        ) {
+            promptParts.push([
+                'This run may access the sharing host\'s group-chat workspace through a short-lived HTTP JSON API.',
+                'Your current local working directory is separate; use this API only when files must be shared with the room owner or other Agents.',
+                `Endpoint: ${remoteWorkspaceApi.endpoint}`,
+                `Authorization header: Bearer ${remoteWorkspaceApi.token}`,
+                'Send POST requests with Content-Type: application/json.',
+                'Supported request bodies:',
+                '{"action":"list","path":""}',
+                '{"action":"read","path":"relative/file.txt"}',
+                '{"action":"write","path":"relative/file.txt","content":"text","expectedSha256":"hash returned by read"}',
+                '{"action":"mkdir","path":"relative/directory"}',
+                '{"action":"delete","path":"relative/file.txt","expectedSha256":"hash returned by read"}',
+                `Binary download: GET ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path>.`,
+                `Binary upload: PUT ${remoteWorkspaceApi.endpoint}/file?path=<URL-encoded relative path> with Content-Type: application/octet-stream and the raw file body.`,
+                'A successful binary upload returns the workspace path and automatically sends a separate Agent attachment message whose text body is that workspace-relative path and whose image/file block uses the same format as the message composer. JSON write actions do not send attachment messages. Do not repeat a binary-upload attachment as Markdown or JSON in your final reply.',
+                'Downloads return the SHA-256 in the X-Content-SHA256 header. Replacing an existing file requires that value in the X-Expected-SHA256 upload header; new files do not require the header.',
+                'Binary uploads and downloads are limited to 20 MiB per file.',
+                'Paths must be relative to the shared group-chat workspace. Existing files require the SHA-256 returned by read before write or delete.',
+                'The authorization expires when this run finishes. Never repeat the token in chat output.',
+            ].join('\n'))
+        }
+        if (
+            msg?.targetOwnerMemberId
+            && msg.senderId
+            && msg.senderId !== msg.targetOwnerMemberId
+        ) {
+            promptParts.push(buildNonOwnerRequestSecurityPrompt({
+                requesterName: msg.senderName,
+                requesterId: msg.senderId,
+                ownerMemberId: msg.targetOwnerMemberId,
+                workspaceRoot: String(room?.workspace || '').trim(),
+            }))
+        }
+        return promptParts.join('\n\n')
     }
 
     private groupConversationHistory(runtimeContext: GroupRuntimeContext): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -747,7 +971,7 @@ class AgentClient {
         if (runtimeContext.summary) {
             history.push({
                 role: 'user',
-                content: `[群聊历史总结]\n${runtimeContext.summary}`,
+                content: `[Group chat history summary]\n${runtimeContext.summary}`,
             })
         }
         for (const message of runtimeContext.history) {
@@ -813,7 +1037,7 @@ class AgentClient {
                 : this.agent === 'claude'
                     ? 'claude-code'
                     : 'codex'
-            const groupSystemPrompt = this.groupSystemPrompt(roomId)
+            const groupSystemPrompt = this.groupSystemPrompt(roomId, msg)
             const result = await this.chatRunService.runAndWait({
                 input: this.groupRuntimeInput(msg, runtimeContext),
                 session_id: sessionId,
@@ -825,8 +1049,8 @@ class AgentClient {
                 group_room_id: roomId,
                 group_agent_id: this.agentId,
                 workspace: workspace || null,
-                source: 'workflow',
-                session_source: 'workflow',
+                source: 'group_chat',
+                session_source: 'group_chat',
                 coding_agent_id: codingAgentId,
                 mode: 'scoped',
                 profile: this.profile,
@@ -835,7 +1059,6 @@ class AgentClient {
                 context_compression_enabled: false,
             }, {
                 profile: this.profile,
-                timeoutMs: 120000,
                 onEvent: (event, payload = {}) => {
                     if (!isCurrent()) {
                         if (!abortRequested) {
@@ -863,17 +1086,27 @@ class AgentClient {
                             toolReasoning,
                         ))
                     } else if (event === 'tool.completed' || event === 'tool.failed') {
-                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, payload))
+                        queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, { ...payload, event }).then(() => undefined))
                     } else if (event === 'approval.requested') {
                         this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'approval.resolved') {
                         this.emitApprovalResolved(roomId, { ...payload, agentSessionId: sessionId })
+                    } else if (event === 'clarify.requested') {
+                        this.emitClarifyRequested(roomId, { ...payload, agentSessionId: sessionId })
+                    } else if (event === 'clarify.resolved') {
+                        this.emitClarifyResolved(roomId, { ...payload, agentSessionId: sessionId })
                     }
                 },
             })
-            if (!isCurrent()) return
+            if (!isCurrent()) {
+                await toolEventWrites
+                await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+                this.discardPendingToolsForRun(responseRunId)
+                return
+            }
             await toolEventWrites
-            await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            const toolResultsPersisted = await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+            if (!toolResultsPersisted) throw new Error('One or more Tool results could not be persisted after bounded retries')
             if (!result.ok) throw new Error(result.error || 'Run failed')
             const finalContent = String(result.output || currentContent || '').trim()
             if (!sawReasoningDelta) reasoningContent = String(result.reasoning || reasoningContent || '')
@@ -892,7 +1125,12 @@ class AgentClient {
             await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'completed', finalContent ? runMessageId : null)
             reportStatus('ready')
         } catch (err) {
-            if (!isCurrent()) return
+            if (!isCurrent()) {
+                await toolEventWrites
+                await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
+                this.discardPendingToolsForRun(responseRunId)
+                return
+            }
             await toolEventWrites
             await this.completePendingToolsForRun(roomId, sessionId, responseRunId)
             await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? runMessageId : null)
@@ -940,7 +1178,7 @@ class AgentClient {
             this.startTyping(roomId)
 
             const conversationHistory = this.groupConversationHistory(runtimeContext)
-            let instructions = this.groupSystemPrompt(roomId)
+            let instructions = this.groupSystemPrompt(roomId, msg)
             const bridge = new AgentBridgeClient()
             const sessionId = groupRuntimeSessionId(roomId, this.profile, this.name)
             this.activeSessions.set(roomId, sessionId)
@@ -977,6 +1215,8 @@ class AgentClient {
                         }
                     }
                 }
+                await this.completePendingToolsForRun(roomId, sessionId, runMessageId)
+                this.discardPendingToolsForRun(runMessageId)
                 this.discardWorkspaceDiffRun(workspaceRunState)
                 workspaceRunState = null
                 try {
@@ -994,16 +1234,16 @@ class AgentClient {
             // selected this agent. This avoids making @all look like an
             // instruction for the model to fan out another routing cycle.
             const routedPrefix = isAllAgentsMentioned(msg.content)
-                ? `群聊系统：这条消息通过 @all 提及所有 agent，你是其中之一，请直接回复。`
-                : `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+                ? 'Group chat system: this message mentioned every Agent with @all. You are one of the targets, so reply directly.'
+                : `Group chat system: this message mentioned you (${this.name}). Reply directly even if it also mentions other participants; do not return an empty response.`
             const rawInput = msg.input || msg.content
             const input = isContentBlockArray(rawInput)
                 ? rawInput.map((block) => {
                     if (block.type !== 'text') return block
                     const text = stripMentionRoutingTokens(String(block.text || msg.content), this.name)
-                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
+                    return { ...block, text: `${routedPrefix}\n\nOriginal message: ${text || msg.content}` }
                 })
-                : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+                : `${routedPrefix}\n\nOriginal message: ${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
             const runPrompt = 'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.'
             instructions = `${instructions}\n\n${runPrompt}`
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
@@ -1102,6 +1342,9 @@ class AgentClient {
                 }
             }
 
+            const toolResultsPersisted = await this.completePendingToolsForRun(roomId, sessionId, runMessageId)
+            if (!toolResultsPersisted) throw new Error('One or more Tool results could not be persisted after bounded retries')
+
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
                 if (!this.replySessionIsCurrent(roomId, sessionId, replyInterruptVersion)) {
@@ -1161,6 +1404,9 @@ class AgentClient {
             if (workspaceRunState && !bridgeStarted) {
                 await stopStaleStartedRun?.('Interrupted after group chat bridge launch failed')
             } else {
+                if (activeSessionId) {
+                    await this.completePendingToolsForRun(roomId, activeSessionId, runMessageId)
+                }
                 await this.finalizeWorkspaceDiffOnce(workspaceRunState, 'failed', streamStarted ? streamMessageId : null)
             }
             try {
@@ -1232,7 +1478,7 @@ class AgentClient {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 await this.recordToolStarted(roomId, sessionId, ev as Record<string, unknown>, toolBaseId, responseRunId, toolReasoning)
                 reasoning = ''
-            } else if (eventType === 'tool.completed') {
+            } else if (eventType === 'tool.completed' || eventType === 'tool.failed') {
                 if (!this.replySessionIsCurrent(roomId, sessionId, interruptVersion)) return reasoning
                 await this.recordToolCompleted(roomId, sessionId, ev as Record<string, unknown>)
             } else if (eventType === 'approval.requested') {
@@ -1244,6 +1490,7 @@ class AgentClient {
                     description: (ev as any).description,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : undefined,
                     allow_permanent: (ev as any).allow_permanent,
+                    timeout_ms: (ev as any).timeout_ms,
                 })
             } else if (eventType === 'approval.resolved') {
                 this.emitApprovalResolved(roomId, {
@@ -1251,6 +1498,23 @@ class AgentClient {
                     agentSessionId: sessionId,
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
+                })
+            } else if (eventType === 'clarify.requested') {
+                this.emitClarifyRequested(roomId, {
+                    event: 'clarify.requested',
+                    agentSessionId: sessionId,
+                    clarify_id: (ev as any).clarify_id,
+                    question: (ev as any).question,
+                    choices: Array.isArray((ev as any).choices) ? (ev as any).choices : null,
+                    timeout_ms: (ev as any).timeout_ms,
+                })
+            } else if (eventType === 'clarify.resolved') {
+                this.emitClarifyResolved(roomId, {
+                    event: 'clarify.resolved',
+                    agentSessionId: sessionId,
+                    clarify_id: (ev as any).clarify_id,
+                    resolved: (ev as any).resolved,
+                    reason: (ev as any).reason,
                 })
             } else {
                 const text = groupBridgeReasoningDeltaFromEvent(ev as Record<string, unknown>)
@@ -1273,18 +1537,26 @@ class AgentClient {
     ): Promise<void> {
         const toolName = String(ev.tool_name || ev.tool || ev.name || '')
         const rawToolCallId = String(ev.tool_call_id || '').trim()
-        const toolCallId = groupToolCallId(rawToolCallId, toolName, this.nextToolIndex(roomId, toolName))
+        const externalToolCallId = groupToolCallId(
+            rawToolCallId,
+            toolName,
+            `${roomId}:${sessionId}:${runMessageId}`,
+            this.nextAnonymousToolCallSequence(),
+        )
+        const toolCallId = toolCorrelationId(roomId, sessionId, externalToolCallId)
+        this.acknowledgedToolCallIds.delete(toolCallId)
         if (!rawToolCallId || !this.pendingToolBaseIds.has(toolCallId)) {
             this.trackPendingToolCall(roomId, toolName, toolCallId)
         }
         this.pendingToolBaseIds.set(toolCallId, runMessageId)
         this.pendingToolRunIds.set(toolCallId, responseRunId)
         this.pendingToolNames.set(toolCallId, toolName)
+        this.pendingToolExternalIds.set(toolCallId, externalToolCallId)
         const timestamp = Date.now()
         const rawArgs = ev.args ?? ev.arguments ?? ev.input ?? {}
         const args = normalizeToolArgs(rawArgs)
         const toolCall = {
-            id: toolCallId,
+            id: externalToolCallId,
             type: 'function',
             function: {
                 name: toolName,
@@ -1292,9 +1564,9 @@ class AgentClient {
             },
         }
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolcall_${safeId(toolCallId)}`,
+            id: groupToolMessageId(runMessageId, 'toolcall', externalToolCallId),
             roomId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             content: '',
             timestamp,
@@ -1318,56 +1590,138 @@ class AgentClient {
             .catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message || err}`))
     }
 
-    private recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): Promise<void> {
+    private async recordToolCompleted(roomId: string, sessionId: string, ev: Record<string, unknown>): Promise<boolean> {
         const rawId = String(ev.tool_call_id || '').trim()
-        const toolName = String(ev.tool_name || ev.tool || ev.name || this.pendingToolNames.get(rawId) || '')
-        if (rawId) this.removePendingToolCall(roomId, toolName, rawId)
-        const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
+        const scopedRawId = rawId ? toolCorrelationId(roomId, sessionId, rawId) : ''
+        if (scopedRawId && this.acknowledgedToolCallIds.has(scopedRawId)) return true
+        const initialToolName = String(ev.tool_name || ev.tool || ev.name || '')
+        const queuedToolCallId = rawId ? '' : (this.takePendingToolCall(roomId, initialToolName) || '')
+        const externalToolCallId = rawId
+            || this.pendingToolExternalIds.get(queuedToolCallId)
+            || groupToolCallId(
+                null,
+                initialToolName,
+                `${roomId}:${sessionId}:${inferResponseRunId(groupMessageId(roomId, this.profile, this.name))}`,
+                this.nextAnonymousToolCallSequence(),
+            )
+        const toolCallId = scopedRawId || queuedToolCallId || toolCorrelationId(roomId, sessionId, externalToolCallId)
+        const toolName = initialToolName || this.pendingToolNames.get(toolCallId) || ''
         const runMessageId = this.pendingToolBaseIds.get(toolCallId) || groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
         const responseRunId = this.pendingToolRunIds.get(toolCallId) || inferResponseRunId(runMessageId)
-        this.pendingToolBaseIds.delete(toolCallId)
-        this.pendingToolRunIds.delete(toolCallId)
-        this.pendingToolNames.delete(toolCallId)
+        this.pendingToolCompletionEvents.set(toolCallId, ev)
         const output = bridgeToolOutput(ev)
+        const failed = ev.event === 'tool.failed'
+            || ev.is_error === true
+            || ev.error === true
+            || (typeof ev.error === 'string' && ev.error.trim().length > 0)
         const timestamp = Date.now()
         const msg: MessageData & Record<string, any> = {
-            id: `${runMessageId}_toolresult_${safeId(toolCallId)}_${Date.now()}`,
+            id: groupToolMessageId(runMessageId, 'toolresult', externalToolCallId),
             roomId,
-            senderId: this.socket?.id || this.agentId,
+            senderId: this.id || this.agentId,
             senderName: this.name,
             content: output,
             timestamp,
             run_id: responseRunId,
             role: 'tool',
-            tool_call_id: toolCallId,
+            tool_call_id: externalToolCallId,
             tool_name: toolName || null,
+            finish_reason: failed ? 'error' : null,
         }
-        return this.sendMessage(roomId, output, msg.id, {
-            role: 'tool',
-            run_id: responseRunId,
-            tool_call_id: toolCallId,
-            tool_name: toolName || null,
-            timestamp,
-        }, sessionId)
-            .then(() => undefined)
-            .catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message || err}`))
+        try {
+            await withTimeout(this.sendMessage(roomId, output, msg.id, {
+                role: 'tool',
+                run_id: responseRunId,
+                tool_call_id: externalToolCallId,
+                tool_name: toolName || null,
+                finish_reason: failed ? 'error' : null,
+                timestamp,
+            }, sessionId), TOOL_RESULT_ACK_TIMEOUT_MS, 'Timed out waiting for Tool result persistence acknowledgement')
+            this.removePendingToolCall(roomId, toolName, toolCallId)
+            this.pendingToolBaseIds.delete(toolCallId)
+            this.pendingToolRunIds.delete(toolCallId)
+            this.pendingToolNames.delete(toolCallId)
+            this.pendingToolExternalIds.delete(toolCallId)
+            this.pendingToolCompletionEvents.delete(toolCallId)
+            this.rememberAcknowledgedToolCall(toolCallId)
+            return true
+        } catch (err: any) {
+            logger.warn(`[AgentClients] failed to record tool result: ${err.message || err}`)
+            return false
+        }
     }
 
-    private async completePendingToolsForRun(roomId: string, sessionId: string, responseRunId: string): Promise<void> {
+    private async completePendingToolsForRun(roomId: string, sessionId: string, responseRunId: string): Promise<boolean> {
         const pendingToolCallIds = Array.from(this.pendingToolRunIds.entries())
             .filter(([, pendingRunId]) => pendingRunId === responseRunId)
             .map(([toolCallId]) => toolCallId)
+        let allPersisted = true
         for (const toolCallId of pendingToolCallIds) {
-            await this.recordToolCompleted(roomId, sessionId, {
-                tool_call_id: toolCallId,
-                tool_name: this.pendingToolNames.get(toolCallId) || '',
-                output: '',
-            })
+            const completionEvent = this.pendingToolCompletionEvents.get(toolCallId)
+            const retryEvent = {
+                ...(completionEvent || {
+                    tool_name: this.pendingToolNames.get(toolCallId) || '',
+                    output: '',
+                }),
+                tool_call_id: this.pendingToolExternalIds.get(toolCallId) || toolCallId,
+            }
+            let persisted = false
+            for (let attempt = 0; attempt < TOOL_RESULT_FINAL_RETRY_ATTEMPTS; attempt += 1) {
+                if (await this.recordToolCompleted(roomId, sessionId, retryEvent)) {
+                    persisted = true
+                    break
+                }
+                if (attempt + 1 < TOOL_RESULT_FINAL_RETRY_ATTEMPTS) {
+                    await delay(TOOL_RESULT_RETRY_DELAY_MS * (attempt + 1))
+                }
+            }
+            if (!persisted) {
+                allPersisted = false
+                const toolName = this.pendingToolNames.get(toolCallId) || ''
+                const externalToolCallId = this.pendingToolExternalIds.get(toolCallId) || toolCallId
+                logger.error(`[AgentClients] terminal Tool result persistence loss after bounded retries: room=${roomId} run=${responseRunId} tool=${toolName || 'unknown'} tool_call_id=${externalToolCallId}`)
+                this.removePendingToolCall(roomId, toolName, toolCallId)
+                this.pendingToolBaseIds.delete(toolCallId)
+                this.pendingToolRunIds.delete(toolCallId)
+                this.pendingToolNames.delete(toolCallId)
+                this.pendingToolExternalIds.delete(toolCallId)
+                this.pendingToolCompletionEvents.delete(toolCallId)
+            }
+        }
+        return allPersisted
+    }
+
+    private discardPendingToolsForRun(responseRunId: string): void {
+        const staleToolCallIds = new Set(Array.from(this.pendingToolRunIds.entries())
+            .filter(([, pendingRunId]) => pendingRunId === responseRunId)
+            .map(([toolCallId]) => toolCallId))
+        if (!staleToolCallIds.size) return
+        for (const [key, list] of this.pendingToolCallIds) {
+            const current = list.filter(toolCallId => !staleToolCallIds.has(toolCallId))
+            if (current.length) this.pendingToolCallIds.set(key, current)
+            else this.pendingToolCallIds.delete(key)
+        }
+        for (const toolCallId of staleToolCallIds) {
+            this.pendingToolBaseIds.delete(toolCallId)
+            this.pendingToolRunIds.delete(toolCallId)
+            this.pendingToolNames.delete(toolCallId)
+            this.pendingToolExternalIds.delete(toolCallId)
+            this.pendingToolCompletionEvents.delete(toolCallId)
         }
     }
 
     private pendingToolKey(roomId: string, toolName: string): string {
         return `${roomId}::${toolName || 'tool'}`
+    }
+
+    private rememberAcknowledgedToolCall(toolCallId: string): void {
+        this.acknowledgedToolCallIds.delete(toolCallId)
+        this.acknowledgedToolCallIds.set(toolCallId, Date.now())
+        while (this.acknowledgedToolCallIds.size > ACKNOWLEDGED_TOOL_CALL_LIMIT) {
+            const oldest = this.acknowledgedToolCallIds.keys().next().value
+            if (!oldest) break
+            this.acknowledgedToolCallIds.delete(oldest)
+        }
     }
 
     private trackPendingToolCall(roomId: string, toolName: string, toolCallId: string): void {
@@ -1396,9 +1750,9 @@ class AgentClient {
         else this.pendingToolCallIds.delete(key)
     }
 
-    private nextToolIndex(roomId: string, toolName: string): number {
-        const key = this.pendingToolKey(roomId, toolName)
-        return (this.pendingToolCallIds.get(key)?.length || 0) + 1
+    private nextAnonymousToolCallSequence(): number {
+        this.anonymousToolCallSequence += 1
+        return this.anonymousToolCallSequence
     }
 
     private bindEvents(): void {
@@ -1418,6 +1772,10 @@ class AgentClient {
 
         s.on('member_left', (data: any) => {
             this.handlers.onMemberLeft?.(data)
+        })
+
+        s.on('room_updated', (data: any) => {
+            this.handlers.onRoomUpdated?.(data)
         })
 
         // Auto rejoin rooms on reconnect
@@ -1479,14 +1837,78 @@ function inferResponseRunId(messageId: string): string {
     return match?.[1] || String(messageId || '')
 }
 
-function groupToolCallId(rawToolCallId: unknown, toolName: string, index: number): string {
+function groupToolCallId(rawToolCallId: unknown, toolName: string, scope: string, sequence: number): string {
     const raw = String(rawToolCallId || '').trim()
     if (raw) return raw
-    return `cli_${safeId(toolName || 'tool')}_${Date.now()}_${index}`
+    return `cli_${safeId(toolName || 'tool')}_${stableToolIdPart(scope)}_${sequence}`
+}
+
+function toolCorrelationId(roomId: string, sessionId: string, externalToolCallId: string): string {
+    return `${roomId}\u0000${sessionId}\u0000${externalToolCallId}`
 }
 
 function safeId(value: string): string {
     return String(value || 'item').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80)
+}
+
+const TOOL_RESULT_ACK_TIMEOUT_MS = 30_000
+const TOOL_RESULT_FINAL_RETRY_ATTEMPTS = 2
+const TOOL_RESULT_RETRY_DELAY_MS = 50
+const ACKNOWLEDGED_TOOL_CALL_LIMIT = 1_024
+const GROUP_CHAT_MESSAGE_ID_MAX_LENGTH = 160
+
+function stableToolIdPart(value: string): string {
+    const raw = String(value || 'item')
+    if (/^[a-zA-Z0-9_-]{1,80}$/.test(raw)) return raw
+    const hash = createHash('sha256').update(raw).digest('hex').slice(0, 12)
+    return `${safeId(raw).slice(0, 67)}_${hash}`
+}
+
+function groupToolMessageId(
+    runMessageId: string,
+    kind: 'toolcall' | 'toolresult',
+    externalToolCallId: string,
+): string {
+    const toolIdPart = stableToolIdPart(externalToolCallId)
+    const candidate = `${runMessageId}_${kind}_${toolIdPart}`
+    if (candidate.length <= GROUP_CHAT_MESSAGE_ID_MAX_LENGTH) return candidate
+
+    const marker = `_${kind}_`
+    const hash = createHash('sha256')
+        .update(`${runMessageId}\u0000${kind}\u0000${externalToolCallId}`)
+        .digest('hex')
+        .slice(0, 20)
+    const hashSuffix = `_h_${hash}`
+    const readableLength = GROUP_CHAT_MESSAGE_ID_MAX_LENGTH - marker.length - hashSuffix.length
+    const safeRunMessageId = String(runMessageId || 'message').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const runLength = Math.min(safeRunMessageId.length, 96, readableLength - 1)
+    let runIdPart = safeRunMessageId.slice(0, runLength)
+    const partSuffix = safeRunMessageId.match(/_part_\d+$/)?.[0] || ''
+    if (partSuffix && safeRunMessageId.length > runLength && partSuffix.length < runLength) {
+        runIdPart = `${safeRunMessageId.slice(0, runLength - partSuffix.length)}${partSuffix}`
+    }
+    const readableToolIdPart = toolIdPart.slice(0, readableLength - runIdPart.length)
+    return `${runIdPart}${marker}${readableToolIdPart}${hashSuffix}`
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+        promise.then(
+            value => {
+                clearTimeout(timeout)
+                resolve(value)
+            },
+            error => {
+                clearTimeout(timeout)
+                reject(error)
+            },
+        )
+    })
 }
 
 function bridgeToolOutput(ev: Record<string, unknown>): string {
@@ -1516,7 +1938,7 @@ function extractBridgeFinalText(chunk: AgentBridgeOutput | null): string {
 // ─── AgentClients (roomId -> agents) ──────────────────────────
 
 export class AgentClients {
-    private rooms = new Map<string, Map<string, AgentClient>>()
+    private rooms = new Map<string, Map<string, GroupAgentExecutor>>()
     private _storage: any = null
     private _workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
     private _chatRunService: GroupChatRunService | null = null
@@ -1525,7 +1947,7 @@ export class AgentClients {
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
-    private _mentionQueue = new Map<string, Array<{ agents: AgentClient[]; msg: MentionMessage }>>()
+    private _mentionQueue = new Map<string, Array<{ agents: GroupAgentExecutor[]; msg: MentionMessage }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
 
@@ -1535,6 +1957,7 @@ export class AgentClients {
      */
     async createAgent(config: AgentConfig, handlers?: AgentEventHandler, port?: number): Promise<AgentClient> {
         const client = new AgentClient(config, handlers)
+        client.setMentionBuilder((roomId, content) => this.buildAgentReplyMentions(roomId, content, client.agentId))
         await client.connect(port)
 
         // Auto-apply stored references (fixes propagation for agents created after set*)
@@ -1556,6 +1979,9 @@ export class AgentClients {
             this.rooms.set(roomId, room)
         }
 
+        if (typeof (client as any).setMentionBuilder === 'function') {
+            client.setMentionBuilder((targetRoomId, content) => this.buildAgentReplyMentions(targetRoomId, content, client.agentId))
+        }
         room.set(client.agentId, client)
         try {
             const result = await client.joinRoom(roomId)
@@ -1567,6 +1993,23 @@ export class AgentClients {
             client.disconnect()
             throw err
         }
+    }
+
+    /**
+     * Register an executor whose transport has already joined the room.
+     * Used by authenticated outbound relay connections.
+     */
+    registerAgentForRoom(roomId: string, executor: GroupAgentExecutor): void {
+        let room = this.rooms.get(roomId)
+        if (!room) {
+            room = new Map()
+            this.rooms.set(roomId, room)
+        }
+        executor.setStorage?.(this._storage)
+        executor.setWorkspaceDiffBroadcaster?.(this._workspaceDiffBroadcaster)
+        executor.setChatRunService?.(this._chatRunService)
+        room.set(executor.agentId, executor)
+        logger.info(`[AgentClients] Registered relay executor: ${executor.name} (${executor.agentId})`)
     }
 
     /**
@@ -1592,15 +2035,31 @@ export class AgentClients {
     /**
      * Get all agents in a room.
      */
-    getAgents(roomId: string): AgentClient[] {
+    getAgents(roomId: string): GroupAgentExecutor[] {
         const room = this.rooms.get(roomId)
         return room ? Array.from(room.values()) : []
+    }
+
+    getConnectedAgents(roomId: string): GroupAgentExecutor[] {
+        return this.getAgents(roomId).filter(agent => agent.connected !== false)
+    }
+
+    private buildAgentReplyMentions(roomId: string, content: string, senderParticipantId: string): StructuredMentionEntry[] {
+        const agents = this.getAgents(roomId)
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
+        return agents
+            .filter(agent => agent.agentId !== senderParticipantId && isAgentMentioned(content, agent.name))
+            .map(agent => ({
+                type: 'agent' as const,
+                participantId: agent.agentId,
+                displayName: agent.name,
+            }))
     }
 
     /**
      * Get a specific agent in a room.
      */
-    getAgent(roomId: string, agentId: string): AgentClient | undefined {
+    getAgent(roomId: string, agentId: string): GroupAgentExecutor | undefined {
         return this.rooms.get(roomId)?.get(agentId)
     }
 
@@ -1701,7 +2160,7 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: AgentClient[], msg: MentionMessage): void {
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): void {
         let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
@@ -1810,8 +2269,10 @@ export class AgentClients {
      * If the room is already processing (compressing/replying), queue the mention.
      */
     async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
-        const agents = this.getAgents(roomId)
-        const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
+        const agents = this.getConnectedAgents(roomId)
+        const mentioned = msg.mentions
+            ? this.resolveStructuredMentionTargets(agents, msg.mentions, msg.senderId)
+            : resolveMentionTargets(agents, msg.content, msg.senderId)
         if (mentioned.length === 0 && msg.role !== 'user') return
 
         if (mentioned.length > 0) {
@@ -1822,6 +2283,35 @@ export class AgentClients {
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
         }
+    }
+
+    private resolveStructuredMentionTargets(
+        agents: GroupAgentExecutor[],
+        mentions: StructuredMention[],
+        senderId: string,
+    ): GroupAgentExecutor[] {
+        const candidates = agents.filter(agent => agent.agentId !== senderId)
+        if (mentions.some(mention => mention.type === 'all')) return candidates
+        const ids = new Set(mentions.flatMap(mention => mention.type === 'agent' ? [mention.participantId] : []))
+        return candidates.filter(agent => ids.has(agent.agentId))
+    }
+
+    private targetAgentOwnerMemberId(roomId: string, agent: GroupAgentExecutor): string {
+        const roomAgents = this._storage?.getRoomAgents?.(roomId)
+        const storedAgent = Array.isArray(roomAgents)
+            ? roomAgents.find((candidate: any) => (
+                String(candidate?.agentId || '') === agent.agentId
+                || String(candidate?.name || '') === agent.name
+            ))
+            : null
+        const explicitOwner = String(storedAgent?.ownerMemberId || '').trim()
+        if (explicitOwner) return explicitOwner
+        if (storedAgent?.executorType === 'remote') return ''
+
+        const ownerAuthUserId = Number(this._storage?.getRoom?.(roomId)?.ownerAuthUserId || 0)
+        return Number.isSafeInteger(ownerAuthUserId) && ownerAuthUserId > 0
+            ? `auth:${ownerAuthUserId}`
+            : ''
     }
 
     async processSummaryCheck(roomId: string, messageId: string): Promise<void> {
@@ -1856,7 +2346,11 @@ export class AgentClients {
                         if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
                     }
                     try {
-                        await agent.replyToMention(roomId, next.msg, runtimeContext, onStatus)
+                        const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
+                        const targetMessage = targetOwnerMemberId
+                            ? { ...next.msg, targetOwnerMemberId }
+                            : next.msg
+                        await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
                     } finally {
                         this.finishAgentActivity(roomId, agent.name)
                     }

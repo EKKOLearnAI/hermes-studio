@@ -15,7 +15,14 @@ const {
   pcmStartMock,
   pcmStopMock,
   pcmCancelMock,
+  localPcmStartMock,
+  localPcmStopMock,
+  localPcmCancelMock,
   transcribeSpeechMock,
+  startLocalSttStreamMock,
+  pushLocalSttStreamChunkMock,
+  finishLocalSttStreamMock,
+  cancelLocalSttStreamMock,
   browserStartMock,
   browserStopMock,
   browserCancelMock,
@@ -24,6 +31,10 @@ const {
   micRecorderState,
   pcmRecorderStatus,
   pcmRecorderError,
+  localPcmRecorderStatus,
+  localPcmRecorderError,
+  localPcmOnChunk,
+  localPcmOptions,
   browserRecognitionStatus,
   browserRecognitionTranscript,
   browserRecognitionPartialTranscript,
@@ -37,7 +48,14 @@ const {
   pcmStartMock: vi.fn(),
   pcmStopMock: vi.fn(),
   pcmCancelMock: vi.fn(),
+  localPcmStartMock: vi.fn(),
+  localPcmStopMock: vi.fn(),
+  localPcmCancelMock: vi.fn(),
   transcribeSpeechMock: vi.fn(),
+  startLocalSttStreamMock: vi.fn(),
+  pushLocalSttStreamChunkMock: vi.fn(),
+  finishLocalSttStreamMock: vi.fn(),
+  cancelLocalSttStreamMock: vi.fn(),
   browserStartMock: vi.fn(),
   browserStopMock: vi.fn(),
   browserCancelMock: vi.fn(),
@@ -53,6 +71,14 @@ const {
   },
   pcmRecorderStatus: { value: 'idle' as 'idle' | 'requesting' | 'recording' | 'error' },
   pcmRecorderError: { value: null as Error | null },
+  localPcmRecorderStatus: { value: 'idle' as 'idle' | 'requesting' | 'recording' | 'error' },
+  localPcmRecorderError: { value: null as Error | null },
+  localPcmOnChunk: {
+    value: null as null | ((audio: Blob) => void),
+  },
+  localPcmOptions: {
+    value: null as null | { continuous?: boolean },
+  },
   browserRecognitionStatus: { value: 'idle' as 'idle' | 'listening' | 'stopping' | 'error' },
   browserRecognitionTranscript: { value: '' },
   browserRecognitionPartialTranscript: { value: '' },
@@ -119,14 +145,29 @@ vi.mock('@/composables/useMicRecorder', () => ({
 }))
 
 vi.mock('@/composables/usePcmStreamRecorder', () => ({
-  usePcmStreamRecorder: () => ({
-    status: pcmRecorderStatus,
-    error: pcmRecorderError,
-    isRecording: { value: false },
-    start: pcmStartMock,
-    stop: pcmStopMock,
-    cancel: pcmCancelMock,
-  }),
+  usePcmStreamRecorder: (options: { continuous?: boolean; onChunk?: (audio: Blob) => void }) => {
+    if (options.onChunk) {
+      localPcmOnChunk.value = options.onChunk
+      localPcmOptions.value = options
+      return {
+        status: localPcmRecorderStatus,
+        error: localPcmRecorderError,
+        isRecording: { value: false },
+        start: localPcmStartMock,
+        stop: localPcmStopMock,
+        cancel: localPcmCancelMock,
+      }
+    }
+
+    return {
+      status: pcmRecorderStatus,
+      error: pcmRecorderError,
+      isRecording: { value: false },
+      start: pcmStartMock,
+      stop: pcmStopMock,
+      cancel: pcmCancelMock,
+    }
+  },
 }))
 
 vi.mock('@/composables/useSpeech', () => ({
@@ -137,6 +178,10 @@ vi.mock('@/composables/useSpeech', () => ({
 
 vi.mock('@/api/hermes/stt', () => ({
   transcribeSpeech: transcribeSpeechMock,
+  startLocalSttStream: startLocalSttStreamMock,
+  pushLocalSttStreamChunk: pushLocalSttStreamChunkMock,
+  finishLocalSttStream: finishLocalSttStreamMock,
+  cancelLocalSttStream: cancelLocalSttStreamMock,
 }))
 
 vi.mock('@/composables/useBrowserSpeechRecognition', () => ({
@@ -245,6 +290,34 @@ describe('VoiceDialogueControls', () => {
     pcmCancelMock.mockImplementation(() => {
       pcmRecorderStatus.value = 'idle'
     })
+    localPcmRecorderStatus.value = 'idle'
+    localPcmRecorderError.value = null
+    localPcmOnChunk.value = null
+    localPcmOptions.value = null
+    localPcmStartMock.mockImplementation(async () => {
+      localPcmRecorderStatus.value = 'recording'
+    })
+    localPcmStopMock.mockImplementation(async () => {
+      localPcmRecorderStatus.value = 'idle'
+      return new Blob([new Uint8Array(256)], { type: 'audio/wav' })
+    })
+    localPcmCancelMock.mockImplementation(() => {
+      localPcmRecorderStatus.value = 'idle'
+    })
+    startLocalSttStreamMock.mockResolvedValue({ sessionId: 'local-input-1' })
+    pushLocalSttStreamChunkMock.mockResolvedValue({
+      sessionId: 'local-input-1',
+      text: '本地实时字幕',
+      model: 'local-zipformer',
+      durationMs: 1,
+    })
+    finishLocalSttStreamMock.mockResolvedValue({
+      sessionId: 'local-input-1',
+      text: '本地最终文本',
+      model: 'local-zipformer',
+      durationMs: 1,
+    })
+    cancelLocalSttStreamMock.mockResolvedValue({ success: true })
     browserStartMock.mockImplementation(async () => {
       browserRecognitionStatus.value = 'listening'
       browserRecognitionError.value = null
@@ -616,6 +689,8 @@ describe('VoiceDialogueControls', () => {
     await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
     await flushPromises()
     expect(micStartMock).toHaveBeenCalledTimes(1)
+    expect(transcribeSpeechMock).not.toHaveBeenCalled()
+    expect(startLocalSttStreamMock).not.toHaveBeenCalled()
 
     await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
     await flushPromises()
@@ -627,8 +702,66 @@ describe('VoiceDialogueControls', () => {
       language: 'ja',
       prompt: 'keep punctuation',
     })
+    expect(startLocalSttStreamMock).not.toHaveBeenCalled()
+    expect(localPcmStartMock).not.toHaveBeenCalled()
     expect(chatStore.sendMessage).not.toHaveBeenCalled()
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('hello hermes')
+  })
+
+  it('streams local PCM partials and stages the final transcript like browser recognition', async () => {
+    const { useSttSettings } = await import('../../packages/client/src/composables/useSttSettings')
+    useSttSettings().setProvider('local')
+
+    const { wrapper, chatStore } = mountChatInput()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(startLocalSttStreamMock).toHaveBeenCalledOnce()
+    expect(localPcmStartMock).toHaveBeenCalledOnce()
+    expect(localPcmOptions.value?.continuous).toBe(true)
+    expect(micStartMock).not.toHaveBeenCalled()
+    expect(pcmStartMock).not.toHaveBeenCalled()
+
+    const liveChunk = new Blob([new Uint8Array(256)], { type: 'audio/wav' })
+    localPcmOnChunk.value?.(liveChunk)
+    await flushPromises()
+
+    expect(pushLocalSttStreamChunkMock).toHaveBeenCalledWith('local-input-1', liveChunk)
+    expect(wrapper.get('[data-testid="voice-transcript-overlay"]').text()).toContain('本地实时字幕')
+
+    await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(localPcmStopMock).toHaveBeenCalledOnce()
+    expect(pushLocalSttStreamChunkMock).toHaveBeenCalledTimes(2)
+    expect(finishLocalSttStreamMock).toHaveBeenCalledWith('local-input-1')
+    expect(transcribeSpeechMock).not.toHaveBeenCalled()
+    expect(chatStore.sendMessage).not.toHaveBeenCalled()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('本地最终文本')
+    expect(wrapper.find('[data-testid="voice-transcript-overlay"]').exists()).toBe(false)
+  })
+
+  it('cancels local streaming input without committing or running single-shot STT', async () => {
+    const { useSttSettings } = await import('../../packages/client/src/composables/useSttSettings')
+    useSttSettings().setProvider('local')
+
+    const { wrapper, chatStore } = mountChatInput()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="voice-record-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(localPcmCancelMock).toHaveBeenCalledOnce()
+    expect(cancelLocalSttStreamMock).toHaveBeenCalledWith('local-input-1')
+    expect(finishLocalSttStreamMock).not.toHaveBeenCalled()
+    expect(transcribeSpeechMock).not.toHaveBeenCalled()
+    expect(chatStore.sendMessage).not.toHaveBeenCalled()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.find('[data-testid="voice-transcript-overlay"]').exists()).toBe(false)
   })
 
   it('records desktop-shell input as PCM WAV instead of MediaRecorder Opus', async () => {

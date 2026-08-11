@@ -15,6 +15,10 @@ const MANAGED_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-use', toolset: 'use' },
 ]
 const MANAGED_SERVER_NAMES: Set<string> = new Set(MANAGED_SERVERS.map(server => server.name))
+// Hermes Agent applies this per managed MCP server. Keep the long-running
+// `use` toolset above Studio's 30-minute chat-run cap with bounded delivery
+// headroom; unrelated API/browser/device calls retain the client default.
+const MANAGED_USE_MCP_TIMEOUT_SECONDS = 30 * 60 + 60
 const LEGACY_SERVER_NAMES = new Set([
   LEGACY_SERVER_NAME,
   'hermes-web-ui-mcp',
@@ -176,6 +180,7 @@ function managedConfig(
 
   return {
     ...managedCommandConfig(toolset, bundledScript),
+    ...(toolset === 'use' ? { timeout: MANAGED_USE_MCP_TIMEOUT_SECONDS } : {}),
     env,
     enabled: true,
   }
@@ -203,6 +208,7 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
   const desiredEnv = desired.env as Record<string, string>
   return existing.command === desired.command &&
     sameArgs(existing, desired) &&
+    (desired.timeout === undefined || existing.timeout === desired.timeout) &&
     existing.enabled !== false &&
     isRecord(existing.env) &&
     existing.env.HERMES_WEB_UI_URL === desiredEnv.HERMES_WEB_UI_URL &&
@@ -283,7 +289,9 @@ async function injectIntoProfile(
       }
 
       if (!sameConfig(existing, desired)) {
-        cfg.mcp_servers[server.name] = desired
+        cfg.mcp_servers[server.name] = desired.timeout === undefined && Object.hasOwn(existing, 'timeout')
+          ? { ...desired, timeout: existing.timeout }
+          : desired
         changed = true
       }
     }

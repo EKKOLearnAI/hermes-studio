@@ -3,12 +3,14 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NPopover } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import type { RoomAgent } from '@/api/hermes/group-chat'
-import { groupAgentAvatar } from '@/utils/group-agent-avatar'
+import type { MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
+import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
 
 const props = defineProps<{
     agent: RoomAgent
+    owner?: MemberInfo | null
     size?: number
+    mentionable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -40,6 +42,13 @@ function runtimeValue(value: string): string {
                     :avatar="groupAgentAvatar(agent)"
                     :size="avatarSize"
                 />
+                <span v-if="owner" class="message-agent-owner-badge">
+                    <ProfileAvatar
+                        :name="owner.name"
+                        :avatar="parseStoredAvatar(owner.avatar)"
+                        :size="14"
+                    />
+                </span>
             </span>
         </template>
         <div class="message-agent-popover">
@@ -48,6 +57,14 @@ function runtimeValue(value: string): string {
                 <span class="message-agent-type">
                     {{ t(`groupChat.agentTypes.${agent.agent || 'hermes'}`) }}
                 </span>
+            </div>
+            <div v-if="owner" class="message-agent-owner">
+                <ProfileAvatar
+                    :name="owner.name"
+                    :avatar="parseStoredAvatar(owner.avatar)"
+                    :size="24"
+                />
+                <span>{{ t('groupChat.agentOwner', { name: owner.name }) }}</span>
             </div>
             <div class="message-agent-runtime">
                 <div class="message-agent-runtime-row">
@@ -64,6 +81,7 @@ function runtimeValue(value: string): string {
                 </div>
             </div>
             <button
+                v-if="mentionable !== false"
                 type="button"
                 class="message-agent-mention"
                 :aria-label="`@${agent.name}`"
@@ -79,11 +97,29 @@ function runtimeValue(value: string): string {
 @use "@/styles/variables" as *;
 
 .message-agent-avatar {
+    position: relative;
     display: inline-flex;
     flex: 0 0 auto;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 8px;
     cursor: pointer;
+}
+
+.message-agent-owner-badge {
+    position: absolute;
+    z-index: 2;
+    inset-block-start: -5px;
+    inset-inline-end: -6px;
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 2px solid $bg-main-surface;
+    border-radius: 50%;
+    background: $bg-main-surface;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    pointer-events: none;
 }
 
 .message-agent-popover {
@@ -92,6 +128,22 @@ function runtimeValue(value: string): string {
     gap: 9px;
     width: 248px;
     min-width: 0;
+}
+
+.message-agent-owner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: $text-secondary;
+    font-size: 12px;
+
+    > span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
 }
 
 .message-agent-popover-header {

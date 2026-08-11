@@ -10,8 +10,6 @@ import { AgentToolRegistry } from '../tools/registry'
 import { createSkillTools } from '../tools/skills'
 import type { EkkoRuntimeLogContext, EkkoRuntimeLogger } from '../logging/runtime-logger'
 
-export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
-
 export interface SkillReviewUsageEvent {
   purpose: 'ekko-skill-review'
   usage: ModelUsage

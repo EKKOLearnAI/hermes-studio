@@ -116,7 +116,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   agentSessionId?: string
   agentNativeSessionId?: string
   isolateSettings?: boolean
-  sessionSource?: 'global_agent' | 'workflow'
+  sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   groupSystemPrompt?: string
   groupRuntimeScope?: {
     roomId: string
@@ -1896,6 +1896,8 @@ export async function startCodingAgentRun(
   const existingSession = getSession(sessionId)
   const sessionSource = input.sessionSource === 'global_agent'
     ? 'global_agent'
+    : input.sessionSource === 'group_chat'
+      ? 'group_chat'
     : input.sessionSource === 'workflow'
       ? 'workflow'
       : 'coding_agent'
@@ -1953,7 +1955,9 @@ export async function startCodingAgentRun(
     env: runtimeEnv,
     state,
     reasoningEffort: launch.reasoningEffort,
-    sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' ? sessionSource : undefined,
+    sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' || sessionSource === 'group_chat'
+      ? sessionSource
+      : undefined,
   })
   updateSession(sessionId, {
     source: sessionSource,
@@ -1981,7 +1985,7 @@ export function sendCodingAgentRunInput(
   systemPrompt?: string,
   images: CodingAgentImageInput[] = [],
   storageInput?: string,
-): { runId: string } {
+): { runId: string; messageId?: number } {
   return codingAgentRunManager.send(sessionId, input, { systemPrompt, images, storageInput })
 }
 

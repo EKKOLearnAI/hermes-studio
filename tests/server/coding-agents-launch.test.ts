@@ -1417,6 +1417,98 @@ describe('coding agent launch preparation', () => {
     expect(sse).toContain('event: message_stop')
   })
 
+  it('returns one normalized Claude tool call when Responses uses separate item and call ids', async () => {
+    const target = registerClaudeCodeProxyTarget({
+      provider: 'fun-codex',
+      model: 'gpt-5.5',
+      baseUrl: 'https://api.apikey.fun/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+    })
+    const fullArguments = JSON.stringify({
+      file_path: '/tmp/package.json',
+      pages: '',
+    })
+    const encoder = new TextEncoder()
+    const frames = [
+      { type: 'response.created', response: { id: 'resp_read', status: 'in_progress' } },
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: {
+          type: 'function_call',
+          id: 'fc_read',
+          call_id: 'call_read',
+          name: 'Read',
+          arguments: '',
+          status: 'in_progress',
+        },
+      },
+      {
+        type: 'response.function_call_arguments.delta',
+        output_index: 0,
+        item_id: 'fc_read',
+        delta: fullArguments,
+      },
+      {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: {
+          type: 'function_call',
+          id: 'fc_read',
+          call_id: 'call_read',
+          name: 'Read',
+          arguments: fullArguments,
+          status: 'completed',
+        },
+      },
+      {
+        type: 'response.completed',
+        response: {
+          id: 'resp_read',
+          status: 'completed',
+          usage: { input_tokens: 10, output_tokens: 4, total_tokens: 14 },
+        },
+      },
+    ]
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        for (const frame of frames) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`))
+        }
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      messages: [{ role: 'user', content: 'read package.json' }],
+      tools: [{
+        name: 'Read',
+        input_schema: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string' },
+            pages: { type: 'string' },
+          },
+          required: ['file_path'],
+        },
+      }],
+    })
+
+    await claudeProxyMessages(ctx)
+
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const sse = chunks.join('')
+    expect(sse.match(/"type":"tool_use"/g)).toHaveLength(1)
+    expect(sse).toContain('"id":"call_read","name":"Read"')
+    expect(sse).toContain('partial_json":"{\\"file_path\\":\\"/tmp/package.json\\"}"')
+    expect(sse).not.toContain('"name":"tool"')
+    expect(sse).not.toContain('pages')
+  })
+
   it('round-trips reasoning_content for DeepSeek-style OpenAI Chat tool calls', async () => {
     const target = registerClaudeCodeProxyTarget({
       provider: 'deepseek',

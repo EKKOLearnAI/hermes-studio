@@ -53,6 +53,7 @@ export interface VoiceApiConnection {
   hasSecret: boolean
   isBuiltin?: boolean
   active?: boolean
+  available?: boolean
 }
 
 export interface VoiceApiSavePayload {

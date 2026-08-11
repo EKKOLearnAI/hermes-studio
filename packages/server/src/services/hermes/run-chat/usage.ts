@@ -18,6 +18,10 @@ type UsageTokenMessage = {
   role?: string
   content?: unknown
   tool_calls?: unknown
+  /** DeepSeek/Kimi thinking-mode payload echoed back on subsequent turns. */
+  reasoning_content?: unknown
+  reasoning?: unknown
+  reasoning_details?: unknown
 }
 
 function contentToUsageText(content: unknown): string {
@@ -39,8 +43,38 @@ export function estimateUsageTokensFromMessages(messages: UsageTokenMessage[]): 
     .reduce((sum, m) => sum + countTokens(contentToUsageText(m.content)), 0)
   const outputTokens = messages
     .filter(m => m.role === 'assistant' || m.role === 'tool')
-    .reduce((sum, m) => sum + countTokens(contentToUsageText(m.content)) + countTokens(String(m.tool_calls || '')), 0)
+    .reduce((sum, m) => {
+      // reasoning_content is re-sent to providers that require thinking-mode
+      // echo-back (DeepSeek/Kimi). Omitting it undercounts full context by
+      // hundreds of K tokens and skips compression until the upstream 400
+      // (NousResearch/hermes-agent#80246).
+      const reasoning = m.reasoning_content ?? m.reasoning
+      const estimatedReasoningTokens = storedReasoningTokenEstimate(m.reasoning_details)
+      return (
+        sum
+        + countTokens(contentToUsageText(m.content))
+        + countTokens(String(m.tool_calls || ''))
+        + (estimatedReasoningTokens ?? countTokens(String(reasoning || '')))
+      )
+    }, 0)
   return { inputTokens, outputTokens }
+}
+
+function storedReasoningTokenEstimate(details: unknown): number | undefined {
+  let parsed = details
+  if (typeof parsed === 'string') {
+    if (!parsed.trim()) return undefined
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return undefined
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const value = (parsed as Record<string, unknown>).estimatedTokens
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined
 }
 
 export async function calcAndUpdateUsage(

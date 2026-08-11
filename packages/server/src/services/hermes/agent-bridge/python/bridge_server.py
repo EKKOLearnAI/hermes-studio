@@ -190,6 +190,12 @@ class BridgeServer:
         if action == "interrupt":
             return self.pool.interrupt(str(req.get("session_id") or ""), req.get("message"))
 
+        if action == "request_boundary_interrupt":
+            return self.pool.request_boundary_interrupt(
+                str(req.get("session_id") or ""),
+                req.get("expected_run_id"),
+            )
+
         if action == "steer":
             text = str(req.get("text") or req.get("message") or "").strip()
             if not text:

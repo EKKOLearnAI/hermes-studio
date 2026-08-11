@@ -555,6 +555,33 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   expect(second.run.input).toBe('Second queued contract')
   await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
 
+  const insertionArrow = page.getByRole('button', { name: 'Insert after the current safe boundary' })
+  await expect(insertionArrow).toBeVisible()
+  await insertionArrow.click()
+  const insertionRequest = await page.waitForFunction(() => {
+    const state = (window as any).__PW_CHAT_SOCKET__
+    return state?.emitted?.find((item: any) => item.event === 'insert_queued_run')?.payload || null
+  })
+  await expect(insertionRequest.jsonValue()).resolves.toEqual({
+    session_id: first.run.session_id,
+    queue_id: second.run.queue_id,
+  })
+  await page.evaluate(({ sid, queueId }) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.queue_insertion.updated', {
+      event: 'run.queue_insertion.updated',
+      session_id: sid,
+      generation: 'generation-1',
+      run_id: 'run-1',
+      queue_id: queueId,
+      runtime: 'hermes',
+      phase: 'waiting_for_tool_batch',
+      guarantee: 'strict',
+      requested_at: Date.now(),
+    })
+  }, { sid: first.run.session_id, queueId: second.run.queue_id })
+  await expect(page.getByRole('button', { name: 'Waiting for the current tools to finish' })).toBeDisabled()
+
   await page.evaluate(({ sid, queueId }) => {
     const socket = (window as any).__PW_CHAT_SOCKET__.latest
     socket.__trigger('run.peer_user_message', {
@@ -592,6 +619,16 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
       dequeued_queue_id: queueId,
       queued_messages: [],
     })
+    socket.__trigger('run.queue_insertion.updated', {
+      event: 'run.queue_insertion.updated',
+      session_id: sid,
+      generation: 'generation-1',
+      queue_id: queueId,
+      runtime: 'hermes',
+      phase: 'starting_queued_message',
+      guarantee: 'strict',
+      requested_at: Date.now(),
+    })
     socket.__trigger('run.peer_user_message', {
       event: 'run.peer_user_message',
       session_id: sid,
@@ -617,6 +654,57 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(1)
   await expect(page.locator('p').filter({ hasText: /^Second answer$/ })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('does not report a safe queue insertion stop as an empty model response', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Current request')
+  const first = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', {
+      event: 'run.started',
+      session_id: sid,
+      run_id: 'run-empty-before-insertion',
+    })
+  }, first.run.session_id)
+
+  await sendChatMessage(page, 'Insert this next')
+  const second = await waitForRun(page, 1)
+  await page.getByRole('button', { name: 'Insert after the current safe boundary' }).click()
+  await page.evaluate(({ sid, queueId }) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.queue_insertion.updated', {
+      event: 'run.queue_insertion.updated',
+      session_id: sid,
+      generation: 'generation-empty-output',
+      run_id: 'run-empty-before-insertion',
+      queue_id: queueId,
+      runtime: 'hermes',
+      phase: 'stopping_current_turn',
+      guarantee: 'strict',
+      requested_at: Date.now(),
+    })
+    socket.__trigger('run.failed', {
+      event: 'run.failed',
+      session_id: sid,
+      run_id: 'run-empty-before-insertion',
+      error: 'Agent reported failure',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      boundary_guarantee: 'strict',
+      queue_remaining: 1,
+    })
+  }, { sid: first.run.session_id, queueId: second.run.queue_id })
+
+  await expect(page.getByText(/Agent returned no output/)).toHaveCount(0)
+  await expect(page.getByText(/Agent reported failure/)).toHaveCount(0)
   expect(api.unexpectedRequests).toEqual([])
 })
 
@@ -815,6 +903,98 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.getByText('Completion fallback should stay hidden.')).toHaveCount(0)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('renders free-text and choice clarifications and sends responses over the chat-run socket', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Ask before choosing a target')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', {
+      event: 'run.started',
+      session_id: sid,
+      run_id: 'run-clarify',
+    })
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-clarify',
+      clarify_id: 'clarify-free-text',
+      question: 'Which directory should I update?',
+      choices: null,
+      timeout_ms: 300_000,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Agent has a question for you')).toBeVisible()
+  await expect(page.getByText('Which directory should I update?')).toBeVisible()
+  const clarifyInput = page.getByPlaceholder('Type your answer...')
+  await clarifyInput.fill('packages/client')
+  await page.getByRole('button', { name: 'Reply' }).click()
+
+  await expect(page.getByText('Which directory should I update?')).toHaveCount(0)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-clarify',
+      clarify_id: 'clarify-choice',
+      question: 'Keep or replace the existing file?',
+      choices: ['Keep', 'Replace'],
+      timeout_ms: 300_000,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Keep or replace the existing file?')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Keep', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Replace', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible()
+  await page.getByRole('button', { name: 'Replace', exact: true }).click()
+
+  await expect(page.getByText('Keep or replace the existing file?')).toHaveCount(0)
+  await expect.poll(async () => page.evaluate(() => {
+    const emitted = (window as any).__PW_CHAT_SOCKET__.emitted
+    return emitted.filter((item: any) => item.event === 'clarify.respond')
+  })).toEqual([
+    {
+      event: 'clarify.respond',
+      payload: {
+        session_id: run.session_id,
+        clarify_id: 'clarify-free-text',
+        response: 'packages/client',
+      },
+    },
+    {
+      event: 'clarify.respond',
+      payload: {
+        session_id: run.session_id,
+        clarify_id: 'clarify-choice',
+        response: 'Replace',
+      },
+    },
+  ])
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-clarify',
+      output: 'Updated the selected target.',
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Updated the selected target.')).toBeVisible()
   expect(api.unexpectedRequests).toEqual([])
 })
 

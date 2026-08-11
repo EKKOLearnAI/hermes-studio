@@ -6,6 +6,11 @@ type MentionableAgent = {
     agentId?: string
 }
 
+export type StructuredMention = {
+    type: 'agent' | 'all'
+    participantId?: string
+}
+
 type MentionRange = {
     start: number
     end: number
@@ -84,6 +89,22 @@ export function resolveMentionTargets<T extends MentionableAgent>(
     }
 
     return candidates.filter((agent) => isAgentMentioned(content, agent.name))
+}
+
+export function resolveStructuredMentionTargets<T extends MentionableAgent>(
+    agents: T[],
+    mentions: StructuredMention[],
+    senderId: string,
+): T[] {
+    const candidates = agents.filter((agent) => !isSenderAgent(agent, senderId))
+    if (mentions.some(mention => mention.type === 'all')) return candidates
+    const participantIds = new Set(
+        mentions
+            .filter((mention): mention is StructuredMention & { type: 'agent'; participantId: string } =>
+                mention.type === 'agent' && typeof mention.participantId === 'string' && mention.participantId.length > 0)
+            .map(mention => mention.participantId),
+    )
+    return candidates.filter(agent => participantIds.has(agent.agentId || agent.id || ''))
 }
 
 export function stripMentionRoutingTokens(content: string, ownAgentName: string): string {

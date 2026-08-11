@@ -12,7 +12,12 @@ export interface TerminalExecInput extends Record<string, unknown> {
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   readonly definition = {
     name: 'terminal_exec',
-    description: 'Run a terminal command. Prefer command as the executable and args as the argument array; shell string execution is not used.',
+    description: [
+      'Run a CLI command, project script, test, build, package manager, or system executable.',
+      'Prefer command as the executable and args as the argument array; shell string execution is not used.',
+      'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.',
+      'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.',
+    ].join(' '),
     parameters: {
       type: 'object',
       properties: {

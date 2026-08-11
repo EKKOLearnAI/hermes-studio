@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { respondToEkkoToolApproval } from '../../packages/server/src/services/ekko-agent/approvals'
+import { respondToEkkoClarification } from '../../packages/server/src/services/ekko-agent/clarifications'
 
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
@@ -62,6 +64,7 @@ vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => 
 }))
 
 vi.mock('../../packages/ekko-agent/src', () => ({
+  DEFAULT_MODEL_REQUEST_TIMEOUT_MS: 300_000,
   createModelClient: vi.fn(() => ({
     provider: 'test',
     requestStyle: 'custom-runtime',
@@ -174,6 +177,126 @@ describe('ekko-agent context usage events', () => {
     completeWorkspaceRunCheckpointMock.mockReturnValue(null)
   })
 
+  it('bridges Ekko tool approval requests through the existing chat events', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-approval', maxSteps: 3 })
+      const choicePromise = input.toolContext.requestToolApproval({
+        approvalId: 'ekko-approval-1',
+        toolName: 'terminal_exec',
+        key: 'terminal:delete',
+        command: 'rm -rf build',
+        description: 'deletes files or directories',
+        choices: ['once', 'session', 'always', 'deny'],
+        allowPermanent: true,
+        timeoutMs: 300_000,
+      })
+      expect(respondToEkkoToolApproval('session-1', 'ekko-approval-1', 'session')).toMatchObject({
+        handled: true,
+        resolved: true,
+      })
+      await expect(choicePromise).resolves.toBe('session')
+      return {
+        runId: 'run-approval',
+        output: { role: 'assistant', content: 'done' },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'remove the build directory',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'approval.requested',
+      payload: expect.objectContaining({
+        event: 'approval.requested',
+        run_id: 'run-approval',
+        approval_id: 'ekko-approval-1',
+        command: 'rm -rf build',
+        choices: ['once', 'session', 'always', 'deny'],
+        allow_permanent: true,
+        permission_key: 'terminal:delete',
+        session_id: 'session-1',
+      }),
+    })
+    expect(events).toContainEqual({
+      event: 'approval.resolved',
+      payload: expect.objectContaining({
+        event: 'approval.resolved',
+        run_id: 'run-approval',
+        approval_id: 'ekko-approval-1',
+        choice: 'session',
+        session_id: 'session-1',
+      }),
+    })
+  })
+
+  it('bridges Ekko clarification requests through the existing chat events', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-clarify', maxSteps: 3 })
+      const responsePromise = input.toolContext.requestUserClarification({
+        clarifyId: 'ekko-clarify-1',
+        question: 'Which option should I use?',
+        choices: ['A', 'B'],
+        timeoutMs: 300_000,
+      })
+      expect(respondToEkkoClarification('session-1', 'ekko-clarify-1', 'B')).toEqual({
+        handled: true,
+        resolved: true,
+      })
+      await expect(responsePromise).resolves.toBe('B')
+      return {
+        runId: 'run-clarify',
+        output: { role: 'assistant', content: 'Using option B.' },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'clarify.requested',
+      payload: expect.objectContaining({
+        event: 'clarify.requested',
+        run_id: 'run-clarify',
+        clarify_id: 'ekko-clarify-1',
+        question: 'Which option should I use?',
+        choices: ['A', 'B'],
+        timeout_ms: 300_000,
+        session_id: 'session-1',
+      }),
+    })
+    expect(events).toContainEqual({
+      event: 'clarify.resolved',
+      payload: expect.objectContaining({
+        event: 'clarify.resolved',
+        run_id: 'run-clarify',
+        clarify_id: 'ekko-clarify-1',
+        resolved: true,
+        reason: 'response',
+        session_id: 'session-1',
+      }),
+    })
+  })
+
   it('attaches a completed workspace diff to the persisted Ekko assistant message', async () => {
     const change = {
       change_id: 'change-1',
@@ -239,6 +362,78 @@ describe('ekko-agent context usage events', () => {
     })
     expect(events.findIndex(item => item.event === 'workspace.diff.completed'))
       .toBeLessThan(events.findIndex(item => item.event === 'run.completed'))
+  }, 15_000)
+
+  it('treats an Ekko boundary interrupt as completion instead of an empty provider response', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-boundary-interrupt', maxSteps: 3 })
+      return {
+        runId: 'run-boundary-interrupt',
+        output: {
+          role: 'assistant',
+          content: '',
+          finishReason: 'boundary_interrupt',
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'stop at the next safe boundary',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'run.completed',
+      payload: expect.objectContaining({
+        run_id: 'run-boundary-interrupt',
+        output: '',
+      }),
+    })
+    expect(events.some(item => item.event === 'run.failed')).toBe(false)
+  }, 15_000)
+
+  it('still reports a genuine Ekko empty model response as a run failure', async () => {
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-empty-response', maxSteps: 3 })
+      return {
+        runId: 'run-empty-response',
+        output: {
+          role: 'assistant',
+          content: '',
+          finishReason: 'stop',
+        },
+        steps: [],
+        messages: [],
+        events: [],
+        contextEstimate: { contextTokens: 5_000 },
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'return a response',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        run_id: 'run-empty-response',
+        error: 'Model provider returned an empty response after streaming and non-streaming attempts.',
+      }),
+    })
+    expect(events.some(item => item.event === 'run.completed')).toBe(false)
   }, 15_000)
 
   it('completes an Ekko workspace diff on run failure without inventing an assistant id', async () => {
@@ -1289,6 +1484,18 @@ describe('ekko-agent context usage events', () => {
         message: {
           role: 'assistant',
           content: '',
+          reasoning: {
+            text: 'I need to find the image skill.',
+            estimatedTokens: 29,
+            native: {
+              format: 'openai-reasoning-details',
+              data: [{
+                type: 'reasoning.text',
+                text: 'I need to find the image skill.',
+                signature: 'provider-signature',
+              }],
+            },
+          },
           toolCalls: [{
             id: 'call-search',
             name: 'skill_list',
@@ -1332,6 +1539,20 @@ describe('ekko-agent context usage events', () => {
           },
         }],
         finish_reason: 'tool_calls',
+        reasoning: 'I need to find the image skill.',
+        reasoning_content: 'I need to find the image skill.',
+        reasoning_details: JSON.stringify({
+          version: 1,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to find the image skill.',
+              signature: 'provider-signature',
+            }],
+          },
+          estimatedTokens: 29,
+        }),
       }),
       expect.objectContaining({
         role: 'tool',
@@ -1486,6 +1707,19 @@ describe('ekko-agent context usage events', () => {
         session_id: 'session-1',
         role: 'assistant',
         content: '',
+        reasoning_content: 'I need to inspect both tool results.',
+        reasoning_details: JSON.stringify({
+          version: 1,
+          estimatedTokens: 17,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to inspect both tool results.',
+              signature: 'provider-signature',
+            }],
+          },
+        }),
         tool_calls: [{
           id: 'call_weather',
           type: 'function',
@@ -1544,6 +1778,18 @@ describe('ekko-agent context usage events', () => {
       {
         role: 'assistant',
         content: '',
+        reasoning: {
+          text: 'I need to inspect both tool results.',
+          estimatedTokens: 17,
+          native: {
+            format: 'openai-reasoning-details',
+            data: [{
+              type: 'reasoning.text',
+              text: 'I need to inspect both tool results.',
+              signature: 'provider-signature',
+            }],
+          },
+        },
         toolCalls: [{
           id: 'call_weather',
           name: 'browser_navigate',

@@ -2,10 +2,8 @@
 
 PlatformIO source project for the ESP32-C3 Wi-Fi setup firmware.
 
-This firmware is intentionally minimal: it manages Wi-Fi provisioning, keeps the
-I2C OLED status/animation UI, and shows a device tab that can discover Hermes Web
-UI and desktop endpoints on the LAN. Voice, pairing, relay, webhook, OTA, and
-audio codec flows are currently removed.
+The firmware manages Wi-Fi provisioning, the I2C OLED status UI, Hermes Web UI
+and desktop discovery, MCU voice interaction, remote relay access, and OTA.
 
 ## Hardware
 
@@ -46,7 +44,7 @@ rows are sent over I²C when the page changes.
 
 The device page can switch between the existing push-to-talk mode and an
 automatic listening mode. Automatic listening runs a lightweight VAD entirely
-on the ESP32-C3 while the device is idle. It keeps about 800 ms of local
+on the ESP32-C3 while the device is idle. It keeps about 250 ms of local
 pre-roll, opens the existing ADPCM voice stream only after sustained
 speech-like activity, and ends the turn after one second of silence.
 
@@ -54,6 +52,15 @@ Listening is suspended while a turn is transcribing, thinking, using tools, or
 playing speech, so device playback cannot trigger a new turn. The existing
 button controls remain unchanged: long press talks, single click stops the
 current response, and double click clears the session.
+
+## Agent Runtime
+
+The device page can select Ekko or Hermes for MCU voice turns. Ekko is selected
+by default, including after upgrading from firmware that did not have this
+setting. The choice is stored in MCU preferences and sent with each voice turn.
+Ekko and Hermes use separate deterministic session IDs, so their histories,
+workspaces, and background tasks are never shared. Switching back to an agent
+continues only that agent's own MCU session.
 
 From the repository root, use:
 

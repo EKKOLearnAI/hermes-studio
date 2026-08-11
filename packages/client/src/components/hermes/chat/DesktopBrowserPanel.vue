@@ -4,6 +4,12 @@ import { NButton, NInput, NPopover, NSelect, useDialog, useMessage } from 'naive
 import { useI18n } from 'vue-i18n'
 import { desktopBridge, type DesktopBrowserDownload, type DesktopBrowserSelection, type DesktopBrowserState } from '@/utils/desktop-bridge'
 
+const props = withDefaults(defineProps<{
+  visible?: boolean
+}>(), {
+  visible: true,
+})
+
 const emit = defineEmits<{
   attach: [payload: { file: File; context: string }]
 }>()
@@ -109,6 +115,7 @@ const annotationAnchorStyle = computed(() => {
 
 watch(() => activeTab.value?.url, value => { address.value = value || '' }, { immediate: true })
 watch(externalOverlayOpen, () => { void nextTick(syncViewport) })
+watch(() => props.visible, () => { void nextTick(syncViewport) })
 
 function applyState(next: DesktopBrowserState): void {
   state.value = next
@@ -117,7 +124,7 @@ function applyState(next: DesktopBrowserState): void {
 async function syncViewport(): Promise<void> {
   if (!bridge || !viewport.value) return
   const rect = viewport.value.getBoundingClientRect()
-  const visible = !externalOverlayOpen.value && !pendingAnnotation.value
+  const visible = props.visible && !externalOverlayOpen.value && !pendingAnnotation.value
     && rect.width > 0 && rect.height > 0 && document.visibilityState === 'visible'
   await bridge.setViewport({ x: rect.left, y: rect.top, width: rect.width, height: rect.height }, visible).catch(() => undefined)
 }

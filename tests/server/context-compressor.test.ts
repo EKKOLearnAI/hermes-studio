@@ -130,7 +130,6 @@ describe('ChatContextCompressor', () => {
       skillsEnabled: false,
       maxSteps: 1,
       maxModelRetries: 0,
-      toolDelayMs: 0,
       modelDefaults: expect.objectContaining({
         model: 'summary-model',
       }),
@@ -854,6 +853,112 @@ describe('countTokens', () => {
     const elapsedMs = performance.now() - start
     expect(tokens).toBeGreaterThan(0)
     expect(elapsedMs).toBeLessThan(250)
+  })
+
+  it('bounds token estimation time for very large non-pathological text', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
+    const text = unit.repeat(Math.ceil(1_000_000 / unit.length)).slice(0, 1_000_000)
+    const start = performance.now()
+    const tokens = countTokens(text)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
+  it('bounds token estimation time for large separated multibyte text', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const text = '汉 '.repeat(100_000)
+    const start = performance.now()
+    const tokens = countTokens(text)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
+  it('uses the exact tokenizer through the 256 KiB UTF-8 boundary and falls back above it', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { getEncoding } = await import('js-tiktoken')
+    const encoder = getEncoding('cl100k_base')
+    const atBoundary = 'a '.repeat(131_072)
+    const aboveBoundary = `${atBoundary}a`
+
+    expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
+    expect(countTokens(atBoundary)).toBe(encoder.encode(atBoundary).length)
+    expect(countTokensForModel(atBoundary, 'gpt-4o')).toBeGreaterThan(0)
+    expect(countTokens(aboveBoundary)).toBe(Buffer.byteLength(aboveBoundary, 'utf8'))
+    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(Buffer.byteLength(aboveBoundary, 'utf8'))
+  })
+
+  it('applies the 256 KiB cap by UTF-8 bytes for separated multibyte text', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { getEncoding } = await import('js-tiktoken')
+    const encoder = getEncoding('cl100k_base')
+    const atBoundary = '汉 '.repeat(65_536)
+    const aboveBoundary = `${atBoundary}a`
+    const heuristic = (text: string) => Buffer.byteLength(text, 'utf8')
+
+    expect(atBoundary.length).toBe(131_072)
+    expect(Buffer.byteLength(atBoundary, 'utf8')).toBe(262_144)
+    expect(countTokens(atBoundary)).toBe(encoder.encode(atBoundary).length)
+    expect(countTokens(aboveBoundary)).toBe(heuristic(aboveBoundary))
+    expect(countTokensForModel(aboveBoundary, 'gpt-4o')).toBe(heuristic(aboveBoundary))
+  })
+
+  it('does not materialize a full regex match array for oversized heuristic input', async () => {
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const oversized = '汉字 mixed text '.repeat(100_000)
+    const originalMatch = String.prototype.match
+    const matchSpy = vi.spyOn(String.prototype, 'match').mockImplementation(function (this: string, regexp: any) {
+      if (this.length > 262_144) {
+        throw new Error('oversized input must not use String.match')
+      }
+      return originalMatch.call(String(this), regexp)
+    } as typeof String.prototype.match)
+
+    expect(() => countTokens(oversized)).not.toThrow()
+    expect(() => countTokensForModel(oversized, 'gpt-4o')).not.toThrow()
+    expect(matchSpy).not.toHaveBeenCalled()
+  })
+
+  it('samples oversized heterogeneous text across its full length', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const ascii = 'a'.repeat(400_000)
+    const cjk = '汉'.repeat(400_000)
+    const tokens = countTokens(ascii + cjk)
+
+    expect(tokens).toBe(Buffer.byteLength(ascii + cjk, 'utf8'))
+  })
+
+  it('does not let a periodic adversarial layout hide CJK from oversized estimation', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const length = 800_000
+    const adversarial = new Array<string>(length).fill('汉')
+    const blockCount = 256
+    const blockLength = Math.floor((64 * 1024) / blockCount)
+    for (let block = 0; block < blockCount; block += 1) {
+      const start = Math.floor(block * length / blockCount)
+      for (let offset = 0; offset < blockLength; offset += 1) adversarial[start + offset] = 'a'
+    }
+    const text = adversarial.join('')
+    const ascii = 64 * 1024
+    const expected = Buffer.byteLength(text, 'utf8')
+
+    expect(countTokens(text)).toBe(expected)
+  })
+
+  it('keeps oversized token estimation work bounded independently of input length', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const small = 'a'.repeat(8 * 1024 * 1024)
+    const large = 'a'.repeat(128 * 1024 * 1024)
+    const smallStart = performance.now()
+    countTokens(small)
+    const smallMs = performance.now() - smallStart
+    const largeStart = performance.now()
+    countTokens(large)
+    const largeMs = performance.now() - largeStart
+
+    expect(largeMs).toBeLessThan(Math.max(100, smallMs * 4))
   })
 
   it('still uses the exact tokenizer for long space-separated text', async () => {

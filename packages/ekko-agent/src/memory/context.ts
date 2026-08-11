@@ -1,7 +1,6 @@
 import type { MemoryContext, MemoryNode } from './types'
 import { countTextTokens } from '../model/tokens'
-
-export const DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET = 4_000
+import { DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET } from '../config'
 
 export interface MemoryTokenSelection {
   nodes: MemoryNode[]

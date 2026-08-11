@@ -48,6 +48,7 @@ export function buildDbHistoryFromContextRows(
       })
     }
     if (row.reasoning_content != null) message.reasoning_content = row.reasoning_content
+    if (row.reasoning_details != null) message.reasoning_details = row.reasoning_details
     if (row.tool_calls?.length) {
       const cleanedToolCalls = row.tool_calls
         .filter((toolCall: any) => toolCall.id && toolCall.id.length > 0)

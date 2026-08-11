@@ -159,6 +159,7 @@ describe('ekko-agent tools', () => {
       'browser_snapshot',
       'browser_type',
       'browser_vision',
+      'code_exec',
       'delegate_task',
       'read_file',
       'skill_list',
@@ -166,6 +167,9 @@ describe('ekko-agent tools', () => {
       'terminal_exec',
       'write_file',
     ])
+    const definitionsByName = new Map(definitions.map(definition => [definition.name, definition]))
+    expect(definitionsByName.get('code_exec')?.description).toContain('including a one-line snippet')
+    expect(definitionsByName.get('terminal_exec')?.description).toContain('use code_exec instead')
     for (const definition of definitions) {
       expect(definition.description, definition.name).not.toMatch(/[\p{Script=Han}]/u)
       for (const description of collectDescriptions(definition.parameters)) {

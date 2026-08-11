@@ -61,6 +61,8 @@ export interface WorkflowRunRecord {
   created_at: number
   updated_at?: number
   error: string | null
+  trigger_source?: 'manual' | 'scheduled'
+  scheduled_at?: number | null
   node_sessions?: WorkflowRunNodeSessionRecord[]
   edge_evaluations?: WorkflowRunEdgeEvaluationRecord[]
   loop_epochs?: WorkflowRunLoopEpochRecord[]
@@ -286,4 +288,52 @@ export async function rerunWorkflowRunFromNode(
       }),
     },
   )
+}
+
+export interface WorkflowScheduleRecord {
+  id: string
+  workflow_id: string
+  profile: string
+  schedule: string
+  timezone: string
+  enabled: boolean
+  input: string | null
+  start_node_ids: string[]
+  timeout_ms: number | null
+  concurrency_policy: 'skip'
+  misfire_policy: 'skip'
+  last_scheduled_at: number | null
+  next_run_at: number | null
+  last_run_id: string | null
+  last_error: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface WorkflowScheduleRequest {
+  schedule: string
+  timezone: string
+  enabled?: boolean
+  input?: string | null
+  start_node_ids?: string[]
+  timeout_ms?: number | null
+}
+
+export async function listWorkflowSchedules(id: string): Promise<WorkflowScheduleRecord[]> {
+  const res = await request<{ schedules: WorkflowScheduleRecord[] }>(`/api/hermes/workflows/${encodeURIComponent(id)}/schedules`)
+  return res.schedules
+}
+
+export async function createWorkflowSchedule(id: string, input: WorkflowScheduleRequest): Promise<WorkflowScheduleRecord> {
+  const res = await request<{ schedule: WorkflowScheduleRecord }>(`/api/hermes/workflows/${encodeURIComponent(id)}/schedules`, { method: 'POST', body: JSON.stringify(input) })
+  return res.schedule
+}
+
+export async function updateWorkflowSchedule(id: string, scheduleId: string, input: Partial<WorkflowScheduleRequest>): Promise<WorkflowScheduleRecord> {
+  const res = await request<{ schedule: WorkflowScheduleRecord }>(`/api/hermes/workflows/${encodeURIComponent(id)}/schedules/${encodeURIComponent(scheduleId)}`, { method: 'PATCH', body: JSON.stringify(input) })
+  return res.schedule
+}
+
+export async function deleteWorkflowSchedule(id: string, scheduleId: string): Promise<void> {
+  await request<{ ok: true }>(`/api/hermes/workflows/${encodeURIComponent(id)}/schedules/${encodeURIComponent(scheduleId)}`, { method: 'DELETE' })
 }

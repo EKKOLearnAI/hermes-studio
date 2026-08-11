@@ -24,8 +24,8 @@ export interface StartRunRequest {
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   queue_id?: string
-  source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
-  session_source?: 'global_agent' | 'workflow'
+  source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
+  session_source?: 'global_agent' | 'workflow' | 'group_chat'
   coding_agent_id?: ChatCodingAgentId
   agent_id?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
@@ -124,6 +124,19 @@ export interface RunEvent {
     timestamp?: number
     queued?: boolean
   }>
+  generation?: string
+  queue_id?: string
+  runtime?: 'hermes' | 'ekko'
+  phase?: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message' | 'cancelled'
+  guarantee?: 'strict'
+  requested_at?: number
+  reason?: string
+  /** True when a terminal event intentionally stopped the previous run. */
+  interrupted?: boolean
+  /** Machine-readable reason for an intentional terminal event. */
+  stop_reason?: 'queue_insertion' | string
+  /** Safety guarantee used when the previous run was interrupted. */
+  boundary_guarantee?: 'strict'
   /** User message broadcast to other windows already watching the same session. */
   message?: {
     id?: string | number
@@ -150,6 +163,15 @@ export interface ResumeSessionPayload {
   workspace?: string | null
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
+  queueInsertion?: {
+    generation: string
+    run_id?: string
+    queue_id: string
+    runtime: 'hermes' | 'ekko'
+    phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message'
+    guarantee: 'strict'
+    requested_at: number
+  } | null
   backgroundTasks?: Array<Record<string, unknown>>
   backgroundPending?: number
 }
@@ -198,6 +220,7 @@ const sessionEventHandlers = new Map<string, {
   onSessionTitleUpdated?: (event: RunEvent) => void
   onSessionWorkspaceUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
+  onQueueInsertionUpdated?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
   onPeerUserMessage?: (event: RunEvent) => void
@@ -376,6 +399,12 @@ function globalRunQueuedHandler(event: RunEvent): void {
   }
 }
 
+function globalQueueInsertionUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+  sessionEventHandlers.get(sid)?.onQueueInsertionUpdated?.(event)
+}
+
 /**
  * Global compression.started event handler
  */
@@ -529,6 +558,7 @@ function globalApprovalRequestedHandler(event: RunEvent): void {
   if (handlers?.onApprovalRequested) {
     handlers.onApprovalRequested(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalApprovalResolvedHandler(event: RunEvent): void {
@@ -539,6 +569,7 @@ function globalApprovalResolvedHandler(event: RunEvent): void {
   if (handlers?.onApprovalResolved) {
     handlers.onApprovalResolved(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalPeerUserMessageHandler(event: RunEvent): void {
@@ -563,6 +594,7 @@ function globalClarifyRequestedHandler(event: RunEvent): void {
   if (handlers?.onClarifyRequested) {
     handlers.onClarifyRequested(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 function globalClarifyResolvedHandler(event: RunEvent): void {
@@ -573,6 +605,7 @@ function globalClarifyResolvedHandler(event: RunEvent): void {
   if (handlers?.onClarifyResolved) {
     handlers.onClarifyResolved(event)
   }
+  for (const handler of peerUserMessageHandlers) handler(event)
 }
 
 /**
@@ -607,6 +640,7 @@ export function registerSessionHandlers(
     onSessionTitleUpdated?: (event: RunEvent) => void
     onSessionWorkspaceUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
+    onQueueInsertionUpdated?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
     onPeerUserMessage?: (event: RunEvent) => void
@@ -769,6 +803,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
     chatRunSocket.on('run.failed', globalRunFailedHandler)
     chatRunSocket.on('run.completed', globalRunCompletedHandler)
     chatRunSocket.on('run.queued', globalRunQueuedHandler)
+    chatRunSocket.on('run.queue_insertion.updated', globalQueueInsertionUpdatedHandler)
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
     chatRunSocket.on('run.peer_user_message', globalPeerUserMessageHandler)
@@ -1046,6 +1081,10 @@ export function startRunViaSocket(
       onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onQueueInsertionUpdated: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },

@@ -30,8 +30,9 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 }))
 
 async function routeHandler(path: string, method: string) {
-  const { groupChatRoutes } = await import('../../packages/server/src/routes/hermes/group-chat')
-  const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
+  const { groupChatPublicRoutes, groupChatRoutes } = await import('../../packages/server/src/routes/hermes/group-chat')
+  const layer = [...(groupChatPublicRoutes as any).stack, ...(groupChatRoutes as any).stack]
+    .find((item: any) => item.path === path && item.methods.includes(method))
   if (!layer) throw new Error(`Route not found: ${method} ${path}`)
   return layer.stack[0]
 }
@@ -431,7 +432,7 @@ describe('group chat room workspace', () => {
 
     const row = dbState.db?.prepare(
       `SELECT workspace, summaryProfile, summaryProvider, summaryModel,
-              summaryApiMode, summaryEveryTurns
+              summaryApiMode, summaryEveryTurns, allowRemoteWorkspaceAccess
        FROM gc_rooms WHERE id = ?`,
     ).get('old-room') as Record<string, unknown>
     expect(row).toMatchObject({
@@ -441,6 +442,7 @@ describe('group chat room workspace', () => {
       summaryModel: '',
       summaryApiMode: '',
       summaryEveryTurns: 20,
+      allowRemoteWorkspaceAccess: 0,
     })
     expect(dbState.db?.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gc_room_summaries'`,

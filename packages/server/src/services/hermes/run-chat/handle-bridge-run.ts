@@ -43,10 +43,11 @@ const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
 const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 120_000
 
-type BridgeRunSource = Extract<ChatRunSource, 'cli' | 'global_agent' | 'workflow'>
+type BridgeRunSource = Extract<ChatRunSource, 'cli' | 'global_agent' | 'workflow' | 'group_chat'>
 
 function normalizeBridgeRunSource(source?: string | null, sessionSource?: string | null): BridgeRunSource {
   if (sessionSource === 'global_agent' || source === 'global_agent') return 'global_agent'
+  if (sessionSource === 'group_chat' || source === 'group_chat') return 'group_chat'
   if (sessionSource === 'workflow' || source === 'workflow') return 'workflow'
   return 'cli'
 }
@@ -400,7 +401,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; category_id?: number | null; source?: string; session_source?: 'global_agent' | 'workflow'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; background_delegation_enabled?: boolean; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; category_id?: number | null; source?: string; session_source?: 'global_agent' | 'workflow' | 'group_chat'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; background_delegation_enabled?: boolean; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -419,9 +420,11 @@ export async function handleBridgeRun(
     return
   }
 
-  let fullInstructions = instructions
-    ? `${getSystemPrompt(undefined, { source: data.session_source || data.source })}\n${instructions}`
-    : getSystemPrompt(undefined, { source: data.session_source || data.source })
+  // `instructions` already carries the Studio guidance: the chat-run socket
+  // composes it before delegating here. Prepending it again duplicated the whole
+  // block — MCP usage plus the output-format rules — byte for byte in the system
+  // message of every request. Compose only when a caller hands us nothing.
+  let fullInstructions = instructions || getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
   const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !sessionRow?.workspace)
@@ -521,6 +524,15 @@ export async function handleBridgeRun(
       content: storageInputStr,
       display_role: displayRoleForStorage,
       display_content: displayContentForStorage,
+      timestamp: now,
+    })
+    data.onEvent?.('message.created', {
+      event: 'message.created',
+      session_id,
+      queue_id: data.queue_id,
+      message_id: messageId,
+      role: displayRole,
+      content: inputStr,
       timestamp: now,
     })
   } else if (!getSession(session_id)) {
@@ -830,6 +842,7 @@ export async function resumeBridgeRun(
     provider?: string | null
     workspace?: string | null
     source?: string | null
+    onEvent?: (event: string, payload: any) => void
   },
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -860,6 +873,7 @@ export async function resumeBridgeRun(
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id: sessionId }
     observePetEvent(profile, event, tagged)
+    args.onEvent?.(event, tagged)
     nsp.to(`session:${sessionId}`).emit(event, tagged)
     if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
       socket.emit(event, tagged)
@@ -1655,6 +1669,7 @@ async function applyBridgeChunkAsync(
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
+    message_id: state.bridgeAssistantMessageId,
     output: finalResponse,
     result: chunk.result,
     error: terminalError || chunk.error,

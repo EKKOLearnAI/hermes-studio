@@ -136,6 +136,23 @@ describe('outbound relay client', () => {
     return queueId
   }
 
+  function startHermesPrimaryMockRun(socket: any, runId = 'run-primary'): string {
+    const runCall = socket.emit.mock.calls
+      .filter(([event]: [string]) => event === 'run')
+      .at(-1)
+    expect(runCall?.[1]).toMatchObject({
+      session_id: 'mcu-device-research-hermes',
+      source: 'global_agent',
+      session_source: 'global_agent',
+      instructions: MCU_VOICE_SYSTEM_INSTRUCTIONS,
+    })
+    expect(runCall?.[1]).not.toHaveProperty('coding_agent_id')
+    const queueId = runCall?.[1]?.queue_id
+    expect(queueId).toMatch(/^mcu_/)
+    socket.__handlers.get('run.started')?.({ run_id: runId, queue_id: queueId })
+    return queueId
+  }
+
   it('stays disabled when no relay url is passed explicitly', async () => {
     const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
 
@@ -326,6 +343,7 @@ describe('outbound relay client', () => {
     emitRemote(remoteSocket, 'voice.stream.start', {
       type: 'voice.stream.start',
       interactionId: 'voice-stream-1',
+      agentRuntime: 'hermes',
       mimeType: 'audio/x-ima-adpcm',
       frameFormat: 'hadp-chunk-v1',
       sampleRate: 24000,
@@ -349,6 +367,7 @@ describe('outbound relay client', () => {
       mimeType: 'audio/x-ima-adpcm',
       frameFormat: 'hadp-chunk-v1',
       profile: 'default',
+      agentRuntime: 'hermes',
     }))
     expect(localGlobalAgentSocket.emit).toHaveBeenCalledWith('voice.stream.chunk', expect.objectContaining({
       interactionId: 'voice-stream-1',
@@ -525,6 +544,7 @@ describe('outbound relay client', () => {
       interactionId: 'voice-tts-ok',
       mimeType: 'audio/wav',
       profile: 'research',
+      agentRuntime: 'hermes',
     })
     emitRemote(remoteSocket, 'voice.stream.chunk', {
       type: 'voice.stream.chunk',
@@ -536,7 +556,10 @@ describe('outbound relay client', () => {
     })
     const localSocket = socketForUrl('http://127.0.0.1:8648/chat-run')
     localSocket.__handlers.get('connect')?.()
-    startPrimaryMockRun(localSocket)
+    startHermesPrimaryMockRun(localSocket)
+    expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'X-Hermes-Mcu-Agent-Runtime': 'hermes',
+    })
     localSocket.__handlers.get('message.delta')?.({ delta: '我来查一下。\n' })
     localSocket.__handlers.get('tool.started')?.({
       tool: 'weather',
@@ -836,7 +859,7 @@ describe('outbound relay client', () => {
     await vi.waitFor(() => {
       expect(ttsSignal?.aborted).toBe(true)
     })
-    expect(localSocket.emit).toHaveBeenCalledWith('abort', { session_id: 'mcu-device-research' })
+    expect(localSocket.emit).toHaveBeenCalledWith('abort', { session_id: 'mcu-device-research-ekko' })
     expect(remoteSocket.emit).not.toHaveBeenCalledWith('audio.enqueue', expect.any(Object))
   })
 

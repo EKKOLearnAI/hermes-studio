@@ -6,7 +6,13 @@ const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(),
   resumeSession: vi.fn(),
   registerSessionHandlers: vi.fn(),
+  globalPendingHandler: undefined as undefined | ((event: any) => void),
   unregisterSessionHandlers: vi.fn(),
+}))
+
+const completionSoundMock = vi.hoisted(() => ({
+  primeCompletionSound: vi.fn(),
+  playCompletionSound: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
@@ -17,7 +23,11 @@ vi.mock('@/api/hermes/chat', () => ({
   getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
   respondToolApproval: vi.fn(),
   respondClarify: vi.fn(),
-  onPeerUserMessage: vi.fn(() => vi.fn()),
+  onPeerUserMessage: vi.fn((handler: (event: any) => void) => { chatApi.globalPendingHandler = handler; return vi.fn() }),
+  onApprovalRequested: vi.fn(() => vi.fn()),
+  onApprovalResolved: vi.fn(() => vi.fn()),
+  onClarifyRequested: vi.fn(() => vi.fn()),
+  onClarifyResolved: vi.fn(() => vi.fn()),
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
   onSessionWorkspaceUpdated: vi.fn(() => vi.fn()),
@@ -53,11 +63,12 @@ vi.mock('@/api/hermes/system', () => ({
 }))
 
 vi.mock('@/utils/completion-sound', () => ({
-  primeCompletionSound: vi.fn(),
-  playCompletionSound: vi.fn(),
+  primeCompletionSound: completionSoundMock.primeCompletionSound,
+  playCompletionSound: completionSoundMock.playCompletionSound,
 }))
 
 import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
+import { useSettingsStore } from '@/stores/hermes/settings'
 
 function makeSession(id: string): Session {
   return {
@@ -74,6 +85,7 @@ describe('chat store error handling - #1644', () => {
 
   beforeEach(() => {
     handlers = undefined
+    chatApi.globalPendingHandler = undefined
     vi.resetAllMocks()
     setActivePinia(createPinia())
     chatApi.startRunViaSocket.mockReturnValue({ abort: vi.fn() })
@@ -90,6 +102,70 @@ describe('chat store error handling - #1644', () => {
       handlers = registeredHandlers
       return vi.fn()
     })
+  })
+
+  it('primes approval sound on direct send when completion sound is disabled', async () => {
+    const store = useChatStore()
+    const settingsStore = useSettingsStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    settingsStore.display.bell_on_complete = false
+    settingsStore.display.approval_bell = true
+
+    await store.sendMessage('request approval')
+
+    expect(completionSoundMock.primeCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('does not prime notification sound on direct send when both sound settings are disabled', async () => {
+    const store = useChatStore()
+    const settingsStore = useSettingsStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    settingsStore.display.bell_on_complete = false
+    settingsStore.display.approval_bell = false
+
+    await store.sendMessage('silent request')
+
+    expect(completionSoundMock.primeCompletionSound).not.toHaveBeenCalled()
+  })
+
+  it('tracks an approval request from an inactive session through the global socket listener', () => {
+    const store = useChatStore()
+    const sessionA = makeSession('session-a')
+    store.sessions = [sessionA, makeSession('session-b')]
+    store.activeSessionId = 'session-a'
+    store.activeSession = sessionA
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested',
+      session_id: 'session-b',
+      approval_id: 'approval-b',
+      command: 'pwd',
+      description: 'Run command',
+      choices: ['once', 'deny'],
+    })
+
+    expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b', command: 'pwd' })
+    expect(store.activePendingApproval).toBeNull()
+  })
+
+  it('keeps a pending approval when the authoritative response is unresolved', () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-a'), makeSession('session-b')]
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-b', approval_id: 'approval-b', choices: ['once', 'deny'],
+    })
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved', session_id: 'session-b', approval_id: 'approval-b', resolved: false, error: 'stale',
+    })
+
+    expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b' })
   })
 
   it('preserves assistant content when run.failed fires during streaming with substantial content', async () => {

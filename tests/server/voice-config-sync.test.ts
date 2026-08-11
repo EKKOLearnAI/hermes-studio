@@ -37,6 +37,7 @@ afterEach(async () => {
   db?.close()
   db = null
   vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/services/hermes/local-stt-model-manager')
   vi.resetModules()
   if (originalHermesHome === undefined) delete process.env.HERMES_HOME
   else process.env.HERMES_HOME = originalHermesHome
@@ -144,6 +145,28 @@ describe('Hermes voice config sync', () => {
     expect(config.tts.provider).toBe('hermes-studio')
     expect(config.tts.edge).toEqual({ voice: 'old-voice' })
     expect(config.tts.providers['hermes-studio'].output_format).toBe('mp3')
+  })
+
+  it('routes an available Studio local model through the non-streaming voice proxy', async () => {
+    vi.doMock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
+      isLocalSttModelUsable: () => true,
+    }))
+    const sttStore = await import('../../packages/server/src/db/hermes/stt-settings-store')
+    sttStore.saveSttProviderSetting('default', 'local', {
+      settings: { model: 'local-model' },
+      secrets: {},
+    })
+    sttStore.saveActiveSttProvider('default', 'local')
+
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    await expect(syncVoiceConfigToHermesProfile('default')).resolves.toMatchObject({ stt: 'hermes-studio' })
+
+    const config = await readConfig()
+    expect(config.stt.provider).toBe('hermes-studio')
+    expect(config.stt.providers['hermes-studio']).toMatchObject({
+      type: 'command',
+      output_format: 'txt',
+    })
   })
 
   it('hides Groq and MiMo behind the same Hermes Studio provider', async () => {

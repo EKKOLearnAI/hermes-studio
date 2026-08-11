@@ -25,6 +25,7 @@ import { resetDesktopDefaultLogin } from './desktop-login-reset'
 import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import { installSelectionContextMenu } from './selection-context-menu'
+import { groupChatAgentLinkPopupResponse } from './group-chat-agent-popup'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
@@ -512,7 +513,9 @@ async function createWindow(): Promise<void> {
   installSelectionContextMenu(mainWindow)
 
   // External links → system browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    const agentLinkPopup = groupChatAgentLinkPopupResponse(url, frameName)
+    if (agentLinkPopup) return agentLinkPopup
     if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
       return { action: 'allow' }
     }
@@ -599,7 +602,9 @@ async function openChatWindow(sessionIdInput: unknown, profileInput?: unknown): 
   })
 
   installSelectionContextMenu(chatWindow)
-  chatWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+  chatWindow.webContents.setWindowOpenHandler(({ url: targetUrl, frameName }) => {
+    const agentLinkPopup = groupChatAgentLinkPopupResponse(targetUrl, frameName)
+    if (agentLinkPopup) return agentLinkPopup
     if (/^(https?:|mailto:)/i.test(targetUrl)) {
       shell.openExternal(targetUrl).catch(() => undefined)
     }
@@ -1120,7 +1125,12 @@ function resolveNotificationIcon(icon: unknown): string {
   return candidates.find(candidate => existsSync(candidate)) || desktopIcon()
 }
 
-ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: unknown; body?: unknown; icon?: unknown; tag?: unknown }) => {
+function safeNotificationClickUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  return value.startsWith('/hermes/') && !value.includes('..') && !value.includes('\\') ? value : null
+}
+
+ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: unknown; body?: unknown; icon?: unknown; tag?: unknown; clickUrl?: unknown }) => {
   const supported = Notification.isSupported()
   if (!supported) {
     console.warn('[desktop-notification] Electron notifications are not supported on this system')
@@ -1132,6 +1142,7 @@ ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: 
     : 'Hermes Studio'
   const body = typeof payload?.body === 'string' ? payload.body.trim().slice(0, 240) : ''
   const icon = resolveNotificationIcon(payload?.icon)
+  const clickUrl = safeNotificationClickUrl(payload?.clickUrl)
   const notification = new Notification({
     title,
     body,
@@ -1144,6 +1155,15 @@ ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: 
   }
   notification.on('click', () => {
     releaseNotification()
+    if (clickUrl && mainWindow && !mainWindow.isDestroyed()) {
+      const target = webUiHashUrl(clickUrl)
+      if (target) {
+        void mainWindow.loadURL(target)
+          .catch(error => console.warn('[desktop-notification] failed to open notification target', error))
+          .finally(showMainWindow)
+      } else showMainWindow()
+      return
+    }
     showMainWindow()
   })
   notification.on('close', releaseNotification)

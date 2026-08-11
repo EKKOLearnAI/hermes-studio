@@ -1042,6 +1042,52 @@ describe('agent runner Anthropic adapters', () => {
       usage: { input_tokens: 5, output_tokens: 6 },
     })
   })
+
+  it('drops unused empty optional Responses arguments using the original Anthropic tool schema', () => {
+    const message = openAiResponsesToAnthropicMessage({
+      id: 'resp_read',
+      status: 'completed',
+      output: [{
+        type: 'function_call',
+        call_id: 'call_read',
+        name: 'Read',
+        arguments: JSON.stringify({
+          file_path: '/tmp/package.json',
+          pages: '',
+          cursor: null,
+          nullable_cursor: null,
+          explicit_empty: '',
+          required_empty: '',
+        }),
+      }],
+    }, anthropicTarget, [{
+      name: 'Read',
+      input_schema: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string' },
+          pages: { type: 'string' },
+          cursor: { type: 'string' },
+          nullable_cursor: { type: ['string', 'null'] },
+          explicit_empty: { type: 'string', enum: [''] },
+          required_empty: { type: 'string' },
+        },
+        required: ['file_path', 'required_empty'],
+      },
+    }])
+
+    expect(message.content).toEqual([{
+      type: 'tool_use',
+      id: 'call_read',
+      name: 'Read',
+      input: {
+        file_path: '/tmp/package.json',
+        nullable_cursor: null,
+        explicit_empty: '',
+        required_empty: '',
+      },
+    }])
+  })
 })
 
 describe('agent runner Anthropic stream adapters', () => {
@@ -1108,5 +1154,54 @@ describe('agent runner Anthropic stream adapters', () => {
       delta: { stop_reason: 'tool_use', stop_sequence: null },
       usage: { output_tokens: 3 },
     })
+  })
+
+  it('unifies Responses call and item ids while normalizing optional tool arguments', async () => {
+    const fullArguments = JSON.stringify({
+      file_path: '/tmp/package.json',
+      limit: 220,
+      offset: 0,
+      pages: '',
+    })
+    const events = await collectAnthropicEvents(openAiResponsesSseToAnthropicEvents(encodedChunks([
+      'data: {"type":"response.created","response":{"id":"resp_read"}}\n\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_read","call_id":"call_read","name":"Read","arguments":"","status":"in_progress"}}\n\n',
+      `data: ${JSON.stringify({ type: 'response.function_call_arguments.delta', output_index: 0, item_id: 'fc_read', delta: fullArguments })}\n\n`,
+      `data: ${JSON.stringify({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', id: 'fc_read', call_id: 'call_read', name: 'Read', arguments: fullArguments, status: 'completed' } })}\n\n`,
+      'data: {"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":8}}}\n\n',
+    ]), anthropicTarget, [{
+      name: 'Read',
+      input_schema: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string' },
+          limit: { type: 'number' },
+          offset: { type: 'number' },
+          pages: { type: 'string' },
+        },
+        required: ['file_path'],
+      },
+    }]))
+
+    const starts = events.filter(event => (
+      event.type === 'content_block_start' &&
+      (event.data as any).content_block?.type === 'tool_use'
+    ))
+    const argumentDeltas = events.filter(event => (
+      event.type === 'content_block_delta' &&
+      (event.data as any).delta?.type === 'input_json_delta'
+    ))
+
+    expect(starts).toHaveLength(1)
+    expect(starts[0].data).toMatchObject({
+      content_block: { type: 'tool_use', id: 'call_read', name: 'Read' },
+    })
+    expect(argumentDeltas).toHaveLength(1)
+    expect((argumentDeltas[0].data as any).delta.partial_json).toBe(JSON.stringify({
+      file_path: '/tmp/package.json',
+      limit: 220,
+      offset: 0,
+    }))
+    expect(JSON.stringify(events)).not.toContain('"name":"tool"')
   })
 })

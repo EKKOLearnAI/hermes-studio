@@ -53,6 +53,7 @@ function runtimeStatus() {
       defaultStorageDirectory: '/state/desktop-runtime',
       pendingStorageDirectory: '',
       migrationError: '',
+      activationError: '',
       installed: [],
       remoteVersions: [],
     },
@@ -100,6 +101,21 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     const runtimeDirectory = wrapper.get('[data-testid="active-runtime-directory"]')
     expect(runtimeDirectory.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64')
+  })
+
+  it('shows the Runtime fallback reason and hides Web UI version switching', async () => {
+    const status = runtimeStatus()
+    status.hermes.activationError = 'Selected Runtime 0.20.0 is missing node/node.exe.'
+    status.webui.remoteVersions = ['0.6.32']
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="runtime-activation-error"]').text())
+      .toContain('Selected Runtime 0.20.0 is missing node/node.exe.')
+    expect(wrapper.text()).not.toContain('runtimeVersions.webUiTitle')
+    expect(wrapper.text()).not.toContain('0.6.32')
   })
 
   it('opens the desktop picker and schedules migration to the selected directory', async () => {

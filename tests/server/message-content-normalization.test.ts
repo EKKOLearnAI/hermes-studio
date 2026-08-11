@@ -59,4 +59,14 @@ describe('message content normalization', () => {
     expect(normalizeMessageContentForStorageRole('user', content)).toBe(content)
     expect(normalizeMessageContentForStorageRole('tool', content)).not.toContain('data:image/')
   })
+
+  it('preserves path-backed Assistant attachment blocks for group message rendering', () => {
+    const content = JSON.stringify([
+      { type: 'text', text: 'Rendered artifact' },
+      { type: 'image', name: 'render.png', path: '0123456789abcdef0123456789abcdef.png', media_type: 'image/png' },
+      { type: 'file', name: 'report.pdf', path: 'fedcba9876543210fedcba9876543210.pdf', media_type: 'application/pdf' },
+    ])
+
+    expect(normalizeMessageContentForStorageRole('assistant', content)).toBe(content)
+  })
 })

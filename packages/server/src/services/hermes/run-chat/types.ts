@@ -40,10 +40,12 @@ export interface QueuedRun {
   groupSystemPrompt?: string
   groupRoomId?: string
   groupAgentId?: string
+  workflowId?: string
+  workflowNodeId?: string
   profile: string
   workspace?: string | null
   source?: ChatRunSource
-  sessionSource?: 'global_agent' | 'workflow'
+  sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   codingAgentId?: ChatCodingAgentId
   agentId?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
@@ -75,6 +77,23 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
+export type QueueInsertionRuntime = 'hermes' | 'ekko'
+export type QueueInsertionPhase =
+  | 'requesting'
+  | 'waiting_for_tool_batch'
+  | 'stopping_current_turn'
+  | 'starting_queued_message'
+
+export interface QueueInsertionControl {
+  generation: string
+  queueId: string
+  runId?: string
+  runtime: QueueInsertionRuntime
+  phase: QueueInsertionPhase
+  guarantee: 'strict'
+  requestedAt: number
+}
+
 export interface SessionState {
   messages: SessionMessage[]
   messageTotal?: number
@@ -93,8 +112,13 @@ export interface SessionState {
   bridgeContext?: BridgeContextState
   isAborting?: boolean
   queue: QueuedRun[]
+  queueInsertion?: QueueInsertionControl
   responseRun?: ResponseRunState
   source?: ChatRunSource
+  webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex'
+  webhookRoomId?: string
+  webhookWorkflowId?: string
+  webhookWorkflowNodeId?: string
   bridgePendingAssistantContent?: string
   bridgeAssistantMessageId?: string
   bridgePendingReasoningContent?: string
@@ -136,7 +160,7 @@ export interface BridgeContextState {
   workspace?: string
 }
 
-export type ChatRunSource = 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow'
+export type ChatRunSource = 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
 export type ChatCodingAgentId = 'claude-code' | 'codex' | 'ekko-agent'
 
 export interface BridgeCompressionResult {

@@ -63,6 +63,48 @@ function isSameOrNestedPath(parent: string, candidate: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
+function windowsVenvHomeIsValid(config: string, sourceRoot: string): boolean {
+  const homeLine = config
+    .split(/\r?\n/)
+    .find(line => /^\s*home\s*=/.test(line))
+  const configuredHome = homeLine
+    ? homeLine.replace(/^\s*home\s*=\s*/, '').trim()
+    : ''
+  return Boolean(
+    configuredHome
+    && isAbsolute(configuredHome)
+    && isSameOrNestedPath(sourceRoot, configuredHome),
+  )
+}
+
+export function windowsRuntimeNeedsRelocationRepair(
+  runtimeRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== 'win32') return false
+
+  const sourceRoot = join(runtimeRoot, 'python')
+  const venvRoot = join(sourceRoot, 'venv')
+  if (!existsSync(venvRoot)) return false
+
+  const pyvenvConfig = join(venvRoot, 'pyvenv.cfg')
+  if (existsSync(pyvenvConfig)) {
+    try {
+      if (!windowsVenvHomeIsValid(readFileSync(pyvenvConfig, 'utf-8'), sourceRoot)) {
+        return true
+      }
+    } catch {
+      return true
+    }
+  }
+
+  const scriptsRoot = join(venvRoot, 'Scripts')
+  return ['hermes', 'hermes-agent', 'hermes-acp'].some(name =>
+    existsSync(join(scriptsRoot, `${name}.exe`))
+    && !existsSync(join(scriptsRoot, `${name}.cmd`)),
+  )
+}
+
 function rewriteWindowsVenvConfig(
   file: string,
   previousSourceRoot: string,
@@ -79,9 +121,7 @@ function rewriteWindowsVenvConfig(
   const configuredHome = homeIndex >= 0
     ? lines[homeIndex].replace(/^\s*home\s*=\s*/, '').trim()
     : ''
-  const home = configuredHome
-    && isAbsolute(configuredHome)
-    && isSameOrNestedPath(finalSourceRoot, configuredHome)
+  const home = windowsVenvHomeIsValid(updated, finalSourceRoot)
     ? configuredHome
     : join(finalSourceRoot, 'base')
   if (homeIndex >= 0) {

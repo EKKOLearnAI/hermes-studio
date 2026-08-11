@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   EkkoDatabaseManager,
   EkkoDirectoryManager,
+  DEFAULT_EKKO_CONFIG,
   resolveEkkoDatabasePath,
   resolveEkkoDataDirectory,
+  setupEkkoAgent,
 } from '../../packages/ekko-agent/src'
 
 let webUiHome = ''
@@ -21,13 +23,26 @@ afterEach(async () => {
 })
 
 describe('EkkoDatabaseManager', () => {
-  it('uses the generic Ekko data directory and database name', () => {
-    expect(resolveEkkoDataDirectory({ baseDirectory: webUiHome })).toBe(join(webUiHome, '.ekko'))
-    expect(resolveEkkoDatabasePath({ baseDirectory: webUiHome })).toBe(join(webUiHome, '.ekko', 'ekko.db'))
+  it('uses the Web UI Ekko directory and database name outside development', () => {
+    const options = { baseDirectory: webUiHome, env: { NODE_ENV: 'production' } }
+    expect(resolveEkkoDataDirectory(options)).toBe(join(webUiHome, '.ekko'))
+    expect(resolveEkkoDatabasePath(options)).toBe(join(webUiHome, '.ekko', 'ekko.db'))
     expect(new EkkoDirectoryManager().baseDirectory).toBe(homedir())
   })
 
-  it('initializes the Ekko root with its skills and workspace directories', () => {
+  it('uses the package-local SQL data directory in development', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const options = {
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    }
+
+    expect(resolveEkkoDataDirectory(options)).toBe(join(packageRoot, 'sql-data'))
+    expect(resolveEkkoDatabasePath(options)).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
+  })
+
+  it('initializes the Ekko root with its global config, skills, and workspace directories', async () => {
     const directories = new EkkoDirectoryManager(webUiHome)
     expect(existsSync(directories.rootDirectory)).toBe(false)
 
@@ -35,10 +50,16 @@ describe('EkkoDatabaseManager', () => {
       baseDirectory: webUiHome,
       rootDirectory: join(webUiHome, '.ekko'),
       databasePath: join(webUiHome, '.ekko', 'ekko.db'),
+      configDirectory: join(webUiHome, '.ekko', 'config'),
+      configPath: join(webUiHome, '.ekko', 'config', 'config.json'),
       skillsDirectory: join(webUiHome, '.ekko', 'skills'),
       logsDirectory: join(webUiHome, '.ekko', 'logs'),
       workspaceDirectory: join(webUiHome, '.ekko', 'workspace'),
     })
+    expect(existsSync(directories.configDirectory)).toBe(true)
+    await expect(readFile(directories.configPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(DEFAULT_EKKO_CONFIG, null, 2)}\n`,
+    )
     expect(existsSync(directories.skillsDirectory)).toBe(true)
     expect(existsSync(directories.workspaceDirectory)).toBe(true)
     expect(existsSync(directories.logsDirectory)).toBe(false)
@@ -54,6 +75,46 @@ describe('EkkoDatabaseManager', () => {
     expect(existsSync(join(webUiHome, '.ekko', 'workspace', 'work', 'session-1'))).toBe(true)
     expect(existsSync(join(webUiHome, '.ekko', 'skills', 'work', '.ekko-backups'))).toBe(false)
     expect(existsSync(join(webUiHome, '.ekko', 'skills', 'work', '.ekko-archive'))).toBe(false)
+  })
+
+  it('initializes the global config idempotently without creating profile config directories', async () => {
+    const directories = new EkkoDirectoryManager(webUiHome)
+    expect(directories.initializeConfigDirectory()).toBe(
+      join(webUiHome, '.ekko', 'config', 'config.json'),
+    )
+    await writeFile(directories.configPath, '{\n  "custom": true\n}\n')
+
+    directories.initialize()
+
+    await expect(readFile(directories.configPath, 'utf8')).resolves.toBe(
+      '{\n  "custom": true\n}\n',
+    )
+    expect(existsSync(join(directories.configDirectory, 'default'))).toBe(false)
+  })
+
+  it('sets up directories, profiles, config, and the migrated database before an agent run', async () => {
+    const setup = setupEkkoAgent({
+      baseDirectory: webUiHome,
+      profiles: ['work'],
+      env: { NODE_ENV: 'test' },
+    })
+
+    try {
+      expect(existsSync(setup.layout.configPath)).toBe(true)
+      expect(existsSync(setup.layout.databasePath)).toBe(true)
+      expect(existsSync(join(setup.layout.skillsDirectory, 'default'))).toBe(true)
+      expect(existsSync(join(setup.layout.skillsDirectory, 'work'))).toBe(true)
+      expect(existsSync(join(setup.layout.logsDirectory, 'default'))).toBe(true)
+      expect(existsSync(join(setup.layout.logsDirectory, 'work'))).toBe(true)
+      expect(existsSync(join(setup.layout.workspaceDirectory, 'default'))).toBe(true)
+      expect(existsSync(join(setup.layout.workspaceDirectory, 'work'))).toBe(true)
+      expect(setup.memory.isEnabled).toBe(true)
+      expect(setup.database.connection.prepare(
+        'SELECT component, version FROM schema_migrations WHERE component = ?',
+      ).get('memory')).toMatchObject({ component: 'memory', version: 3 })
+    } finally {
+      setup.close()
+    }
   })
 
   it('imports every Hermes profile skill only when the Ekko skills directory is first created', async () => {
@@ -92,12 +153,37 @@ describe('EkkoDatabaseManager', () => {
     expect(existsSync(join(ekkoBase, '.ekko', 'skills', 'default', 'late-skill'))).toBe(false)
   })
 
-  it('uses the same .ekko database path with development SQLite settings', () => {
-    const options = { baseDirectory: webUiHome, env: { NODE_ENV: 'development' } }
+  it('uses the package-local database path with development SQLite settings', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const options = {
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    }
     const manager = new EkkoDatabaseManager(options)
     expect(manager.connection.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'delete' })
-    expect(existsSync(join(webUiHome, '.ekko', 'ekko.db'))).toBe(true)
+    expect(manager.databasePath).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
+    expect(existsSync(join(packageRoot, 'sql-data', 'ekko-agent.db'))).toBe(true)
+    expect(existsSync(join(webUiHome, 'production-home', '.ekko', 'ekko.db'))).toBe(false)
     manager.close()
+  })
+
+  it('reports and opens the package-local database path during development setup', () => {
+    const packageRoot = join(webUiHome, 'ekko-agent')
+    const setup = setupEkkoAgent({
+      baseDirectory: join(webUiHome, 'production-home'),
+      env: { NODE_ENV: 'development' },
+      packageRoot,
+    })
+
+    try {
+      expect(setup.layout.databasePath).toBe(join(packageRoot, 'sql-data', 'ekko-agent.db'))
+      expect(setup.database.databasePath).toBe(setup.layout.databasePath)
+      expect(existsSync(setup.layout.databasePath)).toBe(true)
+      expect(existsSync(join(webUiHome, 'production-home', '.ekko', 'ekko.db'))).toBe(false)
+    } finally {
+      setup.close()
+    }
   })
 
   it('owns the connection and component migrations', () => {

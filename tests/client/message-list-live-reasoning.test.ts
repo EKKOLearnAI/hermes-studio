@@ -111,6 +111,35 @@ describe('MessageList live reasoning', () => {
     expect(status.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('shows the safe-insert arrow for Hermes and hides it for unsupported coding agents', async () => {
+    const chatStore = useChatStore()
+    const session = makeSession([])
+    session.source = 'cli'
+    session.agent = 'hermes'
+    chatStore.activeSessionId = 'session-1'
+    chatStore.activeSession = session
+    chatStore.queuedUserMessages = new Map([['session-1', [{
+      id: 'queue-1', role: 'user', content: 'Follow up', timestamp: 1, queued: true,
+    }]]])
+    const insertSpy = vi.spyOn(chatStore, 'insertQueuedMessage')
+    const wrapper = mount(MessageList, {
+      global: { stubs: { MessageItem: MessageItemStub, MarkdownRenderer: MarkdownRendererStub } },
+    })
+
+    expect(wrapper.get('.queue-insert').attributes('title')).toBe('chat.insertQueuedMessage')
+    await wrapper.get('.queue-insert').trigger('click')
+    expect(insertSpy).toHaveBeenCalledWith('session-1', 'queue-1')
+
+    chatStore.activeSession = {
+      ...session,
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+    }
+    await nextTick()
+    expect(wrapper.find('.queue-insert').exists()).toBe(false)
+  })
+
   it('keeps the standalone thinking status before assistant output starts', () => {
     const wrapper = mountMessageList([
       { id: 'user-1', role: 'user', content: 'Think about this', timestamp: 1 },

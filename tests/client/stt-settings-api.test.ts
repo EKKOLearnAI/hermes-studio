@@ -12,7 +12,14 @@ vi.mock('@/router', () => ({
 import router from '@/router'
 import { hasApiKey } from '../../packages/client/src/api/client'
 import { clearSttSecret, deleteSttBaseUrlPreset, deleteSttProvider, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
-import { transcribeSpeech } from '../../packages/client/src/api/hermes/stt'
+import { downloadLocalSttModel, fetchLocalSttModelStatus } from '../../packages/client/src/api/hermes/local-stt-model'
+import {
+  cancelLocalSttStream,
+  finishLocalSttStream,
+  pushLocalSttStreamChunk,
+  startLocalSttStream,
+  transcribeSpeech,
+} from '../../packages/client/src/api/hermes/stt'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -268,6 +275,35 @@ describe('stt api wrappers', () => {
     })
   })
 
+  it('loads local model status and starts the selected background download channel', async () => {
+    const status = {
+      id: 'local-model',
+      name: 'Local STT',
+      languages: ['zh', 'en'],
+      archiveSize: 176344382,
+      extractedSize: 199056205,
+      installed: false,
+      usable: false,
+      validationError: '',
+      job: null,
+    }
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(status) })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: () => Promise.resolve({ success: true, job: { id: 'job-1', source: 'github' } }) })
+
+    await expect(fetchLocalSttModelStatus()).resolves.toEqual(status)
+    await expect(downloadLocalSttModel('github')).resolves.toMatchObject({ success: true, job: { id: 'job-1', source: 'github' } })
+
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
+      'https://hermes.example/api/hermes/stt/local-model',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer jwt-token' }) }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://hermes.example/api/hermes/stt/local-model/download',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ source: 'github' }) }),
+    )
+  })
+
   it('rejects transcription requests without a provider', async () => {
     await expect(transcribeSpeech({
       audio: new Blob(['audio'], { type: 'audio/webm' }),
@@ -371,6 +407,50 @@ describe('stt api wrappers', () => {
     const upload = (init.body as FormData).get('audio') as File
     expect(upload.name).toBe('speech.wav')
     expect(upload.type).toBe('audio/wav')
+  })
+
+  it('uses raw PCM WAV bodies for the local streaming session lifecycle', async () => {
+    const chunk = new Blob([new Uint8Array(256)], { type: 'audio/wav' })
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessionId: 'stream/a' }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'stream/a', text: '实时', model: 'local', durationMs: 4 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'stream/a', text: '实时完成', model: 'local', durationMs: 2 }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ success: true }) })
+
+    await expect(startLocalSttStream()).resolves.toEqual({ sessionId: 'stream/a' })
+    await expect(pushLocalSttStreamChunk('stream/a', chunk)).resolves.toMatchObject({ text: '实时' })
+    await expect(finishLocalSttStream('stream/a')).resolves.toMatchObject({ text: '实时完成' })
+    await expect(cancelLocalSttStream('stream/a')).resolves.toEqual({ success: true })
+
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
+      'https://hermes.example/api/hermes/stt/local-stream',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa/chunk',
+      expect.objectContaining({
+        method: 'POST',
+        body: chunk,
+        headers: expect.objectContaining({
+          Authorization: 'Bearer jwt-token',
+          'Content-Type': 'audio/wav',
+        }),
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(3,
+      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa/finish',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(4,
+      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   it('does not persist raw STT API keys to localStorage when composable state changes', async () => {

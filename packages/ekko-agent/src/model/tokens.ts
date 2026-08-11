@@ -1,11 +1,13 @@
 import { getEncoding } from 'js-tiktoken'
 
 const MAX_LETTER_RUN = 2_000
+const MAX_EXACT_TOKEN_TEXT_BYTES = 256 * 1024
+const MAX_HEURISTIC_SCAN_TEXT_UNITS = 8 * 1024 * 1024
 let cachedEncoder: ReturnType<typeof getEncoding> | null = null
 
 export function countTextTokens(text: string): number {
   if (!text) return 0
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  if (exceedsExactTokenBudget(text) || hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     if (!cachedEncoder) cachedEncoder = getEncoding('cl100k_base')
     return cachedEncoder.encode(text).length
@@ -15,9 +17,14 @@ export function countTextTokens(text: string): number {
 }
 
 function heuristicTokens(text: string): number {
-  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-  const other = text.length - cjk
-  return Math.ceil(cjk * 1.5 + other / 4)
+  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return text.length * 3
+  return Buffer.byteLength(text, 'utf8')
+}
+
+function exceedsExactTokenBudget(text: string): boolean {
+  if (text.length > MAX_EXACT_TOKEN_TEXT_BYTES) return true
+  return text.length > MAX_EXACT_TOKEN_TEXT_BYTES / 3
+    && Buffer.byteLength(text, 'utf8') > MAX_EXACT_TOKEN_TEXT_BYTES
 }
 
 function hasPathologicalRun(text: string): boolean {

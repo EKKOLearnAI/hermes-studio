@@ -25,6 +25,7 @@ import {
   NDrawerContent,
   NDropdown,
   NInput,
+  NInputNumber,
   NModal,
   NSelect,
   NTooltip,
@@ -48,7 +49,7 @@ import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
-import { buildVisibleSessionCategoryGroups } from "./session-category-groups";
+import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
@@ -93,6 +94,7 @@ let sessionFadeAnimation: Animation | null = null;
 const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
+const toolPanelTransitionReady = ref(false);
 const activeToolPanel = ref<"files" | "terminal" | "browser">("files");
 const desktopBrowserAvailable = hasDesktopBrowserBridge();
 const desktopChatWindowAvailable = desktopBridge()?.isDesktop === true
@@ -253,6 +255,22 @@ function toggleToolPanel() {
     return;
   }
   showToolPanel.value = true;
+}
+
+function handleToolPanelBeforeEnter() {
+  toolPanelTransitionReady.value = false;
+}
+
+function handleToolPanelAfterEnter() {
+  toolPanelTransitionReady.value = true;
+}
+
+function handleToolPanelBeforeLeave() {
+  toolPanelTransitionReady.value = false;
+}
+
+function handleToolPanelLeaveCancelled() {
+  toolPanelTransitionReady.value = true;
 }
 
 function hasDraggedFiles(event: DragEvent) {
@@ -487,6 +505,8 @@ const sessionCategoriesLoading = ref(false);
 const sessionCategoriesLoaded = ref(false);
 let sessionCategoriesLoadPromise: Promise<void> | null = null;
 const COLLAPSED_CATEGORIES_STORAGE_KEY = "hermes_chat_collapsed_categories";
+const showRecentCountModal = ref(false);
+const recentCountDraft = ref(sessionBrowserPrefsStore.recentCount);
 
 function loadCollapsedCategories(): Set<string> {
   try {
@@ -535,9 +555,17 @@ function sortSessionsForSidebar(items: Session[]): Session[] {
   });
 }
 
+const recentSessionPartition = computed(() => partitionRecentSessions(
+  chatStore.sessions,
+  sessionBrowserPrefsStore.recentCount,
+  t("chat.recent"),
+));
+const recentSessions = computed(() => recentSessionPartition.value.group);
+const nonRecentSessions = computed(() => recentSessionPartition.value.remaining);
+
 const pinnedSessions = computed(() =>
   sortSessionsForSidebar(
-    chatStore.sessions.filter((session) =>
+    nonRecentSessions.value.filter((session) =>
       sessionBrowserPrefsStore.isPinned(session.id),
     ),
   ),
@@ -545,7 +573,7 @@ const pinnedSessions = computed(() =>
 
 const unpinnedSessions = computed(() =>
   sortSessionsForSidebar(
-    chatStore.sessions.filter(
+    nonRecentSessions.value.filter(
       (session) => !sessionBrowserPrefsStore.isPinned(session.id),
     ),
   ),
@@ -556,6 +584,17 @@ const categorizedSessions = computed(() => buildVisibleSessionCategoryGroups(
   unpinnedSessions.value,
   t("chat.uncategorized"),
 ));
+
+function openRecentCountModal(event: MouseEvent) {
+  event.stopPropagation();
+  recentCountDraft.value = sessionBrowserPrefsStore.recentCount;
+  showRecentCountModal.value = true;
+}
+
+function saveRecentCount() {
+  sessionBrowserPrefsStore.setRecentCount(recentCountDraft.value);
+  showRecentCountModal.value = false;
+}
 
 watch(
   () => [
@@ -1946,6 +1985,34 @@ async function handleSessionModelCustomSubmit() {
           {{ t("chat.noSessions") }}
         </div>
 
+        <template v-if="recentSessions.sessions.length > 0">
+          <div class="session-group-header session-group-header--static">
+            <span class="session-group-label">{{ recentSessions.label }}</span>
+            <span class="session-group-count">{{ recentSessions.sessions.length }}</span>
+            <button class="session-group-config" type="button" :title="t('chat.recentCount')" @click="openRecentCountModal">⚙</button>
+          </div>
+          <SessionListItem
+            v-for="s in recentSessions.sessions"
+            :key="`recent-${s.id}`"
+            :session="s"
+            :active="s.id === chatStore.activeSessionId"
+            :pinned="sessionBrowserPrefsStore.isPinned(s.id)"
+            :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+            :streaming="chatStore.isSessionLive(s.id)"
+            :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
+            :selectable="isBatchMode"
+            :selected="isSessionSelected(s)"
+            :show-profile="true"
+            :to="sessionHref(s.id)"
+            :intercept-modified-navigation="desktopChatWindowAvailable"
+            @select="handleSessionClick(s.id)"
+            @open-new="openSessionInNewTab(s.id)"
+            @contextmenu="handleContextMenu($event, s.id)"
+            @delete="handleDeleteSession(s.id)"
+            @toggle-select="toggleSessionSelection(s)"
+          />
+        </template>
+
         <template v-if="pinnedSessions.length > 0">
           <div class="session-group-header session-group-header--static">
             <span class="session-group-label">{{ t("chat.pinned") }}</span>
@@ -2055,6 +2122,17 @@ async function handleSessionModelCustomSubmit() {
       @select="handleContextMenuSelect"
       @clickoutside="handleClickOutside"
     />
+
+    <NModal
+      v-model:show="showRecentCountModal"
+      preset="dialog"
+      :title="t('chat.recentCount')"
+      :positive-text="t('common.ok')"
+      :negative-text="t('common.cancel')"
+      @positive-click="saveRecentCount"
+    >
+      <NInputNumber v-model:value="recentCountDraft" :min="1" :max="100" />
+    </NModal>
 
     <NDropdown
       placement="bottom-start"
@@ -2575,9 +2653,11 @@ async function handleSessionModelCustomSubmit() {
                       fill="none"
                       stroke="currentColor"
                       stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
                     >
-                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                      <line x1="9" y1="3" x2="9" y2="21" />
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
                       <line x1="15" y1="3" x2="15" y2="21" />
                     </svg>
                   </template>
@@ -2668,98 +2748,107 @@ async function handleSessionModelCustomSubmit() {
             :messages="chatStore.messages"
             @navigate="handleOutlineNavigate"
           />
-          <aside
-            v-if="showToolPanel"
-            class="chat-tool-panel"
-            :style="toolPanelStyle"
+          <Transition
+            name="tool-panel"
+            @before-enter="handleToolPanelBeforeEnter"
+            @after-enter="handleToolPanelAfterEnter"
+            @before-leave="handleToolPanelBeforeLeave"
+            @leave-cancelled="handleToolPanelLeaveCancelled"
           >
-            <div
-              class="chat-tool-resize-handle"
-              @pointerdown="startToolResize"
-            />
-            <div class="chat-tool-panel-inner">
-              <WorkspaceDiffPreview
-                v-if="toolPanelStore.workspaceDiff"
-                :custom-close="closeToolPanelOverlay"
+            <aside
+              v-if="showToolPanel"
+              class="chat-tool-panel"
+              :style="toolPanelStyle"
+            >
+              <div
+                class="chat-tool-resize-handle"
+                @pointerdown="startToolResize"
               />
-              <FilePreview
-                v-else-if="filesStore.previewFile"
-                :custom-close="closeToolPanelOverlay"
-              />
-              <SubagentStreamPanel
-                v-else-if="selectedSubagent"
-                :stream="selectedSubagentStream"
-                @close="closeToolPanelOverlay"
-              />
-              <template v-else>
-                <div class="chat-tool-tabs" role="tablist">
-                  <button
-                    class="chat-tool-tab"
-                    :class="{ active: activeToolPanel === 'files' }"
-                    type="button"
-                    role="tab"
-                    :title="t('drawer.files')"
-                    :aria-label="t('drawer.files')"
-                    :aria-selected="activeToolPanel === 'files'"
-                    @click="activeToolPanel = 'files'"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
-                    </svg>
-                  </button>
-                  <button
-                    class="chat-tool-tab"
-                    :class="{ active: activeToolPanel === 'terminal' }"
-                    type="button"
-                    role="tab"
-                    :title="t('drawer.terminal')"
-                    :aria-label="t('drawer.terminal')"
-                    :aria-selected="activeToolPanel === 'terminal'"
-                    @click="activeToolPanel = 'terminal'"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <rect x="3" y="4" width="18" height="16" rx="2" />
-                      <path d="m7 9 3 3-3 3M13 15h4" />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="desktopBrowserAvailable"
-                    class="chat-tool-tab"
-                    :class="{ active: activeToolPanel === 'browser' }"
-                    type="button"
-                    role="tab"
-                    :title="t('browser.title')"
-                    :aria-label="t('browser.title')"
-                    :aria-selected="activeToolPanel === 'browser'"
-                    @click="activeToolPanel = 'browser'"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <rect x="3" y="4" width="18" height="16" rx="2" />
-                      <path d="M3 9h18" />
-                      <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
-                      <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
-                    </svg>
-                  </button>
-                </div>
-                <div class="chat-tool-content">
-                  <FilesPanel
-                    v-show="activeToolPanel === 'files'"
-                    :workspace-session-id="activeWorkspaceSessionId"
-                    :workspace="activeWorkspacePath"
-                    @attach="handleWorkspaceFileAttach"
-                  />
-                  <TerminalPanel
-                    v-show="activeToolPanel === 'terminal'"
-                    :visible="showToolPanel && activeToolPanel === 'terminal'"
-                  />
-                  <DesktopBrowserPanel
-                    v-if="desktopBrowserAvailable && activeToolPanel === 'browser'"
-                    @attach="handleBrowserAttachment"
-                  />
-                </div>
-              </template>
-            </div>
-          </aside>
+              <div class="chat-tool-panel-inner">
+                <WorkspaceDiffPreview
+                  v-if="toolPanelStore.workspaceDiff"
+                  :custom-close="closeToolPanelOverlay"
+                />
+                <FilePreview
+                  v-else-if="filesStore.previewFile"
+                  :custom-close="closeToolPanelOverlay"
+                />
+                <SubagentStreamPanel
+                  v-else-if="selectedSubagent"
+                  :stream="selectedSubagentStream"
+                  @close="closeToolPanelOverlay"
+                />
+                <template v-else>
+                  <div class="chat-tool-tabs" role="tablist">
+                    <button
+                      class="chat-tool-tab"
+                      :class="{ active: activeToolPanel === 'files' }"
+                      type="button"
+                      role="tab"
+                      :title="t('drawer.files')"
+                      :aria-label="t('drawer.files')"
+                      :aria-selected="activeToolPanel === 'files'"
+                      @click="activeToolPanel = 'files'"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+                      </svg>
+                    </button>
+                    <button
+                      class="chat-tool-tab"
+                      :class="{ active: activeToolPanel === 'terminal' }"
+                      type="button"
+                      role="tab"
+                      :title="t('drawer.terminal')"
+                      :aria-label="t('drawer.terminal')"
+                      :aria-selected="activeToolPanel === 'terminal'"
+                      @click="activeToolPanel = 'terminal'"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <path d="m7 9 3 3-3 3M13 15h4" />
+                      </svg>
+                    </button>
+                    <button
+                      v-if="desktopBrowserAvailable"
+                      class="chat-tool-tab"
+                      :class="{ active: activeToolPanel === 'browser' }"
+                      type="button"
+                      role="tab"
+                      :title="t('browser.title')"
+                      :aria-label="t('browser.title')"
+                      :aria-selected="activeToolPanel === 'browser'"
+                      @click="activeToolPanel = 'browser'"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <path d="M3 9h18" />
+                        <circle cx="6.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                        <circle cx="9.5" cy="6.5" r=".75" fill="currentColor" stroke="none" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="chat-tool-content">
+                    <FilesPanel
+                      v-show="activeToolPanel === 'files'"
+                      :workspace-session-id="activeWorkspaceSessionId"
+                      :workspace="activeWorkspacePath"
+                      @attach="handleWorkspaceFileAttach"
+                    />
+                    <TerminalPanel
+                      v-show="activeToolPanel === 'terminal'"
+                      :visible="showToolPanel && activeToolPanel === 'terminal'"
+                    />
+                    <DesktopBrowserPanel
+                      v-if="desktopBrowserAvailable && activeToolPanel === 'browser'"
+                      :visible="toolPanelTransitionReady"
+                      @attach="handleBrowserAttachment"
+                    />
+                  </div>
+                </template>
+              </div>
+            </aside>
+          </Transition>
         </div>
       </template>
       <ConversationMonitorPane
@@ -3303,6 +3392,15 @@ async function handleSessionModelCustomSubmit() {
   letter-spacing: 0.5px;
 }
 
+.session-group-config {
+  margin-inline-start: auto;
+  border: 0;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
 .session-group-count {
   font-size: 10px;
   color: $text-muted;
@@ -3547,6 +3645,26 @@ async function handleSessionModelCustomSubmit() {
   overflow: visible;
 }
 
+.tool-panel-enter-active,
+.tool-panel-leave-active {
+  overflow: hidden;
+  pointer-events: none;
+  will-change: width, min-width, opacity;
+  transition:
+    width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.tool-panel-enter-from,
+.tool-panel-leave-to {
+  width: 0 !important;
+  min-width: 0;
+  opacity: 0;
+  border-inline-start-color: transparent;
+}
+
 .chat-tool-resize-handle {
   position: absolute;
   inset-inline-start: -7px;
@@ -3711,6 +3829,31 @@ async function handleSessionModelCustomSubmit() {
 
   .chat-tool-resize-handle {
     display: none;
+  }
+
+  .tool-panel-enter-active,
+  .tool-panel-leave-active {
+    transition:
+      transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.16s ease;
+  }
+
+  .tool-panel-enter-from,
+  .tool-panel-leave-to {
+    width: 100% !important;
+    transform: translateX(100%);
+  }
+
+  .tool-panel-enter-from:dir(rtl),
+  .tool-panel-leave-to:dir(rtl) {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-panel-enter-active,
+  .tool-panel-leave-active {
+    transition-duration: 0.01ms;
   }
 }
 

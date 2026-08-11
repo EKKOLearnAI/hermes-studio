@@ -151,9 +151,8 @@ const liveReasoningDetail = computed<{
 
 const emptyState = computed(() => {
   const session = chatStore.activeSession;
-  const codingAgentId = session?.source === "global_agent"
-    ? "ekko-agent"
-    : session?.codingAgentId || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
+  const codingAgentId = session?.codingAgentId
+    || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
   if (codingAgentId === "codex") {
     return {
       logo: "/coding-agents/codex-openai.png",
@@ -274,6 +273,21 @@ const queuedMessages = computed(() => {
   if (!sid) return [];
   return chatStore.queuedUserMessages.get(sid) || [];
 });
+const activeQueueInsertion = computed(() => {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return null;
+  return chatStore.queueInsertionStates.get(sid) || null;
+});
+const canInsertQueuedMessages = computed(() => {
+  const session = chatStore.activeSession;
+  if (!session) return false;
+  const agent = session.codingAgentId || session.agent;
+  if (agent === "ekko-agent") {
+    return session.source === "coding_agent" || session.source === "global_agent";
+  }
+  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
+  return !session.source || session.source === "cli" || session.source === "global_agent";
+});
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
@@ -346,6 +360,20 @@ function removeQueuedMessage(messageId: string) {
   const sid = chatStore.activeSessionId;
   if (!sid) return;
   chatStore.removeQueuedMessage(sid, messageId);
+}
+
+function insertQueuedMessage(messageId: string) {
+  const sid = chatStore.activeSessionId;
+  if (!sid || activeQueueInsertion.value) return;
+  chatStore.insertQueuedMessage(sid, messageId);
+}
+
+function queueInsertionTitle(messageId: string): string {
+  const insertion = activeQueueInsertion.value;
+  if (!insertion) return t("chat.insertQueuedMessage");
+  if (insertion.queueId !== messageId) return t("chat.queueInsertionPending");
+  if (insertion.phase === "waiting_for_tool_batch") return t("chat.queueInsertionWaitingTools");
+  return t("chat.queueInsertionStopping");
 }
 
 function queuedPreview(content: string): string {
@@ -940,7 +968,7 @@ defineExpose({
               {{ t("chat.clarifyDismiss") }}
             </NButton>
           </div>
-          <div v-else class="clarify-float-input-row">
+          <div class="clarify-float-input-row">
             <NInput
               v-model:value="clarifyResponse"
               size="small"
@@ -969,6 +997,21 @@ defineExpose({
             >
               <span class="queue-index">{{ index + 1 }}</span>
               <span class="queue-text">{{ queuedPreview(message.content) }}</span>
+              <button
+                v-if="canInsertQueuedMessages"
+                type="button"
+                class="queue-insert"
+                :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
+                :disabled="!!activeQueueInsertion"
+                :title="queueInsertionTitle(message.id)"
+                :aria-label="queueInsertionTitle(message.id)"
+                @click="insertQueuedMessage(message.id)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
               <button
                 type="button"
                 class="queue-remove"
@@ -1251,6 +1294,7 @@ defineExpose({
   font-size: 12px;
 }
 
+.queue-insert,
 .queue-remove {
   flex: 0 0 auto;
   width: 24px;
@@ -1264,6 +1308,34 @@ defineExpose({
   background: transparent;
   cursor: pointer;
   transition: all $transition-fast;
+}
+
+.queue-insert {
+  color: var(--accent-info);
+
+  &:hover:not(:disabled) {
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.12);
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.34;
+  }
+
+  &.queue-insert--active {
+    opacity: 1;
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.12);
+
+    svg {
+      animation: queue-insert-pulse 0.9s ease-in-out infinite alternate;
+    }
+  }
+}
+
+.queue-remove {
 
   &:hover {
     color: $error;
@@ -1335,6 +1407,7 @@ defineExpose({
     font-size: 11px;
   }
 
+  .queue-insert,
   .queue-remove {
     width: 22px;
     height: 22px;
@@ -1365,6 +1438,15 @@ defineExpose({
 @keyframes queue-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes queue-insert-pulse {
+  from {
+    transform: translateY(1px);
+  }
+  to {
+    transform: translateY(-2px);
   }
 }
 

@@ -20,7 +20,7 @@ import type {
   ModelResponse,
 } from '../../packages/ekko-agent/src/index'
 
-function modelClient(responder: (request: ModelRequest, call: number) => ModelResponse): ModelClient {
+function modelClient(responder: (request: ModelRequest, call: number) => ModelResponse | Promise<ModelResponse>): ModelClient {
   let call = 0
   return {
     provider: 'test',
@@ -141,6 +141,63 @@ describe('ekko-agent runtime', () => {
     expect(client.stream).not.toHaveBeenCalled()
   })
 
+  it('includes assistant reasoning in provider-visible context estimates', async () => {
+    const client = modelClient(() => ({ content: 'must not run' }))
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      tools: new AgentToolRegistry(),
+      systemPrompt: '',
+    })
+    const withoutReasoning = await runtime.estimateContext({
+      messages: [
+        { role: 'assistant', content: 'Previous answer.' },
+        { role: 'user', content: 'Continue.' },
+      ],
+    })
+    const withReasoning = await runtime.estimateContext({
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Previous answer.',
+          reasoning: { text: 'A long hidden reasoning trace that is replayed to the provider.' },
+        },
+        { role: 'user', content: 'Continue.' },
+      ],
+    })
+
+    expect(withReasoning.messageTokens).toBeGreaterThan(withoutReasoning.messageTokens)
+    expect(withReasoning.contextTokens - withoutReasoning.contextTokens)
+      .toBe(withReasoning.messageTokens - withoutReasoning.messageTokens)
+  })
+
+  it('uses one provider reasoning-token estimate instead of counting text and native metadata again', async () => {
+    const client = modelClient(() => ({ content: 'must not run' }))
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      tools: new AgentToolRegistry(),
+      systemPrompt: '',
+    })
+    const base = await runtime.estimateContext({
+      messages: [{ role: 'assistant', content: 'Previous answer.' }],
+    })
+    const withReasoning = await runtime.estimateContext({
+      messages: [{
+        role: 'assistant',
+        content: 'Previous answer.',
+        reasoning: {
+          text: 'Visible summary that must not be counted a second time.',
+          estimatedTokens: 123,
+          native: {
+            format: 'openai-responses-items',
+            data: [{ type: 'reasoning', encrypted_content: 'opaque-native-data' }],
+          },
+        },
+      }],
+    })
+
+    expect(withReasoning.messageTokens - base.messageTokens).toBe(123)
+  })
+
   it('emits one model usage event for each completed non-streaming model call', async () => {
     const client = modelClient(() => ({
       content: 'hello',
@@ -215,7 +272,7 @@ describe('ekko-agent runtime', () => {
       },
     })
 
-    expect(result.output.reasoning).toBe('thinking path')
+    expect(result.output.reasoning).toEqual({ text: 'thinking path' })
     expect(reasoning).toEqual(['thinking path'])
     expect(events).toEqual(['run.started', 'model.started', 'context.estimated', 'model.reasoning', 'model.message', 'run.completed'])
   })
@@ -277,7 +334,7 @@ describe('ekko-agent runtime', () => {
           finishReason: 'tool_calls',
         }
       : { content: 'tool said from-tool', finishReason: 'stop' })
-    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
 
     const result = await runtime.run({ messages: ['use echo'] })
 
@@ -316,7 +373,7 @@ describe('ekko-agent runtime', () => {
       if (call === 2) return { content: 'Child inspection result', finishReason: 'stop' }
       return { content: 'Parent used the child result', finishReason: 'stop' }
     })
-    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
     const events: any[] = []
 
     const result = await runtime.run({
@@ -393,7 +450,7 @@ describe('ekko-agent runtime', () => {
       }),
       stream: vi.fn(),
     }
-    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
     const events: any[] = []
 
     const result = await runtime.run({
@@ -455,7 +512,7 @@ describe('ekko-agent runtime', () => {
       }
       return { content: 'Background delegation was unavailable.', finishReason: 'stop' }
     })
-    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
     const events: any[] = []
 
     const result = await runtime.run({
@@ -519,7 +576,7 @@ describe('ekko-agent runtime', () => {
       }),
       stream: vi.fn(),
     }
-    const runtime = new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
     const events: any[] = []
 
     await runtime.run({
@@ -573,7 +630,7 @@ describe('ekko-agent runtime', () => {
     })
 
     try {
-      const result = await new AgentRuntime({ modelClient: client, tools, toolDelayMs: 0 })
+      const result = await new AgentRuntime({ modelClient: client, tools })
         .run({ messages: ['list profiles'] })
       expect(result.output.content).toBe('done')
     } finally {
@@ -593,7 +650,7 @@ describe('ekko-agent runtime', () => {
       }
       return { content: 'done', finishReason: 'stop' }
     })
-    const runtime = new AgentRuntime({ modelClient: client, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client })
 
     const result = await runtime.run({
       messages: ['use mcp'],
@@ -623,7 +680,7 @@ describe('ekko-agent runtime', () => {
           toolCalls: [{ id: 'call_missing', name: 'missing_tool', arguments: {} }],
         }
       : { content: 'handled missing tool' })
-    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry(), maxSteps: 2, toolDelayMs: 0 })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry(), maxSteps: 2 })
 
     const result = await runtime.run({ messages: ['call missing'] })
 
@@ -646,7 +703,6 @@ describe('ekko-agent runtime', () => {
       tools: new AgentToolRegistry(),
       maxConsecutiveToolFailures: 2,
       maxSteps: 10,
-      toolDelayMs: 0,
     })
     const events: string[] = []
 
@@ -685,6 +741,172 @@ describe('ekko-agent runtime', () => {
 
     await expect(runtime.run({ messages: ['hi'], signal: controller.signal })).rejects.toThrow('Run aborted.')
     expect(client.create).not.toHaveBeenCalled()
+  })
+
+  it('interrupts a matching model request as a graceful boundary completion', async () => {
+    let signalModelStarted!: (signal: AbortSignal | undefined) => void
+    const modelStarted = new Promise<AbortSignal | undefined>((resolve) => {
+      signalModelStarted = resolve
+    })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: {
+        streaming: false,
+        tools: true,
+        vision: false,
+        jsonMode: false,
+        systemPrompt: true,
+      },
+      create: vi.fn(request => new Promise<ModelResponse>((_resolve, reject) => {
+        signalModelStarted(request.signal)
+        const rejectAborted = () => {
+          const error = new Error('Run aborted.')
+          error.name = 'AbortError'
+          reject(error)
+        }
+        request.signal?.addEventListener('abort', rejectAborted, { once: true })
+        if (request.signal?.aborted) rejectAborted()
+      })),
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const eventTypes: string[] = []
+    let runId = ''
+    const run = runtime.run({
+      messages: ['hi'],
+      metadata: { session_id: 'session-1' },
+      onEvent: event => {
+        eventTypes.push(event.type)
+        if (event.type === 'run.started') runId = event.runId
+      },
+    })
+
+    const modelSignal = await modelStarted
+    expect(modelSignal).toBeInstanceOf(AbortSignal)
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'accepted', runId, phase: 'model' })
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'already_pending', runId, phase: 'model' })
+    expect(modelSignal?.aborted).toBe(true)
+
+    const result = await run
+
+    expect(result.output).toMatchObject({ content: '', finishReason: 'boundary_interrupt' })
+    expect(result.steps).toEqual([])
+    expect(eventTypes).toContain('run.completed')
+    expect(eventTypes).not.toContain('run.failed')
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-1',
+      expectedRunId: runId,
+    })).toEqual({ status: 'not_running' })
+  })
+
+  it('finishes the whole tool batch before honoring repeated boundary interrupts', async () => {
+    let releaseFirstTool!: () => void
+    let signalFirstToolStarted!: () => void
+    const firstToolStarted = new Promise<void>((resolve) => {
+      signalFirstToolStarted = resolve
+    })
+    const firstToolRelease = new Promise<void>((resolve) => {
+      releaseFirstTool = resolve
+    })
+    const toolOrder: string[] = []
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'first', description: 'first tool', parameters: { type: 'object' } },
+      async execute() {
+        toolOrder.push('first:start')
+        signalFirstToolStarted()
+        await firstToolRelease
+        toolOrder.push('first:end')
+        return { ok: true, content: 'first result' }
+      },
+    })
+    tools.register({
+      definition: { name: 'second', description: 'second tool', parameters: { type: 'object' } },
+      async execute() {
+        toolOrder.push('second')
+        return { ok: true, content: 'second result' }
+      },
+    })
+    const client = modelClient((_request, call) => call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'call-1', name: 'first', arguments: {} },
+            { id: 'call-2', name: 'second', arguments: {} },
+          ],
+          finishReason: 'tool_calls',
+        }
+      : { content: 'must not request another model step' })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+    let runId = ''
+    const run = runtime.run({
+      messages: ['use tools'],
+      metadata: { session_id: 'session-2' },
+      onEvent: event => {
+        if (event.type === 'run.started') runId = event.runId
+      },
+    })
+
+    await firstToolStarted
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-2',
+      expectedRunId: runId,
+    })).toEqual({ status: 'accepted', runId, phase: 'tool_batch' })
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-2',
+      expectedRunId: runId,
+    })).toEqual({ status: 'already_pending', runId, phase: 'tool_batch' })
+    releaseFirstTool()
+
+    const result = await run
+
+    expect(toolOrder).toEqual(['first:start', 'first:end', 'second'])
+    expect(client.create).toHaveBeenCalledTimes(1)
+    expect(result.output.finishReason).toBe('boundary_interrupt')
+    expect(result.steps.map(step => step.type)).toEqual(['model', 'tool', 'tool'])
+    expect(result.messages.filter(message => message.role === 'tool')).toMatchObject([
+      { toolCallId: 'call-1', content: 'first result' },
+      { toolCallId: 'call-2', content: 'second result' },
+    ])
+  })
+
+  it('does not interrupt a newer or mismatched run', async () => {
+    let releaseModel!: () => void
+    let signalModelStarted!: () => void
+    const modelStarted = new Promise<void>((resolve) => {
+      signalModelStarted = resolve
+    })
+    const modelRelease = new Promise<void>((resolve) => {
+      releaseModel = resolve
+    })
+    const client = modelClient(async () => {
+      signalModelStarted()
+      await modelRelease
+      return { content: 'done' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const run = runtime.run({
+      messages: ['hi'],
+      metadata: { session_id: 'session-3' },
+    })
+
+    await modelStarted
+    expect(runtime.requestBoundaryInterrupt({
+      sessionId: 'session-3',
+      expectedRunId: 'stale-run-id',
+    })).toEqual({ status: 'run_mismatch' })
+    releaseModel()
+
+    await expect(run).resolves.toMatchObject({
+      output: { content: 'done' },
+    })
   })
 
   it('defaults maxSteps to 90', async () => {
@@ -892,7 +1114,6 @@ describe('ekko-agent runtime', () => {
       modelClient: client,
       skillDirectory,
       skillReviewEveryToolCalls: 1,
-      toolDelayMs: 0,
     })
 
     try {
@@ -1091,6 +1312,10 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('## Tool Execution')
     expect(prompt).toContain('prerequisites named by a Skill as requirements, not proof that they are installed')
     expect(prompt).toContain('perform a lightweight availability check')
+    expect(prompt).toContain('use code_exec, including for one-line snippets')
+    expect(prompt).toContain('Do not probe Node or Python with terminal_exec first')
+    expect(prompt).toContain('Use terminal_exec for CLI commands')
+    expect(prompt).toContain('do not retry the operation through another tool or language runtime')
     expect(prompt).toContain('prefer a compatible installed or built-in alternative')
   })
 })

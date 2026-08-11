@@ -1,4 +1,5 @@
 import type { ModelClient, ModelRequest, ModelResponse } from '../model/types'
+import { agentReasoningText } from '../model/messages'
 import type { EkkoLogWriter } from './file-logger'
 
 export interface EkkoRuntimeLogContext {
@@ -93,7 +94,7 @@ export class EkkoRuntimeLogger {
           responseModel: response.model,
           finishReason: response.finishReason,
           outputChars: response.content.length,
-          reasoningChars: response.reasoning?.length || 0,
+          reasoningChars: agentReasoningText(response.reasoning).length,
           toolCallCount: response.toolCalls?.length || 0,
           usage: response.usage,
           ...extra,

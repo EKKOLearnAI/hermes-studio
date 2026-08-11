@@ -19,12 +19,45 @@ vi.mock('../../packages/server/src/services/system-info', () => ({
 }))
 
 const originalEnv = { ...process.env }
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 const tempDirs: string[] = []
 
 function tempDir(prefix: string): string {
   const directory = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(directory)
   return directory
+}
+
+function runtimePlatformKey(): string {
+  const osLabel = process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : process.platform
+  return `${osLabel}-${process.arch}`
+}
+
+function createRuntime(root: string, version: string, options: { missingNode?: boolean } = {}): void {
+  if (process.platform === 'win32') {
+    mkdirSync(join(root, 'python', 'venv', 'Scripts'), { recursive: true })
+    mkdirSync(join(root, 'git', 'cmd'), { recursive: true })
+    writeFileSync(join(root, 'python', 'venv', 'Scripts', 'python.exe'), '')
+    writeFileSync(join(root, 'python', 'venv', 'Scripts', 'hermes.cmd'), '')
+    writeFileSync(join(root, 'git', 'cmd', 'git.exe'), '')
+    if (!options.missingNode) {
+      mkdirSync(join(root, 'node'), { recursive: true })
+      writeFileSync(join(root, 'node', 'node.exe'), '')
+    }
+  } else {
+    mkdirSync(join(root, 'python', 'venv', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'python', 'venv', 'bin', 'python3'), '')
+    writeFileSync(join(root, 'python', 'venv', 'bin', 'hermes'), '')
+    if (!options.missingNode) {
+      mkdirSync(join(root, 'node', 'bin'), { recursive: true })
+      writeFileSync(join(root, 'node', 'bin', 'node'), '')
+    }
+  }
+  writeFileSync(join(root, 'runtime-manifest.json'), JSON.stringify({
+    schema: 1,
+    platform: runtimePlatformKey(),
+    hermesAgentVersion: version,
+  }))
 }
 
 describe('runtime version manager storage migration', () => {
@@ -37,6 +70,7 @@ describe('runtime version manager storage migration', () => {
 
   afterEach(() => {
     process.env = { ...originalEnv }
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
     vi.unstubAllGlobals()
     vi.resetModules()
     for (const directory of tempDirs.splice(0)) {
@@ -130,6 +164,69 @@ describe('runtime version manager storage migration', () => {
     expect(activated.webUiDirectory).toBeUndefined()
     expect(() => activateDownloadedWebUiVersion('0.6.30'))
       .toThrow('Downloaded Web UI version not found')
+  })
+
+  it('does not list or activate an incomplete Runtime directory', async () => {
+    const platform = runtimePlatformKey()
+    const runtimeRoot = join(state.appHome, 'desktop-runtime', 'hermes')
+    const validRuntime = join(runtimeRoot, '0.19.0', platform)
+    const incompleteRuntime = join(runtimeRoot, '0.20.0', platform)
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    createRuntime(validRuntime, '0.19.0')
+    createRuntime(incompleteRuntime, '0.20.0', { missingNode: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.19.0',
+      runtimeDirectory: validRuntime,
+      platform,
+    }))
+
+    const {
+      activateInstalledRuntimeVersion,
+      listInstalledRuntimeVersions,
+    } = await import('../../packages/server/src/services/runtime-version-manager')
+
+    expect(listInstalledRuntimeVersions().map(runtime => runtime.version)).toEqual(['0.19.0'])
+    expect(() => activateInstalledRuntimeVersion('0.20.0'))
+      .toThrow(/Runtime 0\.20\.0 cannot be activated:.*node/)
+    expect(JSON.parse(readFileSync(activeVersionPath, 'utf-8')).runtimeDirectory).toBe(validRuntime)
+  })
+
+  it('clears the previous activation error after selecting a valid Runtime', async () => {
+    const platform = runtimePlatformKey()
+    const runtime = join(state.appHome, 'desktop-runtime', 'hermes', '0.20.0', platform)
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    createRuntime(runtime, '0.20.0')
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.19.0',
+      runtimeActivationError: 'previous Runtime failed',
+      platform,
+    }))
+
+    const { activateInstalledRuntimeVersion } = await import('../../packages/server/src/services/runtime-version-manager')
+    const active = activateInstalledRuntimeVersion('0.20.0')
+
+    expect(active.runtimeDirectory).toBe(runtime)
+    expect(active.runtimeActivationError).toBe('')
+  })
+
+  it('accepts hermes.exe after a Windows CLI update replaces hermes.cmd', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const platform = runtimePlatformKey()
+    const runtime = join(state.appHome, 'desktop-runtime', 'hermes', '0.20.0', platform)
+    createRuntime(runtime, '0.20.0')
+    const scripts = join(runtime, 'python', 'venv', 'Scripts')
+    rmSync(join(scripts, 'hermes.cmd'))
+    writeFileSync(join(scripts, 'hermes.exe'), '')
+
+    const {
+      activateInstalledRuntimeVersion,
+      listInstalledRuntimeVersions,
+    } = await import('../../packages/server/src/services/runtime-version-manager')
+
+    expect(listInstalledRuntimeVersions().map(item => item.version)).toContain('0.20.0')
+    expect(activateInstalledRuntimeVersion('0.20.0').runtimeDirectory).toBe(runtime)
   })
 
 })

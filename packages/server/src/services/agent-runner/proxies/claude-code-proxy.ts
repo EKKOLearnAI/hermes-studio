@@ -440,7 +440,7 @@ async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget
   })
   const [clientStream, observerStream] = teeAsyncIterable(stream)
   observeResponsesEvents(target, openAiResponsesSseToResponsesEvents(observerStream))
-  return anthropicEventStream(openAiResponsesSseToAnthropicEvents(clientStream, target))
+  return anthropicEventStream(openAiResponsesSseToAnthropicEvents(clientStream, target, body?.tools))
 }
 
 export async function claudeProxyModels(ctx: Context) {
@@ -478,7 +478,7 @@ export async function claudeProxyMessages(ctx: Context) {
       const message = target.apiMode === 'anthropic_messages'
         ? await callAnthropicMessages(target, requestBody)
         : target.apiMode === 'codex_responses'
-          ? openAiResponsesToAnthropicMessage(await callOpenAiResponses(target, requestBody), target)
+          ? openAiResponsesToAnthropicMessage(await callOpenAiResponses(target, requestBody), target, requestBody?.tools)
           : openAiToAnthropicMessage(await callOpenAiChat(target, requestBody), target)
       ctx.body = message
     }

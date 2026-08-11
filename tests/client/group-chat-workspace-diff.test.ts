@@ -55,6 +55,7 @@ const groupChatApiMock = vi.hoisted(() => {
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => ({
   getApiKey: vi.fn(() => 'token'),
+  getBaseUrlValue: vi.fn(() => ''),
   getActiveProfileName: vi.fn(() => 'default'),
   getStoredUsername: vi.fn(() => null),
 }))
@@ -295,6 +296,7 @@ describe('group chat workspace diff client rendering', () => {
     })
 
     try {
+      expect(wrapper.text()).not.toContain('"type":"file"')
       const click = new MouseEvent('click', { bubbles: true, cancelable: true })
       wrapper.get('.msg-attachment-file').element.dispatchEvent(click)
       expect(click.defaultPrevented).toBe(true)

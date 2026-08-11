@@ -180,6 +180,19 @@ export const VOICE_API_PRESETS: VoiceApiPreset[] = [
 
   // STT Presets
   {
+    id: 'stt-local',
+    kind: 'stt',
+    provider: 'local',
+    label: 'Local STT',
+    labelKey: 'settings.voice.localSttModelTitle',
+    description: 'On-device Chinese-English speech recognition.',
+    descriptionKey: 'settings.voice.localSttModelDescription',
+    defaultModel: 'sherpa-onnx-streaming-zipformer-bilingual-zh-en-int8-2023-02-20',
+    isBuiltin: true,
+    isSecretRequired: false,
+    capabilities: {},
+  },
+  {
     id: 'stt-browser',
     kind: 'stt',
     provider: 'browser',
