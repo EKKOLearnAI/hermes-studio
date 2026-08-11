@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 export type TargetKind = 'local' | 'remote'
 
 export type ChainStatus =
@@ -45,6 +47,8 @@ export interface AuthBinding {
   sourceInstanceId?: string
   targetId?: string
   authorizationId: string
+  capabilityScope: string
+  requestDigest: string
   signature: string
 }
 
@@ -62,6 +66,17 @@ export interface CancelRequest extends AdmitRequest {
   reason: string
 }
 
+export interface TerminalMessageInput {
+  id: string
+  content: string
+}
+
+export interface DurableAgentMessage extends TerminalMessageInput {
+  attemptId: string
+  contentDigest: string
+  committedAt: number
+}
+
 export interface TerminalPublicationEvidence {
   publicationId: string
   messageId: string
@@ -70,11 +85,16 @@ export interface TerminalPublicationEvidence {
   source: 'durable-agent-message'
 }
 
+export interface TargetTerminalPublication extends TerminalPublicationEvidence {
+  attemptId: string
+}
+
 export interface TargetStatusProof {
   targetId: string
   inboxId: string
   version: number
   status: TargetInboxStatus
+  responseDigest: string
   lastAuditEventId: string
   auditCount: number
   signature: string
@@ -85,6 +105,8 @@ export interface TargetStatusResponse {
   attemptId: string
   sourceInstanceId: string
   targetId: string
+  snapshotDigest: string
+  payloadDigest: string
   inboxId: string
   status: TargetInboxStatus
   receipt: string
@@ -182,6 +204,31 @@ export interface TargetInbox {
   auditEventIds: string[]
 }
 
+interface SourcePersistedState {
+  sourceInstanceId: string
+  targetId: string
+  nextSequence: number
+  chains: Record<string, SourceChain>
+  attempts: Record<string, SourceAttempt>
+  outbox: Record<string, SourceOutbox>
+  sourceAudit: SourceAuditEvent[]
+}
+
+interface TargetPersistedState {
+  targetKind: TargetKind
+  targetId: string
+  nextSequence: number
+  inboxes: Record<string, TargetInbox>
+  targetAudit: TargetAuditEvent[]
+  messages: Record<string, DurableAgentMessage>
+  publications: Record<string, TargetTerminalPublication>
+}
+
+interface DurableStoreSnapshot<T> {
+  loaded: T
+  durable: T
+}
+
 export interface DurableHandoffState {
   targetKind: TargetKind
   sourceInstanceId: string
@@ -194,6 +241,8 @@ export interface DurableHandoffState {
   sourceAudit: SourceAuditEvent[]
   inboxes: Record<string, TargetInbox>
   targetAudit: TargetAuditEvent[]
+  messages: Record<string, DurableAgentMessage>
+  publications: Record<string, TargetTerminalPublication>
   targetOnline: boolean
 }
 
@@ -204,7 +253,7 @@ export type ModelEvent =
   | { type: 'receiveAdmission'; attemptId: string }
   | { type: 'claim'; attemptId: string }
   | { type: 'startInvocation'; attemptId: string; executionId?: string }
-  | { type: 'publishTerminal'; attemptId: string; evidence?: Partial<TerminalPublicationEvidence> }
+  | { type: 'publishTerminal'; attemptId: string; message?: TerminalMessageInput; evidence?: Partial<TerminalPublicationEvidence> }
   | { type: 'targetRestart'; attemptId: string }
   | { type: 'sourceRestart' }
   | { type: 'requestCancel'; attemptId: string; reason?: string; auth?: AuthBinding }
@@ -227,6 +276,10 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
+function digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
 function keyFor(sourceInstanceId: string, attemptId: string): string {
   return `${sourceInstanceId}:${attemptId}`
 }
@@ -238,36 +291,88 @@ function isSourceTerminal(status: SourceAttemptStatus): boolean {
     || status === 'replaced'
 }
 
+type RequestIdentity = Pick<AdmitRequest, 'chainId' | 'attemptId' | 'sourceInstanceId' | 'targetId' | 'snapshotDigest' | 'payloadDigest'>
+
+function requestDigestFor(
+  operation: TransportOperation | OperatorOperation,
+  request: RequestIdentity,
+  reason: string | null = null,
+): string {
+  return digest({
+    operation,
+    chainId: request.chainId,
+    attemptId: request.attemptId,
+    sourceInstanceId: request.sourceInstanceId,
+    targetId: request.targetId,
+    snapshotDigest: request.snapshotDigest,
+    payloadDigest: request.payloadDigest,
+    reason,
+  })
+}
+
+function transportScope(request: RequestIdentity): string {
+  return `handoff:${request.sourceInstanceId}:${request.targetId}:${request.chainId}:${request.attemptId}`
+}
+
+function operatorScope(operation: OperatorOperation, request: RequestIdentity): string {
+  return `operator:${operation}:${request.sourceInstanceId}:${request.targetId}:${request.chainId}:${request.attemptId}`
+}
+
 function expectedTransportSignature(auth: AuthBinding): string {
-  return [
-    'transport',
-    auth.operation,
-    auth.principal,
-    auth.sourceInstanceId,
-    auth.targetId,
-    auth.authorizationId,
-  ].join('|')
+  return digest({
+    kind: 'transport',
+    operation: auth.operation,
+    principal: auth.principal,
+    sourceInstanceId: auth.sourceInstanceId,
+    targetId: auth.targetId,
+    authorizationId: auth.authorizationId,
+    capabilityScope: auth.capabilityScope,
+    requestDigest: auth.requestDigest,
+  })
 }
 
 function expectedOperatorSignature(auth: AuthBinding): string {
-  return [
-    'operator',
-    auth.operation,
-    auth.principal,
-    auth.authorizationId,
-  ].join('|')
+  return digest({
+    kind: 'operator',
+    operation: auth.operation,
+    principal: auth.principal,
+    authorizationId: auth.authorizationId,
+    capabilityScope: auth.capabilityScope,
+    requestDigest: auth.requestDigest,
+  })
+}
+
+function statusCore(response: Omit<TargetStatusResponse, 'proof'>): Omit<TargetStatusResponse, 'proof'> {
+  return {
+    chainId: response.chainId,
+    attemptId: response.attemptId,
+    sourceInstanceId: response.sourceInstanceId,
+    targetId: response.targetId,
+    snapshotDigest: response.snapshotDigest,
+    payloadDigest: response.payloadDigest,
+    inboxId: response.inboxId,
+    status: response.status,
+    receipt: response.receipt,
+    version: response.version,
+    invocationStartedAt: response.invocationStartedAt,
+    executionId: response.executionId,
+    terminalEvidence: clone(response.terminalEvidence),
+    failureReason: response.failureReason,
+    auditEventIds: [...response.auditEventIds],
+  }
 }
 
 function expectedStatusSignature(proof: Omit<TargetStatusProof, 'signature'>): string {
-  return [
-    'target-status',
-    proof.targetId,
-    proof.inboxId,
-    proof.version,
-    proof.status,
-    proof.lastAuditEventId,
-    proof.auditCount,
-  ].join('|')
+  return digest({
+    kind: 'target-status',
+    targetId: proof.targetId,
+    inboxId: proof.inboxId,
+    version: proof.version,
+    status: proof.status,
+    responseDigest: proof.responseDigest,
+    lastAuditEventId: proof.lastAuditEventId,
+    auditCount: proof.auditCount,
+  })
 }
 
 export function transportAuth(
@@ -275,6 +380,14 @@ export function transportAuth(
   sourceInstanceId = 'source-1',
   targetId = 'target-1',
 ): AuthBinding {
+  const wildcard: RequestIdentity = {
+    chainId: '*',
+    attemptId: '*',
+    sourceInstanceId,
+    targetId,
+    snapshotDigest: '*',
+    payloadDigest: '*',
+  }
   const auth: AuthBinding = {
     kind: 'transport',
     operation,
@@ -282,6 +395,28 @@ export function transportAuth(
     sourceInstanceId,
     targetId,
     authorizationId: `transport-auth-${operation}`,
+    capabilityScope: transportScope(wildcard),
+    requestDigest: requestDigestFor(operation, wildcard, null),
+    signature: '',
+  }
+  auth.signature = expectedTransportSignature(auth)
+  return auth
+}
+
+export function transportAuthForRequest(
+  operation: TransportOperation,
+  request: RequestIdentity,
+  reason: string | null = null,
+): AuthBinding {
+  const auth: AuthBinding = {
+    kind: 'transport',
+    operation,
+    principal: `source:${request.sourceInstanceId}`,
+    sourceInstanceId: request.sourceInstanceId,
+    targetId: request.targetId,
+    authorizationId: `transport-auth-${operation}`,
+    capabilityScope: transportScope(request),
+    requestDigest: requestDigestFor(operation, request, reason),
     signature: '',
   }
   auth.signature = expectedTransportSignature(auth)
@@ -292,39 +427,135 @@ export function operatorAuth(
   operation: OperatorOperation,
   principal = 'operator-1',
 ): AuthBinding {
+  const wildcard: RequestIdentity = {
+    chainId: '*',
+    attemptId: '*',
+    sourceInstanceId: '*',
+    targetId: '*',
+    snapshotDigest: '*',
+    payloadDigest: '*',
+  }
   const auth: AuthBinding = {
     kind: 'operator',
     operation,
     principal,
     authorizationId: `operator-auth-${operation}-${principal}`,
+    capabilityScope: operatorScope(operation, wildcard),
+    requestDigest: requestDigestFor(operation, wildcard, null),
     signature: '',
   }
   auth.signature = expectedOperatorSignature(auth)
   return auth
 }
 
+export function operatorAuthForRequest(
+  operation: OperatorOperation,
+  request: RequestIdentity,
+  reason: string | null = null,
+  principal = 'operator-1',
+): AuthBinding {
+  const auth: AuthBinding = {
+    kind: 'operator',
+    operation,
+    principal,
+    authorizationId: `operator-auth-${operation}-${principal}`,
+    capabilityScope: operatorScope(operation, request),
+    requestDigest: requestDigestFor(operation, request, reason),
+    signature: '',
+  }
+  auth.signature = expectedOperatorSignature(auth)
+  return auth
+}
+
+class DurableStore<T> {
+  private durableValue: T
+  private loadedValue: T
+
+  constructor(initial: T) {
+    this.durableValue = clone(initial)
+    this.loadedValue = clone(initial)
+  }
+
+  read(): T {
+    return this.loadedValue
+  }
+
+  transaction<R>(mutate: (draft: T) => R): R {
+    const draft = clone(this.loadedValue)
+    const result = mutate(draft)
+    this.durableValue = clone(draft)
+    this.loadedValue = clone(draft)
+    return result
+  }
+
+  restart(): void {
+    this.loadedValue = clone(this.durableValue)
+  }
+
+  snapshots(): DurableStoreSnapshot<T> {
+    return {
+      loaded: clone(this.loadedValue),
+      durable: clone(this.durableValue),
+    }
+  }
+}
+
 export class DurableHandoffModel {
-  private readonly stateValue: DurableHandoffState
+  private readonly sourceStore: DurableStore<SourcePersistedState>
+  private readonly targetStore: DurableStore<TargetPersistedState>
+  private clock = 0
+  private targetOnline = true
 
   constructor(targetKind: TargetKind) {
-    this.stateValue = {
-      targetKind,
+    this.sourceStore = new DurableStore({
       sourceInstanceId: 'source-1',
       targetId: 'target-1',
-      clock: 0,
       nextSequence: 1,
       chains: {},
       attempts: {},
       outbox: {},
       sourceAudit: [],
+    })
+    this.targetStore = new DurableStore({
+      targetKind,
+      targetId: 'target-1',
+      nextSequence: 1,
       inboxes: {},
       targetAudit: [],
-      targetOnline: true,
-    }
+      messages: {},
+      publications: {},
+    })
   }
 
   snapshot(): DurableHandoffState {
-    return clone(this.stateValue)
+    const source = this.sourceStore.read()
+    const target = this.targetStore.read()
+    return {
+      targetKind: target.targetKind,
+      sourceInstanceId: source.sourceInstanceId,
+      targetId: target.targetId,
+      clock: this.clock,
+      nextSequence: Math.max(source.nextSequence, target.nextSequence),
+      chains: clone(source.chains),
+      attempts: clone(source.attempts),
+      outbox: clone(source.outbox),
+      sourceAudit: clone(source.sourceAudit),
+      inboxes: clone(target.inboxes),
+      targetAudit: clone(target.targetAudit),
+      messages: clone(target.messages),
+      publications: clone(target.publications),
+      targetOnline: this.targetOnline,
+    }
+  }
+
+  durableStores(): {
+    source: DurableStoreSnapshot<SourcePersistedState>
+    target: DurableStoreSnapshot<TargetPersistedState>
+  } {
+    return {
+      source: this.sourceStore.snapshots(),
+      target: this.targetStore.snapshots(),
+    }
   }
 
   apply(event: ModelEvent): unknown {
@@ -342,7 +573,7 @@ export class DurableHandoffModel {
       case 'startInvocation':
         return this.startInvocation(event.attemptId, event.executionId)
       case 'publishTerminal':
-        return this.publishTerminal(event.attemptId, event.evidence)
+        return this.publishTerminal(event.attemptId, event.message, event.evidence)
       case 'targetRestart':
         return this.targetRestart(event.attemptId)
       case 'sourceRestart':
@@ -361,23 +592,19 @@ export class DurableHandoffModel {
   }
 
   createAttempt(chainId = 'chain-1', attemptId = 'attempt-1'): SourceAttempt {
-    if (this.stateValue.chains[chainId]) {
+    const source = this.sourceStore.read()
+    if (source.chains[chainId]) {
       throw new ModelViolation('CHAIN_EXISTS', `chain ${chainId} already exists`)
     }
-    if (this.stateValue.attempts[attemptId]) {
+    if (source.attempts[attemptId]) {
       throw new ModelViolation('ATTEMPT_EXISTS', `attempt ${attemptId} already exists`)
     }
     this.tick()
-    this.stateValue.chains[chainId] = {
-      id: chainId,
-      status: 'continuing',
-      activeAttemptId: attemptId,
-    }
     const attempt: SourceAttempt = {
       id: attemptId,
       chainId,
-      sourceInstanceId: this.stateValue.sourceInstanceId,
-      targetId: this.stateValue.targetId,
+      sourceInstanceId: source.sourceInstanceId,
+      targetId: source.targetId,
       snapshotDigest: `snapshot-${attemptId}`,
       payloadDigest: `payload-${attemptId}`,
       status: 'pending',
@@ -387,15 +614,22 @@ export class DurableHandoffModel {
       replacementAttemptId: null,
       lastTargetVersion: 0,
     }
-    this.stateValue.attempts[attemptId] = attempt
-    this.stateValue.outbox[attemptId] = {
-      id: `outbox-${attemptId}`,
-      attemptId,
-      operation: 'admit',
-      status: 'pending',
-      requestId: `admit-request-${attemptId}`,
-    }
-    this.sourceAuditEvent('attempt_created', attemptId, 'system', null, null)
+    this.sourceStore.transaction(draft => {
+      draft.chains[chainId] = {
+        id: chainId,
+        status: 'continuing',
+        activeAttemptId: attemptId,
+      }
+      draft.attempts[attemptId] = attempt
+      draft.outbox[attemptId] = {
+        id: `outbox-${attemptId}`,
+        attemptId,
+        operation: 'admit',
+        status: 'pending',
+        requestId: `admit-request-${attemptId}`,
+      }
+      this.sourceAuditEvent(draft, 'attempt_created', attemptId, 'system', null, null)
+    })
     this.checkInvariants()
     return clone(attempt)
   }
@@ -409,20 +643,23 @@ export class DurableHandoffModel {
     if (isSourceTerminal(attempt.status)) {
       throw new ModelViolation('ATTEMPT_TERMINAL', `attempt ${attemptId} is terminal`)
     }
-    if (outbox.status === 'pending' || outbox.status === 'sent') {
-      outbox.status = 'sent'
-      this.tick()
+    if (outbox.status !== 'pending' && outbox.status !== 'sent') {
+      throw new ModelViolation('ADMISSION_NOT_RETRYABLE', `outbox ${outbox.id} is ${outbox.status}`)
+    }
+    this.tick()
+    this.sourceStore.transaction(draft => {
+      draft.outbox[attemptId].status = 'sent'
       this.sourceAuditEvent(
+        draft,
         'admission_sent',
         attemptId,
         'source-dispatcher',
-        transportAuth('admit', attempt.sourceInstanceId, attempt.targetId).authorizationId,
+        transportAuthForRequest('admit', attempt).authorizationId,
         null,
       )
-      this.checkInvariants()
-      return this.buildTransportRequest(attempt, 'admit')
-    }
-    throw new ModelViolation('ADMISSION_NOT_RETRYABLE', `outbox ${outbox.id} is ${outbox.status}`)
+    })
+    this.checkInvariants()
+    return this.buildTransportRequest(this.attempt(attemptId), 'admit')
   }
 
   admit(attemptId: string): TargetStatusResponse {
@@ -434,86 +671,107 @@ export class DurableHandoffModel {
     this.requireTargetOnline()
     this.verifyTransportAuth(request, 'admit')
     const key = keyFor(request.sourceInstanceId, request.attemptId)
-    const existing = this.stateValue.inboxes[key]
+    const existing = this.targetStore.read().inboxes[key]
     if (existing) {
       this.assertSameIdentity(existing, request)
       this.tick()
-      this.targetAuditEvent('admission_replayed', existing, request.auth, null)
+      this.targetStore.transaction(draft => {
+        this.targetAuditEvent(draft, 'admission_replayed', draft.inboxes[key], request.auth, null)
+      })
       this.checkInvariants()
-      return this.statusResponse(existing)
+      return this.statusResponse(this.requireInbox(attemptIdFromRequest(request)))
     }
 
     this.tick()
-    const inbox: TargetInbox = {
-      id: `inbox-${request.sourceInstanceId}-${request.attemptId}`,
-      chainId: request.chainId,
-      attemptId: request.attemptId,
-      sourceInstanceId: request.sourceInstanceId,
-      targetId: request.targetId,
-      snapshotDigest: request.snapshotDigest,
-      payloadDigest: request.payloadDigest,
-      status: 'admitted',
-      receipt: `receipt-${this.stateValue.targetKind}-${request.attemptId}`,
-      version: 1,
-      leaseId: null,
-      executionId: null,
-      invocationStartedAt: null,
-      invocationCount: 0,
-      terminalEvidence: null,
-      failureReason: null,
-      auditEventIds: [],
-    }
-    this.stateValue.inboxes[key] = inbox
-    this.targetAuditEvent('admitted', inbox, request.auth, null)
+    this.targetStore.transaction(draft => {
+      const inbox: TargetInbox = {
+        id: `inbox-${request.sourceInstanceId}-${request.attemptId}`,
+        chainId: request.chainId,
+        attemptId: request.attemptId,
+        sourceInstanceId: request.sourceInstanceId,
+        targetId: request.targetId,
+        snapshotDigest: request.snapshotDigest,
+        payloadDigest: request.payloadDigest,
+        status: 'admitted',
+        receipt: `receipt-${draft.targetKind}-${request.attemptId}`,
+        version: 1,
+        leaseId: null,
+        executionId: null,
+        invocationStartedAt: null,
+        invocationCount: 0,
+        terminalEvidence: null,
+        failureReason: null,
+        auditEventIds: [],
+      }
+      draft.inboxes[key] = inbox
+      this.targetAuditEvent(draft, 'admitted', inbox, request.auth, null)
+    })
     this.checkInvariants()
-    return this.statusResponse(inbox)
+    return this.statusResponse(this.requireInbox(attemptIdFromRequest(request)))
   }
 
   receiveAdmission(attemptId: string): void {
     const attempt = this.attempt(attemptId)
-    const outbox = this.outbox(attemptId)
-    const inbox = this.inbox(attemptId)
-    if (!inbox) throw new ModelViolation('ADMISSION_MISSING', `target has no inbox for ${attemptId}`)
-    this.assertSourceTargetIdentity(attempt, inbox)
-    this.verifyStatusProof(this.statusResponse(inbox))
-    if (inbox.status !== 'admitted') {
-      throw new ModelViolation('ADMISSION_STATUS', `cannot receive ${inbox.status} as admission`)
+    const inbox = this.requireInbox(attemptId)
+    const response = this.statusResponse(inbox)
+    this.receiveAdmissionResponse(attemptId, response)
+  }
+
+  private receiveAdmissionResponse(attemptId: string, response: TargetStatusResponse): void {
+    const attempt = this.attempt(attemptId)
+    this.verifyStatusProof(response)
+    this.assertSourceResponseIdentity(attempt, response)
+    if (attempt.status === 'cancel_pending' && response.status === 'admitted') {
+      throw new ModelViolation('STALE_ADMISSION', `admission callback cannot clear cancellation for ${attemptId}`)
     }
-    attempt.targetReceipt = inbox.receipt
-    attempt.status = 'admitted'
-    attempt.lastTargetVersion = inbox.version
-    if (outbox.status === 'sent') outbox.status = 'acknowledged'
-    this.tick()
-    this.sourceAuditEvent(
-      'admission_received',
-      attemptId,
-      'source-reconciler',
-      transportAuth('admit', attempt.sourceInstanceId, attempt.targetId).authorizationId,
-      null,
-    )
+    if (response.status !== 'admitted') {
+      throw new ModelViolation('ADMISSION_STATUS', `cannot receive ${response.status} as admission`)
+    }
+    if (attempt.status !== 'pending' && attempt.status !== 'admitted') {
+      throw new ModelViolation('ADMISSION_STATUS', `cannot receive admission while source is ${attempt.status}`)
+    }
+    this.sourceStore.transaction(draft => {
+      const sourceAttempt = draft.attempts[attemptId]
+      sourceAttempt.targetReceipt = response.receipt
+      sourceAttempt.status = 'admitted'
+      sourceAttempt.lastTargetVersion = response.version
+      if (draft.outbox[attemptId].status === 'sent') draft.outbox[attemptId].status = 'acknowledged'
+      this.sourceAuditEvent(
+        draft,
+        'admission_received',
+        attemptId,
+        'source-reconciler',
+        transportAuthForRequest('admit', sourceAttempt).authorizationId,
+        null,
+      )
+    })
     this.checkInvariants()
   }
 
   claim(attemptId: string): TargetStatusResponse {
     this.requireTargetOnline()
+    const key = keyFor(this.sourceInstanceId(), attemptId)
     const inbox = this.requireInbox(attemptId)
-    const auth = transportAuth('getStatus', this.stateValue.sourceInstanceId, this.stateValue.targetId)
+    const auth = transportAuthForRequest('getStatus', this.requestIdentityForInbox(inbox))
     if (inbox.status !== 'admitted') {
       throw new ModelViolation('CLAIM_STATUS', `cannot claim target inbox in ${inbox.status}`)
     }
     this.tick()
-    inbox.status = 'claimed'
-    inbox.version += 1
-    inbox.leaseId = `lease-${attemptId}-${inbox.version}`
-    this.targetAuditEvent('claimed', inbox, auth, null)
+    this.targetStore.transaction(draft => {
+      const targetInbox = draft.inboxes[key]
+      targetInbox.status = 'claimed'
+      targetInbox.version += 1
+      targetInbox.leaseId = `lease-${attemptId}-${targetInbox.version}`
+      this.targetAuditEvent(draft, 'claimed', targetInbox, auth, null)
+    })
     this.checkInvariants()
-    return this.statusResponse(inbox)
+    return this.statusResponse(this.requireInbox(attemptId))
   }
 
   startInvocation(attemptId: string, executionId = `execution-${attemptId}`): TargetStatusResponse {
     this.requireTargetOnline()
     const inbox = this.requireInbox(attemptId)
-    const auth = transportAuth('getStatus', this.stateValue.sourceInstanceId, this.stateValue.targetId)
+    const auth = transportAuthForRequest('getStatus', this.requestIdentityForInbox(inbox))
     if (inbox.status === 'running') {
       if (inbox.executionId !== executionId) {
         throw new ModelViolation('EXECUTION_CONFLICT', `attempt ${attemptId} already has execution ${inbox.executionId}`)
@@ -524,74 +782,112 @@ export class DurableHandoffModel {
       throw new ModelViolation('INVOCATION_STATUS', `cannot invoke target inbox in ${inbox.status}`)
     }
     this.tick()
-    inbox.status = 'running'
-    inbox.version += 1
-    inbox.executionId = executionId
-    inbox.invocationStartedAt = this.stateValue.clock
-    inbox.invocationCount += 1
-    this.targetAuditEvent('invocation_started', inbox, auth, null)
+    this.targetStore.transaction(draft => {
+      const targetInbox = draft.inboxes[keyFor(this.sourceInstanceId(), attemptId)]
+      targetInbox.status = 'running'
+      targetInbox.version += 1
+      targetInbox.executionId = executionId
+      targetInbox.invocationStartedAt = this.clock
+      targetInbox.invocationCount += 1
+      this.targetAuditEvent(draft, 'invocation_started', targetInbox, auth, null)
+    })
     this.checkInvariants()
-    return this.statusResponse(inbox)
+    return this.statusResponse(this.requireInbox(attemptId))
   }
 
   publishTerminal(
     attemptId: string,
-    partialEvidence: Partial<TerminalPublicationEvidence> = {},
+    message?: TerminalMessageInput,
+    externalEvidence?: Partial<TerminalPublicationEvidence>,
   ): TargetStatusResponse {
     this.requireTargetOnline()
     const inbox = this.requireInbox(attemptId)
-    const auth = transportAuth('getStatus', this.stateValue.sourceInstanceId, this.stateValue.targetId)
     if (inbox.status === 'completed') return this.statusResponse(inbox)
     if (inbox.status !== 'running') {
-      throw new ModelViolation('PUBLICATION_STATUS', `cannot publish from target inbox ${inbox.status}`)
+      throw new ModelViolation('PUBLICATION_STATUS', `cannot publish from target inbox ${attemptId} in ${inbox.status}`)
     }
-    const evidence: TerminalPublicationEvidence = {
-      publicationId: partialEvidence.publicationId ?? `publication-${attemptId}`,
-      messageId: partialEvidence.messageId ?? `message-${attemptId}`,
-      messageDigest: partialEvidence.messageDigest ?? `digest-${attemptId}`,
-      committedAt: partialEvidence.committedAt ?? this.stateValue.clock + 1,
-      source: partialEvidence.source ?? 'durable-agent-message',
+    if (!message
+      || !message.id
+      || !message.content
+      || message.id.startsWith('synthetic:')
+      || externalEvidence) {
+      throw new ModelViolation('TERMINAL_EVIDENCE_INVALID', `attempt ${attemptId} lacks a real Target message row`)
     }
-    if (evidence.source !== 'durable-agent-message'
-      || !evidence.publicationId
-      || !evidence.messageId
-      || !evidence.messageDigest
-      || evidence.messageId.startsWith('synthetic:')
-      || evidence.publicationId.startsWith('synthetic:')) {
-      throw new ModelViolation('TERMINAL_EVIDENCE_INVALID', `attempt ${attemptId} lacks real publication evidence`)
-    }
+    const committedAt = this.clock + 1
+    const messageDigest = digest(message.content)
+    const key = keyFor(this.sourceInstanceId(), attemptId)
+    const auth = transportAuthForRequest('getStatus', this.requestIdentityForInbox(inbox))
     this.tick()
-    inbox.status = 'completed'
-    inbox.version += 1
-    inbox.leaseId = null
-    inbox.terminalEvidence = evidence
-    this.targetAuditEvent('terminal_published', inbox, auth, null)
+    this.targetStore.transaction(draft => {
+      const targetInbox = draft.inboxes[key]
+      if (draft.messages[message.id]) {
+        throw new ModelViolation('MESSAGE_ID_CONFLICT', `message ${message.id} already exists`)
+      }
+      const messageRow: DurableAgentMessage = {
+        id: message.id,
+        attemptId,
+        content: message.content,
+        contentDigest: messageDigest,
+        committedAt,
+      }
+      const publicationId = `publication-${attemptId}-${draft.nextSequence}`
+      const publication: TargetTerminalPublication = {
+        publicationId,
+        attemptId,
+        messageId: message.id,
+        messageDigest,
+        committedAt,
+        source: 'durable-agent-message',
+      }
+      draft.messages[message.id] = messageRow
+      draft.publications[publicationId] = publication
+      targetInbox.status = 'completed'
+      targetInbox.version += 1
+      targetInbox.leaseId = null
+      targetInbox.terminalEvidence = {
+        publicationId,
+        messageId: message.id,
+        messageDigest,
+        committedAt,
+        source: 'durable-agent-message',
+      }
+      this.targetAuditEvent(draft, 'terminal_published', targetInbox, auth, null)
+    })
     this.checkInvariants()
-    return this.statusResponse(inbox)
+    return this.statusResponse(this.requireInbox(attemptId))
   }
 
   targetRestart(attemptId: string): TargetStatusResponse {
+    this.targetStore.restart()
     const inbox = this.requireInbox(attemptId)
-    const auth = transportAuth('getStatus', this.stateValue.sourceInstanceId, this.stateValue.targetId)
     if (inbox.status === 'claimed') {
+      const auth = transportAuthForRequest('getStatus', this.requestIdentityForInbox(inbox))
       this.tick()
-      inbox.status = 'admitted'
-      inbox.version += 1
-      inbox.leaseId = null
-      this.targetAuditEvent('recovered_before_invocation', inbox, auth, 'claim_without_invocation_marker')
+      this.targetStore.transaction(draft => {
+        const targetInbox = draft.inboxes[keyFor(this.sourceInstanceId(), attemptId)]
+        targetInbox.status = 'admitted'
+        targetInbox.version += 1
+        targetInbox.leaseId = null
+        this.targetAuditEvent(draft, 'recovered_before_invocation', targetInbox, auth, 'claim_without_invocation_marker')
+      })
     } else if (inbox.status === 'running') {
+      const auth = transportAuthForRequest('getStatus', this.requestIdentityForInbox(inbox))
       this.tick()
-      inbox.status = 'failed_manual'
-      inbox.version += 1
-      inbox.leaseId = null
-      inbox.failureReason = 'target_restart_after_invocation'
-      this.targetAuditEvent('recovered_after_invocation', inbox, auth, inbox.failureReason)
+      this.targetStore.transaction(draft => {
+        const targetInbox = draft.inboxes[keyFor(this.sourceInstanceId(), attemptId)]
+        targetInbox.status = 'failed_manual'
+        targetInbox.version += 1
+        targetInbox.leaseId = null
+        targetInbox.failureReason = 'target_restart_after_invocation'
+        this.targetAuditEvent(draft, 'recovered_after_invocation', targetInbox, auth, targetInbox.failureReason)
+      })
     }
     this.checkInvariants()
-    return this.statusResponse(inbox)
+    return this.statusResponse(this.requireInbox(attemptId))
   }
 
   sourceRestart(): DurableHandoffState {
+    this.sourceStore.restart()
     this.checkInvariants()
     return this.snapshot()
   }
@@ -599,26 +895,29 @@ export class DurableHandoffModel {
   requestCancel(
     attemptId: string,
     reason = 'operator_requested',
-    auth: AuthBinding = operatorAuth('cancel'),
+    auth?: AuthBinding,
   ): CancelRequest {
     const attempt = this.attempt(attemptId)
-    const chain = this.chain(attempt.chainId)
-    this.verifyOperatorAuth(auth, 'cancel')
-    if (attempt.status === 'cancel_pending') return this.cancelRequest(attempt, reason)
-    if (attempt.status === 'completed' || attempt.status === 'cancelled' || attempt.status === 'replaced') {
+    const effectiveAuth = auth ?? operatorAuthForRequest('cancel', attempt, reason)
+    this.verifyOperatorAuth(effectiveAuth, 'cancel', attempt, reason)
+    if (attempt.status === 'cancel_pending') return this.cancelRequest(attempt, attempt.cancelReason ?? reason)
+    if (isSourceTerminal(attempt.status)) {
       throw new ModelViolation('CANCEL_TERMINAL', `cannot cancel attempt ${attemptId} in ${attempt.status}`)
     }
-    attempt.status = 'cancel_pending'
-    attempt.cancelReason = reason
-    chain.status = 'cancel_pending'
-    const outbox = this.outbox(attemptId)
-    outbox.operation = 'cancel'
-    outbox.status = 'cancel_pending'
-    outbox.requestId = `cancel-request-${attemptId}`
     this.tick()
-    this.sourceAuditEvent('cancel_requested', attemptId, auth.principal, auth.authorizationId, reason)
+    this.sourceStore.transaction(draft => {
+      const sourceAttempt = draft.attempts[attemptId]
+      sourceAttempt.status = 'cancel_pending'
+      sourceAttempt.cancelReason = reason
+      draft.chains[sourceAttempt.chainId].status = 'cancel_pending'
+      const outbox = draft.outbox[attemptId]
+      outbox.operation = 'cancel'
+      outbox.status = 'cancel_pending'
+      outbox.requestId = `cancel-request-${attemptId}`
+      this.sourceAuditEvent(draft, 'cancel_requested', attemptId, effectiveAuth.principal, effectiveAuth.authorizationId, reason)
+    })
     this.checkInvariants()
-    return this.cancelRequest(attempt, reason)
+    return this.cancelRequest(this.attempt(attemptId), reason)
   }
 
   sendCancel(attemptId: string): TargetStatusResponse {
@@ -629,20 +928,18 @@ export class DurableHandoffModel {
       throw new ModelViolation('CANCEL_NOT_PENDING', `attempt ${attemptId} is not awaiting cancellation`)
     }
     const request = this.cancelRequest(attempt, attempt.cancelReason ?? 'operator_requested')
-    this.verifyTransportAuth(request, 'cancel')
-    const inbox = this.stateValue.inboxes[keyFor(request.sourceInstanceId, request.attemptId)]
     const response = this.cancel(request)
-    if (!inbox) {
-      attempt.targetReceipt = response.receipt
-    }
     this.tick()
-    this.sourceAuditEvent(
-      'cancel_sent',
-      attemptId,
-      'source-dispatcher',
-      request.auth.authorizationId,
-      request.reason,
-    )
+    this.sourceStore.transaction(draft => {
+      this.sourceAuditEvent(
+        draft,
+        'cancel_sent',
+        attemptId,
+        'source-dispatcher',
+        request.auth.authorizationId,
+        request.reason,
+      )
+    })
     this.checkInvariants()
     return response
   }
@@ -657,181 +954,207 @@ export class DurableHandoffModel {
     this.requireTargetOnline()
     const attempt = this.attempt(attemptId)
     const response = this.getStatus(attempt)
-    const inbox = this.requireInbox(attemptId)
-    this.verifyStatusProof(response)
-    attempt.lastTargetVersion = response.version
-    if (attempt.targetReceipt === null) attempt.targetReceipt = response.receipt
+    return this.reconcileResponse(attemptId, response)
+  }
 
-    if (response.status === 'completed') {
-      if (!response.terminalEvidence) {
-        throw new ModelViolation('MISSING_TERMINAL_EVIDENCE', `completed target ${attemptId} has no evidence`)
-      }
-      attempt.status = 'completed'
-      this.outbox(attemptId).status = 'completed'
-      this.chain(attempt.chainId).status = 'completed'
-    } else if (response.status === 'cancelled') {
-      attempt.status = 'cancelled'
-      this.outbox(attemptId).status = 'cancelled'
-      this.chain(attempt.chainId).status = 'cancelled'
-    } else if (response.status === 'failed_manual') {
-      attempt.status = 'failed_manual'
-      this.outbox(attemptId).status = 'failed_manual'
-      this.chain(attempt.chainId).status = 'failed_manual'
-    } else if (attempt.status !== 'cancel_pending') {
-      attempt.status = response.status
-      this.outbox(attemptId).status = 'acknowledged'
+  reconcileResponse(attemptId: string, response: TargetStatusResponse): TargetStatusResponse {
+    const attempt = this.attempt(attemptId)
+    this.verifyStatusProof(response)
+    this.assertSourceResponseIdentity(attempt, response)
+    if (response.version < attempt.lastTargetVersion) {
+      throw new ModelViolation('STATUS_STALE', `target status ${response.version} is older than source ${attempt.lastTargetVersion}`)
     }
+    if (response.version === attempt.lastTargetVersion && isSourceTerminal(attempt.status)) {
+      return response
+    }
+    if (response.status === 'completed') {
+      this.assertResponseTerminalEvidence(response)
+    }
+    if (attempt.status === 'failed_manual' && response.status !== 'failed_manual') {
+      throw new ModelViolation('STATUS_REGRESSION', `failed_manual attempt ${attemptId} cannot regress to ${response.status}`)
+    }
+    if (attempt.status === 'cancelled' && response.status !== 'cancelled') {
+      throw new ModelViolation('STATUS_REGRESSION', `cancelled attempt ${attemptId} cannot regress to ${response.status}`)
+    }
+
     this.tick()
-    this.sourceAuditEvent(
-      'status_reconciled',
-      attemptId,
-      'source-reconciler',
-      transportAuth('getStatus', attempt.sourceInstanceId, attempt.targetId).authorizationId,
-      response.status,
-    )
-    this.assertSourceTargetIdentity(attempt, inbox)
+    this.sourceStore.transaction(draft => {
+      const sourceAttempt = draft.attempts[attemptId]
+      const chain = draft.chains[sourceAttempt.chainId]
+      const outbox = draft.outbox[attemptId]
+      sourceAttempt.lastTargetVersion = response.version
+      if (sourceAttempt.targetReceipt === null) sourceAttempt.targetReceipt = response.receipt
+      if (response.status === 'completed') {
+        sourceAttempt.status = 'completed'
+        outbox.status = 'completed'
+        chain.status = 'completed'
+      } else if (response.status === 'cancelled') {
+        sourceAttempt.status = 'cancelled'
+        outbox.status = 'cancelled'
+        chain.status = 'cancelled'
+      } else if (response.status === 'failed_manual') {
+        sourceAttempt.status = 'failed_manual'
+        outbox.status = 'failed_manual'
+        chain.status = 'failed_manual'
+      } else if (sourceAttempt.status !== 'cancel_pending') {
+        sourceAttempt.status = response.status === 'running' ? 'running' : response.status
+        outbox.status = 'acknowledged'
+      }
+      this.sourceAuditEvent(
+        draft,
+        'status_reconciled',
+        attemptId,
+        'source-reconciler',
+        transportAuthForRequest('getStatus', sourceAttempt).authorizationId,
+        response.status,
+      )
+    })
     this.checkInvariants()
     return response
   }
 
-  replace(attemptId: string, auth: AuthBinding = operatorAuth('replace')): SourceAttempt {
+  replace(attemptId: string, auth?: AuthBinding): SourceAttempt {
     const oldAttempt = this.attempt(attemptId)
     const chain = this.chain(oldAttempt.chainId)
-    this.verifyOperatorAuth(auth, 'replace')
+    const effectiveAuth = auth ?? operatorAuthForRequest('replace', oldAttempt)
+    this.verifyOperatorAuth(effectiveAuth, 'replace', oldAttempt)
     if (oldAttempt.status !== 'failed_manual' || chain.status !== 'failed_manual') {
       throw new ModelViolation('REPLACEMENT_NOT_AUTHORIZED', `attempt ${attemptId} is not failed_manual`)
     }
     const replacementId = `${attemptId}-replacement`
-    if (this.stateValue.attempts[replacementId]) {
-      return clone(this.stateValue.attempts[replacementId])
+    if (this.sourceStore.read().attempts[replacementId]) {
+      return clone(this.sourceStore.read().attempts[replacementId])
     }
-    oldAttempt.status = 'replaced'
-    oldAttempt.replacementAttemptId = replacementId
-    const replacement: SourceAttempt = {
-      id: replacementId,
-      chainId: oldAttempt.chainId,
-      sourceInstanceId: oldAttempt.sourceInstanceId,
-      targetId: oldAttempt.targetId,
-      snapshotDigest: `${oldAttempt.snapshotDigest}:replacement`,
-      payloadDigest: `${oldAttempt.payloadDigest}:replacement`,
-      status: 'pending',
-      targetReceipt: null,
-      cancelReason: null,
-      replacesAttemptId: oldAttempt.id,
-      replacementAttemptId: null,
-      lastTargetVersion: 0,
-    }
-    this.stateValue.attempts[replacementId] = replacement
-    this.stateValue.outbox[replacementId] = {
-      id: `outbox-${replacementId}`,
-      attemptId: replacementId,
-      operation: 'admit',
-      status: 'pending',
-      requestId: `admit-request-${replacementId}`,
-    }
-    chain.status = 'continuing'
-    chain.activeAttemptId = replacementId
     this.tick()
-    this.sourceAuditEvent(
-      'replacement_created',
-      replacementId,
-      auth.principal,
-      auth.authorizationId,
-      oldAttempt.id,
-    )
+    this.sourceStore.transaction(draft => {
+      const sourceOldAttempt = draft.attempts[attemptId]
+      sourceOldAttempt.status = 'replaced'
+      sourceOldAttempt.replacementAttemptId = replacementId
+      const replacement: SourceAttempt = {
+        id: replacementId,
+        chainId: sourceOldAttempt.chainId,
+        sourceInstanceId: sourceOldAttempt.sourceInstanceId,
+        targetId: sourceOldAttempt.targetId,
+        snapshotDigest: `${sourceOldAttempt.snapshotDigest}:replacement`,
+        payloadDigest: `${sourceOldAttempt.payloadDigest}:replacement`,
+        status: 'pending',
+        targetReceipt: null,
+        cancelReason: null,
+        replacesAttemptId: sourceOldAttempt.id,
+        replacementAttemptId: null,
+        lastTargetVersion: 0,
+      }
+      draft.attempts[replacementId] = replacement
+      draft.outbox[replacementId] = {
+        id: `outbox-${replacementId}`,
+        attemptId: replacementId,
+        operation: 'admit',
+        status: 'pending',
+        requestId: `admit-request-${replacementId}`,
+      }
+      draft.chains[sourceOldAttempt.chainId].status = 'continuing'
+      draft.chains[sourceOldAttempt.chainId].activeAttemptId = replacementId
+      this.sourceAuditEvent(
+        draft,
+        'replacement_created',
+        replacementId,
+        effectiveAuth.principal,
+        effectiveAuth.authorizationId,
+        sourceOldAttempt.id,
+      )
+    })
     this.checkInvariants()
-    return clone(replacement)
+    return clone(this.sourceStore.read().attempts[replacementId])
   }
 
   setTargetOnline(online: boolean): void {
-    this.stateValue.targetOnline = online
+    this.targetOnline = online
+  }
+
+  getStatusRequest(request: AdmitRequest): TargetStatusResponse {
+    this.requireTargetOnline()
+    this.verifyTransportAuth(request, 'getStatus')
+    const inbox = this.targetStore.read().inboxes[keyFor(request.sourceInstanceId, request.attemptId)]
+    if (!inbox) throw new ModelViolation('INBOX_NOT_FOUND', `unknown target inbox for ${request.attemptId}`)
+    this.assertSameIdentity(inbox, request)
+    return this.statusResponse(inbox)
   }
 
   private cancelTarget(request: CancelRequest): TargetStatusResponse {
-    this.verifyTransportAuth(request, 'cancel')
     const key = keyFor(request.sourceInstanceId, request.attemptId)
-    const existing = this.stateValue.inboxes[key]
-    if (existing) {
-      this.assertSameIdentity(existing, request)
-      if (existing.status === 'admitted' || existing.status === 'claimed') {
-        this.tick()
-        existing.status = 'cancelled'
-        existing.version += 1
-        existing.leaseId = null
-        this.targetAuditEvent('cancelled', existing, request.auth, request.reason)
-      } else if (existing.status === 'running') {
-        this.tick()
-        existing.status = 'failed_manual'
-        existing.version += 1
-        existing.leaseId = null
-        existing.failureReason = 'cancel_after_invocation'
-        this.targetAuditEvent('cancelled_after_invocation', existing, request.auth, existing.failureReason)
-      }
-      this.checkInvariants()
-      return this.statusResponse(existing)
-    }
-
+    const existing = this.targetStore.read().inboxes[key]
+    if (existing) this.assertSameIdentity(existing, request)
     this.tick()
-    const tombstone: TargetInbox = {
-      id: `inbox-${request.sourceInstanceId}-${request.attemptId}`,
-      chainId: request.chainId,
-      attemptId: request.attemptId,
-      sourceInstanceId: request.sourceInstanceId,
-      targetId: request.targetId,
-      snapshotDigest: request.snapshotDigest,
-      payloadDigest: request.payloadDigest,
-      status: 'cancelled',
-      receipt: `receipt-${this.stateValue.targetKind}-${request.attemptId}`,
-      version: 1,
-      leaseId: null,
-      executionId: null,
-      invocationStartedAt: null,
-      invocationCount: 0,
-      terminalEvidence: null,
-      failureReason: request.reason,
-      auditEventIds: [],
-    }
-    this.stateValue.inboxes[key] = tombstone
-    this.targetAuditEvent('cancelled', tombstone, request.auth, request.reason)
+    this.targetStore.transaction(draft => {
+      const targetInbox = draft.inboxes[key]
+      if (!targetInbox) {
+        const tombstone: TargetInbox = {
+          id: `inbox-${request.sourceInstanceId}-${request.attemptId}`,
+          chainId: request.chainId,
+          attemptId: request.attemptId,
+          sourceInstanceId: request.sourceInstanceId,
+          targetId: request.targetId,
+          snapshotDigest: request.snapshotDigest,
+          payloadDigest: request.payloadDigest,
+          status: 'cancelled',
+          receipt: `receipt-${draft.targetKind}-${request.attemptId}`,
+          version: 1,
+          leaseId: null,
+          executionId: null,
+          invocationStartedAt: null,
+          invocationCount: 0,
+          terminalEvidence: null,
+          failureReason: request.reason,
+          auditEventIds: [],
+        }
+        draft.inboxes[key] = tombstone
+        this.targetAuditEvent(draft, 'cancelled', tombstone, request.auth, request.reason)
+        return
+      }
+      if (targetInbox.status === 'admitted' || targetInbox.status === 'claimed') {
+        targetInbox.status = 'cancelled'
+        targetInbox.version += 1
+        targetInbox.leaseId = null
+        targetInbox.failureReason = request.reason
+        this.targetAuditEvent(draft, 'cancelled', targetInbox, request.auth, request.reason)
+      } else if (targetInbox.status === 'running') {
+        targetInbox.status = 'failed_manual'
+        targetInbox.version += 1
+        targetInbox.leaseId = null
+        targetInbox.failureReason = 'cancel_after_invocation'
+        this.targetAuditEvent(draft, 'cancelled_after_invocation', targetInbox, request.auth, targetInbox.failureReason)
+      }
+    })
     this.checkInvariants()
-    return this.statusResponse(tombstone)
+    return this.statusResponse(this.requireInbox(attemptIdFromRequest(request)))
   }
 
   private getStatus(attempt: SourceAttempt): TargetStatusResponse {
     return this.getStatusRequest(this.buildTransportRequest(attempt, 'getStatus'))
   }
 
-  getStatusRequest(request: AdmitRequest): TargetStatusResponse {
-    this.requireTargetOnline()
-    this.verifyTransportAuth(request, 'getStatus')
-    const inbox = this.stateValue.inboxes[keyFor(request.sourceInstanceId, request.attemptId)]
-    if (!inbox) throw new ModelViolation('INBOX_NOT_FOUND', `unknown target inbox for ${request.attemptId}`)
-    this.assertSameIdentity(inbox, request)
-    return this.statusResponse(inbox)
-  }
-
   private buildTransportRequest(
     attempt: SourceAttempt,
     operation: TransportOperation,
+    reason: string | null = null,
   ): AdmitRequest {
-    return {
+    const request: RequestIdentity = {
       chainId: attempt.chainId,
       attemptId: attempt.id,
       sourceInstanceId: attempt.sourceInstanceId,
       targetId: attempt.targetId,
       snapshotDigest: attempt.snapshotDigest,
       payloadDigest: attempt.payloadDigest,
-      auth: transportAuth(operation, attempt.sourceInstanceId, attempt.targetId),
+    }
+    return {
+      ...request,
+      auth: transportAuthForRequest(operation, request, reason),
     }
   }
 
   private cancelRequest(attempt: SourceAttempt, reason: string): CancelRequest {
-    const request = this.buildTransportRequest(attempt, 'cancel')
-    return {
-      ...request,
-      auth: transportAuth('cancel', attempt.sourceInstanceId, attempt.targetId),
-      reason,
-    }
+    const request = this.buildTransportRequest(attempt, 'cancel', reason)
+    return { ...request, reason }
   }
 
   private verifyTransportAuth(
@@ -839,10 +1162,14 @@ export class DurableHandoffModel {
     operation: TransportOperation,
   ): void {
     const auth = request.auth
+    const reason = 'reason' in request ? request.reason : null
     if (auth.kind !== 'transport'
       || auth.operation !== operation
       || auth.sourceInstanceId !== request.sourceInstanceId
       || auth.targetId !== request.targetId
+      || auth.principal !== `source:${request.sourceInstanceId}`
+      || auth.capabilityScope !== transportScope(request)
+      || auth.requestDigest !== requestDigestFor(operation, request, reason)
       || auth.signature !== expectedTransportSignature(auth)) {
       throw new ModelViolation('AUTH_REJECTED', `invalid ${operation} transport authorization`)
     }
@@ -851,15 +1178,20 @@ export class DurableHandoffModel {
   private verifyOperatorAuth(
     auth: AuthBinding,
     operation: OperatorOperation,
+    request: SourceAttempt,
+    reason: string | null = null,
   ): void {
     if (auth.kind !== 'operator'
       || auth.operation !== operation
+      || !auth.principal
+      || auth.capabilityScope !== operatorScope(operation, request)
+      || auth.requestDigest !== requestDigestFor(operation, request, reason)
       || auth.signature !== expectedOperatorSignature(auth)) {
       throw new ModelViolation('AUTH_REJECTED', `invalid ${operation} operator authorization`)
     }
   }
 
-  private assertSameIdentity(inbox: TargetInbox, request: AdmitRequest): void {
+  private assertSameIdentity(inbox: TargetInbox, request: RequestIdentity): void {
     if (inbox.chainId !== request.chainId
       || inbox.attemptId !== request.attemptId
       || inbox.sourceInstanceId !== request.sourceInstanceId
@@ -867,6 +1199,42 @@ export class DurableHandoffModel {
       || inbox.snapshotDigest !== request.snapshotDigest
       || inbox.payloadDigest !== request.payloadDigest) {
       throw new ModelViolation('IDENTITY_CONFLICT', `attempt ${request.attemptId} does not match target identity`)
+    }
+  }
+
+  private assertSourceResponseIdentity(attempt: SourceAttempt, response: TargetStatusResponse): void {
+    if (attempt.chainId !== response.chainId
+      || attempt.id !== response.attemptId
+      || attempt.sourceInstanceId !== response.sourceInstanceId
+      || attempt.targetId !== response.targetId
+      || attempt.snapshotDigest !== response.snapshotDigest
+      || attempt.payloadDigest !== response.payloadDigest) {
+      throw new ModelViolation('IDENTITY_CONFLICT', `status response does not match source attempt ${attempt.id}`)
+    }
+  }
+
+  private assertResponseTerminalEvidence(response: TargetStatusResponse): void {
+    const evidence = response.terminalEvidence
+    if (!evidence
+      || evidence.source !== 'durable-agent-message'
+      || evidence.messageId.startsWith('synthetic:')
+      || evidence.publicationId.startsWith('synthetic:')) {
+      throw new ModelViolation('TERMINAL_EVIDENCE_INVALID', `completed status for ${response.attemptId} lacks valid evidence`)
+    }
+    const target = this.targetStore.read()
+    const publication = target.publications[evidence.publicationId]
+    const message = target.messages[evidence.messageId]
+    if (!publication
+      || !message
+      || publication.attemptId !== response.attemptId
+      || publication.messageId !== evidence.messageId
+      || publication.messageDigest !== evidence.messageDigest
+      || message.attemptId !== response.attemptId
+      || message.contentDigest !== evidence.messageDigest
+      || message.id !== publication.messageId
+      || message.committedAt !== evidence.committedAt
+      || publication.committedAt !== evidence.committedAt) {
+      throw new ModelViolation('TERMINAL_EVIDENCE_INVALID', `completed status for ${response.attemptId} is not backed by Target rows`)
     }
   }
 
@@ -879,11 +1247,13 @@ export class DurableHandoffModel {
     if (!lastAuditEventId) {
       throw new ModelViolation('AUDIT_EVIDENCE_MISSING', `target ${inbox.attemptId} has no audit event`)
     }
-    return {
+    const core: Omit<TargetStatusResponse, 'proof'> = {
       chainId: inbox.chainId,
       attemptId: inbox.attemptId,
       sourceInstanceId: inbox.sourceInstanceId,
       targetId: inbox.targetId,
+      snapshotDigest: inbox.snapshotDigest,
+      payloadDigest: inbox.payloadDigest,
       inboxId: inbox.id,
       status: inbox.status,
       receipt: inbox.receipt,
@@ -893,58 +1263,72 @@ export class DurableHandoffModel {
       terminalEvidence: clone(inbox.terminalEvidence),
       failureReason: inbox.failureReason,
       auditEventIds: [...inbox.auditEventIds],
+    }
+    const responseDigest = digest(statusCore(core))
+    const proofWithoutSignature = {
+      targetId: inbox.targetId,
+      inboxId: inbox.id,
+      version: inbox.version,
+      status: inbox.status,
+      responseDigest,
+      lastAuditEventId,
+      auditCount: inbox.auditEventIds.length,
+    }
+    return {
+      ...core,
       proof: {
-        targetId: inbox.targetId,
-        inboxId: inbox.id,
-        version: inbox.version,
-        status: inbox.status,
-        lastAuditEventId,
-        auditCount: inbox.auditEventIds.length,
-        signature: expectedStatusSignature({
-          targetId: inbox.targetId,
-          inboxId: inbox.id,
-          version: inbox.version,
-          status: inbox.status,
-          lastAuditEventId,
-          auditCount: inbox.auditEventIds.length,
-        }),
+        ...proofWithoutSignature,
+        signature: expectedStatusSignature(proofWithoutSignature),
       },
     }
   }
 
   private verifyStatusProof(response: TargetStatusResponse): void {
-    const { signature, ...unsignedProof } = response.proof
-    if (response.targetId !== response.proof.targetId
+    const lastAuditEventId = response.auditEventIds.at(-1)
+    const { signature, ...proofWithoutSignature } = response.proof
+    const expectedResponseDigest = digest(statusCore(response))
+    const target = this.targetStore.read()
+    const inbox = target.inboxes[keyFor(response.sourceInstanceId, response.attemptId)]
+    const currentAuditIds = inbox?.auditEventIds ?? []
+    const hasAuditPrefix = response.auditEventIds.every((eventId, index) => currentAuditIds[index] === eventId)
+    const auditEvents = response.auditEventIds.map(eventId => target.targetAudit.find(event => event.id === eventId))
+    if (!inbox
+      || response.version > inbox.version
+      || !hasAuditPrefix
+      || auditEvents.some(event => !event || event.attemptId !== response.attemptId)
+      || response.proof.targetId !== response.targetId
       || response.inboxId !== response.proof.inboxId
       || response.version !== response.proof.version
       || response.status !== response.proof.status
+      || response.proof.responseDigest !== expectedResponseDigest
       || response.proof.auditCount !== response.auditEventIds.length
-      || response.proof.lastAuditEventId !== response.auditEventIds.at(-1)
-      || signature !== expectedStatusSignature(unsignedProof)) {
+      || response.proof.lastAuditEventId !== lastAuditEventId
+      || signature !== expectedStatusSignature(proofWithoutSignature)) {
       throw new ModelViolation('STATUS_PROOF_INVALID', `target status proof for ${response.attemptId} is invalid`)
     }
+    if (response.status === 'completed') this.assertResponseTerminalEvidence(response)
   }
 
   private attempt(attemptId: string): SourceAttempt {
-    const attempt = this.stateValue.attempts[attemptId]
+    const attempt = this.sourceStore.read().attempts[attemptId]
     if (!attempt) throw new ModelViolation('ATTEMPT_NOT_FOUND', `unknown attempt ${attemptId}`)
     return attempt
   }
 
   private chain(chainId: string): SourceChain {
-    const chain = this.stateValue.chains[chainId]
+    const chain = this.sourceStore.read().chains[chainId]
     if (!chain) throw new ModelViolation('CHAIN_NOT_FOUND', `unknown chain ${chainId}`)
     return chain
   }
 
   private outbox(attemptId: string): SourceOutbox {
-    const outbox = this.stateValue.outbox[attemptId]
+    const outbox = this.sourceStore.read().outbox[attemptId]
     if (!outbox) throw new ModelViolation('OUTBOX_NOT_FOUND', `unknown outbox for ${attemptId}`)
     return outbox
   }
 
   private inbox(attemptId: string): TargetInbox | null {
-    return this.stateValue.inboxes[keyFor(this.stateValue.sourceInstanceId, attemptId)] ?? null
+    return this.targetStore.read().inboxes[keyFor(this.sourceInstanceId(), attemptId)] ?? null
   }
 
   private requireInbox(attemptId: string): TargetInbox {
@@ -954,59 +1338,74 @@ export class DurableHandoffModel {
   }
 
   private requireTargetOnline(): void {
-    if (!this.stateValue.targetOnline) {
+    if (!this.targetOnline) {
       throw new ModelViolation('TARGET_OFFLINE', 'target transport is offline')
     }
   }
 
-  private tick(): void {
-    this.stateValue.clock += 1
+  private sourceInstanceId(): string {
+    return this.sourceStore.read().sourceInstanceId
   }
 
-  private sequence(prefix: string): string {
-    return `${prefix}-${this.stateValue.nextSequence++}`
+  private requestIdentityForInbox(inbox: TargetInbox): RequestIdentity {
+    return {
+      chainId: inbox.chainId,
+      attemptId: inbox.attemptId,
+      sourceInstanceId: inbox.sourceInstanceId,
+      targetId: inbox.targetId,
+      snapshotDigest: inbox.snapshotDigest,
+      payloadDigest: inbox.payloadDigest,
+    }
+  }
+
+  private tick(): void {
+    this.clock += 1
   }
 
   private sourceAuditEvent(
+    draft: SourcePersistedState,
     action: SourceAuditEvent['action'],
     attemptId: string,
     actor: string,
     authorizationId: string | null,
     reason: string | null,
   ): void {
-    this.stateValue.sourceAudit.push({
-      id: this.sequence('source-audit'),
+    draft.sourceAudit.push({
+      id: `source-audit-${draft.nextSequence++}`,
       action,
       actor,
       authorizationId,
       attemptId,
       reason,
-      at: this.stateValue.clock,
+      at: this.clock,
     })
   }
 
   private targetAuditEvent(
+    draft: TargetPersistedState,
     action: TargetAuditEvent['action'],
     inbox: TargetInbox,
     auth: AuthBinding,
     reason: string | null,
   ): void {
     const event: TargetAuditEvent = {
-      id: this.sequence('target-audit'),
+      id: `target-audit-${draft.nextSequence++}`,
       action,
       actor: auth.principal,
       authorizationId: auth.authorizationId,
       attemptId: inbox.attemptId,
       reason,
-      at: this.stateValue.clock,
+      at: this.clock,
     }
-    this.stateValue.targetAudit.push(event)
+    draft.targetAudit.push(event)
     inbox.auditEventIds.push(event.id)
   }
 
   private checkInvariants(): void {
+    const source = this.sourceStore.read()
+    const target = this.targetStore.read()
     const seenTargetKeys = new Set<string>()
-    for (const inbox of Object.values(this.stateValue.inboxes)) {
+    for (const inbox of Object.values(target.inboxes)) {
       const key = keyFor(inbox.sourceInstanceId, inbox.attemptId)
       if (seenTargetKeys.has(key)) {
         throw new ModelViolation('DUPLICATE_INBOX', `duplicate target inbox ${key}`)
@@ -1018,14 +1417,9 @@ export class DurableHandoffModel {
         }
       }
       if (inbox.status === 'completed') {
-        if (!inbox.terminalEvidence
-          || inbox.terminalEvidence.source !== 'durable-agent-message'
-          || !inbox.terminalEvidence.publicationId
-          || !inbox.terminalEvidence.messageId
-          || !inbox.terminalEvidence.messageDigest) {
-          throw new ModelViolation('TERMINAL_EVIDENCE_MISSING', `target ${inbox.attemptId} lacks durable publication evidence`)
-        }
+        this.assertTargetRows(target, inbox)
         if (inbox.invocationStartedAt === null
+          || !inbox.terminalEvidence
           || inbox.terminalEvidence.committedAt < inbox.invocationStartedAt) {
           throw new ModelViolation('TERMINAL_ORDER_INVALID', `target ${inbox.attemptId} published before invocation marker`)
         }
@@ -1036,11 +1430,18 @@ export class DurableHandoffModel {
       if (inbox.invocationCount > 1) {
         throw new ModelViolation('DUPLICATE_INVOCATION', `target ${inbox.attemptId} invoked more than once`)
       }
+      if (inbox.invocationCount === 0 && inbox.invocationStartedAt !== null) {
+        throw new ModelViolation('INVOCATION_COUNT_MISMATCH', `target ${inbox.attemptId} has a marker without an invocation count`)
+      }
+      if (inbox.terminalEvidence) {
+        this.assertTargetRows(target, inbox)
+      }
     }
 
-    for (const attempt of Object.values(this.stateValue.attempts)) {
-      const chain = this.chain(attempt.chainId)
-      const outbox = this.outbox(attempt.id)
+    for (const attempt of Object.values(source.attempts)) {
+      const chain = source.chains[attempt.chainId]
+      const outbox = source.outbox[attempt.id]
+      if (!chain || !outbox) throw new ModelViolation('SOURCE_RECORD_MISSING', `source records missing for ${attempt.id}`)
       if (attempt.targetReceipt !== null && !this.inbox(attempt.id)) {
         throw new ModelViolation('RECEIPT_WITHOUT_INBOX', `source ${attempt.id} stores receipt without target inbox`)
       }
@@ -1071,9 +1472,9 @@ export class DurableHandoffModel {
         if (!attempt.replacementAttemptId) {
           throw new ModelViolation('REPLACEMENT_LINEAGE_MISSING', `source ${attempt.id} has no replacement lineage`)
         }
-        const replacement = this.attempt(attempt.replacementAttemptId)
-        if (replacement.replacesAttemptId !== attempt.id) {
-          throw new ModelViolation('REPLACEMENT_LINEAGE_BROKEN', `replacement ${replacement.id} does not point to ${attempt.id}`)
+        const replacement = source.attempts[attempt.replacementAttemptId]
+        if (!replacement || replacement.replacesAttemptId !== attempt.id) {
+          throw new ModelViolation('REPLACEMENT_LINEAGE_BROKEN', `replacement for ${attempt.id} is not linked back`)
         }
       }
       if (outbox.attemptId !== attempt.id) {
@@ -1081,9 +1482,9 @@ export class DurableHandoffModel {
       }
     }
 
-    for (const chain of Object.values(this.stateValue.chains)) {
-      const active = this.attempt(chain.activeAttemptId)
-      if (active.chainId !== chain.id) {
+    for (const chain of Object.values(source.chains)) {
+      const active = source.attempts[chain.activeAttemptId]
+      if (!active || active.chainId !== chain.id) {
         throw new ModelViolation('CHAIN_ACTIVE_ATTEMPT_MISMATCH', `chain ${chain.id} has foreign active attempt`)
       }
       if (chain.status === 'completed' && active.status !== 'completed') {
@@ -1097,4 +1498,32 @@ export class DurableHandoffModel {
       }
     }
   }
+
+  private assertTargetRows(target: TargetPersistedState, inbox: TargetInbox): void {
+    const evidence = inbox.terminalEvidence
+    if (!evidence
+      || evidence.source !== 'durable-agent-message'
+      || evidence.messageId.startsWith('synthetic:')
+      || evidence.publicationId.startsWith('synthetic:')) {
+      throw new ModelViolation('TERMINAL_EVIDENCE_MISSING', `target ${inbox.attemptId} lacks durable publication evidence`)
+    }
+    const publication = target.publications[evidence.publicationId]
+    const message = target.messages[evidence.messageId]
+    if (!publication
+      || !message
+      || publication.attemptId !== inbox.attemptId
+      || publication.messageId !== evidence.messageId
+      || publication.messageDigest !== evidence.messageDigest
+      || publication.committedAt !== evidence.committedAt
+      || message.attemptId !== inbox.attemptId
+      || message.id !== evidence.messageId
+      || message.contentDigest !== evidence.messageDigest
+      || message.committedAt !== evidence.committedAt) {
+      throw new ModelViolation('TERMINAL_EVIDENCE_INVALID', `target ${inbox.attemptId} publication is not atomically backed by a message row`)
+    }
+  }
+}
+
+function attemptIdFromRequest(request: AdmitRequest): string {
+  return request.attemptId
 }

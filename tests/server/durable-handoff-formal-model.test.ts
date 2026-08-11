@@ -4,9 +4,17 @@ import {
   ModelViolation,
   operatorAuth,
   transportAuth,
+  transportAuthForRequest,
   type AdmitRequest,
   type TargetKind,
 } from './models/durable-handoff-model'
+
+function terminalMessage(attemptId = 'attempt-1') {
+  return {
+    id: `agent-message-${attemptId}`,
+    content: `durable terminal content for ${attemptId}`,
+  }
+}
 
 function admittedModel(kind: TargetKind = 'local'): DurableHandoffModel {
   const model = new DurableHandoffModel(kind)
@@ -27,6 +35,11 @@ function startedModel(kind: TargetKind = 'local'): DurableHandoffModel {
 describe('Issue #2488 durable handoff executable reference model', () => {
   it('rejects terminal publication without real durable evidence', () => {
     const model = startedModel()
+
+    expect(() => model.apply({
+      type: 'publishTerminal',
+      attemptId: 'attempt-1',
+    })).toThrow(/TERMINAL_EVIDENCE_INVALID/)
 
     expect(() => model.apply({
       type: 'publishTerminal',
@@ -67,7 +80,14 @@ describe('Issue #2488 durable handoff executable reference model', () => {
       targetId: attempt.targetId,
       snapshotDigest: attempt.snapshotDigest,
       payloadDigest: 'different-payload',
-      auth: transportAuth('admit', attempt.sourceInstanceId, attempt.targetId),
+      auth: transportAuthForRequest('admit', {
+        chainId: attempt.chainId,
+        attemptId: attempt.id,
+        sourceInstanceId: attempt.sourceInstanceId,
+        targetId: attempt.targetId,
+        snapshotDigest: attempt.snapshotDigest,
+        payloadDigest: 'different-payload',
+      }),
     }
 
     expect(() => model.admitRequest(conflictingRequest)).toThrow(/IDENTITY_CONFLICT/)
@@ -92,7 +112,7 @@ describe('Issue #2488 durable handoff executable reference model', () => {
 
     const response = model.getStatusRequest({
       ...admitRequest,
-      auth: transportAuth('getStatus', attempt.sourceInstanceId, attempt.targetId),
+      auth: transportAuthForRequest('getStatus', admitRequest),
     })
     expect(response.proof).toMatchObject({
       targetId: attempt.targetId,
@@ -149,7 +169,7 @@ describe('Issue #2488 durable handoff executable reference model', () => {
 
   it('converges after a lost completion callback and a Source restart using getStatus proof', () => {
     const model = startedModel()
-    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1', message: terminalMessage() })
 
     expect(model.snapshot().attempts['attempt-1'].status).toBe('admitted')
     expect(model.snapshot().inboxes['source-1:attempt-1'].status).toBe('completed')
@@ -163,7 +183,7 @@ describe('Issue #2488 durable handoff executable reference model', () => {
 
   it('keeps a durably published terminal stable across a Target restart', () => {
     const model = startedModel()
-    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1', message: terminalMessage() })
     const beforeRestart = model.snapshot().inboxes['source-1:attempt-1']
     model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
     const afterRestart = model.snapshot().inboxes['source-1:attempt-1']
@@ -173,6 +193,28 @@ describe('Issue #2488 durable handoff executable reference model', () => {
       version: beforeRestart.version,
       invocationCount: 1,
       terminalEvidence: beforeRestart.terminalEvidence,
+    })
+  })
+
+  it('requires a Target message row and derives publication evidence in one commit', () => {
+    const model = startedModel()
+    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1', message: terminalMessage() })
+    const snapshot = model.snapshot()
+    const inbox = snapshot.inboxes['source-1:attempt-1']
+    const evidence = inbox.terminalEvidence
+
+    expect(evidence).not.toBeNull()
+    expect(snapshot.messages[evidence!.messageId]).toMatchObject({
+      id: evidence!.messageId,
+      attemptId: 'attempt-1',
+      contentDigest: evidence!.messageDigest,
+      committedAt: evidence!.committedAt,
+    })
+    expect(snapshot.publications[evidence!.publicationId]).toMatchObject({
+      publicationId: evidence!.publicationId,
+      messageId: evidence!.messageId,
+      messageDigest: evidence!.messageDigest,
+      committedAt: evidence!.committedAt,
     })
   })
 
@@ -191,7 +233,7 @@ describe('Issue #2488 durable handoff executable reference model', () => {
   it('uses one status model for Local and Remote targets', () => {
     const run = (kind: TargetKind) => {
       const model = startedModel(kind)
-      model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+      model.apply({ type: 'publishTerminal', attemptId: 'attempt-1', message: terminalMessage() })
       model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
       const snapshot = model.snapshot()
       return {
@@ -280,5 +322,118 @@ describe('Issue #2488 durable handoff executable reference model', () => {
     ]
 
     for (const run of cases) expect(run).toThrow(ModelViolation)
+  })
+
+  it('keeps Source and Target as independently reloadable durable stores', () => {
+    const model = admittedModel()
+    model.apply({ type: 'claim', attemptId: 'attempt-1' })
+    model.apply({ type: 'sourceRestart' })
+
+    const stores = (model as unknown as {
+      durableStores?: () => {
+        source: unknown
+        target: unknown
+      }
+    }).durableStores?.()
+
+    expect(stores).toBeDefined()
+    expect(stores?.source).not.toBe(stores?.target)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('admitted')
+    expect(model.snapshot().inboxes['source-1:attempt-1'].status).toBe('claimed')
+  })
+
+  it('rejects a tampered or stale remote status response before Source mutation', () => {
+    const model = startedModel()
+    const statusRequest = {
+      chainId: 'chain-1',
+      attemptId: 'attempt-1',
+      sourceInstanceId: 'source-1',
+      targetId: 'target-1',
+      snapshotDigest: 'snapshot-attempt-1',
+      payloadDigest: 'payload-attempt-1',
+    } as const
+    const status = model.getStatusRequest({
+      ...statusRequest,
+      auth: transportAuthForRequest('getStatus', statusRequest),
+    })
+    const tampered = structuredClone(status)
+    tampered.status = 'completed'
+
+    expect(() => (model as unknown as {
+      reconcileResponse: (attemptId: string, response: unknown) => unknown
+    }).reconcileResponse('attempt-1', tampered)).toThrow(/STATUS_PROOF_INVALID/)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('admitted')
+  })
+
+  it('rejects an authenticated but expired status response after a newer version is observed', () => {
+    const model = startedModel()
+    const runningRequest = {
+      chainId: 'chain-1',
+      attemptId: 'attempt-1',
+      sourceInstanceId: 'source-1',
+      targetId: 'target-1',
+      snapshotDigest: 'snapshot-attempt-1',
+      payloadDigest: 'payload-attempt-1',
+    } as const
+    const runningResponse = model.getStatusRequest({
+      ...runningRequest,
+      auth: transportAuthForRequest('getStatus', runningRequest),
+    })
+    const completedResponse = model.apply({
+      type: 'publishTerminal',
+      attemptId: 'attempt-1',
+      message: terminalMessage(),
+    }) as { version: number }
+    expect(completedResponse.version).toBeGreaterThan(runningResponse.version)
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+
+    expect(() => (model as unknown as {
+      reconcileResponse: (attemptId: string, response: unknown) => unknown
+    }).reconcileResponse('attempt-1', runningResponse)).toThrow(/STATUS_STALE/)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('completed')
+  })
+
+  it('binds transport authorization to the complete request identity and digest', () => {
+    const model = new DurableHandoffModel('local')
+    model.apply({ type: 'createAttempt' })
+    const attempt = model.snapshot().attempts['attempt-1']
+    const request = {
+      chainId: attempt.chainId,
+      attemptId: attempt.id,
+      sourceInstanceId: attempt.sourceInstanceId,
+      targetId: attempt.targetId,
+      snapshotDigest: attempt.snapshotDigest,
+      payloadDigest: attempt.payloadDigest,
+      auth: transportAuth('admit', attempt.sourceInstanceId, attempt.targetId),
+    } as AdmitRequest
+    const changed = {
+      ...request,
+      payloadDigest: 'payload-tampered',
+    }
+
+    expect(() => model.admitRequest(changed)).toThrow(/AUTH_REJECTED/)
+  })
+
+  it('rejects a stale admission callback after cancellation intent is durable', () => {
+    const model = admittedModel()
+    model.apply({ type: 'requestCancel', attemptId: 'attempt-1', reason: 'stale_admission' })
+    model.apply({ type: 'admit', attemptId: 'attempt-1' })
+
+    expect(() => model.apply({ type: 'receiveAdmission', attemptId: 'attempt-1' }))
+      .toThrow(/STALE_ADMISSION/)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('cancel_pending')
+  })
+
+  it('keeps failed_manual terminal and rejects ordinary cancellation', () => {
+    const model = startedModel()
+    model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+
+    expect(() => model.apply({
+      type: 'requestCancel',
+      attemptId: 'attempt-1',
+      reason: 'must_not_reopen_terminal',
+    })).toThrow(/CANCEL_TERMINAL/)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('failed_manual')
   })
 })
