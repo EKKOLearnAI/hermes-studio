@@ -390,7 +390,7 @@ describe('group chat agent workspace bridge runs', () => {
     client.disconnect()
   })
 
-  it('generates a complete entry mention DTO only from the final handoff line', async () => {
+  it('generates one complete entry mention DTO for repeated mentions of the same participant anywhere in a reply', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -408,7 +408,7 @@ describe('group chat agent workspace bridge runs', () => {
 
     await author.sendMessage(
       'room-1',
-      'I mentioned @Reviewer above only to explain the previous routing mistake.\n\n@Reviewer please verify this.',
+      'Please ask @Reviewer to verify this; @Reviewer owns the final check.',
       'handoff-1',
     )
 
@@ -419,7 +419,7 @@ describe('group chat agent workspace bridge runs', () => {
     }), expect.any(Function))
   })
 
-  it('keeps conversational @name references as text without generating routing metadata', async () => {
+  it('does not generate a structured mention for the replying agent itself', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -438,20 +438,20 @@ describe('group chat agent workspace bridge runs', () => {
 
     await author.sendMessage(
       'room-1',
-      'I previously mentioned @Reviewer twice: @Reviewer. This is an explanation, not a handoff.',
+      '@Author status: waiting for @Reviewer.',
       'self-mention-1',
     )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
       id: 'self-mention-1',
-      content: 'I previously mentioned @Reviewer twice: @Reviewer. This is an explanation, not a handoff.',
-      mentions: [],
+      content: '@Author status: waiting for @Reviewer.',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     }), expect.any(Function))
     expect(replyToMention).not.toHaveBeenCalled()
   })
 
-  it('routes only the leading participant on a final handoff line', async () => {
+  it('routes each distinct participant once regardless of mention position or repetition', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const clients = new AgentClients() as any
     const author = await clients.createAgent({
@@ -470,14 +470,17 @@ describe('group chat agent workspace bridge runs', () => {
 
     await author.sendMessage(
       'room-1',
-      'The previous review is obsolete.\n\n@Lead please continue; the earlier @Reviewer mention is explanatory.',
-      'leading-handoff-1',
+      'Lead with this, @Lead; then ask @Reviewer to verify it. @Lead owns follow-up and @Reviewer signs off.',
+      'deduplicated-handoff-1',
     )
 
     expect(mockSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
-      id: 'leading-handoff-1',
-      mentions: [{ type: 'agent', participantId: 'agent-lead', displayName: 'Lead' }],
+      id: 'deduplicated-handoff-1',
+      mentions: [
+        { type: 'agent', participantId: 'agent-lead', displayName: 'Lead' },
+        { type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' },
+      ],
     }), expect.any(Function))
   })
 

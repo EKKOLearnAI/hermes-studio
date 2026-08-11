@@ -73,37 +73,6 @@ export type StructuredMentionEntry =
     | { type: 'agent'; participantId: string; displayName: string }
     | { type: 'all'; displayName: 'all' }
 
-function terminalHandoffLine(content: string): string {
-    const finalLine = content
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean)
-        .at(-1) || ''
-    return finalLine.startsWith('@') ? finalLine : ''
-}
-
-function leadingHandoffMentionNames(line: string, names: string[]): Set<string> {
-    const result = new Set<string>()
-    let remaining = line.trimStart()
-    const candidates = [...names]
-        .filter(Boolean)
-        .sort((a, b) => b.length - a.length)
-
-    while (remaining.startsWith('@')) {
-        const lower = remaining.toLowerCase()
-        const match = candidates.find((name) => {
-            const token = `@${name.toLowerCase()}`
-            if (!lower.startsWith(token)) return false
-            const next = remaining[token.length]
-            return next === undefined || /\s/.test(next) || /[.,!?;:，。！？；：)\]}＞>]/.test(next)
-        })
-        if (!match) break
-        result.add(match)
-        remaining = remaining.slice(match.length + 1).trimStart()
-    }
-
-    return result
-}
 
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
@@ -492,13 +461,7 @@ export class AgentClient implements GroupAgentExecutor {
     private structuredMentionsForAgentReply(roomId: string, content: string): StructuredMentionEntry[] {
         const rawAgents = this.storage?.getRoomAgents?.(roomId)
         const agents = Array.isArray(rawAgents) ? rawAgents : []
-        const handoffLine = terminalHandoffLine(content)
-        if (!handoffLine) return []
-        const leadingNames = leadingHandoffMentionNames(handoffLine, [
-            'all',
-            ...agents.map(agent => String(agent?.name || '').trim()),
-        ])
-        if (leadingNames.has('all')) return [{ type: 'all', displayName: 'all' }]
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
         const byName = new Map<string, Array<{ agentId: string; name: string }>>()
         for (const agent of agents) {
             const participantId = String(agent?.agentId || '').trim()
@@ -509,7 +472,7 @@ export class AgentClient implements GroupAgentExecutor {
             byName.set(displayName, matches)
         }
         return [...byName.values()]
-            .filter(matches => matches.length === 1 && leadingNames.has(matches[0].name))
+            .filter(matches => matches.length === 1 && isAgentMentioned(content, matches[0].name))
             .map(matches => ({ type: 'agent' as const, participantId: matches[0].agentId, displayName: matches[0].name }))
     }
 
@@ -2083,12 +2046,9 @@ export class AgentClients {
 
     private buildAgentReplyMentions(roomId: string, content: string, senderParticipantId: string): StructuredMentionEntry[] {
         const agents = this.getAgents(roomId)
-        const handoffLine = terminalHandoffLine(content)
-        if (!handoffLine) return []
-        const leadingNames = leadingHandoffMentionNames(handoffLine, ['all', ...agents.map(agent => agent.name)])
-        if (leadingNames.has('all')) return [{ type: 'all', displayName: 'all' }]
+        if (isAllAgentsMentioned(content)) return [{ type: 'all', displayName: 'all' }]
         return agents
-            .filter(agent => agent.agentId !== senderParticipantId && leadingNames.has(agent.name))
+            .filter(agent => agent.agentId !== senderParticipantId && isAgentMentioned(content, agent.name))
             .map(agent => ({
                 type: 'agent' as const,
                 participantId: agent.agentId,
