@@ -1,0 +1,284 @@
+import { describe, expect, it } from 'vitest'
+import {
+  DurableHandoffModel,
+  ModelViolation,
+  operatorAuth,
+  transportAuth,
+  type AdmitRequest,
+  type TargetKind,
+} from './models/durable-handoff-model'
+
+function admittedModel(kind: TargetKind = 'local'): DurableHandoffModel {
+  const model = new DurableHandoffModel(kind)
+  model.apply({ type: 'createAttempt' })
+  model.apply({ type: 'sendAdmission', attemptId: 'attempt-1' })
+  model.apply({ type: 'admit', attemptId: 'attempt-1' })
+  model.apply({ type: 'receiveAdmission', attemptId: 'attempt-1' })
+  return model
+}
+
+function startedModel(kind: TargetKind = 'local'): DurableHandoffModel {
+  const model = admittedModel(kind)
+  model.apply({ type: 'claim', attemptId: 'attempt-1' })
+  model.apply({ type: 'startInvocation', attemptId: 'attempt-1' })
+  return model
+}
+
+describe('Issue #2488 durable handoff executable reference model', () => {
+  it('rejects terminal publication without real durable evidence', () => {
+    const model = startedModel()
+
+    expect(() => model.apply({
+      type: 'publishTerminal',
+      attemptId: 'attempt-1',
+      evidence: { source: 'synthetic' as never },
+    })).toThrow(ModelViolation)
+  })
+
+  it('binds admission identity and receipt to one durable Target inbox', () => {
+    const model = new DurableHandoffModel('remote')
+    model.apply({ type: 'createAttempt' })
+    model.apply({ type: 'sendAdmission', attemptId: 'attempt-1' })
+    const first = model.apply({ type: 'admit', attemptId: 'attempt-1' }) as {
+      receipt: string
+      version: number
+    }
+    const second = model.apply({ type: 'admit', attemptId: 'attempt-1' }) as {
+      receipt: string
+      version: number
+    }
+
+    expect(second).toMatchObject({
+      receipt: first.receipt,
+      version: first.version,
+    })
+    expect(Object.keys(model.snapshot().inboxes)).toEqual(['source-1:attempt-1'])
+    expect(model.snapshot().targetAudit.map(event => event.action)).toEqual(['admitted', 'admission_replayed'])
+  })
+
+  it('rejects duplicate admission with a changed source identity or payload', () => {
+    const model = admittedModel()
+    const snapshot = model.snapshot()
+    const attempt = snapshot.attempts['attempt-1']
+    const conflictingRequest: AdmitRequest = {
+      chainId: attempt.chainId,
+      attemptId: attempt.id,
+      sourceInstanceId: attempt.sourceInstanceId,
+      targetId: attempt.targetId,
+      snapshotDigest: attempt.snapshotDigest,
+      payloadDigest: 'different-payload',
+      auth: transportAuth('admit', attempt.sourceInstanceId, attempt.targetId),
+    }
+
+    expect(() => model.admitRequest(conflictingRequest)).toThrow(/IDENTITY_CONFLICT/)
+  })
+
+  it('requires authenticated transport operations and verifiable Target status proof', () => {
+    const model = admittedModel()
+    const snapshot = model.snapshot()
+    const attempt = snapshot.attempts['attempt-1']
+    const admitRequest: AdmitRequest = {
+      chainId: attempt.chainId,
+      attemptId: attempt.id,
+      sourceInstanceId: attempt.sourceInstanceId,
+      targetId: attempt.targetId,
+      snapshotDigest: attempt.snapshotDigest,
+      payloadDigest: attempt.payloadDigest,
+      auth: transportAuth('admit', attempt.sourceInstanceId, attempt.targetId),
+    }
+
+    expect(() => model.getStatusRequest(admitRequest)).toThrow(/AUTH_REJECTED/)
+    expect(() => model.requestCancel('attempt-1', 'bad-auth', operatorAuth('replace'))).toThrow(/AUTH_REJECTED/)
+
+    const response = model.getStatusRequest({
+      ...admitRequest,
+      auth: transportAuth('getStatus', attempt.sourceInstanceId, attempt.targetId),
+    })
+    expect(response.proof).toMatchObject({
+      targetId: attempt.targetId,
+      inboxId: 'inbox-source-1-attempt-1',
+      version: 1,
+      status: 'admitted',
+      auditCount: 1,
+    })
+  })
+
+  it('replays admission after a lost response without a second invocation', () => {
+    const model = new DurableHandoffModel('remote')
+    model.apply({ type: 'createAttempt' })
+    model.apply({ type: 'sendAdmission', attemptId: 'attempt-1' })
+    model.apply({ type: 'admit', attemptId: 'attempt-1' })
+    model.apply({ type: 'sendAdmission', attemptId: 'attempt-1' })
+    model.apply({ type: 'admit', attemptId: 'attempt-1' })
+    model.apply({ type: 'receiveAdmission', attemptId: 'attempt-1' })
+    model.apply({ type: 'claim', attemptId: 'attempt-1' })
+    model.apply({ type: 'startInvocation', attemptId: 'attempt-1' })
+
+    const inbox = model.snapshot().inboxes['source-1:attempt-1']
+    expect(inbox.invocationCount).toBe(1)
+    expect(inbox.status).toBe('running')
+  })
+
+  it('recovers a pre-invocation crash by returning the lease to admitted', () => {
+    const model = admittedModel()
+    model.apply({ type: 'claim', attemptId: 'attempt-1' })
+    model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().inboxes['source-1:attempt-1']).toMatchObject({
+      status: 'admitted',
+      leaseId: null,
+      invocationStartedAt: null,
+      invocationCount: 0,
+    })
+
+    model.apply({ type: 'claim', attemptId: 'attempt-1' })
+    model.apply({ type: 'startInvocation', attemptId: 'attempt-1' })
+    expect(model.snapshot().inboxes['source-1:attempt-1'].invocationCount).toBe(1)
+  })
+
+  it('turns an invocation-after-marker crash into failed_manual and blocks automatic rerun', () => {
+    const model = startedModel()
+    model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().inboxes['source-1:attempt-1']).toMatchObject({
+      status: 'failed_manual',
+      failureReason: 'target_restart_after_invocation',
+    })
+    expect(() => model.apply({ type: 'claim', attemptId: 'attempt-1' })).toThrow(ModelViolation)
+  })
+
+  it('converges after a lost completion callback and a Source restart using getStatus proof', () => {
+    const model = startedModel()
+    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('admitted')
+    expect(model.snapshot().inboxes['source-1:attempt-1'].status).toBe('completed')
+    model.apply({ type: 'sourceRestart' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('completed')
+    expect(model.snapshot().outbox['attempt-1'].status).toBe('completed')
+    expect(model.snapshot().chains['chain-1'].status).toBe('completed')
+  })
+
+  it('keeps a durably published terminal stable across a Target restart', () => {
+    const model = startedModel()
+    model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+    const beforeRestart = model.snapshot().inboxes['source-1:attempt-1']
+    model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
+    const afterRestart = model.snapshot().inboxes['source-1:attempt-1']
+
+    expect(afterRestart).toMatchObject({
+      status: 'completed',
+      version: beforeRestart.version,
+      invocationCount: 1,
+      terminalEvidence: beforeRestart.terminalEvidence,
+    })
+  })
+
+  it('creates a durable Target cancellation tombstone when cancellation races admission', () => {
+    const model = new DurableHandoffModel('remote')
+    model.apply({ type: 'createAttempt' })
+    model.apply({ type: 'requestCancel', attemptId: 'attempt-1', reason: 'before_admission' })
+    model.apply({ type: 'sendCancel', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().inboxes['source-1:attempt-1'].status).toBe('cancelled')
+    expect(model.apply({ type: 'admit', attemptId: 'attempt-1' })).toMatchObject({ status: 'cancelled' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('cancelled')
+  })
+
+  it('uses one status model for Local and Remote targets', () => {
+    const run = (kind: TargetKind) => {
+      const model = startedModel(kind)
+      model.apply({ type: 'publishTerminal', attemptId: 'attempt-1' })
+      model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+      const snapshot = model.snapshot()
+      return {
+        attempt: snapshot.attempts['attempt-1'],
+        inbox: snapshot.inboxes['source-1:attempt-1'],
+        chain: snapshot.chains['chain-1'],
+      }
+    }
+
+    const local = run('local')
+    const remote = run('remote')
+    expect({
+      ...local,
+      attempt: { ...local.attempt, targetReceipt: 'stable' },
+      inbox: { ...local.inbox, receipt: 'stable' },
+    }).toEqual({
+      ...remote,
+      attempt: { ...remote.attempt, targetReceipt: 'stable' },
+      inbox: { ...remote.inbox, receipt: 'stable' },
+    })
+  })
+
+  it('keeps cancellation pending while Target is offline, then converges by authenticated status', () => {
+    const model = admittedModel()
+    model.apply({ type: 'setTargetOnline', online: false })
+    model.apply({ type: 'requestCancel', attemptId: 'attempt-1', reason: 'operator_cleanup' })
+
+    expect(() => model.apply({ type: 'sendCancel', attemptId: 'attempt-1' })).toThrow(/TARGET_OFFLINE/)
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('cancel_pending')
+
+    model.apply({ type: 'setTargetOnline', online: true })
+    model.apply({ type: 'sendCancel', attemptId: 'attempt-1' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('cancelled')
+    expect(model.snapshot().chains['chain-1'].status).toBe('cancelled')
+  })
+
+  it('maps cancellation after invocation to failed_manual, never cancelled', () => {
+    const model = startedModel()
+    model.apply({ type: 'requestCancel', attemptId: 'attempt-1', reason: 'operator_cleanup' })
+    model.apply({ type: 'sendCancel', attemptId: 'attempt-1' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+
+    expect(model.snapshot().inboxes['source-1:attempt-1'].status).toBe('failed_manual')
+    expect(model.snapshot().attempts['attempt-1'].status).toBe('failed_manual')
+  })
+
+  it('requires explicit authorized replacement and preserves lineage', () => {
+    const model = startedModel()
+    model.apply({ type: 'targetRestart', attemptId: 'attempt-1' })
+    model.apply({ type: 'reconcile', attemptId: 'attempt-1' })
+
+    expect(() => model.apply({ type: 'replace', attemptId: 'attempt-1' })).not.toThrow()
+    const snapshot = model.snapshot()
+    expect(snapshot.attempts['attempt-1']).toMatchObject({
+      status: 'replaced',
+      replacementAttemptId: 'attempt-1-replacement',
+    })
+    expect(snapshot.attempts['attempt-1-replacement']).toMatchObject({
+      status: 'pending',
+      replacesAttemptId: 'attempt-1',
+    })
+    expect(snapshot.sourceAudit.at(-1)).toMatchObject({
+      action: 'replacement_created',
+      authorizationId: operatorAuth('replace').authorizationId,
+    })
+  })
+
+  it('rejects illegal event sequences instead of repairing them implicitly', () => {
+    const cases = [
+      () => new DurableHandoffModel('local').apply({ type: 'publishTerminal', attemptId: 'attempt-1' }),
+      () => {
+        const model = admittedModel()
+        model.apply({ type: 'startInvocation', attemptId: 'attempt-1' })
+      },
+      () => {
+        const model = admittedModel()
+        model.apply({ type: 'requestCancel', attemptId: 'attempt-1' })
+        model.apply({ type: 'sendCancel', attemptId: 'attempt-1' })
+        model.apply({ type: 'claim', attemptId: 'attempt-1' })
+      },
+      () => {
+        const model = admittedModel()
+        model.apply({ type: 'replace', attemptId: 'attempt-1' })
+      },
+    ]
+
+    for (const run of cases) expect(run).toThrow(ModelViolation)
+  })
+})
