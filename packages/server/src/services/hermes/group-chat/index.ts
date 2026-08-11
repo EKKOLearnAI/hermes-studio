@@ -1823,6 +1823,11 @@ export class GroupChatServer {
             maxHttpBufferSize: 2_000_000,
             allowRequest: (req, callback) => {
                 if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
+                    logger.warn({
+                        origin: req.headers.origin || '',
+                        host: req.headers.host || '',
+                        url: req.url || '',
+                    }, '[Socket.IO] rejected upgrade origin')
                     callback('origin not allowed', false)
                     return
                 }

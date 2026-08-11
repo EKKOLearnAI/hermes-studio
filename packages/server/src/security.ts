@@ -51,6 +51,10 @@ function isSameHostOrigin(origin: string, host: string): boolean {
 function isLocalAppDevelopmentOrigin(origin: string | undefined | null): boolean {
   const normalized = normalizeOrigin(origin)
   if (!normalized) return false
+  // App-Plus' native uni.connectSocket client sends this fixed Origin for
+  // LAN WebSocket upgrades. Keep it scoped to Socket.IO/upgrade checks; the
+  // regular HTTP CORS resolver intentionally does not call this helper.
+  if (normalized === 'http://localhost') return true
   try {
     const url = new URL(normalized)
     const hostname = url.hostname.toLowerCase()

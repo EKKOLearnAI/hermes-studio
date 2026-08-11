@@ -30,6 +30,7 @@ describe('server security policy', () => {
     const resolveOrigin = createCorsOriginResolver('')
 
     await expect(resolveOrigin(fakeCtx('http://127.0.0.1:8648', '127.0.0.1:8648'))).resolves.toBe('http://127.0.0.1:8648')
+    await expect(resolveOrigin(fakeCtx('http://localhost', '192.168.10.102:8647'))).resolves.toBe('')
     await expect(resolveOrigin(fakeCtx('https://evil.example', '127.0.0.1:8648'))).resolves.toBe('')
   })
 
@@ -45,6 +46,7 @@ describe('server security policy', () => {
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'https://evil.example', host: '127.0.0.1:8648' } } as any, '')).toBe(true)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'null', host: '127.0.0.1:8648' } } as any, '')).toBe(true)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://127.0.0.1:8648', host: '127.0.0.1:8648' } } as any, '')).toBe(false)
+    expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://localhost', host: '192.168.10.102:8647' } } as any, '')).toBe(false)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://localhost:5173', host: '192.168.10.102:8647' } } as any, '')).toBe(false)
     expect(shouldRejectUpgradeOrigin({ headers: { host: '127.0.0.1:8648' } } as any, '')).toBe(false)
   })
