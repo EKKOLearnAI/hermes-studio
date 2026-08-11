@@ -47,13 +47,15 @@ npm run candidate:evidence -- \
 
 The command fails closed unless:
 
-1. the current worktree is clean;
-2. the Issue is registered under the named active problem direction and active
+1. the full ledger passes shared-budget, unique-method, restart-authorization,
+   and active-state validation;
+2. the current worktree is clean;
+3. the Issue is registered under the named active problem direction and active
    validation method;
-3. the current branch matches the requested branch;
-4. Base is an ancestor of HEAD;
-5. a fresh fetch of the named remote branch succeeds;
-6. local HEAD, `FETCH_HEAD`, and the remote-tracking ref are identical.
+4. the current branch matches the requested branch;
+5. Base is an ancestor of HEAD;
+6. a fresh fetch of the named remote branch succeeds;
+7. local HEAD, `FETCH_HEAD`, and the remote-tracking ref are identical.
 
 Only after those checks does it emit Base, HEAD, Tree and a SHA-256 over the exact
 bytes from `git diff <base> <head>`. The emitted JSON is the evidence

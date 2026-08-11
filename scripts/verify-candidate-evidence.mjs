@@ -31,6 +31,20 @@ function argument(name, fallback) {
   return value
 }
 
+function validateLedger(path) {
+  const validator = resolve(new URL('.', import.meta.url).pathname, 'validate-task-contracts.mjs')
+  try {
+    execFileSync(process.execPath, [validator, path], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch (error) {
+    const detail = error?.stderr?.toString().trim() || error?.message
+    die(`task contract ledger is invalid: ${detail}`)
+  }
+}
+
 const baseArg = argument('--base')
 const remote = argument('--remote', 'origin')
 const branch = argument('--branch')
@@ -53,7 +67,9 @@ if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith('-') || branch.inclu
 
 try {
   const issue = Number(issueArg)
-  const ledger = JSON.parse(readFileSync(resolve(process.cwd(), ledgerPath), 'utf8'))
+  const resolvedLedgerPath = resolve(process.cwd(), ledgerPath)
+  validateLedger(resolvedLedgerPath)
+  const ledger = JSON.parse(readFileSync(resolvedLedgerPath, 'utf8'))
   const direction = ledger?.directions?.find(item => item?.key === problemKey)
   if (!direction) die(`problem key ${problemKey} is not registered in the task contract ledger`)
   if (direction.status !== 'active') die(`problem key ${problemKey} is not active`)

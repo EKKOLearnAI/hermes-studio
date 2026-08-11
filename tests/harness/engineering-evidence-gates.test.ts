@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -155,6 +155,19 @@ describe('candidate evidence gate', () => {
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('is not registered under active method')
+  })
+
+  it('fails closed when the bound ledger violates its shared rework budget', () => {
+    const { work, base, ledger } = makeGitFixture()
+    const data = JSON.parse(readFileSync(ledger, 'utf8'))
+    data.directions[0].methods[0].reworks = 2
+    writeFileSync(ledger, `${JSON.stringify(data, null, 2)}\n`)
+
+    const result = runCandidate(work, base, ledger)
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('task contract ledger is invalid')
+    expect(result.stderr).toContain('exceeds shared rework budget')
   })
 })
 
