@@ -40,11 +40,31 @@ function makeGitFixture() {
   git(work, ['add', 'change.txt'])
   git(work, ['commit', '-m', 'candidate'])
   git(work, ['push', '-u', 'origin', 'fix/evidence'])
-  return { work, base, remote }
+  const ledger = writeLedger(root, {
+    version: 1,
+    directions: [{
+      key: 'fixture-direction',
+      status: 'active',
+      maxTotalReworks: 1,
+      methods: [{ id: 'fixture-method', status: 'active', issues: [100], reworks: 0 }],
+      restarts: [],
+    }],
+  })
+  return { work, base, remote, ledger }
 }
 
-function runCandidate(work: string, base: string, branch = 'fix/evidence') {
-  return spawnSync(process.execPath, [candidateScript, '--base', base, '--remote', 'origin', '--branch', branch, '--json'], {
+function runCandidate(work: string, base: string, ledger: string, branch = 'fix/evidence', issue = '100') {
+  return spawnSync(process.execPath, [
+    candidateScript,
+    '--base', base,
+    '--remote', 'origin',
+    '--branch', branch,
+    '--ledger', ledger,
+    '--problem-key', 'fixture-direction',
+    '--issue', issue,
+    '--method', 'fixture-method',
+    '--json',
+  ], {
     cwd: work,
     encoding: 'utf8',
   })
@@ -83,8 +103,8 @@ afterEach(() => {
 
 describe('candidate evidence gate', () => {
   it('emits machine-derived identity only after a fresh remote round-trip', () => {
-    const { work, base } = makeGitFixture()
-    const result = runCandidate(work, base)
+    const { work, base, ledger } = makeGitFixture()
+    const result = runCandidate(work, base, ledger)
 
     expect(result.status, result.stderr).toBe(0)
     const evidence = JSON.parse(result.stdout)
@@ -96,36 +116,45 @@ describe('candidate evidence gate', () => {
     const patch = execFileSync('git', ['diff', base, evidence.head], { cwd: work })
     expect(evidence.patchSha256).toBe(createHash('sha256').update(patch).digest('hex'))
     expect(evidence.worktree).toBe('clean')
+    expect(evidence.contract).toEqual({ problemKey: 'fixture-direction', issue: 100, method: 'fixture-method' })
   })
 
   it('fails closed when the candidate commit was not pushed', () => {
-    const { work, base } = makeGitFixture()
+    const { work, base, ledger } = makeGitFixture()
     writeFileSync(join(work, 'local-only.txt'), 'not pushed\n')
     git(work, ['add', 'local-only.txt'])
     git(work, ['commit', '-m', 'local only'])
 
-    const result = runCandidate(work, base)
+    const result = runCandidate(work, base, ledger)
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('does not match freshly fetched remote head')
   })
 
   it('fails closed for dirty worktrees, wrong branches, and missing remote branches', () => {
-    const { work, base } = makeGitFixture()
+    const { work, base, ledger } = makeGitFixture()
     writeFileSync(join(work, 'dirty.txt'), 'dirty\n')
-    const dirty = runCandidate(work, base)
+    const dirty = runCandidate(work, base, ledger)
     expect(dirty.status).not.toBe(0)
     expect(dirty.stderr).toContain('worktree is not clean')
 
     rmSync(join(work, 'dirty.txt'))
-    const wrong = runCandidate(work, base, 'fix/missing')
+    const wrong = runCandidate(work, base, ledger, 'fix/missing')
     expect(wrong.status).not.toBe(0)
     expect(wrong.stderr).toContain('does not match requested branch')
 
     git(work, ['checkout', '-b', 'fix/missing'])
-    const missing = runCandidate(work, base, 'fix/missing')
+    const missing = runCandidate(work, base, ledger, 'fix/missing')
     expect(missing.status).not.toBe(0)
     expect(missing.stderr).toContain('unable to fetch remote branch')
+  })
+
+  it('fails closed when a candidate Issue is not registered under the active problem and method', () => {
+    const { work, base, ledger } = makeGitFixture()
+    const result = runCandidate(work, base, ledger, 'fix/evidence', '101')
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('is not registered under active method')
   })
 })
 

@@ -38,16 +38,22 @@ npm run candidate:evidence -- \
   --base <base-sha> \
   --remote <remote> \
   --branch <branch> \
+  --ledger docs/harness/task-contracts.json \
+  --problem-key <stable-direction-key> \
+  --issue <issue-number> \
+  --method <active-method-id> \
   --json
 ```
 
 The command fails closed unless:
 
 1. the current worktree is clean;
-2. the current branch matches the requested branch;
-3. Base is an ancestor of HEAD;
-4. a fresh fetch of the named remote branch succeeds;
-5. local HEAD, `FETCH_HEAD`, and the remote-tracking ref are identical.
+2. the Issue is registered under the named active problem direction and active
+   validation method;
+3. the current branch matches the requested branch;
+4. Base is an ancestor of HEAD;
+5. a fresh fetch of the named remote branch succeeds;
+6. local HEAD, `FETCH_HEAD`, and the remote-tracking ref are identical.
 
 Only after those checks does it emit Base, HEAD, Tree and a SHA-256 over the exact
 bytes from `git diff <base> <head>`. The emitted JSON is the evidence

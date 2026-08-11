@@ -32,7 +32,9 @@ After pushing, do not rely on the `git push` message or a local remote-tracking
 ref. Verify the candidate through a fresh fetch:
 
 ```bash
-npm run candidate:evidence -- --base <base-sha> --remote <remote> --branch <branch> --json
+npm run candidate:evidence -- --base <base-sha> --remote <remote> --branch <branch> \
+  --ledger docs/harness/task-contracts.json --problem-key <key> \
+  --issue <number> --method <id> --json
 ```
 
 The command is the source of truth for Base, HEAD, Tree, Patch SHA-256 and the
