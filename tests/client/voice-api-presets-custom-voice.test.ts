@@ -31,5 +31,9 @@ describe('Custom TTS voice capability', () => {
       'https://api.minimaxi.com/v1/t2a_v2',
     ])
     expect(presets.every(entry => entry.defaultModel === 'speech-2.8-hd')).toBe(true)
+    expect(presets.map(entry => entry.labelKey).sort()).toEqual([
+      'settings.voice.presetMinimaxCnTtsLabel',
+      'settings.voice.presetMinimaxTtsLabel',
+    ])
   })
 })

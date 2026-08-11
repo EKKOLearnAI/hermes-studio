@@ -122,6 +122,7 @@ export const VOICE_API_PRESETS: VoiceApiPreset[] = [
     kind: 'tts',
     provider: 'minimax',
     label: 'MiniMax TTS (China)',
+    labelKey: 'settings.voice.presetMinimaxCnTtsLabel',
     baseUrl: 'https://api.minimaxi.com/v1/t2a_v2',
     defaultModel: 'speech-2.8-hd',
     defaultVoice: 'English_expressive_narrator',

@@ -2144,6 +2144,7 @@ export default {
       presetXaiTtsLabel: 'xAI TTS',
       presetMistralTtsLabel: 'Mistral TTS',
       presetMinimaxTtsLabel: 'MiniMax TTS',
+      presetMinimaxCnTtsLabel: 'MiniMax TTS (China)',
       presetDeepInfraTtsLabel: 'DeepInfra TTS',
       presetMistralSttLabel: 'Mistral STT',
       presetXaiSttLabel: 'xAI STT',
