@@ -106,7 +106,11 @@ for (const file of [
   'docs/harness/validation.md',
   'docs/harness/worktree-runbook.md',
   'docs/harness/pr-review.md',
+  'docs/harness/engineering-gates.md',
+  'docs/harness/task-contracts.json',
   'docs/chat-chain-changes/README.md',
+  'scripts/validate-task-contracts.mjs',
+  'scripts/verify-candidate-evidence.mjs',
 ]) {
   requireFile(file)
 }
@@ -153,6 +157,7 @@ for (const requiredLink of [
   'docs/harness/validation.md',
   'docs/harness/worktree-runbook.md',
   'docs/harness/pr-review.md',
+  'docs/harness/engineering-gates.md',
 ]) {
   if (!agents.includes(requiredLink)) {
     fail(`AGENTS.md must link to ${requiredLink}`)
@@ -162,6 +167,8 @@ for (const requiredLink of [
 const packageJson = JSON.parse(await readText('package.json'))
 for (const scriptName of [
   'harness:check',
+  'contracts:check',
+  'candidate:evidence',
   'test',
   'test:coverage',
   'test:e2e',
@@ -170,6 +177,17 @@ for (const scriptName of [
   if (!packageJson.scripts?.[scriptName]) {
     fail(`package.json is missing script: ${scriptName}`)
   }
+}
+
+try {
+  execFileSync(process.execPath, ['scripts/validate-task-contracts.mjs', 'docs/harness/task-contracts.json'], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+} catch (error) {
+  const detail = error?.stderr?.toString().trim() || error?.message
+  fail(`Task contract ledger is invalid: ${detail}`)
 }
 
 const architecture = await readText('ARCHITECTURE.md')

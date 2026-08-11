@@ -11,11 +11,12 @@ and keep this file small enough to fit into every task context.
 - `docs/harness/validation.md` - which checks to run for each change type.
 - `docs/harness/worktree-runbook.md` - isolated local dev and test setup.
 - `docs/harness/pr-review.md` - self-review checklist before pushing.
+- `docs/harness/engineering-gates.md` - anti-loop contracts and candidate evidence.
 
 ## Common Commands
 
 ```bash
-npm ci --ignore-scripts
+npm ci --include=dev --ignore-scripts
 npm run harness:check
 npm run test
 npm run test:e2e

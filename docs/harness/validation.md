@@ -9,6 +9,15 @@ when touching shared behavior, release automation, auth, persistence, or chat.
 npm run harness:check
 ```
 
+Before reporting a branch as pushed or handing an immutable candidate to review,
+also run `npm run candidate:evidence -- --base <sha> --remote <remote>
+--branch <branch> --json`. This command fetches the named remote branch and fails
+unless the worktree is clean and all three candidate heads agree.
+
+Install validation dependencies with `npm ci --include=dev --ignore-scripts`.
+The explicit `--include=dev` keeps validation reproducible when the environment
+already exports `NODE_ENV=production`.
+
 For broad or shared changes, also run:
 
 ```bash

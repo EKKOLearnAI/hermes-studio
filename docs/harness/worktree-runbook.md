@@ -28,12 +28,26 @@ cd ../worktrees/hermes-web-ui-<short-topic>
 If the repository uses a fork remote, push to the remote requested by the task.
 Do not rewrite or reset unrelated branches.
 
+After pushing, do not rely on the `git push` message or a local remote-tracking
+ref. Verify the candidate through a fresh fetch:
+
+```bash
+npm run candidate:evidence -- --base <base-sha> --remote <remote> --branch <branch> --json
+```
+
+The command is the source of truth for Base, HEAD, Tree, Patch SHA-256 and the
+remote equality check used in a handoff.
+
 ## Install
 
 ```bash
-npm ci --ignore-scripts
+npm ci --include=dev --ignore-scripts
 npm rebuild node-pty
 ```
+
+Use `--include=dev` explicitly. Agent and packaging environments may export
+`NODE_ENV=production`; relying on npm's implicit omit policy can otherwise leave
+Vitest, Vue TypeScript tooling, and preview dependencies uninstalled.
 
 Desktop package dependencies are separate:
 

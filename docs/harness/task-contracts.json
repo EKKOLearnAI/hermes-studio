@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "directions": [
+    {
+      "key": "durable-local-remote-handoff",
+      "status": "stopped",
+      "maxTotalReworks": 2,
+      "methods": [
+        {
+          "id": "prose-contract-review",
+          "status": "stopped",
+          "issues": [2482],
+          "reworks": 1
+        },
+        {
+          "id": "example-based-reference-model",
+          "status": "stopped",
+          "issues": [2488],
+          "reworks": 1
+        }
+      ],
+      "restarts": [
+        {
+          "fromMethod": "prose-contract-review",
+          "toMethod": "example-based-reference-model",
+          "authorizedBy": "product-owner",
+          "reason": "Replace prose-only review with an executable reference model before any production implementation."
+        }
+      ]
+    },
+    {
+      "key": "engineering-anti-loop-and-candidate-evidence",
+      "status": "active",
+      "maxTotalReworks": 1,
+      "methods": [
+        {
+          "id": "repository-executable-gates",
+          "status": "active",
+          "issues": [2489],
+          "reworks": 0
+        }
+      ],
+      "restarts": []
+    }
+  ]
+}

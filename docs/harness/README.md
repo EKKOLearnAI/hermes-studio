@@ -18,6 +18,8 @@ agent can discover without chat history.
 - `docs/harness/validation.md` maps change types to checks.
 - `docs/harness/worktree-runbook.md` explains isolated worktree development.
 - `docs/harness/pr-review.md` provides a PR self-review checklist.
+- `docs/harness/engineering-gates.md` defines anti-loop task contracts and
+  machine-derived candidate evidence.
 - `scripts/harness-check.mjs` enforces baseline repository invariants.
 
 ## Operating Model
