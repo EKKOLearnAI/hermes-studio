@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
+  checkCodingAgentUpdate,
   deleteCodingAgent,
   fetchCodingAgentsStatus,
   inferCodingAgentApiMode,
@@ -17,6 +18,7 @@ import {
   type CodingAgentLaunchMode,
   type CodingAgentLaunchResult,
   type CodingAgentToolStatus,
+  type CodingAgentUpdateResult,
 } from '@/api/coding-agents'
 import { fetchAvailableModelsForProfile, type AvailableModelGroup } from '@/api/hermes/system'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -66,6 +68,14 @@ const installFailureDetails = ref<Record<CodingAgentId, string>>({
 const deleting = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
+})
+const checkingUpdate = ref<Record<CodingAgentId, boolean>>({
+  'claude-code': false,
+  codex: false,
+})
+const updateInfo = ref<Record<CodingAgentId, CodingAgentUpdateResult | null>>({
+  'claude-code': null,
+  codex: null,
 })
 const launchModalVisible = ref(false)
 const launchLoading = ref(false)
@@ -418,6 +428,21 @@ async function handleDelete(id: CodingAgentId) {
   }
 }
 
+async function handleCheckUpdate(id: CodingAgentId) {
+  checkingUpdate.value[id] = true
+  try {
+    const result = await checkCodingAgentUpdate(id)
+    updateInfo.value[id] = result
+    if (!result.success) {
+      message.error(result.message || t('codingAgents.checkUpdateFailed'))
+    }
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.checkUpdateFailed'))
+  } finally {
+    checkingUpdate.value[id] = false
+  }
+}
+
 onMounted(() => {
   void loadStatus()
   void loadConfigFile('claude-code', configFiles['claude-code'][0])
@@ -477,7 +502,33 @@ onMounted(() => {
               {{ deleting[block.id] ? t('codingAgents.deleting') : t('codingAgents.deleteNow') }}
             </NButton>
             <NButton
-              v-else
+              v-if="statusFor(block.id)?.installed"
+              size="small"
+              secondary
+              :loading="checkingUpdate[block.id]"
+              @click="handleCheckUpdate(block.id)"
+            >
+              {{ checkingUpdate[block.id] ? t('codingAgents.checkingUpdate') : t('codingAgents.checkUpdate') }}
+            </NButton>
+            <template v-if="updateInfo[block.id]">
+              <template v-if="updateInfo[block.id]?.updateAvailable">
+                <span class="version-text update-available">
+                  {{ t('codingAgents.newVersionAvailable') }}: {{ updateInfo[block.id]?.latestVersion }}
+                </span>
+                <NButton
+                  size="small"
+                  type="primary"
+                  secondary
+                  :loading="installing[block.id]"
+                  @click="handleInstall(block.id)"
+                >
+                  {{ t('codingAgents.updateNow') }}
+                </NButton>
+              </template>
+              <NTag v-else size="small" type="success">{{ t('codingAgents.upToDate') }}</NTag>
+            </template>
+            <NButton
+              v-if="!statusFor(block.id)?.installed"
               size="small"
               type="primary"
               secondary
@@ -784,6 +835,11 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.update-available {
+  color: $text-primary;
+  font-weight: 600;
 }
 
 .config-file-section {
