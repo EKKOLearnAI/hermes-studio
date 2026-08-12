@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
-import { mkdir, readFile, writeFile } from 'fs/promises'
-import { dirname, join } from 'path'
+import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { dirname, extname, join } from 'path'
 import { getWebUiHome } from '../../config'
 import { fetchPetdexManifest, type PetdexPet } from './petdex'
 
@@ -11,7 +11,7 @@ export interface InstalledPet {
   displayName: string
   kind: string
   submittedBy: string
-  source: 'petdex'
+  source: 'petdex' | 'local'
   spritesheetUrl: string
   petJsonUrl: string
   zipUrl: string
@@ -39,7 +39,7 @@ export interface ActivePetResponse {
   displayName: string
   kind: string
   submittedBy: string
-  source: 'petdex'
+  source: 'petdex' | 'local'
   mime: string
   spritesheetDataUrl: string
   spritesheetRevision: number
@@ -237,6 +237,25 @@ export async function getActivePet(profile: string): Promise<ActivePetResponse |
   return buildActivePetResponse(profile, installed, active)
 }
 
+export async function adoptInstalledPet(profile: string, slugInput: string): Promise<ActivePetResponse> {
+  const slug = safeSlug(slugInput)
+  const installed = await readJsonFile<InstalledPet>(petMetaPath(profile, slug))
+  if (!installed) throw new Error(`Pet "${slugInput}" was not found locally`)
+
+  const now = Date.now()
+  const active: ActivePetConfig = {
+    enabled: true,
+    slug: installed.slug,
+    scale: DEFAULT_SCALE,
+    updatedAt: now,
+  }
+  await writeJsonFile(activePetPath(profile), active)
+
+  const response = await buildActivePetResponse(profile, installed, active)
+  if (!response) throw new Error('Installed pet asset is missing')
+  return response
+}
+
 export async function updateActivePetPreferences(
   profile: string,
   input: { scale?: number; position?: { x?: number; y?: number }; enabled?: boolean },
@@ -302,4 +321,156 @@ async function buildActivePetResponse(
     spritesheetRevision,
     updatedAt,
   }
+}
+
+export interface ImportLocalPetInput {
+  slug: string
+  displayName: string
+  kind: string
+  submittedBy: string
+  spritesheet: Buffer
+  spritesheetFilename: string
+  petJson?: string | null
+}
+
+export interface LocalImportedPet {
+  slug: string
+  displayName: string
+  kind: string
+  submittedBy: string
+  source: 'petdex' | 'local'
+  spritesheetFile: string
+  petJsonFile?: string
+  mime: string
+  installedAt: number
+  updatedAt: number
+}
+
+function sniffMime(data: Buffer, filename: string): string {
+  const lower = filename.toLowerCase()
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
+  return 'image/webp'
+}
+
+function mimeFromFilename(filename: string): string {
+  const extension = extname(filename).toLowerCase()
+  if (extension === '.png') return 'image/png'
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.gif') return 'image/gif'
+  return 'image/webp'
+}
+
+export async function importLocalPet(profile: string, input: ImportLocalPetInput): Promise<LocalImportedPet> {
+  if (!input.spritesheet?.length) throw new Error('Pet spritesheet is required')
+
+  const slug = safeSlug(input.slug)
+  const mime = sniffMime(input.spritesheet, input.spritesheetFilename)
+  const extension = extname(input.spritesheetFilename).toLowerCase()
+  const spritesheetFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)
+    ? `spritesheet${extension}`
+    : mime === 'image/png' ? 'spritesheet.png' : 'spritesheet.webp'
+  const targetDir = petDir(profile, slug)
+  await mkdir(targetDir, { recursive: true })
+  await writeFile(join(targetDir, spritesheetFile), input.spritesheet, { mode: 0o600 })
+
+  let petJsonFile: string | undefined
+  if (input.petJson?.trim()) {
+    petJsonFile = 'local-pet.json'
+    await writeFile(join(targetDir, petJsonFile), input.petJson, { encoding: 'utf-8', mode: 0o600 })
+  }
+
+  const now = Date.now()
+  const installed: InstalledPet = {
+    slug,
+    displayName: input.displayName.trim() || slug,
+    kind: input.kind.trim() || 'pet',
+    submittedBy: input.submittedBy.trim(),
+    source: 'local',
+    spritesheetUrl: '',
+    petJsonUrl: '',
+    zipUrl: '',
+    spritesheetFile,
+    petJsonFile,
+    mime,
+    installedAt: now,
+    updatedAt: now,
+  }
+  await writeJsonFile(petMetaPath(profile, slug), installed)
+
+  return {
+    slug,
+    displayName: installed.displayName,
+    kind: installed.kind,
+    submittedBy: installed.submittedBy,
+    source: 'local',
+    spritesheetFile,
+    petJsonFile,
+    mime,
+    installedAt: now,
+    updatedAt: now,
+  }
+}
+
+export async function listInstalledPets(profile: string): Promise<LocalImportedPet[]> {
+  let entries: string[]
+  try {
+    entries = await readdir(petsRoot(profile))
+  } catch {
+    return []
+  }
+
+  const pets: LocalImportedPet[] = []
+  for (const entry of entries) {
+    if (entry === 'active.json') continue
+    const installed = await readJsonFile<InstalledPet>(petMetaPath(profile, entry))
+    if (!installed) continue
+    pets.push({
+      slug: installed.slug,
+      displayName: installed.displayName,
+      kind: installed.kind,
+      submittedBy: installed.submittedBy,
+      source: installed.source,
+      spritesheetFile: installed.spritesheetFile || 'spritesheet.webp',
+      petJsonFile: installed.petJsonFile,
+      mime: installed.mime || mimeFromFilename(installed.spritesheetFile),
+      installedAt: installed.installedAt,
+      updatedAt: installed.updatedAt,
+    })
+  }
+  return pets.sort((left, right) => right.installedAt - left.installedAt)
+}
+
+export async function getLocalPetAsset(profile: string, slugInput: string): Promise<{ buffer: Buffer; mime: string } | null> {
+  const slug = safeSlug(slugInput)
+  const installed = await readJsonFile<InstalledPet>(petMetaPath(profile, slug))
+  if (!installed) return null
+  const filePath = join(petDir(profile, slug), installed.spritesheetFile || 'spritesheet.webp')
+  if (!existsSync(filePath)) return null
+  return {
+    buffer: await readFile(filePath),
+    mime: installed.mime || mimeFromFilename(installed.spritesheetFile),
+  }
+}
+
+export async function deleteInstalledPet(profile: string, slugInput: string): Promise<{ deleted: boolean; wasActive: boolean }> {
+  const slug = safeSlug(slugInput)
+  const targetDir = petDir(profile, slug)
+  if (!existsSync(targetDir)) throw new Error(`Pet "${slugInput}" was not found`)
+  await rm(targetDir, { recursive: true, force: true })
+
+  const active = await readJsonFile<ActivePetConfig>(activePetPath(profile))
+  const wasActive = active?.slug === slug
+  if (wasActive) {
+    await writeJsonFile(activePetPath(profile), {
+      enabled: false,
+      slug: '',
+      scale: DEFAULT_SCALE,
+      updatedAt: Date.now(),
+    })
+  }
+  return { deleted: true, wasActive }
 }
