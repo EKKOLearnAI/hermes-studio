@@ -2462,5 +2462,5 @@ export class AgentClients {
 }
 
 function nextMentionDepth(msg: MentionMessage): number {
-    return Math.max(0, msg.mentionDepth || 0) + 1
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, msg.mentionDepth || 0) + 1)
 }

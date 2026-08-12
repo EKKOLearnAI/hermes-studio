@@ -18,6 +18,7 @@ import {
   GroupAgentRelayServer,
   redactRelaySecrets,
   relayRoomWorkspace,
+  validateRelayRunRequest,
 } from '../../packages/server/src/services/hermes/group-chat/agent-relay'
 import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import {
@@ -73,6 +74,31 @@ describe('group chat baseline behavior', () => {
       command: 'curl -H "Authorization: Bearer [REDACTED]" https://group.example',
       tool_calls: [{ arguments: JSON.stringify({ token: '[REDACTED]' }) }],
     })
+  })
+
+  it('accepts Relay mention depths governed by bounded or unlimited room policy', () => {
+    const request = {
+      protocolVersion: 1,
+      runId: '11111111-2222-4333-8444-555555555555',
+      room: { id: 'room-1', name: 'Room 1' },
+      members: [],
+      agents: [],
+      message: {
+        messageId: 'source-1',
+        content: '@Remote continue',
+        senderName: 'Source',
+        senderId: 'agent-source',
+        timestamp: 1,
+        role: 'assistant',
+        mentionDepth: 100,
+      },
+      runtimeContext: { summary: '', history: [] },
+      attachments: [],
+    }
+
+    expect(() => validateRelayRunRequest(request)).not.toThrow()
+    request.message.mentionDepth = Number.MAX_SAFE_INTEGER
+    expect(() => validateRelayRunRequest(request)).not.toThrow()
   })
 
   it('joins an existing room and returns room-level history and membership', async () => {
@@ -605,12 +631,20 @@ describe('group chat baseline behavior', () => {
       senderId: 'guest-relay',
       timestamp: Date.now(),
       role: 'user',
+      mentionDepth: 100,
+      handoffChainId: 'trusted-chain',
+      continuationAttemptId: 'trusted-attempt',
     })
     const run = await runRequested
     expect(run.room).toMatchObject({
       id: 'room-relay',
       name: 'Relay Room',
       summaryProfile: 'default',
+    })
+    expect(run.message).toMatchObject({
+      mentionDepth: 100,
+      handoffChainId: 'trusted-chain',
+      continuationAttemptId: 'trusted-attempt',
     })
     expect(run.workspaceApi).toMatchObject({
       access: 'read-write',
@@ -648,6 +682,9 @@ describe('group chat baseline behavior', () => {
           content: 'forged content',
           id: 'forged-id',
           senderId: 'forged-sender',
+          mentionDepth: 1,
+          handoffChainId: 'forged-chain',
+          continuationAttemptId: 'forged-attempt',
         },
       },
     })
@@ -665,6 +702,9 @@ describe('group chat baseline behavior', () => {
           { type: 'agent', participantId: 'agent-first', displayName: 'First' },
           { type: 'agent', participantId: 'agent-second', displayName: 'Second' },
         ],
+        mentionDepth: 101,
+        handoffChainId: 'trusted-chain',
+        continuationAttemptId: 'trusted-attempt',
       },
       'remote-session',
     )

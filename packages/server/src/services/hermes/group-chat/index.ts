@@ -674,6 +674,39 @@ class ChatStorage {
              WHERE status = 'running' AND invocationStartedAt IS NOT NULL`,
         ).run(now)
         db.prepare(
+            `UPDATE gc_handoff_attempts
+             SET status = 'failed', lastError = 'Target invocation was in flight during restart',
+                 leaseUntil = 0, updatedAt = ?
+             WHERE attemptId IN (
+               SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
+                 AND lastError = 'Target invocation was in flight during restart'
+             ) AND status != 'completed'`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_deliveries SET status = 'failed', updatedAt = ?
+             WHERE attemptId IN (
+               SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
+                 AND lastError = 'Target invocation was in flight during restart'
+             ) AND status != 'completed'`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ?
+             WHERE attemptId IN (
+               SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
+                 AND lastError = 'Target invocation was in flight during restart'
+             ) AND status != 'completed'`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_handoff_chains
+             SET status = 'stopped', stopReason = 'continue_failed',
+                 lastError = 'Target invocation was in flight during restart', updatedAt = ?
+             WHERE status = 'claimed' AND continueUsed = 0
+               AND attemptId IN (
+                 SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
+                   AND lastError = 'Target invocation was in flight during restart'
+               )`,
+        ).run(now)
+        db.prepare(
             `UPDATE gc_handoff_inbox
              SET status = 'admitted', executionId = NULL, leaseUntil = 0, updatedAt = ?
              WHERE status = 'running' AND invocationStartedAt IS NULL AND leaseUntil < ?`,
@@ -1740,29 +1773,15 @@ class ChatStorage {
                  WHERE roomId = ? AND status != 'revoked'`,
             ).run(Date.now(), Date.now(), roomId)
             db.prepare('DELETE FROM gc_agent_pairing_requests WHERE roomId = ?').run(roomId)
-            const now = Date.now()
             db.prepare(
-                `UPDATE gc_handoff_inbox
-                 SET status = CASE WHEN status IN ('completed', 'failed_terminal', 'failed_manual', 'cancelled') THEN status ELSE 'cancelled' END,
-                     tombstone = CASE WHEN status IN ('completed', 'failed_terminal', 'failed_manual', 'cancelled') THEN tombstone ELSE ? END,
-                     stateVersion = stateVersion + 1, updatedAt = ?
-                 WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)`,
-            ).run(`room:${roomId}:cleared`, now, roomId)
+                'DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)',
+            ).run(roomId)
             db.prepare(
-                `UPDATE gc_handoff_deliveries SET status = 'failed', updatedAt = ?
-                 WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)`,
-            ).run(now, roomId)
-            db.prepare(
-                `UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ? WHERE roomId = ? AND status NOT IN ('completed', 'failed')`,
-            ).run(now, roomId)
-            db.prepare(
-                `UPDATE gc_handoff_attempts SET status = 'failed_manual', lastError = 'Room cleared', updatedAt = ?
-                 WHERE roomId = ? AND status NOT IN ('completed', 'failed_manual')`,
-            ).run(now, roomId)
-            db.prepare(
-                `UPDATE gc_handoff_chains SET status = 'stopped', stopReason = 'room_cleared', lastError = 'Room cleared', updatedAt = ?
-                 WHERE roomId = ? AND status NOT IN ('resumed', 'stopped')`,
-            ).run(now, roomId)
+                'DELETE FROM gc_handoff_inbox WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)',
+            ).run(roomId)
+            db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)

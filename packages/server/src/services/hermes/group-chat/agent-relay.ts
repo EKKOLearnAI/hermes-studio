@@ -100,6 +100,7 @@ type RelayAgentEvent = {
 type PendingRelayRun = {
   runId: string
   roomId: string
+  message: MentionMessage
   lastSeq: number
   accepted: boolean
   acceptedTimer: ReturnType<typeof setTimeout>
@@ -199,7 +200,7 @@ export function relayRoomWorkspace(
   return workspace
 }
 
-function validateRelayRunRequest(value: unknown): asserts value is RelayRunRequest {
+export function validateRelayRunRequest(value: unknown): asserts value is RelayRunRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw relayError('Invalid Relay run request', 'GROUP_AGENT_RUN_INVALID')
   }
@@ -250,7 +251,7 @@ function validateRelayRunRequest(value: unknown): asserts value is RelayRunReque
   if (!Number.isFinite(message.timestamp)) throw relayError('Invalid Relay message timestamp', 'GROUP_AGENT_RUN_INVALID')
   if (
     message.mentionDepth !== undefined
-    && (!Number.isSafeInteger(message.mentionDepth) || message.mentionDepth < 0 || message.mentionDepth > 10)
+    && (!Number.isSafeInteger(message.mentionDepth) || message.mentionDepth < 0)
   ) {
     throw relayError('Invalid Relay mention depth', 'GROUP_AGENT_RUN_INVALID')
   }
@@ -523,6 +524,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         this.pendingRun = {
           runId,
           roomId,
+          message: prepared.message,
           lastSeq: 0,
           accepted: false,
           acceptedTimer,
@@ -757,6 +759,16 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         if (content.length > 1_000_000) throw relayError('Remote Agent message is too large', 'GROUP_AGENT_EVENT_INVALID')
         const messageId = this.remoteMessageId(pending, data.id, true)
         const extra = this.sanitizeRemoteMessageExtra(data.extra)
+        if (extra.role === 'assistant') {
+          // Relay events are untrusted. Bind chained-routing metadata only
+          // from the server-issued invocation that created this pending run.
+          extra.mentionDepth = Math.min(
+            Number.MAX_SAFE_INTEGER,
+            Math.max(0, Number(pending.message.mentionDepth || 0)) + 1,
+          )
+          extra.handoffChainId = pending.message.handoffChainId || pending.message.messageId || ''
+          extra.continuationAttemptId = pending.message.continuationAttemptId || ''
+        }
         const persistedMessageId = await this.proxy.sendMessage(
           pending.roomId,
           content,
@@ -970,10 +982,6 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     }
     const mentions = this.sanitizeRemoteMentions(input.mentions)
     if (mentions !== undefined) output.mentions = mentions
-    const mentionDepth = Number(input.mentionDepth)
-    if (Number.isSafeInteger(mentionDepth) && mentionDepth >= 0 && mentionDepth <= 10) {
-      output.mentionDepth = mentionDepth
-    }
     return output
   }
 
