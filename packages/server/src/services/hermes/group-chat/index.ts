@@ -1623,6 +1623,7 @@ class ChatRoom {
     readonly id: string
     name: string
     readonly members = new Map<string, Member>()
+    private readonly socketUsers = new Map<string, string>()
 
     constructor(id: string, name?: string) {
         this.id = id
@@ -1630,6 +1631,7 @@ class ChatRoom {
     }
 
     addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human', avatar: string = ''): Member {
+        this.socketUsers.set(socketId, userId)
         const existing = this.members.get(userId)
         if (existing) {
             existing.name = name
@@ -1646,17 +1648,26 @@ class ChatRoom {
     }
 
     removeMember(socketId: string): void {
-        for (const member of this.members.values()) {
-            if (member.socketId === socketId) {
-                member.online = false
-                break
-            }
+        const userId = this.socketUsers.get(socketId)
+        if (!userId) return
+        this.socketUsers.delete(socketId)
+        const member = this.members.get(userId)
+        if (!member) return
+        const replacementSocketId = Array.from(this.socketUsers.entries()).find(([, mappedUserId]) => mappedUserId === userId)?.[0]
+        member.online = Boolean(replacementSocketId)
+        if (member.socketId === socketId && replacementSocketId) {
+            member.socketId = replacementSocketId
         }
     }
 
     removeUser(userId: string): Member | null {
         const member = this.members.get(userId) || null
-        if (member) this.members.delete(userId)
+        if (member) {
+            this.members.delete(userId)
+            for (const [socketId, mappedUserId] of this.socketUsers) {
+                if (mappedUserId === userId) this.socketUsers.delete(socketId)
+            }
+        }
         return member
     }
 
@@ -1665,10 +1676,10 @@ class ChatRoom {
     }
 
     getOnlineMemberBySocketId(socketId: string): Member | undefined {
-        for (const member of this.members.values()) {
-            if (member.socketId === socketId && member.online) return member
-        }
-        return undefined
+        const userId = this.socketUsers.get(socketId)
+        if (!userId) return undefined
+        const member = this.members.get(userId)
+        return member?.online ? member : undefined
     }
 
     hasOnlineMember(socketId: string): boolean {
@@ -3550,7 +3561,7 @@ export class GroupChatServer {
                 const member = room.getOnlineMemberBySocketId(socketId)
                 room.removeMember(socketId)
                 socket.leave(rid)
-                if (member?.source !== 'agent') {
+                if (member?.source !== 'agent' && !member?.online) {
                     this.nsp.to(rid).emit('member_left', {
                         roomId: rid,
                         memberId: member?.userId || socketId,

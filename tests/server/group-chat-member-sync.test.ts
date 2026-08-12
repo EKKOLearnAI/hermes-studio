@@ -1055,6 +1055,189 @@ describe('Group Chat member/agent identity sync', () => {
     expect(ack.mock.calls[0][0]).toEqual(expect.objectContaining({ roomId: 'room-1', messages: [], agents: [] }))
   })
 
+  it('keeps every joined socket valid when one authenticated user opens the room twice', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([
+      ['socket-1', 'auth:42'],
+      ['socket-2', 'auth:42'],
+    ])
+    server.socketRequestedSourceMap = new Map([
+      ['socket-1', 'human'],
+      ['socket-2', 'human'],
+    ])
+    server.socketAuthUserIdMap = new Map([
+      ['socket-1', 42],
+      ['socket-2', 42],
+    ])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => ({
+        id: 'member-1',
+        userId: 'auth:42',
+        name: 'alice',
+        description: '',
+        joinedAt: 1,
+        avatar: '',
+        authUserId: 42,
+      })),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const createSocket = (id: string) => ({
+      id,
+      data: { authUser: { id: 42, username: 'alice', role: 'admin', profiles: ['default'] } },
+      join: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    })
+
+    server.handleJoin(createSocket('socket-1'), { roomId: 'room-1' }, vi.fn())
+    server.handleJoin(createSocket('socket-2'), { roomId: 'room-1' }, vi.fn())
+
+    const room = server.rooms.get('room-1')
+    expect(room.getMembersList()).toHaveLength(1)
+    expect(room.hasOnlineMember('socket-1')).toBe(true)
+    expect(room.hasOnlineMember('socket-2')).toBe(true)
+    expect(room.getOnlineMemberBySocketId('socket-1')?.userId).toBe('auth:42')
+    expect(room.getOnlineMemberBySocketId('socket-2')?.userId).toBe('auth:42')
+  })
+
+  it('keeps the user online when one of their joined room sockets disconnects', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([
+      ['socket-1', 'auth:42'],
+      ['socket-2', 'auth:42'],
+    ])
+    server.socketRequestedSourceMap = new Map([
+      ['socket-1', 'human'],
+      ['socket-2', 'human'],
+    ])
+    server.socketAuthUserIdMap = new Map([
+      ['socket-1', 42],
+      ['socket-2', 42],
+    ])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => ({
+        id: 'member-1',
+        userId: 'auth:42',
+        name: 'alice',
+        description: '',
+        joinedAt: 1,
+        avatar: '',
+        authUserId: 42,
+      })),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const createSocket = (id: string) => ({
+      id,
+      data: { authUser: { id: 42, username: 'alice', role: 'admin', profiles: ['default'] } },
+      join: vi.fn(),
+      leave: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    })
+    const socket1 = createSocket('socket-1')
+    const socket2 = createSocket('socket-2')
+    server.handleJoin(socket1, { roomId: 'room-1' }, vi.fn())
+    server.handleJoin(socket2, { roomId: 'room-1' }, vi.fn())
+    emit.mockClear()
+
+    server.leaveAllRooms(socket2, 'socket-2')
+
+    const room = server.rooms.get('room-1')
+    expect(room.hasOnlineMember('socket-1')).toBe(true)
+    expect(room.hasOnlineMember('socket-2')).toBe(false)
+    expect(room.getMembersList()).toEqual([
+      expect.objectContaining({ userId: 'auth:42', online: true }),
+    ])
+    expect(socket2.leave).toHaveBeenCalledWith('room-1')
+    expect(emit).not.toHaveBeenCalledWith('member_left', expect.anything())
+  })
+
+  it('marks the user offline only after their last joined room socket disconnects', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([
+      ['socket-1', 'auth:42'],
+      ['socket-2', 'auth:42'],
+    ])
+    server.socketRequestedSourceMap = new Map([
+      ['socket-1', 'human'],
+      ['socket-2', 'human'],
+    ])
+    server.socketAuthUserIdMap = new Map([
+      ['socket-1', 42],
+      ['socket-2', 42],
+    ])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => ({
+        id: 'member-1', userId: 'auth:42', name: 'alice', description: '', joinedAt: 1, avatar: '', authUserId: 42,
+      })),
+      getMemberByAuthUserId: vi.fn(() => null),
+      getRoomsForProfiles: vi.fn(() => []),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getRecentMessagesForUI: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const createSocket = (id: string) => ({
+      id,
+      data: { authUser: { id: 42, username: 'alice', role: 'admin', profiles: ['default'] } },
+      join: vi.fn(),
+      leave: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    })
+    const socket1 = createSocket('socket-1')
+    const socket2 = createSocket('socket-2')
+    server.handleJoin(socket1, { roomId: 'room-1' }, vi.fn())
+    server.handleJoin(socket2, { roomId: 'room-1' }, vi.fn())
+    emit.mockClear()
+
+    server.leaveAllRooms(socket2, 'socket-2')
+    server.leaveAllRooms(socket1, 'socket-1')
+
+    const room = server.rooms.get('room-1')
+    expect(room.hasOnlineMember('socket-1')).toBe(false)
+    expect(room.hasOnlineMember('socket-2')).toBe(false)
+    expect(room.getMembersList()).toEqual([
+      expect.objectContaining({ userId: 'auth:42', online: false }),
+    ])
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit).toHaveBeenCalledWith('member_left', expect.objectContaining({
+      roomId: 'room-1',
+      memberId: 'auth:42',
+      memberName: 'alice',
+    }))
+  })
+
   it('reuses an authenticated member name when the browser has no local group-chat name', () => {
     const emit = vi.fn()
     const server = Object.create(GroupChatServer.prototype) as any
