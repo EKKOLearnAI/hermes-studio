@@ -2021,6 +2021,7 @@ export default {
       mimoModelVoiceClone: '음성 클론',
       mimoVoice: '음성',
       mimoVoiceHint: '프리셋 음성 선택',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: '음성 설명',
       mimoVoiceDesignPromptHint: '원하는 음성 특징을 설명하세요',
       mimoVoiceDesignPromptPlaceholder: '예: 따뜻한 젊은 여성 목소리, 약간 느린 속도, 마그네틱한 톤',

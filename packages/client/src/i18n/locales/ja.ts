@@ -2021,6 +2021,7 @@ export default {
       mimoModelVoiceClone: '音声クローン',
       mimoVoice: '音声',
       mimoVoiceHint: 'プリセット音声を選択',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: '音声の説明',
       mimoVoiceDesignPromptHint: '希望する音声の特徴を説明してください',
       mimoVoiceDesignPromptPlaceholder: '例：温かみのある若い女性の声、少しゆっくり、磁力的なトーン',

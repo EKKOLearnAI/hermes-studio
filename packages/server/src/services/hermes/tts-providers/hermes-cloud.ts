@@ -225,19 +225,53 @@ export const minimaxTtsProvider: TtsProvider<CloudTtsProviderOptions> = {
   async synthesize(req, options) {
     const apiKey = requireApiKey(options, 'MiniMax')
     const url = providerUrl(options.baseUrl, DEFAULTS.minimax.baseUrl, 'MiniMax')
+    const text = requireText(req.text, 'MiniMax')
+    let voice = String(options.voice || DEFAULTS.minimax.voice).trim()
+
+    if (options.voiceMode === 'voiceDesign') {
+      const prompt = String(options.voiceDesignDesc || '').trim()
+      if (!prompt) throw new Error('MiniMax TTS voiceDesignDesc is required for voiceDesign mode')
+
+      const designUrl = new URL(url)
+      designUrl.search = ''
+      designUrl.pathname = '/v1/voice_design'
+      const response = await checkedResponse(await fetch(designUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt,
+          voice_id: voice,
+        }),
+        signal: req.signal,
+      }), 'MiniMax', apiKey)
+      const payload = await response.json() as {
+        voice_id?: unknown
+        base_resp?: { status_code?: unknown; status_msg?: unknown }
+      }
+      if (Number(payload.base_resp?.status_code) !== 0) {
+        throw new Error(`MiniMax voice design API error: ${String(payload.base_resp?.status_msg || 'unknown error')}`)
+      }
+      if (typeof payload.voice_id === 'string' && payload.voice_id.trim()) {
+        voice = payload.voice_id.trim()
+      }
+    }
+
     if (options.groupId && !url.searchParams.has('GroupId')) {
       url.searchParams.set('GroupId', options.groupId)
     }
     const isV2 = url.pathname.includes('t2a_v2')
     const common = {
       model: options.model || DEFAULTS.minimax.model,
-      text: requireText(req.text, 'MiniMax'),
+      text,
     }
     const body = isV2
       ? {
           ...common,
           voice_setting: {
-            voice_id: options.voice || DEFAULTS.minimax.voice,
+            voice_id: voice,
             speed: numberOption(options.speed, 1),
             vol: numberOption(options.volume, 1),
             pitch: numberOption(options.pitch, 0),
@@ -252,7 +286,7 @@ export const minimaxTtsProvider: TtsProvider<CloudTtsProviderOptions> = {
         }
       : {
           ...common,
-          voice_id: options.voice || DEFAULTS.minimax.voice,
+          voice_id: voice,
         }
     const response = await checkedResponse(await fetch(url, {
       method: 'POST',

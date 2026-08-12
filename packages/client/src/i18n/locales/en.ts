@@ -2554,6 +2554,7 @@ export default {
       mimoModelVoiceClone: 'Voice Clone',
       mimoVoice: 'Voice',
       mimoVoiceHint: 'Select a preset voice',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: 'Voice Description',
       mimoVoiceDesignPromptHint: 'Describe the voice characteristics you want',
       mimoVoiceDesignPromptPlaceholder: 'e.g., A warm young female voice, slightly slow, with a magnetic tone',

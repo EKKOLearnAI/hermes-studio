@@ -2493,6 +2493,7 @@ export default {
       mimoModelVoiceClone: '音色複製',
       mimoVoice: '音色',
       mimoVoiceHint: '選擇預設音色',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: '音色描述',
       mimoVoiceDesignPromptHint: '描述你想要的音色特徵',
       mimoVoiceDesignPromptPlaceholder: '例如：溫柔的年輕女聲，語速稍慢，帶著磁性',

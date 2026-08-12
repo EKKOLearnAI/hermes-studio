@@ -2542,6 +2542,7 @@ export default {
       mimoModelVoiceClone: 'استنساخ الصوت',
       mimoVoice: 'الصوت',
       mimoVoiceHint: 'اختر صوتًا جاهزًا',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: 'وصف الصوت',
       mimoVoiceDesignPromptHint: 'صِف خصائص الصوت الذي تريده',
       mimoVoiceDesignPromptPlaceholder: 'مثال: صوت أنثوي شاب ودافئ، بطيء قليلًا، بنبرة جاذبة',

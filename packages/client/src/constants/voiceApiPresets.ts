@@ -115,6 +115,7 @@ export const VOICE_API_PRESETS: VoiceApiPreset[] = [
       groupId: true,
       volume: true,
       emotion: true,
+      voiceDesign: true,
     },
   },
   {

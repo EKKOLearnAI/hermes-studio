@@ -2586,6 +2586,7 @@ export default {
       mimoModelVoiceClone: '音色复刻',
       mimoVoice: '音色',
       mimoVoiceHint: '选择预置音色',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: '音色描述',
       mimoVoiceDesignPromptHint: '描述你想要的音色特征',
       mimoVoiceDesignPromptPlaceholder: '例如：温柔的年轻女声，语速稍慢，带着磁性',

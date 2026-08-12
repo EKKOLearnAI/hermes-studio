@@ -2298,6 +2298,7 @@ export default {
       mimoModelVoiceClone: 'Клонирование тембра',
       mimoVoice: 'Тембр',
       mimoVoiceHint: 'Выберите предустановленный тембр',
+      voiceDesignPrompt: 'Voice design prompt',
       mimoVoiceDesignPrompt: 'Описание тембра',
       mimoVoiceDesignPromptHint: 'Опишите желаемые характеристики тембра',
       mimoVoiceDesignPromptPlaceholder: 'Например: мягкий молодой женский голос, слегка замедленный, с хрипотцой',
