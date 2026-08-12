@@ -9286,6 +9286,59 @@
         }
       }
     },
+    "/api/hermes/media/minimax-image-to-video": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Create minimax-image-to-video",
+        "description": "POST /api/hermes/media/minimax-image-to-video",
+        "operationId": "miniMaxImageToVideo",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "output_path": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/memory": {
       "get": {
         "tags": [

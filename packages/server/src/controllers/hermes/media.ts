@@ -4,11 +4,39 @@ import { dirname, extname, isAbsolute, join, resolve } from 'path'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { resolveAuthorizedProviderRuntimeCredentials } from '../../services/hermes/authorized-provider-credentials'
 import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
 const XAI_VIDEO_MODEL = 'grok-imagine-video'
+const MINIMAX_VIDEO_DEFAULT_MODEL = 'MiniMax-H3'
+const MINIMAX_VIDEO_V2_RESOLUTION = '2K'
+const MINIMAX_VIDEO_V2_RATIOS = new Set(['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'])
+const MINIMAX_VIDEO_REGIONS = {
+  global_en: {
+    v2: {
+      generateUrl: 'https://api.minimax.io/v2/video_generation',
+      queryUrl: 'https://api.minimax.io/v2/query/video_generation',
+    },
+    v1: {
+      generateUrl: 'https://api.minimax.io/v1/video_generation',
+      queryUrl: 'https://api.minimax.io/v1/query/video_generation',
+      downloadUrl: 'https://api.minimax.io/v1/files/retrieve',
+    },
+  },
+  cn_zh: {
+    v2: {
+      generateUrl: 'https://api.minimaxi.com/v2/video_generation',
+      queryUrl: 'https://api.minimaxi.com/v2/query/video_generation',
+    },
+    v1: {
+      generateUrl: 'https://api.minimaxi.com/v1/video_generation',
+      queryUrl: 'https://api.minimaxi.com/v1/query/video_generation',
+      downloadUrl: 'https://api.minimaxi.com/v1/files/retrieve',
+    },
+  },
+} as const
 const APIKEY_IMAGE_PROVIDER = 'fun-codex'
 const APIKEY_IMAGE_MODEL = 'gpt-image-2'
 const APIKEY_IMAGE_TO_IMAGE_MODEL = 'gpt-5.4-mini'
@@ -129,6 +157,26 @@ function resolveXaiToken(profile: string): { token: string; source: string } | n
   }
 
   return null
+}
+
+async function resolveMiniMaxToken(profile: string, model: string): Promise<{ token: string; source: string; region?: 'global_en' | 'cn_zh' } | null> {
+  const envToken = String(process.env.MINIMAX_API_KEY || '').trim()
+  if (envToken) return { token: envToken, source: 'MINIMAX_API_KEY' }
+
+  try {
+    const credentials = await resolveAuthorizedProviderRuntimeCredentials({
+      profile,
+      provider: 'minimax-oauth',
+      model,
+    })
+    return {
+      token: credentials.apiKey,
+      source: credentials.source || 'minimax-oauth',
+      region: credentials.baseUrl?.includes('api.minimaxi.com') ? 'cn_zh' : 'global_en',
+    }
+  } catch {
+    return null
+  }
 }
 
 function mimeFromPath(path: string): string | null {
@@ -549,6 +597,214 @@ async function downloadVideo(url: string, outputPath: string): Promise<void> {
   const buffer = Buffer.from(arrayBuffer)
   mkdirSync(dirname(outputPath), { recursive: true })
   writeFileSync(outputPath, buffer)
+}
+
+async function requestMiniMaxJson(url: string, token: string, init: RequestInit = {}): Promise<any> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(init.headers || {}),
+    },
+  })
+  const text = await res.text()
+  let data: any = null
+  try { data = text ? JSON.parse(text) : null } catch {}
+  const baseCode = data?.base_resp?.status_code
+  if (!res.ok || (Number.isFinite(baseCode) && Number(baseCode) !== 0)) {
+    const detail = data?.base_resp?.status_msg || data?.error?.message || data?.error || text || res.statusText
+    const err: any = new Error(`MiniMax request failed: ${res.status} ${detail}`)
+    err.status = 502
+    throw err
+  }
+  return data
+}
+
+function miniMaxVideoUrls(region: string) {
+  return region === 'cn_zh'
+    ? MINIMAX_VIDEO_REGIONS.cn_zh
+    : MINIMAX_VIDEO_REGIONS.global_en
+}
+
+function normalizeMiniMaxV2Duration(value: unknown): number {
+  const duration = value === undefined || value === null || value === '' ? 5 : Number(value)
+  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+    const err: any = new Error('duration must be an integer from 4 to 15 for MiniMax-H3')
+    err.status = 400
+    throw err
+  }
+  return duration
+}
+
+function miniMaxV2ImageRequest(body: any, prompt: string, image: string, region: string): Record<string, unknown> {
+  if (!prompt) {
+    const err: any = new Error('prompt is required for MiniMax-H3')
+    err.status = 400
+    throw err
+  }
+  if (prompt.length > 7000) {
+    const err: any = new Error('prompt must be 7000 characters or fewer for MiniMax-H3')
+    err.status = 400
+    throw err
+  }
+
+  const resolution = typeof body.resolution === 'string' && body.resolution.trim()
+    ? body.resolution.trim()
+    : MINIMAX_VIDEO_V2_RESOLUTION
+  if (resolution !== MINIMAX_VIDEO_V2_RESOLUTION) {
+    const err: any = new Error('resolution must be 2K for MiniMax-H3')
+    err.status = 400
+    throw err
+  }
+
+  const ratio = typeof body.ratio === 'string' && body.ratio.trim() ? body.ratio.trim() : 'adaptive'
+  if (!MINIMAX_VIDEO_V2_RATIOS.has(ratio)) {
+    const err: any = new Error('ratio must be adaptive, 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16 for MiniMax-H3')
+    err.status = 400
+    throw err
+  }
+
+  const requestBody: Record<string, unknown> = {
+    model: MINIMAX_VIDEO_DEFAULT_MODEL,
+    content: [
+      { type: 'text', text: prompt },
+      { type: 'image_url', image_url: { url: image }, role: 'first_frame' },
+    ],
+    resolution,
+    duration: normalizeMiniMaxV2Duration(body.duration),
+    ratio,
+  }
+  if (typeof body.callback_url === 'string' && body.callback_url.trim()) {
+    requestBody.callback_url = body.callback_url.trim()
+  }
+  if (region === 'cn_zh' && typeof body.aigc_watermark === 'boolean') {
+    requestBody.aigc_watermark = body.aigc_watermark
+  }
+  return requestBody
+}
+
+function miniMaxV1ImageRequest(body: any, prompt: string, image: string, model: string): Record<string, unknown> {
+  const requestBody: Record<string, unknown> = { model, first_frame_image: image }
+  if (prompt) requestBody.prompt = prompt
+  for (const field of ['prompt_optimizer', 'fast_pretreatment', 'resolution', 'callback_url'] as const) {
+    const value = body[field]
+    if (value !== undefined && value !== null && value !== '') requestBody[field] = value
+  }
+  if (body.duration !== undefined && body.duration !== null && body.duration !== '') {
+    const duration = Number(body.duration)
+    if (!Number.isInteger(duration) || duration <= 0) {
+      const err: any = new Error('duration must be a positive integer')
+      err.status = 400
+      throw err
+    }
+    requestBody.duration = duration
+  }
+  return requestBody
+}
+
+export async function miniMaxImageToVideo(ctx: Context) {
+  let profile: string
+  try {
+    profile = resolveMediaProfile(ctx)
+  } catch (err: any) {
+    ctx.status = err.status || 400
+    ctx.body = { error: err.message || String(err), code: err.code || 'invalid_profile' }
+    return
+  }
+
+  const body = ctx.request.body as any
+  const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : MINIMAX_VIDEO_DEFAULT_MODEL
+  const tokenInfo = await resolveMiniMaxToken(profile, model)
+  if (!tokenInfo) {
+    ctx.status = 401
+    ctx.body = {
+      error: `Missing MiniMax token for profile "${profile}". Set MINIMAX_API_KEY or complete MiniMax OAuth login first.`,
+      code: 'missing_minimax_token',
+    }
+    return
+  }
+
+  try {
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+    const image = normalizeImageInput(body)
+    const region = String(body.region || tokenInfo.region || 'global_en').trim() === 'cn_zh' ? 'cn_zh' : 'global_en'
+    const urls = miniMaxVideoUrls(region)
+    const rawTimeoutMs = Number(body.timeout_ms || DEFAULT_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(rawTimeoutMs)
+      ? Math.max(10000, Math.min(rawTimeoutMs, 30 * 60 * 1000))
+      : DEFAULT_TIMEOUT_MS
+    const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
+    const useV2 = model === MINIMAX_VIDEO_DEFAULT_MODEL
+    const requestBody = useV2
+      ? miniMaxV2ImageRequest(body, prompt, image, region)
+      : miniMaxV1ImageRequest(body, prompt, image, model)
+
+    const started = await requestMiniMaxJson(useV2 ? urls.v2.generateUrl : urls.v1.generateUrl, tokenInfo.token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    })
+    const taskId = String(started?.task_id || '').trim()
+    if (!taskId) throw new Error('MiniMax response missing task_id')
+
+    const deadline = Date.now() + timeoutMs
+    let latest: any = null
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS))
+      latest = await requestMiniMaxJson(
+        useV2
+          ? `${urls.v2.queryUrl}/${encodeURIComponent(taskId)}`
+          : `${urls.v1.queryUrl}?task_id=${encodeURIComponent(taskId)}`,
+        tokenInfo.token,
+      )
+      const task = useV2 ? latest?.task : latest
+      const status = String(task?.status || '').toLowerCase()
+      if (status === 'succeeded' || status === 'succeed' || status === 'success' || status === 'done') {
+        const fileId = useV2 ? '' : String(task?.file_id || '').trim()
+        let videoUrl = useV2 ? String(task?.content?.url || '').trim() : ''
+        if (!useV2 && fileId) {
+          const fileData = await requestMiniMaxJson(`${urls.v1.downloadUrl}?file_id=${encodeURIComponent(fileId)}`, tokenInfo.token)
+          videoUrl = String(fileData?.file?.download_url || fileData?.download_url || '').trim()
+        }
+        if (!videoUrl) throw new Error('MiniMax response missing generated video URL')
+        const outputPath = requestedOutputPath || defaultMediaOutputPath(taskId)
+        await downloadVideo(videoUrl, outputPath)
+        ctx.body = {
+          task_id: taskId,
+          status: task?.status,
+          ...(fileId ? { file_id: fileId } : {}),
+          video_url: videoUrl,
+          output_path: outputPath,
+          model,
+          api_version: useV2 ? 'v2' : 'v1',
+          region,
+          token_source: tokenInfo.source,
+          profile,
+        }
+        return
+      }
+      if (status === 'fail' || status === 'failed' || status === 'error' || status === 'cancelled') {
+        ctx.status = 502
+        ctx.body = {
+          task_id: taskId,
+          status: task?.status,
+          error: task?.error?.message || task?.error || latest?.base_resp?.status_msg || 'MiniMax video generation failed',
+        }
+        return
+      }
+    }
+
+    ctx.status = 504
+    ctx.body = {
+      task_id: taskId,
+      status: (useV2 ? latest?.task?.status : latest?.status) || 'pending',
+      error: 'Timed out waiting for MiniMax video generation',
+    }
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || String(err) }
+  }
 }
 
 export async function grokImageToVideo(ctx: Context) {
