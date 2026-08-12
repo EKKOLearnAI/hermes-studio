@@ -2652,7 +2652,7 @@ export default {
     summaryModelPlaceholder: 'モデルを選択',
     summaryApiMode: 'API モード',
     summaryEveryTurns: 'N ターンごとに要約',
-    summaryEveryTurnsDesc: '1 ターンは人間のメッセージ 1 件です。',
+    summaryEveryTurnsDesc: '人間または Agent の公開自然言語メッセージを 1 件として数え、Tool・推論・状態記録は除外します。',
     summaryConfigSaved: '要約設定を保存しました',
     agentHandoffTitle: 'Agent 引き継ぎ',
     agentHandoffEnabled: '自動引き継ぎを有効化',

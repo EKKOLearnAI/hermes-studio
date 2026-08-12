@@ -603,6 +603,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   summaryModel: "TEXT NOT NULL DEFAULT ''",
   summaryApiMode: "TEXT NOT NULL DEFAULT ''",
   summaryEveryTurns: 'INTEGER NOT NULL DEFAULT 20',
+  summaryGeneration: 'INTEGER NOT NULL DEFAULT 0',
   triggerTokens: 'INTEGER NOT NULL DEFAULT 100000',
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
   tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
@@ -830,6 +831,10 @@ export const GC_ROOM_SUMMARIES_SCHEMA: Record<string, string> = {
   version: 'INTEGER NOT NULL DEFAULT 0',
   updatedAt: 'INTEGER NOT NULL DEFAULT 0',
   lastError: 'TEXT',
+  summaryRunToken: "TEXT NOT NULL DEFAULT ''",
+  summaryLeaseExpiresAt: 'INTEGER NOT NULL DEFAULT 0',
+  summaryRunGeneration: 'INTEGER NOT NULL DEFAULT 0',
+  summaryDrainThroughMessageId: "TEXT NOT NULL DEFAULT ''",
 }
 
 export const GC_ROOM_MEMBERS_TABLE = 'gc_room_members'

@@ -2931,7 +2931,7 @@ export default {
     summaryModelPlaceholder: 'اختر نموذجاً',
     summaryApiMode: 'وضع API',
     summaryEveryTurns: 'التلخيص كل N جولات',
-    summaryEveryTurnsDesc: 'الجولة الواحدة هي رسالة بشرية واحدة.',
+    summaryEveryTurnsDesc: 'تُحتسب كل رسالة عامة بلغة طبيعية من إنسان أو Agent، وتُستبعد سجلات Tool والاستدلال والحالة.',
     summaryConfigSaved: 'تم حفظ إعدادات التلخيص',
     agentHandoffTitle: 'تتابع الوكلاء',
     agentHandoffEnabled: 'تفعيل التتابع التلقائي',
