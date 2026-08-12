@@ -26,6 +26,7 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
   'abort',
+  'insert_queued_run',
   'cancel_queued_run',
   'approval.respond',
   'clarify.respond',
