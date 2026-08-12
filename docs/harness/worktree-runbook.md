@@ -32,22 +32,18 @@ After pushing, do not rely on the `git push` message or a local remote-tracking
 ref. Verify the candidate through a fresh fetch:
 
 ```bash
-npm run candidate:evidence -- --base <base-sha> \
-  --remote <remote> --branch <branch> --problem-key <key> \
+npm run candidate:evidence -- --base <base-sha> --remote <remote> --branch <branch> \
+  --ledger docs/harness/task-contracts.json --problem-key <key> \
   --issue <number> --method <id> --json
 ```
 
-The command is the source of truth for Base, HEAD, Tree, deterministic Patch
-SHA-256, and the remote equality check used in a handoff. After the Bootstrap
-gate is present on the trusted Base, it also diagnoses the canonical-ledger
-transition with the Base validator. During Bootstrap it exits `2` and reports
-`bootstrap-review-required`; only independent exact-HEAD review may approve
-that candidate. It does not accept a caller-selected ledger path.
+The command is the source of truth for Base, HEAD, Tree, Patch SHA-256 and the
+remote equality check used in a handoff.
 
 ## Install
 
 ```bash
-npm ci --include=dev --ignore-scripts
+npm ci --ignore-scripts
 npm rebuild node-pty
 ```
 

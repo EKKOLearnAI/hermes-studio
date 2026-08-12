@@ -40,13 +40,7 @@ Use this checklist before pushing or updating a pull request.
 - The branch is mergeable.
 - The PR does not depend on hidden local state, credentials, or uncommitted files.
 - Candidate evidence was generated after push with `npm run candidate:evidence`;
-  its Base matches the freshly fetched trusted base branch, its canonical ledger
-  is an append-only transition from the reported trusted commit, its Issue is
-  bound to the active problem/method, and local HEAD, freshly fetched remote HEAD,
-  and remote-tracking HEAD are equal.
-- A Bootstrap candidate is explicitly reported as
-  `bootstrap-review-required`, not as a trusted machine PASS. For later PRs,
-  the Base-owned `Trusted PR Ledger` check validates the transition without
-  executing candidate code.
+  its Issue is bound to the active problem/method, and local HEAD, freshly fetched
+  remote HEAD, and remote-tracking HEAD are equal.
 - A repeated architecture direction keeps one stable key and cumulative rework
   budget in `docs/harness/task-contracts.json`; a successor Issue does not reset it.

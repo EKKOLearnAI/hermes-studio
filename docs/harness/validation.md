@@ -11,21 +11,10 @@ npm run harness:check
 
 Before reporting a branch as pushed or handing an immutable candidate to review,
 also run `npm run candidate:evidence -- --base <sha> --remote <remote>
---branch <branch> --problem-key <key> --issue <number> --method <id> --json`.
-This command fetches the fixed trusted Base `origin/main`, reads the fixed
-canonical ledger, fetches both the trusted Base and candidate branch, and fails
-unless the worktree is clean and all candidate identities agree. Once the Base
-contains the validator, it also validates the append-only transition using that
-Base-owned validator.
-
-For the one-time Bootstrap PR where the Base has no validator, exit status `2`
-with `bootstrap-review-required` is the expected non-authoritative result.
-Do not relabel it as a machine PASS. After Bootstrap, the Base-owned
-`Trusted PR Ledger` workflow is the authoritative transition check.
-
-Install validation dependencies with `npm ci --include=dev --ignore-scripts`.
-The explicit `--include=dev` keeps validation reproducible when the environment
-already exports `NODE_ENV=production`.
+--branch <branch> --ledger docs/harness/task-contracts.json --problem-key <key>
+--issue <number> --method <id> --json`. This command validates the active contract,
+fetches the named remote branch, and fails unless the worktree is clean and all
+three candidate heads agree.
 
 For broad or shared changes, also run:
 

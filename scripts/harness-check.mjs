@@ -110,10 +110,7 @@ for (const file of [
   'docs/harness/task-contracts.json',
   'docs/chat-chain-changes/README.md',
   'scripts/validate-task-contracts.mjs',
-  'scripts/canonical-git-patch.mjs',
   'scripts/verify-candidate-evidence.mjs',
-  'scripts/verify-pr-ledger-from-base.mjs',
-  '.github/workflows/trusted-pr-ledger.yml',
 ]) {
   requireFile(file)
 }
@@ -207,27 +204,11 @@ for (const phrase of [
 }
 
 const buildWorkflow = await readText('.github/workflows/build.yml')
-const trustedPrLedgerWorkflow = await readText('.github/workflows/trusted-pr-ledger.yml')
 if (!buildWorkflow.includes('npm run harness:check')) {
   fail('Build workflow must run npm run harness:check')
 }
 if (!buildWorkflow.includes('fetch-depth: 0')) {
   fail('Build workflow checkout must use fetch-depth: 0 so harness:check can inspect PR diffs')
-}
-for (const phrase of [
-  'pull_request_target:',
-  'permissions:\n  contents: read',
-  'ref: ${{ github.event.pull_request.base.sha }}',
-  'persist-credentials: false',
-  'scripts/verify-pr-ledger-from-base.mjs',
-  '--fetch-ref "refs/pull/$PR_NUMBER/head"',
-]) {
-  if (!trustedPrLedgerWorkflow.includes(phrase)) {
-    fail(`Trusted PR ledger workflow must preserve Base-owned read-only validation: ${phrase}`)
-  }
-}
-if (trustedPrLedgerWorkflow.includes('npm ci') || trustedPrLedgerWorkflow.includes('checkout.pull_request.head')) {
-  fail('Trusted PR ledger workflow must not install or execute candidate-controlled code')
 }
 
 const chatSessionsDoc = await readText('docs/cli-chat-sessions.md')

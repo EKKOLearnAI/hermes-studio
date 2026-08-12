@@ -16,7 +16,7 @@ and keep this file small enough to fit into every task context.
 ## Common Commands
 
 ```bash
-npm ci --include=dev --ignore-scripts
+npm ci --ignore-scripts
 npm run harness:check
 npm run test
 npm run test:e2e
