@@ -1706,8 +1706,8 @@ export class GroupChatServer {
     private roomSummaryService: GroupRoomSummaryService
     private _restoreScheduled = false
     private chatRunService: GroupChatRunService | null = null
-    /** roomId -> (userId -> { userName, timer }) */
-    private typingState = new Map<string, Map<string, { userName: string; timer: ReturnType<typeof setTimeout> }>>()
+    /** roomId -> (userId -> { userName, socketId, timer }) */
+    private typingState = new Map<string, Map<string, { userName: string; socketId: string; timer: ReturnType<typeof setTimeout> }>>()
     /**
      * Transient activity restored to browsers when they join/reconnect.
      * Keep the runtime session id internally so a terminal event from the
@@ -2117,6 +2117,18 @@ export class GroupChatServer {
             : null
         const onlineMember = room?.members.get(normalizedUserId) || null
         if (!storedMember && !onlineMember) return null
+
+        const roomTyping = this.typingState.get(roomId)
+        const typingEntry = roomTyping?.get(normalizedUserId)
+        if (typingEntry) {
+            clearTimeout(typingEntry.timer)
+            roomTyping!.delete(normalizedUserId)
+            if (roomTyping!.size === 0) this.typingState.delete(roomId)
+            this.nsp.to(roomId).emit('stop_typing', {
+                roomId,
+                userId: normalizedUserId,
+            })
+        }
 
         room?.removeUser(normalizedUserId)
         this.storage.removeRoomMember?.(roomId, normalizedUserId)
@@ -3036,6 +3048,7 @@ export class GroupChatServer {
         if (existing) clearTimeout(existing.timer)
         roomTyping.set(userId, {
             userName,
+            socketId: socket.id,
             timer: setTimeout(() => {
                 roomTyping!.delete(userId)
                 if (roomTyping!.size === 0) this.typingState.delete(roomId)
@@ -3057,12 +3070,11 @@ export class GroupChatServer {
 
         // Remove from typing state
         const roomTyping = this.typingState.get(roomId)
-        if (roomTyping) {
-            const entry = roomTyping.get(userId)
-            if (entry) clearTimeout(entry.timer)
-            roomTyping.delete(userId)
-            if (roomTyping.size === 0) this.typingState.delete(roomId)
-        }
+        const entry = roomTyping?.get(userId)
+        if (entry?.socketId !== socket.id) return
+        clearTimeout(entry.timer)
+        roomTyping!.delete(userId)
+        if (roomTyping!.size === 0) this.typingState.delete(roomId)
 
         socket.to(roomId).emit('stop_typing', {
             roomId,
@@ -3523,7 +3535,7 @@ export class GroupChatServer {
         // Clean up typing state for this socket
         for (const [roomId, roomTyping] of this.typingState) {
             const entry = roomTyping.get(userId || socketId)
-            if (entry) {
+            if (entry?.socketId === socketId) {
                 clearTimeout(entry.timer)
                 roomTyping.delete(userId || socketId)
                 if (roomTyping.size === 0) this.typingState.delete(roomId)
