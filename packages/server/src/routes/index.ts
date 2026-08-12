@@ -3,6 +3,7 @@ import type { Context, Next } from 'koa'
 // Shared route modules
 import { healthRoutes } from './health'
 import { uploadRoutes } from './upload'
+import { appUploadRoutes } from './hermes/app-upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { devicePublicRoutes, deviceRoutes } from './devices'
@@ -79,6 +80,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(deviceRoutes.routes())
   app.use(mcuDeviceRoutes.routes())
   app.use(uploadRoutes.routes())
+  app.use(appUploadRoutes.routes())
   app.use(updateRoutes.routes())           // Must be before proxy (proxy catch-all matches everything)
   app.use(codingAgentRoutes.routes())
   app.use(themeRoutes.routes())

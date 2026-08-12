@@ -86,6 +86,7 @@
     "katex": "^0.17.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
+    "sharp": "^0.35.3",
     "sherpa-onnx-node": "1.13.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"

@@ -262,6 +262,16 @@ export class ChatRunSocket {
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
     socket.join(`pending-interactions:${currentProfile()}`)
+    socket.emit('session.activity.snapshot', {
+      event: 'session.activity.snapshot',
+      profile: currentProfile(),
+      sessions: Array.from(this.sessionMap.entries()).flatMap(([sessionId, state]) => {
+        if (!state.isWorking) return []
+        const profile = state.profile || getSession(sessionId)?.profile || 'default'
+        return profile === currentProfile() ? [{ session_id: sessionId, status: 'running' }] : []
+      }),
+      timestamp: Date.now(),
+    })
     const profileExists = (profile: string) => {
       if (!profile || profile === 'default') return true
       return listProfileNamesFromDisk().includes(profile)
@@ -546,12 +556,26 @@ export class ChatRunSocket {
 
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
+        const sessionId = data.session_id
+        let profile: string
         try {
-          requireSocketSessionAccess(data.session_id)
+          profile = requireSocketSessionAccess(sessionId)
         } catch {
           return
         }
-        void handleAbort(this.nsp, socket, data.session_id, this.sessionMap, this.bridge, this.runQueuedItem.bind(this))
+        void handleAbort(
+          this.nsp,
+          socket,
+          sessionId,
+          this.sessionMap,
+          this.bridge,
+          this.runQueuedItem.bind(this),
+        ).then(() => {
+          const state = this.sessionMap.get(sessionId)
+          this.emitSessionActivity(profile, state?.isWorking ? 'run.started' : 'abort.completed', {
+            session_id: sessionId,
+          })
+        }).catch(err => logger.warn(err, '[chat-run-socket] abort failed for session %s', sessionId))
       }
     })
 
@@ -849,6 +873,12 @@ export class ChatRunSocket {
     )
     if (!started) return
     if (data.session_id) {
+      const timestamp = Math.floor(Date.now() / 1000)
+      const role = data.display_role === 'command' ? 'command' : 'user'
+      const content = data.display_input === null
+        ? data.storage_message || contentBlocksToString(data.input)
+        : contentBlocksToString(data.display_input ?? data.input)
+      const messageId = data.queue_id || started.messageId
       observeChatRunWebhookEvent({
         event: 'message.created',
         sessionId: data.session_id,
@@ -859,15 +889,27 @@ export class ChatRunSocket {
           event: 'message.created',
           queue_id: data.queue_id,
           message_id: started.messageId,
-          role: data.display_role === 'command' ? 'command' : 'user',
-          content: data.display_input === null
-            ? data.storage_message || contentBlocksToString(data.input)
-            : contentBlocksToString(data.display_input ?? data.input),
-          timestamp: Math.floor(Date.now() / 1000),
+          role,
+          content,
+          timestamp,
         },
         roomId: data.group_room_id,
         workflowId: data.workflow_id,
         workflowNodeId: data.workflow_node_id,
+      })
+      const peerTarget = data.peerExcludeSocketId
+        ? this.nsp.to(`session:${data.session_id}`).except(data.peerExcludeSocketId)
+        : socket.to(`session:${data.session_id}`)
+      peerTarget.emit('run.peer_user_message', {
+        event: 'run.peer_user_message',
+        session_id: data.session_id,
+        message: {
+          id: messageId,
+          role,
+          content,
+          timestamp,
+          queued: false,
+        },
       })
       observeChatRunWebhookEvent({
         event: 'run.started',
@@ -1736,6 +1778,7 @@ export class ChatRunSocket {
       workflowNodeId: state?.webhookWorkflowNodeId,
     })
     this.observePetEvent(profile, event, tagged)
+    this.emitSessionActivity(profile, event, tagged)
     if (state?.isWorking) {
       state.events.push({ event, data: tagged })
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
@@ -1893,6 +1936,7 @@ export class ChatRunSocket {
   }
 
   private emitPendingInteraction(profile: string, event: string, payload: any) {
+    this.emitSessionActivity(profile, event, payload)
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved') return
     const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
@@ -1901,6 +1945,32 @@ export class ChatRunSocket {
       : undefined
     if (source === 'group_chat') return
     this.nsp.to(`pending-interactions:${profile}`).emit(event, payload)
+  }
+
+  private emitSessionActivity(profile: string, event: string, payload: any) {
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
+    if (!sessionId) return
+
+    let status: 'running' | 'completed' | 'failed' | null = null
+    if (event === 'run.started' || (event === 'session.command' && payload.started === true && payload.terminal !== true)) {
+      status = 'running'
+    } else if (event === 'run.completed') {
+      status = Number(payload.queue_remaining || 0) > 0 ? 'running' : 'completed'
+    } else if (event === 'run.failed') {
+      status = Number(payload.queue_remaining || 0) > 0 ? 'running' : 'failed'
+    } else if (event === 'abort.completed') {
+      status = Number(payload.queue_length || 0) > 0 ? 'running' : 'completed'
+    } else if (event === 'session.command' && payload.terminal === true) {
+      status = payload.ok === false || payload.action === 'error' ? 'failed' : 'completed'
+    }
+    if (!status) return
+
+    this.nsp.to(`pending-interactions:${profile}`).emit('session.activity', {
+      event: 'session.activity',
+      session_id: sessionId,
+      status,
+      timestamp: Date.now(),
+    })
   }
 
   private serializeQueuedMessages(queue: QueuedRun[]) {

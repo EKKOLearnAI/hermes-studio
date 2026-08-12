@@ -443,7 +443,10 @@ function normalizeRequestBody(
 ): NormalizedBody | AppRelayHttpResponse {
   if (method === 'GET' || method === 'HEAD') return {}
   let body: BodyInit | undefined
-  if (typeof request.bodyBase64 === 'string') body = Buffer.from(request.bodyBase64, 'base64')
+  const byteBody = relayByteBuffer(request.bodyBytes)
+  if (byteBody) body = Uint8Array.from(byteBody)
+  else if (request.bodyBytes != null) return httpError(request.id, 'invalid_binary_body', 'Relay binary request body is invalid', 400)
+  else if (typeof request.bodyBase64 === 'string') body = Buffer.from(request.bodyBase64, 'base64')
   else if (typeof request.body === 'string') body = request.body
   else if (request.body != null) {
     body = JSON.stringify(request.body)
@@ -470,7 +473,7 @@ function responseHeaders(response: Response): Record<string, string> {
 
 async function readResponseBody(
   response: Response,
-): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBase64' | 'truncated'>> {
+): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBytes' | 'truncated'>> {
   if (!response.body) return {}
   const reader = response.body.getReader()
   const chunks: Buffer[] = []
@@ -497,7 +500,14 @@ async function readResponseBody(
   ))
   return textual
     ? { body: buffer.toString('utf8'), truncated }
-    : { bodyBase64: buffer.toString('base64'), truncated }
+    : { bodyBytes: buffer, truncated }
+}
+
+function relayByteBuffer(value: unknown): Buffer | null {
+  if (Buffer.isBuffer(value)) return value
+  if (value instanceof ArrayBuffer) return Buffer.from(value)
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  return null
 }
 
 function normalizeBridgeId(value: unknown): string {

@@ -4863,7 +4863,12 @@ export const useChatStore = defineStore('chat', () => {
       systemType: isPeerCommand ? 'command' : undefined,
     }
     const wasDequeued = messageId ? consumeDequeuedQueueId(sid, messageId) : false
-    if (peer?.queued || (!isPeerCommand && !wasDequeued && isSessionLive(sid))) {
+    if (peer?.queued || (
+      peer?.queued !== false
+      && !isPeerCommand
+      && !wasDequeued
+      && isSessionLive(sid)
+    )) {
       enqueueUserMessage(sid, message)
     } else {
       addMessage(sid, message)

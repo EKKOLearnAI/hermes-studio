@@ -14,6 +14,14 @@ function packagedRoot(): string {
 
 function createPackagedWebUi(appOutDir: string, platform = 'win32', arch = 'x64'): void {
   const webUiRoot = join(appOutDir, 'resources', 'webui')
+  const sharpRoot = `node_modules/@img/sharp-${platform}-${arch}`
+  const sharpRuntimeFiles = platform === 'win32'
+    ? [`${sharpRoot}/lib/sharp-${platform}-${arch}.node`]
+    : [
+        `${sharpRoot}/lib/sharp-${platform}-${arch}.node`,
+        `node_modules/@img/sharp-libvips-${platform}-${arch}/package.json`,
+        `node_modules/@img/sharp-libvips-${platform}-${arch}/lib/libvips.${platform === 'darwin' ? 'dylib' : 'so'}`,
+      ]
   const sherpaPlatform = platform === 'win32' ? 'win' : platform
   const sherpaRoot = `node_modules/sherpa-onnx-${sherpaPlatform}-${arch}`
   const sherpaFiles = platform === 'win32'
@@ -28,6 +36,9 @@ function createPackagedWebUi(appOutDir: string, platform = 'win32', arch = 'x64'
     'node_modules/node-pty/package.json',
     'node_modules/node-pty/prebuilds/win32-x64/pty.node',
     'node_modules/socket.io/package.json',
+    'node_modules/sharp/package.json',
+    `${sharpRoot}/package.json`,
+    ...sharpRuntimeFiles,
     'node_modules/sherpa-onnx-node/package.json',
     `${sherpaRoot}/package.json`,
     ...sherpaFiles.map(file => `${sherpaRoot}/${file}`),
@@ -111,6 +122,33 @@ describe('packaged desktop Web UI', () => {
       arch: 1,
       packager: { appInfo: { productFilename: 'Hermes Studio' } },
     } as never)).rejects.toThrow('sherpa-onnx-win-x64')
+  })
+
+  it('rejects a package that omitted the target sharp native runtime', async () => {
+    const appOutDir = packagedRoot()
+    createPackagedWebUi(appOutDir)
+    rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', '@img', 'sharp-win32-x64'), { recursive: true, force: true })
+
+    await expect(verifyPackagedWebUi({
+      appOutDir,
+      electronPlatformName: 'win32',
+      arch: 1,
+      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+    } as never)).rejects.toThrow('sharp-win32-x64')
+  })
+
+  it('rejects a package that omitted the target sharp libvips runtime', async () => {
+    const appOutDir = packagedRoot()
+    createPackagedWebUi(appOutDir, 'linux', 'arm64')
+    createCompiledLinuxNodePty(appOutDir)
+    rmSync(join(appOutDir, 'resources', 'webui', 'node_modules', '@img', 'sharp-libvips-linux-arm64'), { recursive: true, force: true })
+
+    await expect(verifyPackagedWebUi({
+      appOutDir,
+      electronPlatformName: 'linux',
+      arch: 3,
+      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+    } as never)).rejects.toThrow('sharp-libvips-linux-arm64')
   })
 
   it('accepts source-built node-pty runtime files on Linux', async () => {

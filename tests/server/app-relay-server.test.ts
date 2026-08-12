@@ -257,6 +257,28 @@ describe('LocalAppRelayServer', () => {
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
     expect(headers.get('authorization')).toBe('Bearer local-user-token')
     expect(clientSocketMocks.io).not.toHaveBeenCalled()
+
+    fetchImpl.mockResolvedValueOnce(new Response(Uint8Array.from([7, 8, 9]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    }))
+    const binaryAck = vi.fn()
+    app.__handlers.get('http.request')({
+      id: 'binary-1',
+      method: 'POST',
+      path: '/api/hermes/tts/synthesize',
+      headers: { 'content-type': 'application/octet-stream' },
+      bodyBytes: Uint8Array.from([1, 2, 3]),
+    }, binaryAck)
+    await vi.waitFor(() => expect(binaryAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'binary-1',
+      status: 200,
+      bodyBytes: expect.any(Uint8Array),
+    })))
+    const binaryRequest = fetchImpl.mock.calls[1][1]
+    expect(Buffer.from(binaryRequest?.body as Uint8Array)).toEqual(Buffer.from([1, 2, 3]))
+    const binaryResponse = binaryAck.mock.calls[0][0].bodyBytes as Uint8Array
+    expect(Buffer.from(binaryResponse)).toEqual(Buffer.from([7, 8, 9]))
   })
 
   it('bridges /chat-run directly with the same App socket events as the cloud relay', async () => {

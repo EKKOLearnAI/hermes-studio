@@ -4172,6 +4172,17 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "app-image"
+              ]
+            }
           }
         ]
       }
