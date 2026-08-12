@@ -39,6 +39,20 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'approval.respond',
   'clarify.respond',
 ])
+const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
+  'join',
+  'load_pending_approvals',
+  'load_messages',
+  'update_member_profile',
+  'message',
+  'typing',
+  'stop_typing',
+  'interrupt_agent',
+  'remove_agent',
+  'approval.respond',
+  'clarify.respond',
+])
+const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat'])
 const NON_STREAMING_SUPPRESSED_EVENTS = new Set([
   'message.delta',
   'message.interim',
@@ -65,7 +79,7 @@ interface LocalAppRelayServerOptions {
 interface LocalSocketBridge {
   key: string
   id: string
-  namespace: '/chat-run'
+  namespace: string
   ownerSocketId: string
   socket: ClientSocket
   stream: boolean
@@ -140,7 +154,7 @@ export class LocalAppRelayServer {
       role: 'app',
       machineId,
       hostConnected: true,
-      capabilities: ['http.request', 'socket.chat-run'],
+      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat'],
     })
     if (socket.data.localUserToken) this.scheduleTokenExpiry(socket)
 
@@ -217,12 +231,11 @@ export class LocalAppRelayServer {
     }
     const id = normalizeBridgeId(request.id)
     if (!id) return socketError(request.id, 'invalid_socket_id', 'A socket bridge id is required')
-    if (request.namespace !== '/chat-run') {
-      return socketError(id, 'namespace_not_allowed', 'Only /chat-run can be relayed')
-    }
+    const namespace = String(request.namespace || '').trim()
+    if (!ALLOWED_SOCKET_NAMESPACES.has(namespace)) return socketError(id, 'namespace_not_allowed', 'Relay socket namespace is not allowed')
 
     this.closeSocket(socket, { id })
-    const localSocket = createClientSocket(`${this.localBaseUrl}/chat-run`, {
+    const localSocket = createClientSocket(`${this.localBaseUrl}${namespace}`, {
       auth: {
         ...normalizeSocketAuth(request.auth),
         token: socket.data.localUserToken,
@@ -238,7 +251,7 @@ export class LocalAppRelayServer {
     const bridge: LocalSocketBridge = {
       key: bridgeKey(socket.id, id),
       id,
-      namespace: '/chat-run',
+      namespace,
       ownerSocketId: socket.id,
       socket: localSocket,
       stream: typeof request.stream === 'boolean' ? request.stream : true,
@@ -262,18 +275,26 @@ export class LocalAppRelayServer {
     const id = normalizeBridgeId(request.id)
     if (!id) return socketError(request.id, 'invalid_socket_id', 'A socket bridge id is required')
     const event = String(request.event || '').trim()
-    if (!ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)) {
-      return socketError(id, 'event_not_allowed', 'Relay socket event is not allowed')
-    }
     const bridge = this.bridges.get(bridgeKey(socket.id, id))
     if (!bridge) return socketError(id, 'socket_not_open', 'The chat socket bridge is not open')
+    if (!isAllowedSocketEvent(bridge.namespace, event)) {
+      return socketError(id, 'event_not_allowed', 'Relay socket event is not allowed')
+    }
     if (typeof request.stream === 'boolean') bridge.stream = request.stream
     if (event === 'run') {
       bridge.output = ''
       bridge.reasoning = ''
     }
-    bridge.socket.emit(event, request.payload)
-    return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream }
+    if (!request.ack) {
+      bridge.socket.emit(event, request.payload)
+      return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream }
+    }
+    try {
+      const payload = await emitLocalSocketWithAck(bridge.socket, event, request.payload, normalizeTimeout(request.timeoutMs))
+      return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream, payload }
+    } catch (error) {
+      return socketError(id, 'socket_ack_timeout', error instanceof Error ? error.message : 'Socket acknowledgement timed out')
+    }
   }
 
   private closeSocket(socket: Socket, request: AppRelaySocketCloseRequest): AppRelaySocketResponse {
@@ -531,6 +552,29 @@ function normalizeTimeout(value: unknown): number {
   const timeout = Number(value)
   if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
   return Math.min(Math.floor(timeout), MAX_REQUEST_TIMEOUT_MS)
+}
+
+function isAllowedSocketEvent(namespace: string, event: string): boolean {
+  if (namespace === '/chat-run') return ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)
+  if (namespace === '/group-chat') return ALLOWED_GROUP_CHAT_CLIENT_EVENTS.has(event)
+  return false
+}
+
+function emitLocalSocketWithAck(socket: ClientSocket, event: string, payload: unknown, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error(`Socket acknowledgement timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    socket.emit(event, payload, (...args: unknown[]) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(args.length <= 1 ? args[0] : args)
+    })
+  })
 }
 
 function bridgeKey(ownerSocketId: string, id: string): string {
