@@ -80,6 +80,13 @@ describe('group chat room Agent handoff depth policy', () => {
             status: 'resumed',
             continueUsed: 1,
         })
+        expect(storage.getStoppedHandoffChains('room-1')).toEqual([
+            expect.objectContaining({
+                chainId: 'chain-1',
+                status: 'resumed',
+                continueUsed: 1,
+            }),
+        ])
     })
 
     it('records a failed delivery as retryable and allocates a new attempt', () => {
@@ -221,5 +228,46 @@ describe('group chat room Agent handoff depth policy', () => {
         })
         expect(harness.db.prepare('SELECT status FROM gc_handoff_attempts WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'failed_manual' })
         expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'failed' })
+    })
+
+    it('requires a durable target message before completing a continuation attempt', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payload = JSON.parse(String(harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId).payload))
+
+        storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        expect(storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)).toBe(true)
+        expect(storage.markHandoffTargetInvocationStarted(attemptId)).toBe(true)
+        expect(storage.completeHandoffContinuation('room-1', 'chain-1')).toBeNull()
+
+        expect(storage.completeHandoffTarget(attemptId, 'agent-message-1')).toBe(true)
+        expect(storage.completeHandoffContinuation('room-1', 'chain-1')).toMatchObject({
+            status: 'resumed',
+            continueUsed: 1,
+        })
+    })
+
+    it('records a post-invocation failure as manual and never reports completion', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payload = JSON.parse(String(harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId).payload))
+
+        storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+        storage.markHandoffTargetInvocationStarted(attemptId)
+        expect(storage.failHandoffTarget(attemptId, 'Agent run failed')).toBe(true)
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({
+            status: 'failed_manual',
+            lastError: 'Agent run failed',
+        })
+        expect(storage.completeHandoffContinuation('room-1', 'chain-1')).toBeNull()
     })
 })

@@ -25,7 +25,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type { GroupChatMention, MemberInfo, RoomAgent, RoomAgentHandoffChain, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -101,7 +101,9 @@ const agentHandoffEnabledDraft = ref(true)
 const agentHandoffMaxDepthDraft = ref<number | null>(4)
 const agentHandoffUnlimitedDraft = ref(false)
 const agentHandoffRecommendation = computed(() => Math.max(4, store.agents.length + 1))
-const stoppedHandoffChains = ref<any[]>([])
+const stoppedHandoffChains = computed<RoomAgentHandoffChain[]>(() =>
+    [...store.handoffChains.values()].filter(chain => chain.roomId === store.currentRoomId)
+)
 const isContinuingHandoff = ref(false)
 const roomSummaryState = ref<RoomSummaryState | null>(null)
 const roomSummaryAnchor = ref<RoomSummaryAnchor | null>(null)
@@ -1458,9 +1460,9 @@ async function handleOpenRoomSettings() {
     showRoomSettingsModal.value = true
     try {
         const result = await listStoppedRoomAgentHandoffs(store.currentRoomId!)
-        stoppedHandoffChains.value = result.chains
+        store.handoffChains = new Map(result.chains.map(chain => [chain.chainId, chain]))
     } catch {
-        stoppedHandoffChains.value = []
+        store.handoffChains = new Map()
     }
     if (!store.currentRoomId) return
     void refreshPendingAgentPairings()
@@ -1605,12 +1607,13 @@ async function handleContinueHandoff(chainId: string): Promise<void> {
     isContinuingHandoff.value = true
     try {
         await continueRoomAgentHandoff(store.currentRoomId, chainId)
-        stoppedHandoffChains.value = stoppedHandoffChains.value.filter(chain => chain.chainId !== chainId)
+        const result = await listStoppedRoomAgentHandoffs(store.currentRoomId)
+        store.handoffChains = new Map(result.chains.map(chain => [chain.chainId, chain]))
         message.success(t('groupChat.agentHandoffContinued'))
     } catch (err: any) {
         try {
             const result = await listStoppedRoomAgentHandoffs(store.currentRoomId)
-            stoppedHandoffChains.value = result.chains
+            store.handoffChains = new Map(result.chains.map(chain => [chain.chainId, chain]))
         } catch {
             // Keep the original continuation error.
         }
@@ -2047,6 +2050,8 @@ async function handleClarify(response?: string) {
                         <GroupMessageList
                             :allow-speech="!props.standalone"
                             @mention-agent="handleMentionAgent"
+                            @continue-handoff="handleContinueHandoff"
+                            @adjust-handoff-settings="handleOpenRoomSettings"
                         />
                         <Transition name="approval-float">
                             <div v-if="visibleAgentPairing" class="approval-float-panel agent-pairing-float-panel">
@@ -2869,7 +2874,13 @@ async function handleClarify(response?: string) {
                                 <div>{{ t('groupChat.agentHandoffReason', { reason: chain.stopReason || '—' }) }}</div>
                                 <div>{{ t('groupChat.agentHandoffContinueState', { state: chain.continueUsed ? 'used' : 'available', updated: formatSummaryTime(chain.updatedAt) }) }}</div>
                                 <div v-if="chain.lastError" class="summary-error">{{ chain.lastError }}</div>
-                                <NButton text type="primary" :loading="isContinuingHandoff" @click="handleContinueHandoff(chain.chainId)">
+                                <NButton
+                                    v-if="chain.status === 'stopped' && !chain.continueUsed"
+                                    text
+                                    type="primary"
+                                    :loading="isContinuingHandoff"
+                                    @click="handleContinueHandoff(chain.chainId)"
+                                >
                                     {{ t('groupChat.agentHandoffContinue') }}
                                 </NButton>
                             </div>

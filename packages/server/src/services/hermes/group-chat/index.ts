@@ -487,7 +487,7 @@ const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
 class ChatStorage {
-    private readonly trustedAgentMessageMetadata = new Map<string, { mentionDepth: number; handoffChainId: string }>()
+    private readonly trustedAgentMessageMetadata = new Map<string, { mentionDepth: number; handoffChainId: string; continuationAttemptId: string }>()
     private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
 
     private db() { return getDb() }
@@ -959,7 +959,7 @@ class ChatStorage {
     getStoppedHandoffChains(roomId: string): any[] {
         return (this.db()?.prepare(
             `SELECT * FROM gc_handoff_chains
-             WHERE roomId = ? AND status = 'stopped'
+             WHERE roomId = ?
              ORDER BY updatedAt DESC`,
         ).all(roomId) || []) as any[]
     }
@@ -1193,20 +1193,34 @@ class ChatStorage {
         return Boolean(result?.changes)
     }
 
-    registerTrustedAgentMessageMetadata(roomId: string, messageId: string, mentionDepth: unknown, handoffChainId: unknown): void {
+    registerTrustedAgentMessageMetadata(roomId: string, messageId: string, mentionDepth: unknown, handoffChainId: unknown, continuationAttemptId?: unknown): void {
         const depth = typeof mentionDepth === 'number' && Number.isFinite(mentionDepth)
             ? Math.max(0, Math.floor(mentionDepth))
             : null
         const chainId = typeof handoffChainId === 'string' ? handoffChainId.trim() : ''
         if (depth == null || !chainId) return
-        this.trustedAgentMessageMetadata.set(`${roomId}:${messageId}`, { mentionDepth: depth, handoffChainId: chainId })
+        const attemptId = typeof continuationAttemptId === 'string' ? continuationAttemptId.trim() : ''
+        this.trustedAgentMessageMetadata.set(`${roomId}:${messageId}`, {
+            mentionDepth: depth,
+            handoffChainId: chainId,
+            continuationAttemptId: attemptId,
+        })
     }
 
-    consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string } | null {
+    consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string; continuationAttemptId: string } | null {
         const key = `${roomId}:${messageId}`
         const metadata = this.trustedAgentMessageMetadata.get(key) || null
         this.trustedAgentMessageMetadata.delete(key)
         return metadata
+    }
+
+    failHandoffTarget(attemptId: string, error: string): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_handoff_inbox
+             SET status = 'failed_manual', stateVersion = stateVersion + 1, lastError = ?, leaseUntil = 0, updatedAt = ?
+             WHERE sourceInstanceId = 'studio' AND attemptId = ? AND status = 'running'`,
+        ).run(error.slice(0, 2000), Date.now(), attemptId)
+        return Boolean(result?.changes)
     }
 
     acceptHandoffAttempt(attemptId: string, targetAgentId: string): 'accepted' | 'already' | null {
@@ -2080,6 +2094,7 @@ class ChatRoom {
     readonly id: string
     name: string
     readonly members = new Map<string, Member>()
+    private readonly socketUsers = new Map<string, string>()
 
     constructor(id: string, name?: string) {
         this.id = id
@@ -2087,6 +2102,7 @@ class ChatRoom {
     }
 
     addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human', avatar: string = ''): Member {
+        this.socketUsers.set(socketId, userId)
         const existing = this.members.get(userId)
         if (existing) {
             existing.name = name
@@ -2103,17 +2119,26 @@ class ChatRoom {
     }
 
     removeMember(socketId: string): void {
-        for (const member of this.members.values()) {
-            if (member.socketId === socketId) {
-                member.online = false
-                break
-            }
+        const userId = this.socketUsers.get(socketId)
+        if (!userId) return
+        this.socketUsers.delete(socketId)
+        const member = this.members.get(userId)
+        if (!member) return
+        const replacementSocketId = Array.from(this.socketUsers.entries()).find(([, mappedUserId]) => mappedUserId === userId)?.[0]
+        member.online = Boolean(replacementSocketId)
+        if (member.socketId === socketId && replacementSocketId) {
+            member.socketId = replacementSocketId
         }
     }
 
     removeUser(userId: string): Member | null {
         const member = this.members.get(userId) || null
-        if (member) this.members.delete(userId)
+        if (member) {
+            this.members.delete(userId)
+            for (const [socketId, mappedUserId] of this.socketUsers) {
+                if (mappedUserId === userId) this.socketUsers.delete(socketId)
+            }
+        }
         return member
     }
 
@@ -2122,10 +2147,10 @@ class ChatRoom {
     }
 
     getOnlineMemberBySocketId(socketId: string): Member | undefined {
-        for (const member of this.members.values()) {
-            if (member.socketId === socketId && member.online) return member
-        }
-        return undefined
+        const userId = this.socketUsers.get(socketId)
+        if (!userId) return undefined
+        const member = this.members.get(userId)
+        return member?.online ? member : undefined
     }
 
     hasOnlineMember(socketId: string): boolean {
@@ -2154,8 +2179,8 @@ export class GroupChatServer {
     private handoffDispatcherTimer: ReturnType<typeof setInterval> | null = null
     private handoffDispatcherRunning = false
     private chatRunService: GroupChatRunService | null = null
-    /** roomId -> (userId -> { userName, timer }) */
-    private typingState = new Map<string, Map<string, { userName: string; timer: ReturnType<typeof setTimeout> }>>()
+    /** roomId -> (userId -> { userName, socketId, timer }) */
+    private typingState = new Map<string, Map<string, { userName: string; socketId: string; timer: ReturnType<typeof setTimeout> }>>()
     /**
      * Transient activity restored to browsers when they join/reconnect.
      * Keep the runtime session id internally so a terminal event from the
@@ -2380,6 +2405,10 @@ export class GroupChatServer {
                     if (!chain || !this.storage.completeHandoffContinuation(String(chain.roomId), String(chain.chainId))) {
                         throw new Error('Continuation delivery was accepted but could not be durably completed')
                     }
+                    this.broadcastHandoffUpdate(
+                        String(chain.roomId),
+                        this.storage.getHandoffChain(String(chain.roomId), String(chain.chainId)),
+                    )
                     this.storage.finishHandoffOutbox(attemptId)
                     dispatched++
                 } catch (error) {
@@ -2391,8 +2420,20 @@ export class GroupChatServer {
                             String(attempt?.chainId || ''),
                             message,
                         )
+                    } else if (this.storage.getHandoffTargetStatus(attemptId)?.invocationStartedAt) {
+                        this.storage.failHandoffContinuation(
+                            String(attempt?.roomId || outbox.roomId),
+                            String(attempt?.chainId || ''),
+                            message,
+                        )
                     } else {
                         this.storage.requeueHandoffOutbox(attemptId, message)
+                    }
+                    if (attempt?.roomId && attempt?.chainId) {
+                        this.broadcastHandoffUpdate(
+                            String(attempt.roomId),
+                            this.storage.getHandoffChain(String(attempt.roomId), String(attempt.chainId)),
+                        )
                     }
                     dispatched++
                 }
@@ -2403,7 +2444,7 @@ export class GroupChatServer {
         return dispatched
     }
 
-    private consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string } | null {
+    private consumeTrustedAgentMessageMetadata(roomId: string, messageId: string): { mentionDepth: number; handoffChainId: string; continuationAttemptId: string } | null {
         return this.storage.consumeTrustedAgentMessageMetadata?.(roomId, messageId) || null
     }
 
@@ -2531,8 +2572,15 @@ export class GroupChatServer {
             name: room.name,
             inviteCode: room.inviteCode,
             totalTokens: room.totalTokens,
+            agentHandoffEnabled: room.agentHandoffEnabled,
+            agentHandoffMaxDepth: room.agentHandoffMaxDepth,
+            agentHandoffUnlimited: room.agentHandoffUnlimited,
         })
         return room
+    }
+
+    broadcastHandoffUpdate(roomId: string, chain: any): void {
+        if (chain) this.nsp.to(roomId).emit('handoff_updated', chain)
     }
 
     getRoomAgentViews(
@@ -2628,6 +2676,18 @@ export class GroupChatServer {
             : null
         const onlineMember = room?.members.get(normalizedUserId) || null
         if (!storedMember && !onlineMember) return null
+
+        const roomTyping = this.typingState.get(roomId)
+        const typingEntry = roomTyping?.get(normalizedUserId)
+        if (typingEntry) {
+            clearTimeout(typingEntry.timer)
+            roomTyping!.delete(normalizedUserId)
+            if (roomTyping!.size === 0) this.typingState.delete(roomId)
+            this.nsp.to(roomId).emit('stop_typing', {
+                roomId,
+                userId: normalizedUserId,
+            })
+        }
 
         room?.removeUser(normalizedUserId)
         this.storage.removeRoomMember?.(roomId, normalizedUserId)
@@ -3294,6 +3354,7 @@ export class GroupChatServer {
             return senderIsAgent ? { mentions: [] } : {}
         }
         if (!Array.isArray(rawMentions)) return { error: 'Invalid structured mentions' }
+        if (rawMentions.length === 0) return { mentions: [] }
         const roomAgents = this.storage.getRoomAgents(roomId) as RoomAgent[]
         const visibleAllMention = isAllAgentsMentioned(content)
         const visibleParticipantIds = new Set(
@@ -3390,12 +3451,13 @@ export class GroupChatServer {
                 return
             }
         }
-        if (
-            canCarryMentions
-            &&
-            isAllAgentsMentioned(contentToText(messageContent))
-            && !this.canSocketMentionAll(socket, roomId)
-        ) {
+        const requestsAllMention = Array.isArray(data.mentions)
+            ? data.mentions.some(mention => Boolean(mention)
+                && typeof mention === 'object'
+                && !Array.isArray(mention)
+                && (mention as Record<string, unknown>).type === 'all')
+            : isAllAgentsMentioned(contentToText(messageContent))
+        if (canCarryMentions && requestsAllMention && !this.canSocketMentionAll(socket, roomId)) {
             ack?.({
                 code: 'GROUP_CHAT_ALL_MENTION_FORBIDDEN',
                 error: 'Only the room owner can mention @all',
@@ -3442,6 +3504,7 @@ export class GroupChatServer {
         ack?.({ id: savedMsg.id })
 
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const hasStructuredAgentTargets = isAgentReply && (savedMsg.mentions?.length || 0) > 0
         const trustedMetadata = isAgentReply
             ? this.consumeTrustedAgentMessageMetadata(roomId, savedMsg.id)
             : null
@@ -3453,6 +3516,7 @@ export class GroupChatServer {
         const handoffChainId = isAgentReply
             ? (trustedMetadata?.handoffChainId || '')
             : (data.handoffChainId || savedMsg.id)
+        const continuationAttemptId = trustedMetadata?.continuationAttemptId || ''
         // Any human who has successfully joined the room may interact with its
         // Agents. Room management remains separately protected by
         // canSocketManageRoom, so invite guests cannot mutate settings, approve
@@ -3462,7 +3526,18 @@ export class GroupChatServer {
             ? this.storage.getRoomAgentHandoffPolicy(roomId)
             : resolveGroupChatAgentHandoffPolicy({}, process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
         const shouldRouteMentions = canRouteHumanMentions ||
-            (isAgentReply && shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy))
+            (hasStructuredAgentTargets && shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy))
+
+        if (continuationAttemptId) {
+            if (savedMsg.finish_reason === 'error') {
+                this.storage.failHandoffTarget(
+                    continuationAttemptId,
+                    contentToText(savedMsg.content) || 'Continuation Agent run failed',
+                )
+            } else {
+                this.storage.completeHandoffTarget(continuationAttemptId, savedMsg.id)
+            }
+        }
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse mentions and invoke agents directly.
@@ -3496,6 +3571,10 @@ export class GroupChatServer {
                     ? String(savedMsg.mentions.find(mention => mention.type === 'agent')?.participantId || '')
                     : '',
                 handoffPolicy,
+            )
+            this.broadcastHandoffUpdate(
+                roomId,
+                this.storage.getHandoffChain(roomId, `handoff:${savedMsg.id}`),
             )
         } else if (savedMsg.role === 'user' && typeof this.agentClients.processSummaryCheck === 'function') {
             this.agentClients.processSummaryCheck(roomId, savedMsg.id).catch((err) => {
@@ -3573,6 +3652,7 @@ export class GroupChatServer {
         if (existing) clearTimeout(existing.timer)
         roomTyping.set(userId, {
             userName,
+            socketId: socket.id,
             timer: setTimeout(() => {
                 roomTyping!.delete(userId)
                 if (roomTyping!.size === 0) this.typingState.delete(roomId)
@@ -3594,12 +3674,11 @@ export class GroupChatServer {
 
         // Remove from typing state
         const roomTyping = this.typingState.get(roomId)
-        if (roomTyping) {
-            const entry = roomTyping.get(userId)
-            if (entry) clearTimeout(entry.timer)
-            roomTyping.delete(userId)
-            if (roomTyping.size === 0) this.typingState.delete(roomId)
-        }
+        const entry = roomTyping?.get(userId)
+        if (entry?.socketId !== socket.id) return
+        clearTimeout(entry.timer)
+        roomTyping!.delete(userId)
+        if (roomTyping!.size === 0) this.typingState.delete(roomId)
 
         socket.to(roomId).emit('stop_typing', {
             roomId,
@@ -4060,7 +4139,7 @@ export class GroupChatServer {
         // Clean up typing state for this socket
         for (const [roomId, roomTyping] of this.typingState) {
             const entry = roomTyping.get(userId || socketId)
-            if (entry) {
+            if (entry?.socketId === socketId) {
                 clearTimeout(entry.timer)
                 roomTyping.delete(userId || socketId)
                 if (roomTyping.size === 0) this.typingState.delete(roomId)
@@ -4098,7 +4177,7 @@ export class GroupChatServer {
                 const member = room.getOnlineMemberBySocketId(socketId)
                 room.removeMember(socketId)
                 socket.leave(rid)
-                if (member?.source !== 'agent') {
+                if (member?.source !== 'agent' && !member?.online) {
                     this.nsp.to(rid).emit('member_left', {
                         roomId: rid,
                         memberId: member?.userId || socketId,

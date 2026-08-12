@@ -1098,4 +1098,42 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.rooms[0].name).toBe('Renamed Room')
     expect(store.roomName).toBe('Renamed Room')
   })
+
+  it('hydrates and live-updates durable handoff stops for the current room', async () => {
+    const store = await loadStore()
+    const chain = {
+      chainId: 'chain-1',
+      roomId: 'room-1',
+      sourceMessageId: 'msg-1',
+      currentDepth: 4,
+      maxDepth: 4,
+      unlimited: 0,
+      targetAgentId: 'agent-1',
+      status: 'stopped',
+      stopReason: 'max_depth',
+      continueUsed: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    groupChatApiMock.getRoomDetail.mockResolvedValue({
+      room,
+      messages: [],
+      agents: [],
+      members: [],
+      handoffChains: [chain],
+      total: 0,
+      hasMore: false,
+    })
+
+    await store.connect()
+    await store.joinRoom('room-1')
+    expect(store.handoffChains.get('chain-1')).toMatchObject({ status: 'stopped' })
+
+    emitSocket('handoff_updated', { ...chain, status: 'claimed', attemptId: 'attempt-1', updatedAt: 2 })
+    expect(store.handoffChains.get('chain-1')).toMatchObject({
+      status: 'claimed',
+      attemptId: 'attempt-1',
+      updatedAt: 2,
+    })
+  })
 })

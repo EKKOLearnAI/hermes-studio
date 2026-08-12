@@ -13,6 +13,7 @@ import {
     getStoredUserName,
     type RoomInfo,
     type RoomAgent,
+    type RoomAgentHandoffChain,
     type RoomAgentInput,
     type RoomSummaryConfig,
     type RoomSummaryState,
@@ -180,6 +181,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const realtimeJoinedSocketId = ref<string | null>(null)
     const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
     const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
+    const handoffChains = ref<Map<string, RoomAgentHandoffChain>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const pendingClarifies = ref<Map<string, GroupPendingClarify>>(new Map())
@@ -1021,6 +1023,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             roomSummaryStates.value = new Map(roomSummaryStates.value)
         })
 
+        socket.on('handoff_updated', (chain: RoomAgentHandoffChain) => {
+            if (!chain?.chainId || chain.roomId !== currentRoomId.value) return
+            handoffChains.value.set(chain.chainId, chain)
+            handoffChains.value = new Map(handoffChains.value)
+        })
+
         socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
             upsertPendingApproval(data)
             pendingApprovals.value = new Map(pendingApprovals.value)
@@ -1059,6 +1067,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             guestAgentApproval?: 'owner'
             maxGuestAgentsPerMember?: number
             allowRemoteWorkspaceAccess?: number
+            agentHandoffEnabled?: number
+            agentHandoffMaxDepth?: number | null
+            agentHandoffUnlimited?: number
         }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (!room) return
@@ -1070,6 +1081,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
             if (typeof data.allowRemoteWorkspaceAccess === 'number') {
                 room.allowRemoteWorkspaceAccess = data.allowRemoteWorkspaceAccess
+            }
+            if (typeof data.agentHandoffEnabled === 'number') {
+                room.agentHandoffEnabled = data.agentHandoffEnabled
+            }
+            if (typeof data.agentHandoffMaxDepth === 'number' || data.agentHandoffMaxDepth === null) {
+                room.agentHandoffMaxDepth = data.agentHandoffMaxDepth
+            }
+            if (typeof data.agentHandoffUnlimited === 'number') {
+                room.agentHandoffUnlimited = data.agentHandoffUnlimited
             }
             if (typeof data.name === 'string' && data.name.trim()) {
                 room.name = data.name.trim()
@@ -1083,6 +1103,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (room) room.totalTokens = data.totalTokens
             roomSummaryStates.value.delete(data.roomId)
             roomSummaryStates.value = new Map(roomSummaryStates.value)
+            for (const [chainId, chain] of handoffChains.value) {
+                if (chain.roomId === data.roomId) handoffChains.value.delete(chainId)
+            }
+            handoffChains.value = new Map(handoffChains.value)
             if (data.roomId === currentRoomId.value) {
                 clearPendingStreamDeltas()
                 messages.value = []
@@ -1119,6 +1143,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         roomName.value = ''
         contextStatuses.value.clear()
         roomSummaryStates.value.clear()
+        handoffChains.value.clear()
         pendingApprovals.value.clear()
         pendingClarifies.value.clear()
         inviteGuest.value = false
@@ -1182,6 +1207,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             historicalMessageAgents.value = []
             captureHistoricalMessageAgents(res.messages)
             messages.value = res.messages
+            handoffChains.value = new Map((res.handoffChains || []).map(chain => [chain.chainId, chain]))
             applyMessagePaging(res)
             agents.value = res.agents
             members.value = res.members || []
@@ -1362,6 +1388,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             rooms.value = rooms.value.filter(r => r.id !== roomId)
             roomSummaryStates.value.delete(roomId)
             roomSummaryStates.value = new Map(roomSummaryStates.value)
+            for (const [chainId, chain] of handoffChains.value) {
+                if (chain.roomId === roomId) handoffChains.value.delete(chainId)
+            }
+            handoffChains.value = new Map(handoffChains.value)
             clearMessageReference(roomId)
             if (currentRoomId.value === roomId) {
                 resetLocalTypingState()
@@ -1681,6 +1711,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         contextStatus,
         contextStatuses,
         roomSummaryStates,
+        handoffChains,
         pendingApprovals,
         pendingClarifies,
         activePendingApproval,

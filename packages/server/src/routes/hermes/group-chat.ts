@@ -491,6 +491,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         summaryApiMode: sourceRoom.summaryApiMode,
         summaryEveryTurns: sourceRoom.summaryEveryTurns,
         workspace: sourceRoom.workspace || '',
+        agentHandoffEnabled: Number(sourceRoom.agentHandoffEnabled ?? 1) === 1,
+        agentHandoffMaxDepth: sourceRoom.agentHandoffMaxDepth ?? null,
+        agentHandoffUnlimited: Number(sourceRoom.agentHandoffUnlimited || 0) === 1,
     })
     persistRoomCreator(storage, roomId, ctx.state?.user)
 
@@ -562,6 +565,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         messages,
         agents,
         members,
+        handoffChains: storage.getStoppedHandoffChains?.(ctx.params.roomId) || [],
         total,
         offset,
         limit,
@@ -1196,6 +1200,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
             })
         }
     })
+    chatServer.broadcastRoomMetadata(roomId)
     ctx.body = {
         room: serializeRoom(
             storage.getRoom(roomId),
@@ -1257,6 +1262,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         return
     }
     ctx.status = 202
+    chatServer.broadcastHandoffUpdate(roomId, storage.getHandoffChain(roomId, chainId))
     ctx.body = {
         success: true,
         attemptId: chain.attemptId,

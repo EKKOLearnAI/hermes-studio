@@ -2661,6 +2661,7 @@ export default {
     agentHandoffUnlimited: '無制限',
     agentHandoffStopped: 'An Agent handoff reached its depth limit.',
     agentHandoffContinue: 'Continue this handoff once',
+    agentHandoffAdjustSettings: 'Adjust room settings',
     agentHandoffDepthState: 'Depth: {current} / {max}',
     agentHandoffTarget: 'Target Agent: {target}',
     agentHandoffReason: 'Stop reason: {reason}',

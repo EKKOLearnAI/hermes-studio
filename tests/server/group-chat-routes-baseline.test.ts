@@ -95,6 +95,7 @@ describe('group chat REST route baseline', () => {
         return room || null
       }),
       deleteRoom: vi.fn((roomId) => storage.rooms.delete(roomId)),
+      getStoppedHandoffChains: vi.fn(() => []),
     }
     agentClients = {
       createAgent: vi.fn(async (cfg: any) => {
@@ -640,11 +641,47 @@ describe('group chat REST route baseline', () => {
       messages: [{ id: 'msg-2' }],
       agents: [{ agentId: 'agent-1' }],
       members: [{ userId: 'user-1' }],
+      handoffChains: [],
       total: 2,
       offset: 1,
       limit: 1,
       hasMore: false,
     })
+  })
+
+  it('clones the room Agent handoff policy without copying stopped chains', async () => {
+    storage.rooms.set('room-source', {
+      id: 'room-source',
+      name: 'Source',
+      inviteCode: 'SOURCE',
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'summary-model',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+      workspace: '',
+      agentHandoffEnabled: 0,
+      agentHandoffMaxDepth: 6,
+      agentHandoffUnlimited: 0,
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Clone' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(storage.saveRoom).toHaveBeenCalledWith(
+      expect.any(String),
+      'Clone',
+      expect.any(String),
+      expect.objectContaining({
+        agentHandoffEnabled: false,
+        agentHandoffMaxDepth: 6,
+        agentHandoffUnlimited: false,
+      }),
+    )
   })
 
   it('allows multiple room agents backed by the same profile', async () => {

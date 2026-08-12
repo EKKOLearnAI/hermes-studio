@@ -4,7 +4,7 @@ import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 type DesktopPlatform = 'darwin' | 'win32'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, agentHandoffEnabled: 1, agentHandoffMaxDepth: 4, agentHandoffUnlimited: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
   { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_100 },
   { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0, createdAt: 1_789_999_999, lastActiveAt: 1_789_999_999 },
 ]
@@ -67,6 +67,21 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const rooms = baseRooms.map(room => ({ ...room }))
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
+  const roomConfigUpdates: Array<{ roomId: string, body: any }> = []
+  const handoffChains = [{
+    chainId: 'handoff:alpha-msg',
+    roomId: 'room-alpha',
+    sourceMessageId: 'alpha-msg',
+    currentDepth: 4,
+    maxDepth: 4,
+    unlimited: 0,
+    targetAgentId: 'agent-1',
+    status: 'stopped',
+    stopReason: 'max_depth',
+    continueUsed: 0,
+    createdAt: 1_790_000_002,
+    updatedAt: 1_790_000_002,
+  }]
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -94,6 +109,40 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       })
     }
     if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
+
+    const handoffContinueMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs\/([^/]+)\/continue$/)
+    if (handoffContinueMatch && request.method() === 'POST') {
+      const chain = handoffChains.find(item => item.roomId === decodeURIComponent(handoffContinueMatch[1])
+        && item.chainId === decodeURIComponent(handoffContinueMatch[2]))
+      if (!chain) return json({ error: 'Handoff chain not found' }, 404)
+      Object.assign(chain, {
+        status: 'claimed',
+        attemptId: 'attempt-1',
+        updatedAt: chain.updatedAt + 1,
+      })
+      return json({ success: true, attemptId: chain.attemptId, status: 'continuing', chain }, 202)
+    }
+
+    const handoffListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs$/)
+    if (handoffListMatch && request.method() === 'GET') {
+      const roomId = decodeURIComponent(handoffListMatch[1])
+      return json({ chains: handoffChains.filter(item => item.roomId === roomId) })
+    }
+
+    const configMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/config$/)
+    if (configMatch && request.method() === 'PUT') {
+      const roomId = decodeURIComponent(configMatch[1])
+      const body = JSON.parse(request.postData() || '{}')
+      const room = rooms.find(r => r.id === roomId)
+      if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      roomConfigUpdates.push({ roomId, body })
+      Object.assign(room, {
+        ...(typeof body.agentHandoffEnabled === 'boolean' ? { agentHandoffEnabled: body.agentHandoffEnabled ? 1 : 0 } : {}),
+        ...(body.agentHandoffMaxDepth !== undefined ? { agentHandoffMaxDepth: body.agentHandoffMaxDepth } : {}),
+        ...(typeof body.agentHandoffUnlimited === 'boolean' ? { agentHandoffUnlimited: body.agentHandoffUnlimited ? 1 : 0 } : {}),
+      })
+      return json({ room })
+    }
 
     const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
     if (inviteCodeMatch && request.method() === 'PUT') {
@@ -153,14 +202,14 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
         ? [{ id: 'member-offline', userId: 'user-offline', name: 'Offline Member', description: '', joinedAt: 1_790_000_000, connectionStatus: 'offline' }]
         : [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }]
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents, members })
+        ? json({ room, messages: messagesByRoom[roomId] || [], agents, members, handoffChains: handoffChains.filter(item => item.roomId === roomId) })
         : json({ error: 'Room not found' }, 404)
     }
 
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
 
-  return { inviteCodeUpdates, guestAgentPolicyUpdates }
+  return { inviteCodeUpdates, guestAgentPolicyUpdates, roomConfigUpdates }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -491,6 +540,42 @@ test.describe('group chat room deep links', () => {
         allowRemoteWorkspaceAccess: true,
       },
     })
+  })
+
+  test('persists room handoff settings and continues one stopped chain without changing them', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const stopCard = page.locator('[data-handoff-chain-id="handoff:alpha-msg"]')
+    await expect(stopCard).toContainText('Depth: 4 / 4')
+    await expect(stopCard).toContainText('Target Agent: Worker')
+
+    await page.locator('.chat-header .header-info .compression-settings-button').click()
+    const drawer = page.locator('.n-drawer').filter({ has: page.locator('.room-settings-drawer') })
+    const section = drawer.locator('.settings-section').filter({ hasText: 'Agent handoff' })
+    await expect(section).toContainText('Recommended depth: 4')
+    await section.locator('.n-input-number input').fill('6')
+    const configResponse = page.waitForResponse(response =>
+      response.request().method() === 'PUT'
+      && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/config'))
+    await section.getByRole('button', { name: 'Save' }).click()
+    await expect((await configResponse).status()).toBe(200)
+    expect(api.roomConfigUpdates.at(-1)).toMatchObject({
+      roomId: 'room-alpha',
+      body: {
+        agentHandoffEnabled: true,
+        agentHandoffMaxDepth: 6,
+        agentHandoffUnlimited: false,
+      },
+    })
+
+    await page.keyboard.press('Escape')
+    const continueResponse = page.waitForResponse(response =>
+      response.request().method() === 'POST'
+      && response.url().includes('/handoffs/handoff%3Aalpha-msg/continue'))
+    await stopCard.getByRole('button', { name: 'Continue this handoff once' }).click()
+    await expect((await continueResponse).status()).toBe(202)
+    await expect(stopCard).toContainText('Continue: claimed')
+    expect(api.roomConfigUpdates).toHaveLength(1)
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {

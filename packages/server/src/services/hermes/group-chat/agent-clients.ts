@@ -76,6 +76,7 @@ export type StructuredMentionEntry =
     | { type: 'agent'; participantId: string; displayName: string }
     | { type: 'all'; displayName: 'all' }
 
+
 export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
     return {
         id: msg.messageId || '',
@@ -445,13 +446,14 @@ export class AgentClient implements GroupAgentExecutor {
         const mentions = generatedMentions.length > 0
             ? generatedMentions
             : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
-        const messageExtra = mentions.length ? { ...extra, mentions } : extra
+        const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
         if (role === 'assistant' && messageId) {
             this.storage?.registerTrustedAgentMessageMetadata?.(
                 roomId,
                 messageId,
                 extra?.mentionDepth,
                 extra?.handoffChainId,
+                extra?.continuationAttemptId,
             )
         }
         if (this.eventSink) {
@@ -1134,6 +1136,7 @@ export class AgentClient implements GroupAgentExecutor {
                     run_id: responseRunId,
                     mentionDepth: nextMentionDepth(msg),
                     handoffChainId: msg.handoffChainId || msg.messageId || '',
+                    continuationAttemptId: msg.continuationAttemptId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1335,6 +1338,7 @@ export class AgentClient implements GroupAgentExecutor {
                                 run_id: runMessageId,
                                 mentionDepth: nextMentionDepth(msg),
                                 handoffChainId: msg.handoffChainId || msg.messageId || '',
+                                continuationAttemptId: msg.continuationAttemptId || '',
                                 reasoning: toolReasoning || null,
                                 reasoning_content: toolReasoning || null,
                             }, sessionId)
@@ -1397,6 +1401,7 @@ export class AgentClient implements GroupAgentExecutor {
                     run_id: runMessageId,
                     mentionDepth: nextMentionDepth(msg),
                     handoffChainId: msg.handoffChainId || msg.messageId || '',
+                    continuationAttemptId: msg.continuationAttemptId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1468,6 +1473,7 @@ export class AgentClient implements GroupAgentExecutor {
             ...(responseRunId ? { run_id: responseRunId } : {}),
             mentionDepth: nextMentionDepth(sourceMsg),
             handoffChainId: sourceMsg.handoffChainId || sourceMsg.messageId || '',
+            continuationAttemptId: sourceMsg.continuationAttemptId || '',
             finish_reason: 'error',
             reasoning: reasoningContent || null,
             reasoning_content: reasoningContent || null,
@@ -2336,16 +2342,38 @@ export class AgentClients {
                 this._storage?.releaseHandoffDelivery?.(msg.continuationAttemptId)
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation attempt is no longer dispatchable'] }
             }
+            const executionId = `handoff:${msg.continuationAttemptId}`
+            const running = this._storage?.markHandoffTargetRunning?.(
+                msg.continuationAttemptId,
+                executionId,
+                Date.now() + 60_000,
+            )
+            if (!running && admission.status !== 'already') {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target could not claim the invocation'] }
+            }
+            const started = this._storage?.markHandoffTargetInvocationStarted?.(msg.continuationAttemptId)
+            const current = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
+            if (!started && !current?.invocationStartedAt) {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation invocation marker could not be persisted'] }
+            }
         }
         this.queueMention(roomId, mentioned, msg)
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
         }
         if (msg.continuationAttemptId && mentioned.length === 1) {
-            const executionId = `handoff:${msg.continuationAttemptId}`
-            this._storage?.markHandoffTargetRunning?.(msg.continuationAttemptId, executionId, Date.now() + 60_000)
-            this._storage?.markHandoffTargetInvocationStarted?.(msg.continuationAttemptId)
-            this._storage?.completeHandoffTarget?.(msg.continuationAttemptId, `continuation:${msg.continuationAttemptId}`)
+            const status = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
+            if (status?.status !== 'completed') {
+                this._storage?.failHandoffTarget?.(
+                    msg.continuationAttemptId,
+                    'Target invocation completed without a durable Agent message',
+                )
+                return {
+                    targetCount: 1,
+                    deliveredCount: 0,
+                    errors: ['Continuation target did not publish a durable Agent message'],
+                }
+            }
         }
         return { targetCount: mentioned.length, deliveredCount: mentioned.length, errors: [] }
     }

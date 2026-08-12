@@ -431,6 +431,18 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain(":title=\"t('groupChat.roomSettings')\"")
   })
 
+  it('renders durable handoff stops under their source message with continue and settings actions', () => {
+    const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(list).toContain('handoffChainFor(msg)')
+    expect(list).toContain('data-handoff-chain-id')
+    expect(list).toContain("emit('continueHandoff'")
+    expect(list).toContain("emit('adjustHandoffSettings')")
+    expect(panel).toContain('@continue-handoff="handleContinueHandoff"')
+    expect(panel).toContain('@adjust-handoff-settings="handleOpenRoomSettings"')
+  })
+
   it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 

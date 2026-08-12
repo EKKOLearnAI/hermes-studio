@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { groupAgentRunMessages, useGroupChatStore } from '@/stores/hermes/group-chat'
+import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
@@ -15,6 +16,8 @@ const props = withDefaults(defineProps<{
 })
 const emit = defineEmits<{
     mentionAgent: [agent: import('@/api/hermes/group-chat').RoomAgent]
+    continueHandoff: [chainId: string]
+    adjustHandoffSettings: []
 }>()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
@@ -54,6 +57,15 @@ function scrollToBottom(options?: BottomScrollOptions): void {
 function containsSummaryAnchor(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
     const anchorId = summaryAnchorMessageId.value
     return !!anchorId && (message.runItems || [message]).some(item => item.id === anchorId)
+}
+
+function handoffChainFor(message: import('@/api/hermes/group-chat').ChatMessage): RoomAgentHandoffChain | null {
+    const messageIds = new Set((message.runItems || [message]).map(item => item.id))
+    return [...store.handoffChains.values()].find(chain => messageIds.has(chain.sourceMessageId)) || null
+}
+
+function targetAgentName(chain: RoomAgentHandoffChain): string {
+    return store.messageAgents.find(agent => agent.agentId === chain.targetAgentId)?.name || chain.targetAgentId || '—'
 }
 
 function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
@@ -184,6 +196,26 @@ defineExpose({ scrollToBottom })
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <div
+                        v-if="handoffChainFor(msg)"
+                        class="handoff-stop-card"
+                        role="status"
+                        :data-handoff-chain-id="handoffChainFor(msg)!.chainId"
+                    >
+                        <strong>{{ t('groupChat.agentHandoffStopped') }}</strong>
+                        <span>{{ t('groupChat.agentHandoffDepthState', { current: handoffChainFor(msg)!.currentDepth, max: handoffChainFor(msg)!.unlimited ? '∞' : handoffChainFor(msg)!.maxDepth }) }}</span>
+                        <span>{{ t('groupChat.agentHandoffTarget', { target: targetAgentName(handoffChainFor(msg)!) }) }}</span>
+                        <span v-if="handoffChainFor(msg)!.lastError">{{ handoffChainFor(msg)!.lastError }}</span>
+                        <div v-if="handoffChainFor(msg)!.status === 'stopped' && !handoffChainFor(msg)!.continueUsed" class="handoff-stop-actions">
+                            <button type="button" @click="emit('continueHandoff', handoffChainFor(msg)!.chainId)">
+                                {{ t('groupChat.agentHandoffContinue') }}
+                            </button>
+                            <button type="button" @click="emit('adjustHandoffSettings')">
+                                {{ t('groupChat.agentHandoffAdjustSettings') }}
+                            </button>
+                        </div>
+                        <span v-else>{{ t('groupChat.agentHandoffContinueState', { state: handoffChainFor(msg)!.status, updated: new Date(handoffChainFor(msg)!.updatedAt).toLocaleString() }) }}</span>
+                    </div>
+                    <div
                         v-if="containsSummaryAnchor(msg)"
                         class="summary-anchor-divider"
                         role="separator"
@@ -244,6 +276,33 @@ defineExpose({ scrollToBottom })
 .group-message-list {
     min-width: 0;
     max-width: 100%;
+}
+
+.handoff-stop-card {
+    display: grid;
+    gap: 4px;
+    margin: 6px 0 0 46px;
+    padding: 10px 12px;
+    max-width: min(85%, 720px);
+    border: 1px solid rgba(var(--warning-rgb), 0.3);
+    border-radius: 10px;
+    background: rgba(var(--warning-rgb), 0.08);
+    color: var(--text-color);
+    font-size: 12px;
+}
+
+.handoff-stop-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 4px;
+
+    button {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--primary-color);
+        cursor: pointer;
+    }
 }
 
 .scroll-bottom-button {
