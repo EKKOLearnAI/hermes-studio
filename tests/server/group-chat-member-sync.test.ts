@@ -242,6 +242,58 @@ describe('Group Chat member/agent identity sync', () => {
     })
   })
 
+  it('clears typing when an active room member is removed', () => {
+    const broadcast = vi.fn()
+    const kickedSocket = {
+      id: 'socket-1',
+      rooms: new Set(['room-1']),
+      emit: vi.fn(),
+      leave: vi.fn(),
+    }
+    const member = {
+      id: 'member-1',
+      userId: 'human-1',
+      name: 'Human',
+      description: '',
+      joinedAt: 1,
+      online: true,
+      socketId: 'socket-1',
+      source: 'human',
+      avatar: '',
+    }
+    const roomState = {
+      members: new Map([['human-1', member]]),
+      removeUser: vi.fn(() => true),
+      getMembersList: vi.fn(() => []),
+    }
+    const timer = setTimeout(() => {}, 30000)
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', roomState]])
+    server.typingState = new Map([['room-1', new Map([['human-1', {
+      userName: 'Human',
+      socketId: 'socket-1',
+      timer,
+    }]])]])
+    server.socketUserMap = new Map([['socket-1', 'human-1']])
+    server.nsp = {
+      sockets: new Map([['socket-1', kickedSocket]]),
+      to: vi.fn(() => ({ emit: broadcast })),
+    }
+    server.storage = {
+      getMemberByUserId: vi.fn(() => member),
+      removeRoomMember: vi.fn(),
+    }
+    server.getRoomMemberViews = vi.fn(() => [])
+
+    server.removeRoomMember('room-1', 'human-1')
+
+    expect(server.typingState.has('room-1')).toBe(false)
+    expect(broadcast).toHaveBeenCalledWith('stop_typing', {
+      roomId: 'room-1',
+      userId: 'human-1',
+    })
+  })
+
   it('uses the persisted group-chat agent id as the runtime agent id and socket user id', async () => {
     const clients = new AgentClients()
 

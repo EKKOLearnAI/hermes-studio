@@ -13,7 +13,7 @@ Typing state now records the joined socket that most recently emitted `typing` f
 
 - Preserves active typing when a different joined socket for the same user disconnects.
 - Ignores stale `stop_typing` events from non-owning same-user sockets.
-- Keeps owner disconnect cleanup and the existing joined-room authorization checks.
+- Keeps owner disconnect cleanup and active member removal cleanup aligned with the existing joined-room authorization checks.
 
 ## Notes
 

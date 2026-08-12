@@ -2118,6 +2118,18 @@ export class GroupChatServer {
         const onlineMember = room?.members.get(normalizedUserId) || null
         if (!storedMember && !onlineMember) return null
 
+        const roomTyping = this.typingState.get(roomId)
+        const typingEntry = roomTyping?.get(normalizedUserId)
+        if (typingEntry) {
+            clearTimeout(typingEntry.timer)
+            roomTyping!.delete(normalizedUserId)
+            if (roomTyping!.size === 0) this.typingState.delete(roomId)
+            this.nsp.to(roomId).emit('stop_typing', {
+                roomId,
+                userId: normalizedUserId,
+            })
+        }
+
         room?.removeUser(normalizedUserId)
         this.storage.removeRoomMember?.(roomId, normalizedUserId)
 
