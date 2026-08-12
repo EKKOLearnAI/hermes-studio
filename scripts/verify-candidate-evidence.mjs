@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const CANONICAL_LEDGER_PATH = 'docs/harness/task-contracts.json'
 const VALIDATOR_PATH = 'scripts/validate-task-contracts.mjs'
 const BOOTSTRAP_ANCHOR = 'de18ac3a86b73e6f4e062b13635e37685694e3a0'
 const TRUSTED_BASE_REMOTE = 'origin'
 const TRUSTED_BASE_BRANCH = 'main'
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
+const CANONICAL_PATCH_SCRIPT = join(SCRIPT_DIR, 'canonical-git-patch.mjs')
 
 function die(message) {
   console.error(`candidate evidence rejected: ${message}`)
@@ -93,41 +96,19 @@ function validateLedgerTransition(validatorContent, trustedContent, candidateCon
 
 function canonicalPatch(base, head) {
   const command = [
-    'git',
-    '-c', 'diff.external=',
-    '-c', 'diff.noprefix=false',
-    '-c', 'diff.mnemonicPrefix=false',
-    '-c', 'diff.renames=false',
-    '-c', 'diff.algorithm=myers',
-    '-c', 'diff.indentHeuristic=false',
-    '-c', 'diff.context=3',
-    '-c', 'diff.interHunkContext=0',
-    '-c', 'diff.orderFile=/dev/null',
-    '-c', 'core.quotePath=true',
-    '-c', 'color.ui=false',
-    'diff',
-    '--no-ext-diff',
-    '--no-textconv',
-    '--binary',
-    '--full-index',
-    '--src-prefix=a/',
-    '--dst-prefix=b/',
-    '--no-renames',
-    '--diff-algorithm=myers',
-    '--no-color',
-    '--unified=3',
-    '--inter-hunk-context=0',
-    '--no-indent-heuristic',
-    '--no-relative',
-    '--ignore-submodules=none',
-    '--submodule=short',
+    process.execPath,
+    CANONICAL_PATCH_SCRIPT,
     base,
     head,
-    '--',
   ]
   return {
     command,
-    bytes: git(command.slice(1), { encoding: 'buffer' }),
+    bytes: execFileSync(command[0], command.slice(1), {
+      cwd: process.cwd(),
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 100 * 1024 * 1024,
+    }),
   }
 }
 
@@ -244,6 +225,13 @@ try {
     remoteTrackingHead,
     worktree: 'clean',
     patchCommand: patch.command,
+    patchIsolation: {
+      commandOwner: 'scripts/canonical-git-patch.mjs',
+      attributes: 'isolated recursive info/attributes unsets diff-affecting repository attributes',
+      globalAttributes: 'disabled',
+      systemAttributes: 'disabled',
+      repositoryConfig: 'isolated bare repository',
+    },
     gate: authoritative
       ? { status: 'trusted-base-validated', authoritative: true }
       : {

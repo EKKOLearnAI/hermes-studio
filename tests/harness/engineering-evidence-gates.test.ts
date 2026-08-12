@@ -9,6 +9,7 @@ const repoRoot = resolve(__dirname, '../..')
 const candidateScript = join(repoRoot, 'scripts/verify-candidate-evidence.mjs')
 const contractScript = join(repoRoot, 'scripts/validate-task-contracts.mjs')
 const trustedPrScript = join(repoRoot, 'scripts/verify-pr-ledger-from-base.mjs')
+const canonicalPatchScript = join(repoRoot, 'scripts/canonical-git-patch.mjs')
 const canonicalLedgerPath = 'docs/harness/task-contracts.json'
 const validatorPath = 'scripts/validate-task-contracts.mjs'
 const roots: string[] = []
@@ -35,6 +36,7 @@ function makeGitFixture(options: {
   ledger?: unknown
   includeLedger?: boolean
   includeValidator?: boolean
+  candidateAttributes?: string
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'hermes-engineering-gate-'))
   roots.push(root)
@@ -69,7 +71,10 @@ function makeGitFixture(options: {
   const base = git(work, ['rev-parse', 'HEAD'])
   writeFileSync(join(work, 'change.txt'), 'candidate\n')
   writeFileSync(join(work, 'another.txt'), 'candidate two\n')
-  git(work, ['add', 'change.txt', 'another.txt'])
+  if (options.candidateAttributes) {
+    writeFileSync(join(work, '.gitattributes'), options.candidateAttributes)
+  }
+  git(work, ['add', 'change.txt', 'another.txt', ...(options.candidateAttributes ? ['.gitattributes'] : [])])
   git(work, ['commit', '-m', 'candidate'])
   git(work, ['push', '-u', 'origin', 'fix/evidence'])
   return { root, seed, work, base, remote }
@@ -78,7 +83,13 @@ function makeGitFixture(options: {
 function runCandidate(
   work: string,
   base: string,
-  options: { branch?: string, issue?: string, method?: string, extra?: string[] } = {},
+  options: {
+    branch?: string
+    issue?: string
+    method?: string
+    extra?: string[]
+    env?: NodeJS.ProcessEnv
+  } = {},
 ) {
   return spawnSync(process.execPath, [
     candidateScript,
@@ -93,6 +104,7 @@ function runCandidate(
   ], {
     cwd: work,
     encoding: 'utf8',
+    env: options.env ?? process.env,
   })
 }
 
@@ -180,37 +192,10 @@ describe('candidate evidence gate', () => {
       transition: 'append-only-valid',
     })
     expect(evidence.patchCommand).toEqual([
-      'git',
-      '-c', 'diff.external=',
-      '-c', 'diff.noprefix=false',
-      '-c', 'diff.mnemonicPrefix=false',
-      '-c', 'diff.renames=false',
-      '-c', 'diff.algorithm=myers',
-      '-c', 'diff.indentHeuristic=false',
-      '-c', 'diff.context=3',
-      '-c', 'diff.interHunkContext=0',
-      '-c', 'diff.orderFile=/dev/null',
-      '-c', 'core.quotePath=true',
-      '-c', 'color.ui=false',
-      'diff',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--binary',
-      '--full-index',
-      '--src-prefix=a/',
-      '--dst-prefix=b/',
-      '--no-renames',
-      '--diff-algorithm=myers',
-      '--no-color',
-      '--unified=3',
-      '--inter-hunk-context=0',
-      '--no-indent-heuristic',
-      '--no-relative',
-      '--ignore-submodules=none',
-      '--submodule=short',
+      process.execPath,
+      canonicalPatchScript,
       base,
       evidence.head,
-      '--',
     ])
     expect(evidence.contract).toEqual({ problemKey: 'fixture-direction', issue: 100, method: 'fixture-method' })
   })
@@ -311,6 +296,74 @@ describe('candidate evidence gate', () => {
 
     expect(hostile.status, hostile.stderr).toBe(0)
     expect(JSON.parse(hostile.stdout).patchSha256).toBe(expected.patchSha256)
+  })
+
+  it('isolates patch bytes from repository, info, global, and system attributes', () => {
+    const { root, work, base } = makeGitFixture({
+      candidateAttributes: [
+        'change.txt binary',
+        'another.txt diff=hostile',
+        '',
+      ].join('\n'),
+    })
+    git(work, ['config', 'diff.hostile.binary', 'true'])
+    const normal = runCandidate(work, base)
+    expect(normal.status, normal.stderr).toBe(0)
+    const expected = JSON.parse(normal.stdout)
+
+    const infoAttributes = resolve(work, git(work, ['rev-parse', '--git-path', 'info/attributes']))
+    writeFileSync(infoAttributes, 'another.txt binary\n')
+    const globalAttributes = join(root, 'global-attributes')
+    const systemAttributes = join(root, 'system-attributes')
+    writeFileSync(globalAttributes, 'change.txt diff=hostile\n')
+    writeFileSync(systemAttributes, 'another.txt diff=hostile\n')
+    const globalConfig = join(root, 'global-config')
+    const systemConfig = join(root, 'system-config')
+    writeFileSync(globalConfig, [
+      '[core]',
+      `\tattributesFile = ${globalAttributes}`,
+      '[diff "hostile"]',
+      '\tbinary = true',
+      '',
+    ].join('\n'))
+    writeFileSync(systemConfig, [
+      '[core]',
+      `\tattributesFile = ${systemAttributes}`,
+      '[diff "hostile"]',
+      '\tbinary = true',
+      '',
+    ].join('\n'))
+
+    const hostile = runCandidate(work, base, {
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: systemConfig,
+      },
+    })
+
+    expect(hostile.status, hostile.stderr).toBe(0)
+    const evidence = JSON.parse(hostile.stdout)
+    expect(evidence.patchSha256).toBe(expected.patchSha256)
+    const patch = execFileSync(evidence.patchCommand[0], evidence.patchCommand.slice(1), {
+      cwd: work,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: systemConfig,
+      },
+    }).toString()
+    expect(createHash('sha256').update(patch).digest('hex')).toBe(evidence.patchSha256)
+    expect(patch).toContain('+candidate')
+    expect(patch).toContain('+candidate two')
+    expect(patch).not.toContain('Binary files ')
+    expect(evidence.patchIsolation).toEqual({
+      commandOwner: 'scripts/canonical-git-patch.mjs',
+      attributes: 'isolated recursive info/attributes unsets diff-affecting repository attributes',
+      globalAttributes: 'disabled',
+      systemAttributes: 'disabled',
+      repositoryConfig: 'isolated bare repository',
+    })
   })
 
   it('fails closed when the candidate commit was not pushed', () => {

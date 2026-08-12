@@ -110,6 +110,7 @@ for (const file of [
   'docs/harness/task-contracts.json',
   'docs/chat-chain-changes/README.md',
   'scripts/validate-task-contracts.mjs',
+  'scripts/canonical-git-patch.mjs',
   'scripts/verify-candidate-evidence.mjs',
   'scripts/verify-pr-ledger-from-base.mjs',
   '.github/workflows/trusted-pr-ledger.yml',

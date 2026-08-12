@@ -100,11 +100,17 @@ The command fails closed unless:
 8. a fresh fetch of the named remote branch succeeds;
 9. local HEAD, `FETCH_HEAD`, and the remote-tracking ref are identical.
 
-It emits Base, HEAD, Tree and a SHA-256 over a fixed patch serialization. The
-command disables external diff and textconv, fixes binary/full-index output,
-prefixes, rename detection, diff algorithm, and color, and includes the full
-command array in `patchCommand`. Local Git diff configuration must not change
-the digest.
+It emits Base, HEAD, Tree and a SHA-256 over a fixed patch serialization.
+`scripts/canonical-git-patch.mjs` runs Git against an isolated bare repository,
+uses a highest-precedence recursive `info/attributes` rule that unsets
+diff-affecting attributes, disables global and system attributes/configuration,
+and does not read the reviewer's repository config.
+It also disables external diff and textconv and fixes binary/full-index output,
+prefixes, rename detection, diff algorithm, and color. Evidence includes the
+replayable command array in `patchCommand` and the isolation contract in
+`patchIsolation`. Repository `.gitattributes`, repository-local
+`info/attributes`, and reviewer global/system attributes must not change the
+digest.
 
 For a post-Bootstrap candidate, trusted approval comes from the Base-owned
 `Trusted PR Ledger` check. Local `candidate:evidence` remains useful for
@@ -120,4 +126,5 @@ successor ordering errors, replacement ledger paths, rewritten Issue/history,
 decreased rework counts, stopped-method reactivation, silent budget expansion,
 forged/disconnected anchors, dirty worktrees, wrong or missing branches, and
 unpushed commits are rejected. They also prove that patch identity is stable
-under hostile local diff configuration.
+under hostile local diff configuration and repository, info, global, and system
+attributes.
