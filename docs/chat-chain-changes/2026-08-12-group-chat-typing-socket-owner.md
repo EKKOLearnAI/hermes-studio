@@ -1,6 +1,6 @@
 ---
 date: 2026-08-12
-pr: pending
+pr: 2500
 feature: Group Chat multi-socket typing ownership
 impact: Preserve socket-owned typing state across same-user connections
 ---
