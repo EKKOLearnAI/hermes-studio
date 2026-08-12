@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 const CANONICAL_LEDGER_PATH = 'docs/harness/task-contracts.json'
+const VALIDATOR_PATH = 'scripts/validate-task-contracts.mjs'
 const BOOTSTRAP_ANCHOR = 'de18ac3a86b73e6f4e062b13635e37685694e3a0'
 const TRUSTED_BASE_REMOTE = 'origin'
 const TRUSTED_BASE_BRANCH = 'main'
@@ -68,12 +69,13 @@ function commitContains(commit, path) {
   }
 }
 
-function validateLedgerTransition(trustedContent, candidateContent) {
-  const validator = resolve(new URL('.', import.meta.url).pathname, 'validate-task-contracts.mjs')
+function validateLedgerTransition(validatorContent, trustedContent, candidateContent) {
   const root = mkdtempSync(join(tmpdir(), 'hermes-ledger-transition-'))
   try {
+    const validator = join(root, 'trusted-validator.mjs')
     const trustedPath = join(root, 'trusted.json')
     const candidatePath = join(root, 'candidate.json')
+    writeFileSync(validator, validatorContent)
     writeFileSync(trustedPath, trustedContent)
     writeFileSync(candidatePath, candidateContent)
     execFileSync(process.execPath, [validator, '--previous', trustedPath, candidatePath], {
@@ -86,6 +88,46 @@ function validateLedgerTransition(trustedContent, candidateContent) {
     die(`canonical ledger transition is invalid: ${detail}`)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function canonicalPatch(base, head) {
+  const command = [
+    'git',
+    '-c', 'diff.external=',
+    '-c', 'diff.noprefix=false',
+    '-c', 'diff.mnemonicPrefix=false',
+    '-c', 'diff.renames=false',
+    '-c', 'diff.algorithm=myers',
+    '-c', 'diff.indentHeuristic=false',
+    '-c', 'diff.context=3',
+    '-c', 'diff.interHunkContext=0',
+    '-c', 'diff.orderFile=/dev/null',
+    '-c', 'core.quotePath=true',
+    '-c', 'color.ui=false',
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--binary',
+    '--full-index',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+    '--no-renames',
+    '--diff-algorithm=myers',
+    '--no-color',
+    '--unified=3',
+    '--inter-hunk-context=0',
+    '--no-indent-heuristic',
+    '--no-relative',
+    '--ignore-submodules=none',
+    '--submodule=short',
+    base,
+    head,
+    '--',
+  ]
+  return {
+    command,
+    bytes: git(command.slice(1), { encoding: 'buffer' }),
   }
 }
 
@@ -147,25 +189,35 @@ try {
   if (head !== fetchedHead) die(`local HEAD ${head} does not match freshly fetched remote head ${fetchedHead}`)
   if (head !== remoteTrackingHead) die(`local HEAD ${head} does not match remote-tracking head ${remoteTrackingHead}`)
 
+  const baseHasLedger = commitContains(base, CANONICAL_LEDGER_PATH)
+  const baseHasValidator = commitContains(base, VALIDATOR_PATH)
+  const authoritative = baseHasLedger && baseHasValidator
   let trustedLedgerCommit = base
   let ledgerTrustSource = 'protected-base'
-  if (!commitContains(base, CANONICAL_LEDGER_PATH)) {
-    trustedLedgerCommit = BOOTSTRAP_ANCHOR
-    ledgerTrustSource = 'frozen-bootstrap-anchor'
-    try {
-      git(['merge-base', '--is-ancestor', BOOTSTRAP_ANCHOR, head])
-    } catch {
-      die(`frozen bootstrap anchor ${BOOTSTRAP_ANCHOR} is not an ancestor of HEAD ${head}`)
-    }
-    if (!commitContains(BOOTSTRAP_ANCHOR, CANONICAL_LEDGER_PATH)) {
-      die(`frozen bootstrap anchor ${BOOTSTRAP_ANCHOR} does not contain the canonical ledger`)
+  if (!authoritative) {
+    if (baseHasLedger) {
+      ledgerTrustSource = 'untrusted-bootstrap-base'
+    } else {
+      trustedLedgerCommit = BOOTSTRAP_ANCHOR
+      ledgerTrustSource = 'frozen-bootstrap-anchor'
+      try {
+        git(['merge-base', '--is-ancestor', BOOTSTRAP_ANCHOR, head])
+      } catch {
+        die(`frozen bootstrap anchor ${BOOTSTRAP_ANCHOR} is not an ancestor of HEAD ${head}`)
+      }
+      if (!commitContains(BOOTSTRAP_ANCHOR, CANONICAL_LEDGER_PATH)) {
+        die(`frozen bootstrap anchor ${BOOTSTRAP_ANCHOR} does not contain the canonical ledger`)
+      }
     }
   }
   if (!commitContains(head, CANONICAL_LEDGER_PATH)) die(`HEAD does not contain canonical ledger ${CANONICAL_LEDGER_PATH}`)
 
   const trustedLedger = git(['show', `${trustedLedgerCommit}:${CANONICAL_LEDGER_PATH}`])
   const candidateLedger = git(['show', `${head}:${CANONICAL_LEDGER_PATH}`])
-  validateLedgerTransition(trustedLedger, candidateLedger)
+  if (authoritative) {
+    const trustedValidator = git(['show', `${base}:${VALIDATOR_PATH}`])
+    validateLedgerTransition(trustedValidator, trustedLedger, candidateLedger)
+  }
   const ledger = JSON.parse(candidateLedger)
   const direction = ledger?.directions?.find(item => item?.key === problemKey)
   if (!direction) die(`problem key ${problemKey} is not registered in the canonical ledger`)
@@ -175,8 +227,8 @@ try {
     die(`issue ${issue} is not registered under active method ${problemKey}/${methodId}`)
   }
 
-  const patch = git(['diff', base, head], { encoding: 'buffer' })
-  const patchSha256 = createHash('sha256').update(patch).digest('hex')
+  const patch = canonicalPatch(base, head)
+  const patchSha256 = createHash('sha256').update(patch.bytes).digest('hex')
   const evidence = {
     base,
     head,
@@ -191,13 +243,21 @@ try {
     remoteHead: fetchedHead,
     remoteTrackingHead,
     worktree: 'clean',
+    patchCommand: patch.command,
+    gate: authoritative
+      ? { status: 'trusted-base-validated', authoritative: true }
+      : {
+          status: 'bootstrap-review-required',
+          authoritative: false,
+          reason: 'trusted Base does not contain the ledger validator',
+        },
     ledger: {
       path: CANONICAL_LEDGER_PATH,
       trustedCommit: trustedLedgerCommit,
       trustSource: ledgerTrustSource,
       trustedSha256: createHash('sha256').update(trustedLedger).digest('hex'),
       candidateSha256: createHash('sha256').update(candidateLedger).digest('hex'),
-      transition: 'append-only-valid',
+      transition: authoritative ? 'append-only-valid' : 'not-authoritatively-validated',
     },
     contract: { problemKey, issue, method: methodId },
   }
@@ -209,6 +269,7 @@ try {
       console.log(`${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`)
     }
   }
+  if (!authoritative) process.exit(2)
 } catch (error) {
   die(error instanceof Error ? error.message : String(error))
 }

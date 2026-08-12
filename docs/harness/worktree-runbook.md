@@ -37,9 +37,12 @@ npm run candidate:evidence -- --base <base-sha> \
   --issue <number> --method <id> --json
 ```
 
-The command is the source of truth for Base, HEAD, Tree, Patch SHA-256, the
-trusted canonical-ledger transition, and the remote equality check used in a
-handoff. It does not accept a caller-selected ledger path.
+The command is the source of truth for Base, HEAD, Tree, deterministic Patch
+SHA-256, and the remote equality check used in a handoff. After the Bootstrap
+gate is present on the trusted Base, it also diagnoses the canonical-ledger
+transition with the Base validator. During Bootstrap it exits `2` and reports
+`bootstrap-review-required`; only independent exact-HEAD review may approve
+that candidate. It does not accept a caller-selected ledger path.
 
 ## Install
 

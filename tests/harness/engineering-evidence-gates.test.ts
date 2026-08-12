@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 const repoRoot = resolve(__dirname, '../..')
 const candidateScript = join(repoRoot, 'scripts/verify-candidate-evidence.mjs')
 const contractScript = join(repoRoot, 'scripts/validate-task-contracts.mjs')
+const trustedPrScript = join(repoRoot, 'scripts/verify-pr-ledger-from-base.mjs')
 const canonicalLedgerPath = 'docs/harness/task-contracts.json'
+const validatorPath = 'scripts/validate-task-contracts.mjs'
 const roots: string[] = []
 
 function git(cwd: string, args: string[]): string {
@@ -29,7 +31,11 @@ function fixtureLedger(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function makeGitFixture(options: { ledger?: unknown, includeLedger?: boolean } = {}) {
+function makeGitFixture(options: {
+  ledger?: unknown
+  includeLedger?: boolean
+  includeValidator?: boolean
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), 'hermes-engineering-gate-'))
   roots.push(root)
   const remote = join(root, 'remote.git')
@@ -47,6 +53,11 @@ function makeGitFixture(options: { ledger?: unknown, includeLedger?: boolean } =
     mkdirSync(dirname(ledgerPath), { recursive: true })
     writeFileSync(ledgerPath, `${JSON.stringify(options.ledger ?? fixtureLedger(), null, 2)}\n`)
   }
+  if (options.includeValidator !== false) {
+    const target = join(seed, validatorPath)
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, readFileSync(contractScript))
+  }
   git(seed, ['add', '.'])
   git(seed, ['commit', '-m', 'base'])
   git(seed, ['remote', 'add', 'origin', remote])
@@ -57,10 +68,11 @@ function makeGitFixture(options: { ledger?: unknown, includeLedger?: boolean } =
   git(work, ['checkout', '-b', 'fix/evidence'])
   const base = git(work, ['rev-parse', 'HEAD'])
   writeFileSync(join(work, 'change.txt'), 'candidate\n')
-  git(work, ['add', 'change.txt'])
+  writeFileSync(join(work, 'another.txt'), 'candidate two\n')
+  git(work, ['add', 'change.txt', 'another.txt'])
   git(work, ['commit', '-m', 'candidate'])
   git(work, ['push', '-u', 'origin', 'fix/evidence'])
-  return { root, work, base, remote }
+  return { root, seed, work, base, remote }
 }
 
 function runCandidate(
@@ -80,6 +92,25 @@ function runCandidate(
     ...(options.extra ?? []),
   ], {
     cwd: work,
+    encoding: 'utf8',
+  })
+}
+
+function runTrustedPrGate(
+  seed: string,
+  base: string,
+  head: string,
+  options: { branch?: string } = {},
+) {
+  return spawnSync(process.execPath, [
+    trustedPrScript,
+    '--base', base,
+    '--head', head,
+    '--remote', 'origin',
+    '--branch', options.branch ?? 'fix/evidence',
+    '--json',
+  ], {
+    cwd: seed,
     encoding: 'utf8',
   })
 }
@@ -139,7 +170,7 @@ describe('candidate evidence gate', () => {
     expect(evidence.tree).toBe(git(work, ['rev-parse', 'HEAD^{tree}']))
     expect(evidence.remoteHead).toBe(evidence.head)
     expect(evidence.remoteTrackingHead).toBe(evidence.head)
-    const patch = execFileSync('git', ['diff', base, evidence.head], { cwd: work })
+    const patch = execFileSync(evidence.patchCommand[0], evidence.patchCommand.slice(1), { cwd: work })
     expect(evidence.patchSha256).toBe(createHash('sha256').update(patch).digest('hex'))
     expect(evidence.worktree).toBe('clean')
     expect(evidence.ledger).toMatchObject({
@@ -148,10 +179,43 @@ describe('candidate evidence gate', () => {
       trustSource: 'protected-base',
       transition: 'append-only-valid',
     })
+    expect(evidence.patchCommand).toEqual([
+      'git',
+      '-c', 'diff.external=',
+      '-c', 'diff.noprefix=false',
+      '-c', 'diff.mnemonicPrefix=false',
+      '-c', 'diff.renames=false',
+      '-c', 'diff.algorithm=myers',
+      '-c', 'diff.indentHeuristic=false',
+      '-c', 'diff.context=3',
+      '-c', 'diff.interHunkContext=0',
+      '-c', 'diff.orderFile=/dev/null',
+      '-c', 'core.quotePath=true',
+      '-c', 'color.ui=false',
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--binary',
+      '--full-index',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      '--no-renames',
+      '--diff-algorithm=myers',
+      '--no-color',
+      '--unified=3',
+      '--inter-hunk-context=0',
+      '--no-indent-heuristic',
+      '--no-relative',
+      '--ignore-submodules=none',
+      '--submodule=short',
+      base,
+      evidence.head,
+      '--',
+    ])
     expect(evidence.contract).toEqual({ problemKey: 'fixture-direction', issue: 100, method: 'fixture-method' })
   })
 
-  it('accepts a legal authorized method change and explicit shared-budget expansion', () => {
+  it('rejects candidate-authored method changes and budget expansions', () => {
     const { work, base } = makeGitFixture()
     const data = candidateLedger(work)
     const direction = data.directions[0]
@@ -175,7 +239,78 @@ describe('candidate evidence gate', () => {
 
     const result = runCandidate(work, base, { method: 'anchored-transition' })
 
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('authorization changes must already exist in the trusted Base')
+  })
+
+  it('uses the validator stored in the trusted Base instead of a candidate replacement', () => {
+    const { seed, work, base } = makeGitFixture()
+    const data = candidateLedger(work)
+    data.directions[0].methods[0].issues = [101]
+    writeFileSync(join(work, canonicalLedgerPath), `${JSON.stringify(data, null, 2)}\n`)
+    writeFileSync(join(work, validatorPath), '#!/usr/bin/env node\nprocess.exit(0)\n')
+    git(work, ['add', canonicalLedgerPath, validatorPath])
+    git(work, ['commit', '-m', 'candidate bypass'])
+    git(work, ['push', 'origin', 'HEAD'])
+    const head = git(work, ['rev-parse', 'HEAD'])
+
+    const result = runTrustedPrGate(seed, base, head)
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('historical Issue bindings cannot be rewritten')
+  })
+
+  it('accepts unchanged authorization data through the Base-owned PR gate', () => {
+    const { seed, work, base } = makeGitFixture()
+    const head = git(work, ['rev-parse', 'HEAD'])
+
+    const result = runTrustedPrGate(seed, base, head)
+
     expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      gate: 'trusted-base-ledger-transition',
+      base,
+      head,
+      transition: 'append-only-valid',
+    })
+  })
+
+  it('reports a non-authoritative bootstrap state when the trusted Base has no validator', () => {
+    const { work, base } = makeGitFixture({ includeValidator: false })
+    const result = runCandidate(work, base)
+
+    expect(result.status).toBe(2)
+    const evidence = JSON.parse(result.stdout)
+    expect(evidence.gate).toEqual({
+      status: 'bootstrap-review-required',
+      authoritative: false,
+      reason: 'trusted Base does not contain the ledger validator',
+    })
+    expect(evidence.ledger.transition).toBe('not-authoritatively-validated')
+  })
+
+  it('produces the same patch identity under hostile local diff configuration', () => {
+    const { work, base } = makeGitFixture()
+    const normal = runCandidate(work, base)
+    expect(normal.status, normal.stderr).toBe(0)
+    const expected = JSON.parse(normal.stdout)
+
+    git(work, ['config', 'diff.noprefix', 'true'])
+    git(work, ['config', 'diff.mnemonicPrefix', 'true'])
+    git(work, ['config', 'diff.renames', 'true'])
+    git(work, ['config', 'diff.algorithm', 'histogram'])
+    git(work, ['config', 'diff.indentHeuristic', 'true'])
+    git(work, ['config', 'diff.context', '8'])
+    git(work, ['config', 'diff.interHunkContext', '8'])
+    const orderFile = join(work, '.git', 'hostile-diff-order')
+    writeFileSync(orderFile, 'change.txt\nanother.txt\n')
+    git(work, ['config', 'diff.orderFile', orderFile])
+    git(work, ['config', 'core.quotePath', 'false'])
+    git(work, ['config', 'color.ui', 'always'])
+    const hostile = runCandidate(work, base)
+
+    expect(hostile.status, hostile.stderr).toBe(0)
+    expect(JSON.parse(hostile.stdout).patchSha256).toBe(expected.patchSha256)
   })
 
   it('fails closed when the candidate commit was not pushed', () => {
@@ -262,6 +397,7 @@ describe('candidate evidence gate', () => {
   it('rejects reactivation of a stopped method and deletion of historical methods', () => {
     const stopped = fixtureLedger({
       status: 'stopped',
+      maxTotalReworks: 2,
       methods: [{ id: 'fixture-method', status: 'stopped', issues: [100], reworks: 1 }],
     })
     const reactivationFixture = makeGitFixture({ ledger: stopped })
@@ -308,7 +444,7 @@ describe('candidate evidence gate', () => {
     commitLedger(budgetFixture.work, expanded)
     const budget = runCandidate(budgetFixture.work, budgetFixture.base)
     expect(budget.status).not.toBe(0)
-    expect(budget.stderr).toContain('cannot expand without an appended authorized budgetChange')
+    expect(budget.stderr).toContain('shared rework budget expansion must already exist in the trusted Base')
 
     const authorizedBase = fixtureLedger({
       maxTotalReworks: 2,
@@ -330,7 +466,7 @@ describe('candidate evidence gate', () => {
     commitLedger(authorizationFixture.work, rewritten)
     const authorization = runCandidate(authorizationFixture.work, authorizationFixture.base)
     expect(authorization.status).not.toBe(0)
-    expect(authorization.stderr).toContain('historical restart authorization')
+    expect(authorization.stderr).toContain('authorizedBy must be an approved role')
   })
 
   it('fails closed for a forged or disconnected bootstrap anchor', () => {
@@ -388,5 +524,65 @@ describe('task contract anti-loop gate', () => {
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('reuses validation method')
+  })
+
+  it('rejects self-authorization and a zero-cost successor restart', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hermes-contract-gate-'))
+    roots.push(root)
+    const data = fixtureLedger({
+      maxTotalReworks: 2,
+      methods: [
+        { id: 'first-method', status: 'stopped', issues: [100], reworks: 0 },
+        { id: 'second-method', status: 'active', issues: [101], reworks: 0 },
+      ],
+      restarts: [{
+        fromMethod: 'first-method',
+        toMethod: 'second-method',
+        authorizedBy: 'candidate',
+        reason: 'candidate grants itself another validation attempt',
+      }],
+    })
+    const ledger = writeLedger(root, data)
+    const result = spawnSync(process.execPath, [contractScript, ledger], { encoding: 'utf8' })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('authorizedBy must be an approved role')
+    expect(result.stderr).toContain('must consume at least one rework before a successor')
+  })
+
+  it('rejects an active direction whose shared budget is exhausted', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hermes-contract-gate-'))
+    roots.push(root)
+    const ledger = writeLedger(root, fixtureLedger({
+      maxTotalReworks: 1,
+      methods: [{ id: 'fixture-method', status: 'active', issues: [100], reworks: 1 }],
+    }))
+    const result = spawnSync(process.execPath, [contractScript, ledger], { encoding: 'utf8' })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('exhausted shared rework budget cannot remain active')
+  })
+
+  it('rejects a successor ordering where an earlier method remains active', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hermes-contract-gate-'))
+    roots.push(root)
+    const ledger = writeLedger(root, fixtureLedger({
+      maxTotalReworks: 2,
+      methods: [
+        { id: 'first-method', status: 'active', issues: [100], reworks: 1 },
+        { id: 'second-method', status: 'stopped', issues: [101], reworks: 0 },
+      ],
+      restarts: [{
+        fromMethod: 'first-method',
+        toMethod: 'second-method',
+        authorizedBy: 'product-owner',
+        reason: 'replace the first method with a separately reviewed successor',
+      }],
+    }))
+    const result = spawnSync(process.execPath, [contractScript, ledger], { encoding: 'utf8' })
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('only the final successor method may be active')
+    expect(result.stderr).toContain('predecessor method must be stopped')
   })
 })

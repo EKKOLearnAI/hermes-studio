@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+const APPROVED_AUTHORIZATION_ROLES = new Set(['product-owner', 'technical-lead'])
+
 function loadLedger(path) {
   const resolved = resolve(path)
   try {
@@ -77,11 +79,18 @@ function validateLedger(ledger, label) {
         reject(`${directionLabel}: missing explicit method-change restart ${fromMethod} -> ${toMethod}`)
         continue
       }
-      if (typeof restart.authorizedBy !== 'string' || !restart.authorizedBy.trim()) {
-        reject(`${directionLabel}: restart ${fromMethod} -> ${toMethod} requires authorizedBy`)
+      if (!APPROVED_AUTHORIZATION_ROLES.has(restart.authorizedBy)) {
+        reject(`${directionLabel}: restart ${fromMethod} -> ${toMethod} authorizedBy must be an approved role`)
       }
       if (typeof restart.reason !== 'string' || restart.reason.trim().length < 12) {
         reject(`${directionLabel}: restart ${fromMethod} -> ${toMethod} requires a concrete reason`)
+      }
+      const predecessor = direction.methods[index - 1]
+      if (predecessor.status !== 'stopped') {
+        reject(`${directionLabel}/${predecessor.id}: predecessor method must be stopped before a successor`)
+      }
+      if (predecessor.reworks < 1) {
+        reject(`${directionLabel}/${predecessor.id}: must consume at least one rework before a successor`)
       }
       if (restart.budgetChange !== undefined) {
         const change = restart.budgetChange
@@ -93,11 +102,27 @@ function validateLedger(ledger, label) {
 
     const activeMethods = direction.methods.filter(method => method.status === 'active')
     if (activeMethods.length > 1) reject(`${directionLabel}: only one validation method may be active`)
+    const finalMethod = direction.methods.at(-1)
+    for (const method of direction.methods.slice(0, -1)) {
+      if (method.status === 'active') reject(`${directionLabel}: only the final successor method may be active`)
+    }
     if (direction.status === 'active' && activeMethods.length !== 1) {
       reject(`${directionLabel}: active direction requires exactly one active method`)
     }
+    if (direction.status === 'active' && finalMethod?.status !== 'active') {
+      reject(`${directionLabel}: only the final successor method may be active`)
+    }
     if (direction.status !== 'active' && activeMethods.length !== 0) {
       reject(`${directionLabel}: non-active direction cannot contain an active method`)
+    }
+    if (direction.status === 'stopped' && finalMethod?.status !== 'stopped') {
+      reject(`${directionLabel}: stopped direction requires its final method to be stopped`)
+    }
+    if (direction.status === 'accepted' && finalMethod?.status !== 'accepted') {
+      reject(`${directionLabel}: accepted direction requires its final method to be accepted`)
+    }
+    if (direction.status === 'active' && totalReworks >= direction.maxTotalReworks) {
+      reject(`${directionLabel}: exhausted shared rework budget cannot remain active`)
     }
   }
 
@@ -109,6 +134,9 @@ function validateTransition(previous, current) {
   const reject = message => errors.push(`transition: ${message}`)
 
   if (current.directions.length < previous.directions.length) reject('historical directions cannot be deleted')
+  if (current.directions.length > previous.directions.length) {
+    reject('new directions and their authorization must already exist in the trusted Base')
+  }
 
   for (let directionIndex = 0; directionIndex < previous.directions.length; directionIndex += 1) {
     const before = previous.directions[directionIndex]
@@ -122,6 +150,9 @@ function validateTransition(previous, current) {
     }
     if (after.methods.length < before.methods.length) reject(`${before.key}: historical methods cannot be deleted`)
     if (after.restarts.length < before.restarts.length) reject(`${before.key}: historical restart authorizations cannot be deleted`)
+    if (after.methods.length > before.methods.length || after.restarts.length > before.restarts.length) {
+      reject(`${before.key}: authorization changes must already exist in the trusted Base`)
+    }
 
     for (let index = 0; index < before.methods.length; index += 1) {
       const oldMethod = before.methods[index]
@@ -154,17 +185,7 @@ function validateTransition(previous, current) {
       reject(`${before.key}: shared rework budget cannot decrease`)
     }
     if (after.maxTotalReworks > before.maxTotalReworks) {
-      const appendedRestarts = after.restarts.slice(before.restarts.length)
-      const authorizedChange = appendedRestarts.some(restart =>
-        restart?.budgetChange?.from === before.maxTotalReworks
-        && restart?.budgetChange?.to === after.maxTotalReworks
-        && typeof restart.authorizedBy === 'string'
-        && restart.authorizedBy.trim()
-        && typeof restart.reason === 'string'
-        && restart.reason.trim().length >= 12)
-      if (!authorizedChange) {
-        reject(`${before.key}: shared rework budget cannot expand without an appended authorized budgetChange`)
-      }
+      reject(`${before.key}: shared rework budget expansion must already exist in the trusted Base`)
     }
   }
 
