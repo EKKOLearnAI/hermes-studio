@@ -8,6 +8,7 @@ and keep this file small enough to fit into every task context.
 - `DEVELOPMENT.md` - project commands, coding rules, test rules, and PR shape.
 - `ARCHITECTURE.md` - package boundaries, data ownership, and runtime flow.
 - `docs/harness/README.md` - how this repository is prepared for agent work.
+- `docs/petdex.md` - Petdex catalog and local pet import, storage, and API behavior.
 - `docs/harness/validation.md` - which checks to run for each change type.
 - `docs/harness/worktree-runbook.md` - isolated local dev and test setup.
 - `docs/harness/pr-review.md` - self-review checklist before pushing.
