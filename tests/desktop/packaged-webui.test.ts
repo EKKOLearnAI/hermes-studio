@@ -20,7 +20,7 @@ function createPackagedWebUi(appOutDir: string, platform = 'win32', arch = 'x64'
     : [
         `${sharpRoot}/lib/sharp-${platform}-${arch}.node`,
         `node_modules/@img/sharp-libvips-${platform}-${arch}/package.json`,
-        `node_modules/@img/sharp-libvips-${platform}-${arch}/lib/libvips.${platform === 'darwin' ? 'dylib' : 'so'}`,
+        `node_modules/@img/sharp-libvips-${platform}-${arch}/lib/${platform === 'darwin' ? 'libvips-cpp.8.18.3.dylib' : 'libvips-cpp.so.8.18.3'}`,
       ]
   const sherpaPlatform = platform === 'win32' ? 'win' : platform
   const sherpaRoot = `node_modules/sherpa-onnx-${sherpaPlatform}-${arch}`
@@ -162,6 +162,29 @@ describe('packaged desktop Web UI', () => {
       arch: 3,
       packager: { appInfo: { productFilename: 'Hermes Studio' } },
     } as never)).resolves.toBeUndefined()
+  })
+
+  it('rejects a Linux libvips package without a shared library', async () => {
+    const appOutDir = packagedRoot()
+    createPackagedWebUi(appOutDir, 'linux', 'x64')
+    createCompiledLinuxNodePty(appOutDir)
+    rmSync(join(
+      appOutDir,
+      'resources',
+      'webui',
+      'node_modules',
+      '@img',
+      'sharp-libvips-linux-x64',
+      'lib',
+      'libvips-cpp.so.8.18.3',
+    ))
+
+    await expect(verifyPackagedWebUi({
+      appOutDir,
+      electronPlatformName: 'linux',
+      arch: 1,
+      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+    } as never)).rejects.toThrow('sharp-libvips-linux-x64')
   })
 
   it('rejects a missing source-built node-pty module on Linux', async () => {

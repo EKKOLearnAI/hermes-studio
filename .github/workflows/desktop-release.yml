@@ -95,6 +95,9 @@ jobs:
       - name: Keep production web UI dependencies only
         run: npm prune --omit=dev --no-audit --no-fund
 
+      - name: Verify image processing runtime
+        run: npm run verify:sharp-runtime
+
       - name: Install desktop dependencies
         run: npm ci --prefix packages/desktop --no-audit --no-fund
 
