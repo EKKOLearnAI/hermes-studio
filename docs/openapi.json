@@ -1160,6 +1160,42 @@
         ]
       }
     },
+    "/api/coding-agents/{id}/check-update": {
+      "post": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Create check-update",
+        "description": "POST /api/coding-agents/:id/check-update",
+        "operationId": "checkUpdate",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/coding-agents/{id}/config-files/{key}": {
       "get": {
         "tags": [

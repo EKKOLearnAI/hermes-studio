@@ -220,6 +220,8 @@ async function loadStatus() {
   try {
     const data = await fetchCodingAgentsStatus()
     tools.value = data.tools
+    updateInfo.value['claude-code'] = null
+    updateInfo.value.codex = null
   } catch (err: any) {
     loadError.value = err?.message || t('codingAgents.loadFailed')
   } finally {
@@ -393,6 +395,8 @@ async function handleInstall(id: CodingAgentId) {
       message.success(t('codingAgents.installSuccess'))
       installFailureHints.value[id] = ''
       installFailureDetails.value[id] = ''
+      updateInfo.value[id] = null
+      await handleCheckUpdate(id)
     } else {
       const errorMessage = codingAgentMessage(result.code, result.message, 'codingAgents.installFailed')
       message.error(errorMessage)
@@ -417,6 +421,7 @@ async function handleDelete(id: CodingAgentId) {
     tools.value = result.tools
     if (result.success) {
       message.success(t('codingAgents.deleteSuccess'))
+      updateInfo.value[id] = null
     } else {
       message.error(codingAgentMessage(result.code, result.message, 'codingAgents.deleteFailed'))
     }
@@ -430,12 +435,15 @@ async function handleDelete(id: CodingAgentId) {
 
 async function handleCheckUpdate(id: CodingAgentId) {
   checkingUpdate.value[id] = true
+  updateInfo.value[id] = null
   try {
     const result = await checkCodingAgentUpdate(id)
-    updateInfo.value[id] = result
     if (!result.success) {
       message.error(result.message || t('codingAgents.checkUpdateFailed'))
+      return
     }
+    updateInfo.value[id] = result
+    tools.value = tools.value.map(tool => tool.id === id ? result.tool : tool)
   } catch (err: any) {
     message.error(err?.message || t('codingAgents.checkUpdateFailed'))
   } finally {
@@ -476,68 +484,91 @@ onMounted(() => {
           </header>
 
           <div class="agent-install-state">
-            <div class="install-state-main">
-              <div class="install-state-title">{{ t('codingAgents.installStatus') }}</div>
-              <div class="install-state-value">
-                <NTag v-if="loading && !statusFor(block.id)" size="small">
-                  {{ t('codingAgents.checking') }}
-                </NTag>
-                <template v-else-if="statusFor(block.id)?.installed">
-                  <NTag size="small" type="success">{{ t('codingAgents.installed') }}</NTag>
-                  <span class="version-text">
-                    {{ statusFor(block.id)?.version || statusFor(block.id)?.rawVersion }}
-                  </span>
-                </template>
-                <NTag v-else size="small" type="warning">{{ t('codingAgents.notInstalled') }}</NTag>
+            <div class="agent-install-summary">
+              <div class="install-state-main">
+                <div class="install-state-title">{{ t('codingAgents.installStatus') }}</div>
+                <div class="install-state-value">
+                  <NTag v-if="loading && !statusFor(block.id)" size="small">
+                    {{ t('codingAgents.checking') }}
+                  </NTag>
+                  <template v-else-if="statusFor(block.id)?.installed">
+                    <NTag size="small" type="success">{{ t('codingAgents.installed') }}</NTag>
+                    <span class="version-text">
+                      {{ statusFor(block.id)?.version || statusFor(block.id)?.rawVersion }}
+                    </span>
+                  </template>
+                  <NTag v-else size="small" type="warning">{{ t('codingAgents.notInstalled') }}</NTag>
+                </div>
               </div>
-            </div>
-            <NButton
-              v-if="statusFor(block.id)?.installed"
-              size="small"
-              type="error"
-              secondary
-              :loading="deleting[block.id]"
-              @click="handleDelete(block.id)"
-            >
-              {{ deleting[block.id] ? t('codingAgents.deleting') : t('codingAgents.deleteNow') }}
-            </NButton>
-            <NButton
-              v-if="statusFor(block.id)?.installed"
-              size="small"
-              secondary
-              :loading="checkingUpdate[block.id]"
-              @click="handleCheckUpdate(block.id)"
-            >
-              {{ checkingUpdate[block.id] ? t('codingAgents.checkingUpdate') : t('codingAgents.checkUpdate') }}
-            </NButton>
-            <template v-if="updateInfo[block.id]">
-              <template v-if="updateInfo[block.id]?.updateAvailable">
-                <span class="version-text update-available">
-                  {{ t('codingAgents.newVersionAvailable') }}: {{ updateInfo[block.id]?.latestVersion }}
-                </span>
+              <div class="install-state-actions">
                 <NButton
+                  v-if="statusFor(block.id)?.installed"
+                  size="small"
+                  secondary
+                  :loading="checkingUpdate[block.id]"
+                  :disabled="installing[block.id] || deleting[block.id]"
+                  @click="handleCheckUpdate(block.id)"
+                >
+                  {{ checkingUpdate[block.id] ? t('codingAgents.checkingUpdate') : t('codingAgents.checkUpdate') }}
+                </NButton>
+                <NButton
+                  v-if="statusFor(block.id)?.installed"
+                  size="small"
+                  type="error"
+                  quaternary
+                  :loading="deleting[block.id]"
+                  :disabled="installing[block.id] || checkingUpdate[block.id]"
+                  @click="handleDelete(block.id)"
+                >
+                  {{ deleting[block.id] ? t('codingAgents.deleting') : t('codingAgents.deleteNow') }}
+                </NButton>
+                <NButton
+                  v-if="!statusFor(block.id)?.installed"
                   size="small"
                   type="primary"
                   secondary
                   :loading="installing[block.id]"
+                  :disabled="loading && !statusFor(block.id)"
                   @click="handleInstall(block.id)"
                 >
-                  {{ t('codingAgents.updateNow') }}
+                  {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
                 </NButton>
-              </template>
-              <NTag v-else size="small" type="success">{{ t('codingAgents.upToDate') }}</NTag>
-            </template>
-            <NButton
-              v-if="!statusFor(block.id)?.installed"
-              size="small"
-              type="primary"
-              secondary
-              :loading="installing[block.id]"
-              :disabled="loading && !statusFor(block.id)"
-              @click="handleInstall(block.id)"
+              </div>
+            </div>
+
+            <div
+              v-if="statusFor(block.id)?.installed && updateInfo[block.id]"
+              class="agent-update-state"
+              :class="{ 'is-available': updateInfo[block.id]?.updateAvailable }"
+              :data-testid="`coding-agent-update-${block.id}`"
             >
-              {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
-            </NButton>
+              <div class="update-state-copy">
+                <NTag
+                  size="small"
+                  :type="updateInfo[block.id]?.updateAvailable ? 'warning' : 'success'"
+                  :bordered="false"
+                >
+                  {{ updateInfo[block.id]?.updateAvailable
+                    ? t('codingAgents.newVersionAvailable')
+                    : t('codingAgents.upToDate') }}
+                </NTag>
+                <span v-if="updateInfo[block.id]?.updateAvailable" class="update-version">
+                  {{ updateInfo[block.id]?.latestVersion }}
+                </span>
+              </div>
+              <NButton
+                v-if="updateInfo[block.id]?.updateAvailable"
+                class="update-action"
+                size="small"
+                type="primary"
+                secondary
+                :loading="installing[block.id]"
+                :disabled="checkingUpdate[block.id] || deleting[block.id]"
+                @click="handleInstall(block.id)"
+              >
+                {{ t('codingAgents.updateNow') }}
+              </NButton>
+            </div>
           </div>
 
           <NAlert
@@ -789,10 +820,26 @@ onMounted(() => {
   min-height: 58px;
   padding: 10px 14px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
   border-bottom: 1px solid $border-light;
+}
+
+.agent-install-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.install-state-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .install-helper-alert {
@@ -837,9 +884,43 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.update-available {
+.agent-update-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid rgba(var(--success-rgb), 0.2);
+  border-radius: $radius-sm;
+  background: rgba(var(--success-rgb), 0.06);
+
+  &.is-available {
+    border-color: rgba(var(--warning-rgb), 0.24);
+    background: rgba(var(--warning-rgb), 0.07);
+  }
+}
+
+.update-state-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-version {
+  min-width: 0;
   color: $text-primary;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-action {
+  flex-shrink: 0;
 }
 
 .config-file-section {
@@ -1067,6 +1148,20 @@ onMounted(() => {
 
   .coding-agents-content {
     padding: 14px;
+  }
+
+  .agent-install-summary,
+  .agent-update-state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .install-state-actions {
+    justify-content: flex-start;
+  }
+
+  .update-action {
+    width: 100%;
   }
 
   .drawer-panel {
