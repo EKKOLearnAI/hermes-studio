@@ -328,7 +328,7 @@ export default {
 
   mcuDevices: {
     title: '小方盒',
-    subtitle: '查看裝置連結狀態',
+    subtitle: '管理小方盒語音互動裝置及其連線',
     name: '名稱',
     nameOptional: '名稱可為空',
     deviceCode: '裝置碼',

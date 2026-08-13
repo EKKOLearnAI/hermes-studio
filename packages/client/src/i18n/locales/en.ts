@@ -328,7 +328,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'View device connection status',
+    subtitle: 'Manage Little Box voice interaction devices and connections',
     name: 'Name',
     nameOptional: 'Name is optional',
     deviceCode: 'Device code',
