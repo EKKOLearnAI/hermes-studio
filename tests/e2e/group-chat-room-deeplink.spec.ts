@@ -37,6 +37,22 @@ const messagesByRoom: Record<string, unknown[]> = {
     { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
     { id: 'alpha-reasoning', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Reasoning is available on demand.', reasoning: 'Inspecting several possible approaches.', isStreaming: true, timestamp: 1_790_000_003, role: 'assistant' },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: `alpha-live-tool-${index + 1}`,
+      roomId: 'room-alpha',
+      senderId: 'agent-1',
+      senderName: 'Worker',
+      content: JSON.stringify({ result: `live-${index + 1}` }),
+      timestamp: 1_790_000_010 + index,
+      role: 'tool',
+      run_id: 'run-live-tools',
+      tool_name: `live_tool_${index + 1}`,
+      tool_call_id: `live-call-${index + 1}`,
+      ...(index === 11 ? { isStreaming: true } : {}),
+    })),
+    { id: 'alpha-live-answer', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Live run remains in progress.', timestamp: 1_790_000_030, role: 'assistant', run_id: 'run-live-tools', isStreaming: true },
+    { id: 'alpha-history-tool', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '{"result":"history"}', timestamp: 1_790_000_040, role: 'tool', run_id: 'run-history-tools', tool_name: 'historical_tool', tool_call_id: 'history-call' },
+    { id: 'alpha-history-answer', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Historical run finished.', timestamp: 1_790_000_041, role: 'assistant', run_id: 'run-history-tools' },
   ],
   'room-beta': [
     { id: 'beta-msg', roomId: 'room-beta', senderId: 'user-1', senderName: 'Bob', content: 'Beta room message', timestamp: 1_790_000_100, role: 'user' },
@@ -325,6 +341,39 @@ test.describe('group chat room deep links', () => {
     await expect(message.locator('.thinking-body')).toHaveCount(0)
     await message.locator('.thinking-header').click()
     await expect(message.locator('.thinking-body')).toContainText('Inspecting several possible approaches.')
+  })
+
+  test('keeps the active Agent run tool list bounded and independently scrollable', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const panel = page.locator('.run-tool-list[data-agent-id="agent-1"][data-run-id="run-live-tools"]')
+    const outer = page.locator('.group-message-list .virtual-message-list')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-message')).toHaveCount(12)
+    await expect(page.locator('.run-tool-list[data-run-id="run-history-tools"]')).toHaveCount(0)
+    await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .tool-name')).toContainText('historical_tool')
+
+    const dimensions = await panel.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(dimensions.clientHeight).toBeLessThan(dimensions.scrollHeight)
+    expect(dimensions.clientHeight).toBeLessThanOrEqual(180)
+
+    await panel.hover()
+    await expect.poll(async () => {
+      const first = await outer.evaluate(element => element.scrollTop)
+      await page.waitForTimeout(100)
+      const second = await outer.evaluate(element => element.scrollTop)
+      return second - first
+    }).toBe(0)
+    const outerBefore = await outer.evaluate(element => element.scrollTop)
+    await page.mouse.wheel(0, 120)
+    await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(await outer.evaluate(element => element.scrollTop)).toBe(outerBefore)
+
+    await panel.focus()
+    await expect(panel).toBeFocused()
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
