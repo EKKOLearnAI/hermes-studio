@@ -1082,6 +1082,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (typeof data.allowRemoteWorkspaceAccess === 'number') {
                 room.allowRemoteWorkspaceAccess = data.allowRemoteWorkspaceAccess
             }
+            const handoffPolicyChanged = Object.prototype.hasOwnProperty.call(data, 'agentHandoffEnabled')
+                || Object.prototype.hasOwnProperty.call(data, 'agentHandoffMaxDepth')
+                || Object.prototype.hasOwnProperty.call(data, 'agentHandoffUnlimited')
             if (typeof data.agentHandoffEnabled === 'number') {
                 room.agentHandoffEnabled = data.agentHandoffEnabled
             }
@@ -1090,6 +1093,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
             if (typeof data.agentHandoffUnlimited === 'number') {
                 room.agentHandoffUnlimited = data.agentHandoffUnlimited
+            }
+            if (handoffPolicyChanged) {
+                for (const [chainId, chain] of handoffChains.value) {
+                    if (chain.roomId === data.roomId) handoffChains.value.delete(chainId)
+                }
+                handoffChains.value = new Map(handoffChains.value)
             }
             if (typeof data.name === 'string' && data.name.trim()) {
                 room.name = data.name.trim()
