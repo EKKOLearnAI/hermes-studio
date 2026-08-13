@@ -24,6 +24,7 @@ export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
+const roomAgentUpdates = new Set<string>()
 
 export function setGroupChatServer(server: GroupChatServer | null) {
     chatServer = server
@@ -853,6 +854,13 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Failed to validate participant name' }
         return
     }
+    const updateKey = `${roomId}:${previous.agentId}`
+    if (roomAgentUpdates.has(updateKey)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
+    roomAgentUpdates.add(updateKey)
     let replacement: Awaited<ReturnType<typeof createRoomAgentRuntimeClient>> | null = null
     let runtimeSwapped = false
     try {
@@ -899,6 +907,8 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
+    } finally {
+        roomAgentUpdates.delete(updateKey)
     }
 })
 

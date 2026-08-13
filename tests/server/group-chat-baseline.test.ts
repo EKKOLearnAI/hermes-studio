@@ -842,6 +842,11 @@ describe('group chat baseline behavior', () => {
       name: 'Updated Relay Agent',
       ownerMemberId: 'guest-relay',
     })
+    expect(groupServer.agentClients.getAgent('room-relay', readyPayload.agent.agentId)).toMatchObject({
+      agent: 'codex',
+      model: 'gpt-updated',
+      name: 'Updated Relay Agent',
+    })
 
     const allRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
     const processAll = groupServer.agentClients.processMentions('room-relay', {

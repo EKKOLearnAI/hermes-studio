@@ -972,6 +972,32 @@ describe('group chat REST route baseline', () => {
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
+  it('rejects a concurrent update for the same room agent before runtime and persistence can interleave', async () => {
+    storage.rooms.set('room-lock', { id: 'room-lock', name: 'Room', inviteCode: 'LOCK' })
+    storage.agents.set('room-lock', [{
+      id: 'row-lock', roomId: 'room-lock', agentId: 'agent-lock', agent: 'hermes', profile: 'default',
+      provider: 'openai', model: 'old', apiMode: '', reasoningEffort: '', name: 'Worker', description: '', invited: 0,
+    }])
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    agentClients.createAgent.mockImplementationOnce(async (cfg: any) => {
+      await blocked
+      return { ...cfg, joinRoom: vi.fn(async () => ({})), disconnect: vi.fn() }
+    })
+    const request = (model: string) => fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock/agents/row-lock`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model, name: 'Worker' }),
+    })
+
+    const first = request('first')
+    await vi.waitFor(() => expect(agentClients.createAgent).toHaveBeenCalled())
+    const second = await request('second')
+    expect(second.status).toBe(409)
+    expect(await second.json()).toEqual({ error: 'Agent configuration update is already in progress' })
+    release()
+    expect((await first).status).toBe(200)
+  })
+
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {
     const agent = { id: 'row-agent', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Agent' }
     storage.agents.set('room-1', [agent])

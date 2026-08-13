@@ -184,6 +184,57 @@ describe('group chat durable continuation route', () => {
         expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
     })
 
+    it('waits for a queued continuation in a busy room and never produces a failed ghost run', async () => {
+        const storage = groupServer.getStorage()
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        let releaseFirst!: () => void
+        const firstBlocked = new Promise<void>(resolve => { releaseFirst = resolve })
+        let calls = 0
+        const replyToMention = vi.fn(async (_roomId: string, message: any) => {
+            calls += 1
+            if (calls === 1) {
+                await firstBlocked
+                return
+            }
+            storage.completeHandoffTarget(
+                String(message.continuationAttemptId),
+                `continuation:${message.continuationAttemptId}`,
+            )
+        })
+        groupServer.agentClients.registerAgentForRoom('room-1', {
+            ...target,
+            connected: true,
+            disconnect: vi.fn(), sendMessage: vi.fn(async () => ''), interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined), isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(), setWorkspaceDiffBroadcaster: vi.fn(), setChatRunService: vi.fn(),
+            replyToMention,
+        } as any)
+
+        const busy = groupServer.agentClients.processMentions('room-1', {
+            messageId: 'busy-1', content: '@Target busy', senderName: 'User', senderId: 'user-1',
+            timestamp: Date.now(), role: 'user', mentions: [{ type: 'agent', participantId: 'agent-2' }],
+        })
+        await vi.waitFor(() => expect(replyToMention).toHaveBeenCalledTimes(1))
+
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const dispatch = groupServer.dispatchPendingHandoffs()
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(replyToMention).toHaveBeenCalledTimes(1)
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'admitted' })
+        expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({
+            status: 'admitted',
+            invocationStartedAt: null,
+        })
+
+        releaseFirst()
+        await busy
+        expect(await dispatch).toBe(1)
+        expect(replyToMention).toHaveBeenCalledTimes(2)
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'resumed', continueUsed: 1 })
+    })
+
     it('rejects a frozen continuation when the selected runtime differs from persisted target configuration', async () => {
         const storage = groupServer.getStorage()
         const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!

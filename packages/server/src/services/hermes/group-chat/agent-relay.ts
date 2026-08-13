@@ -348,15 +348,15 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
-  readonly profile: string
-  readonly provider: string
-  readonly model: string
-  readonly apiMode: string
-  readonly reasoningEffort: string
-  readonly name: string
-  readonly description: string
-  readonly avatar: string
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  profile: string
+  provider: string
+  model: string
+  apiMode: string
+  reasoningEffort: string
+  name: string
+  description: string
+  avatar: string
   readonly ownerMemberId: string
   private activeSessions = new Map<string, string>()
   private pendingRun: PendingRelayRun | null = null
@@ -397,6 +397,18 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
 
   get busy(): boolean {
     return this.pendingRun !== null
+  }
+
+  updateConfiguration(agent: any): void {
+    this.agent = agent.agent || 'hermes'
+    this.profile = String(agent.profile || 'default')
+    this.provider = String(agent.provider || '')
+    this.model = String(agent.model || '')
+    this.apiMode = String(agent.apiMode || '')
+    this.reasoningEffort = String(agent.reasoningEffort || '')
+    this.name = String(agent.name || this.profile)
+    this.description = String(agent.description || '')
+    this.avatar = String(agent.avatar || '')
   }
 
   setStorage(_storage: any): void {}
@@ -1341,6 +1353,7 @@ export class GroupAgentRelayServer {
             if (!updated || updated.executorType !== 'remote' || updated.connectorId !== connector!.id) {
               throw relayError('Remote Agent registration no longer exists', 'GROUP_AGENT_REGISTRATION_MISSING')
             }
+            executor.updateConfiguration(updated)
             lastAgentConfigUpdateAt = now
             const agent = normalizeRemoteGroupAgentDescriptor(updated)
             this.groupChatServer.broadcastRoomAgents(connector!.roomId)
