@@ -228,7 +228,7 @@ export default {
     globalAgent: 'Global Agent',
     files: 'ファイル',
     devices: 'デバイス',
-    connections: '接続',
+    connections: 'デバイス接続',
     groupChat: 'グループチャット',
     groupConversation: '会話',
     groupConversationShort: '会話',
@@ -340,7 +340,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'View device link status',
+    subtitle: '音声対話デバイス Little Box とその接続を管理',
     name: 'Name',
     nameOptional: 'Name is optional',
     deviceCode: 'Device code',
@@ -366,6 +366,7 @@ export default {
     added: 'MCU device added',
     addFailed: 'Failed to add MCU device',
     purchase: 'Buy',
+    refresh: '更新',
     edit: 'Edit',
     editNameTitle: 'Edit name',
     nameUpdated: 'Name updated',
@@ -379,8 +380,18 @@ export default {
     close: 'Close',
   },
 
+  connections: {
+    title: 'デバイス接続',
+    tabs: {
+      app: 'App',
+      mcu: 'Little Box',
+      devices: 'デバイス',
+    },
+  },
+
   devices: {
     title: 'デバイス',
+    subtitle: '接続済みデバイス、ペアリング要求、リモートアクセスを管理',
     count: '{count} 台のデバイス',
     lastScanned: '最終スキャン: {time}',
     refresh: '更新',

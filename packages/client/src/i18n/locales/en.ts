@@ -379,6 +379,7 @@ export default {
 
   devices: {
     title: 'Devices',
+    subtitle: 'Manage connected devices, pairing requests, and remote access',
     count: '{count} devices',
     lastScanned: 'Last scanned: {time}',
     refresh: 'Refresh',

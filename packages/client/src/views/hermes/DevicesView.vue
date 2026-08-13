@@ -284,7 +284,10 @@ onMounted(() => {
 <template>
   <div class="devices-view" :class="{ 'devices-view--embedded': embedded }">
     <header class="page-header">
-      <h2 class="header-title">{{ t('devices.title') }}</h2>
+      <div class="header-heading">
+        <h2 class="header-title">{{ t('devices.title') }}</h2>
+        <p>{{ t('devices.subtitle') }}</p>
+      </div>
       <div class="header-actions">
         <NInput
           v-model:value="manualPairingUrl"
@@ -482,6 +485,17 @@ onMounted(() => {
   .page-header {
     min-height: 68px;
     padding: 12px 20px;
+  }
+}
+
+.header-heading {
+  min-width: 0;
+
+  p {
+    margin: 2px 0 0;
+    color: $text-muted;
+    font-size: 12px;
+    line-height: 18px;
   }
 }
 

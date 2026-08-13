@@ -145,7 +145,7 @@ export default {
     groupChat: 'Групповой чат',
     files: 'Файлы',
     devices: 'Устройства',
-    connections: 'Подключения',
+    connections: 'Подключение устройств',
     groupConversation: 'Диалог',
     groupConversationShort: 'Диалог',
     groupPlatform: 'Платформа',
@@ -255,7 +255,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'View device link status',
+    subtitle: 'Управление устройствами Little Box для голосового взаимодействия и их подключениями',
     name: 'Name',
     nameOptional: 'Name is optional',
     deviceCode: 'Device code',
@@ -281,6 +281,7 @@ export default {
     added: 'MCU device added',
     addFailed: 'Failed to add MCU device',
     purchase: 'Buy',
+    refresh: 'Обновить',
     edit: 'Edit',
     editNameTitle: 'Edit name',
     nameUpdated: 'Name updated',
@@ -294,8 +295,18 @@ export default {
     close: 'Close',
   },
 
+  connections: {
+    title: 'Подключение устройств',
+    tabs: {
+      app: 'Приложение',
+      mcu: 'Little Box',
+      devices: 'Устройства',
+    },
+  },
+
   devices: {
     title: 'Устройства',
+    subtitle: 'Управление подключенными устройствами, запросами на сопряжение и удаленным доступом',
     count: 'Устройств: {count}',
     lastScanned: 'Последнее сканирование: {time}',
     refresh: 'Обновить',

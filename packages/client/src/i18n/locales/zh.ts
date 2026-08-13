@@ -379,6 +379,7 @@ export default {
 
   devices: {
     title: '设备',
+    subtitle: '管理已连接设备、配对请求及远程访问',
     count: '{count} 台设备',
     lastScanned: '上次扫描：{time}',
     refresh: '刷新',

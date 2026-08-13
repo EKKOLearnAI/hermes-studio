@@ -220,7 +220,7 @@ export default {
     groupChat: 'محادثة جماعية',
     files: 'الملفات',
     devices: 'الأجهزة',
-    connections: 'الاتصالات',
+    connections: 'ترابط الأجهزة',
     groupConversation: 'المحادثة',
     groupConversationShort: 'محادثة',
     groupPlatform: 'المنصة',
@@ -328,7 +328,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'عرض حالة ارتباط الجهاز',
+    subtitle: 'إدارة أجهزة Little Box للتفاعل الصوتي واتصالاتها',
     name: 'الاسم',
     nameOptional: 'الاسم اختياري',
     deviceCode: 'رمز الجهاز',
@@ -354,6 +354,7 @@ export default {
     added: 'تم إضافة جهاز MCU',
     addFailed: 'تعذّر إضافة جهاز MCU',
     purchase: 'شراء',
+    refresh: 'تحديث',
     edit: 'تعديل',
     editNameTitle: 'تعديل الاسم',
     nameUpdated: 'تم تحديث الاسم',
@@ -367,8 +368,18 @@ export default {
     close: 'إغلاق',
   },
 
+  connections: {
+    title: 'ترابط الأجهزة',
+    tabs: {
+      app: 'التطبيق',
+      mcu: 'Little Box',
+      devices: 'الأجهزة',
+    },
+  },
+
   devices: {
     title: 'الأجهزة',
+    subtitle: 'إدارة الأجهزة المتصلة وطلبات الاقتران والوصول عن بُعد',
     count: '{count} جهاز',
     lastScanned: 'آخر فحص: {time}',
     refresh: 'تحديث',

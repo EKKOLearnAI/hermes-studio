@@ -228,7 +228,7 @@ export default {
     globalAgent: 'Global Agent',
     files: 'Dateien',
     devices: 'Gerate',
-    connections: 'Verbindungen',
+    connections: 'Geräteverbindungen',
     groupChat: 'Gruppenchat',
     groupConversation: 'Konversation',
     groupConversationShort: 'Konv',
@@ -340,7 +340,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'View device link status',
+    subtitle: 'Little-Box-Geräte für Sprachinteraktion und ihre Verbindungen verwalten',
     name: 'Name',
     nameOptional: 'Name is optional',
     deviceCode: 'Device code',
@@ -366,6 +366,7 @@ export default {
     added: 'MCU device added',
     addFailed: 'Failed to add MCU device',
     purchase: 'Buy',
+    refresh: 'Aktualisieren',
     edit: 'Edit',
     editNameTitle: 'Edit name',
     nameUpdated: 'Name updated',
@@ -379,8 +380,18 @@ export default {
     close: 'Close',
   },
 
+  connections: {
+    title: 'Geräteverbindungen',
+    tabs: {
+      app: 'App',
+      mcu: 'Little Box',
+      devices: 'Geräte',
+    },
+  },
+
   devices: {
     title: 'Geräte',
+    subtitle: 'Verbundene Geräte, Kopplungsanfragen und Fernzugriff verwalten',
     count: '{count} Geräte',
     lastScanned: 'Zuletzt gescannt: {time}',
     refresh: 'Aktualisieren',

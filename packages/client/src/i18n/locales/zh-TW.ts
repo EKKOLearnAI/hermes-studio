@@ -379,6 +379,7 @@ export default {
 
   devices: {
     title: '裝置',
+    subtitle: '管理已連線裝置、配對要求及遠端存取',
     count: '{count} 台裝置',
     lastScanned: '上次掃描：{time}',
     refresh: '重新整理',
