@@ -2874,11 +2874,16 @@ function promoteQueuedMessage(sessionId: string, messageId: string) {
         replaceQueuedUserMessages(sessionId, nextQueue)
       }
       if (dequeued && !getSessionMsgs(sessionId).some(message => message.id === dequeued.id)) {
-        addMessage(sessionId, { ...dequeued, queued: false })
-        updateSessionTitle(sessionId)
-      } else if (!dequeued) {
-        markDequeuedQueueId(sessionId, dequeuedId)
-      }
+              addMessage(sessionId, { ...dequeued, queued: false })
+              updateSessionTitle(sessionId)
+            } else if (!dequeued) {
+              // 服务端已将该消息出队(dequeued_queue_id 是权威),即使本地队列里找不到
+              // 匹配项(如 ID 被服务端改写/事件乱序),也必须把它从 UI 队列移除,
+              // 否则队列面板会一直挂着"已发出"的消息。同时打标记防止后续
+              // run.started 把它当新排队消息再加回来。
+              dropQueuedUserMessage(sessionId, dequeuedId)
+              markDequeuedQueueId(sessionId, dequeuedId)
+            }
       return
     }
 

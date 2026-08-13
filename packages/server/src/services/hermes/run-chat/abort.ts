@@ -14,6 +14,7 @@ import { flushBridgePendingToDb } from './bridge-message'
 import { flushResponseRunToDb } from './response-stream'
 import { replaceState } from './compression'
 import { calcAndUpdateUsage } from './usage'
+import { contentBlocksToString } from './content-blocks'
 import type { QueuedRun, SessionState } from './types'
 
 const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent did not confirm stop before timeout. Local run state was released so you can continue.'
@@ -272,10 +273,17 @@ export async function markAbortCompleted(
       queue_length: state.queue.length + 1,
     })
     emitToSession(nsp, socket, sessionId, 'run.queued', {
-      event: 'run.queued',
-      queue_length: state.queue.length,
-      dequeued_queue_id: next.queue_id,
-    })
+          event: 'run.queued',
+          queue_length: state.queue.length,
+          dequeued_queue_id: next.queue_id,
+          queued_messages: state.queue.filter(item => item.displayInput !== null).map(item => ({
+            id: item.queue_id,
+            role: item.displayRole || (typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user'),
+            content: contentBlocksToString(item.displayInput ?? item.input),
+            timestamp: Math.floor(Date.now() / 1000),
+            queued: true,
+          })),
+        })
     state.events = []
     runQueuedItem(socket, sessionId, next, profile || 'default')
     return
