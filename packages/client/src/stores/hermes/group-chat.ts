@@ -1910,7 +1910,7 @@ function mapGroupMessages(msgs: ChatMessage[], activeAgentNames = new Set<string
             !msg.tool_calls?.length &&
             !runtimePayloadText((msg as any).content).trim() &&
             !msg.reasoning?.trim() &&
-            (!msg.isStreaming || msg.finish_reason === 'streaming')
+            !msg.isStreaming
         ) {
             continue
         }

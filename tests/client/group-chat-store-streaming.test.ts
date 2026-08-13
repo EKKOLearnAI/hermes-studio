@@ -173,6 +173,84 @@ describe('group chat store streaming merge', () => {
     )
   })
 
+  it('keeps the real runtime streaming anchor so completed Tools stay in the live run panel', async () => {
+    const store = await createJoinedStore()
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-live_part_0',
+      run_id: 'run-live',
+      finish_reason: 'streaming',
+    }))
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'run-live_part_0' })
+    emitSocket('message', assistantMessage({
+      id: 'run-live_part_0_toolcall_call-live',
+      run_id: 'run-live',
+      timestamp: 2,
+      tool_calls: [{
+        id: 'call-live',
+        type: 'function',
+        function: { name: 'terminal', arguments: JSON.stringify({ command: 'pwd' }) },
+      }],
+      finish_reason: 'tool_calls',
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-live_part_0_toolresult_call-live',
+      run_id: 'run-live',
+      timestamp: 3,
+      role: 'tool',
+      tool_call_id: 'call-live',
+      tool_name: 'terminal',
+      content: '/workspace',
+    }))
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-live_part_1',
+      run_id: 'run-live',
+      timestamp: 4,
+      finish_reason: 'streaming',
+    }))
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]).toMatchObject({
+      role: 'agent_run',
+      run_id: 'run-live',
+      isStreaming: true,
+    })
+    expect(grouped[0].runItems).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'call-live',
+        toolStatus: 'done',
+      }),
+      expect.objectContaining({
+        id: 'run-live_part_1',
+        role: 'assistant',
+        isStreaming: true,
+        finish_reason: 'streaming',
+      }),
+    ])
+
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'ready' })
+
+    const completed = groupAgentRunMessages(store.sortedMessages)
+    expect(completed).toHaveLength(1)
+    expect(completed[0]).toMatchObject({
+      role: 'agent_run',
+      run_id: 'run-live',
+      isStreaming: false,
+    })
+    expect(completed[0].runItems).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'call-live',
+        toolStatus: 'done',
+      }),
+    ])
+  })
+
   it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
     const store = await createJoinedStore([
       assistantMessage({
