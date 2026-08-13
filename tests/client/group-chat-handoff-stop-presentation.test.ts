@@ -26,4 +26,16 @@ describe('Group Chat handoff stop UI placement', () => {
     expect(list).toContain('props.canManageHandoff && handoffChainFor(msg)!.status')
     expect(panel).toContain(':can-manage-handoff="currentRoomCanManage"')
   })
+
+  it('binds a policy save and its stop refresh to the originating Room', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const start = panel.indexOf('async function handleSaveHandoffConfig()')
+    const end = panel.indexOf('async function handleContinueHandoff', start)
+    const handler = panel.slice(start, end)
+
+    expect(handler).toContain('const roomId = store.currentRoomId')
+    expect(handler).toContain('updateRoomConfig(roomId, {')
+    expect(handler).toContain('listStoppedRoomAgentHandoffs(roomId)')
+    expect(handler).toContain('if (store.currentRoomId === roomId)')
+  })
 })

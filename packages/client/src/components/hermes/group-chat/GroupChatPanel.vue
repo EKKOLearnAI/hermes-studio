@@ -1584,15 +1584,25 @@ async function handleSaveSummaryConfig() {
 }
 
 async function handleSaveHandoffConfig() {
-    if (!store.currentRoomId || !currentRoomCanManage.value) return
+    const roomId = store.currentRoomId
+    if (!roomId || !currentRoomCanManage.value) return
     try {
-        const res = await updateRoomConfig(store.currentRoomId, {
+        const res = await updateRoomConfig(roomId, {
             agentHandoffEnabled: agentHandoffEnabledDraft.value,
             agentHandoffMaxDepth: agentHandoffMaxDepthDraft.value,
             agentHandoffUnlimited: agentHandoffUnlimitedDraft.value,
         })
-        const idx = store.rooms.findIndex(r => r.id === store.currentRoomId)
+        const idx = store.rooms.findIndex(r => r.id === roomId)
         if (idx >= 0 && res.room) store.rooms[idx] = res.room
+        try {
+            const result = await listStoppedRoomAgentHandoffs(roomId)
+            if (store.currentRoomId === roomId) {
+                store.handoffChains = new Map(result.chains.map(chain => [chain.chainId, chain]))
+            }
+        } catch {
+            // Never preserve controls that may have become invalid under the saved policy.
+            if (store.currentRoomId === roomId) store.handoffChains = new Map()
+        }
         message.success(t('common.saved'))
     } catch (err: any) {
         message.error(err?.message || t('common.saveFailed'))

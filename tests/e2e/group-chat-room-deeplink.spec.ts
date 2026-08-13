@@ -126,7 +126,15 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     const handoffListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs$/)
     if (handoffListMatch && request.method() === 'GET') {
       const roomId = decodeURIComponent(handoffListMatch[1])
-      return json({ chains: handoffChains.filter(item => item.roomId === roomId) })
+      const room = rooms.find(item => item.id === roomId)
+      return json({
+        chains: handoffChains.filter(item => item.roomId === roomId
+          && item.status === 'stopped'
+          && !item.continueUsed
+          && Number(room?.agentHandoffEnabled ?? 1) === 1
+          && Number(room?.agentHandoffUnlimited ?? 0) === 0
+          && item.maxDepth === Number(room?.agentHandoffMaxDepth ?? 4)),
+      })
     }
 
     const configMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/config$/)
@@ -542,7 +550,7 @@ test.describe('group chat room deep links', () => {
     })
   })
 
-  test('persists room handoff settings and continues one stopped chain without changing them', async ({ page }) => {
+  test('removes stale stopped chains after changing room handoff settings', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     const stopCard = page.locator('[data-handoff-chain-id="handoff:alpha-msg"]')
@@ -568,14 +576,21 @@ test.describe('group chat room deep links', () => {
       },
     })
 
-    await page.keyboard.press('Escape')
+    await expect(stopCard).toHaveCount(0)
+  })
+
+  test('continues one stopped chain without changing room handoff settings', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    const stopCard = page.locator('[data-handoff-chain-id="handoff:alpha-msg"]')
+    await expect(stopCard).toContainText('Depth: 4 / 4')
+
     const continueResponse = page.waitForResponse(response =>
       response.request().method() === 'POST'
       && response.url().includes('/handoffs/handoff%3Aalpha-msg/continue'))
     await stopCard.getByRole('button', { name: 'Continue this handoff once' }).click()
     await expect((await continueResponse).status()).toBe(202)
-    await expect(stopCard).toContainText('Continue: claimed')
-    expect(api.roomConfigUpdates).toHaveLength(1)
+    await expect(stopCard).toHaveCount(0)
+    expect(api.roomConfigUpdates).toHaveLength(0)
   })
 
   test('read-only room members cannot open room settings', async ({ page }) => {
