@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPresentableHandoffChain } from '@/components/hermes/group-chat/handoff-presentation'
+import { handoffErrorTranslationKey, isPresentableHandoffChain } from '@/components/hermes/group-chat/handoff-presentation'
 import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
 
 function chain(overrides: Partial<RoomAgentHandoffChain> = {}): RoomAgentHandoffChain {
@@ -12,6 +12,13 @@ function chain(overrides: Partial<RoomAgentHandoffChain> = {}): RoomAgentHandoff
 }
 
 describe('handoff stop presentation predicate', () => {
+  it('maps backend continuation errors to localized UI keys without returning raw copy', () => {
+    expect(handoffErrorTranslationKey('Continuation target admission was rejected')).toBe('groupChat.agentHandoffErrorAdmissionRejected')
+    expect(handoffErrorTranslationKey('Handoff source message is no longer available')).toBe('groupChat.agentHandoffErrorGeneric')
+    expect(handoffErrorTranslationKey('')).toBeNull()
+    expect(handoffErrorTranslationKey('Handoff source message is no longer available')).not.toContain('Handoff source message')
+  })
+
   it('accepts only actionable finite max-depth stops', () => {
     expect(isPresentableHandoffChain(chain())).toBe(true)
   })

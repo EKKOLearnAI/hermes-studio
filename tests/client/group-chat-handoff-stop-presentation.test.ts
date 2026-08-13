@@ -38,4 +38,14 @@ describe('Group Chat handoff stop UI placement', () => {
     expect(handler).toContain('listStoppedRoomAgentHandoffs(roomId)')
     expect(handler).toContain('if (store.currentRoomId === roomId)')
   })
+
+  it('localizes continuation action failures instead of exposing backend messages', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const start = panel.indexOf('async function handleContinueHandoff')
+    const end = panel.indexOf('async function handleSaveRoomSummary', start)
+    const handler = panel.slice(start, end)
+
+    expect(handler).toContain('handoffErrorTranslationKey(err?.message)')
+    expect(handler).not.toContain("message.error(err?.message")
+  })
 })

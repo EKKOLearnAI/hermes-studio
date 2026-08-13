@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { groupAgentRunMessages, useGroupChatStore } from '@/stores/hermes/group-chat'
 import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
-import { isPresentableHandoffChain } from './handoff-presentation'
+import { handoffErrorTranslationKey, isPresentableHandoffChain } from './handoff-presentation'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
@@ -74,12 +74,8 @@ function targetAgentName(chain: RoomAgentHandoffChain): string {
 }
 
 function handoffErrorText(error: string | null | undefined): string {
-    const normalized = String(error || '').trim()
-    if (!normalized) return ''
-    if (normalized === 'Continuation target admission was rejected') {
-        return t('groupChat.agentHandoffErrorAdmissionRejected')
-    }
-    return t('groupChat.agentHandoffErrorGeneric')
+    const key = handoffErrorTranslationKey(error)
+    return key ? t(key) : ''
 }
 
 function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {

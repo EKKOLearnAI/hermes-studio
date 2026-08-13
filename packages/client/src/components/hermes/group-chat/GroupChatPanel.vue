@@ -44,6 +44,7 @@ import {
 } from '@/utils/group-agent-avatar'
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { buildRemoteGroupChatRooms, type RemoteGroupChatRoom } from '@/utils/group-chat-remote-rooms'
+import { handoffErrorTranslationKey } from './handoff-presentation'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -1624,7 +1625,7 @@ async function handleContinueHandoff(chainId: string): Promise<void> {
         } catch {
             // Keep the original continuation error.
         }
-        message.error(err?.message || t('common.saveFailed'))
+        message.error(t(handoffErrorTranslationKey(err?.message) || 'groupChat.agentHandoffErrorGeneric'))
     } finally {
         isContinuingHandoff.value = false
     }

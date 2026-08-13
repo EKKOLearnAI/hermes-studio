@@ -1,5 +1,14 @@
 import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
 
+export function handoffErrorTranslationKey(error: unknown): string | null {
+    const normalized = String(error || '').trim()
+    if (!normalized) return null
+    if (normalized === 'Continuation target admission was rejected') {
+        return 'groupChat.agentHandoffErrorAdmissionRejected'
+    }
+    return 'groupChat.agentHandoffErrorGeneric'
+}
+
 export function isPresentableHandoffChain(chain: RoomAgentHandoffChain): boolean {
     const currentDepth = Number(chain.currentDepth)
     const maxDepth = Number(chain.maxDepth)
