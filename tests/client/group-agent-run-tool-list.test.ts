@@ -88,8 +88,8 @@ function mountCard(message: ChatMessage) {
   })
 }
 
-describe('GroupAgentRunCard current tool list', () => {
-  it('places only the current active Agent/Run tool calls in one keyboard-focusable bounded panel', () => {
+describe('GroupAgentRunCard tool list', () => {
+  it('places the current Agent/Run tool calls newest-first after its transcript', () => {
     const wrapper = mountCard(runMessage([
       runItem({ id: 'current-tool-1', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
       runItem({ id: 'current-reasoning', content: 'Checking the result.', isStreaming: true, timestamp: 2 }),
@@ -102,24 +102,33 @@ describe('GroupAgentRunCard current tool list', () => {
     expect(panel.attributes('data-agent-id')).toBe('agent-1')
     expect(panel.attributes('data-run-id')).toBe('run-current')
     expect(panel.findAll('.run-tool-item').map(item => item.attributes('data-message-id'))).toEqual([
-      'current-tool-1',
       'current-tool-2',
+      'current-tool-1',
     ])
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(panel.element)
   })
 
-  it('keeps completed historical tool calls in the normal run transcript without a second panel', () => {
+  it('keeps completed historical tool calls in the same bounded panel after its transcript', () => {
     const wrapper = mountCard(runMessage([
-      runItem({ id: 'historical-tool', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
+      runItem({ id: 'historical-tool-1', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
       runItem({ id: 'historical-answer', content: 'Finished.', timestamp: 2 }),
+      runItem({ id: 'historical-tool-2', role: 'tool', toolName: 'search', toolStatus: 'done', timestamp: 3 }),
     ], false))
 
-    expect(wrapper.find('.run-tool-list').exists()).toBe(false)
+    expect(wrapper.get('.run-tool-list').findAll('.run-tool-item').map(item => item.attributes('data-message-id'))).toEqual([
+      'historical-tool-2',
+      'historical-tool-1',
+    ])
     expect(wrapper.findAll('.run-transcript-item').map(item => item.attributes('data-message-id'))).toEqual([
-      'historical-tool',
       'historical-answer',
     ])
-    expect(wrapper.get('.run-transcript').text()).toContain('read_file')
+    expect(wrapper.get('.run-transcript').text()).not.toContain('read_file')
+    expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-1"]')).toHaveLength(1)
+    expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-2"]')).toHaveLength(1)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-tool-list').element)
   })
 })

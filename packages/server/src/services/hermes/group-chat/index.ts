@@ -3887,12 +3887,14 @@ export class GroupChatServer {
         if (!member) return
         const id = this.normalizeClientMessageId(data.id)
         if (!id) return
+        const agent = this.storage.getRoomAgentByAgentId(roomId, member.userId)
 
         this.nsp.to(roomId).emit('message_stream_start', {
             id,
             roomId,
             senderId: member.userId,
             senderName: member.name,
+            ...(agent?.id ? { senderAgentRecordId: agent.id } : {}),
             content: '',
             timestamp: data.timestamp || Date.now(),
             run_id: typeof data.run_id === 'string' && data.run_id.trim() ? data.run_id.trim() : null,

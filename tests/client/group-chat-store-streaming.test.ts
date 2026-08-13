@@ -173,6 +173,56 @@ describe('group chat store streaming merge', () => {
     )
   })
 
+  it('keeps persisted Tools inside the live Agent run when transport sender ids differ', async () => {
+    const store = await createJoinedStore()
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-owned_part_0',
+      senderId: 'transport-socket-id',
+      senderAgentRecordId: 'agent-record-1',
+      run_id: 'run-owned',
+      finish_reason: 'streaming',
+    }))
+    emitSocket('message_reasoning_delta', {
+      roomId: 'room-1',
+      id: 'run-owned_part_0',
+      delta: 'Inspecting.',
+    })
+    emitSocket('message', assistantMessage({
+      id: 'run-owned_part_0_toolresult_call-owned',
+      senderId: 'agent-stable-id',
+      senderAgentRecordId: 'agent-record-1',
+      timestamp: 2,
+      run_id: 'run-owned',
+      role: 'tool',
+      tool_call_id: 'call-owned',
+      tool_name: 'read_file',
+      content: 'result',
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-owned_part_1',
+      senderId: 'agent-stable-id',
+      senderAgentRecordId: 'agent-record-1',
+      timestamp: 3,
+      run_id: 'run-owned',
+      content: 'Finished.',
+    }))
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]).toMatchObject({
+      role: 'agent_run',
+      run_id: 'run-owned',
+      senderAgentRecordId: 'agent-record-1',
+    })
+    expect(grouped[0].runItems).toEqual([
+      expect.objectContaining({ id: 'run-owned_part_0', reasoning: 'Inspecting.' }),
+      expect.objectContaining({ role: 'tool', toolCallId: 'call-owned' }),
+      expect.objectContaining({ id: 'run-owned_part_1', content: 'Finished.' }),
+    ])
+  })
+
   it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
     const store = await createJoinedStore([
       assistantMessage({

@@ -782,7 +782,12 @@ describe('Group Chat member/agent identity sync', () => {
     expect(updateRoomTotalTokens).not.toHaveBeenCalled()
     expect(roomEmit).toHaveBeenCalledWith('context_status', expect.objectContaining({ roomId: 'room-1', agentName: 'Worker', status: 'replying' }))
     expect(broadcastEmit).not.toHaveBeenCalledWith('room_updated', expect.anything())
-    expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({ id: 'current-stream', senderName: 'Worker' }))
+    expect(broadcastEmit).toHaveBeenCalledWith('message_stream_start', expect.objectContaining({
+      id: 'current-stream',
+      senderId: 'agent-stable-1',
+      senderAgentRecordId: 'row-1',
+      senderName: 'Worker',
+    }))
   })
 
   it('accepts side-channel events for the persisted non-Hermes runtime session', () => {
@@ -833,7 +838,12 @@ describe('Group Chat member/agent identity sync', () => {
 
     expect(broadcastEmit).toHaveBeenCalledWith(
       'message_stream_start',
-      expect.objectContaining({ id: 'ekko-stream', senderName: 'ekko-agent' }),
+      expect.objectContaining({
+        id: 'ekko-stream',
+        senderId: 'agent-ekko-1',
+        senderAgentRecordId: 'row-ekko-1',
+        senderName: 'ekko-agent',
+      }),
     )
   })
 

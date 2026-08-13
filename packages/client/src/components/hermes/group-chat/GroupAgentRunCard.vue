@@ -27,13 +27,11 @@ const { t } = useI18n()
 const items = computed(() =>
     props.message.runItems?.length ? props.message.runItems : [props.message]
 )
-const currentRunToolItems = computed(() =>
-    props.message.isStreaming
-        ? items.value.filter(item => item.role === 'tool')
-        : []
+const runToolItems = computed(() =>
+    items.value.filter(item => item.role === 'tool').reverse()
 )
 const transcriptItems = computed(() =>
-    currentRunToolItems.value.length > 0
+    runToolItems.value.length > 0
         ? items.value.filter(item => item.role !== 'tool')
         : items.value
 )
@@ -101,20 +99,11 @@ function handleToolListWheel(event: WheelEvent): void {
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
-                <div
-                    v-if="currentRunToolItems.length"
-                    class="run-tool-list"
-                    tabindex="0"
-                    role="region"
-                    :aria-label="t('chat.showToolCalls')"
-                    :data-agent-id="stableAgentId"
-                    :data-run-id="message.run_id || undefined"
-                    @wheel="handleToolListWheel"
-                >
+                <div v-if="transcriptItems.length" class="run-transcript">
                     <div
-                        v-for="item in currentRunToolItems"
+                        v-for="item in transcriptItems"
                         :key="item.id"
-                        class="run-tool-item"
+                        class="run-transcript-item"
                         :data-message-id="item.id"
                     >
                         <GroupMessageItem
@@ -127,11 +116,20 @@ function handleToolListWheel(event: WheelEvent): void {
                         />
                     </div>
                 </div>
-                <div v-if="transcriptItems.length" class="run-transcript">
+                <div
+                    v-if="runToolItems.length"
+                    class="run-tool-list"
+                    tabindex="0"
+                    role="region"
+                    :aria-label="t('chat.showToolCalls')"
+                    :data-agent-id="stableAgentId"
+                    :data-run-id="message.run_id || undefined"
+                    @wheel="handleToolListWheel"
+                >
                     <div
-                        v-for="item in transcriptItems"
+                        v-for="item in runToolItems"
                         :key="item.id"
-                        class="run-transcript-item"
+                        class="run-tool-item"
                         :data-message-id="item.id"
                     >
                         <GroupMessageItem
@@ -241,7 +239,7 @@ function handleToolListWheel(event: WheelEvent): void {
     min-width: 0;
 }
 
-.run-tool-list + .run-transcript {
+.run-transcript + .run-tool-list {
     border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
 }
 

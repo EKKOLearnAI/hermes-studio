@@ -1910,7 +1910,7 @@ function mapGroupMessages(msgs: ChatMessage[], activeAgentNames = new Set<string
             !msg.tool_calls?.length &&
             !runtimePayloadText((msg as any).content).trim() &&
             !msg.reasoning?.trim() &&
-            (!msg.isStreaming || msg.finish_reason === 'streaming')
+            !msg.isStreaming
         ) {
             continue
         }
@@ -2003,7 +2003,8 @@ export function groupAgentRunMessages(messages: ChatMessage[]): ChatMessage[] {
             result.push(message)
             continue
         }
-        const groupKey = `${message.senderId}\u0000${runId}`
+        const ownerId = String(message.senderAgentRecordId || message.senderId || '').trim()
+        const groupKey = `${ownerId}\u0000${runId}`
         const existing = groupedByRun.get(groupKey)
         if (existing) {
             existing.runItems!.push(message)
@@ -2012,7 +2013,7 @@ export function groupAgentRunMessages(messages: ChatMessage[]): ChatMessage[] {
         }
         const grouped: ChatMessage = {
             ...message,
-            id: `group-agent-run:${message.senderId}:${runId}`,
+            id: `group-agent-run:${ownerId}:${runId}`,
             run_id: runId,
             role: 'agent_run',
             content: '',
