@@ -145,10 +145,10 @@ describe('group chat structured agent mentions', () => {
 
     expect(response).toEqual({ id: 'self-plus-other-reply' })
     expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('self-plus-other-reply')).toEqual({ count: 1 })
-    expect(replyToMention).toHaveBeenCalledWith('room-1', expect.objectContaining({
+    await vi.waitFor(() => expect(replyToMention).toHaveBeenCalledWith('room-1', expect.objectContaining({
       messageId: 'self-plus-other-reply',
       mentions: [{ type: 'agent', participantId: 'agent-reviewer' }],
-    }), expect.anything(), expect.any(Function))
+    }), expect.anything(), expect.any(Function)))
   })
 
   it('persists tool output containing mention-like text without authorizing or routing mentions', async () => {
