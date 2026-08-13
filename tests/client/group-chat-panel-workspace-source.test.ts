@@ -439,6 +439,8 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(list).toContain('data-handoff-chain-id')
     expect(list).toContain("emit('continueHandoff'")
     expect(list).toContain("emit('adjustHandoffSettings')")
+    expect(list).toContain('props.canManageHandoff && handoffChainFor(msg)!.status')
+    expect(panel).toContain(':can-manage-handoff="currentRoomCanManage"')
     expect(panel).toContain('@continue-handoff="handleContinueHandoff"')
     expect(panel).toContain('@adjust-handoff-settings="handleOpenRoomSettings"')
   })

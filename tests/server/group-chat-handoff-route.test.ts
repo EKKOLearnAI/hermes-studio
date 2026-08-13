@@ -36,7 +36,12 @@ describe('group chat durable continuation route', () => {
         initAllHermesTables()
         groupServer = new GroupChatServer(createServer())
         const storage = groupServer.getStorage()
-        storage.saveRoom('room-1', 'Room', 'ROOM1')
+        storage.saveRoom('room-1', 'Room', 'ROOM1', {
+            ownerAuthUserId: 1,
+            agentHandoffEnabled: true,
+            agentHandoffMaxDepth: 4,
+            agentHandoffUnlimited: false,
+        })
         storage.addRoomAgent('room-1', 'agent-2', 'default', 'Target', '', 0)
         db.prepare(
             `INSERT INTO gc_messages
@@ -54,6 +59,12 @@ describe('group chat durable continuation route', () => {
         setGroupChatServer(groupServer)
         const app = new Koa()
         app.use(bodyParser())
+        app.use(async (ctx, next) => {
+            const testUser = ctx.get('x-test-user')
+            if (testUser === 'owner') ctx.state.user = { id: 1, username: 'owner', role: 'admin', profiles: [] }
+            if (testUser === 'member') ctx.state.user = { id: 2, username: 'member', role: 'admin', profiles: [] }
+            await next()
+        })
         app.use(groupChatPublicRoutes.routes())
         app.use(groupChatRoutes.routes())
         httpServer = createServer(app.callback())
@@ -65,6 +76,20 @@ describe('group chat durable continuation route', () => {
         setGroupChatServer(null)
         db?.close()
         dbState.current = null
+    })
+
+    it('allows the authenticated Room owner and rejects a non-manager without side effects', async () => {
+        const endpoint = `${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`
+        const denied = await fetch(endpoint, { method: 'POST', headers: { 'x-test-user': 'member' } })
+        expect(denied.status).toBe(403)
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 0 })
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_outbox').get()).toEqual({ count: 0 })
+        expect(groupServer.getStorage().getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'stopped' })
+
+        const allowed = await fetch(endpoint, { method: 'POST', headers: { 'x-test-user': 'owner' } })
+        expect(allowed.status).toBe(202)
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 1 })
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_outbox').get()).toEqual({ count: 1 })
     })
 
     it('returns a stable asynchronous continuation acknowledgement', async () => {

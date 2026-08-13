@@ -12,7 +12,11 @@ describe('group chat room Agent handoff depth policy', () => {
 
     beforeEach(async () => {
         harness = await createTestGroupChatServer()
-        harness.groupServer.getStorage().saveRoom('room-1', 'Room', 'ROOM1')
+        harness.groupServer.getStorage().saveRoom('room-1', 'Room', 'ROOM1', {
+            agentHandoffEnabled: true,
+            agentHandoffMaxDepth: 4,
+            agentHandoffUnlimited: false,
+        })
         harness.groupServer.getStorage().addRoomAgent('room-1', 'agent-2', 'default', 'Target', '', 0)
         harness.db.prepare(
             `INSERT INTO gc_messages
@@ -58,6 +62,38 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(shouldRouteGroupChatAgentHandoff(0, { enabled: false, maxDepth: 4, unlimited: false })).toBe(false)
     })
 
+    it('returns only actionable finite depth stops with valid Room source and target records', () => {
+        const storage = harness.groupServer.getStorage()
+        const db = harness.db
+        storage.addRoomAgent('room-1', 'agent-3', 'default', 'Other', '', 0)
+        db.prepare(`INSERT INTO gc_messages
+          (id, roomId, senderId, senderName, content, timestamp, persistedAt, mentions, role)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run('source-valid', 'room-1', 'agent-1', 'Source', '@Target', 200, 200,
+            JSON.stringify([{ type: 'agent', participantId: 'agent-2' }]), 'assistant')
+        storage.recordHandoffStop('room-1', 'valid', 'source-valid', 4, 'agent-2', {
+          enabled: true, maxDepth: 4, unlimited: false,
+        })
+        storage.recordHandoffStop('room-1', 'sentinel', 'source-valid', Number.MAX_SAFE_INTEGER, 'agent-2', {
+          enabled: true, maxDepth: 4, unlimited: false,
+        })
+        storage.recordHandoffStop('room-1', 'missing-target', 'source-valid', 4, '', {
+          enabled: true, maxDepth: 4, unlimited: false,
+        })
+        storage.recordHandoffStop('room-1', 'missing-source', 'absent', 4, 'agent-2', {
+          enabled: true, maxDepth: 4, unlimited: false,
+        })
+        storage.recordHandoffStop('room-1', 'unlimited', 'source-valid', 4, 'agent-2', {
+          enabled: true, maxDepth: null, unlimited: true,
+        })
+        storage.recordHandoffStop('room-1', 'wrong-reason', 'source-valid', 4, 'agent-2', {
+          enabled: true, maxDepth: 4, unlimited: false,
+        })
+        db.prepare("UPDATE gc_handoff_chains SET stopReason = 'continue_failed' WHERE chainId = 'wrong-reason'").run()
+
+        expect(storage.getStoppedHandoffChains('room-1').map((chain: any) => chain.chainId).sort()).toEqual(['chain-1', 'valid'])
+    })
+
     it('claims one durable attempt, persists the outbox, and deduplicates replay', () => {
         const storage = harness.groupServer.getStorage()
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')
@@ -80,13 +116,25 @@ describe('group chat room Agent handoff depth policy', () => {
             status: 'resumed',
             continueUsed: 1,
         })
-        expect(storage.getStoppedHandoffChains('room-1')).toEqual([
-            expect.objectContaining({
-                chainId: 'chain-1',
-                status: 'resumed',
-                continueUsed: 1,
-            }),
-        ])
+        expect(storage.getStoppedHandoffChains('room-1')).toEqual([])
+    })
+
+    it('migrates the legacy unique chain index to retained history plus one active attempt', async () => {
+        harness.db.exec(`
+          DROP INDEX IF EXISTS idx_gc_handoff_attempts_chain_history;
+          DROP INDEX IF EXISTS idx_gc_handoff_attempts_chain_active;
+          CREATE UNIQUE INDEX idx_gc_handoff_attempts_chain ON gc_handoff_attempts(chainId);
+        `)
+
+        const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+        initAllHermesTables()
+
+        const indexes = harness.db.prepare("PRAGMA index_list('gc_handoff_attempts')").all() as Array<{ name: string; unique: number }>
+        expect(indexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'idx_gc_handoff_attempts_chain_history', unique: 0 }),
+            expect.objectContaining({ name: 'idx_gc_handoff_attempts_chain_active', unique: 1 }),
+        ]))
+        expect(indexes.some(index => index.name === 'idx_gc_handoff_attempts_chain')).toBe(false)
     })
 
     it('records a failed delivery as retryable and allocates a new attempt', () => {
@@ -97,6 +145,12 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(storage.getHandoffAttempt(String(first.attemptId))).toMatchObject({ status: 'failed' })
         const retry = storage.claimHandoffContinuation('room-1', 'chain-1')!
         expect(retry.attemptId).not.toBe(first.attemptId)
+        expect(storage.getHandoffAttempt(String(first.attemptId))).toMatchObject({ status: 'failed' })
+        expect(storage.getHandoffAttempt(String(retry.attemptId))).toMatchObject({
+            status: 'claimed',
+            replacesAttemptId: first.attemptId,
+        })
+        expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts WHERE chainId = ?').get('chain-1')).toEqual({ count: 2 })
     })
 
     it('recovers an expired claimed attempt on storage restart without consuming continuation', () => {

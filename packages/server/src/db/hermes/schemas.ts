@@ -661,8 +661,9 @@ export const GC_HANDOFF_ATTEMPTS_SCHEMA: Record<string, string> = {
   updatedAt: 'INTEGER NOT NULL',
 }
 export const GC_HANDOFF_ATTEMPTS_INDEXES = {
-  idx_gc_handoff_attempts_chain: 'CREATE UNIQUE INDEX idx_gc_handoff_attempts_chain ON gc_handoff_attempts(chainId)',
-  idx_gc_handoff_attempts_lease: 'CREATE INDEX idx_gc_handoff_attempts_lease ON gc_handoff_attempts(status, leaseUntil)',
+  idx_gc_handoff_attempts_chain_history: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_attempts_chain_history ON gc_handoff_attempts(chainId, createdAt)',
+  idx_gc_handoff_attempts_chain_active: "CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_handoff_attempts_chain_active ON gc_handoff_attempts(chainId) WHERE status IN ('claimed', 'admitted', 'dispatched')",
+  idx_gc_handoff_attempts_lease: 'CREATE INDEX IF NOT EXISTS idx_gc_handoff_attempts_lease ON gc_handoff_attempts(status, leaseUntil)',
 }
 
 export const GC_HANDOFF_OUTBOX_TABLE = 'gc_handoff_outbox'
@@ -1436,6 +1437,10 @@ export function initAllHermesTables(): void {
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
     syncTable(GC_HANDOFF_CHAINS_TABLE, GC_HANDOFF_CHAINS_SCHEMA, { indexes: GC_HANDOFF_CHAINS_INDEXES })
     syncTable(GC_HANDOFF_ATTEMPTS_TABLE, GC_HANDOFF_ATTEMPTS_SCHEMA, { indexes: GC_HANDOFF_ATTEMPTS_INDEXES })
+    // Migrate the legacy one-attempt-per-chain index to retained history plus
+    // a single active attempt invariant. DROP is idempotent for fresh DBs.
+    db.exec('DROP INDEX IF EXISTS idx_gc_handoff_attempts_chain')
+    createIndexes(db, GC_HANDOFF_ATTEMPTS_INDEXES)
     syncTable(GC_HANDOFF_OUTBOX_TABLE, GC_HANDOFF_OUTBOX_SCHEMA, { indexes: GC_HANDOFF_OUTBOX_INDEXES })
     syncTable(GC_HANDOFF_DELIVERIES_TABLE, GC_HANDOFF_DELIVERIES_SCHEMA, { indexes: GC_HANDOFF_DELIVERIES_INDEXES })
     syncTable(GC_HANDOFF_INBOX_TABLE, GC_HANDOFF_INBOX_SCHEMA, { indexes: GC_HANDOFF_INBOX_INDEXES })

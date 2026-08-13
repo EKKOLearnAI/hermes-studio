@@ -989,63 +989,140 @@ class ChatStorage {
         return this.db()?.prepare('SELECT * FROM gc_handoff_chains WHERE roomId = ? AND chainId = ?').get(roomId, chainId) || null
     }
 
+    private actionableHandoffChainWhere(alias = 'chain'): string {
+        const effectiveDefaultDepth = resolveGroupChatAgentHandoffPolicy(
+            { enabled: true, maxDepth: null, unlimited: false },
+            process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH,
+        ).maxDepth ?? DEFAULT_GROUP_CHAT_AGENT_HANDOFF_DEPTH
+        const ecmaTrimCharacters = [
+            "' '",
+            'char(9)', 'char(10)', 'char(11)', 'char(12)', 'char(13)',
+            'char(160)', 'char(5760)',
+            'char(8192)', 'char(8193)', 'char(8194)', 'char(8195)', 'char(8196)', 'char(8197)',
+            'char(8198)', 'char(8199)', 'char(8200)', 'char(8201)', 'char(8202)',
+            'char(8232)', 'char(8233)', 'char(8239)', 'char(8287)', 'char(12288)', 'char(65279)',
+        ].join(' || ')
+        return `${alias}.status = 'stopped'
+               AND (
+                 ${alias}.stopReason = 'max_depth'
+                 OR (
+                   ${alias}.stopReason = 'continue_failed'
+                   AND ${alias}.attemptId IS NOT NULL
+                   AND typeof(${alias}.lastError) = 'text'
+                   AND length(trim(${alias}.lastError, ${ecmaTrimCharacters})) > 0
+                   AND EXISTS (
+                     SELECT 1 FROM gc_handoff_attempts AS failed_attempt
+                     WHERE failed_attempt.attemptId = ${alias}.attemptId
+                       AND failed_attempt.chainId = ${alias}.chainId
+                       AND failed_attempt.roomId = ${alias}.roomId
+                       AND failed_attempt.status = 'failed'
+                   )
+                 )
+               )
+               AND ${alias}.continueUsed = 0
+               AND ${alias}.unlimited = 0
+               AND typeof(${alias}.maxDepth) = 'integer'
+               AND typeof(${alias}.currentDepth) = 'integer'
+               AND ${alias}.maxDepth >= 1
+               AND ${alias}.maxDepth < ${Number.MAX_SAFE_INTEGER}
+               AND ${alias}.currentDepth >= ${alias}.maxDepth
+               AND ${alias}.currentDepth < ${Number.MAX_SAFE_INTEGER}
+               AND EXISTS (
+                 SELECT 1 FROM gc_rooms AS policy_room
+                 WHERE policy_room.id = ${alias}.roomId
+                   AND COALESCE(policy_room.agentHandoffEnabled, 1) = 1
+                   AND COALESCE(policy_room.agentHandoffUnlimited, 0) = 0
+                   AND (
+                     (policy_room.agentHandoffMaxDepth IS NULL AND ${alias}.maxDepth = ${effectiveDefaultDepth})
+                     OR (
+                       typeof(policy_room.agentHandoffMaxDepth) = 'integer'
+                       AND policy_room.agentHandoffMaxDepth >= 1
+                       AND policy_room.agentHandoffMaxDepth < ${Number.MAX_SAFE_INTEGER}
+                       AND policy_room.agentHandoffMaxDepth = ${alias}.maxDepth
+                     )
+                   )
+               )`
+    }
+
+    private getActionableHandoffChain(roomId: string, chainId: string): any | null {
+        return this.db()?.prepare(
+            `SELECT chain.* FROM gc_handoff_chains AS chain
+             INNER JOIN gc_messages AS source
+               ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
+             INNER JOIN gc_room_agents AS target
+               ON target.agentId = chain.targetAgentId AND target.roomId = chain.roomId
+             WHERE chain.roomId = ? AND chain.chainId = ?
+               AND ${this.actionableHandoffChainWhere('chain')}`,
+        ).get(roomId, chainId) || null
+    }
+
     getStoppedHandoffChains(roomId: string): any[] {
         return (this.db()?.prepare(
-            `SELECT * FROM gc_handoff_chains
-             WHERE roomId = ?
-             ORDER BY updatedAt DESC`,
+            `SELECT chain.* FROM gc_handoff_chains AS chain
+             INNER JOIN gc_messages AS source
+               ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
+             INNER JOIN gc_room_agents AS target
+               ON target.agentId = chain.targetAgentId AND target.roomId = chain.roomId
+             WHERE chain.roomId = ?
+               AND ${this.actionableHandoffChainWhere('chain')}
+             ORDER BY chain.updatedAt DESC`,
         ).all(roomId) || []) as any[]
     }
 
     claimHandoffContinuation(roomId: string, chainId: string): any | null {
         const db = this.db()
         if (!db) return null
-        const chain = this.getHandoffChain(roomId, chainId)
-        if (!chain) return null
-        if (chain.status === 'resumed' && chain.continueUsed) return chain
-        if (chain.status !== 'stopped' || Number(chain.continueUsed) !== 0) return null
-        const source = this.getMessage(String(chain.sourceMessageId))
-        if (!source) return null
-        const attemptId = randomUUID()
-        const now = Date.now()
-        const payload = JSON.stringify({
-            messageId: source.id,
-            content: String(source.content || ''),
-            input: String(source.content || ''),
-            senderName: source.senderName,
-            senderId: source.senderId,
-            timestamp: source.timestamp,
-            role: source.role,
-            mentionDepth: Math.max(0, Number(chain.currentDepth || 0) - 1),
-            handoffChainId: chain.chainId,
-            mentions: chain.targetAgentId
-                ? [{ type: 'agent', participantId: String(chain.targetAgentId) }]
-                : source.mentions,
-        })
-        const targetSnapshot = JSON.stringify({ agentId: String(chain.targetAgentId || '') })
-        const payloadDigest = createHash('sha256').update(payload).digest('hex')
-        this.withImmediateTransaction(db, () => {
-            if (chain.attemptId) {
-                db.prepare(`DELETE FROM gc_handoff_outbox WHERE attemptId = ?`).run(chain.attemptId)
-                db.prepare(`DELETE FROM gc_handoff_attempts WHERE attemptId = ? AND status = 'failed'`).run(chain.attemptId)
-            }
+        return this.withImmediateTransaction(db, () => {
+            const chain = this.getActionableHandoffChain(roomId, chainId)
+            if (!chain) return null
+            const source = this.getMessage(String(chain.sourceMessageId))
+            if (!source || source.roomId !== roomId) return null
+            const attemptId = randomUUID()
+            const now = Date.now()
+            const payload = JSON.stringify({
+                messageId: source.id,
+                content: String(source.content || ''),
+                input: String(source.content || ''),
+                senderName: source.senderName,
+                senderId: source.senderId,
+                timestamp: source.timestamp,
+                role: source.role,
+                mentionDepth: Number(chain.currentDepth) - 1,
+                handoffChainId: chain.chainId,
+                mentions: [{ type: 'agent', participantId: String(chain.targetAgentId) }],
+            })
+            const targetSnapshot = JSON.stringify({ agentId: String(chain.targetAgentId) })
+            const payloadDigest = createHash('sha256').update(payload).digest('hex')
+            const previousAttemptId = String(chain.attemptId || '')
+            const claimed = db.prepare(
+                `UPDATE gc_handoff_chains
+                 SET status = 'claimed', attemptId = ?, updatedAt = ?
+                 WHERE roomId = ? AND chainId = ? AND ${this.actionableHandoffChainWhere('gc_handoff_chains')}`,
+            ).run(attemptId, now, roomId, chainId)
+            if (!claimed.changes) return null
             db.prepare(
                 `INSERT INTO gc_handoff_attempts
-                   (attemptId, chainId, roomId, sourceInstanceId, targetAgentId, targetSnapshot, payloadDigest, status, leaseUntil, attemptCount, createdAt, updatedAt)
-                 VALUES (?, ?, ?, 'studio', ?, ?, ?, 'claimed', ?, 1, ?, ?)`,
-            ).run(attemptId, chainId, roomId, String(chain.targetAgentId || ''), targetSnapshot, payloadDigest, now + 30_000, now, now)
+                   (attemptId, chainId, roomId, sourceInstanceId, targetAgentId, targetSnapshot, payloadDigest, replacesAttemptId, status, leaseUntil, attemptCount, createdAt, updatedAt)
+                 VALUES (?, ?, ?, 'studio', ?, ?, ?, ?, 'claimed', ?, 1, ?, ?)`,
+            ).run(
+                attemptId,
+                chainId,
+                roomId,
+                String(chain.targetAgentId),
+                targetSnapshot,
+                payloadDigest,
+                previousAttemptId || null,
+                now + 30_000,
+                now,
+                now,
+            )
             db.prepare(
                 `INSERT INTO gc_handoff_outbox
                    (attemptId, roomId, payload, status, availableAt, createdAt, updatedAt)
                  VALUES (?, ?, ?, 'pending', ?, ?, ?)`,
             ).run(attemptId, roomId, payload, now, now, now)
-            db.prepare(
-                `UPDATE gc_handoff_chains
-                 SET status = 'claimed', attemptId = ?, updatedAt = ?
-                 WHERE roomId = ? AND chainId = ? AND status = 'stopped' AND continueUsed = 0`,
-            ).run(attemptId, now, roomId, chainId)
+            return this.getHandoffChain(roomId, chainId)
         })
-        return this.getHandoffChain(roomId, chainId)
     }
 
     getHandoffAttempt(attemptId: string): any | null {
@@ -3523,7 +3600,10 @@ export class GroupChatServer {
         ack?.({ id: savedMsg.id })
 
         const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
-        const hasStructuredAgentTargets = isAgentReply && (savedMsg.mentions?.length || 0) > 0
+        const structuredAgentTargetId = isAgentReply && Array.isArray(savedMsg.mentions)
+            ? String(savedMsg.mentions.find(mention => mention.type === 'agent')?.participantId || '')
+            : ''
+        const hasStructuredAgentTargets = Boolean(structuredAgentTargetId)
         const trustedMetadata = isAgentReply
             ? this.consumeTrustedAgentMessageMetadata(roomId, savedMsg.id)
             : null
@@ -3578,17 +3658,20 @@ export class GroupChatServer {
             })
         } else if (
             isAgentReply
+            && hasStructuredAgentTargets
+            && trustedMetadata
+            && handoffPolicy.enabled
+            && !handoffPolicy.unlimited
+            && Number.isFinite(handoffPolicy.maxDepth)
+            && mentionDepth >= Number(handoffPolicy.maxDepth)
             && typeof this.storage.recordHandoffStop === 'function'
-            && !shouldRouteGroupChatAgentHandoff(mentionDepth, handoffPolicy)
         ) {
             this.storage.recordHandoffStop(
                 roomId,
                 `handoff:${savedMsg.id}`,
                 savedMsg.id,
                 mentionDepth,
-                Array.isArray(savedMsg.mentions)
-                    ? String(savedMsg.mentions.find(mention => mention.type === 'agent')?.participantId || '')
-                    : '',
+                structuredAgentTargetId,
                 handoffPolicy,
             )
             this.broadcastHandoffUpdate(

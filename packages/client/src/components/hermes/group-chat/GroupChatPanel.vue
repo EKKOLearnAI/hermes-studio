@@ -25,7 +25,7 @@ import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { GroupChatMention, MemberInfo, RoomAgent, RoomAgentHandoffChain, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -101,9 +101,6 @@ const agentHandoffEnabledDraft = ref(true)
 const agentHandoffMaxDepthDraft = ref<number | null>(4)
 const agentHandoffUnlimitedDraft = ref(false)
 const agentHandoffRecommendation = computed(() => Math.max(4, store.agents.length + 1))
-const stoppedHandoffChains = computed<RoomAgentHandoffChain[]>(() =>
-    [...store.handoffChains.values()].filter(chain => chain.roomId === store.currentRoomId)
-)
 const isContinuingHandoff = ref(false)
 const roomSummaryState = ref<RoomSummaryState | null>(null)
 const roomSummaryAnchor = ref<RoomSummaryAnchor | null>(null)
@@ -2049,6 +2046,7 @@ async function handleClarify(response?: string) {
                     <div class="group-message-shell">
                         <GroupMessageList
                             :allow-speech="!props.standalone"
+                            :can-manage-handoff="currentRoomCanManage"
                             @mention-agent="handleMentionAgent"
                             @continue-handoff="handleContinueHandoff"
                             @adjust-handoff-settings="handleOpenRoomSettings"
@@ -2867,23 +2865,6 @@ async function handleClarify(response?: string) {
                                 <NSwitch v-model:value="agentHandoffUnlimitedDraft" :disabled="!agentHandoffEnabledDraft" />
                             </div>
                             <NButton type="primary" @click="handleSaveHandoffConfig">{{ t('common.save') }}</NButton>
-                            <div v-for="chain in stoppedHandoffChains" :key="chain.chainId" class="form-hint">
-                                <div>{{ t('groupChat.agentHandoffStopped') }}</div>
-                                <div>{{ t('groupChat.agentHandoffDepthState', { current: chain.currentDepth, max: chain.unlimited ? '∞' : chain.maxDepth }) }}</div>
-                                <div>{{ t('groupChat.agentHandoffTarget', { target: chain.targetAgentId || '—' }) }}</div>
-                                <div>{{ t('groupChat.agentHandoffReason', { reason: chain.stopReason || '—' }) }}</div>
-                                <div>{{ t('groupChat.agentHandoffContinueState', { state: chain.continueUsed ? 'used' : 'available', updated: formatSummaryTime(chain.updatedAt) }) }}</div>
-                                <div v-if="chain.lastError" class="summary-error">{{ chain.lastError }}</div>
-                                <NButton
-                                    v-if="chain.status === 'stopped' && !chain.continueUsed"
-                                    text
-                                    type="primary"
-                                    :loading="isContinuingHandoff"
-                                    @click="handleContinueHandoff(chain.chainId)"
-                                >
-                                    {{ t('groupChat.agentHandoffContinue') }}
-                                </NButton>
-                            </div>
                         </section>
                     <section class="settings-section summary-state-section">
                         <div class="summary-state-heading">

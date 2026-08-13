@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, nextTick } from 'vue'
-import type { ChatMessage } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgentHandoffChain } from '@/api/hermes/group-chat'
 
 const mockScrollToBottom = vi.hoisted(() => vi.fn())
 const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
@@ -162,6 +162,60 @@ describe('GroupMessageList scroll behavior', () => {
     expect(firstMessage.get('.summary-anchor-divider').text()).toBe('groupChat.summaryMessagesAbove')
     expect(firstMessage.get('.summary-anchor-divider').attributes('data-summary-anchor-message-id')).toBe('message-1')
     expect(wrapper.get('[data-group-message-id="message-2"]').find('.summary-anchor-divider').exists()).toBe(false)
+  })
+
+  it('renders handoff controls only for Room managers and emits both actions', async () => {
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [makeMessage('message-1')]
+    store.handoffChains.set('chain-1', {
+      chainId: 'chain-1', roomId: 'room-1', sourceMessageId: 'message-1',
+      currentDepth: 4, maxDepth: 4, unlimited: false, targetAgentId: 'agent-2',
+      status: 'stopped', stopReason: 'max_depth', continueUsed: false,
+      createdAt: 1, updatedAt: 1, lastError: null,
+    } as RoomAgentHandoffChain)
+
+    const reader = mount(GroupMessageList, { props: { canManageHandoff: false } })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(true)
+    expect(reader.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(reader.text()).not.toContain('groupChat.agentHandoffContinueState')
+
+    const onContinue = vi.fn()
+    const onSettings = vi.fn()
+    const manager = mount(GroupMessageList, {
+      props: {
+        canManageHandoff: true,
+        onContinueHandoff: onContinue,
+        onAdjustHandoffSettings: onSettings,
+      },
+    })
+    await flushListUpdates()
+    const actions = manager.get('.handoff-stop-actions').findAll('button')
+    expect(actions).toHaveLength(2)
+    await actions[0].trigger('click')
+    await actions[1].trigger('click')
+    expect(onContinue).toHaveBeenCalledWith('chain-1')
+    expect(onSettings).toHaveBeenCalledTimes(1)
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      stopReason: 'continue_failed',
+      attemptId: 'failed-attempt-1',
+      lastError: 'Agent disconnected',
+    })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(true)
+    expect(reader.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(manager.get('.handoff-stop-actions').findAll('button')).toHaveLength(2)
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      lastError: ' \t ',
+    })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(false)
+    expect(manager.find('.handoff-stop-card').exists()).toBe(false)
   })
 
   it('shows a bottom jump button when the group transcript is far from the bottom', async () => {
