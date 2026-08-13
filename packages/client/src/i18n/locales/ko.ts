@@ -2665,7 +2665,7 @@ export default {
     summaryModelPlaceholder: '모델 선택',
     summaryApiMode: 'API 모드',
     summaryEveryTurns: 'N턴마다 요약',
-    summaryEveryTurnsDesc: '한 턴은 사용자 메시지 한 개입니다.',
+    summaryEveryTurnsDesc: '사람 또는 Agent의 공개 자연어 메시지는 각각 집계되며 Tool, 추론 및 상태 기록은 제외됩니다.',
     summaryConfigSaved: '요약 설정을 저장했습니다',
     agentHandoffTitle: 'Agent 인계',
     agentHandoffEnabled: '자동 인계 활성화',

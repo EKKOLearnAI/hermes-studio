@@ -247,6 +247,7 @@ export interface RoomInfo {
     summaryModel: string
     summaryApiMode: string
     summaryEveryTurns: number
+    summaryGeneration: number
     triggerTokens: number
     maxHistoryTokens: number
     tailMessageCount: number
@@ -275,6 +276,7 @@ const ROOM_SELECT_COLUMNS = [
     'summaryModel',
     'summaryApiMode',
     'summaryEveryTurns',
+    'summaryGeneration',
     'triggerTokens',
     'maxHistoryTokens',
     'tailMessageCount',
@@ -484,6 +486,7 @@ function isExpiredInteractionError(value: unknown): boolean {
 
 const GROUP_CHAT_MESSAGE_WINDOW = 500
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
+const GROUP_CHAT_SUMMARY_SCAN_LIMIT = 10_000
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
 class ChatStorage {
@@ -962,6 +965,7 @@ class ChatStorage {
         }
         if (config.agentHandoffUnlimited !== undefined) { sets.push('agentHandoffUnlimited = ?'); vals.push(config.agentHandoffUnlimited ? 1 : 0) }
         if (sets.length === 0) return
+        sets.push('summaryGeneration = summaryGeneration + 1')
         vals.push(roomId)
         this.db()?.prepare(`UPDATE gc_rooms SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
     }
@@ -1531,6 +1535,88 @@ class ChatStorage {
         ).messages
     }
 
+    getMessagesForSummaryBatch(
+        roomId: string,
+        options: { afterMessageId?: string; throughMessageId?: string; limit: number },
+    ): ChatMessage[] {
+        const db = this.db()
+        const limit = Math.min(1_000, Math.max(1, Math.floor(options.limit)))
+        if (!db) return []
+        // Keep this set aligned with ECMAScript String.trim() so rows that the
+        // cleaner considers empty cannot consume the fail-closed scan limit.
+        const trimWhitespace = [
+            9, 10, 11, 12, 13, 32, 160, 5760,
+            8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202,
+            8232, 8233, 8239, 8287, 12288, 65279,
+        ].map(codePoint => `CHAR(${codePoint})`).join(' || ')
+        const trimmedContent = `LTRIM(content, ${trimWhitespace})`
+        const firstCloseBracket = `INSTR(${trimmedContent}, ']')`
+        const serializedTraceBody = `LTRIM(SUBSTR(${trimmedContent}, ${firstCloseBracket} + 2), ${trimWhitespace})`
+        const hasSerializedMarker = (value: string, marker: string) => {
+            const markerLength = marker.length
+            const nextCharacter = `SUBSTR(${value}, ${markerLength + 1}, 1)`
+            return `(${value} LIKE '${marker}%'
+                AND (${nextCharacter} = '' OR ${nextCharacter} NOT GLOB '[A-Za-z0-9_]'))`
+        }
+        const bodyCallingTool = hasSerializedMarker(serializedTraceBody, '[Calling tool')
+        const bodyToolResult = hasSerializedMarker(serializedTraceBody, '[Tool result')
+        const directCallingTool = hasSerializedMarker(trimmedContent, '[Calling tool')
+        const directToolResult = hasSerializedMarker(trimmedContent, '[Tool result')
+        const serializedToolTrace = `(
+            (${firstCloseBracket} > 1
+                AND SUBSTR(${trimmedContent}, 1, 1) = '['
+                AND SUBSTR(${trimmedContent}, ${firstCloseBracket} + 1, 1) = ':'
+                AND (${bodyCallingTool} OR ${bodyToolResult}))
+            OR ${directCallingTool}
+            OR ${directToolResult}
+        )`
+        const where = [
+            'roomId = ?',
+            "role IN ('user', 'assistant')",
+            `TRIM(content, ${trimWhitespace}) <> ''`,
+            "COALESCE(tool_name, '') = ''",
+            "COALESCE(tool_call_id, '') = ''",
+            "COALESCE(tool_calls, '[]') IN ('', '[]')",
+            "COALESCE(finish_reason, '') NOT IN ('tool_calls', 'streaming')",
+            `NOT ${serializedToolTrace}`,
+        ]
+        const params: Array<string | number> = [roomId]
+        const after = options.afterMessageId
+            ? db.prepare('SELECT timestamp FROM gc_messages WHERE roomId = ? AND id = ?')
+                .get(roomId, options.afterMessageId) as { timestamp: number } | undefined
+            : undefined
+        if (after) {
+            where.push('timestamp >= ?')
+            params.push(after.timestamp)
+        }
+        const through = options.throughMessageId
+            ? db.prepare('SELECT timestamp FROM gc_messages WHERE roomId = ? AND id = ?')
+                .get(roomId, options.throughMessageId) as { timestamp: number } | undefined
+            : undefined
+        if (through) {
+            where.push('timestamp <= ?')
+            params.push(through.timestamp)
+        }
+        const rows = db.prepare(
+            `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages
+             WHERE ${where.join(' AND ')}
+             ORDER BY timestamp ASC, id ASC
+             LIMIT ?`
+        ).all(...params, GROUP_CHAT_SUMMARY_SCAN_LIMIT + 1) as any[]
+        if (rows.length > GROUP_CHAT_SUMMARY_SCAN_LIMIT) {
+            throw new Error(`Group summary scan exceeded ${GROUP_CHAT_SUMMARY_SCAN_LIMIT} eligible messages`)
+        }
+        const agentCache = new Map<string, RoomAgent | null>()
+        const roomCache = new Map<string, RoomInfo | undefined>()
+        const sliced = sliceGroupMessagesCanonical(
+            rows.map(row => this.mapStoredMessageRow(row, agentCache, roomCache)),
+            { afterMessageId: options.afterMessageId, throughMessageId: options.throughMessageId },
+        )
+        if (options.afterMessageId && !sliced.afterMessageFound) return []
+        if (options.throughMessageId && !sliced.throughMessageFound) return []
+        return sliced.messages.slice(0, limit)
+    }
+
     getMessageCount(roomId: string): number {
         const row = this.db()?.prepare(
             'SELECT COUNT(*) as total FROM gc_messages WHERE roomId = ?'
@@ -1863,7 +1949,7 @@ class ChatStorage {
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
-            db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ? WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
+            db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ?, summaryGeneration = summaryGeneration + 1 WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
         })
     }
 
@@ -2030,12 +2116,19 @@ class ChatStorage {
         ).get(roomId) as any) ?? null
     }
 
+    getRoomSummaryDrainThroughMessageId(roomId: string): string {
+        return String((this.db()?.prepare(
+            'SELECT summaryDrainThroughMessageId FROM gc_room_summaries WHERE roomId = ?',
+        ).get(roomId) as { summaryDrainThroughMessageId?: string } | undefined)?.summaryDrainThroughMessageId || '')
+    }
+
     saveRoomSummary(summary: GroupRoomSummary): void {
         this.db()?.prepare(
             `INSERT INTO gc_room_summaries (
                 roomId, summary, summaryThroughMessageId, summaryThroughMessageTimestamp,
-                summarizedTurnCount, status, version, updatedAt, lastError
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summarizedTurnCount, status, version, updatedAt, lastError,
+                summaryRunToken, summaryLeaseExpiresAt, summaryRunGeneration, summaryDrainThroughMessageId
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, '')
              ON CONFLICT(roomId) DO UPDATE SET
                 summary = excluded.summary,
                 summaryThroughMessageId = excluded.summaryThroughMessageId,
@@ -2044,7 +2137,11 @@ class ChatStorage {
                 status = excluded.status,
                 version = excluded.version,
                 updatedAt = excluded.updatedAt,
-                lastError = excluded.lastError`
+                lastError = excluded.lastError,
+                summaryRunToken = '',
+                summaryLeaseExpiresAt = 0,
+                summaryRunGeneration = 0,
+                summaryDrainThroughMessageId = ''`
         ).run(
             summary.roomId,
             summary.summary,
@@ -2056,6 +2153,179 @@ class ChatStorage {
             summary.updatedAt,
             summary.lastError,
         )
+    }
+
+    saveRoomSummaryIfCurrent(
+        summary: GroupRoomSummary,
+        expectedGeneration: number,
+        expectedVersion: number,
+        expectedAnchor: string,
+    ): boolean {
+        const generation = Math.max(0, Math.floor(Number(expectedGeneration) || 0))
+        const version = Math.max(0, Math.floor(Number(expectedVersion) || 0))
+        const anchor = String(expectedAnchor || '')
+        const result = this.db()?.prepare(
+            `INSERT INTO gc_room_summaries (
+                roomId, summary, summaryThroughMessageId, summaryThroughMessageTimestamp,
+                summarizedTurnCount, status, version, updatedAt, lastError,
+                summaryRunToken, summaryLeaseExpiresAt, summaryRunGeneration, summaryDrainThroughMessageId
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ''
+             WHERE ? = 0 AND ? = '' AND EXISTS (
+               SELECT 1 FROM gc_rooms r WHERE r.id = ? AND r.summaryGeneration = ?
+             )
+             ON CONFLICT(roomId) DO UPDATE SET
+                summary = excluded.summary,
+                summaryThroughMessageId = excluded.summaryThroughMessageId,
+                summaryThroughMessageTimestamp = excluded.summaryThroughMessageTimestamp,
+                summarizedTurnCount = excluded.summarizedTurnCount,
+                status = excluded.status,
+                version = excluded.version,
+                updatedAt = excluded.updatedAt,
+                lastError = excluded.lastError,
+                summaryRunToken = '',
+                summaryLeaseExpiresAt = 0,
+                summaryRunGeneration = 0,
+                summaryDrainThroughMessageId = ''
+             WHERE gc_room_summaries.version = ?
+               AND gc_room_summaries.summaryThroughMessageId = ?
+               AND EXISTS (
+                 SELECT 1 FROM gc_rooms r WHERE r.id = ? AND r.summaryGeneration = ?
+               )`
+        ).run(
+            summary.roomId, summary.summary, summary.summaryThroughMessageId,
+            summary.summaryThroughMessageTimestamp, summary.summarizedTurnCount,
+            summary.status, summary.version, summary.updatedAt, summary.lastError,
+            version, anchor, summary.roomId, generation,
+            version, anchor, summary.roomId, generation,
+        )
+        return Number(result?.changes || 0) === 1
+    }
+
+    claimRoomSummaryRun(
+        roomId: string,
+        expected: GroupRoomSummary,
+        runToken: string,
+        leaseExpiresAt: number,
+        generation?: number,
+        drainThroughMessageId: string = '',
+    ): boolean {
+        const db = this.db()
+        if (!db) return false
+        const persistedGeneration = Number((db.prepare(
+            'SELECT summaryGeneration FROM gc_rooms WHERE id = ?',
+        ).get(roomId) as { summaryGeneration?: number } | undefined)?.summaryGeneration || 0)
+        const effectiveGeneration = generation === undefined
+            ? persistedGeneration
+            : Math.max(0, Math.floor(Number(generation) || 0))
+        db.prepare(
+            `INSERT INTO gc_room_summaries (
+                roomId, summary, summaryThroughMessageId, summaryThroughMessageTimestamp,
+                summarizedTurnCount, status, version, updatedAt, lastError,
+                summaryRunToken, summaryLeaseExpiresAt, summaryRunGeneration, summaryDrainThroughMessageId
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ''
+             WHERE EXISTS (
+               SELECT 1 FROM gc_rooms r WHERE r.id = ? AND r.summaryGeneration = ?
+             )
+             ON CONFLICT(roomId) DO NOTHING`
+        ).run(
+            expected.roomId,
+            expected.summary,
+            expected.summaryThroughMessageId,
+            expected.summaryThroughMessageTimestamp,
+            expected.summarizedTurnCount,
+            expected.status,
+            expected.version,
+            expected.updatedAt,
+            expected.lastError,
+            roomId,
+            effectiveGeneration,
+        )
+        const result = db.prepare(
+            `UPDATE gc_room_summaries
+             SET status = 'summarizing', updatedAt = ?, lastError = NULL,
+                 summaryRunToken = ?, summaryLeaseExpiresAt = ?, summaryRunGeneration = ?,
+                 summaryDrainThroughMessageId = CASE
+                   WHEN summaryDrainThroughMessageId = '' THEN ? ELSE summaryDrainThroughMessageId END
+             WHERE roomId = ? AND version = ? AND summaryThroughMessageId = ?
+               AND status != 'summarizing' AND summaryRunToken = ''
+               AND EXISTS (
+                 SELECT 1 FROM gc_rooms r WHERE r.id = ? AND r.summaryGeneration = ?
+               )`
+        ).run(
+            Date.now(), runToken, leaseExpiresAt, effectiveGeneration, drainThroughMessageId, roomId,
+            expected.version, expected.summaryThroughMessageId, roomId, effectiveGeneration,
+        )
+        return Number(result.changes || 0) === 1
+    }
+
+    renewRoomSummaryRun(roomId: string, runToken: string, leaseExpiresAt: number): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_room_summaries
+             SET summaryLeaseExpiresAt = ?
+             WHERE roomId = ? AND summaryRunToken = ? AND status = 'summarizing'
+               AND summaryRunGeneration = (
+                 SELECT summaryGeneration FROM gc_rooms WHERE id = ?
+               )`
+        ).run(leaseExpiresAt, roomId, runToken, roomId)
+        return Number(result?.changes || 0) === 1
+    }
+
+    commitRoomSummaryRun(
+        roomId: string,
+        runToken: string,
+        summary: GroupRoomSummary,
+        drainComplete: boolean = true,
+    ): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_room_summaries
+             SET summary = ?, summaryThroughMessageId = ?, summaryThroughMessageTimestamp = ?,
+                 summarizedTurnCount = ?, status = ?, version = ?, updatedAt = ?, lastError = ?,
+                 summaryRunToken = '', summaryLeaseExpiresAt = 0, summaryRunGeneration = 0,
+                 summaryDrainThroughMessageId = CASE WHEN ? THEN '' ELSE summaryDrainThroughMessageId END
+             WHERE roomId = ? AND summaryRunToken = ? AND status = 'summarizing'
+               AND summaryRunGeneration = (
+                 SELECT summaryGeneration FROM gc_rooms WHERE id = ?
+               )`
+        ).run(
+            summary.summary,
+            summary.summaryThroughMessageId,
+            summary.summaryThroughMessageTimestamp,
+            summary.summarizedTurnCount,
+            summary.status,
+            summary.version,
+            summary.updatedAt,
+            summary.lastError,
+            drainComplete ? 1 : 0,
+            roomId,
+            runToken,
+            roomId,
+        )
+        return Number(result?.changes || 0) === 1
+    }
+
+    invalidateRoomSummaryRun(roomId: string): void {
+        this.db()?.prepare(
+            `UPDATE gc_room_summaries
+             SET summaryRunToken = '', summaryLeaseExpiresAt = 0, summaryRunGeneration = 0,
+                 summaryDrainThroughMessageId = '',
+                 status = CASE WHEN status = 'summarizing' THEN 'failed' ELSE status END,
+                 lastError = CASE WHEN status = 'summarizing' THEN 'Summary run was invalidated' ELSE lastError END,
+                 updatedAt = ?
+             WHERE roomId = ? AND summaryRunToken != ''`
+        ).run(Date.now(), roomId)
+    }
+
+    recoverExpiredRoomSummaryRun(roomId: string, now: number): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_room_summaries
+             SET status = 'failed', lastError = 'Summary run was interrupted', updatedAt = ?,
+                 summaryRunToken = '', summaryLeaseExpiresAt = 0, summaryRunGeneration = 0
+             WHERE roomId = ? AND status = 'summarizing'
+               AND (summaryRunToken = '' OR (summaryLeaseExpiresAt > 0 AND summaryLeaseExpiresAt <= ?))`
+        ).run(now, roomId, now)
+        return Number(result?.changes || 0) === 1
     }
 
     deleteRoom(roomId: string): void {
@@ -3655,8 +3925,14 @@ export class GroupChatServer {
                 mentions: savedMsg.mentions,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
+            }).finally(() => {
+                if (typeof this.agentClients.processSummaryCheck !== 'function') return
+                this.agentClients.processSummaryCheck(roomId, savedMsg.id).catch((err) => {
+                    logger.error(`[GroupChat] summary check error: ${err.message}`)
+                })
             })
-        } else if (
+        } else {
+            if (
             isAgentReply
             && hasStructuredAgentTargets
             && trustedMetadata
@@ -3665,23 +3941,26 @@ export class GroupChatServer {
             && Number.isFinite(handoffPolicy.maxDepth)
             && mentionDepth >= Number(handoffPolicy.maxDepth)
             && typeof this.storage.recordHandoffStop === 'function'
-        ) {
-            this.storage.recordHandoffStop(
-                roomId,
-                `handoff:${savedMsg.id}`,
-                savedMsg.id,
-                mentionDepth,
-                structuredAgentTargetId,
-                handoffPolicy,
-            )
-            this.broadcastHandoffUpdate(
-                roomId,
-                this.storage.getHandoffChain(roomId, `handoff:${savedMsg.id}`),
-            )
-        } else if (savedMsg.role === 'user' && typeof this.agentClients.processSummaryCheck === 'function') {
-            this.agentClients.processSummaryCheck(roomId, savedMsg.id).catch((err) => {
-                logger.error(`[GroupChat] summary check error: ${err.message}`)
-            })
+            ) {
+                this.storage.recordHandoffStop(
+                    roomId,
+                    `handoff:${savedMsg.id}`,
+                    savedMsg.id,
+                    mentionDepth,
+                    structuredAgentTargetId,
+                    handoffPolicy,
+                )
+                this.broadcastHandoffUpdate(
+                    roomId,
+                    this.storage.getHandoffChain(roomId, `handoff:${savedMsg.id}`),
+                )
+            }
+            if ((savedMsg.role === 'user' || savedMsg.role === 'assistant')
+                && typeof this.agentClients.processSummaryCheck === 'function') {
+                this.agentClients.processSummaryCheck(roomId, savedMsg.id).catch((err) => {
+                    logger.error(`[GroupChat] summary check error: ${err.message}`)
+                })
+            }
         }
     }
 
