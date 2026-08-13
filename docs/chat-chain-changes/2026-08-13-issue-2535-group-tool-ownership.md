@@ -1,6 +1,6 @@
 ---
 date: 2026-08-13
-pr: pending
+pr: 2536
 feature: Group Chat Agent run Tool ownership
 impact: Persisted Tool traces remain inside their owning Agent run card after the transcript across live, terminal, and refreshed history states.
 ---
