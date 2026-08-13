@@ -431,27 +431,6 @@ export const USER_THEMES_SCHEMA: Record<string, string> = {
 }
 
 // ============================================================================
-// Credits / 点数账本 (credits-store.ts)
-// ============================================================================
-
-export const CREDITS_LEDGER_TABLE = 'credits_ledger'
-
-export const CREDITS_LEDGER_SCHEMA: Record<string, string> = {
-  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
-  user_id: 'INTEGER NOT NULL',
-  type: "TEXT NOT NULL DEFAULT 'grant'",
-  amount: 'INTEGER NOT NULL DEFAULT 0',
-  balance_after: 'INTEGER NOT NULL DEFAULT 0',
-  order_id: "TEXT NOT NULL DEFAULT ''",
-  note: "TEXT NOT NULL DEFAULT ''",
-  created_at: 'INTEGER NOT NULL',
-}
-
-export const CREDITS_LEDGER_INDEXES = {
-  idx_credits_ledger_user: 'CREATE INDEX IF NOT EXISTS idx_credits_ledger_user ON credits_ledger(user_id, created_at)',
-}
-
-// ============================================================================
 // LAN Devices
 // ============================================================================
 
@@ -1405,17 +1384,12 @@ export function initAllHermesTables(): void {
     })
 
     // Users and profile access
-        syncTable(USERS_TABLE, USERS_SCHEMA)
-        syncTable(USER_PROFILES_TABLE, USER_PROFILES_SCHEMA, {
-          primaryKey: 'user_id, profile_name',
-          indexes: USER_PROFILES_INDEXES,
-        })
-        syncTable(USER_THEMES_TABLE, USER_THEMES_SCHEMA)
-
-        // Credits / 点数账本
-        syncTable(CREDITS_LEDGER_TABLE, CREDITS_LEDGER_SCHEMA, {
-          indexes: CREDITS_LEDGER_INDEXES,
-        })
+    syncTable(USERS_TABLE, USERS_SCHEMA)
+    syncTable(USER_PROFILES_TABLE, USER_PROFILES_SCHEMA, {
+      primaryKey: 'user_id, profile_name',
+      indexes: USER_PROFILES_INDEXES,
+    })
+    syncTable(USER_THEMES_TABLE, USER_THEMES_SCHEMA)
 
     // LAN devices and link request status
     syncTable(DEVICES_TABLE, DEVICES_SCHEMA, {

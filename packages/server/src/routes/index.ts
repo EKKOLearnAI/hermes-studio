@@ -53,7 +53,6 @@ import { runtimeVersionRoutes } from './hermes/runtime-versions'
 import { writeGateRoutes } from './hermes/write-gate'
 import { petdexPublicRoutes, petdexRoutes } from './hermes/petdex'
 import { petRoutes } from './hermes/pets'
-import { creditRoutes } from './hermes/credits'
 
 /**
  * Register all routes on the Koa app.
@@ -123,5 +122,4 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(writeGateRoutes.routes())              // Hermes Agent write approval review
   app.use(petdexRoutes.routes())
   app.use(petRoutes.routes())
-  app.use(creditRoutes.routes())
 }
