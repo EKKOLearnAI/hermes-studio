@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.39"
+    "version": "0.6.42"
   },
   "servers": [
     {
@@ -23,10 +23,6 @@
     {
       "name": "Upload",
       "description": "File upload"
-    },
-    {
-      "name": "Webhook",
-      "description": "Incoming webhooks"
     },
     {
       "name": "Auth",
@@ -849,6 +845,42 @@
         "responses": {
           "200": {
             "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/coding-agents/{id}/check-update": {
+      "post": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Create check-update",
+        "description": "POST /api/coding-agents/:id/check-update",
+        "operationId": "checkUpdate",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2644,6 +2676,32 @@
         }
       }
     },
+    "/livez": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Get livez",
+        "description": "GET /livez",
+        "operationId": "livenessCheck",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/upload": {
       "post": {
         "tags": [
@@ -2666,47 +2724,6 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/webhook": {
-      "post": {
-        "tags": [
-          "Webhook"
-        ],
-        "summary": "Create webhook",
-        "description": "POST /webhook",
-        "operationId": "handleWebhook",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "event": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
           }
         }
       }
