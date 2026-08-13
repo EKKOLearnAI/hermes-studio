@@ -2290,6 +2290,23 @@ export class AgentClients {
     }
 
 
+    private handoffRuntimeSnapshot(roomId: string, agent: GroupAgentExecutor): Record<string, string> {
+        const persisted = this._storage?.getHandoffTargetSnapshot?.(roomId, agent.agentId)
+        if (!persisted || typeof persisted !== 'object') return {}
+        return {
+            ...persisted,
+            agentId: String(agent.agentId || ''),
+            agent: String(agent.agent || ''),
+            profile: String(agent.profile || ''),
+            provider: String(agent.provider || ''),
+            model: String(agent.model || ''),
+            apiMode: String(agent.apiMode || ''),
+            reasoningEffort: String(agent.reasoningEffort || ''),
+            name: String(agent.name || ''),
+            description: String(agent.description || ''),
+        }
+    }
+
     /**
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
@@ -2319,7 +2336,7 @@ export class AgentClients {
                 msg.continuationAttemptId,
                 mentioned[0].agentId,
                 msg as unknown as Record<string, unknown>,
-                this._storage?.getHandoffTargetSnapshot?.(roomId, mentioned[0].agentId) || {},
+                this.handoffRuntimeSnapshot(roomId, mentioned[0]),
             )
             if (!admission) {
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target admission was rejected'] }

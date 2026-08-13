@@ -184,6 +184,62 @@ describe('group chat durable continuation route', () => {
         expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
     })
 
+    it('rejects a frozen continuation when the selected runtime differs from persisted target configuration', async () => {
+        const storage = groupServer.getStorage()
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const replyToMention = vi.fn(async () => {})
+        groupServer.agentClients.registerAgentForRoom('room-1', {
+            agentId: target.agentId,
+            agent: 'codex',
+            profile: 'changed-profile',
+            provider: 'changed-provider',
+            model: 'changed-model',
+            apiMode: 'responses',
+            reasoningEffort: 'high',
+            name: target.name,
+            description: target.description,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention,
+        } as any)
+
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(replyToMention).not.toHaveBeenCalled()
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'claimed' })
+        expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(claimed.attemptId)).toEqual({
+            status: 'pending',
+        })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'claimed',
+            continueUsed: 0,
+        })
+
+        storage.updateRoomAgent('room-1', 'agent-2', 'changed-profile', target.name, target.description, {
+            agent: 'codex',
+            provider: 'changed-provider',
+            model: 'changed-model',
+            apiMode: 'responses',
+            reasoningEffort: 'high',
+        })
+        db.prepare('UPDATE gc_handoff_outbox SET availableAt = 0 WHERE attemptId = ?').run(claimed.attemptId)
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(replyToMention).not.toHaveBeenCalled()
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            continueUsed: 0,
+            stopReason: 'continue_failed',
+        })
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'failed' })
+    })
+
     it('replays a dispatching outbox after restart through the real dispatcher path', async () => {
         const storage = groupServer.getStorage()
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
