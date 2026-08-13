@@ -20,7 +20,7 @@ If the Hermes Web UI endpoint returns an authentication, connection, or generati
 
 ## Workflow
 
-Call the local Hermes Web UI media endpoint. The server resolves MiniMax credentials, creates an image-to-video task, polls it, downloads the finished mp4, and optionally saves it to a requested path.
+Call the local Hermes Web UI media endpoint. The server resolves the selected profile's MiniMax API key, creates an image-to-video task through the official v1 API, polls it, downloads the finished mp4, and optionally saves it to a requested path.
 
 Endpoint:
 
@@ -47,18 +47,17 @@ If the run instructions include `[Current Hermes profile: <name>]`, send the exa
 
 Required JSON fields:
 
-- `prompt`: instructions for animating the image when using the default model.
 - One image input: `image_url`, `image_base64` with `mime_type`, or `image_path`.
 
 Optional JSON fields:
 
-- `model`: defaults to `MiniMax-H3`; supported v1 image-to-video models may be selected explicitly.
-- `duration`: `MiniMax-H3` accepts integer values from 4 through 15 and defaults to 5.
-- `resolution`: `MiniMax-H3` uses `2K`.
-- `ratio`: defaults to `adaptive`; supported values are `adaptive`, `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, and `9:16`.
+- `prompt`: motion and style instructions, up to 2000 characters.
+- `model`: defaults to `MiniMax-Hailuo-2.3`. Supported values are `MiniMax-Hailuo-2.3`, `MiniMax-Hailuo-2.3-Fast`, `MiniMax-Hailuo-02`, `I2V-01-Director`, `I2V-01-live`, and `I2V-01`.
+- `duration`: defaults to 6 seconds. Hailuo models also support 10 seconds at compatible resolutions.
+- `resolution`: defaults to `768P` for Hailuo models and `720P` for I2V models. `1080P` is limited to 6-second videos.
 - `prompt_optimizer`, `fast_pretreatment`, and `callback_url`: supported request options.
 - `aigc_watermark`: optional China-region watermark flag.
-- `region`: `global_en` or `cn_zh`.
+- `region`: `global_en` or `cn_zh`. When omitted, the server infers the region from the selected profile provider (`minimax` or `minimax-cn`).
 - `output_path`: local mp4 destination; the server media directory is used when omitted.
 - `timeout_ms`: maximum polling time; defaults to 600000.
 
@@ -89,11 +88,11 @@ curl -sS -X POST "$BASE_URL/api/hermes/media/minimax-image-to-video" \
   -d '{
     "prompt": "Add a gentle camera push while the clouds drift across the sky",
     "image_url": "https://example.com/source.png",
-    "duration": 5,
+    "duration": 6,
     "output_path": "/absolute/path/to/output.mp4"
   }'
 ```
 
-If the response has `code: "missing_minimax_token"`, tell the user to set `MINIMAX_API_KEY` or complete MiniMax authorization before retrying.
+If the response has `code: "missing_minimax_token"`, tell the user to configure the MiniMax API-key provider for the selected profile. International profiles use `MINIMAX_API_KEY`; China profiles use `MINIMAX_CN_API_KEY`. MiniMax Coding Plan OAuth credentials do not authorize video generation.
 
 Return the generated `output_path`.

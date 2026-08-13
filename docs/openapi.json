@@ -9317,6 +9317,30 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "aigc_watermark": {
+                    "type": "boolean"
+                  },
+                  "callback_url": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "number"
+                  },
+                  "fast_pretreatment": {
+                    "type": "boolean"
+                  },
+                  "image_base64": {
+                    "type": "string"
+                  },
+                  "image_path": {
+                    "type": "string"
+                  },
+                  "image_url": {
+                    "type": "string"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  },
                   "model": {
                     "type": "string"
                   },
@@ -9326,11 +9350,17 @@
                   "prompt": {
                     "type": "string"
                   },
+                  "prompt_optimizer": {
+                    "type": "boolean"
+                  },
                   "region": {
                     "type": "string"
                   },
-                  "timeout_ms": {
+                  "resolution": {
                     "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "number"
                   }
                 }
               }

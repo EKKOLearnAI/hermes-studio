@@ -1,13 +1,15 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 const originalWebuiStateDir = process.env.HERMES_WEBUI_STATE_DIR
+const temporaryProfileDirs: string[] = []
 
 afterEach(() => {
   vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
   vi.doUnmock('../../packages/server/src/services/config-helpers')
-  vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
   vi.clearAllMocks()
   vi.unstubAllEnvs()
   vi.resetModules()
@@ -15,6 +17,7 @@ afterEach(() => {
   else process.env.HERMES_WEB_UI_HOME = originalWebUiHome
   if (originalWebuiStateDir === undefined) delete process.env.HERMES_WEBUI_STATE_DIR
   else process.env.HERMES_WEBUI_STATE_DIR = originalWebuiStateDir
+  for (const directory of temporaryProfileDirs.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
 describe('media controller', () => {
@@ -167,18 +170,14 @@ describe('media controller', () => {
 
   it('rejects MiniMax image-to-video without credentials', async () => {
     vi.stubEnv('MINIMAX_API_KEY', '')
+    vi.stubEnv('MINIMAX_CN_API_KEY', '')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
     vi.doMock('../../packages/server/src/services/config-helpers', () => ({
-      readConfigYamlForProfile: vi.fn(async () => ({})),
-    }))
-    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
-      resolveAuthorizedProviderRuntimeCredentials: vi.fn(async () => {
-        throw new Error('MiniMax authorization is unavailable')
-      }),
+      readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax' } })),
     }))
     const { miniMaxImageToVideo } = await import('../../packages/server/src/controllers/hermes/media')
     const ctx: any = {
@@ -193,33 +192,39 @@ describe('media controller', () => {
     await miniMaxImageToVideo(ctx)
 
     expect(ctx.status).toBe(401)
-    expect(ctx.body).toMatchObject({ code: 'missing_minimax_token' })
+    expect(ctx.body).toMatchObject({
+      code: 'missing_minimax_token',
+      error: expect.stringContaining('MINIMAX_API_KEY'),
+    })
   })
 
-  it('generates MiniMax-H3 image-to-video through the global v2 endpoint', async () => {
+  it('generates image-to-video with the official MiniMax v1 workflow by default', async () => {
     vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
+    vi.stubEnv('MINIMAX_CN_API_KEY', '')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
     vi.doMock('../../packages/server/src/services/config-helpers', () => ({
-      readConfigYamlForProfile: vi.fn(async () => ({})),
+      readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax' } })),
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
       const urlString = String(url)
-      if (urlString.includes('/v2/query/video_generation/task_h3')) {
-        return new Response(JSON.stringify({
-          task: {
-            id: 'task_h3',
-            model: 'MiniMax-H3',
-            status: 'succeeded',
-            content: { url: 'https://cdn.example.com/video-h3.mp4' },
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (urlString.includes('/v1/query/video_generation')) {
+        return new Response(JSON.stringify({ status: 'Success', file_id: 'file_default', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
       }
-      if (urlString.includes('/v2/video_generation')) {
-        return new Response(JSON.stringify({ task_id: 'task_h3' }), {
+      if (urlString.includes('/v1/files/retrieve')) {
+        return new Response(JSON.stringify({ file: { download_url: 'https://cdn.example.com/video-default.mp4' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/v1/video_generation')) {
+        return new Response(JSON.stringify({ task_id: 'task_default', base_resp: { status_code: 0 } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         })
@@ -251,28 +256,24 @@ describe('media controller', () => {
 
       expect(ctx.status).toBe(200)
       expect(ctx.body).toMatchObject({
-        task_id: 'task_h3',
-        status: 'succeeded',
-        model: 'MiniMax-H3',
-        api_version: 'v2',
+        task_id: 'task_default',
+        file_id: 'file_default',
+        status: 'Success',
+        model: 'MiniMax-Hailuo-2.3',
+        api_version: 'v1',
         region: 'global_en',
+        token_source: 'MINIMAX_API_KEY',
       })
-      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimax.io/v2/video_generation')
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimax.io/v1/video_generation')
       expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
-        model: 'MiniMax-H3',
-        content: [
-          { type: 'text', text: 'animate the water and clouds' },
-          {
-            type: 'image_url',
-            image_url: { url: 'https://cdn.example.com/source.png' },
-            role: 'first_frame',
-          },
-        ],
-        resolution: '2K',
-        duration: 5,
-        ratio: 'adaptive',
+        model: 'MiniMax-Hailuo-2.3',
+        first_frame_image: 'https://cdn.example.com/source.png',
+        prompt: 'animate the water and clouds',
+        duration: 6,
+        resolution: '768P',
       })
-      expect(fetchMock.mock.calls[1][0]).toBe('https://api.minimax.io/v2/query/video_generation/task_h3')
+      expect(fetchMock.mock.calls[1][0]).toBe('https://api.minimax.io/v1/query/video_generation?task_id=task_default')
+      expect(fetchMock.mock.calls[2][0]).toBe('https://api.minimax.io/v1/files/retrieve?file_id=file_default')
     } finally {
       globalThis.fetch = originalFetch
       globalThis.setTimeout = originalSetTimeout
@@ -280,39 +281,36 @@ describe('media controller', () => {
     }
   })
 
-  it('uses refreshed MiniMax authorization credentials and the CN v2 endpoint', async () => {
+  it('uses the selected profile MiniMax China API key and endpoint', async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), 'hermes-web-ui-minimax-profile-'))
+    temporaryProfileDirs.push(profileDir)
+    writeFileSync(join(profileDir, '.env'), 'MINIMAX_CN_API_KEY="profile-cn-key"\n')
     vi.stubEnv('MINIMAX_API_KEY', '')
+    vi.stubEnv('MINIMAX_CN_API_KEY', 'process-cn-key')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
-      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      getProfileDir: () => profileDir,
       listProfileNamesFromDisk: () => ['default'],
     }))
     vi.doMock('../../packages/server/src/services/config-helpers', () => ({
-      readConfigYamlForProfile: vi.fn(async () => ({})),
-    }))
-    const resolveAuthorizedProviderRuntimeCredentials = vi.fn(async () => ({
-      provider: 'minimax-oauth',
-      apiKey: 'fresh-minimax-token',
-      baseUrl: 'https://api.minimaxi.com/anthropic',
-      source: 'oauth-refresh',
-    }))
-    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
-      resolveAuthorizedProviderRuntimeCredentials,
+      readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax-cn' } })),
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
       const urlString = String(url)
-      if (urlString.includes('/v2/query/video_generation/task_cn')) {
-        return new Response(JSON.stringify({
-          task: {
-            id: 'task_cn',
-            model: 'MiniMax-H3',
-            status: 'succeeded',
-            content: { url: 'https://cdn.example.com/video-cn.mp4' },
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (urlString.includes('/v1/query/video_generation')) {
+        return new Response(JSON.stringify({ status: 'Success', file_id: 'file_cn', base_resp: { status_code: 0 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
       }
-      if (urlString.includes('/v2/video_generation')) {
-        return new Response(JSON.stringify({ task_id: 'task_cn' }), {
+      if (urlString.includes('/v1/files/retrieve')) {
+        return new Response(JSON.stringify({ file: { download_url: 'https://cdn.example.com/video-cn.mp4' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (urlString.includes('/v1/video_generation')) {
+        return new Response(JSON.stringify({ task_id: 'task_cn', base_resp: { status_code: 0 } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         })
@@ -346,14 +344,15 @@ describe('media controller', () => {
       expect(ctx.status).toBe(200)
       expect(ctx.body).toMatchObject({
         task_id: 'task_cn',
-        model: 'MiniMax-H3',
-        api_version: 'v2',
+        file_id: 'file_cn',
+        model: 'MiniMax-Hailuo-2.3',
+        api_version: 'v1',
         region: 'cn_zh',
-        token_source: 'oauth-refresh',
+        token_source: 'profile:MINIMAX_CN_API_KEY',
       })
-      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimaxi.com/v2/video_generation')
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimaxi.com/v1/video_generation')
       expect(fetchMock.mock.calls[0][1]).toMatchObject({
-        headers: expect.objectContaining({ Authorization: 'Bearer fresh-minimax-token' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer profile-cn-key' }),
       })
       expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
         aigc_watermark: true,
@@ -365,7 +364,7 @@ describe('media controller', () => {
     }
   })
 
-  it('uses the MiniMax v1 image-to-video workflow for an explicit v1 model', async () => {
+  it('validates model-specific MiniMax duration and resolution options', async () => {
     vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
@@ -411,9 +410,8 @@ describe('media controller', () => {
             model: 'MiniMax-Hailuo-2.3',
             prompt: 'animate the portrait',
             image_url: 'https://cdn.example.com/portrait.png',
-            duration: 6,
+            duration: 10,
             resolution: '1080P',
-            output_path: '/tmp/hermes-web-ui-minimax-image-video-v1.mp4',
           },
         },
         get: vi.fn(() => ''),
@@ -423,22 +421,11 @@ describe('media controller', () => {
 
       await miniMaxImageToVideo(ctx)
 
-      expect(ctx.status).toBe(200)
+      expect(ctx.status).toBe(400)
       expect(ctx.body).toMatchObject({
-        task_id: 'task_v1',
-        file_id: 'file_v1',
-        model: 'MiniMax-Hailuo-2.3',
-        api_version: 'v1',
-        region: 'global_en',
+        error: 'MiniMax-Hailuo-2.3 does not support 1080P at 10 seconds',
       })
-      expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimax.io/v1/video_generation')
-      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
-        model: 'MiniMax-Hailuo-2.3',
-        first_frame_image: 'https://cdn.example.com/portrait.png',
-        prompt: 'animate the portrait',
-        duration: 6,
-        resolution: '1080P',
-      })
+      expect(fetchMock).not.toHaveBeenCalled()
     } finally {
       globalThis.fetch = originalFetch
       globalThis.setTimeout = originalSetTimeout
