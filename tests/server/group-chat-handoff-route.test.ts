@@ -113,10 +113,11 @@ describe('group chat durable continuation route', () => {
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
         expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
         expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
-            status: 'stopped',
-            stopReason: 'continue_failed',
+            status: 'claimed',
+            continueUsed: 0,
         })
-        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'failed' })
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'claimed' })
+        expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(claimed.attemptId)).toEqual({ status: 'pending' })
     })
 
     it('completes a claimed route through target acknowledgement and outbox finalization', async () => {
@@ -266,6 +267,32 @@ describe('group chat durable continuation route', () => {
             }),
         } as any)
 
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'resumed', continueUsed: 1 })
+    })
+
+    it('keeps a recovered continuation retryable until its target runtime reconnects', async () => {
+        const storage = groupServer.getStorage()
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'claimed', attemptCount: 1 })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'claimed', continueUsed: 0 })
+        expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'pending' })
+
+        groupServer.agentClients.registerAgentForRoom('room-1', {
+            ...target, connected: true,
+            disconnect: vi.fn(), sendMessage: vi.fn(async () => ''), interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined), isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(), setWorkspaceDiffBroadcaster: vi.fn(), setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async (_roomId: string, message: any) => {
+                storage.completeHandoffTarget(attemptId, `continuation:${message.continuationAttemptId}`)
+            }),
+        } as any)
+        db.prepare('UPDATE gc_handoff_outbox SET availableAt = 0 WHERE attemptId = ?').run(attemptId)
         expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
         expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed' })
         expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'resumed', continueUsed: 1 })

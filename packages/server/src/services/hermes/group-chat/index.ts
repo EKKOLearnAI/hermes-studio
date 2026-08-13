@@ -1215,6 +1215,21 @@ class ChatStorage {
             .run(now + 1_000, now, attemptId)
     }
 
+    deferHandoffOutbox(attemptId: string, error: string, delayMs = 5_000): void {
+        const db = this.db()
+        if (!db) return
+        const now = Date.now()
+        db.prepare(
+            `UPDATE gc_handoff_attempts
+             SET status = 'claimed', lastError = ?, leaseUntil = ?, attemptCount = MAX(0, attemptCount - 1), updatedAt = ?
+             WHERE attemptId = ? AND status != 'completed'`,
+        ).run(error.slice(0, 2000), now + delayMs, now, attemptId)
+        db.prepare(
+            `UPDATE gc_handoff_outbox SET status = 'pending', availableAt = ?, updatedAt = ?
+             WHERE attemptId = ? AND status != 'completed'`,
+        ).run(now + delayMs, now, attemptId)
+    }
+
     finishHandoffOutbox(attemptId: string): void {
         this.db()?.prepare(`UPDATE gc_handoff_outbox SET status = 'completed', updatedAt = ? WHERE attemptId = ?`).run(Date.now(), attemptId)
     }
@@ -2781,13 +2796,8 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('message', msg)
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         })
-        this.handoffDispatcherTimer = setInterval(() => {
-            void this.dispatchPendingHandoffs().catch((error) => {
-                logger.warn(`[GroupChat] handoff dispatcher tick failed: ${error instanceof Error ? error.message : String(error)}`)
-            })
-        }, 1_000)
-        this.handoffDispatcherTimer.unref?.()
-        // Restore agent connections — call restoreAgents() after server is listening
+        // Restore agent connections — call restoreWhenReady() after server is listening.
+        // The dispatcher starts only after local runtime restoration completes.
         this._restoreScheduled = false
     }
 
@@ -2834,11 +2844,7 @@ export class GroupChatServer {
                     const message = error instanceof Error ? error.message : String(error)
                     const attempt = this.storage.getHandoffAttempt(attemptId)
                     if (/target Agent is not connected/i.test(message)) {
-                        this.storage.failHandoffContinuation(
-                            String(attempt?.roomId || outbox.roomId),
-                            String(attempt?.chainId || ''),
-                            message,
-                        )
+                        this.storage.deferHandoffOutbox(attemptId, message)
                     } else if (this.storage.getHandoffTargetStatus(attemptId)?.invocationStartedAt) {
                         this.storage.failHandoffContinuation(
                             String(attempt?.roomId || outbox.roomId),
@@ -3232,6 +3238,17 @@ export class GroupChatServer {
         if (this._restoreScheduled) return
         this._restoreScheduled = true
         await this.restoreAgents()
+        this.startHandoffDispatcher()
+    }
+
+    private startHandoffDispatcher(): void {
+        if (this.handoffDispatcherTimer) return
+        this.handoffDispatcherTimer = setInterval(() => {
+            void this.dispatchPendingHandoffs().catch((error) => {
+                logger.warn(`[GroupChat] handoff dispatcher tick failed: ${error instanceof Error ? error.message : String(error)}`)
+            })
+        }, 1_000)
+        this.handoffDispatcherTimer.unref?.()
     }
 
     private async restoreAgents(): Promise<void> {
