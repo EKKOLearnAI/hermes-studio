@@ -149,6 +149,7 @@ describe('group chat REST route baseline', () => {
       getRoomSummaryService: () => roomSummaryService,
       agentClients,
       clearRoomRuntimeState,
+      deleteRoomRuntimeState: vi.fn(async () => {}),
       updateRoomName,
       broadcastRoomMetadata,
       broadcastRoomAgents,
@@ -1003,6 +1004,35 @@ describe('group chat REST route baseline', () => {
     expect(await roomRemoved.json()).toEqual({ error: 'Agent configuration update is already in progress' })
     release()
     expect((await first).status).toBe(200)
+  })
+
+  it('rejects agent updates and removals while room deletion is already in progress', async () => {
+    storage.rooms.set('room-delete-lock', { id: 'room-delete-lock', name: 'Room', inviteCode: 'DELETE' })
+    storage.agents.set('room-delete-lock', [{
+      id: 'row-delete-lock', roomId: 'room-delete-lock', agentId: 'agent-delete-lock', agent: 'hermes',
+      profile: 'default', provider: 'openai', model: 'old', apiMode: '', reasoningEffort: '',
+      name: 'Worker', description: '', invited: 0,
+    }])
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    roomSummaryService.runExclusive.mockImplementationOnce(async (_roomId: string, task: () => unknown) => {
+      await blocked
+      return task()
+    })
+
+    const deleting = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(roomSummaryService.runExclusive).toHaveBeenCalled())
+    const update = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model: 'new', name: 'Worker' }),
+    })
+    expect(update.status).toBe(409)
+    expect(await update.json()).toEqual({ error: 'Room deletion is already in progress' })
+    const remove = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, { method: 'DELETE' })
+    expect(remove.status).toBe(409)
+    expect(await remove.json()).toEqual({ error: 'Room deletion is already in progress' })
+    release()
+    expect((await deleting).status).toBe(200)
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {

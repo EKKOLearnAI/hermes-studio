@@ -717,6 +717,21 @@ class ChatStorage {
         db.prepare(
             `UPDATE gc_handoff_attempts
              SET status = 'claimed', leaseUntil = ?, attemptCount = attemptCount + 1, updatedAt = ?
+             WHERE status = 'admitted' AND attemptId IN (
+               SELECT attemptId FROM gc_handoff_inbox
+               WHERE status = 'admitted' AND invocationStartedAt IS NULL
+             )`,
+        ).run(now + 30_000, now)
+        db.prepare(
+            `UPDATE gc_handoff_outbox
+             SET status = 'pending', availableAt = ?, updatedAt = ?
+             WHERE status = 'delivered' AND attemptId IN (
+               SELECT attemptId FROM gc_handoff_attempts WHERE status = 'claimed'
+             )`,
+        ).run(now, now)
+        db.prepare(
+            `UPDATE gc_handoff_attempts
+             SET status = 'claimed', leaseUntil = ?, attemptCount = attemptCount + 1, updatedAt = ?
              WHERE status IN ('dispatching', 'dispatched')
                AND attemptId NOT IN (SELECT attemptId FROM gc_handoff_inbox WHERE status IN ('completed', 'failed_manual', 'cancelled'))`,
         ).run(now + 30_000, now)

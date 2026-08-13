@@ -25,6 +25,7 @@ export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
 const roomAgentUpdates = new Set<string>()
+const roomDeletions = new Set<string>()
 
 export function setGroupChatServer(server: GroupChatServer | null) {
     chatServer = server
@@ -826,6 +827,11 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
     if (previous.executorType === 'remote') {
         ctx.status = 409
         ctx.body = { error: 'Remote Agents must be changed from their connected Hermes service or re-paired' }
@@ -1022,6 +1028,11 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
     if (roomAgentUpdates.has(`${roomId}:${agent.agentId}`)) {
         ctx.status = 409
         ctx.body = { error: 'Agent configuration update is already in progress' }
@@ -1067,6 +1078,12 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.body = { error: 'Agent configuration update is already in progress' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
+    roomDeletions.add(roomId)
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
     try {
         await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
@@ -1078,6 +1095,8 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
+    } finally {
+        roomDeletions.delete(roomId)
     }
     ctx.body = { success: true }
 })
