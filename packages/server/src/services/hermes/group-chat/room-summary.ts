@@ -541,7 +541,7 @@ export class GroupRoomSummaryService {
           updatedAt: Date.now(),
           lastError: message.slice(0, 2000),
         }
-        if (this.storage.commitRoomSummaryRun(input.roomId, input.runToken, failed, true)) this.onStatus?.(failed)
+        if (this.storage.commitRoomSummaryRun(input.roomId, input.runToken, failed, false)) this.onStatus?.(failed)
       })
       logger.warn({
         err: error,

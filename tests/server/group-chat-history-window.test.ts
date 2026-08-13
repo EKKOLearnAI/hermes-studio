@@ -837,6 +837,46 @@ describe('group chat history windows', () => {
     })
   })
 
+  it('retains frozen-cutoff drain authority after a later batch fails', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    const onePerBatch = 'bounded token '.repeat(10_000)
+    storage.addMessage(makeMessage({ id: 'u1', content: `${onePerBatch} one`, timestamp: 1 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a1', role: 'assistant', senderId: 'agent', senderName: 'Agent',
+      content: `${onePerBatch} two`, timestamp: 2,
+    }) as any)
+
+    let attempt = 0
+    const runner = vi.fn<GroupSummaryRunner>(async (input: Parameters<GroupSummaryRunner>[0]) => {
+      attempt += 1
+      if (attempt === 2) throw new Error('second batch failed')
+      return `summary-${input.messages.at(-1)?.id}`
+    })
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+
+    await service.checkAfterMessage('room-1', 'a1')
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'u1', summarizedTurnCount: 1, version: 1,
+      status: 'failed', lastError: 'second batch failed',
+    })
+    expect(storage.getRoomSummaryDrainThroughMessageId('room-1')).toBe('a1')
+
+    await service.checkAfterMessage('room-1', 'a1')
+
+    expect(runner).toHaveBeenCalledTimes(3)
+    expect(runner.mock.calls[2][0].messages.map(message => message.id)).toEqual(['a1'])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'a1', summarizedTurnCount: 2, version: 2,
+      status: 'success', lastError: null,
+    })
+    expect(storage.getRoomSummaryDrainThroughMessageId('room-1')).toBe('')
+  })
+
   it('persists frozen-cutoff drain authority across an owner handoff after a partial commit', async () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
