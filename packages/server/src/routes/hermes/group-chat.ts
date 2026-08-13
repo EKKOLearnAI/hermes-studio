@@ -1022,6 +1022,11 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomAgentUpdates.has(`${roomId}:${agent.agentId}`)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
 
     if (agent.executorType === 'remote' && agent.connectorId) {
         revokeGroupAgentConnector(agent.connectorId)
@@ -1055,6 +1060,11 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     if (!canManageRoom(storage, roomId, ctx.state?.user)) {
         ctx.status = 403
         ctx.body = { error: 'Access denied' }
+        return
+    }
+    if ([...roomAgentUpdates].some(key => key.startsWith(`${roomId}:`))) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
         return
     }
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
