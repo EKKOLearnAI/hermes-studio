@@ -4,7 +4,19 @@
 的两个自定义改动**（消息队列、桌面字体缩放）。所有改动都固化在源码里、带清晰
 `[zoom patch]` / `[preempt patch]` 标记，**上游更新后 merge 回来不会被覆盖**。
 
+> ⚠️ **credits 点数系统已于 2026-08-13 从本仓库剥离**（`git revert 99718a54`）。
+> 点数系统属于独立的收费 CDE 平台项目（见 vault「项目笔记-收费CDE平台.md」），
+> 与本 Web 面板 fork 无关，代码不在此仓库维护。
+
 **每次部署请优先使用本 fork，而不是上游原版。**
+
+---
+
+## 同步记录（2026-08-13）
+
+- 上游已更新到 `0899f7eb`（v0.6.42 之后 1 个 hotfix：#2511 群聊滚动摘要游标安全）
+- 本次操作：`git merge upstream/main`（自动合并，零冲突）+ `git revert 99718a54`（剥离 credits）
+- 当前版本：**0.6.42 + hotfix**；本 fork 两个自定义改动已验证保留（见下文）
 
 ---
 
@@ -95,21 +107,43 @@ if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 > 前提：两个改动都在**少量文件、带清晰标记**（`[zoom patch]` / `[preempt patch]`
 > / `[user-controlled patch]`），合并时能快速识别。
 
-### 本地 git merge（推荐）
+### 完整 SOP（2026-08-13 实操验证）
+
 ```bash
-git remote add upstream https://github.com/EKKOLearnAI/hermes-studio.git  # 已配置
-git fetch upstream
-git checkout main
-git merge upstream/main
+# 1. 拉取上游最新
+git fetch upstream main
+
+# 2. 查看差距（确认上游改了什么、我们有多少领先）
+git rev-list --left-right --count upstream/main...main
+git log --oneline main..upstream/main   # 上游新提交
+git log --oneline upstream/main..main   # 我们领先的提交
+
+# 3. 检查上游是否也实现了类似功能（如排队消息 #2477 就是上游独立的实现）
+#    如果上游有同名/同功能，决定保留谁的版本
+
+# 4. 合入上游（自动合并一般成功）
+git merge upstream/main --no-edit
 # 若有冲突：
-#   - 带 [zoom patch] / [preempt patch] / [user-controlled patch] 注释的代码块 → 保留我们自己的
+#   - 带 [zoom patch] / [preempt patch] / [user-controlled patch] 标记的代码块 → 保留我们自己的
 #   - 其余代码 → 以上游为准
 #   - CUSTOM_CHANGES.md 保留 fork 版本
-git add -A && git commit -m "merge: upstream"
+
+# 5. 剥离无关功能（如 credits 点数系统归属另一个项目）
+git revert <要剥离的提交SHA> --no-edit
+# 检查上游是否有同类功能需要剥离：
+#   curl -s "https://api.github.com/search/code?q=credits+repo:EKKOLearnAI/hermes-studio"
+#   （上游 0 结果，见 2026-08-13 实操）
+
+# 6. 编译验证
+npm run build
+
+# 7. 更新 CUSTOM_CHANGES.md 中的同步记录
+
+# 8. 推送
 git push origin main
 ```
 
-### GitHub 网页一键同步
+### GitHub 网页一键同步（仅限零冲突）
 1. 打开本 fork 仓库页 → **Sync fork** → **Update branch**。
 2. 无冲突则直接完成；有冲突时回到上面的本地方式解决。
 
