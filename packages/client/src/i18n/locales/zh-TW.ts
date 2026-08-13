@@ -375,6 +375,10 @@ export default {
       mcu: '小方盒',
       devices: '裝置',
     },
+    app: {
+      subtitle: '讓 App 連接你的裝置',
+      scanToAdd: '掃碼新增',
+    },
   },
 
   devices: {

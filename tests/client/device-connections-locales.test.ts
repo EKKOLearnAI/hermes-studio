@@ -31,6 +31,8 @@ const requiredPaths = [
   'connections.tabs.app',
   'connections.tabs.mcu',
   'connections.tabs.devices',
+  'connections.app.subtitle',
+  'connections.app.scanToAdd',
   'mcuDevices.subtitle',
   'mcuDevices.refresh',
   'devices.subtitle',

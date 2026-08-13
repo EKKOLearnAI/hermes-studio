@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { NButton, NTabPane, NTabs } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import AppConnectionsPanel from '@/components/hermes/connections/AppConnectionsPanel.vue'
 import McuDevicesPanel from '@/components/hermes/connections/McuDevicesPanel.vue'
 import DevicesView from '@/views/hermes/DevicesView.vue'
 
@@ -80,7 +81,7 @@ function updateTab(value: string | number) {
       @update:value="updateTab"
     >
       <NTabPane name="app" :tab="t('connections.tabs.app')" display-directive="if">
-        <div class="app-tab-blank" />
+        <AppConnectionsPanel />
       </NTabPane>
       <NTabPane name="mcu" :tab="t('connections.tabs.mcu')" display-directive="if">
         <McuDevicesPanel />
@@ -131,11 +132,6 @@ function updateTab(value: string | number) {
     height: 100%;
     min-height: 0;
   }
-}
-
-.app-tab-blank {
-  height: 100%;
-  min-height: 0;
 }
 
 @media (max-width: $breakpoint-mobile) {

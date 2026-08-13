@@ -302,6 +302,10 @@ export default {
       mcu: 'Little Box',
       devices: 'Устройства',
     },
+    app: {
+      subtitle: 'Подключите приложение к своим устройствам',
+      scanToAdd: 'Добавить сканированием',
+    },
   },
 
   devices: {

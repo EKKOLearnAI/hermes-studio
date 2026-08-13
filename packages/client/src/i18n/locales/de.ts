@@ -387,6 +387,10 @@ export default {
       mcu: 'Little Box',
       devices: 'Geräte',
     },
+    app: {
+      subtitle: 'Verbinde die App mit deinen Geräten',
+      scanToAdd: 'Per Scan hinzufügen',
+    },
   },
 
   devices: {
