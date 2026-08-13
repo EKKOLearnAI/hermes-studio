@@ -360,6 +360,9 @@ test.describe('group chat room deep links', () => {
     const historicalPanel = page.locator('.run-tool-list[data-run-id="run-history-tools"]')
     await expect(historicalPanel).toBeVisible()
     await expect(historicalPanel.locator('.tool-name')).toHaveText('historical_tool')
+    await expect.poll(() => page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-card').evaluate(
+      element => Array.from(element.children, child => child.className),
+    )).toEqual(['run-transcript', 'run-tool-list'])
 
     const dimensions = await panel.evaluate(element => ({
       clientHeight: element.clientHeight,
@@ -491,6 +494,9 @@ test.describe('group chat room deep links', () => {
     await expect(refreshedPanel).toBeVisible()
     await expect(refreshedPanel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
     await expect(page.locator('.group-agent-run[data-run-id="run-runtime-tools"] .tool-message')).toHaveCount(2)
+    await expect.poll(() => page.locator('.group-agent-run[data-run-id="run-runtime-tools"] .run-card').evaluate(
+      element => Array.from(element.children, child => child.className),
+    )).toEqual(['run-transcript', 'run-tool-list'])
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {

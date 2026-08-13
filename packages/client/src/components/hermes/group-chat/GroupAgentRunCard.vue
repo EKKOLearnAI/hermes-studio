@@ -99,6 +99,23 @@ function handleToolListWheel(event: WheelEvent): void {
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
+                <div v-if="transcriptItems.length" class="run-transcript">
+                    <div
+                        v-for="item in transcriptItems"
+                        :key="item.id"
+                        class="run-transcript-item"
+                        :data-message-id="item.id"
+                    >
+                        <GroupMessageItem
+                            :message="item"
+                            :agents="agents"
+                            :members="members"
+                            :current-user-id="currentUserId"
+                            :allow-speech="props.allowSpeech"
+                            embedded
+                        />
+                    </div>
+                </div>
                 <div
                     v-if="runToolItems.length"
                     class="run-tool-list"
@@ -113,23 +130,6 @@ function handleToolListWheel(event: WheelEvent): void {
                         v-for="item in runToolItems"
                         :key="item.id"
                         class="run-tool-item"
-                        :data-message-id="item.id"
-                    >
-                        <GroupMessageItem
-                            :message="item"
-                            :agents="agents"
-                            :members="members"
-                            :current-user-id="currentUserId"
-                            :allow-speech="props.allowSpeech"
-                            embedded
-                        />
-                    </div>
-                </div>
-                <div v-if="transcriptItems.length" class="run-transcript">
-                    <div
-                        v-for="item in transcriptItems"
-                        :key="item.id"
-                        class="run-transcript-item"
                         :data-message-id="item.id"
                     >
                         <GroupMessageItem
@@ -239,7 +239,7 @@ function handleToolListWheel(event: WheelEvent): void {
     min-width: 0;
 }
 
-.run-tool-list + .run-transcript {
+.run-transcript + .run-tool-list {
     border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
 }
 

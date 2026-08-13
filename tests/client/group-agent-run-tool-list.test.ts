@@ -107,6 +107,8 @@ describe('GroupAgentRunCard tool list', () => {
     ])
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(panel.element)
   })
 
   it('keeps completed historical tool calls newest-first in the same bounded panel', () => {
@@ -126,5 +128,7 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript').text()).not.toContain('read_file')
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-1"]')).toHaveLength(1)
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-2"]')).toHaveLength(1)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-tool-list').element)
   })
 })
