@@ -236,6 +236,50 @@ describe('group chat durable continuation route', () => {
         expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({ status: 'resumed', continueUsed: 1 })
     })
 
+    it('defers a queued continuation when its selected runtime disconnects before invocation', async () => {
+        const storage = groupServer.getStorage()
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        let connected = true
+        let releaseFirst!: () => void
+        const blocked = new Promise<void>(resolve => { releaseFirst = resolve })
+        let calls = 0
+        const executor: any = {
+            ...target,
+            get connected() { return connected },
+            disconnect: vi.fn(), sendMessage: vi.fn(async () => ''), interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined), isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(), setWorkspaceDiffBroadcaster: vi.fn(), setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async (_roomId: string, message: any) => {
+                calls += 1
+                if (calls === 1) return blocked
+                storage.completeHandoffTarget(String(message.continuationAttemptId), `continuation:${message.continuationAttemptId}`)
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor)
+        const busy = groupServer.agentClients.processMentions('room-1', {
+            messageId: 'busy-disconnect', content: '@Target busy', senderName: 'User', senderId: 'user-1',
+            timestamp: Date.now(), role: 'user', mentions: [{ type: 'agent', participantId: 'agent-2' }],
+        })
+        await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const dispatch = groupServer.dispatchPendingHandoffs()
+        await vi.waitFor(() => expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'admitted' }))
+        connected = false
+        releaseFirst()
+        await busy
+        expect(await dispatch).toBe(1)
+        expect(executor.replyToMention).toHaveBeenCalledTimes(1)
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({ status: 'admitted', invocationStartedAt: null })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'claimed', attemptCount: 1 })
+
+        connected = true
+        db.prepare('UPDATE gc_handoff_outbox SET availableAt = 0 WHERE attemptId = ?').run(attemptId)
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(executor.replyToMention).toHaveBeenCalledTimes(2)
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed' })
+    })
+
     it('reopens an admitted queued continuation after restart and completes it through the dispatcher', async () => {
         const storage = groupServer.getStorage()
         const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!

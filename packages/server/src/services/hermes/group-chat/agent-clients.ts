@@ -1976,7 +1976,7 @@ export class AgentClients {
     private _mentionQueue = new Map<string, Array<{
         agents: GroupAgentExecutor[]
         msg: MentionMessage
-        resolve: () => void
+        resolve: (error: string | null) => void
     }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
@@ -2184,7 +2184,7 @@ export class AgentClients {
     private clearMentionQueuesForRoom(roomId: string): void {
         const queue = this._mentionQueue.get(roomId)
         this._mentionQueue.delete(roomId)
-        for (const entry of queue || []) entry.resolve()
+        for (const entry of queue || []) entry.resolve('Continuation target Agent is not connected')
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
         for (const agentName of roomCounts?.keys() || []) {
@@ -2192,14 +2192,14 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<void> {
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<string | null> {
         let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
             this._mentionQueue.set(roomId, queue)
         }
-        let resolve!: () => void
-        const completed = new Promise<void>(done => { resolve = done })
+        let resolve!: (error: string | null) => void
+        const completed = new Promise<string | null>(done => { resolve = done })
         queue.push({ agents, msg, resolve })
         for (const agent of agents) this.scheduleAgentActivity(roomId, agent.name)
         return completed
@@ -2374,7 +2374,10 @@ export class AgentClients {
             await this._drainRoomQueue(roomId)
         }
         if (msg.continuationAttemptId && mentioned.length === 1) {
-            await completed
+            const queueError = await completed
+            if (queueError) {
+                return { targetCount: 1, deliveredCount: 0, errors: [queueError] }
+            }
             const status = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
             if (status?.status !== 'completed') {
                 this._storage?.failHandoffTarget?.(
@@ -2444,6 +2447,7 @@ export class AgentClients {
                 if (!next) break
                 if (queue?.length === 0) this._mentionQueue.delete(roomId)
 
+                let queueError: string | null = null
                 try {
                     const runtimeContext = this._roomSummaryService
                         ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
@@ -2454,6 +2458,9 @@ export class AgentClients {
                         }
                         try {
                             if (next.msg.continuationAttemptId) {
+                                if (!agent.connected) {
+                                    throw new Error('Continuation target Agent is not connected')
+                                }
                                 const attemptId = next.msg.continuationAttemptId
                                 const running = this._storage?.markHandoffTargetRunning?.(
                                     attemptId,
@@ -2482,11 +2489,13 @@ export class AgentClients {
                     for (let index = 0; index < results.length; index += 1) {
                         const result = results[index]
                         if (result.status === 'rejected') {
-                            logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${result.reason?.message || result.reason}`)
+                            const message = result.reason?.message || String(result.reason)
+                            queueError ||= message
+                            logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${message}`)
                         }
                     }
                 } finally {
-                    next.resolve()
+                    next.resolve(queueError)
                 }
             }
         } finally {
