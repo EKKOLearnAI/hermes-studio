@@ -2749,6 +2749,14 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+function promoteQueuedMessage(sessionId: string, messageId: string) {
+    if (!(queuedUserMessages.value.get(sessionId) || []).some(message => message.id === messageId)) return
+    getChatRunSocket(runtimeTransport())?.emit('run.promote', {
+      session_id: sessionId,
+      queue_id: messageId,
+    })
+  }
+
   function insertQueuedMessage(sessionId: string, messageId: string) {
     if (!(queuedUserMessages.value.get(sessionId) || []).some(message => message.id === messageId)) return
     getChatRunSocket(runtimeTransport())?.emit('insert_queued_run', {
@@ -2785,7 +2793,6 @@ export const useChatStore = defineStore('chat', () => {
     if (!sid) return
     replaceQueueInsertionState(sid, evt)
   }
-
   function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
     if (!Array.isArray(rawMessages)) return []
     return rawMessages.flatMap((raw) => {
@@ -2867,11 +2874,16 @@ export const useChatStore = defineStore('chat', () => {
         replaceQueuedUserMessages(sessionId, nextQueue)
       }
       if (dequeued && !getSessionMsgs(sessionId).some(message => message.id === dequeued.id)) {
-        addMessage(sessionId, { ...dequeued, queued: false })
-        updateSessionTitle(sessionId)
-      } else if (!dequeued) {
-        markDequeuedQueueId(sessionId, dequeuedId)
-      }
+              addMessage(sessionId, { ...dequeued, queued: false })
+              updateSessionTitle(sessionId)
+            } else if (!dequeued) {
+              // 服务端已将该消息出队(dequeued_queue_id 是权威),即使本地队列里找不到
+              // 匹配项(如 ID 被服务端改写/事件乱序),也必须把它从 UI 队列移除,
+              // 否则队列面板会一直挂着"已发出"的消息。同时打标记防止后续
+              // run.started 把它当新排队消息再加回来。
+              dropQueuedUserMessage(sessionId, dequeuedId)
+              markDequeuedQueueId(sessionId, dequeuedId)
+            }
       return
     }
 
@@ -3281,6 +3293,9 @@ export const useChatStore = defineStore('chat', () => {
           models: group.models,
         })),
         queue_id: userMsg.id,
+        // 普通发送默认排队不打断;只有用户通过"立即发送"/ESC 显式放行时
+        // (promoteQueuedMessage 走 run.promote)才打断当前回复。
+        preempt: false,
         workspace: activeSession.value?.workspace || undefined,
         category_id: activeSession.value?.categoryId ?? null,
         source: sessionSource,
@@ -5112,7 +5127,8 @@ export const useChatStore = defineStore('chat', () => {
     subagentStreams,
     getSubagentStream,
     removeQueuedMessage,
-    insertQueuedMessage,
+        promoteQueuedMessage,
+        insertQueuedMessage,
     setMessageReference,
     clearMessageReference,
     isLoadingSessions,

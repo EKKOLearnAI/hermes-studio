@@ -278,16 +278,9 @@ const activeQueueInsertion = computed(() => {
   if (!sid) return null;
   return chatStore.queueInsertionStates.get(sid) || null;
 });
-const canInsertQueuedMessages = computed(() => {
-  const session = chatStore.activeSession;
-  if (!session) return false;
-  const agent = session.codingAgentId || session.agent;
-  if (agent === "ekko-agent") {
-    return session.source === "coding_agent" || session.source === "global_agent";
-  }
-  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
-  return !session.source || session.source === "cli" || session.source === "global_agent";
-});
+// [user-controlled patch] canInsertQueuedMessages 已移除——上游 #2477 的
+// "安全排队插入"按钮被隐藏（v-if="false"），避免与本 fork 的 ↑ 立即发送图标重复。
+// 如需恢复，从注释中取消该计算属性+取消上游按钮的 v-if 注释。
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
@@ -360,6 +353,12 @@ function removeQueuedMessage(messageId: string) {
   const sid = chatStore.activeSessionId;
   if (!sid) return;
   chatStore.removeQueuedMessage(sid, messageId);
+}
+
+function promoteQueuedMessage(messageId: string) {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return;
+  chatStore.promoteQueuedMessage(sid, messageId);
 }
 
 function insertQueuedMessage(messageId: string) {
@@ -997,19 +996,33 @@ defineExpose({
             >
               <span class="queue-index">{{ index + 1 }}</span>
               <span class="queue-text">{{ queuedPreview(message.content) }}</span>
+              <!-- [user-controlled patch] 上游 #2477 的"安全排队插入"按钮图标与
+                                 本 fork 的"立即发送"(promote) 撞车(都是上箭头):隐藏上游按钮,
+                                 只保留本 fork 的 ↑ 立即发送(ESC/Ctrl+Enter 同语义)。删除时直接
+                                 删掉整个 <button class="queue-insert"> 块。 -->
+                            <button
+                              v-if="false"
+                              type="button"
+                              class="queue-insert"
+                              :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
+                              :disabled="!!activeQueueInsertion"
+                              :title="queueInsertionTitle(message.id)"
+                              :aria-label="queueInsertionTitle(message.id)"
+                              @click="insertQueuedMessage(message.id)"
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 19V5" />
+                                <path d="m5 12 7-7 7 7" />
+                              </svg>
+                            </button>
               <button
-                v-if="canInsertQueuedMessages"
                 type="button"
-                class="queue-insert"
-                :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
-                :disabled="!!activeQueueInsertion"
-                :title="queueInsertionTitle(message.id)"
-                :aria-label="queueInsertionTitle(message.id)"
-                @click="insertQueuedMessage(message.id)"
+                class="queue-promote"
+                @click="promoteQueuedMessage(message.id)"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 19V5" />
-                  <path d="m5 12 7-7 7 7" />
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <line x1="12" y1="19" x2="12" y2="6" />
+                  <polyline points="5 11 12 4 19 11" />
                 </svg>
               </button>
               <button
@@ -1343,6 +1356,26 @@ defineExpose({
   }
 }
 
+.queue-promote {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-muted;
+  background: transparent;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $success;
+    background: rgba($success, 0.1);
+  }
+}
+
 @media (max-width: 640px) {
   .message-float-stack {
     left: 8px;
@@ -1409,6 +1442,11 @@ defineExpose({
 
   .queue-insert,
   .queue-remove {
+    width: 22px;
+    height: 22px;
+  }
+
+  .queue-promote {
     width: 22px;
     height: 22px;
   }
