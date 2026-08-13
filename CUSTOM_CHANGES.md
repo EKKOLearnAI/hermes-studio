@@ -15,8 +15,12 @@
 ## 同步记录（2026-08-13）
 
 - 上游已更新到 `0899f7eb`（v0.6.42 之后 1 个 hotfix：#2511 群聊滚动摘要游标安全）
-- 本次操作：`git merge upstream/main`（自动合并，零冲突）+ `git revert 99718a54`（剥离 credits）
-- 当前版本：**0.6.42 + hotfix**；本 fork 两个自定义改动已验证保留（见下文）
+- **merge 上游**：`git merge upstream/main`（自动合并，零冲突）+ `git revert 99718a54`（剥离 credits）
+- **消息队列 bug 修复**（3 处改动，已在 36号 实测验证通过）：
+  - 后端 `abort.ts`：`markAbortCompleted` 发出的 `run.queued` 补上 `queued_messages` 字段，前端用服务器权威队列替换
+  - 前端 `chat.ts`：`handleRunQueuedEvent` 找不到 `dequeued` 消息时强制 `dropQueuedUserMessage` 移除 UI 队列
+  - 前端 `MessageList.vue`：隐藏上游 #2477 的「安全排队插入」按钮（`v-if="false"`），避免与本 fork 的「↑ 立即发送」图标重复，同时移除未使用的 `canInsertQueuedMessages` 计算属性
+- 当前版本：**0.6.42 + hotfix + 消息队列修复**；本 fork 两个自定义改动已验证保留
 
 ---
 
