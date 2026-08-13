@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.41"
+    "version": "0.6.42"
   },
   "servers": [
     {
@@ -1143,6 +1143,42 @@
         "responses": {
           "200": {
             "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/coding-agents/{id}/check-update": {
+      "post": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Create check-update",
+        "description": "POST /api/coding-agents/:id/check-update",
+        "operationId": "checkUpdate",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3466,6 +3502,72 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/config/delegation-model": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get delegation-model",
+        "description": "GET /api/hermes/config/delegation-model",
+        "operationId": "getDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update delegation-model",
+        "description": "PUT /api/hermes/config/delegation-model",
+        "operationId": "updateDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "delegation": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/hermes/config/moa": {
@@ -9280,6 +9382,89 @@
                 "required": [
                   "prompt"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/media/minimax-image-to-video": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Create minimax-image-to-video",
+        "description": "POST /api/hermes/media/minimax-image-to-video",
+        "operationId": "miniMaxImageToVideo",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "aigc_watermark": {
+                    "type": "boolean"
+                  },
+                  "callback_url": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "number"
+                  },
+                  "fast_pretreatment": {
+                    "type": "boolean"
+                  },
+                  "image_base64": {
+                    "type": "string"
+                  },
+                  "image_path": {
+                    "type": "string"
+                  },
+                  "image_url": {
+                    "type": "string"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "output_path": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "prompt_optimizer": {
+                    "type": "boolean"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "resolution": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "number"
+                  }
+                }
               }
             }
           }

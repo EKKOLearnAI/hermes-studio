@@ -2,7 +2,16 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, NInputNumber, NModal, NSelect, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchAuxiliaryModels, saveAuxiliaryModels, type AuxiliaryModelSettings, type AuxiliaryModelTask, type AuxiliaryModelsConfig } from '@/api/hermes/config'
+import {
+  fetchAuxiliaryModels,
+  fetchDelegationModel,
+  saveAuxiliaryModels,
+  saveDelegationModel,
+  type AuxiliaryModelSettings,
+  type AuxiliaryModelTask,
+  type AuxiliaryModelsConfig,
+  type DelegationModelConfig,
+} from '@/api/hermes/config'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
@@ -13,17 +22,26 @@ const profilesStore = useProfilesStore()
 
 const loading = ref(false)
 const saving = ref(false)
+const savingDelegation = ref(false)
 const tasks = ref<AuxiliaryModelTask[]>([])
 const auxiliary = ref<AuxiliaryModelsConfig>({})
+const delegation = ref<DelegationModelConfig>({})
 const showEditor = ref(false)
+const showDelegationEditor = ref(false)
 const editingTask = ref<AuxiliaryModelTask | null>(null)
 const hydratingForm = ref(false)
+const hydratingDelegationForm = ref(false)
 const form = ref({
   provider: '',
   model: '',
   timeout: null as number | null,
   download_timeout: null as number | null,
   extra_body: '',
+})
+const delegationForm = ref({
+  provider: '',
+  model: '',
+  reasoning_effort: null as string | null,
 })
 
 const providerOptions = computed(() => {
@@ -45,6 +63,56 @@ const modelOptions = computed(() => {
   if (!provider || provider === 'auto' || provider === 'main') return []
   return modelsForProvider(provider).map(model => ({ label: model, value: model }))
 })
+
+const delegationProviderOptions = computed(() => {
+  const options = modelsStore.providers
+    .filter(group => group.provider && group.provider.toLowerCase() !== 'moa')
+    .map(group => ({ label: group.label || group.provider, value: group.provider }))
+  const current = delegationForm.value.provider.trim()
+  if (current && !options.some(option => option.value === current)) {
+    options.unshift({ label: current, value: current })
+  }
+  return options
+})
+
+const delegationModelOptions = computed(() => {
+  const provider = delegationForm.value.provider.trim()
+  if (!provider) return []
+  const options = modelsForProvider(provider).map(model => ({ label: model, value: model }))
+  const current = delegationForm.value.model.trim()
+  if (current && !options.some(option => option.value === current)) {
+    options.unshift({ label: current, value: current })
+  }
+  return options
+})
+
+const reasoningEffortOptions = computed(() => [
+  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
+  { label: t('chat.reasoningEffort.options.ultra'), value: 'ultra' },
+])
+
+const delegationModelLabel = computed(() => {
+  if (!delegation.value.model) return t('models.delegationInheritMain')
+  return delegation.value.provider
+    ? `${delegation.value.provider} / ${delegation.value.model}`
+    : delegation.value.model
+})
+
+const delegationReasoningLabel = computed(() => {
+  if (!delegation.value.reasoning_effort) return t('models.delegationInheritReasoning')
+  const option = reasoningEffortOptions.value.find(item => item.value === delegation.value.reasoning_effort)
+  return option?.label || delegation.value.reasoning_effort
+})
+
+const hasDelegationOverride = computed(() => !!(
+  delegation.value.provider || delegation.value.model || delegation.value.reasoning_effort
+))
 
 const isEditingVision = computed(() => editingTask.value?.key === 'vision')
 
@@ -95,16 +163,69 @@ function timeoutLabel(task: AuxiliaryModelTask, settings?: AuxiliaryModelSetting
   return values.join(' / ')
 }
 
-async function loadAuxiliaryModels() {
+async function loadModelRouting() {
   loading.value = true
   try {
-    const data = await fetchAuxiliaryModels()
-    tasks.value = data.tasks
-    auxiliary.value = data.auxiliary
+    const [auxiliaryData, delegationData] = await Promise.all([
+      fetchAuxiliaryModels(),
+      fetchDelegationModel(),
+    ])
+    tasks.value = auxiliaryData.tasks
+    auxiliary.value = auxiliaryData.auxiliary
+    delegation.value = delegationData.delegation
   } catch (e: any) {
-    message.error(e.message || t('models.auxiliaryLoadFailed'))
+    message.error(e.message || t('models.modelRoutingLoadFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+function openDelegationEditor() {
+  hydratingDelegationForm.value = true
+  delegationForm.value = {
+    provider: delegation.value.provider || '',
+    model: delegation.value.model || '',
+    reasoning_effort: delegation.value.reasoning_effort || null,
+  }
+  hydratingDelegationForm.value = false
+  showDelegationEditor.value = true
+}
+
+async function saveDelegation() {
+  const provider = delegationForm.value.provider.trim()
+  const model = delegationForm.value.model.trim()
+  if (!provider || !model) {
+    message.error(t('models.delegationModelRequired'))
+    return
+  }
+
+  savingDelegation.value = true
+  try {
+    const saved = await saveDelegationModel({
+      provider,
+      model,
+      reasoning_effort: delegationForm.value.reasoning_effort || undefined,
+    })
+    delegation.value = saved.delegation
+    showDelegationEditor.value = false
+    message.success(t('models.delegationSaved'))
+  } catch (e: any) {
+    message.error(e.message || t('models.delegationSaveFailed'))
+  } finally {
+    savingDelegation.value = false
+  }
+}
+
+async function clearDelegation() {
+  savingDelegation.value = true
+  try {
+    const saved = await saveDelegationModel({})
+    delegation.value = saved.delegation
+    message.success(t('models.delegationSaved'))
+  } catch (e: any) {
+    message.error(e.message || t('models.delegationSaveFailed'))
+  } finally {
+    savingDelegation.value = false
   }
 }
 
@@ -212,11 +333,11 @@ async function clearTask(task: AuxiliaryModelTask) {
 }
 
 onMounted(() => {
-  void loadAuxiliaryModels()
+  void loadModelRouting()
 })
 
 watch(() => profilesStore.activeProfileName, () => {
-  void loadAuxiliaryModels()
+  void loadModelRouting()
 })
 
 watch(() => form.value.provider, (provider) => {
@@ -230,48 +351,144 @@ watch(() => form.value.provider, (provider) => {
     form.value.model = ''
   }
 }, { flush: 'sync' })
+
+watch(() => delegationForm.value.provider, (provider) => {
+  if (hydratingDelegationForm.value) return
+  if (!modelsForProvider(provider).includes(delegationForm.value.model)) {
+    delegationForm.value.model = ''
+  }
+}, { flush: 'sync' })
 </script>
 
 <template>
   <section class="auxiliary-panel">
     <div class="auxiliary-header">
       <div>
-        <h3>{{ t('models.auxiliaryTitle') }}</h3>
-        <p>{{ t('models.auxiliarySubtitle') }}</p>
+        <h3>{{ t('models.modelRoutingTitle') }}</h3>
+        <p>{{ t('models.modelRoutingSubtitle') }}</p>
       </div>
-      <NButton size="small" quaternary :loading="loading" @click="loadAuxiliaryModels">
+      <NButton size="small" quaternary :loading="loading" @click="loadModelRouting">
         {{ t('models.auxiliaryRefresh') }}
       </NButton>
     </div>
 
     <NSpin :show="loading">
-      <div class="auxiliary-table">
-        <div class="auxiliary-row auxiliary-row-head">
-          <span>{{ t('models.auxiliaryTask') }}</span>
-          <span>{{ t('models.provider') }} / {{ t('models.defaultModel') }}</span>
-          <span>{{ t('models.auxiliaryTimeout') }}</span>
-          <span>{{ t('models.auxiliaryActions') }}</span>
-        </div>
-        <div v-for="task in tasks" :key="task.key" class="auxiliary-row">
-          <span class="task-name">{{ taskLabel(task) }}</span>
-          <span class="task-config">{{ configuredLabel(auxiliary[task.key]) }}</span>
-          <span class="task-timeout">{{ timeoutLabel(task, auxiliary[task.key]) }}</span>
-          <span class="task-actions">
-            <NButton size="tiny" quaternary @click="openEditor(task)">
+      <div class="delegation-section">
+        <div class="delegation-header">
+          <div>
+            <h4>{{ t('models.delegationTitle') }}</h4>
+            <p>{{ t('models.delegationSubtitle') }}</p>
+          </div>
+          <div class="delegation-actions">
+            <NButton
+              data-testid="delegation-reset"
+              size="small"
+              quaternary
+              :disabled="savingDelegation || !hasDelegationOverride"
+              @click="clearDelegation"
+            >
+              {{ t('models.delegationReset') }}
+            </NButton>
+            <NButton data-testid="delegation-edit" size="small" type="primary" secondary @click="openDelegationEditor">
               {{ t('common.edit') }}
             </NButton>
-            <NButton
-              size="tiny"
-              quaternary
-              :disabled="saving"
-              @click="clearTask(task)"
-            >
-              {{ t('models.auxiliaryClear') }}
-            </NButton>
-          </span>
+          </div>
+        </div>
+        <div class="delegation-summary">
+          <div class="summary-item">
+            <span>{{ t('models.defaultModel') }}</span>
+            <strong :title="delegationModelLabel">{{ delegationModelLabel }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>{{ t('chat.reasoningEffort.tooltip') }}</span>
+            <strong>{{ delegationReasoningLabel }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="auxiliary-tasks-header">
+        <h4>{{ t('models.auxiliaryTasksTitle') }}</h4>
+        <p>{{ t('models.auxiliarySubtitle') }}</p>
+      </div>
+
+      <div class="auxiliary-table-scroll">
+        <div class="auxiliary-table">
+          <div class="auxiliary-row auxiliary-row-head">
+            <span>{{ t('models.auxiliaryTask') }}</span>
+            <span>{{ t('models.provider') }} / {{ t('models.defaultModel') }}</span>
+            <span>{{ t('models.auxiliaryTimeout') }}</span>
+            <span>{{ t('models.auxiliaryActions') }}</span>
+          </div>
+          <div v-for="task in tasks" :key="task.key" class="auxiliary-row">
+            <span class="task-name">{{ taskLabel(task) }}</span>
+            <span class="task-config">{{ configuredLabel(auxiliary[task.key]) }}</span>
+            <span class="task-timeout">{{ timeoutLabel(task, auxiliary[task.key]) }}</span>
+            <span class="task-actions">
+              <NButton size="tiny" quaternary @click="openEditor(task)">
+                {{ t('common.edit') }}
+              </NButton>
+              <NButton
+                size="tiny"
+                quaternary
+                :disabled="saving"
+                @click="clearTask(task)"
+              >
+                {{ t('models.auxiliaryClear') }}
+              </NButton>
+            </span>
+          </div>
         </div>
       </div>
     </NSpin>
+
+    <NModal
+      v-model:show="showDelegationEditor"
+      preset="card"
+      :title="t('models.delegationTitle')"
+      :style="{ width: 'min(620px, calc(100vw - 32px))' }"
+      :mask-closable="!savingDelegation"
+    >
+      <div class="delegation-form">
+        <label>
+          <span>{{ t('models.provider') }}</span>
+          <NSelect
+            data-testid="delegation-provider"
+            v-model:value="delegationForm.provider"
+            :options="delegationProviderOptions"
+            :placeholder="t('models.chooseProvider')"
+            filterable
+          />
+        </label>
+        <label>
+          <span>{{ t('models.defaultModel') }}</span>
+          <NSelect
+            data-testid="delegation-model"
+            v-model:value="delegationForm.model"
+            :options="delegationModelOptions"
+            :placeholder="t('models.selectModel')"
+            :disabled="!delegationForm.provider"
+            filterable
+          />
+        </label>
+        <label class="reasoning-field">
+          <span>{{ t('chat.reasoningEffort.tooltip') }}</span>
+          <NSelect
+            data-testid="delegation-reasoning"
+            v-model:value="delegationForm.reasoning_effort"
+            :options="reasoningEffortOptions"
+            :placeholder="t('models.delegationInheritReasoning')"
+            clearable
+          />
+        </label>
+      </div>
+      <p class="delegation-form-hint">{{ t('models.delegationFormHint') }}</p>
+      <template #footer>
+        <div class="auxiliary-modal-actions">
+          <NButton :disabled="savingDelegation" @click="showDelegationEditor = false">{{ t('common.cancel') }}</NButton>
+          <NButton data-testid="delegation-save" type="primary" :loading="savingDelegation" @click="saveDelegation">{{ t('common.save') }}</NButton>
+        </div>
+      </template>
+    </NModal>
 
     <NModal
       v-model:show="showEditor"
@@ -357,6 +574,112 @@ watch(() => form.value.provider, (provider) => {
   }
 }
 
+.delegation-section {
+  margin: 16px;
+  overflow: hidden;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  background: $bg-secondary;
+}
+
+.delegation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px 12px;
+
+  h4,
+  p {
+    margin: 0;
+  }
+
+  h4 {
+    color: $text-primary;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  p {
+    margin-top: 5px;
+    color: $text-muted;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+.delegation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.delegation-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr);
+  border-top: 1px solid $border-light;
+}
+
+.summary-item {
+  min-width: 0;
+  padding: 11px 16px 12px;
+
+  & + & {
+    border-inline-start: 1px solid $border-light;
+  }
+
+  span,
+  strong {
+    display: block;
+  }
+
+  span {
+    margin-bottom: 4px;
+    color: $text-muted;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  strong {
+    overflow: hidden;
+    color: $text-secondary;
+    font-family: $font-code;
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.auxiliary-tasks-header {
+  padding: 14px 16px 10px;
+  border-top: 1px solid $border-light;
+
+  h4,
+  p {
+    margin: 0;
+  }
+
+  h4 {
+    color: $text-primary;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  p {
+    margin-top: 4px;
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
+.auxiliary-table-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .auxiliary-table {
   min-width: var(--auxiliary-table-min-width);
 }
@@ -404,7 +727,8 @@ watch(() => form.value.provider, (provider) => {
   gap: 6px;
 }
 
-.auxiliary-form {
+.auxiliary-form,
+.delegation-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -423,6 +747,17 @@ watch(() => form.value.provider, (provider) => {
   }
 }
 
+.reasoning-field {
+  grid-column: 1 / -1;
+}
+
+.delegation-form-hint {
+  margin: 12px 0 0;
+  color: $text-muted;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .extra-body-field {
   grid-column: 1 / -1;
 }
@@ -434,16 +769,31 @@ watch(() => form.value.provider, (provider) => {
 }
 
 @media (max-width: 760px) {
-  .auxiliary-panel {
-    overflow-x: auto;
+  .delegation-header {
+    flex-direction: column;
   }
 
-  .auxiliary-header {
-    min-width: var(--auxiliary-table-min-width);
+  .delegation-actions {
+    justify-content: flex-end;
+    width: 100%;
   }
 
-  .auxiliary-form {
+  .delegation-summary {
     grid-template-columns: 1fr;
+  }
+
+  .summary-item + .summary-item {
+    border-top: 1px solid $border-light;
+    border-inline-start: 0;
+  }
+
+  .auxiliary-form,
+  .delegation-form {
+    grid-template-columns: 1fr;
+  }
+
+  .reasoning-field {
+    grid-column: auto;
   }
 }
 </style>

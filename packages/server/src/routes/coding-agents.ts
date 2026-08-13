@@ -5,6 +5,7 @@ export const codingAgentRoutes = new Router()
 
 codingAgentRoutes.get('/api/coding-agents', ctrl.status)
 codingAgentRoutes.post('/api/coding-agents/:id/install', ctrl.install)
+codingAgentRoutes.post('/api/coding-agents/:id/check-update', ctrl.checkUpdate)
 codingAgentRoutes.post('/api/coding-agents/:id/launch/prepare', ctrl.prepareLaunch)
 codingAgentRoutes.post('/api/coding-agents/:id/launch/native', ctrl.nativeLaunch)
 codingAgentRoutes.post('/api/coding-agents/:id/runs', ctrl.startRun)

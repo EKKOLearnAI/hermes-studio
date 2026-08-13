@@ -35,7 +35,10 @@ function containsRuntimeFile(root, extensions) {
   return entries.some((entry) => {
     const path = join(root, entry.name)
     if (entry.isDirectory()) return containsRuntimeFile(path, extensions)
-    return extensions.some(extension => entry.name.endsWith(extension))
+    return extensions.some(extension => {
+      if (extension === '.so') return /\.so(?:\.\d+)*$/.test(entry.name)
+      return entry.name.endsWith(extension)
+    })
   })
 }
 

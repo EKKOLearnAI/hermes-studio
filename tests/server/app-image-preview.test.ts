@@ -1,6 +1,11 @@
 import { deflateSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAppImagePreview } from '../../packages/server/src/services/hermes/app-image-preview'
+
+afterEach(() => {
+  vi.doUnmock('sharp')
+  vi.resetModules()
+})
 
 describe('createAppImagePreview', () => {
   it('downscales large images and encodes an App WebP preview', async () => {
@@ -23,6 +28,42 @@ describe('createAppImagePreview', () => {
     expect(result.optimized).toBe(false)
     expect(result.mime).toBe('text/plain')
     expect(result.data).toBe(source)
+  })
+
+  it('does not load Sharp for non-image downloads', async () => {
+    vi.resetModules()
+    vi.doMock('sharp', () => {
+      throw new Error('Sharp should not load')
+    })
+    const { createAppImagePreview: createWithoutSharp } = await import(
+      '../../packages/server/src/services/hermes/app-image-preview'
+    )
+    const source = Buffer.from('hello')
+
+    const result = await createWithoutSharp(source, 'text/plain')
+
+    expect(result.optimized).toBe(false)
+    expect(result.data).toBe(source)
+  })
+
+  it('returns the original image when Sharp cannot load', async () => {
+    vi.resetModules()
+    vi.doMock('sharp', () => {
+      throw new Error('Native Sharp runtime unavailable')
+    })
+    const { createAppImagePreview: createWithoutSharp } = await import(
+      '../../packages/server/src/services/hermes/app-image-preview'
+    )
+    const source = solidPng(4, 4, [53, 88, 212, 255])
+
+    const result = await createWithoutSharp(source, 'image/png')
+
+    expect(result).toEqual({
+      data: source,
+      mime: 'image/png',
+      optimized: false,
+      originalBytes: source.length,
+    })
   })
 })
 

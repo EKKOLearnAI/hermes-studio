@@ -1,9 +1,16 @@
-import sharp from 'sharp'
-
 const APP_IMAGE_MAX_EDGE = 2048
 const APP_IMAGE_MAX_PIXELS = 100 * 1024 * 1024
 const APP_IMAGE_WEBP_QUALITY = 76
 const COMPRESSIBLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+const importSharp = () => import('sharp')
+
+let sharpModulePromise: ReturnType<typeof importSharp> | undefined
+
+function loadSharp(): ReturnType<typeof importSharp> {
+  sharpModulePromise ??= importSharp()
+  return sharpModulePromise
+}
 
 export interface AppImagePreview {
   data: Buffer
@@ -25,6 +32,7 @@ export async function createAppImagePreview(data: Buffer, mimeInput: string): Pr
   if (!COMPRESSIBLE_IMAGE_TYPES.has(mime) || !data.length) return fallback
 
   try {
+    const { default: sharp } = await loadSharp()
     const input = sharp(data, {
       animated: false,
       failOn: 'none',
