@@ -1,6 +1,6 @@
 ---
 date: 2026-08-13
-pr: pending
+pr: 2527
 feature: Group Chat current-run tool list
 impact: Active Agent runs show their tool calls in an Agent/Run-scoped bounded scroll region while completed runs keep tool traces in the transcript.
 ---
