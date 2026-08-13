@@ -119,7 +119,7 @@ function contentPreview(content: unknown): string {
 }
 
 type AgentInput = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -338,7 +338,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         name?: string
         inviteCode?: string
         agents?: {
-            agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+            agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
             profile: string
             provider?: string
             model?: string

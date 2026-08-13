@@ -140,11 +140,11 @@ function isHermesWorkerBackedSession(session?: { source?: string | null; agent?:
   if (!source || source === 'cli' || source === 'api_server') return true
   if (source === 'workflow' || source === 'group_chat') {
     const agent = String(session?.agent || '').trim()
-    return agent !== 'claude' && agent !== 'codex' && agent !== 'ekko-agent' && !session?.agent_session_id
+    return agent !== 'claude' && agent !== 'codex' && agent !== 'pi' && agent !== 'ekko-agent' && !session?.agent_session_id
   }
   if (source !== 'global_agent') return false
   const agent = String(session?.agent || '').trim()
-  return agent !== 'claude' && agent !== 'codex' && agent !== 'ekko-agent' && !session?.agent_session_id
+  return agent !== 'claude' && agent !== 'codex' && agent !== 'pi' && agent !== 'ekko-agent' && !session?.agent_session_id
 }
 
 function isBridgeRunSource(source?: string): boolean {
@@ -188,6 +188,7 @@ function webhookAgentForRun(data?: { coding_agent_id?: string; agent_id?: string
   const agent = data?.coding_agent_id || data?.agent_id
   if (agent === 'ekko-agent') return 'ekko'
   if (agent === 'codex') return 'codex'
+  if (agent === 'pi') return 'pi'
   if (agent === 'claude-code') return 'claude-code'
   return 'bridge'
 }
@@ -1301,7 +1302,7 @@ export class ChatRunSocket {
   private queueInsertionRuntime(sessionId: string, state: SessionState): QueueInsertionRuntime | null {
     const storedAgent = String(getSession(sessionId)?.agent || '').trim()
     const activeAgent = state.webhookAgent
-      || (storedAgent === 'ekko-agent' ? 'ekko' : storedAgent === 'claude' ? 'claude-code' : storedAgent === 'codex' ? 'codex' : 'bridge')
+      || (storedAgent === 'ekko-agent' ? 'ekko' : storedAgent === 'claude' ? 'claude-code' : storedAgent === 'codex' ? 'codex' : storedAgent === 'pi' ? 'pi' : 'bridge')
     if (activeAgent === 'ekko') return 'ekko'
     if (activeAgent !== 'bridge') return null
     if (state.source === 'coding_agent') return null
@@ -1771,7 +1772,7 @@ export class ChatRunSocket {
       sessionId,
       profile,
       source: state?.source || session?.source || 'coding_agent',
-      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'ekko-agent' ? 'ekko' : 'claude-code'),
+      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'pi' ? 'pi' : storedAgent === 'ekko-agent' ? 'ekko' : 'claude-code'),
       payload: tagged,
       roomId: state?.webhookRoomId,
       workflowId: state?.webhookWorkflowId,
@@ -1921,7 +1922,7 @@ export class ChatRunSocket {
       sessionId,
       profile,
       source: state?.source || session?.source || 'chat',
-      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'ekko-agent' ? 'ekko' : 'bridge'),
+      agent: state?.webhookAgent || (storedAgent === 'codex' ? 'codex' : storedAgent === 'pi' ? 'pi' : storedAgent === 'ekko-agent' ? 'ekko' : 'bridge'),
       payload: tagged,
       roomId: state?.webhookRoomId,
       workflowId: state?.webhookWorkflowId,

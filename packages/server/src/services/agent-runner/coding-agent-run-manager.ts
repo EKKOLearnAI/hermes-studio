@@ -14,6 +14,7 @@ import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
+import { attachPiJsonlReader } from './pi/pi-jsonl-parser'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -114,6 +115,8 @@ interface ManagedCodingAgentRun {
   pendingChatCompletionPayload?: Record<string, unknown>
   memoryExportStarted?: boolean
   assistantMessageId?: string
+  piDetachJsonl?: () => void
+  piToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
 }
 
 interface CodingAgentRunSendOptions {
@@ -211,11 +214,34 @@ function truncateCodingAgentToolOutputEvent(event: CanonicalResponsesEvent): Can
 }
 
 function isPrintAgent(agentId: string): boolean {
-  return agentId === 'claude-code' || agentId === 'codex'
+  return agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi'
+}
+
+function persistedCodingAgent(agentId: string): 'claude' | 'codex' | 'pi' {
+  if (agentId === 'codex') return 'codex'
+  if (agentId === 'pi') return 'pi'
+  return 'claude'
+}
+
+function usageCodingAgent(agentId: string): 'claude_code' | 'codex' | 'pi' {
+  if (agentId === 'codex') return 'codex'
+  if (agentId === 'pi') return 'pi'
+  return 'claude_code'
 }
 
 function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
-  if (run.launch.agentId !== 'codex' || run.launch.mode !== 'scoped') return true
+  if (run.launch.mode !== 'scoped') return true
+  if (run.launch.agentId === 'pi') {
+    const piHome = String(run.launch.env?.PI_CODING_AGENT_DIR || '').trim()
+    if (!piHome) return false
+    try {
+      const config = readFileSync(join(piHome, 'mcp.json'), 'utf-8')
+      return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+    } catch {
+      return false
+    }
+  }
+  if (run.launch.agentId !== 'codex') return true
   const codexHome = String(run.launch.env?.CODEX_HOME || '').trim()
   if (!codexHome) return false
   try {
@@ -506,7 +532,16 @@ export class CodingAgentRunManager {
       this.sessionIndex.set(launch.sessionId, run.id)
       this.ensureDbSession(run)
       this.touch(run)
-      this.emitTerminalStatus(run, `${launch.agentId === 'codex' ? 'Codex' : 'Claude Code'} chat runner ready.`)
+      if (launch.agentId === 'pi') {
+        try {
+          this.startPiRpcProcess(run)
+        } catch (err) {
+          this.cleanupRun(run, { kill: true, reportClosed: false })
+          throw err
+        }
+      }
+      const agentName = launch.agentId === 'codex' ? 'Codex' : launch.agentId === 'pi' ? 'Pi' : 'Claude Code'
+      this.emitTerminalStatus(run, `${agentName} chat runner ready.`)
       logger.info({
         runId: run.id,
         sessionId: launch.sessionId,
@@ -516,7 +551,7 @@ export class CodingAgentRunManager {
         provider: launch.provider,
         model: launch.model,
       }, '[coding-agent-run] print runner started')
-      return { runId: run.id, pid: 0 }
+      return { runId: run.id, pid: run.currentChild?.pid || 0 }
     }
 
     if (!pty) throw new Error('Hidden coding agent terminal is unavailable because node-pty is not installed')
@@ -599,6 +634,10 @@ export class CodingAgentRunManager {
       this.startCodexExecTurn(run, text, systemPrompt, images)
       return { runId: run.id, messageId }
     }
+    if (run.launch.agentId === 'pi') {
+      this.startPiRpcTurn(run, text, images)
+      return { runId: run.id, messageId }
+    }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
     run.pty.write(`${text}\r`)
     return { runId: run.id, messageId }
@@ -641,7 +680,7 @@ export class CodingAgentRunManager {
       sessionId: run.launch.sessionId,
       runId: final?.id,
       source: 'coding_agent',
-      agent: run.launch.agentId === 'codex' ? 'codex' : 'claude_code',
+      agent: usageCodingAgent(run.launch.agentId),
       usageScope: 'model_call',
       apiCalls: 1,
       usage,
@@ -659,6 +698,11 @@ export class CodingAgentRunManager {
     const responseEvent = this.normalizeCodexChatTextEvent(run, event)
     if (!responseEvent) return
     const storageSafeResponseEvent = truncateCodingAgentToolOutputEvent(responseEvent)
+    if (run.launch.agentId === 'pi' && !run.acceptingPrintEvent) {
+      // Pi RPC is the authoritative stream. The scoped provider proxy is used
+      // for transport and usage accounting only.
+      return
+    }
     if (run.launch.agentId === 'claude-code' && !run.acceptingPrintEvent) {
       if (run.terminalEventHandled) return
       // Claude's stream-json process reports tool_use/tool_result itself.
@@ -729,7 +773,7 @@ export class CodingAgentRunManager {
             sessionId: run.launch.sessionId,
             runId: final?.id || run.printResponseId || run.runMarker,
             source: 'coding_agent',
-            agent: run.launch.agentId === 'codex' ? 'codex' : 'claude_code',
+            agent: usageCodingAgent(run.launch.agentId),
             usageScope: 'run',
             usage: final.usage,
             profile: run.launch.profile,
@@ -754,7 +798,7 @@ export class CodingAgentRunManager {
         output: finalText,
         error: terminalError || undefined,
       }
-      if (childIsRunning(run.currentChild)) {
+      if (run.launch.agentId !== 'pi' && childIsRunning(run.currentChild)) {
         run.pendingChatCompletionEvent = chatCompletionEvent
         run.pendingChatCompletionPayload = chatCompletionPayload
       } else {
@@ -825,7 +869,7 @@ export class CodingAgentRunManager {
       id: run.launch.sessionId,
       profile: run.launch.profile,
       source,
-      agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
+      agent: persistedCodingAgent(run.launch.agentId),
       agent_session_id: run.id,
       agent_native_session_id: run.launch.agentNativeSessionId,
       model: run.launch.model,
@@ -871,11 +915,16 @@ export class CodingAgentRunManager {
     const shouldReportClosed = options.reportClosed !== false && (run.state.isWorking || Boolean(run.currentChild && !run.currentChild.killed))
     if (run.idleTimer) clearTimeout(run.idleTimer)
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+    run.piDetachJsonl?.()
+    run.piDetachJsonl = undefined
     this.flushTerminalOutput(run)
     if (run.terminalFlushTimer) clearTimeout(run.terminalFlushTimer)
     this.runs.delete(run.id)
     if (this.sessionIndex.get(run.launch.sessionId) === run.id) this.sessionIndex.delete(run.launch.sessionId)
     if (options.kill && !run.exited) {
+      if (run.launch.agentId === 'pi' && childIsRunning(run.currentChild)) {
+        this.writePiRpcCommand(run, { id: `abort_${Date.now()}`, type: 'abort' })
+      }
       try { run.pty?.kill() } catch {}
       terminateChildProcess(run.currentChild)
       if (childIsRunning(run.currentChild)) {
@@ -892,6 +941,209 @@ export class CodingAgentRunManager {
         workspace_run_change: workspaceRunChange,
       })
       this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
+    }
+  }
+
+  private startPiRpcProcess(run: ManagedCodingAgentRun) {
+    const child = spawnCodingAgentChild(run.launch.command, run.launch.args, {
+      cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+      env: {
+        ...process.env,
+        ...(run.launch.env || {}),
+      },
+      pipeStdin: true,
+    })
+    run.currentChild = child
+    run.currentChildStderr = ''
+    run.piToolBlocks = new Map()
+    run.piDetachJsonl = child.stdout
+      ? attachPiJsonlReader(
+          child.stdout,
+          event => this.handlePiRpcEvent(run, event),
+          line => logger.debug({ runId: run.id, line: sanitizeCodingAgentTerminalOutput(line) }, '[coding-agent-run] ignored invalid Pi RPC line'),
+        )
+      : undefined
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      this.touch(run)
+      const text = appendChildStderr(run, chunk)
+      if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] Pi RPC stderr')
+    })
+    child.stdin?.on('error', (err) => {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] Pi RPC stdin failed')
+    })
+    child.on('error', (err) => {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] Pi RPC failed to start')
+      if (!run.printCompleted) this.failClaudePrintTurn(run, childProcessErrorMessage(err))
+    })
+    child.on('close', (code) => {
+      run.piDetachJsonl?.()
+      run.piDetachJsonl = undefined
+      run.currentChild = undefined
+      if (run.exited || run.stoppedByUser) return
+      const message = exitErrorMessage('Pi', code, run.currentChildStderr)
+      logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] Pi RPC exited')
+      if (run.state.isWorking && !run.printCompleted) this.failClaudePrintTurn(run, message)
+      this.cleanupRun(run, { kill: false, reportClosed: false })
+    })
+  }
+
+  private writePiRpcCommand(run: ManagedCodingAgentRun, command: Record<string, unknown>) {
+    const stdin = run.currentChild?.stdin
+    if (!stdin || !childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
+    stdin.write(`${JSON.stringify(command)}\n`)
+  }
+
+  private startPiRpcTurn(run: ManagedCodingAgentRun, input: string, images: CodingAgentImageInput[]) {
+    if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not running')
+    if (run.printResponseId && !run.printCompleted) throw new Error('Pi is still processing the previous input')
+
+    const responseId = `resp_${Date.now()}`
+    run.printResponseId = responseId
+    run.printMessageId = `msg_${responseId}`
+    run.printTextStarted = false
+    run.printText = ''
+    run.printCompleted = false
+    run.responseStartEmitted = false
+    run.terminalEventHandled = false
+    run.runMarker = undefined
+    run.memoryExportStarted = false
+    run.piToolBlocks = new Map()
+
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: {
+        type: 'response.created',
+        response: { id: responseId, object: 'response', status: 'in_progress', model: run.launch.model, output: [] },
+      },
+    })
+
+    const rpcImages = images.map(image => ({
+      type: 'image',
+      data: readFileSync(image.path).toString('base64'),
+      mimeType: normalizedImageMediaType(image),
+    }))
+    this.writePiRpcCommand(run, {
+      id: `prompt_${responseId}`,
+      type: 'prompt',
+      message: input,
+      ...(rpcImages.length ? { images: rpcImages } : {}),
+    })
+  }
+
+  private handlePiRpcEvent(run: ManagedCodingAgentRun, event: any) {
+    this.touch(run)
+    if (!event || typeof event !== 'object') return
+
+    if (event.type === 'response') {
+      if (event.success === false && event.command === 'prompt' && !run.printCompleted) {
+        this.failClaudePrintTurn(run, String(event.error || 'Pi rejected the prompt'))
+      }
+      return
+    }
+
+    if (event.type === 'extension_ui_request') {
+      if (event.method === 'notify' || event.method === 'setStatus' || event.method === 'setWidget' || event.method === 'setTitle') return
+      const response = event.method === 'confirm'
+        ? { type: 'extension_ui_response', id: event.id, confirmed: false }
+        : { type: 'extension_ui_response', id: event.id, cancelled: true }
+      this.writePiRpcCommand(run, response)
+      return
+    }
+
+    if (run.printCompleted) return
+    if (event.type === 'message_end') {
+      const message = event.message || {}
+      if (message.role === 'assistant' && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
+        this.failClaudePrintTurn(run, String(message.errorMessage || `Pi run ${message.stopReason}`))
+      }
+      return
+    }
+    if (event.type === 'auto_retry_end' && event.success === false && event.finalError) {
+      this.failClaudePrintTurn(run, String(event.finalError))
+      return
+    }
+    if (event.type === 'message_update') {
+      const delta = event.assistantMessageEvent || {}
+      if (delta.type === 'text_delta' && delta.delta) {
+        const text = String(delta.delta)
+        this.ensureClaudePrintText(run)
+        run.printText = `${run.printText || ''}${text}`
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            item_id: run.printMessageId,
+            output_index: 0,
+            content_index: 0,
+            delta: text,
+          },
+        })
+      } else if (delta.type === 'thinking_delta' && delta.delta) {
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.reasoning.delta',
+          data: {
+            type: 'response.reasoning.delta',
+            item_id: run.printMessageId,
+            output_index: 0,
+            delta: String(delta.delta),
+          },
+        })
+      }
+      return
+    }
+
+    if (event.type === 'tool_execution_start') {
+      const id = String(event.toolCallId || `pi_tool_${Date.now()}`)
+      const block = {
+        id,
+        name: String(event.toolName || 'tool'),
+        arguments: JSON.stringify(event.args ?? {}),
+        done: false,
+      }
+      run.piToolBlocks?.set(id, block)
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.output_item.added',
+        data: {
+          type: 'response.output_item.added',
+          output_index: run.piToolBlocks?.size || 0,
+          item: { type: 'function_call', id, call_id: id, name: block.name, arguments: block.arguments },
+        },
+      })
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.output_item.done',
+        data: {
+          type: 'response.output_item.done',
+          output_index: run.piToolBlocks?.size || 0,
+          item: { type: 'function_call', id, call_id: id, name: block.name, arguments: block.arguments },
+        },
+      })
+      return
+    }
+
+    if (event.type === 'tool_execution_end') {
+      const id = String(event.toolCallId || '')
+      const block = run.piToolBlocks?.get(id)
+      if (block) block.done = true
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.output_item.done',
+        data: {
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: {
+            type: 'function_call_output',
+            id,
+            call_id: id,
+            output: truncateCodingAgentToolOutputForStorage(event.result),
+            ...(event.isError ? { status: 'failed' } : {}),
+          },
+        },
+      })
+      return
+    }
+
+    if (event.type === 'agent_settled') {
+      this.completeClaudePrintTurn(run)
     }
   }
 

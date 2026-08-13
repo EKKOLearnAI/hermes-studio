@@ -42,7 +42,8 @@ export interface CodingAgentRunSocketData {
 
 function codingAgentId(data: CodingAgentRunSocketData): ExternalCodingAgentId {
   const value = data.coding_agent_id || data.agent_id || 'claude-code'
-  return value === 'codex' ? 'codex' : 'claude-code'
+  if (value === 'codex' || value === 'pi') return value
+  return 'claude-code'
 }
 
 export async function handleCodingAgentRun(
@@ -132,7 +133,7 @@ export async function handleCodingAgentRun(
     const codingInput = convertContentBlocksForCodingAgent(data.input)
     const socketUser = socket.data?.user as AuthenticatedUser | undefined
     await writeModelRunProfileToken(socketUser, profile)
-    const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex'
+    const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi'
     const runPrompt = [
       groupSystemPrompt || (includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : ''),
     ].filter(Boolean).join('\n')

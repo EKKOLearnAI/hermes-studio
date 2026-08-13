@@ -348,7 +348,7 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
   readonly profile: string
   readonly provider: string
   readonly model: string

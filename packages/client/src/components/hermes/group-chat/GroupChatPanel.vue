@@ -187,7 +187,7 @@ const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
 
-type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude'
+type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
 
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
     { label: 'Hermes', value: 'hermes' },

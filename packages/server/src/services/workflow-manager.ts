@@ -46,13 +46,13 @@ export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 
 export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'skipped' | 'failed' | 'approval_rejected' | 'canceled'
 export type WorkflowRunType = 'workflow'
-export type WorkflowNodeAgent = 'hermes' | 'claude-code' | 'codex'
+export type WorkflowNodeAgent = 'hermes' | 'claude-code' | 'codex' | 'pi'
 
 export interface WorkflowNodeRunTarget {
   type: WorkflowRunType
   source: 'workflow'
-  agent: 'hermes' | 'claude' | 'codex'
-  codingAgentId?: 'claude-code' | 'codex'
+  agent: 'hermes' | 'claude' | 'codex' | 'pi'
+  codingAgentId?: 'claude-code' | 'codex' | 'pi'
 }
 
 export interface WorkflowRuntimeStatus {
@@ -241,6 +241,14 @@ export function resolveWorkflowNodeRunTarget(agent?: string | null): WorkflowNod
       codingAgentId: 'codex',
     }
   }
+  if (agent === 'pi') {
+    return {
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'pi',
+      codingAgentId: 'pi',
+    }
+  }
   if (agent === 'hermes') {
     return {
       type: 'workflow',
@@ -274,7 +282,7 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
     join = orchestration.join
   }
   const agent = typeof data.agent === 'string' && data.agent.trim() ? data.agent.trim() : 'hermes'
-  if (agent !== 'hermes' && agent !== 'claude-code' && agent !== 'codex') {
+  if (agent !== 'hermes' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
     throw new Error(`workflow node ${id} has unsupported agent runtime`)
   }
   const provider = typeof data.provider === 'string' ? data.provider.trim() : ''
@@ -880,7 +888,7 @@ function workflowOutputConditionContext(output: string, edges: WorkflowEdgeSnaps
 
 function isWorkflowCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
   const agent = String(session?.agent || '').trim()
-  return agent === 'claude' || agent === 'codex' || Boolean(session?.agent_session_id)
+  return agent === 'claude' || agent === 'codex' || agent === 'pi' || Boolean(session?.agent_session_id)
 }
 
 async function deleteHermesSessionIfPresent(sessionId: string, profile: string): Promise<void> {

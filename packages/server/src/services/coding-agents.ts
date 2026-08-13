@@ -31,6 +31,9 @@ const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
 const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
+const PI_MCP_ADAPTER_VERSION = '2.24.0'
+const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
+const PI_PROVIDER_ID = 'hermes-studio'
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
   { name: 'hermes-studio-browser', toolset: 'browser' },
@@ -55,7 +58,7 @@ interface CommandExecution {
   windowsVerbatimArguments?: WindowsCommandExecution['windowsVerbatimArguments']
 }
 
-export type CodingAgentId = 'claude-code' | 'codex'
+export type CodingAgentId = 'claude-code' | 'codex' | 'pi'
 
 export interface CodingAgentDefinition {
   id: CodingAgentId
@@ -167,6 +170,13 @@ const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
     command: 'codex',
     packageName: '@openai/codex',
   },
+  {
+    id: 'pi',
+    name: 'Pi',
+    provider: 'Pi',
+    command: 'pi',
+    packageName: '@earendil-works/pi-coding-agent',
+  },
 ]
 
 const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'> & { scopedPath: string }>> = {
@@ -179,6 +189,12 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
     { key: 'auth', path: '~/.codex/auth.json', scopedPath: 'auth.json', language: 'json' },
     { key: 'config', path: '~/.codex/config.toml', scopedPath: 'config.toml', language: 'ini' },
     { key: 'agents', path: '~/.codex/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
+  ],
+  pi: [
+    { key: 'settings', path: '~/.pi/agent/settings.json', scopedPath: 'settings.json', language: 'json' },
+    { key: 'models', path: '~/.pi/agent/models.json', scopedPath: 'models.json', language: 'json' },
+    { key: 'mcp', path: '~/.pi/agent/mcp.json', scopedPath: 'mcp.json', language: 'json' },
+    { key: 'prompt', path: '~/.pi/agent/APPEND_SYSTEM.md', scopedPath: 'APPEND_SYSTEM.md', language: 'markdown' },
   ],
 }
 
@@ -616,6 +632,12 @@ function storedCodingAgentMode(session: HermesSessionRow | null): 'scoped' | 'gl
   return session?.provider === 'global' ? 'global' : 'scoped'
 }
 
+function persistedAgentId(id: string): 'claude' | 'codex' | 'pi' {
+  if (id === 'codex') return 'codex'
+  if (id === 'pi') return 'pi'
+  return 'claude'
+}
+
 function makeAgentSessionId(): string {
   return `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -1019,6 +1041,81 @@ function codexMcpConfigToml(profile: string, ...externalContents: Array<string |
     blocks.push(lines.join('\n'))
   }
   return blocks.join('\n')
+}
+
+function getPiMcpAdapterRoot(): string {
+  return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'pi-mcp-adapter')
+}
+
+function getPiMcpAdapterEntry(): string {
+  return join(getPiMcpAdapterRoot(), 'node_modules', 'pi-mcp-adapter', 'index.ts')
+}
+
+function piSettingsConfig(): string {
+  return `${JSON.stringify({
+    defaultProjectTrust: 'never',
+    enableSkillCommands: true,
+    extensions: [getPiMcpAdapterEntry()],
+  }, null, 2)}\n`
+}
+
+function piMcpConfig(profile: string): string {
+  const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
+    const server = hermesMcpServerConfig(profile, item.name, item.toolset)
+    const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
+    return [item.name, {
+      ...server,
+      lifecycle: 'lazy',
+      directTools: true,
+      toolPrefix: 'none',
+      requestTimeoutMs,
+    }]
+  }))
+  return `${JSON.stringify({
+    settings: {
+      hostConfigDiscovery: 'off',
+      toolPrefix: 'none',
+      directTools: true,
+      freezeDirectTools: true,
+      scriptMode: false,
+      outputGuard: true,
+      showStatusIcon: false,
+      mcpFooterStatus: 'off',
+      requestTimeoutMs: 120_000,
+    },
+    mcpServers,
+  }, null, 2)}\n`
+}
+
+function piModelsConfig(input: {
+  baseUrl: string
+  apiKey: string
+  apiMode: ApiMode
+  model: string
+  profile: string
+  provider: string
+}): string {
+  const contextWindow = getModelContextLength(input)
+  return `${JSON.stringify({
+    providers: {
+      [PI_PROVIDER_ID]: {
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
+        // The local Codex proxy exposes a Responses endpoint and performs the
+        // selected upstream Chat Completions / Responses / Anthropic adaptation.
+        api: 'openai-responses',
+        models: [{
+          id: input.model,
+          name: displayNameForModel(input.model),
+          reasoning: true,
+          input: ['text', 'image'],
+          contextWindow,
+          maxTokens: Math.min(32_000, contextWindow),
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }],
+      },
+    },
+  }, null, 2)}\n`
 }
 
 function buildLaunchShellCommand(input: {
@@ -1458,6 +1555,15 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
       env,
     })
     const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
+    if (definition.id === 'pi' && !existsSync(getPiMcpAdapterEntry())) {
+      return {
+        ...definition,
+        installed: false,
+        version: extractVersion(rawVersion),
+        rawVersion,
+        error: `Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed`,
+      }
+    }
     return {
       ...definition,
       installed: true,
@@ -1543,6 +1649,14 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
       timeout: 10 * 60 * 1000,
       env,
     })
+    if (tool.id === 'pi') {
+      const adapterRoot = getPiMcpAdapterRoot()
+      await mkdir(adapterRoot, { recursive: true })
+      await runNpm(['install', '--prefix', adapterRoot, '--save-exact', PI_MCP_ADAPTER_PACKAGE], {
+        timeout: 10 * 60 * 1000,
+        env,
+      })
+    }
     cachedGlobalNpmBin = undefined
     const status = await getCodingAgentStatus(tool)
     const allStatus = await getCodingAgentsStatus()
@@ -1589,6 +1703,12 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
       : [['uninstall', '-g', tool.packageName]]
     for (const uninstallArgs of uninstallArgsList) {
       await runNpm(uninstallArgs, {
+        timeout: 10 * 60 * 1000,
+        env,
+      })
+    }
+    if (tool.id === 'pi') {
+      await runNpm(['uninstall', '--prefix', getPiMcpAdapterRoot(), 'pi-mcp-adapter'], {
         timeout: 10 * 60 * 1000,
         env,
       })
@@ -1696,6 +1816,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   }
 
   const mode = input.mode === 'global' ? 'global' : 'scoped'
+  if (tool.id === 'pi' && mode === 'global') {
+    const err = new Error('Pi currently requires Provider and model mode so Hermes can generate its isolated RPC, model, and MCP configuration.')
+    ;(err as any).status = 400
+    throw err
+  }
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
@@ -1822,7 +1947,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       promptPath,
       ...claudeCodePermissionArgs(),
     ]
-  } else {
+  } else if (tool.id === 'codex') {
     if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {
       const err = new Error('Codex launch only supports OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages providers')
       ;(err as any).status = 400
@@ -1883,6 +2008,55 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     args = [
       '--model', model,
       ...(reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
+    ]
+  } else {
+    if (!existsSync(getPiMcpAdapterEntry())) {
+      const err = new Error(`Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed. Reinstall Pi from Coding Agents.`)
+      ;(err as any).status = 400
+      throw err
+    }
+    const proxyTarget = baseUrl && apiKey
+      ? registerCodexProxyTarget({
+          profile: scope.profile,
+          provider,
+          model,
+          baseUrl,
+          apiKey,
+          apiMode,
+          reasoningEffort,
+          agentId: tool.id,
+          agentSessionId: input.agentSessionId,
+          chatSessionId: input.sessionId,
+        })
+      : null
+    const piBaseUrl = proxyTarget?.baseUrl || baseUrl
+    const piApiKey = proxyTarget?.token || apiKey
+    const sessionsDir = join(rootDir, 'sessions')
+    await mkdir(sessionsDir, { recursive: true })
+    await writeScopedFile('settings', piSettingsConfig())
+    await writeScopedFile('models', piModelsConfig({
+      baseUrl: piBaseUrl,
+      apiKey: piApiKey,
+      apiMode,
+      model,
+      profile: scope.profile,
+      provider,
+    }))
+    await writeScopedFile('mcp', piMcpConfig(scope.profile))
+    await writeScopedFile('prompt', `${scopedSystemPrompt.trim()}\n`)
+    env = {
+      PI_CODING_AGENT_DIR: rootDir,
+      PI_CODING_AGENT_SESSION_DIR: sessionsDir,
+      PI_SKIP_VERSION_CHECK: '1',
+    }
+    args = [
+      '--mode', 'rpc',
+      '--provider', PI_PROVIDER_ID,
+      '--model', model,
+      ...(input.agentNativeSessionId ? ['--session-id', input.agentNativeSessionId] : []),
+      '--session-dir', sessionsDir,
+      '--append-system-prompt', join(rootDir, 'APPEND_SYSTEM.md'),
+      '--no-approve',
     ]
   }
 
@@ -1956,13 +2130,13 @@ export async function startCodingAgentRun(
   const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
   const canResumeNativeSession = existingSession
     ? storedCodingAgentMode(existingSession) === requestedMode &&
-      (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent) &&
+      (existingSession.agent === persistedAgentId(id) || !existingSession.agent) &&
       String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
       String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim() &&
       (!String(existingSession.api_mode || '').trim() || String(existingSession.api_mode || '').trim() === String(resolvedInput.apiMode || '').trim())
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
-  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
+  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' || id === 'pi' ? randomUUID() : '')
   const launch = await prepareCodingAgentLaunch(id, {
     ...resolvedInput,
     sessionId,
@@ -2003,7 +2177,7 @@ export async function startCodingAgentRun(
   })
   updateSession(sessionId, {
     source: sessionSource,
-    agent: launch.agentId === 'codex' ? 'codex' : 'claude',
+    agent: persistedAgentId(launch.agentId),
     agent_mode: launch.mode,
     agent_session_id: agentSessionId,
     agent_native_session_id: agentNativeSessionId,

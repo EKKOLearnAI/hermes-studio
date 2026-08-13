@@ -144,6 +144,12 @@ describe('workflow manager', () => {
       agent: 'codex',
       codingAgentId: 'codex',
     })
+    expect(resolveWorkflowNodeRunTarget('pi')).toEqual({
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'pi',
+      codingAgentId: 'pi',
+    })
     expect(() => resolveWorkflowNodeRunTarget('unknown')).toThrow('unsupported workflow Agent runtime: unknown')
     expect(() => resolveWorkflowNodeRunTarget()).toThrow('unsupported workflow Agent runtime')
   })

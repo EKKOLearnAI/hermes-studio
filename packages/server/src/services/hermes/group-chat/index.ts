@@ -167,7 +167,7 @@ interface RoomAgent {
     id: string
     roomId: string
     agentId: string
-    agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider: string
     model: string
@@ -184,7 +184,7 @@ interface RoomAgent {
 }
 
 interface RoomAgentMetadata {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     provider?: string
     model?: string
     apiMode?: string

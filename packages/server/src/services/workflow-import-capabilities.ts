@@ -31,7 +31,7 @@ export function assertWorkflowImportCapabilities(nodes: unknown[], groups: Capab
     const exact = `${provider}\u0000${model}\u0000${apiMode}`
     const providerModel = `${provider}\u0000${model}`
     const hermesTargetAvailable = agent === 'hermes' && configuredProviderModels.has(providerModel)
-    const scopedCodingAgent = agent === 'codex' || agent === 'claude-code'
+    const scopedCodingAgent = agent === 'codex' || agent === 'claude-code' || agent === 'pi'
     const scopedCodingAgentProviderBlocked = scopedCodingAgent && isScopedCodingAgentAuthProvider(provider)
     const codingAgentTargetAvailable = scopedCodingAgent
       && !scopedCodingAgentProviderBlocked

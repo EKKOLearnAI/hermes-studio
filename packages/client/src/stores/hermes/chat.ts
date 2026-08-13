@@ -21,10 +21,11 @@ export type ContentBlock = ContentBlockImport
 export const LIVE_CHAT_MESSAGE_PAGE_SIZE = 150
 export const LIVE_CHAT_MAX_LOADED_MESSAGES = 300
 const LEGACY_WORKSPACE_RUN_CHANGE_MESSAGE_PREFIX = 'workspace-run-change:'
-type ChatAgentId = 'hermes' | 'claude' | 'codex' | 'ekko-agent'
+type ChatAgentId = 'hermes' | 'claude' | 'codex' | 'pi' | 'ekko-agent'
 
 function agentToCodingAgentId(agent?: string): ChatCodingAgentId | undefined {
   if (agent === 'codex') return 'codex'
+  if (agent === 'pi') return 'pi'
   if (agent === 'claude') return 'claude-code'
   if (agent === 'ekko-agent') return 'ekko-agent'
   return undefined
@@ -32,6 +33,7 @@ function agentToCodingAgentId(agent?: string): ChatCodingAgentId | undefined {
 
 function codingAgentIdToAgent(id?: ChatCodingAgentId): ChatAgentId | undefined {
   if (id === 'codex') return 'codex'
+  if (id === 'pi') return 'pi'
   if (id === 'claude-code') return 'claude'
   if (id === 'ekko-agent') return 'ekko-agent'
   return undefined

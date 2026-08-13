@@ -397,6 +397,7 @@ const agentOptions = computed<WorkflowSelectOption[]>(() => [
   { label: 'Hermes', value: 'hermes' },
   { label: 'Claude Code', value: 'claude-code' },
   { label: 'Codex', value: 'codex' },
+  { label: 'Pi', value: 'pi' },
 ])
 const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(option => ({
   value: option.value,

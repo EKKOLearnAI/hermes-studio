@@ -1,7 +1,7 @@
 import { request } from '../client'
 
 export type RemoteGroupAgentDescriptor = {
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
   profile: string
   provider: string
   model: string

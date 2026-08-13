@@ -1228,7 +1228,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
 
 
 function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
-  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'ekko-agent'
+  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'pi' || session?.agent === 'ekko-agent'
 }
 
 function generateBranchSessionId(): string {

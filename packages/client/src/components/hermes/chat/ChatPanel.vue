@@ -830,6 +830,7 @@ const newChatAgentOptions = computed(() => [
   { label: "Hermes", value: "hermes" },
   { label: "Claude Code", value: "claude-code" },
   { label: "Codex", value: "codex" },
+  { label: "Pi", value: "pi" },
   { label: "Ekko Agent", value: "ekko-agent" },
 ]);
 
@@ -940,9 +941,9 @@ const selectedNewChatProviderGroup = computed(() =>
 );
 
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
-const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex");
+const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi");
 const effectiveNewChatAgentMode = computed(() =>
-  newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value,
+  newChatAgent.value === "ekko-agent" || newChatAgent.value === "pi" ? "scoped" : newChatAgentMode.value,
 );
 const isNewChatGlobalCodingAgent = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
@@ -1100,7 +1101,7 @@ async function confirmNewChat() {
       const status = await fetchCodingAgentsStatus();
       const tool = status.tools.find((item) => item.id === agentId);
       if (!tool?.installed) {
-        const fallbackName = agentId === "codex" ? "Codex" : "Claude Code";
+        const fallbackName = agentId === "codex" ? "Codex" : agentId === "pi" ? "Pi" : "Claude Code";
         message.warning(t("codingAgents.installRequired", { agent: tool?.name || fallbackName }));
         showNewChatModal.value = false;
         await router.push({ name: "hermes.codingAgents" });

@@ -5,7 +5,7 @@ export const GROUP_AGENT_PAIRING_REQUEST_TTL_MS = 10 * 60_000
 export const GROUP_AGENT_PAIRING_TICKET_TTL_MS = 2 * 60_000
 
 export type RemoteGroupAgentDescriptor = {
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
   profile: string
   provider: string
   model: string

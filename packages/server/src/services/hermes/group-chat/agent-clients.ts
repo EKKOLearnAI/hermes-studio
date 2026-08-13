@@ -28,7 +28,7 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 export interface AgentConfig {
     agentId?: string
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -92,7 +92,7 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
 export type GroupAgentSessionConfig = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     provider?: string
     model?: string
     apiMode?: string
@@ -216,7 +216,7 @@ export interface GroupAgentEventSink {
 
 export interface GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     readonly profile: string
     readonly provider: string
     readonly model: string
@@ -264,7 +264,7 @@ export interface GroupChatRunService {
             workspace?: string | null
             source?: string
             session_source?: 'group_chat'
-            coding_agent_id?: 'claude-code' | 'codex' | 'ekko-agent'
+            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'ekko-agent'
             mode?: 'scoped'
             profile?: string
             reasoning_effort?: string
@@ -290,7 +290,7 @@ export interface GroupChatRunService {
 
 export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     readonly profile: string
     readonly provider: string
     readonly model: string
@@ -1054,7 +1054,9 @@ export class AgentClient implements GroupAgentExecutor {
                 ? 'ekko-agent'
                 : this.agent === 'claude'
                     ? 'claude-code'
-                    : 'codex'
+                    : this.agent === 'pi'
+                        ? 'pi'
+                        : 'codex'
             const groupSystemPrompt = this.groupSystemPrompt(roomId, msg)
             const result = await this.chatRunService.runAndWait({
                 input: this.groupRuntimeInput(msg, runtimeContext),
