@@ -81,6 +81,7 @@ const agentsByRoom: Record<string, unknown[]> = {
 
 async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const rooms = baseRooms.map(room => ({ ...room }))
+  let roomMessages = structuredClone(messagesByRoom)
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
   const roomConfigUpdates: Array<{ roomId: string, body: any }> = []
@@ -105,7 +106,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     const { pathname } = url
 
     if (!(pathname === '/health' || pathname.startsWith('/api/'))) {
-      await route.continue()
+      await route.fallback()
       return
     }
 
@@ -218,14 +219,21 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
         ? [{ id: 'member-offline', userId: 'user-offline', name: 'Offline Member', description: '', joinedAt: 1_790_000_000, connectionStatus: 'offline' }]
         : [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }]
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents, members, handoffChains: handoffChains.filter(item => item.roomId === roomId) })
+        ? json({ room, messages: roomMessages[roomId] || [], agents, members, handoffChains: handoffChains.filter(item => item.roomId === roomId) })
         : json({ error: 'Room not found' }, 404)
     }
 
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
 
-  return { inviteCodeUpdates, guestAgentPolicyUpdates, roomConfigUpdates }
+  return {
+    inviteCodeUpdates,
+    guestAgentPolicyUpdates,
+    roomConfigUpdates,
+    setRoomMessages(messages: Record<string, unknown[]>) {
+      roomMessages = structuredClone(messages)
+    },
+  }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -265,7 +273,6 @@ function makeSocket(url, options) {
       return this
     },
     disconnect() {
-      this.connected = false
       return this
     },
     __trigger(event, payload) {
@@ -273,7 +280,7 @@ function makeSocket(url, options) {
     },
   }
   state.sockets.push(socket)
-  state.latest = socket
+  if (String(url).endsWith('/group-chat')) state.latest = socket
   return socket
 }
 export function io(url, options) {
@@ -311,6 +318,14 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform, offli
   return api
 }
 
+async function triggerGroupSocket(page: Page, event: string, payload: unknown) {
+  await page.evaluate(({ event, payload }) => {
+    const socket = (window as any).__PW_GROUP_SOCKET__?.latest
+    if (!socket) throw new Error('Group chat socket is not connected')
+    socket.__trigger(event, payload)
+  }, { event, payload })
+}
+
 test.describe('group chat room deep links', () => {
   // This file already covers multi-tab behavior explicitly; keeping the deep-link/socket fixture serial
   // avoids local fullyParallel races where early tests see the room list before route-room selection settles.
@@ -342,8 +357,9 @@ test.describe('group chat room deep links', () => {
     const outer = page.locator('.group-message-list .virtual-message-list')
     await expect(panel).toBeVisible()
     await expect(panel.locator('.tool-message')).toHaveCount(12)
-    await expect(page.locator('.run-tool-list[data-run-id="run-history-tools"]')).toHaveCount(0)
-    await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .tool-name')).toContainText('historical_tool')
+    const historicalPanel = page.locator('.run-tool-list[data-run-id="run-history-tools"]')
+    await expect(historicalPanel).toBeVisible()
+    await expect(historicalPanel.locator('.tool-name')).toHaveText('historical_tool')
 
     const dimensions = await panel.evaluate(element => ({
       clientHeight: element.clientHeight,
@@ -366,6 +382,115 @@ test.describe('group chat room deep links', () => {
 
     await panel.focus()
     await expect(panel).toBeFocused()
+
+    const toolNames = await panel.locator('.tool-name').allTextContents()
+    expect(toolNames[0]).toBe('live_tool_12')
+    expect(toolNames.at(-1)).toBe('live_tool_1')
+  })
+
+  test('keeps runtime Tools bounded, newest-first, and stable after completion and refresh', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-beta')
+    await expect(page.getByText('Beta room message')).toBeVisible()
+
+    const runtimeMessage = (overrides: Record<string, unknown>) => ({
+      id: 'run-runtime-tools_part_0',
+      roomId: 'room-beta',
+      senderId: 'agent-runtime',
+      senderName: 'Runtime Worker',
+      content: '',
+      timestamp: 1_790_000_200,
+      role: 'assistant',
+      run_id: 'run-runtime-tools',
+      ...overrides,
+    })
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'replying',
+    })
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      finish_reason: 'streaming',
+    }))
+    await triggerGroupSocket(page, 'message_stream_end', {
+      roomId: 'room-beta',
+      id: 'run-runtime-tools_part_0',
+    })
+    for (const [index, toolName] of ['read_file', 'terminal'].entries()) {
+      const callId = `runtime-call-${index + 1}`
+      await triggerGroupSocket(page, 'message', runtimeMessage({
+        id: `run-runtime-tools_part_0_toolcall_${callId}`,
+        timestamp: 1_790_000_201 + index * 2,
+        tool_calls: [{
+          id: callId,
+          type: 'function',
+          function: { name: toolName, arguments: JSON.stringify({ index }) },
+        }],
+        finish_reason: 'tool_calls',
+      }))
+      await triggerGroupSocket(page, 'message', runtimeMessage({
+        id: `run-runtime-tools_part_0_toolresult_${callId}`,
+        timestamp: 1_790_000_202 + index * 2,
+        role: 'tool',
+        tool_call_id: callId,
+        tool_name: toolName,
+        content: `result-${index + 1}`,
+      }))
+    }
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      id: 'run-runtime-tools_part_1',
+      timestamp: 1_790_000_206,
+      finish_reason: 'streaming',
+    }))
+
+    const panel = page.locator('.run-tool-list[data-agent-id="agent-runtime"][data-run-id="run-runtime-tools"]')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(panel.locator('.tool-message')).toHaveCount(2)
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'ready',
+    })
+
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(page.locator('.group-agent-run[data-run-id="run-runtime-tools"] .tool-message')).toHaveCount(2)
+
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-beta': [
+        ...messagesByRoom['room-beta'],
+        runtimeMessage({
+          id: 'run-runtime-tools_part_0_toolresult_runtime-call-1',
+          timestamp: 1_790_000_202,
+          role: 'tool',
+          tool_call_id: 'runtime-call-1',
+          tool_name: 'read_file',
+          content: 'result-1',
+        }),
+        runtimeMessage({
+          id: 'run-runtime-tools_part_0_toolresult_runtime-call-2',
+          timestamp: 1_790_000_204,
+          role: 'tool',
+          tool_call_id: 'runtime-call-2',
+          tool_name: 'terminal',
+          content: 'result-2',
+        }),
+        runtimeMessage({
+          id: 'run-runtime-tools_part_2',
+          timestamp: 1_790_000_207,
+          content: 'Finished.',
+        }),
+      ],
+    })
+    await page.reload()
+
+    const refreshedPanel = page.locator('.run-tool-list[data-agent-id="agent-runtime"][data-run-id="run-runtime-tools"]')
+    await expect(refreshedPanel).toBeVisible()
+    await expect(refreshedPanel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(page.locator('.group-agent-run[data-run-id="run-runtime-tools"] .tool-message')).toHaveCount(2)
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {

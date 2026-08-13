@@ -27,13 +27,11 @@ const { t } = useI18n()
 const items = computed(() =>
     props.message.runItems?.length ? props.message.runItems : [props.message]
 )
-const currentRunToolItems = computed(() =>
-    props.message.isStreaming
-        ? items.value.filter(item => item.role === 'tool')
-        : []
+const runToolItems = computed(() =>
+    items.value.filter(item => item.role === 'tool').reverse()
 )
 const transcriptItems = computed(() =>
-    currentRunToolItems.value.length > 0
+    runToolItems.value.length > 0
         ? items.value.filter(item => item.role !== 'tool')
         : items.value
 )
@@ -102,7 +100,7 @@ function handleToolListWheel(event: WheelEvent): void {
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
                 <div
-                    v-if="currentRunToolItems.length"
+                    v-if="runToolItems.length"
                     class="run-tool-list"
                     tabindex="0"
                     role="region"
@@ -112,7 +110,7 @@ function handleToolListWheel(event: WheelEvent): void {
                     @wheel="handleToolListWheel"
                 >
                     <div
-                        v-for="item in currentRunToolItems"
+                        v-for="item in runToolItems"
                         :key="item.id"
                         class="run-tool-item"
                         :data-message-id="item.id"
