@@ -225,6 +225,8 @@ export interface GroupAgentExecutor {
     readonly name: string
     readonly description: string
     readonly connected: boolean
+    reserveInvocation?(): void
+    releaseInvocation?(): void
     disconnect(): void
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
     interrupt(roomId: string): Promise<boolean>
@@ -2175,6 +2177,9 @@ export class AgentClients {
         const queue = this._mentionQueue.get(roomId)
         if (queue) {
             for (const entry of queue) {
+                for (const agent of entry.agents) {
+                    if (agent.name === agentName) agent.releaseInvocation?.()
+                }
                 entry.agents = entry.agents.filter(agent => agent.name !== agentName)
             }
         }
@@ -2184,7 +2189,10 @@ export class AgentClients {
     private clearMentionQueuesForRoom(roomId: string): void {
         const queue = this._mentionQueue.get(roomId)
         this._mentionQueue.delete(roomId)
-        for (const entry of queue || []) entry.resolve('Continuation target Agent is not connected')
+        for (const entry of queue || []) {
+            for (const agent of entry.agents) agent.releaseInvocation?.()
+            entry.resolve('Continuation target Agent is not connected')
+        }
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
         for (const agentName of roomCounts?.keys() || []) {
@@ -2201,7 +2209,10 @@ export class AgentClients {
         let resolve!: (error: string | null) => void
         const completed = new Promise<string | null>(done => { resolve = done })
         queue.push({ agents, msg, resolve })
-        for (const agent of agents) this.scheduleAgentActivity(roomId, agent.name)
+        for (const agent of agents) {
+            agent.reserveInvocation?.()
+            this.scheduleAgentActivity(roomId, agent.name)
+        }
         return completed
     }
 
@@ -2456,35 +2467,31 @@ export class AgentClients {
                         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                             if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
                         }
-                        try {
-                            if (next.msg.continuationAttemptId) {
-                                if (!agent.connected) {
-                                    throw new Error('Continuation target Agent is not connected')
-                                }
-                                const attemptId = next.msg.continuationAttemptId
-                                const running = this._storage?.markHandoffTargetRunning?.(
-                                    attemptId,
-                                    `handoff:${attemptId}`,
-                                    Date.now() + 60_000,
-                                )
-                                const current = this._storage?.getHandoffTargetStatus?.(attemptId)
-                                if (!running && current?.status !== 'running') {
-                                    throw new Error('Continuation target could not claim the invocation')
-                                }
-                                const started = this._storage?.markHandoffTargetInvocationStarted?.(attemptId)
-                                const startedState = this._storage?.getHandoffTargetStatus?.(attemptId)
-                                if (!started && !startedState?.invocationStartedAt) {
-                                    throw new Error('Continuation invocation marker could not be persisted')
-                                }
+                        if (next.msg.continuationAttemptId) {
+                            if (!agent.connected) {
+                                throw new Error('Continuation target Agent is not connected')
                             }
-                            const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
-                            const targetMessage = targetOwnerMemberId
-                                ? { ...next.msg, targetOwnerMemberId }
-                                : next.msg
-                            await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
-                        } finally {
-                            this.finishAgentActivity(roomId, agent.name)
+                            const attemptId = next.msg.continuationAttemptId
+                            const running = this._storage?.markHandoffTargetRunning?.(
+                                attemptId,
+                                `handoff:${attemptId}`,
+                                Date.now() + 60_000,
+                            )
+                            const current = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!running && current?.status !== 'running') {
+                                throw new Error('Continuation target could not claim the invocation')
+                            }
+                            const started = this._storage?.markHandoffTargetInvocationStarted?.(attemptId)
+                            const startedState = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!started && !startedState?.invocationStartedAt) {
+                                throw new Error('Continuation invocation marker could not be persisted')
+                            }
                         }
+                        const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
+                        const targetMessage = targetOwnerMemberId
+                            ? { ...next.msg, targetOwnerMemberId }
+                            : next.msg
+                        await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
                     }))
                     for (let index = 0; index < results.length; index += 1) {
                         const result = results[index]
@@ -2495,6 +2502,10 @@ export class AgentClients {
                         }
                     }
                 } finally {
+                    for (const agent of next.agents) {
+                        agent.releaseInvocation?.()
+                        this.finishAgentActivity(roomId, agent.name)
+                    }
                     next.resolve(queueError)
                 }
             }

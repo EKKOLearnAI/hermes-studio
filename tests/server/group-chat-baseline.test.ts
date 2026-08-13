@@ -817,6 +817,31 @@ describe('group chat baseline behavior', () => {
       error: 'Name is already in use in this room',
     })
 
+    ;(groupServer.agentClients as any)._pausedRooms.add('room-relay')
+    const queuedReply = groupServer.agentClients.processMentions('room-relay', {
+      messageId: 'queued-config-fence',
+      content: '@Remote Relay Agent queued',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: executor.agentId }],
+    })
+    const queuedUpdate = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
+      agent: 'codex', profile: 'default', provider: 'openai', model: 'should-not-apply',
+      apiMode: 'codex_responses', reasoningEffort: 'high', name: 'Queued Mutation', description: '', avatar: '',
+    })
+    expect(queuedUpdate).toMatchObject({ code: 'GROUP_AGENT_BUSY' })
+    const queuedRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    ;(groupServer.agentClients as any)._pausedRooms.delete('room-relay')
+    const drainQueued = (groupServer.agentClients as any)._drainRoomQueue('room-relay')
+    const queuedRun = await queuedRunRequested
+    expect(queuedRun.message).toMatchObject({ messageId: 'queued-config-fence' })
+    intendedTarget.emit('run.accepted', { runId: queuedRun.runId })
+    intendedTarget.emit('run.completed', { runId: queuedRun.runId })
+    await drainQueued
+    await queuedReply
+
     const updated = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
       agent: 'codex',
       profile: 'default',

@@ -360,6 +360,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly ownerMemberId: string
   private activeSessions = new Map<string, string>()
   private pendingRun: PendingRelayRun | null = null
+  private reservedInvocations = 0
   private detached = false
   private eventQueue: Promise<void> = Promise.resolve()
   private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
@@ -396,7 +397,15 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   }
 
   get busy(): boolean {
-    return this.pendingRun !== null
+    return this.pendingRun !== null || this.reservedInvocations > 0
+  }
+
+  reserveInvocation(): void {
+    this.reservedInvocations += 1
+  }
+
+  releaseInvocation(): void {
+    this.reservedInvocations = Math.max(0, this.reservedInvocations - 1)
   }
 
   updateConfiguration(agent: any): void {
