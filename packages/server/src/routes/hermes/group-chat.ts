@@ -211,9 +211,16 @@ async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: st
     })
 }
 
-function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = false) {
+export function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = false) {
     if (!room) return room
-    const { ownerAuthUserId: _ownerAuthUserId, ...rest } = room
+    const {
+        ownerAuthUserId: _ownerAuthUserId,
+        summaryGeneration: _summaryGeneration,
+        summaryRunToken: _summaryRunToken,
+        summaryLeaseExpiresAt: _summaryLeaseExpiresAt,
+        summaryRunGeneration: _summaryRunGeneration,
+        ...rest
+    } = room
     const ownerAuthUserId = Number(room.ownerAuthUserId || 0)
     const serialized = {
         ...rest,

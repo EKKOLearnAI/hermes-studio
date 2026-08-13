@@ -2600,7 +2600,7 @@ export default {
     summaryModelPlaceholder: 'Выберите модель',
     summaryApiMode: 'Режим API',
     summaryEveryTurns: 'Резюмировать каждые N ходов',
-    summaryEveryTurnsDesc: 'Один ход — одно сообщение человека.',
+    summaryEveryTurnsDesc: 'Учитывается каждое публичное сообщение человека или Agent; Tool, рассуждения и статусы исключаются.',
     summaryConfigSaved: 'Настройки резюме сохранены',
     agentHandoffTitle: 'Передача Agent',
     agentHandoffEnabled: 'Включить автоматическую передачу',
