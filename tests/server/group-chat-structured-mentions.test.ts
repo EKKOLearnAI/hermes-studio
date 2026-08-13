@@ -134,6 +134,7 @@ describe('group chat structured agent mentions', () => {
       { id: 'agent-reviewer', agentId: 'agent-reviewer', name: 'Reviewer', replyToMention },
     ]]))
 
+    groupServer.getStorage().registerTrustedAgentMessageMetadata('room-1', 'self-plus-other-reply', 1, 'trusted-chain')
     const response = await emitAck<{ id?: string; error?: string }>(author, 'message', {
       roomId: 'room-1',
       id: 'self-plus-other-reply',
