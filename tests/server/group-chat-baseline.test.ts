@@ -891,7 +891,41 @@ describe('group chat baseline behavior', () => {
     intendedTarget.emit('run.completed', { runId: allRun.runId })
     await processAll
 
+    const failedRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const failedReply = executor.replyToMention('room-relay', {
+      messageId: 'known-failure-message',
+      content: '@Updated Relay Agent fail with a terminal result',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const failedRun = await failedRunRequested
+    intendedTarget.emit('run.accepted', { runId: failedRun.runId })
+    intendedTarget.emit('run.failed', { runId: failedRun.runId, error: 'Known remote failure' })
+    const failedError = await failedReply.then(
+      () => null,
+      error => error as Error & { code?: string; outcomeUnknown?: boolean },
+    )
+    expect(failedError).toMatchObject({ code: 'GROUP_AGENT_REMOTE_RUN_FAILED' })
+    expect(failedError?.outcomeUnknown).not.toBe(true)
+
+    const uncertainRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const uncertainReply = executor.replyToMention('room-relay', {
+      messageId: 'transport-loss-message',
+      content: '@Updated Relay Agent keep running across a transport loss',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const uncertainRun = await uncertainRunRequested
+    intendedTarget.emit('run.accepted', { runId: uncertainRun.runId })
     intendedTarget.disconnect()
+    await expect(uncertainReply).rejects.toMatchObject({
+      code: 'GROUP_AGENT_OFFLINE',
+      outcomeUnknown: true,
+    })
     await vi.waitFor(() => {
       expect(storage.getMentionableRoomAgents('room-relay')).toEqual([])
     })

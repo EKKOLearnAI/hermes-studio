@@ -3021,6 +3021,8 @@ export default {
     agentHandoffContinued: '接力已继续',
     agentHandoffErrorAdmissionRejected: '目标 Agent 未能接收本次接力，请重试。',
     agentHandoffErrorGeneric: '本次接力未能继续，请重试或调整房间设置。',
+    agentHandoffOutcomeUnknownTitle: '远端接力结果未知',
+    agentHandoffOutcomeUnknownDescription: '远端任务可能仍在执行。为避免重复执行，系统不会自动重试或再次开放继续操作，请先人工确认远端结果。',
     summaryConfigurationRequired: '该群聊尚未配置总结器，请先选择 Profile、Provider、Model 和 API Mode 并保存。',
     summaryConfigurationOwnerRequired: '该群聊尚未配置总结器，请联系房间管理员完成配置后再发送消息。',
     saveSummaryConfig: '保存总结设置',

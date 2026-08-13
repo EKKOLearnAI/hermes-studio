@@ -218,6 +218,20 @@ describe('GroupMessageList scroll behavior', () => {
     await flushListUpdates()
     expect(reader.find('.handoff-stop-card').exists()).toBe(false)
     expect(manager.find('.handoff-stop-card').exists()).toBe(false)
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      status: 'outcome_unknown',
+      stopReason: 'outcome_unknown',
+      continueUsed: true,
+      attemptId: 'unknown-attempt-1',
+      lastError: 'Remote target invocation outcome is unknown after restart',
+    })
+    await flushListUpdates()
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffOutcomeUnknownTitle')
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffOutcomeUnknownDescription')
+    expect(manager.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(manager.get('.handoff-stop-card').text()).not.toContain('Remote target invocation outcome is unknown after restart')
   })
 
   it('shows a bottom jump button when the group transcript is far from the bottom', async () => {

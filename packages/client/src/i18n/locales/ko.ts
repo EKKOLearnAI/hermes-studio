@@ -2682,6 +2682,8 @@ export default {
     agentHandoffContinued: 'Handoff continued',
     agentHandoffErrorAdmissionRejected: '대상 Agent가 이 핸드오프를 수락하지 못했습니다. 다시 시도하세요.',
     agentHandoffErrorGeneric: '이 핸드오프를 계속할 수 없습니다. 다시 시도하거나 방 설정을 조정하세요.',
+    agentHandoffOutcomeUnknownTitle: '원격 핸드오프 결과를 알 수 없음',
+    agentHandoffOutcomeUnknownDescription: '원격 작업이 아직 실행 중일 수 있습니다. 중복 실행을 방지하기 위해 자동 재시도와 계속 작업 재개를 하지 않으며, 원격 결과를 수동으로 확인해야 합니다.',
     summaryConfigurationRequired: '이 방에는 요약기가 아직 설정되지 않았습니다. Profile, Provider, Model, API Mode를 선택한 뒤 저장하세요.',
     summaryConfigurationOwnerRequired: '이 방에는 요약기가 아직 설정되지 않았습니다. 메시지를 보내기 전에 방 관리자에게 설정을 요청하세요.',
     saveSummaryConfig: '요약 설정 저장',

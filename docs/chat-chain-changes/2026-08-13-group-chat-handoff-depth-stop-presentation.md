@@ -15,6 +15,10 @@ Group Chat now persists and presents an Agent handoff depth-stop only when a tru
 - Prevents disabled handoffs from being mislabeled as maximum-depth stops.
 - Keeps legitimate finite depth-limit stops attached to their source message with the existing one-time continuation action.
 - Canonicalizes dispatcher-only continuation metadata outside the frozen payload digest while still rejecting mismatched attempt IDs and business-payload drift.
+- Freezes the selected target/runtime identity, fences queued Remote Relay configuration updates, and recovers only invocations that have not actually started.
+- Moves a started Remote Relay invocation to durable `outcome_unknown` after source restart or a non-terminal transport failure. The same attempt remains the active database record, `Continue` stays unavailable, and no replay or replacement attempt is created.
+- Treats an authenticated remote `run.failed` event and a durable target Agent message as authoritative terminal evidence, so known failures remain retryable and a message published just before transport loss still completes the original chain.
+- Returns `HANDOFF_OUTCOME_UNKNOWN` to stale clients that try to Continue and presents a localized warning card without exposing raw backend diagnostics.
 - Localizes the stop card and maps persisted backend failures to user-facing locale copy instead of exposing raw English errors in non-English interfaces.
 - Keeps stop history out of the Room settings form; the form remains configuration-only.
 

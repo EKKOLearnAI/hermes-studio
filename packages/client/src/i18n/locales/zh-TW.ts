@@ -2923,6 +2923,8 @@ export default {
     agentHandoffContinued: '接力已繼續',
     agentHandoffErrorAdmissionRejected: '目標 Agent 未能接收本次接力，請重試。',
     agentHandoffErrorGeneric: '本次接力未能繼續，請重試或調整房間設定。',
+    agentHandoffOutcomeUnknownTitle: '遠端接力結果未知',
+    agentHandoffOutcomeUnknownDescription: '遠端工作可能仍在執行。為避免重複執行，系統不會自動重試或再次開放繼續操作，請先人工確認遠端結果。',
     summaryConfigurationRequired: '此群聊尚未設定總結器，請先選擇 Profile、Provider、Model 和 API Mode 並儲存。',
     summaryConfigurationOwnerRequired: '此群聊尚未設定總結器，請聯絡房間管理員完成設定後再傳送訊息。',
     saveSummaryConfig: '儲存總結設定',

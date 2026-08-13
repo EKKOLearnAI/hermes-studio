@@ -1284,6 +1284,15 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         ctx.body = { success: true, replay: true, chain: existing }
         return
     }
+    if (existing.status === 'outcome_unknown') {
+        ctx.status = 409
+        ctx.body = {
+            code: 'HANDOFF_OUTCOME_UNKNOWN',
+            error: 'Remote handoff outcome is unknown; automatic retry is disabled',
+            chain: existing,
+        }
+        return
+    }
     const chain = storage.claimHandoffContinuation(roomId, chainId)
     if (!chain || !chain.attemptId) {
         if (existing.status === 'claimed' && existing.attemptId) {

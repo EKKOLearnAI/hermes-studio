@@ -670,6 +670,17 @@ class ChatStorage {
              WHERE status = 'claimed'
                AND attemptId IN (SELECT attemptId FROM gc_handoff_inbox WHERE status = 'completed')`,
         ).run(now)
+        const remoteOutcomeUnknownError = 'Remote target invocation outcome is unknown after restart'
+        const inFlightRemoteAttempts = db.prepare(
+            `SELECT attemptId FROM gc_handoff_inbox
+             WHERE status = 'running'
+               AND invocationStartedAt IS NOT NULL
+               AND json_valid(targetSnapshot) = 1
+               AND json_extract(targetSnapshot, '$.executorType') = 'remote'`,
+        ).all() as Array<{ attemptId: string }>
+        for (const row of inFlightRemoteAttempts) {
+            this.markRemoteHandoffOutcomeUnknown(String(row.attemptId), remoteOutcomeUnknownError)
+        }
         db.prepare(
             `UPDATE gc_handoff_inbox
              SET status = 'failed_manual', lastError = 'Target invocation was in flight during restart',
@@ -678,35 +689,41 @@ class ChatStorage {
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_attempts
-             SET status = 'failed', lastError = 'Target invocation was in flight during restart',
+             SET status = 'failed',
+                 lastError = COALESCE((
+                   SELECT inbox.lastError FROM gc_handoff_inbox AS inbox
+                   WHERE inbox.attemptId = gc_handoff_attempts.attemptId
+                     AND inbox.status = 'failed_manual'
+                 ), 'Target invocation failed'),
                  leaseUntil = 0, updatedAt = ?
              WHERE attemptId IN (
                SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
-                 AND lastError = 'Target invocation was in flight during restart'
-             ) AND status != 'completed'`,
+             ) AND status NOT IN ('completed', 'outcome_unknown')`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_deliveries SET status = 'failed', updatedAt = ?
              WHERE attemptId IN (
                SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
-                 AND lastError = 'Target invocation was in flight during restart'
              ) AND status != 'completed'`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ?
              WHERE attemptId IN (
                SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
-                 AND lastError = 'Target invocation was in flight during restart'
              ) AND status != 'completed'`,
         ).run(now)
         db.prepare(
             `UPDATE gc_handoff_chains
              SET status = 'stopped', stopReason = 'continue_failed',
-                 lastError = 'Target invocation was in flight during restart', updatedAt = ?
+                 lastError = COALESCE((
+                   SELECT inbox.lastError FROM gc_handoff_inbox AS inbox
+                   WHERE inbox.attemptId = gc_handoff_chains.attemptId
+                     AND inbox.status = 'failed_manual'
+                 ), 'Target invocation failed'),
+                 updatedAt = ?
              WHERE status = 'claimed' AND continueUsed = 0
                AND attemptId IN (
                  SELECT attemptId FROM gc_handoff_inbox WHERE status = 'failed_manual'
-                   AND lastError = 'Target invocation was in flight during restart'
                )`,
         ).run(now)
         db.prepare(
@@ -1001,7 +1018,15 @@ class ChatStorage {
             `INSERT INTO gc_handoff_chains
               (chainId, roomId, sourceMessageId, currentDepth, maxDepth, unlimited, targetAgentId, targetSnapshot, status, stopReason, createdAt, updatedAt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stopped', 'max_depth', ?, ?)
-             ON CONFLICT(chainId) DO UPDATE SET currentDepth = excluded.currentDepth, targetAgentId = excluded.targetAgentId, targetSnapshot = excluded.targetSnapshot, status = 'stopped', stopReason = excluded.stopReason, updatedAt = excluded.updatedAt`
+             ON CONFLICT(chainId) DO UPDATE SET
+               currentDepth = excluded.currentDepth,
+               targetAgentId = excluded.targetAgentId,
+               targetSnapshot = excluded.targetSnapshot,
+               updatedAt = excluded.updatedAt
+             WHERE gc_handoff_chains.status = 'stopped'
+               AND gc_handoff_chains.stopReason = 'max_depth'
+               AND gc_handoff_chains.continueUsed = 0
+               AND gc_handoff_chains.attemptId IS NULL`
         ).run(chainId, roomId, sourceMessageId, depth, policy.maxDepth, policy.unlimited ? 1 : 0, targetAgentId, targetSnapshot, now, now)
     }
 
@@ -1081,20 +1106,40 @@ class ChatStorage {
     }
 
     getStoppedHandoffChains(roomId: string): any[] {
-        const chains = (this.db()?.prepare(
+        const db = this.db()
+        if (!db) return []
+        const actionable = (db.prepare(
             `SELECT chain.* FROM gc_handoff_chains AS chain
              INNER JOIN gc_messages AS source
                ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
              INNER JOIN gc_room_agents AS target
                ON target.agentId = chain.targetAgentId AND target.roomId = chain.roomId
              WHERE chain.roomId = ?
-               AND ${this.actionableHandoffChainWhere('chain')}
-             ORDER BY chain.updatedAt DESC`,
+               AND ${this.actionableHandoffChainWhere('chain')}`,
         ).all(roomId) || []) as any[]
-        return chains.filter(chain => {
+        const visibleActionable = actionable.filter(chain => {
             const currentSnapshot = this.getHandoffTargetSnapshot(roomId, String(chain.targetAgentId))
             return currentSnapshot && JSON.stringify(currentSnapshot) === String(chain.targetSnapshot || '{}')
         })
+        const outcomeUnknown = (db.prepare(
+            `SELECT chain.* FROM gc_handoff_chains AS chain
+             INNER JOIN gc_messages AS source
+               ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
+             WHERE chain.roomId = ?
+               AND chain.status = 'outcome_unknown'
+               AND chain.stopReason = 'outcome_unknown'
+               AND chain.continueUsed = 1
+               AND chain.attemptId IS NOT NULL
+               AND EXISTS (
+                 SELECT 1 FROM gc_handoff_attempts AS attempt
+                 WHERE attempt.attemptId = chain.attemptId
+                   AND attempt.chainId = chain.chainId
+                   AND attempt.roomId = chain.roomId
+                   AND attempt.status = 'outcome_unknown'
+               )`,
+        ).all(roomId) || []) as any[]
+        return [...visibleActionable, ...outcomeUnknown]
+            .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))
     }
 
     claimHandoffContinuation(roomId: string, chainId: string): any | null {
@@ -1375,6 +1420,65 @@ class ChatStorage {
         return metadata
     }
 
+    markRemoteHandoffOutcomeUnknown(attemptId: string, error: string): any | null {
+        const db = this.db()
+        if (!db) return null
+        const diagnostic = error.slice(0, 2000)
+        return this.withImmediateTransaction(db, () => {
+            const state = db.prepare(
+                `SELECT attempt.chainId, attempt.roomId
+                 FROM gc_handoff_inbox AS inbox
+                 INNER JOIN gc_handoff_attempts AS attempt ON attempt.attemptId = inbox.attemptId
+                 INNER JOIN gc_handoff_chains AS chain
+                   ON chain.attemptId = attempt.attemptId
+                  AND chain.chainId = attempt.chainId
+                  AND chain.roomId = attempt.roomId
+                 WHERE inbox.sourceInstanceId = 'studio'
+                   AND inbox.attemptId = ?
+                   AND inbox.status = 'running'
+                   AND inbox.invocationStartedAt IS NOT NULL
+                   AND json_valid(inbox.targetSnapshot) = 1
+                   AND json_extract(inbox.targetSnapshot, '$.executorType') = 'remote'
+                   AND attempt.status != 'completed'
+                   AND chain.status = 'claimed'
+                   AND chain.continueUsed = 0`,
+            ).get(attemptId) as { chainId: string; roomId: string } | undefined
+            if (!state) return null
+            const now = Date.now()
+            const inbox = db.prepare(
+                `UPDATE gc_handoff_inbox
+                 SET status = 'outcome_unknown', stateVersion = stateVersion + 1,
+                     lastError = ?, leaseUntil = 0, updatedAt = ?
+                 WHERE sourceInstanceId = 'studio' AND attemptId = ?
+                   AND status = 'running' AND invocationStartedAt IS NOT NULL`,
+            ).run(diagnostic, now, attemptId)
+            const attempt = db.prepare(
+                `UPDATE gc_handoff_attempts
+                 SET status = 'outcome_unknown', lastError = ?, leaseUntil = 0, updatedAt = ?
+                 WHERE attemptId = ? AND status != 'completed'`,
+            ).run(diagnostic, now, attemptId)
+            const outbox = db.prepare(
+                `UPDATE gc_handoff_outbox SET status = 'outcome_unknown', updatedAt = ?
+                 WHERE attemptId = ? AND status != 'completed'`,
+            ).run(now, attemptId)
+            const delivery = db.prepare(
+                `UPDATE gc_handoff_deliveries SET status = 'outcome_unknown', updatedAt = ?
+                 WHERE attemptId = ? AND status != 'completed'`,
+            ).run(now, attemptId)
+            const chain = db.prepare(
+                `UPDATE gc_handoff_chains
+                 SET status = 'outcome_unknown', stopReason = 'outcome_unknown', continueUsed = 1,
+                     lastError = ?, updatedAt = ?
+                 WHERE roomId = ? AND chainId = ? AND attemptId = ?
+                   AND status = 'claimed' AND continueUsed = 0`,
+            ).run(diagnostic, now, state.roomId, state.chainId, attemptId)
+            if (![inbox, attempt, chain].every(result => result.changes === 1)) {
+                throw new Error('Remote handoff outcome-unknown transition was incomplete')
+            }
+            return this.getHandoffChain(state.roomId, state.chainId)
+        })
+    }
+
     failHandoffTarget(attemptId: string, error: string): boolean {
         const result = this.db()?.prepare(
             `UPDATE gc_handoff_inbox
@@ -1438,6 +1542,10 @@ class ChatStorage {
         ).run(error.slice(0, 2000), now, chain.attemptId)
         this.db()?.prepare(
             `UPDATE gc_handoff_outbox SET status = 'failed', updatedAt = ? WHERE attemptId = ?`,
+        ).run(now, chain.attemptId)
+        this.db()?.prepare(
+            `UPDATE gc_handoff_deliveries SET status = 'failed', updatedAt = ?
+             WHERE attemptId = ? AND status != 'completed'`,
         ).run(now, chain.attemptId)
         this.db()?.prepare(
             `UPDATE gc_handoff_chains
@@ -2403,6 +2511,7 @@ class ChatStorage {
             this.deleteWorkspaceDiffChanges(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
+            db.prepare('DELETE FROM gc_handoff_inbox WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
             db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
@@ -2825,7 +2934,11 @@ export class GroupChatServer {
                         continuationAttemptId: attemptId,
                     })
                     if (delivery.targetCount === 0 || delivery.deliveredCount !== delivery.targetCount || delivery.errors.length > 0) {
-                        throw new Error(delivery.errors.join('; ') || 'Continuation target Agent is not connected')
+                        const deliveryError = new Error(delivery.errors.join('; ') || 'Continuation target Agent is not connected') as Error & {
+                            outcomeUnknown?: boolean
+                        }
+                        deliveryError.outcomeUnknown = delivery.outcomeUnknown === true
+                        throw deliveryError
                     }
                     const attempt = this.storage.getHandoffAttempt(attemptId)
                     const chain = attempt
@@ -2843,9 +2956,39 @@ export class GroupChatServer {
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
                     const attempt = this.storage.getHandoffAttempt(attemptId)
-                    if (/target Agent is not connected/i.test(message)) {
+                    const target = this.storage.getHandoffTargetStatus(attemptId)
+                    if (target?.status === 'completed' && String(target.terminalMessageId || '')) {
+                        const chain = attempt
+                            ? this.storage.getHandoffChain(String(attempt.roomId), String(attempt.chainId))
+                            : null
+                        const completed = chain
+                            ? this.storage.completeHandoffContinuation(String(chain.roomId), String(chain.chainId))
+                            : null
+                        if (completed) {
+                            this.storage.finishHandoffOutbox(attemptId)
+                            this.broadcastHandoffUpdate(String(completed.roomId), completed)
+                        } else {
+                            this.storage.requeueHandoffOutbox(
+                                attemptId,
+                                'Durable target completion could not be finalized on the source chain',
+                            )
+                        }
+                    } else if (target?.status === 'failed_manual') {
+                        this.storage.failHandoffContinuation(
+                            String(attempt?.roomId || outbox.roomId),
+                            String(attempt?.chainId || ''),
+                            String(target.lastError || message),
+                        )
+                    } else if (/target Agent is not connected/i.test(message)) {
                         this.storage.deferHandoffOutbox(attemptId, message)
-                    } else if (this.storage.getHandoffTargetStatus(attemptId)?.invocationStartedAt) {
+                    } else if ((error as any)?.outcomeUnknown === true) {
+                        const diagnostic = `Remote target invocation outcome is unknown: ${message}`
+                        const unknown = this.storage.markRemoteHandoffOutcomeUnknown(attemptId, diagnostic)
+                        if (!unknown) {
+                            logger.error({ attemptId }, '[GroupChat] failed to persist remote outcome-unknown state')
+                        }
+                    } else if (target?.invocationStartedAt) {
+                        this.storage.failHandoffTarget(attemptId, message)
                         this.storage.failHandoffContinuation(
                             String(attempt?.roomId || outbox.roomId),
                             String(attempt?.chainId || ''),

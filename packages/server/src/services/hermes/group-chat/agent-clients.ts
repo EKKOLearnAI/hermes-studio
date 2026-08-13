@@ -249,6 +249,12 @@ export interface MentionDeliveryResult {
     targetCount: number
     deliveredCount: number
     errors: string[]
+    outcomeUnknown?: boolean
+}
+
+type MentionQueueError = {
+    message: string
+    outcomeUnknown: boolean
 }
 
 export interface GroupChatRunService {
@@ -1978,7 +1984,7 @@ export class AgentClients {
     private _mentionQueue = new Map<string, Array<{
         agents: GroupAgentExecutor[]
         msg: MentionMessage
-        resolve: (error: string | null) => void
+        resolve: (error: MentionQueueError | null) => void
     }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
@@ -2191,7 +2197,7 @@ export class AgentClients {
         this._mentionQueue.delete(roomId)
         for (const entry of queue || []) {
             for (const agent of entry.agents) agent.releaseInvocation?.()
-            entry.resolve('Continuation target Agent is not connected')
+            entry.resolve({ message: 'Continuation target Agent is not connected', outcomeUnknown: false })
         }
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
@@ -2200,14 +2206,14 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<string | null> {
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<MentionQueueError | null> {
         let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
             this._mentionQueue.set(roomId, queue)
         }
-        let resolve!: (error: string | null) => void
-        const completed = new Promise<string | null>(done => { resolve = done })
+        let resolve!: (error: MentionQueueError | null) => void
+        const completed = new Promise<MentionQueueError | null>(done => { resolve = done })
         queue.push({ agents, msg, resolve })
         for (const agent of agents) {
             agent.reserveInvocation?.()
@@ -2387,7 +2393,12 @@ export class AgentClients {
         if (msg.continuationAttemptId && mentioned.length === 1) {
             const queueError = await completed
             if (queueError) {
-                return { targetCount: 1, deliveredCount: 0, errors: [queueError] }
+                return {
+                    targetCount: 1,
+                    deliveredCount: 0,
+                    errors: [queueError.message],
+                    outcomeUnknown: queueError.outcomeUnknown,
+                }
             }
             const status = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
             if (status?.status !== 'completed') {
@@ -2458,7 +2469,7 @@ export class AgentClients {
                 if (!next) break
                 if (queue?.length === 0) this._mentionQueue.delete(roomId)
 
-                let queueError: string | null = null
+                let queueError: MentionQueueError | null = null
                 try {
                     const runtimeContext = this._roomSummaryService
                         ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
@@ -2497,7 +2508,10 @@ export class AgentClients {
                         const result = results[index]
                         if (result.status === 'rejected') {
                             const message = result.reason?.message || String(result.reason)
-                            queueError ||= message
+                            queueError ||= {
+                                message,
+                                outcomeUnknown: result.reason?.outcomeUnknown === true,
+                            }
                             logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${message}`)
                         }
                     }

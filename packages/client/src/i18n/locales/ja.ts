@@ -2682,6 +2682,8 @@ export default {
     agentHandoffContinued: 'Handoff continued',
     agentHandoffErrorAdmissionRejected: '対象の Agent がこの引き継ぎを受け付けられませんでした。再試行してください。',
     agentHandoffErrorGeneric: 'この引き継ぎを続行できませんでした。再試行するか、ルーム設定を調整してください。',
+    agentHandoffOutcomeUnknownTitle: 'リモート引き継ぎの結果が不明です',
+    agentHandoffOutcomeUnknownDescription: 'リモートタスクはまだ実行中の可能性があります。重複実行を防ぐため、自動再試行や続行操作の再開は行わず、リモート結果を手動で確認する必要があります。',
     summaryConfigurationRequired: 'このルームには要約エージェントが未設定です。Profile、Provider、Model、API Mode を選択して保存してください。',
     summaryConfigurationOwnerRequired: 'このルームには要約エージェントが未設定です。メッセージを送信する前にルーム管理者へ設定を依頼してください。',
     saveSummaryConfig: '要約設定を保存',

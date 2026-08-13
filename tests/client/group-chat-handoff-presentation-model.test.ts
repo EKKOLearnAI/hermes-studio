@@ -14,6 +14,8 @@ function chain(overrides: Partial<RoomAgentHandoffChain> = {}): RoomAgentHandoff
 describe('handoff stop presentation predicate', () => {
   it('maps backend continuation errors to localized UI keys without returning raw copy', () => {
     expect(handoffErrorTranslationKey('Continuation target admission was rejected')).toBe('groupChat.agentHandoffErrorAdmissionRejected')
+    expect(handoffErrorTranslationKey('Remote target invocation outcome is unknown after restart')).toBe('groupChat.agentHandoffOutcomeUnknownDescription')
+    expect(handoffErrorTranslationKey('Remote handoff outcome is unknown; automatic retry is disabled')).toBe('groupChat.agentHandoffOutcomeUnknownDescription')
     expect(handoffErrorTranslationKey('Handoff source message is no longer available')).toBe('groupChat.agentHandoffErrorGeneric')
     expect(handoffErrorTranslationKey('')).toBeNull()
     expect(handoffErrorTranslationKey('Handoff source message is no longer available')).not.toContain('Handoff source message')
@@ -28,6 +30,16 @@ describe('handoff stop presentation predicate', () => {
       stopReason: 'continue_failed',
       attemptId: 'failed-attempt-1',
       lastError: 'Agent disconnected',
+    }))).toBe(true)
+  })
+
+  it('presents a durable outcome-unknown chain without making it retryable', () => {
+    expect(isPresentableHandoffChain(chain({
+      status: 'outcome_unknown',
+      stopReason: 'outcome_unknown',
+      continueUsed: true,
+      attemptId: 'unknown-attempt-1',
+      lastError: 'Remote target invocation outcome is unknown after restart',
     }))).toBe(true)
   })
 

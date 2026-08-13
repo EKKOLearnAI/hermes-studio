@@ -108,6 +108,42 @@ describe('group chat durable continuation route', () => {
         expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 1 })
     })
 
+    it('returns an explicit conflict without replacement for an outcome-unknown chain', async () => {
+        const storage = groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payloadRow = db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId) as { payload: string }
+        const payload = JSON.parse(String(payloadRow.payload))
+        storage.admitHandoffTarget(attemptId, 'agent-2', payload, storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)
+        storage.claimHandoffDelivery(attemptId, 'agent-2')
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+        storage.markHandoffTargetInvocationStarted(attemptId)
+        expect(storage.markRemoteHandoffOutcomeUnknown(attemptId, 'Remote transport ended without a terminal result')).toBeTruthy()
+
+        const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`, {
+            method: 'POST',
+        })
+        expect(response.status).toBe(409)
+        expect(await response.json()).toMatchObject({
+            code: 'HANDOFF_OUTCOME_UNKNOWN',
+            error: 'Remote handoff outcome is unknown; automatic retry is disabled',
+            chain: { status: 'outcome_unknown', continueUsed: 1 },
+        })
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts WHERE chainId = ?').get('chain-1')).toEqual({ count: 1 })
+    })
+
     it('replays a pending outbox through the dispatcher after the request path has returned', async () => {
         const storage = groupServer.getStorage()
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
@@ -183,6 +219,200 @@ describe('group chat durable continuation route', () => {
         })
         expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
         expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
+    })
+
+    it('fails closed when a started remote continuation loses its transport outcome', async () => {
+        const storage = groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const executor = {
+            ...target,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async () => {
+                throw Object.assign(new Error('Remote Agent disconnected'), {
+                    code: 'GROUP_AGENT_OFFLINE',
+                    outcomeUnknown: true,
+                })
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({ status: 'outcome_unknown' })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'outcome_unknown' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'outcome_unknown',
+            stopReason: 'outcome_unknown',
+            continueUsed: 1,
+        })
+        expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toBeNull()
+        expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts WHERE chainId = ?').get('chain-1')).toEqual({ count: 1 })
+    })
+
+    it('prefers a durable remote terminal message over a later transport loss', async () => {
+        const storage = groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const executor = {
+            ...target,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async (_roomId: string, message: any) => {
+                storage.completeHandoffTarget(
+                    String(message.continuationAttemptId),
+                    `continuation:${message.continuationAttemptId}`,
+                )
+                throw Object.assign(new Error('Remote Agent disconnected after publishing'), {
+                    code: 'GROUP_AGENT_OFFLINE',
+                    outcomeUnknown: true,
+                })
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'resumed',
+            continueUsed: 1,
+        })
+        expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({
+            status: 'completed',
+        })
+    })
+
+    it('keeps an authoritative remote terminal failure retryable', async () => {
+        const storage = groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const executor = {
+            ...target,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async () => {
+                throw Object.assign(new Error('Remote execution failed'), {
+                    code: 'GROUP_AGENT_REMOTE_RUN_FAILED',
+                })
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+        const first = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffTargetStatus(String(first.attemptId))).toMatchObject({ status: 'failed_manual' })
+        expect(storage.getHandoffAttempt(String(first.attemptId))).toMatchObject({ status: 'failed' })
+        expect(db.prepare('SELECT status FROM gc_handoff_deliveries WHERE attemptId = ?').get(first.attemptId)).toEqual({
+            status: 'failed',
+        })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            stopReason: 'continue_failed',
+            continueUsed: 0,
+        })
+        expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toMatchObject({
+            status: 'claimed',
+            attemptId: expect.not.stringMatching(new RegExp(`^${first.attemptId}$`)),
+        })
+    })
+
+    it('prefers a durable remote failure over a later uncertain transport error', async () => {
+        const storage = groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const executor = {
+            ...target,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async (_roomId: string, message: any) => {
+                storage.failHandoffTarget(String(message.continuationAttemptId), 'Durable remote failure')
+                throw Object.assign(new Error('Remote Agent disconnected after failing'), {
+                    code: 'GROUP_AGENT_OFFLINE',
+                    outcomeUnknown: true,
+                })
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+        const first = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(storage.getHandoffTargetStatus(String(first.attemptId))).toMatchObject({
+            status: 'failed_manual',
+            lastError: 'Durable remote failure',
+        })
+        expect(storage.getHandoffAttempt(String(first.attemptId))).toMatchObject({ status: 'failed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            stopReason: 'continue_failed',
+            continueUsed: 0,
+        })
     })
 
     it('waits for a queued continuation in a busy room and never produces a failed ghost run', async () => {

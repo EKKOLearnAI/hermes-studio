@@ -1099,7 +1099,17 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     }
     this.pendingRun = null
     this.activeSessions.delete(pending.roomId)
-    if (error) pending.reject(error)
+    if (error) {
+      const relayFailure = error as Error & { code?: string; outcomeUnknown?: boolean }
+      // A run.failed event is an authoritative remote terminal result. Every
+      // other source-side termination after run.request was emitted (timeout,
+      // disconnect, interrupt without acknowledgement, invalid/missing event)
+      // cannot prove that the remote invocation stopped.
+      if (relayFailure.code !== 'GROUP_AGENT_REMOTE_RUN_FAILED') {
+        relayFailure.outcomeUnknown = true
+      }
+      pending.reject(relayFailure)
+    }
     else pending.resolve()
   }
 }

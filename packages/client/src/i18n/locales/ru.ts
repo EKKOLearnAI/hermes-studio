@@ -2617,6 +2617,8 @@ export default {
     agentHandoffContinued: 'Handoff continued',
     agentHandoffErrorAdmissionRejected: 'Целевой Agent не смог принять эту передачу. Повторите попытку.',
     agentHandoffErrorGeneric: 'Не удалось продолжить передачу. Повторите попытку или измените настройки комнаты.',
+    agentHandoffOutcomeUnknownTitle: 'Результат удалённой передачи неизвестен',
+    agentHandoffOutcomeUnknownDescription: 'Удалённая задача может всё ещё выполняться. Во избежание повторного запуска автоматическая попытка и действие «Продолжить» недоступны, пока результат не будет подтверждён вручную.',
     summaryConfigurationRequired: 'Для этой комнаты ещё не настроен суммаризатор. Выберите профиль, провайдера, модель и режим API, затем сохраните.',
     summaryConfigurationOwnerRequired: 'Для этой комнаты ещё не настроен суммаризатор. Попросите администратора настроить его перед отправкой сообщений.',
     saveSummaryConfig: 'Сохранить настройки',

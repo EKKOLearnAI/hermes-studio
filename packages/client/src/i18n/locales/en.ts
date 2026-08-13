@@ -2979,6 +2979,8 @@ export default {
     agentHandoffContinued: 'Handoff continued',
     agentHandoffErrorAdmissionRejected: 'The target Agent could not accept this handoff. Try again.',
     agentHandoffErrorGeneric: 'This handoff could not continue. Try again or adjust the room settings.',
+    agentHandoffOutcomeUnknownTitle: 'Remote handoff outcome unknown',
+    agentHandoffOutcomeUnknownDescription: 'The remote task may still be running. To avoid duplicate execution, it will not be retried and Continue will remain unavailable until the remote outcome is confirmed manually.',
     summaryConfigurationRequired: 'This room has no summarizer yet. Select a profile, provider, model, and API mode, then save.',
     summaryConfigurationOwnerRequired: 'This room has no summarizer yet. Ask a room administrator to configure it before sending messages.',
     saveSummaryConfig: 'Save summary settings',

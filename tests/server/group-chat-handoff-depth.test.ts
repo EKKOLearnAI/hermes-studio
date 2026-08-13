@@ -137,6 +137,23 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(indexes.some(index => index.name === 'idx_gc_handoff_attempts_chain')).toBe(false)
     })
 
+    it('upgrades the active-attempt index so outcome-unknown attempts block replacement', async () => {
+        harness.db.exec(`
+          DROP INDEX IF EXISTS idx_gc_handoff_attempts_chain_active;
+          CREATE UNIQUE INDEX idx_gc_handoff_attempts_chain_active
+          ON gc_handoff_attempts(chainId)
+          WHERE status IN ('claimed', 'admitted', 'dispatched');
+        `)
+
+        const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+        initAllHermesTables()
+
+        const row = harness.db.prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_gc_handoff_attempts_chain_active'",
+        ).get() as { sql: string }
+        expect(row.sql).toContain("'outcome_unknown'")
+    })
+
     it('records a failed delivery as retryable and allocates a new attempt', () => {
         const storage = harness.groupServer.getStorage()
         const first = storage.claimHandoffContinuation('room-1', 'chain-1')!
@@ -278,8 +295,17 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_inbox WHERE attemptId = ?').get(attemptId)).toEqual({ count: 1 })
     })
 
-    it('converges an in-flight invocation to a retryable terminal chain after restart', () => {
+    it('fails closed when a started remote invocation has an unknown outcome after restart', () => {
         const storage = harness.groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
         const attemptId = String(claimed.attemptId)
         const payload = JSON.parse(String(harness.db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
@@ -288,32 +314,150 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
         storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
         storage.markHandoffTargetInvocationStarted(attemptId)
+
         storage.init()
+
         expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({
-            status: 'failed_manual',
-            lastError: 'Target invocation was in flight during restart',
+            status: 'outcome_unknown',
+            lastError: 'Remote target invocation outcome is unknown after restart',
         })
         expect(storage.getHandoffAttempt(attemptId)).toMatchObject({
-            status: 'failed',
-            lastError: 'Target invocation was in flight during restart',
+            status: 'outcome_unknown',
+            lastError: 'Remote target invocation outcome is unknown after restart',
         })
         expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({
-            status: 'failed',
+            status: 'outcome_unknown',
         })
         expect(harness.db.prepare('SELECT status FROM gc_handoff_deliveries WHERE attemptId = ?').get(attemptId)).toEqual({
-            status: 'failed',
+            status: 'outcome_unknown',
         })
         expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
-            status: 'stopped',
-            continueUsed: 0,
-            stopReason: 'continue_failed',
-            lastError: 'Target invocation was in flight during restart',
+            status: 'outcome_unknown',
+            continueUsed: 1,
+            stopReason: 'outcome_unknown',
+            lastError: 'Remote target invocation outcome is unknown after restart',
         })
+        expect(storage.getStoppedHandoffChains('room-1')).toEqual([
+            expect.objectContaining({
+                chainId: 'chain-1',
+                status: 'outcome_unknown',
+                stopReason: 'outcome_unknown',
+            }),
+        ])
         expect(storage.completeHandoffContinuation('room-1', 'chain-1')).toBeNull()
+        expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toBeNull()
+        expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts WHERE chainId = ?').get('chain-1')).toEqual({ count: 1 })
+
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'outcome_unknown',
+            stopReason: 'outcome_unknown',
+            continueUsed: 1,
+            attemptId,
+        })
+        expect(storage.getStoppedHandoffChains('room-1')).toEqual([
+            expect.objectContaining({ chainId: 'chain-1', status: 'outcome_unknown' }),
+        ])
+    })
+
+    it('keeps a started local invocation retryable after restart', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payloadRow = harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId) as { payload: string }
+        const payload = JSON.parse(String(payloadRow.payload))
+        storage.admitHandoffTarget(attemptId, 'agent-2', payload, storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)
+        storage.claimHandoffDelivery(attemptId, 'agent-2')
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+        storage.markHandoffTargetInvocationStarted(attemptId)
+
+        storage.init()
+
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({ status: 'failed_manual' })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'failed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            stopReason: 'continue_failed',
+            continueUsed: 0,
+        })
         expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toMatchObject({
             status: 'claimed',
             attemptId: expect.not.stringMatching(new RegExp(`^${attemptId}$`)),
         })
+    })
+
+    it('reconciles a durable target failure if restart interrupts source finalization', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payloadRow = harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId) as { payload: string }
+        storage.admitHandoffTarget(attemptId, 'agent-2', JSON.parse(payloadRow.payload), storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)
+        storage.claimHandoffDelivery(attemptId, 'agent-2')
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+        storage.markHandoffTargetInvocationStarted(attemptId)
+        storage.failHandoffTarget(attemptId, 'Durable target failure before source finalization')
+
+        storage.init()
+
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({
+            status: 'failed',
+            lastError: 'Durable target failure before source finalization',
+        })
+        expect(harness.db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'failed' })
+        expect(harness.db.prepare('SELECT status FROM gc_handoff_deliveries WHERE attemptId = ?').get(attemptId)).toEqual({ status: 'failed' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'stopped',
+            stopReason: 'continue_failed',
+            continueUsed: 0,
+            lastError: 'Durable target failure before source finalization',
+        })
+        expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toMatchObject({
+            status: 'claimed',
+            attemptId: expect.not.stringMatching(new RegExp(`^${attemptId}$`)),
+        })
+    })
+
+    it('fails closed even when a remote attempt is missing an audit delivery row', () => {
+        const storage = harness.groupServer.getStorage()
+        storage.updateRoomAgentRelayMetadata('room-1', 'agent-2', {
+            connectorId: 'connector-1',
+            remoteOrigin: 'https://relay.example',
+        })
+        storage.recordHandoffStop('room-1', 'chain-1', 'source-1', 4, 'agent-2', {
+            enabled: true,
+            maxDepth: 4,
+            unlimited: false,
+        })
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payloadRow = harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId) as { payload: string }
+        storage.admitHandoffTarget(attemptId, 'agent-2', JSON.parse(payloadRow.payload), storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)
+        storage.claimHandoffDelivery(attemptId, 'agent-2')
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+        storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
+        storage.markHandoffTargetInvocationStarted(attemptId)
+        harness.db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId = ?').run(attemptId)
+
+        expect(storage.markRemoteHandoffOutcomeUnknown(attemptId, 'Remote transport outcome is unknown')).toBeTruthy()
+        expect(storage.getHandoffTargetStatus(attemptId)).toMatchObject({ status: 'outcome_unknown' })
+        expect(storage.getHandoffAttempt(attemptId)).toMatchObject({ status: 'outcome_unknown' })
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'outcome_unknown',
+            continueUsed: 1,
+        })
+        expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toBeNull()
     })
 
     it('reclaims an expired dispatcher lease without waiting for a process restart', () => {
@@ -345,6 +489,30 @@ describe('group chat room Agent handoff depth policy', () => {
         expect(harness.db.prepare('SELECT * FROM gc_handoff_inbox WHERE attemptId = ?').get(attemptId)).toBeUndefined()
         expect(harness.db.prepare('SELECT * FROM gc_handoff_deliveries WHERE attemptId = ?').get(attemptId)).toBeUndefined()
         expect(storage.claimHandoffContinuation('room-1', 'chain-1')).toBeNull()
+    })
+
+    it('removes target inbox state when a room is deleted', () => {
+        const storage = harness.groupServer.getStorage()
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        const attemptId = String(claimed.attemptId)
+        const payloadRow = harness.db.prepare(
+            'SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?',
+        ).get(attemptId) as { payload: string }
+        storage.admitHandoffTarget(attemptId, 'agent-2', JSON.parse(payloadRow.payload), storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)
+        storage.claimHandoffDelivery(attemptId, 'agent-2')
+        storage.acceptHandoffAttempt(attemptId, 'agent-2')
+
+        storage.deleteRoom('room-1')
+
+        for (const table of [
+            'gc_handoff_chains',
+            'gc_handoff_attempts',
+            'gc_handoff_outbox',
+            'gc_handoff_deliveries',
+            'gc_handoff_inbox',
+        ]) {
+            expect(harness.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 })
+        }
     })
 
     it('requires a durable target message before completing a continuation attempt', () => {
