@@ -3126,6 +3126,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_42_1: 'This release covers all 13 PRs merged after v0.6.41, spanning Group Chat reliability, App relay, safe queue insertion, Coding Agent maintenance, subagent routing, and MiniMax video generation',
+    new_0_6_42_2: 'Group Chat keeps remote interactions routable while reducing streaming work, reliably deduplicates Agent mentions, and preserves membership and typing ownership across multiple tabs for the same account (#2473, #2495, #2498, #2500)',
+    new_0_6_42_3: 'App clients can connect directly over LAN, use realtime Group Chat through App Relay, and submit native MP3 recordings to local STT (#2487, #2509)',
+    new_0_6_42_4: 'Room owners can set bounded or unlimited Agent handoff depth, stop automatic chains, and grant exactly one durable continuation when more work is needed (#2504)',
+    new_0_6_42_5: 'Queued messages gain a safe insert-next action for Hermes and Ekko, stopping active work only at runtime-owned model or tool boundaries and keeping state consistent across tabs (#2477)',
+    new_0_6_42_6: 'Coding Agents can check npm for updates, show the latest version, install it in place, and refresh the displayed state when the update completes (#2505)',
+    new_0_6_42_7: 'Recoverable Codex native stream errors no longer mark successful runs as failed, while structured Claude API failures now persist and settle exactly once (#2471, #2481)',
+    new_0_6_42_8: 'Auxiliary Models adds Profile-wide subagent routing for provider, model, and reasoning effort; delegated Agents follow the main model when no override is set (#2515)',
+    new_0_6_42_9: 'MiniMax image-to-video generation now supports Global and China official v1 endpoints, URL, base64, and local image inputs, task polling, and automatic download with Profile API keys (#2512)',
     new_0_6_41_1: 'Local STT now works reliably in npm-installed Hermes Web UI by pinning sherpa-onnx native runtimes to the same version as the Node.js wrapper on macOS, Windows, and Linux (#2464)',
     new_0_6_40_1: 'This release covers all 40 PRs merged after v0.6.39, spanning secure remote Group Chat, local speech recognition, Workflow scheduling, global approvals, Chat Run webhooks, MCU, and Coding Agent reliability',
     new_0_6_40_2: 'Group Chat adds secure shared rooms and remote Agents, stabilizes Agent handoff, presence, and revocation, preserves offline owner avatars, and offers manual room-link copy when clipboard APIs are unavailable (#2408, #2410, #2411, #2415, #2423)',
