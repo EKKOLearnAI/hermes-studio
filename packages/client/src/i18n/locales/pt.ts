@@ -228,6 +228,7 @@ export default {
     globalAgent: 'Global Agent',
     files: 'Arquivos',
     devices: 'Dispositivos',
+    connections: 'Conexões',
     groupChat: 'Chat em grupo',
     groupConversation: 'Conversa',
     groupConversationShort: 'Conv.',

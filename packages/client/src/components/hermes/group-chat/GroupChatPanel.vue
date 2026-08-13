@@ -22,7 +22,6 @@ import GroupChatInput from './GroupChatInput.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
-import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { GroupChatMention, MemberInfo, RoomAgent, RoomAgentHandoffChain, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
@@ -1794,7 +1793,6 @@ async function handleClarify(response?: string) {
                     </svg>
                     <span>{{ t('sidebar.settings') }}</span>
                 </button>
-                <SettingsCircuitBadge />
             </div>
         </div>
 

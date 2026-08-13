@@ -228,6 +228,7 @@ export default {
     globalAgent: 'Global Agent',
     files: 'ファイル',
     devices: 'デバイス',
+    connections: '接続',
     groupChat: 'グループチャット',
     groupConversation: '会話',
     groupConversationShort: '会話',

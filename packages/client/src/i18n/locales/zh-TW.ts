@@ -220,6 +220,7 @@ export default {
     groupChat: '群聊',
     files: '檔案',
     devices: '裝置',
+    connections: '裝置互聯',
     groupConversation: '對話',
     groupConversationShort: '對話',
     groupPlatform: '平台',
@@ -353,6 +354,7 @@ export default {
     added: 'MCU 裝置已新增',
     addFailed: '新增 MCU 裝置失敗',
     purchase: '購買',
+    refresh: '重新整理',
     edit: '編輯',
     editNameTitle: '編輯名稱',
     nameUpdated: '名稱已更新',
@@ -364,6 +366,15 @@ export default {
     deleteFailed: '刪除 MCU 裝置失敗',
     loadFailed: '載入 MCU 裝置失敗',
     close: '關閉',
+  },
+
+  connections: {
+    title: '裝置互聯',
+    tabs: {
+      app: 'App',
+      mcu: '小方盒',
+      devices: '裝置',
+    },
   },
 
   devices: {

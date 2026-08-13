@@ -51,7 +51,6 @@ import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
 import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
-import SettingsCircuitBadge from "@/components/layout/SettingsCircuitBadge.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
@@ -61,11 +60,14 @@ import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from "@/utils/desktop-browser";
 
 const props = withDefaults(defineProps<{
   standalone?: boolean;
+  contentMode?: "chat" | "connections";
 }>(), {
   standalone: false,
+  contentMode: "chat",
 });
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
+const ConnectionsPanel = defineAsyncComponent(async () => (await import('@/components/hermes/connections/ConnectionsPanel.vue')).default);
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default);
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('./DesktopBrowserPanel.vue')).default);
@@ -1854,7 +1856,7 @@ async function handleSessionModelCustomSubmit() {
     >
       <div v-if="showSessions" class="page-sidebar-top">
         <PageSidebarNav
-          :active="chatStore.runtimeMode === 'global_agent' ? 'global' : 'chat'"
+          :active="contentMode === 'connections' ? 'connections' : chatStore.runtimeMode === 'global_agent' ? 'global' : 'chat'"
           :primary-label="t('chat.newChat')"
           @primary="openNewChatModal"
         />
@@ -2108,7 +2110,6 @@ async function handleSessionModelCustomSubmit() {
           </svg>
           <span>{{ t("sidebar.settings") }}</span>
         </button>
-        <SettingsCircuitBadge />
       </div>
     </aside>
 
@@ -2587,6 +2588,12 @@ async function handleSessionModelCustomSubmit() {
       class="chat-main"
       :class="{ 'chat-main--sidebar-collapsed': currentMode !== 'chat' || !showSessions }"
     >
+      <ConnectionsPanel
+        v-if="contentMode === 'connections'"
+        :sidebar-collapsed="!showSessions"
+        @toggle-sidebar="showSessions = !showSessions"
+      />
+      <template v-else>
       <header v-if="!standalone" class="chat-header">
         <div class="header-left">
           <NButton
@@ -2855,6 +2862,7 @@ async function handleSessionModelCustomSubmit() {
         v-else
         :human-only="sessionBrowserPrefsStore.humanOnly"
       />
+      </template>
     </div>
     <Teleport to="body">
       <RealtimeVoiceStage

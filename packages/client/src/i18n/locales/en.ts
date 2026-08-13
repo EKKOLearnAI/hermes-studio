@@ -220,6 +220,7 @@ export default {
     groupChat: 'Group Chat',
     files: 'Files',
     devices: 'Devices',
+    connections: 'Device connections',
     groupConversation: 'Conversation',
     groupConversationShort: 'Conv',
     groupPlatform: 'Platform',
@@ -327,7 +328,7 @@ export default {
 
   mcuDevices: {
     title: 'Little Box',
-    subtitle: 'View device link status',
+    subtitle: 'View device connection status',
     name: 'Name',
     nameOptional: 'Name is optional',
     deviceCode: 'Device code',
@@ -353,6 +354,7 @@ export default {
     added: 'MCU device added',
     addFailed: 'Failed to add MCU device',
     purchase: 'Buy',
+    refresh: 'Refresh',
     edit: 'Edit',
     editNameTitle: 'Edit name',
     nameUpdated: 'Name updated',
@@ -364,6 +366,15 @@ export default {
     deleteFailed: 'Failed to delete MCU device',
     loadFailed: 'Failed to load MCU devices',
     close: 'Close',
+  },
+
+  connections: {
+    title: 'Device connections',
+    tabs: {
+      app: 'App',
+      mcu: 'Little Box',
+      devices: 'Devices',
+    },
   },
 
   devices: {

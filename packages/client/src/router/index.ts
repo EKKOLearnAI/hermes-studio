@@ -160,9 +160,18 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
+      path: '/hermes/connections',
+      name: 'hermes.connections',
+      component: () => import('@/views/hermes/ChatView.vue'),
+      meta: { requiresSuperAdmin: true },
+    },
+    {
       path: '/hermes/devices',
       name: 'hermes.devices',
-      component: () => import('@/views/hermes/DevicesView.vue'),
+      redirect: to => ({
+        name: 'hermes.connections',
+        query: { ...to.query, tab: 'devices' },
+      }),
       meta: { requiresSuperAdmin: true },
     },
     {

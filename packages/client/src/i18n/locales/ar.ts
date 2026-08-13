@@ -220,6 +220,7 @@ export default {
     groupChat: 'محادثة جماعية',
     files: 'الملفات',
     devices: 'الأجهزة',
+    connections: 'الاتصالات',
     groupConversation: 'المحادثة',
     groupConversationShort: 'محادثة',
     groupPlatform: 'المنصة',

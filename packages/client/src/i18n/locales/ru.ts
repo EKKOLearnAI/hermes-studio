@@ -145,6 +145,7 @@ export default {
     groupChat: 'Групповой чат',
     files: 'Файлы',
     devices: 'Устройства',
+    connections: 'Подключения',
     groupConversation: 'Диалог',
     groupConversationShort: 'Диалог',
     groupPlatform: 'Платформа',

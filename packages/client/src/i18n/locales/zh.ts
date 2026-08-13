@@ -220,6 +220,7 @@ export default {
     groupChat: '群聊',
     files: '文件',
     devices: '设备',
+    connections: '设备互联',
     groupConversation: '对话',
     groupConversationShort: '对话',
     groupPlatform: '平台',
@@ -327,7 +328,7 @@ export default {
 
   mcuDevices: {
     title: '小方盒',
-    subtitle: '查看设备链接状态',
+    subtitle: '查看设备连接状态',
     name: '名称',
     nameOptional: '名称可为空',
     deviceCode: '设备码',
@@ -353,6 +354,7 @@ export default {
     added: 'MCU 设备已添加',
     addFailed: '添加 MCU 设备失败',
     purchase: '购买',
+    refresh: '刷新',
     edit: '编辑',
     editNameTitle: '编辑名称',
     nameUpdated: '名称已更新',
@@ -364,6 +366,15 @@ export default {
     deleteFailed: '删除 MCU 设备失败',
     loadFailed: '加载 MCU 设备失败',
     close: '关闭',
+  },
+
+  connections: {
+    title: '设备互联',
+    tabs: {
+      app: 'App',
+      mcu: '小方盒',
+      devices: '设备',
+    },
   },
 
   devices: {

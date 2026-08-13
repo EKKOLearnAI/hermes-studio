@@ -1,8 +1,10 @@
 import Router from '@koa/router'
 import * as ctrl from '../controllers/mcu-devices'
+import { requireSuperAdmin } from '../middleware/user-auth'
 
 export const mcuDeviceRoutes = new Router()
 
+mcuDeviceRoutes.use(requireSuperAdmin)
 mcuDeviceRoutes.get('/api/mcu-devices', ctrl.listMcuDevicesController)
 mcuDeviceRoutes.post('/api/mcu-devices', ctrl.createMcuDeviceController)
 mcuDeviceRoutes.post('/api/mcu-devices/:id/remote-connect', ctrl.connectMcuDeviceRemoteController)
