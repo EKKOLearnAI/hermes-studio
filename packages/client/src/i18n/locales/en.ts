@@ -2977,6 +2977,8 @@ export default {
     agentHandoffReason: 'Stop reason: {reason}',
     agentHandoffContinueState: 'Continue: {state}; updated {updated}',
     agentHandoffContinued: 'Handoff continued',
+    agentHandoffErrorAdmissionRejected: 'The target Agent could not accept this handoff. Try again.',
+    agentHandoffErrorGeneric: 'This handoff could not continue. Try again or adjust the room settings.',
     summaryConfigurationRequired: 'This room has no summarizer yet. Select a profile, provider, model, and API mode, then save.',
     summaryConfigurationOwnerRequired: 'This room has no summarizer yet. Ask a room administrator to configure it before sending messages.',
     saveSummaryConfig: 'Save summary settings',

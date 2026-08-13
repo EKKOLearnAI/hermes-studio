@@ -2680,6 +2680,8 @@ export default {
     agentHandoffReason: 'Stop reason: {reason}',
     agentHandoffContinueState: 'Continue: {state}; updated {updated}',
     agentHandoffContinued: 'Handoff continued',
+    agentHandoffErrorAdmissionRejected: '対象の Agent がこの引き継ぎを受け付けられませんでした。再試行してください。',
+    agentHandoffErrorGeneric: 'この引き継ぎを続行できませんでした。再試行するか、ルーム設定を調整してください。',
     summaryConfigurationRequired: 'このルームには要約エージェントが未設定です。Profile、Provider、Model、API Mode を選択して保存してください。',
     summaryConfigurationOwnerRequired: 'このルームには要約エージェントが未設定です。メッセージを送信する前にルーム管理者へ設定を依頼してください。',
     saveSummaryConfig: '要約設定を保存',

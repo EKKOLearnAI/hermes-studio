@@ -202,12 +202,14 @@ describe('GroupMessageList scroll behavior', () => {
       ...store.handoffChains.get('chain-1')!,
       stopReason: 'continue_failed',
       attemptId: 'failed-attempt-1',
-      lastError: 'Agent disconnected',
+      lastError: 'Continuation target admission was rejected',
     })
     await flushListUpdates()
     expect(reader.find('.handoff-stop-card').exists()).toBe(true)
     expect(reader.find('.handoff-stop-actions').exists()).toBe(false)
     expect(manager.get('.handoff-stop-actions').findAll('button')).toHaveLength(2)
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffErrorAdmissionRejected')
+    expect(manager.get('.handoff-stop-card').text()).not.toContain('Continuation target admission was rejected')
 
     store.handoffChains.set('chain-1', {
       ...store.handoffChains.get('chain-1')!,

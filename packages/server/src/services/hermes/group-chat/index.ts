@@ -1241,7 +1241,15 @@ class ChatStorage {
         if (!db) return null
         const attempt = this.getHandoffAttempt(attemptId)
         if (!attempt || String(attempt.targetAgentId) !== targetAgentId) return null
-        const payloadText = JSON.stringify(payload)
+        const transportAttemptId = typeof payload.continuationAttemptId === 'string'
+            ? payload.continuationAttemptId.trim()
+            : ''
+        if (transportAttemptId && transportAttemptId !== attemptId) return null
+        // continuationAttemptId is dispatcher-owned transport metadata. The
+        // attempt already authenticates it separately, so keep it out of the
+        // canonical payload that was frozen when the outbox row was created.
+        const { continuationAttemptId: _transportAttemptId, ...canonicalPayload } = payload
+        const payloadText = JSON.stringify(canonicalPayload)
         const payloadDigest = createHash('sha256').update(payloadText).digest('hex')
         const snapshotText = JSON.stringify(targetSnapshot)
         if (String(attempt.sourceInstanceId || 'studio') !== 'studio'

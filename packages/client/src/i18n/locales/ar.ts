@@ -2959,6 +2959,8 @@ export default {
     agentHandoffReason: 'Stop reason: {reason}',
     agentHandoffContinueState: 'Continue: {state}; updated {updated}',
     agentHandoffContinued: 'Handoff continued',
+    agentHandoffErrorAdmissionRejected: 'تعذر على Agent المستهدف قبول عملية التسليم هذه. حاول مرة أخرى.',
+    agentHandoffErrorGeneric: 'تعذر متابعة عملية التسليم هذه. حاول مرة أخرى أو عدّل إعدادات الغرفة.',
     summaryConfigurationRequired: 'لم يتم إعداد ملخّص لهذه الغرفة بعد. اختر ملفاً وموفراً ونموذجاً ووضع API ثم احفظ.',
     summaryConfigurationOwnerRequired: 'لم يتم إعداد ملخّص لهذه الغرفة بعد. اطلب من مسؤول الغرفة إعداده قبل إرسال الرسائل.',
     saveSummaryConfig: 'حفظ إعدادات التلخيص',

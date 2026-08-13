@@ -2680,6 +2680,8 @@ export default {
     agentHandoffReason: 'Stop reason: {reason}',
     agentHandoffContinueState: 'Continue: {state}; updated {updated}',
     agentHandoffContinued: 'Handoff continued',
+    agentHandoffErrorAdmissionRejected: '대상 Agent가 이 핸드오프를 수락하지 못했습니다. 다시 시도하세요.',
+    agentHandoffErrorGeneric: '이 핸드오프를 계속할 수 없습니다. 다시 시도하거나 방 설정을 조정하세요.',
     summaryConfigurationRequired: '이 방에는 요약기가 아직 설정되지 않았습니다. Profile, Provider, Model, API Mode를 선택한 뒤 저장하세요.',
     summaryConfigurationOwnerRequired: '이 방에는 요약기가 아직 설정되지 않았습니다. 메시지를 보내기 전에 방 관리자에게 설정을 요청하세요.',
     saveSummaryConfig: '요약 설정 저장',

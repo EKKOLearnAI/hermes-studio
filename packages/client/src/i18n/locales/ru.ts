@@ -2615,6 +2615,8 @@ export default {
     agentHandoffReason: 'Stop reason: {reason}',
     agentHandoffContinueState: 'Continue: {state}; updated {updated}',
     agentHandoffContinued: 'Handoff continued',
+    agentHandoffErrorAdmissionRejected: 'Целевой Agent не смог принять эту передачу. Повторите попытку.',
+    agentHandoffErrorGeneric: 'Не удалось продолжить передачу. Повторите попытку или измените настройки комнаты.',
     summaryConfigurationRequired: 'Для этой комнаты ещё не настроен суммаризатор. Выберите профиль, провайдера, модель и режим API, затем сохраните.',
     summaryConfigurationOwnerRequired: 'Для этой комнаты ещё не настроен суммаризатор. Попросите администратора настроить его перед отправкой сообщений.',
     saveSummaryConfig: 'Сохранить настройки',

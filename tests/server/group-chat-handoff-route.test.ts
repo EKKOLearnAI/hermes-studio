@@ -123,9 +123,10 @@ describe('group chat durable continuation route', () => {
         const storage = groupServer.getStorage()
         vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             const attemptId = String(message.continuationAttemptId)
+            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, { agentId: 'agent-2' })).toMatchObject({
+                status: 'admitted',
+            })
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
-            const payload = JSON.parse(String(db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
-            storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
             expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
             storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
             storage.markHandoffTargetInvocationStarted(attemptId)
@@ -156,9 +157,10 @@ describe('group chat durable continuation route', () => {
 
         const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             expect(message.continuationAttemptId).toBe(attemptId)
+            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, { agentId: 'agent-2' })).toMatchObject({
+                status: 'admitted',
+            })
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
-            const payload = JSON.parse(String(db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
-            storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
             expect(storage.acceptHandoffAttempt(attemptId, 'agent-2')).toBe('accepted')
             storage.markHandoffTargetRunning(attemptId, `handoff:${attemptId}`, Date.now() + 60_000)
             storage.markHandoffTargetInvocationStarted(attemptId)

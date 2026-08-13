@@ -73,6 +73,15 @@ function targetAgentName(chain: RoomAgentHandoffChain): string {
     return store.messageAgents.find(agent => agent.agentId === chain.targetAgentId)?.name || chain.targetAgentId || '—'
 }
 
+function handoffErrorText(error: string | null | undefined): string {
+    const normalized = String(error || '').trim()
+    if (!normalized) return ''
+    if (normalized === 'Continuation target admission was rejected') {
+        return t('groupChat.agentHandoffErrorAdmissionRejected')
+    }
+    return t('groupChat.agentHandoffErrorGeneric')
+}
+
 function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
     if (!store.userId || message.senderId === store.userId) return false
     return store.members.some(member =>
@@ -209,7 +218,7 @@ defineExpose({ scrollToBottom })
                         <strong>{{ t('groupChat.agentHandoffStopped') }}</strong>
                         <span>{{ t('groupChat.agentHandoffDepthState', { current: handoffChainFor(msg)!.currentDepth, max: handoffChainFor(msg)!.unlimited ? '∞' : handoffChainFor(msg)!.maxDepth }) }}</span>
                         <span>{{ t('groupChat.agentHandoffTarget', { target: targetAgentName(handoffChainFor(msg)!) }) }}</span>
-                        <span v-if="handoffChainFor(msg)!.lastError">{{ handoffChainFor(msg)!.lastError }}</span>
+                        <span v-if="handoffChainFor(msg)!.lastError">{{ handoffErrorText(handoffChainFor(msg)!.lastError) }}</span>
                         <div v-if="props.canManageHandoff && handoffChainFor(msg)!.status === 'stopped' && !handoffChainFor(msg)!.continueUsed" class="handoff-stop-actions">
                             <button type="button" @click="emit('continueHandoff', handoffChainFor(msg)!.chainId)">
                                 {{ t('groupChat.agentHandoffContinue') }}

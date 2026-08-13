@@ -231,11 +231,13 @@ describe('group chat room Agent handoff depth policy', () => {
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
         const attemptId = String(claimed.attemptId)
         const payload = JSON.parse(String(harness.db.prepare('SELECT payload FROM gc_handoff_outbox WHERE attemptId = ?').get(attemptId).payload))
-        const first = storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
-        const replay = storage.admitHandoffTarget(attemptId, 'agent-2', payload, { agentId: 'agent-2' })
+        const dispatchedPayload = { ...payload, continuationAttemptId: attemptId }
+        const first = storage.admitHandoffTarget(attemptId, 'agent-2', dispatchedPayload, { agentId: 'agent-2' })
+        const replay = storage.admitHandoffTarget(attemptId, 'agent-2', dispatchedPayload, { agentId: 'agent-2' })
         expect(first).toMatchObject({ status: 'admitted', stateVersion: 1 })
         expect(replay).toMatchObject({ status: 'already', inboxId: first?.inboxId, receipt: first?.receipt })
-        expect(storage.admitHandoffTarget(attemptId, 'agent-2', { ...payload, input: 'tampered' }, { agentId: 'agent-2' })).toBeNull()
+        expect(storage.admitHandoffTarget(attemptId, 'agent-2', { ...dispatchedPayload, continuationAttemptId: 'wrong-attempt' }, { agentId: 'agent-2' })).toBeNull()
+        expect(storage.admitHandoffTarget(attemptId, 'agent-2', { ...dispatchedPayload, input: 'tampered' }, { agentId: 'agent-2' })).toBeNull()
         expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_inbox WHERE attemptId = ?').get(attemptId)).toEqual({ count: 1 })
     })
 
