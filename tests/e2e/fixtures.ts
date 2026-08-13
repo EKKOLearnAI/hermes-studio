@@ -722,7 +722,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (
       request.method() === 'GET' &&
-      /^\/api\/coding-agents\/(?:claude-code|codex)\/config-files\/[^/]+$/.test(pathname)
+      /^\/api\/coding-agents\/(?:claude-code|codex|pi)\/config-files\/[^/]+$/.test(pathname)
     ) {
       const key = pathname.split('/').at(-1) || 'config'
       await route.fulfill(jsonResponse({
