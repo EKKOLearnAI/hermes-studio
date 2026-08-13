@@ -105,7 +105,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     const { pathname } = url
 
     if (!(pathname === '/health' || pathname.startsWith('/api/'))) {
-      await route.continue()
+      await route.fallback()
       return
     }
 
@@ -265,7 +265,6 @@ function makeSocket(url, options) {
       return this
     },
     disconnect() {
-      this.connected = false
       return this
     },
     __trigger(event, payload) {
@@ -273,7 +272,7 @@ function makeSocket(url, options) {
     },
   }
   state.sockets.push(socket)
-  state.latest = socket
+  if (String(url).endsWith('/group-chat')) state.latest = socket
   return socket
 }
 export function io(url, options) {
@@ -309,6 +308,14 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform, offli
   const api = await mockGroupChatApi(page, offlinePresence)
   await page.goto(path)
   return api
+}
+
+async function triggerGroupSocket(page: Page, event: string, payload: unknown) {
+  await page.evaluate(({ event, payload }) => {
+    const socket = (window as any).__PW_GROUP_SOCKET__?.latest
+    if (!socket) throw new Error('Group chat socket is not connected')
+    socket.__trigger(event, payload)
+  }, { event, payload })
 }
 
 test.describe('group chat room deep links', () => {
@@ -366,6 +373,75 @@ test.describe('group chat room deep links', () => {
 
     await panel.focus()
     await expect(panel).toBeFocused()
+  })
+
+  test('routes persisted Tools through the live panel from runtime socket events', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-beta')
+    await expect(page.getByText('Beta room message')).toBeVisible()
+
+    const runtimeMessage = (overrides: Record<string, unknown>) => ({
+      id: 'run-runtime-tools_part_0',
+      roomId: 'room-beta',
+      senderId: 'agent-runtime',
+      senderName: 'Runtime Worker',
+      content: '',
+      timestamp: 1_790_000_200,
+      role: 'assistant',
+      run_id: 'run-runtime-tools',
+      ...overrides,
+    })
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'replying',
+    })
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      finish_reason: 'streaming',
+    }))
+    await triggerGroupSocket(page, 'message_stream_end', {
+      roomId: 'room-beta',
+      id: 'run-runtime-tools_part_0',
+    })
+    await triggerGroupSocket(page, 'message', runtimeMessage({
+      id: 'run-runtime-tools_part_0_toolcall_runtime-call',
+      timestamp: 1_790_000_201,
+      tool_calls: [{
+        id: 'runtime-call',
+        type: 'function',
+        function: { name: 'terminal', arguments: JSON.stringify({ command: 'pwd' }) },
+      }],
+      finish_reason: 'tool_calls',
+    }))
+    await triggerGroupSocket(page, 'message', runtimeMessage({
+      id: 'run-runtime-tools_part_0_toolresult_runtime-call',
+      timestamp: 1_790_000_202,
+      role: 'tool',
+      tool_call_id: 'runtime-call',
+      tool_name: 'terminal',
+      content: '/workspace',
+    }))
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      id: 'run-runtime-tools_part_1',
+      timestamp: 1_790_000_203,
+      finish_reason: 'streaming',
+    }))
+
+    const livePanel = page.locator('.run-tool-list[data-agent-id="agent-runtime"][data-run-id="run-runtime-tools"]')
+    await expect(livePanel).toBeVisible()
+    await expect(livePanel.locator('.tool-message')).toHaveCount(1)
+    await expect(livePanel).toContainText('terminal')
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'ready',
+    })
+
+    await expect(livePanel).toHaveCount(0)
+    const historicalRun = page.locator('.group-agent-run[data-run-id="run-runtime-tools"]')
+    await expect(historicalRun.locator('.tool-message')).toHaveCount(1)
+    await expect(historicalRun.locator('.tool-name')).toHaveText('terminal')
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
