@@ -278,16 +278,9 @@ const activeQueueInsertion = computed(() => {
   if (!sid) return null;
   return chatStore.queueInsertionStates.get(sid) || null;
 });
-const canInsertQueuedMessages = computed(() => {
-  const session = chatStore.activeSession;
-  if (!session) return false;
-  const agent = session.codingAgentId || session.agent;
-  if (agent === "ekko-agent") {
-    return session.source === "coding_agent" || session.source === "global_agent";
-  }
-  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
-  return !session.source || session.source === "cli" || session.source === "global_agent";
-});
+// [user-controlled patch] canInsertQueuedMessages 已移除——上游 #2477 的
+// "安全排队插入"按钮被隐藏（v-if="false"），避免与本 fork 的 ↑ 立即发送图标重复。
+// 如需恢复，从注释中取消该计算属性+取消上游按钮的 v-if 注释。
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
