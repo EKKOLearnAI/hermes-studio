@@ -3468,6 +3468,72 @@
         ]
       }
     },
+    "/api/hermes/config/delegation-model": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get delegation-model",
+        "description": "GET /api/hermes/config/delegation-model",
+        "operationId": "getDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update delegation-model",
+        "description": "PUT /api/hermes/config/delegation-model",
+        "operationId": "updateDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "delegation": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/config/moa": {
       "get": {
         "tags": [

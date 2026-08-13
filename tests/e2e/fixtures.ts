@@ -159,6 +159,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   let workflowSchedules: any[] = [...(options.workflowSchedules ?? [])]
   const skillBundles = [...(options.bundles ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
+  let delegationModel: Record<string, string> = {}
   let theme: MockThemePayload = {
     fontSize: 14,
     textColor: null,
@@ -597,6 +598,17 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/config/auxiliary-models') {
       await route.fulfill(jsonResponse({ tasks: sampleAuxiliaryModelTasks, auxiliary: {} }))
+      return
+    }
+
+    if (pathname === '/api/hermes/config/delegation-model') {
+      if (request.method() === 'PUT') {
+        const body = JSON.parse(request.postData() || '{}') as { delegation?: Record<string, string> }
+        delegationModel = { ...(body.delegation || {}) }
+        await route.fulfill(jsonResponse({ success: true, delegation: delegationModel }))
+        return
+      }
+      await route.fulfill(jsonResponse({ delegation: delegationModel }))
       return
     }
 

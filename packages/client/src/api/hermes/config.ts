@@ -124,6 +124,16 @@ export interface AuxiliaryModelsResponse {
   auxiliary: AuxiliaryModelsConfig
 }
 
+export interface DelegationModelConfig {
+  provider?: string
+  model?: string
+  reasoning_effort?: string
+}
+
+export interface DelegationModelResponse {
+  delegation: DelegationModelConfig
+}
+
 export interface MoaModelSlot {
   provider: string
   model: string
@@ -178,6 +188,20 @@ export async function saveAuxiliaryModels(auxiliary: AuxiliaryModelsConfig): Pro
   return request<{ success: boolean; auxiliary: AuxiliaryModelsConfig }>('/api/hermes/config/auxiliary-models', {
     method: 'PUT',
     body: JSON.stringify({ auxiliary }),
+  })
+}
+
+export async function fetchDelegationModel(): Promise<DelegationModelResponse> {
+  return request<DelegationModelResponse>('/api/hermes/config/delegation-model')
+}
+
+export async function saveDelegationModel(delegation: DelegationModelConfig): Promise<{
+  success: boolean
+  delegation: DelegationModelConfig
+}> {
+  return request<{ success: boolean; delegation: DelegationModelConfig }>('/api/hermes/config/delegation-model', {
+    method: 'PUT',
+    body: JSON.stringify({ delegation }),
   })
 }
 
