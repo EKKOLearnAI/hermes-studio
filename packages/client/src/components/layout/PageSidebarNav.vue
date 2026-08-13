@@ -4,7 +4,6 @@ import { NTooltip } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionSearch } from '@/composables/useSessionSearch'
-import { isStoredSuperAdmin } from '@/api/client'
 
 type ActiveSection = 'chat' | 'history' | 'connections' | 'group' | 'global' | 'workflow'
 
@@ -21,7 +20,6 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const router = useRouter()
 const { openSessionSearch } = useSessionSearch()
-const isSuperAdmin = computed(() => isStoredSuperAdmin())
 
 const primaryText = computed(() => props.primaryLabel || t('chat.newChat'))
 const showModeSwitch = computed(() => !props.hideModeSwitch)
@@ -133,7 +131,6 @@ function openApiRelay() {
         <span>{{ historyButtonLabel }}</span>
       </button>
       <button
-        v-if="isSuperAdmin"
         class="page-sidebar-tab"
         :class="{ active: active === 'connections' }"
         type="button"

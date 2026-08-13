@@ -1,14 +1,11 @@
 import type { Context } from 'koa'
-import { config } from '../config'
-import { getLanEndpointKind } from '../services/lan-discovery'
+import { getAppRelayClient } from '../services/app-relay/client'
 import {
-  getAppRelayClient,
-  startAppRelayClient,
-  stopAppRelayClient,
-} from '../services/app-relay/client'
-import { getDeviceIdentity, getPublicSystemInfo } from '../services/system-info'
-
-const APP_RELAY_CONNECTION_ID = 'app-relay'
+  APP_RELAY_CONNECTION_ID,
+  ensureAppRelayHostClient,
+  stopAppRelayHostClient,
+} from '../services/app-relay/connection'
+import { getDeviceIdentity } from '../services/system-info'
 
 function appRelayResponse(relay: Record<string, unknown>) {
   return { relay }
@@ -27,24 +24,9 @@ export async function getAppRelayStatusController(ctx: Context) {
 }
 
 export async function connectAppRelayController(ctx: Context) {
-  let client = getAppRelayClient(APP_RELAY_CONNECTION_ID)
-  if (!client) {
-    const [identity, info] = await Promise.all([getDeviceIdentity(), getPublicSystemInfo()])
-    client = startAppRelayClient({
-      connectionId: APP_RELAY_CONNECTION_ID,
-      relayUrl: config.appRelay.url,
-      machineId: identity.device_id,
-      publicKey: identity.device_public_key,
-      machineInfo: {
-        ...info,
-        http_port: config.port,
-        endpoint_kind: getLanEndpointKind(config.port),
-      },
-      localBaseUrl: `http://127.0.0.1:${config.port}`,
-    })
-  }
+  const client = await ensureAppRelayHostClient()
   if (!client || !await client.waitForConnected(8000)) {
-    stopAppRelayClient(APP_RELAY_CONNECTION_ID)
+    stopAppRelayHostClient()
     ctx.status = 502
     ctx.body = { error: 'Failed to connect App relay' }
     return
@@ -66,7 +48,7 @@ export async function refreshAppRelayPairingController(ctx: Context) {
 }
 
 export async function disconnectAppRelayController(ctx: Context) {
-  stopAppRelayClient(APP_RELAY_CONNECTION_ID)
+  stopAppRelayHostClient()
   ctx.body = appRelayResponse({
       connected: false,
       machineId: (await getDeviceIdentity()).device_id,

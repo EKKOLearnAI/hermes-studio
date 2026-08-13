@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authMocks = vi.hoisted(() => ({
   authenticateUserToken: vi.fn(),
+  inspectAppUserToken: vi.fn(),
   getDeviceId: vi.fn(),
 }))
 
@@ -38,6 +39,7 @@ const clientSocketMocks = vi.hoisted(() => {
 
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   authenticateUserToken: authMocks.authenticateUserToken,
+  inspectAppUserToken: authMocks.inspectAppUserToken,
 }))
 
 vi.mock('../../packages/server/src/services/system-info', () => ({
@@ -105,6 +107,7 @@ describe('LocalAppRelayServer', () => {
       username: 'app-user',
       role: 'user',
     })
+    authMocks.inspectAppUserToken.mockResolvedValue(null)
   })
 
   it('accepts the selected machine with a valid token or in login-only mode', async () => {
@@ -142,6 +145,51 @@ describe('LocalAppRelayServer', () => {
     })
     await connectApp(namespace, loginOnly)
     expect(loginOnly.data.localUserToken).toBe('')
+  })
+
+  it('tracks an authenticated App as online, notifies it when deleted, and rejects its next connection', async () => {
+    const namespace = createMockNamespace()
+    const io = { of: vi.fn(() => namespace) }
+    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const server = new LocalAppRelayServer(io as any, { machineId: 'hwui_local_machine_1234567890' })
+    server.init()
+    authMocks.inspectAppUserToken.mockResolvedValue({
+      status: 'active',
+      user: { id: 7, username: 'app-user', role: 'user' },
+      deviceCode: 'phone-001',
+      connectionType: 'lan',
+    })
+
+    const app = createMockAppSocket('app-online', {
+      role: 'app',
+      token: 'app-device-token',
+      machineId: 'hwui_local_machine_1234567890',
+    })
+    await connectApp(namespace, app)
+
+    expect(server.isConnectionOnline('phone-001', 'lan')).toBe(true)
+    expect(server.notifyConnectionDeleted('phone-001', 'lan')).toBe(1)
+    expect(app.emit).toHaveBeenCalledWith('relay.connection.deleted', {
+      machineId: 'hwui_local_machine_1234567890',
+      deviceCode: 'phone-001',
+      connectionType: 'lan',
+    })
+    await vi.waitFor(() => expect(app.disconnect).toHaveBeenCalledWith(true))
+
+    authMocks.inspectAppUserToken.mockResolvedValue({
+      status: 'revoked',
+      user: { id: 7, username: 'app-user', role: 'user' },
+      deviceCode: 'phone-001',
+      connectionType: 'lan',
+    })
+    const reconnecting = createMockAppSocket('app-reconnecting', {
+      role: 'app',
+      token: 'app-device-token',
+      machineId: 'hwui_local_machine_1234567890',
+    })
+    const next = vi.fn()
+    await namespace.__middleware[0](reconnecting, next)
+    expect(next.mock.calls[0][0]).toMatchObject({ message: 'app_connection_deleted' })
   })
 
   it('forwards login over the socket, remembers its token, then unlocks protected requests', async () => {
@@ -215,6 +263,53 @@ describe('LocalAppRelayServer', () => {
     await vi.waitFor(() => expect(protectedAck).toHaveBeenCalledWith(expect.objectContaining({ status: 200 })))
     const protectedHeaders = fetchImpl.mock.calls[1][1]?.headers as Headers
     expect(protectedHeaders.get('authorization')).toBe(`Bearer ${issuedToken}`)
+  })
+
+  it('marks authorization-code login from the local App relay as a LAN connection', async () => {
+    const namespace = createMockNamespace()
+    const io = { of: vi.fn(() => namespace) }
+    const issuedToken = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+    authMocks.authenticateUserToken.mockImplementation(async (token: string) => token === issuedToken
+      ? { id: 7, username: 'app-user', role: 'user' }
+      : null)
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ token: issuedToken, userId: 7 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const server = new LocalAppRelayServer(io as any, {
+      machineId: 'hwui_local_machine_1234567890',
+      localBaseUrl: 'http://127.0.0.1:8748',
+      fetchImpl: fetchImpl as any,
+    })
+    server.init()
+
+    const app = createMockAppSocket('app-login', {
+      role: 'app',
+      machineId: 'hwui_local_machine_1234567890',
+    })
+    await connectApp(namespace, app)
+    const ack = vi.fn()
+    app.__handlers.get('http.request')({
+      id: 'app-login-1',
+      method: 'POST',
+      path: '/api/auth/app-login',
+      headers: {
+        authorization: 'Bearer untrusted-token',
+        'content-type': 'application/json',
+      },
+      body: {
+        authorization_code: 'one-time-code',
+        device_code: 'phone-001',
+        device_name: 'Alice iPhone',
+      },
+    }, ack)
+
+    await vi.waitFor(() => expect(ack).toHaveBeenCalledWith(expect.objectContaining({ status: 200 })))
+    const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
+    expect(headers.get('authorization')).toBeNull()
+    expect(headers.get('x-hermes-app-connection')).toBe('lan')
+    expect(app.data.localUserToken).toBe(issuedToken)
   })
 
   it('handles the cloud-compatible HTTP relay request directly on loopback', async () => {

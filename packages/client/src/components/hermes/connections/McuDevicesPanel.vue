@@ -248,7 +248,7 @@ onMounted(() => {
         :columns="columns"
         :data="devices"
         :loading="loading"
-        :bordered="false"
+        bordered
         :single-line="false"
         :row-key="(row: McuDevice) => row.id"
         :scroll-x="788"
@@ -349,6 +349,7 @@ onMounted(() => {
 
 .mcu-device-table {
   flex: 1 1 auto;
+  height: 0;
   min-height: 0;
   padding: 16px 20px 20px;
   overflow: hidden;

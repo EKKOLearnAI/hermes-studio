@@ -24,7 +24,8 @@ import {
 } from '../db/hermes/users-store'
 import { removeAllUserThemeAssets } from '../services/user-theme'
 import { getUserTheme, toUserThemePayload } from '../db/hermes/user-theme-store'
-import { issueUserJwt } from '../middleware/user-auth'
+import { getUserJwtExpiresSeconds, issueAppJwt, issueUserJwt } from '../middleware/user-auth'
+import { consumeAppAuthorizationCode, upsertAppConnection, type AppConnectionType } from '../db/hermes/app-connections-store'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
 import { startOutboundRelayClient, stopOutboundRelayClient } from '../services/global-agent/outbound-relay-client'
 import { getLanEndpointKind } from '../services/lan-discovery'
@@ -164,11 +165,11 @@ export async function updateMyAvatar(ctx: Context) {
   ctx.body = { success: true, avatar: validation.json }
 }
 
-async function passwordLogin(
+async function authenticatePasswordUser(
   ctx: Context,
   username: string,
   password: string,
-): Promise<{ ok: true; token: string; user: UserRecord } | { ok: false }> {
+): Promise<{ ok: true; ip: string; user: UserRecord } | { ok: false }> {
   const ip = extractIp(ctx)
   const result = checkPassword(ip)
   if (!result.allowed) {
@@ -189,10 +190,20 @@ async function passwordLogin(
     return { ok: false }
   }
 
+  return { ok: true, ip, user }
+}
+
+async function passwordLogin(
+  ctx: Context,
+  username: string,
+  password: string,
+): Promise<{ ok: true; token: string; user: UserRecord } | { ok: false }> {
+  const authentication = await authenticatePasswordUser(ctx, username, password)
+  if (!authentication.ok) return authentication
   try {
-    const token = await issueUserJwt(user)
-    recordPasswordSuccess(ip)
-    return { ok: true, token, user }
+    const token = await issueUserJwt(authentication.user)
+    recordPasswordSuccess(authentication.ip)
+    return { ok: true, token, user: authentication.user }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to issue login token' }
@@ -225,6 +236,116 @@ export async function login(ctx: Context) {
     userId: result.user.id,
     profiles: accessibleProfileNames(result.user),
     theme: toUserThemePayload(getUserTheme(result.user.id)),
+  }
+}
+
+function normalizeAppLoginField(value: unknown, maxLength: number): string {
+  const normalized = String(value || '').trim()
+  return normalized.length <= maxLength ? normalized : ''
+}
+
+function appConnectionType(ctx: Context): AppConnectionType {
+  const requestAddresses = [ctx.ip, ctx.request.ip, ctx.req?.socket?.remoteAddress]
+    .map(value => String(value || '').trim().replace(/^::ffff:/, ''))
+    .filter(Boolean)
+  const forwardedByLocalRelay = requestAddresses.some(value => (
+    value === '::1' || value === 'localhost' || value.startsWith('127.')
+  ))
+  return forwardedByLocalRelay && ctx.get('x-hermes-app-connection').trim().toLowerCase() === 'cloud'
+    ? 'cloud'
+    : 'lan'
+}
+
+/**
+ * POST /api/auth/app-login
+ * Exchange either a one-time App authorization code or active user credentials
+ * for a device-bound App token.
+ */
+export async function appLogin(ctx: Context) {
+  const body = ctx.request.body as Record<string, unknown> | undefined
+  const authorizationCode = normalizeAppLoginField(
+    body?.authorization_code ?? body?.authorizationCode,
+    255,
+  )
+  const deviceCode = normalizeAppLoginField(body?.device_code ?? body?.deviceCode, 255)
+  const deviceName = normalizeAppLoginField(body?.device_name ?? body?.deviceName, 80)
+  const deviceBrand = normalizeAppLoginField(body?.device_brand ?? body?.deviceBrand, 80)
+  const deviceModel = normalizeAppLoginField(body?.device_model ?? body?.deviceModel, 120)
+  const username = normalizeAppLoginField(body?.username ?? body?.account, 80)
+  const rawPassword = typeof body?.password === 'string' ? body.password : ''
+  const password = rawPassword.length <= 256 ? rawPassword : ''
+  const passwordCredentialsProvided = Boolean(username && password)
+  if (!deviceCode || !deviceName || (!authorizationCode && !passwordCredentialsProvided)) {
+    ctx.status = 400
+    ctx.body = {
+      error: 'device_code and device_name are required together with authorization_code or username and password',
+    }
+    return
+  }
+
+  let user: UserRecord | null = null
+  let authenticatedPasswordIp = ''
+  if (authorizationCode) {
+    try {
+      const authorization = consumeAppAuthorizationCode(authorizationCode, deviceCode)
+      user = findUserById(authorization.created_by_user_id)
+    } catch (error: any) {
+      if (error?.message === 'app_authorization_code_expired') {
+        ctx.status = 410
+        ctx.body = { error: 'App authorization code has expired' }
+        return
+      }
+      if (error?.message === 'app_authorization_code_used') {
+        ctx.status = 409
+        ctx.body = { error: 'App authorization code has already been used' }
+        return
+      }
+      ctx.status = 401
+      ctx.body = { error: 'Invalid App authorization code' }
+      return
+    }
+  } else {
+    const authentication = await authenticatePasswordUser(ctx, username, password)
+    if (!authentication.ok) return
+    user = authentication.user
+    authenticatedPasswordIp = authentication.ip
+  }
+
+  if (!user || user.status !== 'active') {
+    ctx.status = 403
+    ctx.body = { error: 'The authorizing user is disabled or does not exist' }
+    return
+  }
+  const connectionType = appConnectionType(ctx)
+  const token = await issueAppJwt(user, deviceCode, connectionType)
+  if (authenticatedPasswordIp) recordPasswordSuccess(authenticatedPasswordIp)
+  const now = Math.floor(Date.now() / 1000)
+  const tokenExpiresAt = now + getUserJwtExpiresSeconds()
+  const connection = upsertAppConnection({
+    deviceCode,
+    deviceName,
+    deviceBrand,
+    deviceModel,
+    connectionType,
+    userId: user.id,
+    token,
+    tokenExpiresAt,
+    now,
+  })
+  ctx.body = {
+    token,
+    userId: user.id,
+    profiles: accessibleProfileNames(user),
+    theme: toUserThemePayload(getUserTheme(user.id)),
+    appConnection: {
+      id: connection.id,
+      device_code: connection.device_code,
+      device_name: connection.device_name,
+      device_brand: connection.device_brand,
+      device_model: connection.device_model,
+      connection_type: connection.connection_type,
+      token_expires_at: connection.token_expires_at,
+    },
   }
 }
 

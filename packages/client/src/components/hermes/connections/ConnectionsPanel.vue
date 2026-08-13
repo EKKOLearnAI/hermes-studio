@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NButton, NTabPane, NTabs } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppConnectionsPanel from '@/components/hermes/connections/AppConnectionsPanel.vue'
 import McuDevicesPanel from '@/components/hermes/connections/McuDevicesPanel.vue'
 import DevicesView from '@/views/hermes/DevicesView.vue'
+import { isStoredSuperAdmin } from '@/api/client'
 
 type ConnectionTab = 'app' | 'mcu' | 'devices'
 
@@ -20,9 +21,12 @@ const emit = defineEmits<{
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const isSuperAdmin = computed(() => isStoredSuperAdmin())
 
 function normalizeTab(value: unknown): ConnectionTab {
-  return value === 'mcu' || value === 'devices' ? value : 'app'
+  if (value === 'mcu') return value
+  if (value === 'devices' && isSuperAdmin.value) return value
+  return 'app'
 }
 
 const activeTab = ref<ConnectionTab>(normalizeTab(route.query.tab))
@@ -86,7 +90,7 @@ function updateTab(value: string | number) {
       <NTabPane name="mcu" :tab="t('connections.tabs.mcu')" display-directive="if">
         <McuDevicesPanel />
       </NTabPane>
-      <NTabPane name="devices" :tab="t('connections.tabs.devices')" display-directive="if">
+      <NTabPane v-if="isSuperAdmin" name="devices" :tab="t('connections.tabs.devices')" display-directive="if">
         <DevicesView embedded />
       </NTabPane>
     </NTabs>

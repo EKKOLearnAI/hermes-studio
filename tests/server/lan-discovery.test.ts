@@ -5,6 +5,7 @@ import {
   HERMES_DISCOVERY_PORT,
   discoveryPortForHttpPort,
   getDiscoveryHttpPorts,
+  getLanBackendUrl,
   getLanEndpointKind,
   isPrivateOrLoopbackIPv4,
   resetLanDiscoveryState,
@@ -62,6 +63,14 @@ describe('LAN discovery', () => {
     expect(getLanEndpointKind(8648)).toBe('web')
     expect(getLanEndpointKind(8748)).toBe('desktop')
     expect(getLanEndpointKind(19001)).toBe('custom')
+  })
+
+  it('builds an App backend URL on a private local interface', () => {
+    const url = new URL(getLanBackendUrl('::ffff:127.0.0.1', 19004))
+
+    expect(url.protocol).toBe('http:')
+    expect(url.port).toBe('19004')
+    expect(isPrivateOrLoopbackIPv4(url.hostname)).toBe(true)
   })
 
   it('limits discovery responses to local/private IPv4 senders', () => {
@@ -178,8 +187,7 @@ describe('LAN discovery', () => {
     expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections'")
     expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/:id/connect'")
     expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections/:connectionId/terminals'")
-    expect(mcuDeviceRoutesSource).toContain("import { requireSuperAdmin }")
-    expect(mcuDeviceRoutesSource).toContain('mcuDeviceRoutes.use(requireSuperAdmin)')
+    expect(mcuDeviceRoutesSource).not.toContain('requireSuperAdmin')
     expect(bootstrapSource).toContain('getLanPeerSocketPath()')
     expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)

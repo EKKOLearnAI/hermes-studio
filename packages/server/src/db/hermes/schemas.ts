@@ -483,6 +483,52 @@ export const MCU_DEVICES_INDEXES = {
   idx_mcu_devices_created_at: 'CREATE INDEX IF NOT EXISTS idx_mcu_devices_created_at ON mcu_devices(created_at)',
 }
 
+// ============================================================================
+// App Connections
+// ============================================================================
+
+export const APP_CONNECTIONS_TABLE = 'app_connections'
+
+export const APP_CONNECTIONS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  device_code: 'TEXT NOT NULL',
+  device_name: "TEXT NOT NULL DEFAULT ''",
+  device_brand: "TEXT NOT NULL DEFAULT ''",
+  device_model: "TEXT NOT NULL DEFAULT ''",
+  connection_type: "TEXT NOT NULL DEFAULT 'lan'",
+  user_id: 'INTEGER NOT NULL',
+  token_hash: "TEXT NOT NULL DEFAULT ''",
+  token_expires_at: 'INTEGER NOT NULL DEFAULT 0',
+  last_connected_at: 'INTEGER NOT NULL DEFAULT 0',
+  revoked_at: 'INTEGER',
+  cloud_revocation_pending: 'INTEGER NOT NULL DEFAULT 0',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const APP_CONNECTIONS_INDEXES = {
+  uniq_app_connections_device_type: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_app_connections_device_type ON app_connections(device_code, connection_type)',
+  idx_app_connections_user: 'CREATE INDEX IF NOT EXISTS idx_app_connections_user ON app_connections(user_id)',
+  idx_app_connections_updated_at: 'CREATE INDEX IF NOT EXISTS idx_app_connections_updated_at ON app_connections(updated_at)',
+}
+
+export const APP_AUTHORIZATION_CODES_TABLE = 'app_authorization_codes'
+
+export const APP_AUTHORIZATION_CODES_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  code_hash: 'TEXT NOT NULL UNIQUE',
+  created_by_user_id: 'INTEGER NOT NULL',
+  expires_at: 'INTEGER NOT NULL',
+  used_at: 'INTEGER',
+  used_by_device_code: "TEXT NOT NULL DEFAULT ''",
+  created_at: 'INTEGER NOT NULL',
+}
+
+export const APP_AUTHORIZATION_CODES_INDEXES = {
+  idx_app_authorization_codes_expires_at: 'CREATE INDEX IF NOT EXISTS idx_app_authorization_codes_expires_at ON app_authorization_codes(expires_at)',
+  idx_app_authorization_codes_created_by_user: 'CREATE INDEX IF NOT EXISTS idx_app_authorization_codes_created_by_user ON app_authorization_codes(created_by_user_id)',
+}
+
 export const STT_PROVIDER_SETTINGS_TABLE = 'stt_provider_settings'
 
 export const STT_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
@@ -1394,6 +1440,14 @@ export function initAllHermesTables(): void {
     // MCU devices
     syncTable(MCU_DEVICES_TABLE, MCU_DEVICES_SCHEMA, {
       indexes: MCU_DEVICES_INDEXES,
+    })
+
+    // App authorization codes and connected mobile devices
+    syncTable(APP_CONNECTIONS_TABLE, APP_CONNECTIONS_SCHEMA, {
+      indexes: APP_CONNECTIONS_INDEXES,
+    })
+    syncTable(APP_AUTHORIZATION_CODES_TABLE, APP_AUTHORIZATION_CODES_SCHEMA, {
+      indexes: APP_AUTHORIZATION_CODES_INDEXES,
     })
 
     syncTable(STT_PROVIDER_SETTINGS_TABLE, STT_PROVIDER_SETTINGS_SCHEMA, {

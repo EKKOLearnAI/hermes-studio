@@ -163,7 +163,6 @@ const router = createRouter({
       path: '/hermes/connections',
       name: 'hermes.connections',
       component: () => import('@/views/hermes/ChatView.vue'),
-      meta: { requiresSuperAdmin: true },
     },
     {
       path: '/hermes/devices',
