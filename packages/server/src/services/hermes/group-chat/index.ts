@@ -3378,7 +3378,7 @@ export class GroupChatServer {
         const visibleAllMention = isAllAgentsMentioned(content)
         const visibleParticipantIds = new Set(
             roomAgents
-                .filter(agent => isAgentMentioned(content, agent.name))
+                .filter(agent => agent.agentId !== senderId && isAgentMentioned(content, agent.name))
                 .map(agent => agent.agentId),
         )
 

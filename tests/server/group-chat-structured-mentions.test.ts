@@ -121,6 +121,36 @@ describe('group chat structured agent mentions', () => {
     expect(replyToMention).not.toHaveBeenCalled()
   })
 
+  it('persists an agent reply that @-mentions itself and another agent, routing only the other agent', async () => {
+    const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
+      source: 'agent',
+      agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
+    })
+    harness.sockets.push(author)
+    await emitAck(author, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    const replyToMention = vi.fn(async () => {})
+    ;(groupServer.agentClients as any).rooms.set('room-1', new Map([[
+      'agent-reviewer',
+      { id: 'agent-reviewer', agentId: 'agent-reviewer', name: 'Reviewer', replyToMention },
+    ]]))
+
+    const response = await emitAck<{ id?: string; error?: string }>(author, 'message', {
+      roomId: 'room-1',
+      id: 'self-plus-other-reply',
+      content: '@Author @Reviewer please review this.',
+      role: 'assistant',
+      agentSessionId: groupRuntimeSessionId('room-1', 'default', 'Author'),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    })
+
+    expect(response).toEqual({ id: 'self-plus-other-reply' })
+    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM gc_messages WHERE id = ?').get('self-plus-other-reply')).toEqual({ count: 1 })
+    expect(replyToMention).toHaveBeenCalledWith('room-1', expect.objectContaining({
+      messageId: 'self-plus-other-reply',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer' }],
+    }), expect.anything(), expect.any(Function))
+  })
+
   it('persists tool output containing mention-like text without authorizing or routing mentions', async () => {
     const author = await connectGroupChatClient(port, 'agent-author', 'Author', {
       source: 'agent',
