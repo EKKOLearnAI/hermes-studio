@@ -981,12 +981,13 @@ class ChatStorage {
 
     recordHandoffStop(roomId: string, chainId: string, sourceMessageId: string, depth: number, targetAgentId: string, policy: GroupChatAgentHandoffPolicy): void {
         const now = Date.now()
+        const targetSnapshot = JSON.stringify(this.getHandoffTargetSnapshot(roomId, targetAgentId) || {})
         this.db()?.prepare(
             `INSERT INTO gc_handoff_chains
-              (chainId, roomId, sourceMessageId, currentDepth, maxDepth, unlimited, targetAgentId, status, stopReason, createdAt, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped', 'max_depth', ?, ?)
-             ON CONFLICT(chainId) DO UPDATE SET currentDepth = excluded.currentDepth, targetAgentId = excluded.targetAgentId, status = 'stopped', stopReason = excluded.stopReason, updatedAt = excluded.updatedAt`
-        ).run(chainId, roomId, sourceMessageId, depth, policy.maxDepth, policy.unlimited ? 1 : 0, targetAgentId, now, now)
+              (chainId, roomId, sourceMessageId, currentDepth, maxDepth, unlimited, targetAgentId, targetSnapshot, status, stopReason, createdAt, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stopped', 'max_depth', ?, ?)
+             ON CONFLICT(chainId) DO UPDATE SET currentDepth = excluded.currentDepth, targetAgentId = excluded.targetAgentId, targetSnapshot = excluded.targetSnapshot, status = 'stopped', stopReason = excluded.stopReason, updatedAt = excluded.updatedAt`
+        ).run(chainId, roomId, sourceMessageId, depth, policy.maxDepth, policy.unlimited ? 1 : 0, targetAgentId, targetSnapshot, now, now)
     }
 
     getHandoffChain(roomId: string, chainId: string): any | null {
@@ -1049,7 +1050,7 @@ class ChatStorage {
     }
 
     private getActionableHandoffChain(roomId: string, chainId: string): any | null {
-        return this.db()?.prepare(
+        const chain = this.db()?.prepare(
             `SELECT chain.* FROM gc_handoff_chains AS chain
              INNER JOIN gc_messages AS source
                ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
@@ -1057,11 +1058,15 @@ class ChatStorage {
                ON target.agentId = chain.targetAgentId AND target.roomId = chain.roomId
              WHERE chain.roomId = ? AND chain.chainId = ?
                AND ${this.actionableHandoffChainWhere('chain')}`,
-        ).get(roomId, chainId) || null
+        ).get(roomId, chainId) as any
+        if (!chain) return null
+        const currentSnapshot = this.getHandoffTargetSnapshot(roomId, String(chain.targetAgentId))
+        if (!currentSnapshot || JSON.stringify(currentSnapshot) !== String(chain.targetSnapshot || '{}')) return null
+        return chain
     }
 
     getStoppedHandoffChains(roomId: string): any[] {
-        return (this.db()?.prepare(
+        const chains = (this.db()?.prepare(
             `SELECT chain.* FROM gc_handoff_chains AS chain
              INNER JOIN gc_messages AS source
                ON source.id = chain.sourceMessageId AND source.roomId = chain.roomId
@@ -1071,6 +1076,10 @@ class ChatStorage {
                AND ${this.actionableHandoffChainWhere('chain')}
              ORDER BY chain.updatedAt DESC`,
         ).all(roomId) || []) as any[]
+        return chains.filter(chain => {
+            const currentSnapshot = this.getHandoffTargetSnapshot(roomId, String(chain.targetAgentId))
+            return currentSnapshot && JSON.stringify(currentSnapshot) === String(chain.targetSnapshot || '{}')
+        })
     }
 
     claimHandoffContinuation(roomId: string, chainId: string): any | null {
@@ -1095,14 +1104,14 @@ class ChatStorage {
                 handoffChainId: chain.chainId,
                 mentions: [{ type: 'agent', participantId: String(chain.targetAgentId) }],
             })
-            const targetSnapshot = JSON.stringify({ agentId: String(chain.targetAgentId) })
+            const targetSnapshot = String(chain.targetSnapshot || '{}')
             const payloadDigest = createHash('sha256').update(payload).digest('hex')
             const previousAttemptId = String(chain.attemptId || '')
             const claimed = db.prepare(
                 `UPDATE gc_handoff_chains
                  SET status = 'claimed', attemptId = ?, updatedAt = ?
-                 WHERE roomId = ? AND chainId = ? AND ${this.actionableHandoffChainWhere('gc_handoff_chains')}`,
-            ).run(attemptId, now, roomId, chainId)
+                 WHERE roomId = ? AND chainId = ? AND targetSnapshot = ? AND ${this.actionableHandoffChainWhere('gc_handoff_chains')}`,
+            ).run(attemptId, now, roomId, chainId, targetSnapshot)
             if (!claimed.changes) return null
             db.prepare(
                 `INSERT INTO gc_handoff_attempts
@@ -2050,6 +2059,27 @@ class ChatStorage {
              FROM gc_room_agents
              WHERE roomId = ? AND removedAt = 0 AND agentId = ?`
         ).get(roomId, agentId) as any) ?? null
+    }
+
+    getHandoffTargetSnapshot(roomId: string, agentId: string): Record<string, string> | null {
+        const target = this.getRoomAgentByAgentId(roomId, agentId)
+        if (!target) return null
+        return {
+            id: String(target.id || ''),
+            agentId: String(target.agentId || ''),
+            agent: String(target.agent || ''),
+            profile: String(target.profile || ''),
+            provider: String(target.provider || ''),
+            model: String(target.model || ''),
+            apiMode: String(target.apiMode || ''),
+            reasoningEffort: String(target.reasoningEffort || ''),
+            name: String(target.name || ''),
+            description: String(target.description || ''),
+            executorType: String(target.executorType || ''),
+            ownerMemberId: String(target.ownerMemberId || ''),
+            connectorId: String(target.connectorId || ''),
+            remoteOrigin: String(target.remoteOrigin || ''),
+        }
     }
 
     updateRoomAgent(

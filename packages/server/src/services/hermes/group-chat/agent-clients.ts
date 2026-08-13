@@ -2319,7 +2319,7 @@ export class AgentClients {
                 msg.continuationAttemptId,
                 mentioned[0].agentId,
                 msg as unknown as Record<string, unknown>,
-                { agentId: mentioned[0].agentId, name: mentioned[0].name },
+                this._storage?.getHandoffTargetSnapshot?.(roomId, mentioned[0].agentId) || {},
             )
             if (!admission) {
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target admission was rejected'] }

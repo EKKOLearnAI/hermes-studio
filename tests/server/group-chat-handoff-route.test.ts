@@ -123,7 +123,7 @@ describe('group chat durable continuation route', () => {
         const storage = groupServer.getStorage()
         vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             const attemptId = String(message.continuationAttemptId)
-            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, { agentId: 'agent-2' })).toMatchObject({
+            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)).toMatchObject({
                 status: 'admitted',
             })
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
@@ -142,6 +142,48 @@ describe('group chat durable continuation route', () => {
         expect(db.prepare('SELECT status FROM gc_handoff_outbox WHERE attemptId = ?').get(claimed.attemptId)).toEqual({ status: 'completed' })
     })
 
+    it('completes a continuation through the real AgentClients admission and queue path', async () => {
+        const storage = groupServer.getStorage()
+        const target = storage.getRoomAgentByAgentId('room-1', 'agent-2')!
+        const executor = {
+            agentId: target.agentId,
+            agent: target.agent,
+            profile: target.profile,
+            provider: target.provider,
+            model: target.model,
+            apiMode: target.apiMode,
+            reasoningEffort: target.reasoningEffort,
+            name: target.name,
+            description: target.description,
+            connected: true,
+            disconnect: vi.fn(),
+            sendMessage: vi.fn(async () => ''),
+            interrupt: vi.fn(async () => true),
+            getActiveSessionId: vi.fn(() => undefined),
+            isActiveSession: vi.fn(() => false),
+            setStorage: vi.fn(),
+            setWorkspaceDiffBroadcaster: vi.fn(),
+            setChatRunService: vi.fn(),
+            replyToMention: vi.fn(async (_roomId: string, message: any) => {
+                storage.completeHandoffTarget(
+                    String(message.continuationAttemptId),
+                    `continuation:${message.continuationAttemptId}`,
+                )
+            }),
+        }
+        groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+        const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
+        expect(await groupServer.dispatchPendingHandoffs()).toBe(1)
+        expect(executor.replyToMention).toHaveBeenCalledTimes(1)
+        expect(storage.getHandoffChain('room-1', 'chain-1')).toMatchObject({
+            status: 'resumed',
+            continueUsed: 1,
+        })
+        expect(storage.getHandoffAttempt(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
+        expect(storage.getHandoffTargetStatus(String(claimed.attemptId))).toMatchObject({ status: 'completed' })
+    })
+
     it('replays a dispatching outbox after restart through the real dispatcher path', async () => {
         const storage = groupServer.getStorage()
         const claimed = storage.claimHandoffContinuation('room-1', 'chain-1')!
@@ -157,7 +199,7 @@ describe('group chat durable continuation route', () => {
 
         const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockImplementation(async (_roomId, message: any) => {
             expect(message.continuationAttemptId).toBe(attemptId)
-            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, { agentId: 'agent-2' })).toMatchObject({
+            expect(storage.admitHandoffTarget(attemptId, 'agent-2', message, storage.getHandoffTargetSnapshot('room-1', 'agent-2')!)).toMatchObject({
                 status: 'admitted',
             })
             expect(storage.claimHandoffDelivery(attemptId, 'agent-2')).toBe('accepted')
