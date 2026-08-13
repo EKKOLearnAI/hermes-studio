@@ -1003,21 +1003,25 @@ defineExpose({
             >
               <span class="queue-index">{{ index + 1 }}</span>
               <span class="queue-text">{{ queuedPreview(message.content) }}</span>
-              <button
-                v-if="canInsertQueuedMessages"
-                type="button"
-                class="queue-insert"
-                :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
-                :disabled="!!activeQueueInsertion"
-                :title="queueInsertionTitle(message.id)"
-                :aria-label="queueInsertionTitle(message.id)"
-                @click="insertQueuedMessage(message.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 19V5" />
-                  <path d="m5 12 7-7 7 7" />
-                </svg>
-              </button>
+              <!-- [user-controlled patch] 上游 #2477 的"安全排队插入"按钮图标与
+                                 本 fork 的"立即发送"(promote) 撞车(都是上箭头):隐藏上游按钮,
+                                 只保留本 fork 的 ↑ 立即发送(ESC/Ctrl+Enter 同语义)。删除时直接
+                                 删掉整个 <button class="queue-insert"> 块。 -->
+                            <button
+                              v-if="false"
+                              type="button"
+                              class="queue-insert"
+                              :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
+                              :disabled="!!activeQueueInsertion"
+                              :title="queueInsertionTitle(message.id)"
+                              :aria-label="queueInsertionTitle(message.id)"
+                              @click="insertQueuedMessage(message.id)"
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 19V5" />
+                                <path d="m5 12 7-7 7 7" />
+                              </svg>
+                            </button>
               <button
                 type="button"
                 class="queue-promote"
