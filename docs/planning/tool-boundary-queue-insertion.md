@@ -1,13 +1,14 @@
 # Tool-Boundary Queue Insertion
 
 Date: 2026-08-06
-Status: Proposed
+Status: Implemented for Hermes Agent and Ekko Agent; Coding Agents deferred
 
 ## Decision Summary
 
 When a user sends a normal message while an agent turn is already running,
-Studio should keep the message in the existing FIFO queue and stop the current
-turn at the nearest safe boundary:
+Studio keeps the message in the existing FIFO queue. The user can click the
+small upward arrow on a queued message to promote it to the head and stop the
+current turn at the nearest safe boundary:
 
 - If no tool batch is executing, interrupt the current turn immediately.
 - If a tool batch is executing, let every tool call already issued by the
@@ -64,14 +65,18 @@ conversation.
 
 ## Goals
 
-- Reuse the current FIFO queue and queued-message UI.
+- Reuse the current FIFO queue and add an explicit insertion arrow to each
+  eligible queued message.
+- Keep ordinary sends as ordinary FIFO queue operations until the user clicks
+  the arrow.
 - Stop immediately when no tool batch is executing.
 - Never interrupt a tool call merely because a new message was queued.
 - Never issue another model request after a strict runtime reaches the selected
   tool boundary.
 - Submit the dequeued message through the normal run path as a new user turn.
-- Support Hermes Agent, Ekko Agent, Claude Code, and Codex through one
-  capability-based server contract.
+- Support Hermes Agent and Ekko Agent, including their Global Agent chat
+  surfaces, through one capability-based server contract. Coding Agents remain
+  deferred until their strict boundary behavior is selected.
 - Keep explicit hard stop behavior available while a boundary stop is waiting.
 - Preserve already-detached background delegations unless the user explicitly
   requests a hard stop.
@@ -102,8 +107,9 @@ passes it back through `handleRun()`. The queued user message therefore already
 has the correct normal-turn execution path.
 
 Natural completion in Hermes Bridge and Ekko Agent handlers dequeues the next
-run. `markAbortCompleted()` also dequeues after an explicit abort. The missing
-piece is a safe request that ends the active turn at a tool boundary.
+run. `markAbortCompleted()` also dequeues after an explicit abort. The
+implemented coordinator adds the safe request that ends the active turn at a
+tool boundary after the user clicks the insertion arrow.
 
 ### Hermes Agent
 
@@ -153,9 +159,10 @@ alone must therefore not be presented as a strict guarantee.
 
 ## User-Visible Semantics
 
-Only normal user messages use automatic queue insertion. The first queued
-message arms one boundary stop for the active run. Additional messages remain
-FIFO and do not arm duplicate stops.
+Only explicit arrow clicks arm queue insertion. Clicking an item promotes it to
+the queue head and arms one boundary stop for the active run. While that request
+is pending, additional rapid clicks are idempotent and the remaining messages
+stay FIFO.
 
 Recommended phases:
 
@@ -238,19 +245,19 @@ Hermes, Ekko, and Coding Agent managers implement it independently.
 
 ### Queue Trigger
 
-When a normal message arrives during an active run:
+When the insertion arrow is clicked for a normal queued message:
 
-1. Append the existing `QueuedRun` and emit `run.queued`.
-2. If this is the first real queued user message for the active run, create
-   `QueueInsertionControl`.
-3. Call the active runtime's `requestBoundaryInterrupt(...)` once.
-4. Emit the returned phase and guarantee.
-5. Leave subsequent queued messages in FIFO order without another interrupt
-   request.
+1. Validate that the queue item is a visible user/command item and the active
+   runtime is Hermes or Ekko.
+2. Promote the selected item to the queue head and emit the authoritative
+   `run.queued` snapshot to every page in the session room.
+3. Create `QueueInsertionControl` if the active run has no insertion request.
+4. Call the active runtime's `requestBoundaryInterrupt(...)` once.
+5. Emit the returned phase and guarantee. Repeated clicks reuse the existing
+   generation without issuing another runtime request.
 
-Goal-continuation entries and background-delivery entries do not arm automatic
-queue insertion. A real queued user message takes priority over an automatic
-goal continuation.
+Goal-continuation entries and background-delivery entries cannot be selected
+for insertion. A selected real queued user message takes priority over them.
 
 ### Terminalization And Dequeue
 
@@ -341,7 +348,7 @@ When creating the `AIAgent`, install one Bridge-owned post-tool-batch wrapper:
 3. In `finally`, atomically inspect the pending boundary generation.
 4. If pending, set a foreground-loop interrupt before returning to the Hermes
    conversation loop.
-5. Emit a Bridge control event such as `run.boundary_reached`.
+5. Emit the Bridge control event `run.boundary_interrupt` when the run settles.
 
 The wrapper must be installed once per agent instance and capability-checked
 when Hermes is upgraded. It changes no Hermes files and sends no Hermes
@@ -363,11 +370,12 @@ used only for display and persistence, never as the control signal.
 
 ### Ekko Agent: Strict Internal Method
 
-Expose the method through Studio's internal Ekko layers:
+Implement the capability in the Ekko package and expose it through a thin
+Studio adapter:
 
 ```ts
-AgentRuntime.requestBoundaryInterrupt(sessionId, expectedRunId?)
-GlobalEkkoAgent.requestBoundaryInterrupt(sessionId, expectedRunId?)
+AgentRuntime.requestBoundaryInterrupt({ sessionId, expectedRunId? })
+GlobalEkkoAgent.requestBoundaryInterrupt({ sessionId, expectedRunId? })
 ```
 
 `AgentRuntime` should own an active-run registry keyed by foreground session and
@@ -383,11 +391,12 @@ sequentially today, a pending boundary is checked after the entire array is
 resolved and before the next `for (step...)` iteration starts. This makes the
 behavior stable if Ekko later adds parallel tool execution.
 
-At the boundary, return a graceful run result with a dedicated finish reason
-such as `queue_insertion`, and emit `run.completed` rather than treating the
+At the boundary, return a graceful run result with the runtime-owned finish
+reason `boundary_interrupt`, and emit `run.completed` rather than treating the
 stop as a model or tool failure. If the phase is `model`, abort the internal
 provider request immediately and convert that known internal abort into the
-same graceful boundary result.
+same graceful boundary result. Queue ownership remains outside Ekko Agent;
+Hermes Studio maps `boundary_interrupt` to its own `queue_insertion` policy.
 
 Only the matching foreground run is affected. Detached Ekko subagents remain
 running. A foreground `delegate_task` that is part of the current batch is
@@ -515,10 +524,11 @@ next run.
 ### Queue Editing
 
 If the user removes the only real queued message before the boundary is
-crossed, disarm the boundary request. If another real queued message remains,
-keep it armed. Once the runtime has crossed the boundary, removing the queue
-head cannot resume the old turn; the next remaining item starts, or the session
-becomes idle.
+crossed, clear the visible insertion state. Runtime boundary requests are
+one-way once accepted, so the old turn may still stop. If another real queued
+message remains, retarget the insertion state to that queue head. Once the
+runtime has crossed the boundary, removing the queue head cannot resume the old
+turn; the next remaining item starts, or the session becomes idle.
 
 ### Duplicate Requests
 
@@ -580,7 +590,7 @@ generations in a dedicated table rather than as premature user messages.
 - Preserve user and managed Claude settings; Studio's temporary hook must merge
   without weakening policy.
 - Probe Hermes private-hook compatibility at worker startup and fail closed for
-  automatic boundary insertion if the expected callable shape changes.
+  explicit boundary insertion if the expected callable shape changes.
 
 ## Observability
 
@@ -601,7 +611,7 @@ Do not log queued message text or hook capability tokens.
 
 ## Implementation Phases
 
-### Phase 1: Shared Coordinator And Ekko Agent
+### Phase 1: Shared Coordinator And Ekko Agent — Complete
 
 - Add `QueueInsertionControl` and the runtime adapter contract.
 - Extract safe boundary terminalization/dequeue behavior.
@@ -610,21 +620,21 @@ Do not log queued message text or hook capability tokens.
 
 This establishes the contract in a runtime Studio fully owns.
 
-### Phase 2: Hermes Agent
+### Phase 2: Hermes Agent — Complete
 
 - Add the Bridge request/action and run identity checks.
 - Install the post-tool-batch wrapper and foreground-only interrupt.
 - Add runtime compatibility probing.
 - Verify detached background delegations continue.
 
-### Phase 3: Claude Code
+### Phase 3: Claude Code — Deferred
 
 - Add temporary `PreToolUse` and `PostToolBatch` settings.
 - Add authenticated local hook IPC and helper.
 - Detect unsupported or disabled hooks.
 - Suppress Studio's synthetic stop marker from chat history.
 
-### Phase 4: Codex
+### Phase 4: Codex — Deferred
 
 - Ship the measured best-effort adapter behind an explicit capability label.
 - Evaluate App Server migration separately.
@@ -639,9 +649,10 @@ is made.
 
 ### Shared Server Tests
 
-- First queued user message arms exactly one boundary.
-- Additional messages remain FIFO.
-- Automatic goal-continuation entries do not arm the boundary.
+- Clicking a queued user message arms exactly one boundary and promotes it to
+  the head.
+- Rapid additional clicks do not duplicate the boundary request.
+- Goal-continuation entries cannot arm the boundary.
 - Boundary completion flushes old output before dequeuing.
 - The dequeued item becomes one normal user message.
 - Removing the final queued item disarms a pending boundary.
@@ -667,7 +678,7 @@ is made.
 - `requestBoundaryInterrupt()` during the model phase aborts the provider call.
 - The method during a tool batch allows all current calls to finish.
 - No model request occurs after the boundary.
-- The run returns a graceful `queue_insertion` finish reason.
+- The run returns the graceful runtime-owned `boundary_interrupt` finish reason.
 - Foreground session/run matching prevents cross-session interruption.
 - Background subagents continue.
 - External hard abort retains its stronger behavior.
@@ -711,16 +722,15 @@ Chat-chain implementation must include the required
 
 ## Acceptance Criteria
 
-- On Hermes, Ekko, and supported Claude Code, a queued message submitted during
-  a tool batch causes zero subsequent model requests in the old turn.
-- No active tool is cancelled by automatic queue insertion.
+- On Hermes and Ekko, clicking the arrow during a tool batch causes zero
+  subsequent model requests in the old turn.
+- No active tool is cancelled by explicit queue insertion.
 - When no tool is active, the old turn begins stopping immediately.
 - The queued text appears exactly once as the next normal user message.
 - No slash command, steer marker, tool-result injection, or synthetic hook
   warning enters model-visible history.
 - Detached background work is preserved.
-- Codex behavior is visibly and programmatically marked best effort until a
-  strict control point exists.
+- Claude Code and Codex do not expose the arrow in this implementation.
 
 ## Expected Change Surface
 

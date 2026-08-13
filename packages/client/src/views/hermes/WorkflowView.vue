@@ -14,7 +14,8 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
-import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
+import { useRoute } from 'vue-router'
+import { buildWorkflowEvidenceRows, latestWorkflowNodeSession, workflowNodeSessionByExecution, summarizeWorkflowEvidenceRows, workflowEdgePlaybackState, type WorkflowEvidenceRow } from '@/utils/workflow-history'
 import { resolveWorkflowRunPageSwipe, type WorkflowRunPagerPage } from '@/utils/workflow-run-pager'
 import {
   normalizeWorkflowRunEdge,
@@ -30,6 +31,7 @@ import {
   type WorkflowConditionValueType,
 } from '@/utils/workflow-edge-condition'
 import { workflowImportConfirmationText } from '@/utils/workflow-import'
+import { workflowApprovalKey } from '@/utils/workflow-approval-key'
 import {
   WORKFLOW_RUN_BUDGET_PRESETS,
   isWorkflowRunBudgetValid,
@@ -67,25 +69,30 @@ import {
   approveWorkflowNode,
   batchDeleteWorkflows,
   createWorkflow as createWorkflowApi,
+  createWorkflowSchedule,
   cancelWorkflowImport,
   confirmWorkflowImport,
   deleteWorkflowRun,
+  deleteWorkflowSchedule,
   deleteWorkflow as deleteWorkflowApi,
   exportWorkflow,
   fetchWorkflowRun,
   listWorkflowRuns,
+  listWorkflowSchedules,
   previewWorkflowImport,
   listWorkflows as listWorkflowsApi,
   rerunWorkflowRunFromNode,
   runWorkflowNow,
   stopWorkflowRun,
+  updateWorkflowSchedule,
   updateWorkflow as updateWorkflowApi,
+  type WorkflowScheduleRecord,
+  type WorkflowRunNodeSessionRecord,
   type WorkflowRunRecord,
   type WorkflowRecord,
   type WorkflowViewport,
 } from '@/api/hermes/workflows'
 import {
-  disconnectWorkflowSocket,
   listWorkflowsSocket,
   onWorkflowStatusError,
   onWorkflowStatusUpdated,
@@ -111,6 +118,7 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
 const { t } = useI18n()
+const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
@@ -323,6 +331,19 @@ const pendingWorkflowRunBudgetAction = ref<
 >(null)
 const workflowBudgetNow = ref(Date.now())
 const workflowRuns = ref<WorkflowRunRecord[]>([])
+const workflowSchedules = ref<WorkflowScheduleRecord[]>([])
+const workflowSchedulesLoading = ref(false)
+const workflowScheduleLoadError = ref('')
+const persistedWorkflowScheduleStartNodes = ref<Record<string, WorkflowSelectOption[]>>({})
+const workflowScheduleModalVisible = ref(false)
+const workflowScheduleSubmitting = ref(false)
+const editingWorkflowScheduleId = ref<string | null>(null)
+const workflowScheduleCron = ref('@daily')
+const workflowScheduleTimezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+const workflowScheduleEnabled = ref(true)
+const workflowScheduleInput = ref('')
+const workflowScheduleStartNodeIds = ref<string[]>([])
+const workflowScheduleTimeoutMinutes = ref<number | null>(null)
 const workflowRunsLoading = ref(false)
 const rerunningWorkflowNodeId = ref<string | null>(null)
 const showWorkflowRunsPanel = ref(true)
@@ -362,6 +383,13 @@ let mobileQuery: MediaQueryList | null = null
 let applyingWorkflow = false
 let workflowRunsLoadSeq = 0
 let workflowRunsLoadingSeq = 0
+let workflowSchedulesLoadSeq = 0
+let workflowSchedulesLoadingSeq = 0
+let workflowSchedulesGeneration = 0
+let workflowScheduleSaveSeq = 0
+let workflowSchedulesMutationSeq = 0
+const workflowScheduleMutationTokens = new Map<string, number>()
+const workflowSchedulePendingIds = ref<Set<string>>(new Set())
 let edgePreviewTimer: number | null = null
 let workflowBudgetClock: number | null = null
 
@@ -374,6 +402,15 @@ const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(
   value: option.value,
   label: t(`workflow.budget.options.${option.value}`),
 })))
+const workflowSchedulePresetOptions = computed(() => [
+  { label: t('workflow.schedule.presets.hourly'), value: '@hourly' },
+  { label: t('workflow.schedule.presets.daily'), value: '@daily' },
+  { label: t('workflow.schedule.presets.weekly'), value: '@weekly' },
+  { label: t('workflow.schedule.presets.monthly'), value: '@monthly' },
+])
+const workflowScheduleStartNodeOptions = computed(() => persistedWorkflowScheduleStartNodes.value[activeWorkflowId.value] || [])
+const workflowScheduleFormTitle = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.editTitle' : 'workflow.schedule.createTitle'))
+const workflowScheduleSubmitLabel = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.save' : 'workflow.schedule.create'))
 const workflowRunBudgetValid = computed(() => isWorkflowRunBudgetValid(
   workflowRunBudgetChoice.value,
   workflowRunBudgetCustomMinutes.value,
@@ -788,6 +825,23 @@ const workflowChatPanelPendingApproval = computed(() => {
   return workflowNodeStatusFromRun(run, nodeId) === 'pending_approval'
 })
 
+const visibleWorkflowApprovalKey = computed(() => {
+  const run = selectedWorkflowRun.value
+  const nodeId = workflowChatPanelNodeId.value
+  if (!workflowChatPanelVisible.value || !workflowChatPanelPendingApproval.value || !run || !nodeId) return null
+  return workflowApprovalKey(run.workflow_id, run.id, nodeId, workflowChatPanelExecutionId.value || undefined)
+})
+
+function publishVisibleWorkflowApproval(key: string | null, visible: boolean) {
+  if (!key || typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('hermes:workflow-approval-visible', { detail: { key, visible } }))
+}
+
+watch(visibleWorkflowApprovalKey, (key, previousKey) => {
+  if (previousKey && previousKey !== key) publishVisibleWorkflowApproval(previousKey, false)
+  if (key && key !== previousKey) publishVisibleWorkflowApproval(key, true)
+})
+
 watch([agentOptions, modelGroups], () => {
   nodes.value = normalizeWorkflowRunNodeTargets(
     nodes.value,
@@ -815,6 +869,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  publishVisibleWorkflowApproval(visibleWorkflowApprovalKey.value, false)
   if (workflowBudgetClock !== null) window.clearInterval(workflowBudgetClock)
   workflowBudgetClock = null
   mobileQuery?.removeEventListener('change', handleMobileChange)
@@ -827,7 +882,6 @@ onUnmounted(() => {
   removeWorkflowStatusListener = null
   removeWorkflowStatusErrorListener?.()
   removeWorkflowStatusErrorListener = null
-  disconnectWorkflowSocket()
 })
 
 function handleMobileChange(event: MediaQueryList | MediaQueryListEvent) {
@@ -1078,6 +1132,32 @@ function workflowDocumentFromRecord(record: WorkflowRecord): WorkflowDocument {
   }
 }
 
+async function openWorkflowNotificationTarget() {
+  const profile = typeof route.query.profile === 'string' ? route.query.profile : ''
+  const workflowId = typeof route.query.workflowId === 'string' ? route.query.workflowId : ''
+  const runId = typeof route.query.runId === 'string' ? route.query.runId : ''
+  const nodeId = typeof route.query.nodeId === 'string' ? route.query.nodeId : ''
+  const executionId = typeof route.query.executionId === 'string' ? route.query.executionId : ''
+  if (!workflowId || !runId || !nodeId) return
+
+  if (profile && profile !== profilesStore.activeProfileName && profilesStore.profiles.some(item => item.name === profile)) {
+    await profilesStore.switchProfile(profile)
+    await loadWorkflows()
+  }
+
+  const workflow = workflows.value.find(item => item.id === workflowId)
+  if (!workflow) return
+  await applyWorkflow(workflow, false)
+  await loadWorkflowRuns(workflowId, runId, { applySelectedSnapshot: true })
+  const run = workflowRuns.value.find(item => item.id === runId)
+  if (!run) return
+  const nodeSession = executionId
+    ? workflowNodeSessionByExecution(run.node_sessions, nodeId, executionId)
+    : latestWorkflowNodeSession(run.node_sessions, nodeId)
+  if (!nodeSession?.session_id) return
+  await openWorkflowNodeSession(nodeId, nodeSession)
+}
+
 async function initializeWorkflowPage() {
   await profilesStore.fetchProfiles()
   createWorkflowProfile.value = defaultWorkflowProfile.value
@@ -1087,11 +1167,19 @@ async function initializeWorkflowPage() {
     message.error(error.error || t('workflow.evidence.loadFailed'))
   })
   await loadWorkflows()
+  await openWorkflowNotificationTarget()
   void subscribeWorkflowStatuses().then(applyWorkflowRuntimeStatuses).catch((err) => {
     console.error('Failed to subscribe workflow statuses:', err)
     message.error(err?.message || t('workflow.evidence.loadFailed'))
   })
 }
+
+watch(
+  () => [route.query.profile, route.query.workflowId, route.query.runId, route.query.nodeId, route.query.executionId],
+  () => {
+    if (workflows.value.length > 0) void openWorkflowNotificationTarget()
+  },
+)
 
 async function loadWorkflows() {
   workflowsLoading.value = true
@@ -1104,6 +1192,10 @@ async function loadWorkflows() {
       records = await listWorkflowsSocket()
     }
     const docs = records.map(workflowDocumentFromRecord)
+    persistedWorkflowScheduleStartNodes.value = Object.fromEntries(docs.map(workflow => [
+      workflow.id,
+      workflow.nodes.map(node => ({ label: node.data.title || node.id, value: node.id })),
+    ]))
     const previousActiveId = activeWorkflowId.value
     workflows.value = docs
     if (docs.length === 0) {
@@ -1465,10 +1557,10 @@ function workflowNodeErrorFromRun(run: WorkflowRunRecord, nodeId: string): strin
   return null
 }
 
-async function openWorkflowNodeSession(nodeId: string) {
+async function openWorkflowNodeSession(nodeId: string, targetNodeSession?: WorkflowRunNodeSessionRecord) {
   const run = selectedWorkflowRun.value
   if (!run) return
-  const nodeSession = latestWorkflowNodeSession(run.node_sessions, nodeId)
+  const nodeSession = targetNodeSession || latestWorkflowNodeSession(run.node_sessions, nodeId)
   if (!nodeSession?.session_id) {
     message.warning(t('workflow.runs.noNodeSession'))
     return
@@ -1599,6 +1691,201 @@ async function clearSelectedWorkflowRun() {
   if (workflow) await applyWorkflow(workflow, false, { resetRuntime: true })
 }
 
+function resetWorkflowScheduleForm(schedule?: WorkflowScheduleRecord) {
+  editingWorkflowScheduleId.value = schedule?.id || null
+  workflowScheduleCron.value = schedule?.schedule || '@daily'
+  workflowScheduleTimezone.value = schedule?.timezone || (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  workflowScheduleEnabled.value = schedule?.enabled ?? true
+  workflowScheduleInput.value = schedule?.input || ''
+  workflowScheduleStartNodeIds.value = [...(schedule?.start_node_ids || [])]
+  workflowScheduleTimeoutMinutes.value = schedule?.timeout_ms == null ? null : schedule.timeout_ms / 60_000
+}
+
+function setPersistedWorkflowScheduleStartNodes(workflow: WorkflowDocument) {
+  persistedWorkflowScheduleStartNodes.value = {
+    ...persistedWorkflowScheduleStartNodes.value,
+    [workflow.id]: workflow.nodes.map(node => ({ label: node.data.title || node.id, value: node.id })),
+  }
+}
+
+function clearWorkflowSchedules() {
+  workflowSchedulesGeneration += 1
+  workflowSchedulesLoadSeq += 1
+  workflowSchedulesLoadingSeq = 0
+  workflowScheduleSaveSeq += 1
+  workflowScheduleMutationTokens.clear()
+  workflowSchedulePendingIds.value = new Set()
+  workflowSchedules.value = []
+  workflowSchedulesLoading.value = false
+  workflowScheduleSubmitting.value = false
+  workflowScheduleLoadError.value = ''
+}
+
+function isCurrentWorkflowScheduleLifecycle(workflowId: string, generation: number) {
+  return workflowScheduleModalVisible.value
+    && activeWorkflowId.value === workflowId
+    && workflowSchedulesGeneration === generation
+}
+
+function invalidateWorkflowScheduleLoads() {
+  workflowSchedulesLoadSeq += 1
+}
+
+function isWorkflowScheduleMutating(scheduleId: string) {
+  return workflowSchedulePendingIds.value.has(scheduleId)
+}
+
+function setWorkflowScheduleMutating(scheduleId: string, pending: boolean) {
+  const next = new Set(workflowSchedulePendingIds.value)
+  if (pending) next.add(scheduleId)
+  else next.delete(scheduleId)
+  workflowSchedulePendingIds.value = next
+}
+
+function beginWorkflowScheduleMutation(scheduleId: string) {
+  const mutationToken = ++workflowSchedulesMutationSeq
+  const generation = workflowSchedulesGeneration
+  workflowScheduleMutationTokens.set(scheduleId, mutationToken)
+  setWorkflowScheduleMutating(scheduleId, true)
+  invalidateWorkflowScheduleLoads()
+  return { generation, mutationToken }
+}
+
+function isCurrentWorkflowScheduleMutation(workflowId: string, scheduleId: string, generation: number, mutationToken: number) {
+  return isCurrentWorkflowScheduleLifecycle(workflowId, generation)
+    && workflowScheduleMutationTokens.get(scheduleId) === mutationToken
+}
+
+function finishWorkflowScheduleMutation(scheduleId: string, mutationToken: number) {
+  if (workflowScheduleMutationTokens.get(scheduleId) !== mutationToken) return
+  workflowScheduleMutationTokens.delete(scheduleId)
+  setWorkflowScheduleMutating(scheduleId, false)
+}
+
+function handleWorkflowScheduleModalVisibility(visible: boolean) {
+  workflowScheduleModalVisible.value = visible
+  if (!visible) clearWorkflowSchedules()
+}
+
+async function loadWorkflowSchedules(workflowId = activeWorkflowId.value, silent = false) {
+  if (!workflowId) {
+    clearWorkflowSchedules()
+    return
+  }
+  const requestSeq = ++workflowSchedulesLoadSeq
+  const generation = workflowSchedulesGeneration
+  if (!silent) {
+    workflowSchedulesLoadingSeq = requestSeq
+    workflowSchedulesLoading.value = true
+  }
+  if (activeWorkflowId.value === workflowId) workflowScheduleLoadError.value = ''
+  try {
+    const schedules = await listWorkflowSchedules(workflowId)
+    if (requestSeq !== workflowSchedulesLoadSeq || !isCurrentWorkflowScheduleLifecycle(workflowId, generation)) return
+    workflowSchedules.value = schedules
+  } catch (err: any) {
+    if (requestSeq !== workflowSchedulesLoadSeq || !isCurrentWorkflowScheduleLifecycle(workflowId, generation)) return
+    workflowScheduleLoadError.value = err?.message || t('workflow.schedule.loadFailed')
+    if (!silent) message.error(workflowScheduleLoadError.value)
+  } finally {
+    if (!silent && workflowSchedulesLoadingSeq === requestSeq) workflowSchedulesLoading.value = false
+  }
+}
+
+async function openWorkflowScheduleModal() {
+  if (!activeWorkflowId.value || selectedWorkflowRunId.value) return
+  resetWorkflowScheduleForm()
+  workflowScheduleModalVisible.value = true
+  await loadWorkflowSchedules()
+}
+
+function editWorkflowSchedule(schedule: WorkflowScheduleRecord) {
+  if (isWorkflowScheduleMutating(schedule.id)) return
+  resetWorkflowScheduleForm(schedule)
+}
+
+async function saveWorkflowSchedule() {
+  const workflowId = activeWorkflowId.value
+  if (!workflowId || workflowScheduleSubmitting.value) return
+  const editingScheduleId = editingWorkflowScheduleId.value
+  const schedule = workflowScheduleCron.value.trim()
+  const timezone = workflowScheduleTimezone.value.trim()
+  if (!schedule || !timezone) { message.warning(t('workflow.schedule.required')); return }
+  const scheduleId = editingScheduleId || '__create__'
+  if (isWorkflowScheduleMutating(scheduleId)) return
+  const saveToken = ++workflowScheduleSaveSeq
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(scheduleId)
+  workflowScheduleSubmitting.value = true
+  try {
+    const input = {
+      schedule,
+      timezone,
+      enabled: workflowScheduleEnabled.value,
+      input: workflowScheduleInput.value.trim() === '' ? null : workflowScheduleInput.value,
+      start_node_ids: [...workflowScheduleStartNodeIds.value],
+      timeout_ms: workflowScheduleTimeoutMinutes.value == null ? null : Math.round(workflowScheduleTimeoutMinutes.value * 60_000),
+    }
+    const saved = editingScheduleId
+      ? await updateWorkflowSchedule(workflowId, editingScheduleId, input)
+      : await createWorkflowSchedule(workflowId, input)
+    if (!isCurrentWorkflowScheduleMutation(workflowId, scheduleId, generation, mutationToken)) return
+    const index = workflowSchedules.value.findIndex(item => item.id === saved.id)
+    workflowSchedules.value = index < 0
+      ? [...workflowSchedules.value, saved]
+      : workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
+    if (editingWorkflowScheduleId.value === editingScheduleId) resetWorkflowScheduleForm()
+    message.success(t('workflow.schedule.saved'))
+  } catch (err: any) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, scheduleId, generation, mutationToken)) {
+      message.error(err?.message || t('workflow.schedule.saveFailed'))
+    }
+  } finally {
+    finishWorkflowScheduleMutation(scheduleId, mutationToken)
+    if (workflowScheduleSaveSeq === saveToken) workflowScheduleSubmitting.value = false
+  }
+}
+
+async function toggleWorkflowSchedule(schedule: WorkflowScheduleRecord) {
+  const workflowId = activeWorkflowId.value
+  if (!workflowId || isWorkflowScheduleMutating(schedule.id)) return
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(schedule.id)
+  try {
+    const saved = await updateWorkflowSchedule(workflowId, schedule.id, { enabled: !schedule.enabled })
+    if (!isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) return
+    workflowSchedules.value = workflowSchedules.value.map(item => item.id === saved.id ? saved : item)
+    if (editingWorkflowScheduleId.value === saved.id) workflowScheduleEnabled.value = saved.enabled
+  } catch (err: any) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) {
+      message.error(err?.message || t('workflow.schedule.saveFailed'))
+    }
+  } finally {
+    finishWorkflowScheduleMutation(schedule.id, mutationToken)
+  }
+}
+
+async function removeWorkflowSchedule(schedule: WorkflowScheduleRecord) {
+  const workflowId = activeWorkflowId.value
+  if (!workflowId || isWorkflowScheduleMutating(schedule.id)) return
+  const { generation, mutationToken } = beginWorkflowScheduleMutation(schedule.id)
+  try {
+    await deleteWorkflowSchedule(workflowId, schedule.id)
+    if (!isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) return
+    workflowSchedules.value = workflowSchedules.value.filter(item => item.id !== schedule.id)
+    if (editingWorkflowScheduleId.value === schedule.id) resetWorkflowScheduleForm()
+    message.success(t('workflow.schedule.deleted'))
+  } catch (err: any) {
+    if (isCurrentWorkflowScheduleMutation(workflowId, schedule.id, generation, mutationToken)) {
+      message.error(err?.message || t('workflow.schedule.deleteFailed'))
+    }
+  } finally {
+    finishWorkflowScheduleMutation(schedule.id, mutationToken)
+  }
+}
+
+function formatWorkflowScheduleTime(timestamp: number | null): string {
+  return timestamp ? new Date(timestamp).toLocaleString() : t('workflow.schedule.never')
+}
+
 async function clearActiveWorkflowPage() {
   applyingWorkflow = true
   activeWorkflowId.value = ''
@@ -1608,6 +1895,8 @@ async function clearActiveWorkflowPage() {
   edges.value = []
   nextNodeIndex.value = 1
   workflowRuns.value = []
+  workflowSchedules.value = []
+  workflowScheduleLoadError.value = ''
   selectedWorkflowRunId.value = null
   manuallyDeselectedWorkflowRunIds.value = new Set()
   autoSelectRunningWorkflowIds.value = new Set()
@@ -1940,6 +2229,7 @@ async function applyWorkflow(
 ) {
   applyingWorkflow = true
   selectedWorkflowRunId.value = null
+  clearWorkflowSchedules()
   activeWorkflowId.value = workflow.id
   workflowName.value = workflow.name
   workflowWorkspace.value = workflow.workspace
@@ -2030,6 +2320,7 @@ async function confirmPendingWorkflowImport() {
   try {
     const record = await confirmWorkflowImport(preview.token, workflowImportProfile.value)
     const imported = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(imported)
     workflows.value = [imported, ...workflows.value.filter(item => item.id !== imported.id)]
     workflowImportConfirmVisible.value = false
     workflowImportPreview.value = null
@@ -2073,6 +2364,7 @@ async function submitCreateWorkflow() {
       viewport: defaultViewport,
     })
     const workflow = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(workflow)
     workflows.value = [workflow, ...workflows.value]
     createWorkflowDrawerVisible.value = false
     await applyWorkflow(workflow, true)
@@ -2210,6 +2502,7 @@ async function saveActiveWorkflow(options: { quiet?: boolean } = {}): Promise<bo
       viewport: currentWorkflowViewport(),
     })
     const savedWorkflow = workflowDocumentFromRecord(record)
+    setPersistedWorkflowScheduleStartNodes(savedWorkflow)
     workflows.value = workflows.value.map(workflow => (
       workflow.id === savedWorkflow.id
         ? { ...savedWorkflow, updatedAt: previous?.updatedAt ?? savedWorkflow.updatedAt }
@@ -2962,7 +3255,19 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             </template>
             {{ showWorkflowRunsPanel ? t('workflow.runs.hide') : t('workflow.runs.show') }}
           </NTooltip>
-          <input ref="workflowImportInputRef" class="workflow-import-input" type="file" accept="application/json,.json" @change="handleWorkflowImport" />
+          <NTooltip v-if="!selectedWorkflowRunId" trigger="hover">
+            <template #trigger>
+              <NButton quaternary size="small" circle :disabled="!activeWorkflowId" :aria-label="t('workflow.schedule.manage')" @click="openWorkflowScheduleModal">
+                <template #icon>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('workflow.schedule.manage') }}
+          </NTooltip>
+                    <input ref="workflowImportInputRef" class="workflow-import-input" type="file" accept="application/json,.json" @change="handleWorkflowImport" />
           <NTooltip v-if="!selectedWorkflowRunId" trigger="hover">
             <template #trigger>
               <NButton quaternary size="small" circle :aria-label="t('workflow.actions.importWorkflow')" @click="openWorkflowImport">
@@ -3048,6 +3353,65 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           </NTooltip>
         </div>
       </header>
+    <NModal
+      data-testid="workflow-schedules-modal"
+      :show="workflowScheduleModalVisible"
+      preset="card"
+      :title="t('workflow.schedule.title')"
+      :style="{ width: 'min(720px, calc(100vw - 32px))' }"
+      @update:show="handleWorkflowScheduleModalVisibility"
+    >
+      <div class="workflow-schedules-layout">
+        <section class="workflow-schedules-list">
+          <div v-if="workflowSchedulesLoading" class="workflow-schedules-empty">{{ t('common.loading') }}</div>
+          <div v-else-if="workflowScheduleLoadError" class="workflow-schedule-error">{{ workflowScheduleLoadError }}</div>
+          <div v-else-if="workflowSchedules.length === 0" class="workflow-schedules-empty">{{ t('workflow.schedule.empty') }}</div>
+          <article v-for="schedule in workflowSchedules" :key="schedule.id" class="workflow-schedule-item">
+            <div class="workflow-schedule-item-header">
+              <strong>{{ schedule.schedule }}</strong>
+              <span class="workflow-schedule-status" :class="{ disabled: !schedule.enabled }">{{ schedule.enabled ? t('workflow.schedule.enabled') : t('workflow.schedule.disabled') }}</span>
+            </div>
+            <div class="workflow-schedule-meta">{{ schedule.timezone }}</div>
+            <div class="workflow-schedule-meta">{{ t('workflow.schedule.lastScheduled') }}: {{ formatWorkflowScheduleTime(schedule.last_scheduled_at) }}</div>
+            <div class="workflow-schedule-meta">{{ t('workflow.schedule.nextRun') }}: {{ formatWorkflowScheduleTime(schedule.next_run_at) }}</div>
+            <div class="workflow-schedule-meta">{{ t('workflow.schedule.lastRun') }}: {{ schedule.last_run_id || t('workflow.schedule.never') }}</div>
+            <div v-if="schedule.last_error" class="workflow-schedule-error">{{ schedule.last_error }}</div>
+            <div class="workflow-schedule-actions">
+              <NButton size="tiny" :disabled="isWorkflowScheduleMutating(schedule.id)" @click="editWorkflowSchedule(schedule)">{{ t('workflow.schedule.edit') }}</NButton>
+              <NButton size="tiny" :disabled="isWorkflowScheduleMutating(schedule.id)" @click="toggleWorkflowSchedule(schedule)">{{ schedule.enabled ? t('workflow.schedule.disable') : t('workflow.schedule.enable') }}</NButton>
+              <NPopconfirm :disabled="isWorkflowScheduleMutating(schedule.id)" @positive-click="removeWorkflowSchedule(schedule)">
+                <template #trigger><NButton size="tiny" type="error" :disabled="isWorkflowScheduleMutating(schedule.id)">{{ t('workflow.schedule.delete') }}</NButton></template>
+                {{ t('workflow.schedule.deleteConfirm') }}
+              </NPopconfirm>
+            </div>
+          </article>
+        </section>
+        <section class="workflow-schedule-form">
+          <h3>{{ workflowScheduleFormTitle }}</h3>
+          <label>{{ t('workflow.schedule.cron') }}
+            <NInput v-model:value="workflowScheduleCron" :placeholder="t('workflow.schedule.cronPlaceholder')" :aria-label="t('workflow.schedule.cron')" />
+          </label>
+          <div class="workflow-schedule-presets">
+            <NButton v-for="preset in workflowSchedulePresetOptions" :key="String(preset.value)" size="tiny" @click="workflowScheduleCron = String(preset.value)">{{ preset.label }}</NButton>
+          </div>
+          <label>{{ t('workflow.schedule.timezone') }}
+            <NInput v-model:value="workflowScheduleTimezone" :placeholder="t('workflow.schedule.timezonePlaceholder')" :aria-label="t('workflow.schedule.timezone')" />
+          </label>
+          <label class="workflow-schedule-checkbox"><NCheckbox v-model:checked="workflowScheduleEnabled">{{ t('workflow.schedule.enabled') }}</NCheckbox></label>
+          <label>{{ t('workflow.schedule.initialInput') }}
+            <NInput v-model:value="workflowScheduleInput" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :placeholder="t('workflow.schedule.initialInputPlaceholder')" />
+          </label>
+          <label>{{ t('workflow.schedule.startNodes') }}
+            <NSelect v-model:value="workflowScheduleStartNodeIds" multiple :options="workflowScheduleStartNodeOptions" :placeholder="t('workflow.schedule.startNodesPlaceholder')" />
+          </label>
+          <label>{{ t('workflow.schedule.timeout') }}
+            <NInputNumber v-model:value="workflowScheduleTimeoutMinutes" :min="0.1" :max="1440" :precision="1" :placeholder="t('workflow.schedule.timeoutPlaceholder')" />
+          </label>
+          <p class="workflow-schedule-policy">{{ t('workflow.schedule.policies') }}</p>
+          <div class="workflow-schedule-submit"><NButton @click="resetWorkflowScheduleForm()">{{ t('workflow.schedule.reset') }}</NButton><NButton type="primary" :loading="workflowScheduleSubmitting" @click="saveWorkflowSchedule">{{ workflowScheduleSubmitLabel }}</NButton></div>
+        </section>
+      </div>
+    </NModal>
     <NModal
       data-testid="workflow-run-budget-modal"
       :show="workflowRunBudgetModalVisible"
@@ -4577,6 +4941,21 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.workflow-schedules-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr); gap: 20px; }
+.workflow-schedules-list { display: flex; min-height: 200px; flex-direction: column; gap: 10px; }
+.workflow-schedules-empty { color: $text-muted; padding: 16px 0; }
+.workflow-schedule-item { border: 1px solid $border-color; border-radius: 8px; padding: 12px; }
+.workflow-schedule-item-header, .workflow-schedule-actions, .workflow-schedule-submit { display: flex; align-items: center; gap: 8px; }
+.workflow-schedule-item-header { justify-content: space-between; margin-bottom: 6px; }
+.workflow-schedule-status { color: var(--success); font-size: 12px; }.workflow-schedule-status.disabled { color: $text-muted; }
+.workflow-schedule-meta, .workflow-schedule-policy { color: $text-muted; font-size: 12px; line-height: 18px; }
+.workflow-schedule-error { color: var(--error); font-size: 12px; margin-top: 4px; word-break: break-word; }
+.workflow-schedule-actions { margin-top: 10px; }
+.workflow-schedule-form { display: flex; flex-direction: column; gap: 12px; }.workflow-schedule-form h3 { margin: 0; }
+.workflow-schedule-form label { display: flex; flex-direction: column; gap: 6px; color: $text-secondary; font-size: 13px; }.workflow-schedule-form .workflow-schedule-checkbox { display: block; }
+.workflow-schedule-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }.workflow-schedule-submit { justify-content: flex-end; }
+@media (max-width: $breakpoint-mobile) { .workflow-schedules-layout { grid-template-columns: 1fr; } }
 
 .workflow-flow {
   width: 100%;

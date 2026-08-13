@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
@@ -43,6 +43,7 @@ const JSON_MAX_NODES = 1000
 const JSON_MAX_KEYS_PER_OBJECT = 50
 const JSON_MAX_ITEMS_PER_ARRAY = 50
 const JSON_TRUNCATED_KEY = '__truncated__'
+const STREAMING_MARKDOWN_RENDER_INTERVAL_MS = 100
 
 const props = withDefaults(defineProps<{
     message: ChatMessage
@@ -149,7 +150,6 @@ const thinkingStreamingNow = computed(() => {
 })
 const thinkingOverride = ref<boolean | null>(null)
 const thinkingExpanded = computed(() => {
-    if (thinkingStreamingNow.value) return true
     if (thinkingOverride.value !== null) return thinkingOverride.value
     return false
 })
@@ -160,7 +160,12 @@ const contentBlocks = computed(() => {
     if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null
     try {
         const parsed = JSON.parse(trimmed)
-        return Array.isArray(parsed) ? parsed : null
+        if (!Array.isArray(parsed) || parsed.length === 0) return null
+        return parsed.every((block: any) => (
+            block
+            && typeof block === 'object'
+            && (block.type === 'text' || block.type === 'image' || block.type === 'file')
+        )) ? parsed : null
     } catch {
         return null
     }
@@ -193,13 +198,33 @@ const renderedAttachments = computed(() => {
 })
 const hasAttachments = computed(() => renderedAttachments.value.length > 0)
 const displayBody = computed(() => {
-    if (props.message.role !== 'user') return assistantBody.value
     const blocks = contentBlocks.value
     if (!blocks) return assistantBody.value
     return blocks
         .filter((block: any) => block?.type === 'text' && typeof block.text === 'string')
         .map((block: any) => block.text)
         .join('\n')
+})
+const renderedDisplayBody = ref(displayBody.value)
+let streamingMarkdownTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearStreamingMarkdownTimer() {
+    if (streamingMarkdownTimer === null) return
+    clearTimeout(streamingMarkdownTimer)
+    streamingMarkdownTimer = null
+}
+
+watch([displayBody, () => props.message.isStreaming], ([body, isStreaming]) => {
+    if (!isStreaming) {
+        clearStreamingMarkdownTimer()
+        renderedDisplayBody.value = body
+        return
+    }
+    if (streamingMarkdownTimer !== null) return
+    streamingMarkdownTimer = setTimeout(() => {
+        streamingMarkdownTimer = null
+        renderedDisplayBody.value = displayBody.value
+    }, STREAMING_MARKDOWN_RENDER_INTERVAL_MS)
 })
 const parsedMessageReference = computed(() =>
     props.message.role !== 'assistant' && props.message.role !== 'tool'
@@ -224,7 +249,7 @@ const copyableContent = computed(() => {
 const quotableContent = computed(() => {
     if (isToolMessage.value || props.message.isStreaming || isAgentError.value) return null
     const content = props.message.role === 'assistant'
-        ? assistantBody.value
+        ? displayBody.value
         : parsedMessageReference.value?.reply || parsedMessageReference.value?.content || displayBody.value
     return content.trim() || null
 })
@@ -274,7 +299,7 @@ function openWorkspaceDiffFileForPayload(file: GroupWorkspaceDiffFile, payload: 
 const canPlaySpeech = computed(() => {
     if (!props.allowSpeech) return false
     if (props.message.role !== 'assistant') return false
-    if (!assistantBody.value.trim()) return false
+    if (!displayBody.value.trim()) return false
     if (messageTtsProfile.value) return true
     if (isServerTtsProvider(voiceSettings.provider.value)) return true
     return speech.isSupported
@@ -541,7 +566,7 @@ function playSpeech(content: string, autoplay = false, profileOverride = '') {
 }
 
 function handleSpeechToggle() {
-    if (canPlaySpeech.value) playSpeech(assistantBody.value)
+    if (canPlaySpeech.value) playSpeech(displayBody.value)
 }
 
 async function copyBubbleContent() {
@@ -562,6 +587,7 @@ function referenceBubbleContent() {
         role,
         content,
         sender: props.message.senderName || props.message.senderId,
+        senderId: props.message.senderId,
     })
 }
 
@@ -607,13 +633,14 @@ onMounted(() => {
     autoPlayHandler = (e: Event) => {
         const event = e as CustomEvent<{ messageId: string; content: string; profile?: string }>
         if (event.detail?.messageId === props.message.id && canPlaySpeech.value) {
-            playSpeech(event.detail.content || assistantBody.value, true, event.detail.profile)
+            playSpeech(event.detail.content || displayBody.value, true, event.detail.profile)
         }
     }
     window.addEventListener('auto-play-speech', autoPlayHandler)
 })
 
 onBeforeUnmount(() => {
+    clearStreamingMarkdownTimer()
     if (autoPlayHandler) window.removeEventListener('auto-play-speech', autoPlayHandler)
     if (speech.currentMessageId.value === props.message.id || speech.currentCustomMessageId.value === props.message.id) speech.stop()
 })
@@ -660,6 +687,7 @@ onBeforeUnmount(() => {
                 <span v-if="message.toolPreview && !toolExpanded" class="tool-preview">{{ message.toolPreview }}</span>
                 <span v-if="message.toolStatus === 'running'" class="tool-spinner"></span>
                 <span v-if="message.toolStatus === 'error'" class="tool-error-badge">{{ t('chat.error') }}</span>
+                <span v-if="message.toolStatus === 'interrupted'" class="tool-interrupted-badge">{{ t('chat.toolResultUnavailable') }}</span>
             </div>
             <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
                 <div v-if="message.reasoning?.trim()" class="tool-detail-section">
@@ -754,7 +782,7 @@ onBeforeUnmount(() => {
                     <MarkdownRenderer :content="referencedContentMarkdown" :mention-names="mentionNames" />
                     <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" />
                 </template>
-                <MarkdownRenderer v-else-if="displayBody" :content="displayBody" :mention-names="mentionNames" />
+                <MarkdownRenderer v-else-if="renderedDisplayBody" :content="renderedDisplayBody" :mention-names="mentionNames" />
                 <ToolChangeCard
                     v-for="change in assistantWorkspaceChanges"
                     :key="change.change_id"
@@ -769,7 +797,7 @@ onBeforeUnmount(() => {
                     @toggle="toggleWorkspaceChange(change.change_id)"
                     @select="file => openWorkspaceDiffFileForPayload(file, change)"
                 />
-                <span v-if="message.isStreaming && !displayBody" class="streaming-dots">
+                <span v-if="message.isStreaming && !renderedDisplayBody" class="streaming-dots">
                     <span></span><span></span><span></span>
                 </span>
             </div>
@@ -915,6 +943,12 @@ onBeforeUnmount(() => {
             background: rgba(0, 0, 0, 0.03);
         }
     }
+}
+
+.tool-interrupted-badge {
+    flex: 0 0 auto;
+    color: $text-muted;
+    font-size: 10px;
 }
 
 .tool-chevron {

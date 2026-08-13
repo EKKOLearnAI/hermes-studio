@@ -313,7 +313,7 @@ class BridgeBroker:
             )
             return self._forward(profile, req, worker_key)
 
-        if action in {"interrupt", "steer", "command", "switch_session_model", "goal_evaluate", "goal_pause", "status", "get_history", "get_session_title", "destroy"}:
+        if action in {"interrupt", "request_boundary_interrupt", "steer", "command", "switch_session_model", "goal_evaluate", "goal_pause", "status", "get_history", "get_session_title", "destroy"}:
             session_id = str(req.get("session_id") or "")
             profile, worker_key = self._route_for_session(session_id, req.get("profile"), req.get("worker_key") if "worker_key" in req else None)
             resp = self._forward(profile, req, worker_key)

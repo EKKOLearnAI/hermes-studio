@@ -1,6 +1,6 @@
 import Koa from 'koa'
 import { createServer, type Server as HttpServer } from 'node:http'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -153,6 +153,29 @@ describe('invite-scoped group chat attachments', () => {
       path: '/etc/passwd',
       media_type: 'image/png',
     }])).toThrow('Invalid group chat attachment')
+  })
+
+  it('stores Agent-uploaded media in the same room attachment format as the composer', async () => {
+    const attachments = await import('../../packages/server/src/services/hermes/group-chat/attachments')
+    const sourcePath = join(stateDir, 'workspace', 'renders', 'final image.png')
+    await mkdir(join(stateDir, 'workspace', 'renders'), { recursive: true })
+    await writeFile(sourcePath, 'agent-image')
+
+    const block = await attachments.storeAgentGroupChatAttachment(
+      'room-1',
+      sourcePath,
+      'renders/final image.png',
+    )
+
+    expect(block).toEqual({
+      type: 'image',
+      name: 'final image.png',
+      path: expect.stringMatching(/^[a-f0-9]{32}\.png$/),
+      media_type: 'image/png',
+    })
+    const storedPath = attachments.getGroupChatAttachmentPath('room-1', block.path)
+    expect(storedPath).toBeTruthy()
+    expect(await readFile(storedPath!, 'utf8')).toBe('agent-image')
   })
 
   it('denies protected attachment routes to accounts without room read access', async () => {

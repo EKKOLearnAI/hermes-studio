@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   authenticateRemoteWorkspaceGrant,
@@ -10,7 +11,12 @@ import {
   revokeRemoteWorkspaceGrantsForRun,
   waitForRemoteWorkspaceGrantOperations,
 } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
-import { performRemoteWorkspaceAction } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
+import {
+  MAX_REMOTE_WORKSPACE_TRANSFER_BYTES,
+  openRemoteWorkspaceDownload,
+  performRemoteWorkspaceAction,
+  uploadRemoteWorkspaceFile,
+} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
 
 describe('group chat remote workspace access', () => {
   const temporaryDirectories: string[] = []
@@ -138,5 +144,59 @@ describe('group chat remote workspace access', () => {
         expect.objectContaining({ name: 'hosts-link' }),
       ]))
     }
+  })
+
+  it('streams binary uploads and downloads with overwrite conflict protection', async () => {
+    const root = await workspace()
+    const firstBytes = Buffer.from([0x00, 0xff, 0x89, 0x50, 0x4e, 0x47])
+    const created = await uploadRemoteWorkspaceFile(
+      root,
+      'artifacts/image.bin',
+      Readable.from([firstBytes.subarray(0, 2), firstBytes.subarray(2)]),
+    )
+
+    expect(created).toMatchObject({
+      ok: true,
+      path: 'artifacts/image.bin',
+      size: firstBytes.length,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+    expect(await readFile(join(root, 'artifacts/image.bin'))).toEqual(firstBytes)
+
+    const download = await openRemoteWorkspaceDownload(root, 'artifacts/image.bin')
+    const downloaded: Buffer[] = []
+    for await (const chunk of download.stream) downloaded.push(Buffer.from(chunk))
+    expect(Buffer.concat(downloaded)).toEqual(firstBytes)
+    expect(download.sha256).toBe(created.sha256)
+
+    await expect(uploadRemoteWorkspaceFile(
+      root,
+      'artifacts/image.bin',
+      Readable.from([Buffer.from('unsafe overwrite')]),
+    )).rejects.toMatchObject({ status: 409, code: 'workspace_conflict' })
+
+    const replacement = Buffer.from([0x01, 0x02, 0x03])
+    await expect(uploadRemoteWorkspaceFile(
+      root,
+      'artifacts/image.bin',
+      Readable.from([replacement]),
+      created.sha256,
+    )).resolves.toMatchObject({ ok: true, size: replacement.length })
+    expect(await readFile(join(root, 'artifacts/image.bin'))).toEqual(replacement)
+  })
+
+  it('stops oversized binary uploads and removes the temporary file', async () => {
+    const root = await workspace()
+
+    await expect(uploadRemoteWorkspaceFile(
+      root,
+      'artifacts/oversized.bin',
+      Readable.from([Buffer.alloc(MAX_REMOTE_WORKSPACE_TRANSFER_BYTES + 1)]),
+    )).rejects.toMatchObject({ status: 413, code: 'file_too_large' })
+
+    await expect(readFile(join(root, 'artifacts/oversized.bin'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(await readdir(join(root, 'artifacts'))).toEqual([])
   })
 })

@@ -40,6 +40,8 @@ export interface QueuedRun {
   groupSystemPrompt?: string
   groupRoomId?: string
   groupAgentId?: string
+  workflowId?: string
+  workflowNodeId?: string
   profile: string
   workspace?: string | null
   source?: ChatRunSource
@@ -75,6 +77,23 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
+export type QueueInsertionRuntime = 'hermes' | 'ekko'
+export type QueueInsertionPhase =
+  | 'requesting'
+  | 'waiting_for_tool_batch'
+  | 'stopping_current_turn'
+  | 'starting_queued_message'
+
+export interface QueueInsertionControl {
+  generation: string
+  queueId: string
+  runId?: string
+  runtime: QueueInsertionRuntime
+  phase: QueueInsertionPhase
+  guarantee: 'strict'
+  requestedAt: number
+}
+
 export interface SessionState {
   messages: SessionMessage[]
   messageTotal?: number
@@ -99,8 +118,13 @@ export interface SessionState {
   /** [credits] run 扣点后的余额（用于前端展示） */
   creditsBalanceAfter?: number
   queue: QueuedRun[]
+  queueInsertion?: QueueInsertionControl
   responseRun?: ResponseRunState
   source?: ChatRunSource
+  webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex'
+  webhookRoomId?: string
+  webhookWorkflowId?: string
+  webhookWorkflowNodeId?: string
   bridgePendingAssistantContent?: string
   bridgeAssistantMessageId?: string
   bridgePendingReasoningContent?: string

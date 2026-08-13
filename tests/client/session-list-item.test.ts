@@ -180,6 +180,51 @@ describe('SessionListItem', () => {
     expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
   })
 
+  it('renders the Hermes logo for Hermes Global Agent sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: { ...session, source: 'global_agent', agent: 'hermes' },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/hermes.png')
+    expect(logo.attributes('alt')).toBe('Hermes')
+  })
+
+  it('renders the Ekko logo for Ekko Global Agent sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: {
+          ...session,
+          source: 'global_agent',
+          agent: 'ekko-agent',
+          codingAgentId: 'ekko-agent',
+        },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/ekko-agent.png')
+    expect(logo.attributes('alt')).toBe('Ekko Agent')
+  })
+
   it('defaults old sessions without agent metadata to the Hermes logo', () => {
     const wrapper = mount(SessionListItem, {
       props: {

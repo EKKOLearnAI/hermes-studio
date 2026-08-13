@@ -19,6 +19,7 @@ const SessionSearchModal = defineAsyncComponent(async () => (await import('@/com
 const DefaultCredentialPrompt = defineAsyncComponent(async () => (await import('@/components/auth/DefaultCredentialPrompt.vue')).default)
 const ProviderConfigurationPrompt = defineAsyncComponent(async () => (await import('@/components/hermes/models/ProviderConfigurationPrompt.vue')).default)
 const WebPet = defineAsyncComponent(async () => (await import('@/components/hermes/pets/WebPet.vue')).default)
+const GlobalPendingActions = defineAsyncComponent(async () => (await import('@/components/layout/GlobalPendingActions.vue')).default)
 
 const {
   isDark,
@@ -162,6 +163,7 @@ useKeyboard()
           <SessionSearchModal v-if="!isDesktopPetRoute && !isStandaloneChatPage && sessionSearchOpen" />
           <DefaultCredentialPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
           <ProviderConfigurationPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
+          <GlobalPendingActions v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage" />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

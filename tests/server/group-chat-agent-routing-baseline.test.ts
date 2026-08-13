@@ -23,6 +23,7 @@ describe('group chat agent routing baseline', () => {
     vi.spyOn(groupServer.agentClients, 'agentSessionIsCurrent').mockReturnValue(true)
     groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
     groupServer.getStorage().addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
+    groupServer.getStorage().addRoomAgent('room-1', 'agent-reviewer', 'default', 'Reviewer', '', 0)
   })
 
   afterEach(() => {
@@ -45,7 +46,7 @@ describe('group chat agent routing baseline', () => {
     return groupRuntimeSessionId('room-1', 'default', 'Worker')
   }
 
-  it('routes human messages through mention processing', async () => {
+  it('forwards only server-validated structured mentions to mention processing', async () => {
     const { human } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
@@ -55,6 +56,19 @@ describe('group chat agent routing baseline', () => {
       messageId: 'human-msg-1',
       role: 'user',
       mentionDepth: 0,
+      mentions: undefined,
+    }))
+
+    await emitAck(human, 'message', {
+      roomId: 'room-1',
+      id: 'human-msg-2',
+      content: '@Worker hello',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+    })
+
+    expect(processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
+      messageId: 'human-msg-2',
+      mentions: [{ type: 'agent', participantId: 'agent-worker' }],
     }))
   })
 
@@ -121,14 +135,16 @@ describe('group chat agent routing baseline', () => {
   it('routes agent replies below the default mention-depth guard', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    groupServer.getStorage().registerTrustedAgentMessageMetadata('room-1', 'agent-msg-1', 3, 'handoff:agent-msg-1')
 
     await emitAck(agent, 'message', {
       roomId: 'room-1',
       id: 'agent-msg-1',
-      content: '@Worker chain handoff',
+      content: '@Reviewer chain handoff',
       role: 'assistant',
       mentionDepth: 3,
       agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
     expect(processMentions).toHaveBeenCalledWith('room-1', expect.objectContaining({
@@ -138,17 +154,19 @@ describe('group chat agent routing baseline', () => {
     }))
   })
 
-  it('does not route agent replies at the default mention-depth guard', async () => {
+  it('does not trust forged agent depth or chain identity', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
 
     await emitAck(agent, 'message', {
       roomId: 'room-1',
       id: 'agent-msg-2',
-      content: '@Worker stop looping',
+      content: '@Reviewer stop looping',
       role: 'assistant',
-      mentionDepth: 4,
+      mentionDepth: 0,
+      handoffChainId: 'forged-chain',
       agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
     })
 
     expect(processMentions).not.toHaveBeenCalled()

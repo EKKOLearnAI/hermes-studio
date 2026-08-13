@@ -31,6 +31,14 @@ async function loadRouteSession() {
   }
 }
 
+async function applyRouteProfile() {
+  const profile = routeProfile.value
+  if (!profile || profile === profilesStore.activeProfileName) return
+  if (!profilesStore.profiles.some(item => item.name === profile)) return
+  await profilesStore.switchProfile(profile)
+  chatStore.setSessionProfileFilter(profile)
+}
+
 onMounted(async () => {
   chatStore.setRuntimeMode('global_agent')
   appStore.loadModels()
@@ -39,6 +47,7 @@ onMounted(async () => {
     settingsStore.fetchSettings(),
   ])
   chatStore.validateSessionProfileFilter(profilesStore.profiles.map(profile => profile.name))
+  await applyRouteProfile()
   await loadRouteSession()
 })
 
@@ -48,6 +57,7 @@ onUnmounted(() => {
 
 watch([routeSessionId, routeProfile], async ([sessionId]) => {
   if (chatStore.runtimeMode !== 'global_agent' || !chatStore.sessionsLoaded) return
+  await applyRouteProfile()
   if (!sessionId) {
     await chatStore.loadSessions(chatStore.sessionProfileFilter)
     return

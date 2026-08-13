@@ -45,6 +45,9 @@ jobs:
       - name: Keep production dependencies only
         run: npm prune --omit=dev --no-audit --no-fund
 
+      - name: Verify image processing runtime
+        run: npm run verify:sharp-runtime
+
       - name: Package Web UI
         id: package
         shell: bash

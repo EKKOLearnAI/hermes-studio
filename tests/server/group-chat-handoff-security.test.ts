@@ -92,6 +92,35 @@ describe('group chat Agent handoff security limits', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('allows handoff requests to a remote HTTP group chat server', async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/submit')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          request: { expiresAt: Date.now() + GROUP_AGENT_PAIRING_REQUEST_TTL_MS },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+      }
+      return new Promise<Response>(() => undefined)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = handoffContext({
+      ...handoffBody(),
+      cloudOrigin: 'http://47.243.215.84:8088',
+    })
+
+    await connectLocalAgentHandoff(ctx)
+
+    expect(ctx.status).toBe(202)
+    expect(ctx.body).toEqual({ ok: true, accepted: true })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^http:\/\/47\.243\.215\.84:8088\/api\/hermes\/group-chat\/invites\/ROOMCODE\/agent-links\//),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('limits concurrent handoffs for one authenticated local user', async () => {
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input)

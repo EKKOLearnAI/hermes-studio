@@ -73,6 +73,70 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 \`\`\`
 `;
 
+export const AI_OUTPUT_FORMAT_GUIDELINES_EN = `
+# Output format guidelines
+
+When your response includes an image, video, or file reference, use Markdown and reference the absolute local path.
+
+## Path rules
+
+- Unix/macOS/WSL: use \`/path/to/file\`, for example \`/tmp/screenshot.png\`
+- Windows: use an absolute drive-letter path and replace backslashes \`\\\` with forward slashes \`/\`, for example \`C:/Users/Administrator/Desktop/screenshot.png\`
+- Wrap Windows link targets in angle brackets so the drive-letter colon and special characters are parsed correctly, for example \`<C:/Users/Administrator/Desktop/screenshot.png>\`
+- If a path contains spaces, Chinese characters, or other special characters, wrap the link target in angle brackets or URL-encode the path
+- Make sure the file exists and the path is correct
+
+## Image format
+
+Use Markdown image syntax:
+
+\`\`\`
+![Image description](/tmp/screenshot.png)
+![Sub2API Dashboard](/tmp/sub2api-dashboard.png)
+![Desktop screenshot](<C:/Users/Administrator/Desktop/screenshot.png>)
+\`\`\`
+
+## Video format
+
+Use Markdown link syntax for video files. Supported formats are .mp4, .webm, and .mov. The client renders them as playable videos with native controls, up to 640x480.
+
+\`\`\`
+[Screen recording](/tmp/screen-recording.mp4)
+[Demo](/tmp/demo.webm)
+[Recording 2026-05-08 15.19.46](/Users/ekko/Desktop/recording%202026-05-08%2015.19.46.mov)
+[Recording 2026-05-08 15.19.46](</Users/ekko/Desktop/recording 2026-05-08 15.19.46.mov>)
+[Windows recording](<C:/Users/Administrator/Desktop/screen recording.mov>)
+\`\`\`
+
+Incorrect examples:
+\`\`\`
+[Recording 2026-05-08 15.19.46](/Users/ekko/Desktop/recording 2026-05-08 15.19.46.mov)
+![Desktop screenshot](C:\\Users\\Administrator\\Desktop\\screenshot.png)
+\`\`\`
+
+## File link format
+
+Use Markdown link syntax:
+
+\`\`\`
+[Download report](/tmp/monthly-report.pdf)
+[Download report](<C:/Users/Administrator/Desktop/monthly-report.pdf>)
+\`\`\`
+
+## Sending a file to the user
+
+When the user asks you to send, share, or deliver a file, return its path in one of the formats above:
+
+\`\`\`
+![Image description](/path/to/image.png)
+![Windows image](<C:/Users/Administrator/Desktop/image.png>)
+[Video name](/path/to/video.mp4)
+[Windows video](<C:/Users/Administrator/Desktop/video.mp4>)
+[File name](/path/to/file.pdf)
+[Windows file](<C:/Users/Administrator/Desktop/file.pdf>)
+\`\`\`
+`;
+
 /**
  * Stable Hermes Studio MCP usage guidance. This intentionally avoids runtime
  * values such as profile names or bearer tokens; those are supplied by MCP
@@ -100,7 +164,10 @@ Return the result for this node clearly and concisely. Do not describe the workf
  * @param customPrompt - Optional custom system prompt to prepend
  * @returns Complete system prompt string
  */
-export function getSystemPrompt(customPrompt?: string, options?: { source?: string | null }): string {
+export function getSystemPrompt(
+  customPrompt?: string,
+  options?: { source?: string | null; outputLanguage?: 'zh' | 'en' },
+): string {
   const parts: string[] = [];
 
   if (customPrompt) {
@@ -112,7 +179,9 @@ export function getSystemPrompt(customPrompt?: string, options?: { source?: stri
   }
 
   parts.push(HERMES_MCP_USAGE_GUIDELINES.join('\n'));
-  parts.push(AI_OUTPUT_FORMAT_GUIDELINES);
+  parts.push(options?.outputLanguage === 'en'
+    ? AI_OUTPUT_FORMAT_GUIDELINES_EN
+    : AI_OUTPUT_FORMAT_GUIDELINES);
 
   return parts.join('\n\n');
 }

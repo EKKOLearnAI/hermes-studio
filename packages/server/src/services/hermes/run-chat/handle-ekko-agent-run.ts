@@ -44,6 +44,7 @@ import { observeRunChatPetEvent } from '../pet-state-socket'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
 import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
+import { buildOutboundRunEvent } from './resume-payload'
 import { estimateUsageTokensFromMessages } from './usage'
 import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
@@ -467,9 +468,10 @@ export async function handleEkkoAgentRun(
     observeRunChatPetEvent(profile, event, tagged)
     data.onEvent?.(event, tagged)
     appendStateEvent(state, event, tagged)
-    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    const outbound = buildOutboundRunEvent(event, tagged)
+    nsp.to(`session:${sessionId}`).emit(event, outbound)
     if (!data.onEvent && !nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
-      socket.emit(event, tagged)
+      socket.emit(event, outbound)
     }
   }
 
@@ -530,6 +532,15 @@ export async function handleEkkoAgentRun(
       session_id: sessionId,
       role,
       content: storageText,
+      timestamp: now,
+    })
+    data.onEvent?.('message.created', {
+      event: 'message.created',
+      session_id: sessionId,
+      queue_id: data.queue_id,
+      message_id: messageId,
+      role,
+      content: displayText,
       timestamp: now,
     })
     state.messages.push({
@@ -1364,7 +1375,8 @@ export async function handleEkkoAgentRun(
     }
     assistantReasoning = agentReasoningText(result.output.reasoning) || assistantReasoning
     const hadToolActivity = result.steps.some(step => step.type === 'tool')
-    if (!assistantText.trim() && !assistantReasoning.trim() && !hadToolActivity) {
+    const boundaryInterrupted = result.output.finishReason === 'boundary_interrupt'
+    if (!boundaryInterrupted && !assistantText.trim() && !assistantReasoning.trim() && !hadToolActivity) {
       const error = 'Model provider returned an empty response after streaming and non-streaming attempts.'
       logger.warn({
         session_id: sessionId,
@@ -1455,6 +1467,7 @@ export async function handleEkkoAgentRun(
     emit('run.completed', {
       event: 'run.completed',
       run_id: runId || result.runId,
+      message_id: assistantMessageId || undefined,
       output: assistantText,
       context: result.context,
       contextTokens: contextEstimate?.contextTokens,

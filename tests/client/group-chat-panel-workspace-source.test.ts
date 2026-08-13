@@ -2,6 +2,22 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('GroupChatPanel workspace save handling', () => {
+  it('keeps free-text input available alongside clarification choices in single and group chat', () => {
+    const sources = [
+      readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8'),
+      readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8'),
+    ]
+
+    for (const source of sources) {
+      const start = source.indexOf('v-if="!visibleApproval && visibleClarify"')
+      const clarifyPanel = source.slice(start, source.indexOf('</Transition>', start))
+
+      expect(clarifyPanel).toContain('visibleClarify.choices')
+      expect(clarifyPanel).toContain('<div class="clarify-float-input-row">')
+      expect(clarifyPanel).not.toContain('<div v-else class="clarify-float-input-row">')
+    }
+  })
+
   it('coerces null picker values before trimming so clearing the input saves an empty workspace', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
@@ -9,13 +25,22 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain('workspaceValue.value.trim()')
   })
 
-  it('gates workspace mutation controls to rooms the server marks manageable', () => {
+  it('gates room management controls while allowing an Agent owner to handle a directed approval', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const visibleApproval = source.slice(
+      source.indexOf('const visibleApproval = computed(() =>'),
+      source.indexOf('const visibleClarify = computed(() =>'),
+    )
+    const approvalHandler = source.slice(
+      source.indexOf('async function handleApproval('),
+      source.indexOf('async function handleClarify('),
+    )
 
     expect(source).toContain('const currentRoomCanManage = computed(() => !props.standalone && canManageRoom(currentRoom.value))')
     expect(source).toContain("const currentRoomCanMentionAll = computed(() => !props.standalone && currentRoom.value?.canMentionAll === true)")
-    expect(source).toContain('const visibleApproval = computed(() =>')
-    expect(source).toContain('currentRoomCanManage.value && pendingAgentPairings.value.length === 0')
+    expect(visibleApproval).toContain('pendingAgentPairings.value.length === 0')
+    expect(visibleApproval).not.toContain('currentRoomCanManage.value')
+    expect(approvalHandler).not.toContain('currentRoomCanManage.value')
     expect(source).toContain('if (!currentRoomCanManage.value) return')
     expect(source).toContain('if (!canManageRoom(room)) return')
     expect(source).toContain("options.push({ label: t('chat.setWorkspace'), key: 'set-workspace' })")
@@ -35,6 +60,19 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain(':title="currentRoom.workspace"')
     expect(source).not.toContain('class="workspace-chip"')
     expect(source).not.toContain("currentWorkspaceLabel || t('chat.setWorkspace')")
+  })
+
+  it('offers a selected manual room link when browser clipboard access fails', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(source).toContain('const roomLink = buildRoomUrl(roomId)')
+    expect(source).toContain('manualRoomLink.value = roomLink')
+    expect(source).toContain('showManualRoomLinkModal.value = true')
+    expect(source).toContain('manualRoomLinkInput.value?.select()')
+    expect(source).toContain('v-model:show="showManualRoomLinkModal"')
+    expect(source).toContain(':aria-label="t(\'groupChat.copyRoomLink\')"')
+    expect(source).toContain("t('groupChat.manualCopyRoomLinkHint')")
+    expect(source).toContain('ref="manualRoomLinkInput"')
   })
 
   it('shows rolling-summary progress above the input like a single-chat tool call', () => {
@@ -155,8 +193,10 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(rail).toContain(':key="member.userId"')
     expect(rail).toContain('v-for="agent in store.agents"')
     expect(rail).toContain('class="agent-avatar-rail-item"')
+    expect(rail).toContain("'agent-avatar-rail-offline': agent.connectionStatus === 'offline'")
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
     expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
+    expect(rail).toContain("'agent-avatar-rail-offline': member.connectionStatus === 'offline'")
     expect(rail).toContain('@click="handleRoomMemberClick(member)"')
     expect(rail).toContain('@click="handleAgentRailClick(agent)"')
     expect(rail).not.toContain(':disabled="!currentRoomCanManage"')
@@ -169,6 +209,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('overflow-y: auto')
     expect(source).toContain('animation: member-avatar-typing-breathe 1.6s ease-in-out infinite')
     expect(source).toContain('@keyframes member-avatar-typing-breathe')
+    expect(source).toContain('.agent-avatar-rail-offline')
+    expect(source).toContain('filter: grayscale(1)')
+    expect(source).toContain('opacity: 0.42')
   })
 
   it('keeps invite-only chat free of settings and speech controls', () => {
@@ -191,12 +234,16 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(panel).toContain('class="agent-owner-avatar-badge"')
     expect(panel).toContain('function canRemoveAgent(agent: RoomAgent)')
     expect(panel).toContain('v-if="canRemoveAgent(agent)"')
-    expect(panel).toContain('@positive-click="handleRemoveAgent(agent)"')
+    expect(panel).toContain('@click.stop="handleRemoveAgent(agent)"')
+    expect(panel).toContain('@click="handleRemoveAgent(editingAgent)"')
+    expect(panel).not.toContain("t('groupChat.deleteAgentConfirm'")
     expect(panel).toContain(':disabled="!canRemoveAgent(agent) && !agentContextStatus(agent)"')
     expect(panel).toContain("const ownerMemberId = currentRoom.value?.ownerMemberId || ''")
     expect(panel).toContain('if (ownerMemberId && member.userId === ownerMemberId) return 0')
     expect(panel).toContain('if (member.userId === store.userId) return 1')
-    expect(panel).toContain('@positive-click="handleRemoveMember(member)"')
+    expect(panel).toContain('@click.stop="handleRemoveMember(member)"')
+    expect(panel).not.toContain("t('groupChat.removeMemberConfirm'")
+    expect(sharedView).toMatch(/<GroupChatPanel[\s\S]*?standalone/)
     expect(sharedView).toContain('@request-agent-link="openAgentLinkModal"')
     expect(sharedView).toContain('@request-agent-edit="openOwnedAgentEditor"')
     expect(sharedView).toContain('editConnectorId: agent.connectorId')
@@ -204,11 +251,37 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(sharedView).toContain('/?groupChatAgentLink=1#/group-chat-link')
     expect(sharedView).toContain('v-model:value="targetOriginDraft"')
     expect(sharedView).toContain("const targetOriginDraft = ref('http://127.0.0.1:8748')")
+    expect(sharedView).toContain("import { generateClientUuid } from '@/utils/client-random'")
+    expect(sharedView).not.toContain('crypto.randomUUID')
     expect(sharedView).not.toContain('probeTargets')
     expect(sharedView).not.toContain('detectedTargetOrigins')
     expect(sharedView).not.toContain('class="agent-link-launcher"')
     expect(linkView).not.toContain('disconnectLocalGroupAgent')
     expect(linkView).not.toContain('disconnectConnection')
+    expect(linkView).not.toContain('class="existing-connections"')
+    expect(linkView).not.toContain('class="connection-row"')
+    expect(linkView).not.toContain('class="connection-state"')
+    expect(panel).toContain('listLocalGroupAgentConnections')
+    expect(panel).toContain('buildRemoteGroupChatRooms')
+    expect(panel).toContain("t('groupChat.localRooms')")
+    expect(panel).toContain("t('groupChat.remoteRooms')")
+    expect(panel).toContain('v-if="store.rooms.length"')
+    expect(panel).toContain('v-if="remoteRooms.length"')
+    expect(panel).toContain(':aria-expanded="!localRoomsCollapsed"')
+    expect(panel).toContain(':aria-expanded="!remoteRoomsCollapsed"')
+    expect(panel).toContain('handleSelectRemoteRoom(room)')
+    expect(panel).toContain('/#/share/group-chat/${encodeURIComponent(room.inviteCode)}')
+    expect(panel).not.toContain('/#/hermes/group-chat/room/${encodeURIComponent(room.roomId)}')
+    expect(panel).toContain(':aria-disabled="!room.inviteCode"')
+    expect(panel).toContain('@contextmenu="handleRemoteRoomContextMenu($event, room)"')
+    expect(panel).toContain('renameLocalGroupAgentRoom')
+    expect(panel).toContain('leaveLocalGroupAgentRoom')
+    expect(panel).toContain("t('groupChat.leaveRemoteRoom')")
+    expect(panel).toContain("t('groupChat.leaveRemoteRoomConfirm'")
+    expect(panel).toContain("t('groupChat.renameRemoteRoom')")
+    expect(panel).toContain("t('groupChat.remoteRoomRenameFailed')")
+    expect(panel).toContain("t('groupChat.remoteRoomLeaveFailed')")
+    expect(panel).not.toContain("t('common.rename')")
     expect(router).toMatch(/path: '\/group-chat-link'[\s\S]*?meta: \{ standaloneChat: true \}/)
     expect(input).toContain('v-if="props.showSettings"')
     expect(input).toContain('store.setAutoPlaySpeech(false)')
@@ -296,7 +369,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(runCardSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).not.toContain('run-agent-description')
     expect(panelSource).toContain('@mention-agent="handleMentionAgent"')
-    expect(panelSource).toContain('groupChatInputRef.value?.insertMention?.(agent.name)')
+    expect(panelSource).toContain('groupChatInputRef.value?.insertMention?.(agent.name, agent.agentId)')
     expect(panelSource).not.toContain('class="agent-avatar-popover"')
   })
 
@@ -356,6 +429,18 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('<FolderPicker v-model="workspaceValue" />')
     expect(source).toContain('@click="handleSaveWorkspace"')
     expect(source).toContain(":title=\"t('groupChat.roomSettings')\"")
+  })
+
+  it('renders durable handoff stops under their source message with continue and settings actions', () => {
+    const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(list).toContain('handoffChainFor(msg)')
+    expect(list).toContain('data-handoff-chain-id')
+    expect(list).toContain("emit('continueHandoff'")
+    expect(list).toContain("emit('adjustHandoffSettings')")
+    expect(panel).toContain('@continue-handoff="handleContinueHandoff"')
+    expect(panel).toContain('@adjust-handoff-settings="handleOpenRoomSettings"')
   })
 
   it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {

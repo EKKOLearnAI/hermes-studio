@@ -35,6 +35,7 @@ RUN npm ci --ignore-scripts && npm rebuild node-pty
 COPY . .
 
 RUN npm run build && npm prune --omit=dev
+RUN npm run verify:sharp-runtime
 
 ENV NODE_ENV=production
 ENV HOME=/home/agent

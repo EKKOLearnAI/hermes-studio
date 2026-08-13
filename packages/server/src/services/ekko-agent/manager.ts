@@ -6,6 +6,8 @@ import {
   setupEkkoAgent,
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
+  type AgentRuntimeBoundaryInterruptRequest,
+  type AgentRuntimeBoundaryInterruptResult,
   type AgentRuntimeContextEstimate,
   type AgentRuntimeOptions,
 } from '../../../../ekko-agent/src'
@@ -82,6 +84,12 @@ export class GlobalEkkoAgent {
 
   async abortBackgroundTasks(sessionId?: string): Promise<number> {
     return this.runtime?.abortBackgroundTasks(sessionId) ?? 0
+  }
+
+  requestBoundaryInterrupt(
+    input: AgentRuntimeBoundaryInterruptRequest,
+  ): AgentRuntimeBoundaryInterruptResult {
+    return this.runtime?.requestBoundaryInterrupt(input) ?? { status: 'not_running' }
   }
 
   close(): void {

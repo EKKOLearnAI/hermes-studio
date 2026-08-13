@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 
 const store = useGroupChatStore()
+const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +16,18 @@ const routeRoomId = computed(() => {
     const value = route.params.roomId
     return typeof value === 'string' && value.trim() ? value : null
 })
+
+const routeProfile = computed(() => {
+    const value = route.query?.profile
+    return typeof value === 'string' && value.trim() ? value : null
+})
+
+async function applyRouteProfile() {
+    const profile = routeProfile.value
+    if (!profile || profile === profilesStore.activeProfileName) return
+    if (!profilesStore.profiles.some(item => item.name === profile)) return
+    await profilesStore.switchProfile(profile)
+}
 
 async function syncRouteRoom() {
     const roomId = routeRoomId.value
@@ -35,6 +49,8 @@ async function syncRouteRoom() {
 }
 
 onMounted(async () => {
+    await profilesStore.fetchProfiles()
+    await applyRouteProfile()
     await store.connect()
     await Promise.all([
         store.loadRooms(),
@@ -43,13 +59,10 @@ onMounted(async () => {
     await syncRouteRoom()
 })
 
-watch(routeRoomId, async () => {
+watch([routeRoomId, routeProfile], async () => {
+    await applyRouteProfile()
     if (store.rooms.length === 0) return
     await syncRouteRoom()
-})
-
-onUnmounted(() => {
-    store.disconnect()
 })
 </script>
 

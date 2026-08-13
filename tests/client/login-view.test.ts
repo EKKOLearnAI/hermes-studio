@@ -99,6 +99,20 @@ describe('LoginView password login', () => {
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
   })
 
+  it('returns to the Agent link page after the first login', async () => {
+    const redirect = '/group-chat-link?cloudOrigin=http%3A%2F%2F47.243.215.84%3A8088&requestId=handoff-id'
+    mockRoute.query = { redirect }
+    mockLoginWithPassword.mockResolvedValue({ token: 'jwt-token', userId: 7, theme: null })
+    const wrapper = mount(LoginView)
+
+    const inputs = wrapper.findAll('input.login-input')
+    await inputs[0].setValue('admin')
+    await inputs[1].setValue('123456')
+    await wrapper.find('form.login-form').trigger('submit')
+
+    expect(mockReplace).toHaveBeenCalledWith(redirect)
+  })
+
   it('shows the default login hint', () => {
     const wrapper = mount(LoginView)
 

@@ -7,10 +7,20 @@ export interface SessionCategoryAssignment {
   categoryId?: number | null;
 }
 
+export interface RecentSessionAssignment extends SessionCategoryAssignment {
+  id: string;
+  updatedAt?: number | null;
+}
+
 export interface VisibleSessionCategoryGroup<T> {
   key: string;
   label: string;
   sessions: T[];
+}
+
+export interface RecentSessionPartition<T> {
+  group: VisibleSessionCategoryGroup<T>;
+  remaining: T[];
 }
 
 export function buildVisibleSessionCategoryGroups<T extends SessionCategoryAssignment>(
@@ -37,4 +47,32 @@ export function buildVisibleSessionCategoryGroups<T extends SessionCategoryAssig
     });
   }
   return groups;
+}
+
+export function buildRecentSessionCategoryGroup<T extends RecentSessionAssignment>(
+  sessions: readonly T[],
+  limit: number,
+  label: string,
+): VisibleSessionCategoryGroup<T> {
+  return partitionRecentSessions(sessions, limit, label).group;
+}
+
+export function partitionRecentSessions<T extends RecentSessionAssignment>(
+  sessions: readonly T[],
+  limit: number,
+  label: string,
+): RecentSessionPartition<T> {
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 10)));
+  const recent = [...sessions]
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, safeLimit);
+  const recentIds = new Set(recent.map(session => session.id));
+  return {
+    group: {
+      key: "recent",
+      label,
+      sessions: recent,
+    },
+    remaining: sessions.filter(session => !recentIds.has(session.id)),
+  };
 }

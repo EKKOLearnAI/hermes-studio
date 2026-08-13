@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.6.39",
+  "version": "0.6.42",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -41,6 +41,7 @@
     "dev:server": "nodemon",
     "build": "npm run openapi:generate && vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "harness:check": "node scripts/harness-check.mjs",
+    "verify:sharp-runtime": "node scripts/verify-sharp-runtime.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
@@ -86,8 +87,18 @@
     "katex": "^0.17.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
+    "sharp": "^0.35.3",
+    "sherpa-onnx-node": "1.13.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
+  },
+  "optionalDependencies": {
+    "sherpa-onnx-darwin-arm64": "1.13.3",
+    "sherpa-onnx-darwin-x64": "1.13.3",
+    "sherpa-onnx-linux-arm64": "1.13.3",
+    "sherpa-onnx-linux-x64": "1.13.3",
+    "sherpa-onnx-win-ia32": "1.13.3",
+    "sherpa-onnx-win-x64": "1.13.3"
   },
   "devDependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",
@@ -153,5 +164,13 @@
     "vue-tsc": "^3.2.8",
     "vue-virtual-scroller": "^3.0.4",
     "ws": "^8.20.0"
+  },
+  "overrides": {
+    "sherpa-onnx-darwin-arm64": "1.13.3",
+    "sherpa-onnx-darwin-x64": "1.13.3",
+    "sherpa-onnx-linux-arm64": "1.13.3",
+    "sherpa-onnx-linux-x64": "1.13.3",
+    "sherpa-onnx-win-ia32": "1.13.3",
+    "sherpa-onnx-win-x64": "1.13.3"
   }
 }

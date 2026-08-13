@@ -1200,10 +1200,56 @@ describe('workflow manager', () => {
     try {
       const runPromise = manager.runNow(workflow.id)
       await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).nodeStatuses.header).toBe('pending_approval'))
+      expect(manager.getRuntimeStatus(workflow.id).pendingApprovals).toEqual([
+        { nodeId: 'header', executionId: 'header@loop:retry:0' },
+      ])
       const runId = manager.getRuntimeStatus(workflow.id).runId!
       expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:0')).toBe(true)
-      await vi.waitFor(() => expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:1')).toBe(true))
+      await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).pendingApprovals).toEqual([
+        { nodeId: 'header', executionId: 'header@loop:retry:1' },
+      ]))
+      expect(manager.approveNode(workflow.id, runId, 'header', true, 'header@loop:retry:1')).toBe(true)
       expect((await runPromise).run.status).toBe('completed')
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it('atomically rejects simultaneous runs of the same workflow before either can overwrite approval status', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { listActiveWorkflowRuns } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
+    initAllStores()
+    const manager = new WorkflowManager()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'review' })
+    const workflow = manager.create({
+      name: `Concurrent approval ${Date.now()}`, profile: 'default',
+      nodes: [{ id: 'review', type: 'agent', data: { title: 'Review', agent: 'hermes', input: 'review', approvalRequired: true } }],
+      edges: [],
+    })
+    try {
+      const attempts = [manager.runNow(workflow.id), manager.runNow(workflow.id)]
+      const observed = attempts.map(attempt => attempt.then(
+        value => ({ status: 'fulfilled' as const, value }),
+        reason => ({ status: 'rejected' as const, reason }),
+      ))
+      await vi.waitFor(() => expect(manager.getRuntimeStatus(workflow.id).nodeStatuses.review).toBe('pending_approval'))
+      const firstRunId = manager.getRuntimeStatus(workflow.id).runId!
+      const rejected = await Promise.race(observed.map(async attempt => {
+        const result = await attempt
+        return result.status === 'rejected' ? result.reason : null
+      }))
+
+      expect(rejected).toMatchObject({ message: 'workflow is already running', status: 409 })
+      expect(listActiveWorkflowRuns().filter(run => run.workflow_id === workflow.id)).toHaveLength(1)
+      expect(manager.getRuntimeStatus(workflow.id)).toMatchObject({
+        runId: firstRunId,
+        nodeStatuses: { review: 'pending_approval' },
+        pendingApprovals: [{ nodeId: 'review', executionId: 'review' }],
+      })
+
+      expect(manager.approveNode(workflow.id, firstRunId, 'review', true, 'review')).toBe(true)
+      const settled = await Promise.allSettled(attempts)
+      expect(settled.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(settled.filter(result => result.status === 'rejected')).toHaveLength(1)
     } finally { await manager.delete(workflow.id) }
   })
 

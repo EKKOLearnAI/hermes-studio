@@ -32,6 +32,7 @@ import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 import { markAbortCompleted } from './abort'
+import { buildOutboundRunEvent } from './resume-payload'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
@@ -421,9 +422,11 @@ export async function handleBridgeRun(
     return
   }
 
-  let fullInstructions = instructions
-    ? `${getSystemPrompt(undefined, { source: data.session_source || data.source })}\n${instructions}`
-    : getSystemPrompt(undefined, { source: data.session_source || data.source })
+  // `instructions` already carries the Studio guidance: the chat-run socket
+  // composes it before delegating here. Prepending it again duplicated the whole
+  // block — MCP usage plus the output-format rules — byte for byte in the system
+  // message of every request. Compose only when a caller hands us nothing.
+  let fullInstructions = instructions || getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
   const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !sessionRow?.workspace)
@@ -540,6 +543,15 @@ export async function handleBridgeRun(
       display_content: displayContentForStorage,
       timestamp: now,
     })
+    data.onEvent?.('message.created', {
+      event: 'message.created',
+      session_id,
+      queue_id: data.queue_id,
+      message_id: messageId,
+      role: displayRole,
+      content: inputStr,
+      timestamp: now,
+    })
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
@@ -566,9 +578,10 @@ export async function handleBridgeRun(
     const tagged = { ...payload, session_id }
     observePetEvent(profile, event, tagged)
     data.onEvent?.(event, tagged)
-    nsp.to(`session:${session_id}`).emit(event, tagged)
+    const outbound = buildOutboundRunEvent(event, tagged)
+    nsp.to(`session:${session_id}`).emit(event, outbound)
     if (!data.onEvent && !nsp.adapter.rooms.get(`session:${session_id}`)?.size && socket.connected) {
-      socket.emit(event, tagged)
+      socket.emit(event, outbound)
     }
   }
   if (shouldEmitWorkspaceUpdate) {
@@ -847,6 +860,7 @@ export async function resumeBridgeRun(
     provider?: string | null
     workspace?: string | null
     source?: string | null
+    onEvent?: (event: string, payload: any) => void
   },
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -877,9 +891,11 @@ export async function resumeBridgeRun(
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id: sessionId }
     observePetEvent(profile, event, tagged)
-    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    args.onEvent?.(event, tagged)
+    const outbound = buildOutboundRunEvent(event, tagged)
+    nsp.to(`session:${sessionId}`).emit(event, outbound)
     if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
-      socket.emit(event, tagged)
+      socket.emit(event, outbound)
     }
   }
 
@@ -1694,6 +1710,7 @@ async function applyBridgeChunkAsync(
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
+    message_id: state.bridgeAssistantMessageId,
     output: finalResponse,
     result: chunk.result,
     error: terminalError || chunk.error,

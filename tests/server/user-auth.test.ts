@@ -464,6 +464,7 @@ describe('user auth tables and middleware', () => {
     expect(ctx.status).toBe(200)
     expect(ctx.body.token).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
     expect(ctx.body.userId).toBeGreaterThan(0)
+    expect(ctx.body.profiles).toContain('default')
     expect(ctx.body.theme).toEqual({
       fontSize: 14,
       textColor: null,

@@ -146,6 +146,25 @@ function getEncoder() {
 // pathological case up front and use the cheap heuristic instead. Normal text
 // (even very long, but space-separated) keeps the exact tiktoken path.
 const MAX_LETTER_RUN = 2000
+// Exact js-tiktoken encoding is synchronous. Even well-separated text takes
+// seconds once tool output reaches megabyte scale, starving unrelated HTTP
+// requests on the server thread. Token totals are estimates, so cap exact
+// encoding to a bounded input size and use the existing linear heuristic above
+// it. Normal prompts and the existing 50 KB exact-tokenizer coverage remain
+// unchanged.
+const MAX_EXACT_TOKEN_TEXT_BYTES = 256 * 1024
+// Keep fallback work bounded even when an internal tool or bridge hands us a
+// very large string. Up to this limit we scan the complete distribution for a
+// useful estimate. Above it we use the conservative all-CJK upper estimate;
+// this is O(1), deterministic, and cannot be defeated by an adversarial sample
+// layout. The persisted content is not changed by token accounting.
+const MAX_HEURISTIC_SCAN_TEXT_UNITS = 8 * 1024 * 1024
+
+function exceedsExactTokenBudget(text: string): boolean {
+  if (text.length > MAX_EXACT_TOKEN_TEXT_BYTES) return true
+  return text.length > MAX_EXACT_TOKEN_TEXT_BYTES / 3
+    && Buffer.byteLength(text, 'utf8') > MAX_EXACT_TOKEN_TEXT_BYTES
+}
 
 function hasPathologicalRun(text: string): boolean {
   let maxRun = 0
@@ -164,13 +183,19 @@ function hasPathologicalRun(text: string): boolean {
 }
 
 function heuristicTokens(text: string): number {
-  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-  const other = text.length - cjk
-  return Math.ceil(cjk * 1.5 + other / 4)
+  if (text.length === 0) return 0
+  // A tokenizer cannot emit more tokens than the UTF-8 byte sequence contains:
+  // each token consumes at least one byte. Buffer.byteLength is bounded by the
+  // 8 Mi code-unit gate; above it, three bytes per UTF-16 code unit is a safe
+  // constant-time upper bound (including unpaired surrogates; valid pairs use
+  // four bytes for two units). This avoids both adversarial underestimation and
+  // unbounded main-thread scans.
+  if (text.length > MAX_HEURISTIC_SCAN_TEXT_UNITS) return text.length * 3
+  return Buffer.byteLength(text, 'utf8')
 }
 
 export function countTokens(text: string): number {
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  if (exceedsExactTokenBudget(text) || hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     return getEncoder().encode(text).length
   } catch {
@@ -179,7 +204,7 @@ export function countTokens(text: string): number {
 }
 
 export function countTokensForModel(text: string, model: string): number {
-  if (hasPathologicalRun(text)) return heuristicTokens(text)
+  if (exceedsExactTokenBudget(text) || hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     const enc = encodingForModel(model as any)
     return enc.encode(text).length

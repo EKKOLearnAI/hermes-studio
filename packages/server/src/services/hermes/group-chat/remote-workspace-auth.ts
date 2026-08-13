@@ -4,6 +4,17 @@ const REMOTE_WORKSPACE_GRANT_TTL_MS = 165_000
 const MAX_ACTIVE_REMOTE_WORKSPACE_GRANTS = 1_000
 const MAX_REMOTE_WORKSPACE_REQUESTS_PER_RUN = 200
 
+export type RemoteWorkspaceGrantAgentSnapshot = {
+  name: string
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  profile: string
+  provider: string
+  model: string
+  description: string
+  avatar: string
+  ownerMemberId: string
+}
+
 export type RemoteWorkspaceGrant = {
   runId: string
   roomId: string
@@ -11,6 +22,7 @@ export type RemoteWorkspaceGrant = {
   workspace: string
   access: 'read-write'
   expiresAt: number
+  agentSnapshot?: RemoteWorkspaceGrantAgentSnapshot
 }
 
 const grants = new Map<string, RemoteWorkspaceGrant>()
@@ -42,6 +54,7 @@ export function issueRemoteWorkspaceGrant(input: {
   roomId: string
   agentId: string
   workspace: string
+  agentSnapshot?: RemoteWorkspaceGrantAgentSnapshot
   now?: number
 }): { token: string; grant: RemoteWorkspaceGrant } {
   const now = input.now ?? Date.now()
@@ -58,6 +71,7 @@ export function issueRemoteWorkspaceGrant(input: {
     workspace: input.workspace,
     access: 'read-write',
     expiresAt: now + REMOTE_WORKSPACE_GRANT_TTL_MS,
+    ...(input.agentSnapshot ? { agentSnapshot: { ...input.agentSnapshot } } : {}),
   }
   grants.set(digest, grant)
   grantRequestCounts.set(digest, 0)

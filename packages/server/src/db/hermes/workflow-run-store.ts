@@ -21,6 +21,8 @@ export interface WorkflowRunRecord {
   finished_at: number | null
   created_at: number
   error: string | null
+  trigger_source: 'manual' | 'scheduled'
+  scheduled_at: number | null
 }
 
 export interface WorkflowRunEdgeEvaluationRecord {
@@ -94,6 +96,8 @@ function rowToRunRecord(row: Record<string, any>): WorkflowRunRecord {
     finished_at: row.finished_at == null ? null : Number(row.finished_at),
     created_at: Number(row.created_at || 0),
     error: row.error == null || row.error === '' ? null : String(row.error),
+    trigger_source: row.trigger_source === 'scheduled' ? 'scheduled' : 'manual',
+    scheduled_at: row.scheduled_at == null ? null : Number(row.scheduled_at),
   }
 }
 
@@ -205,6 +209,8 @@ export function createWorkflowRun(input: {
   deadline_at?: number | null
   started_at?: number | null
   error?: string | null
+  trigger_source?: 'manual' | 'scheduled'
+  scheduled_at?: number | null
 }): WorkflowRunRecord {
   const now = Date.now()
   const record: WorkflowRunRecord = {
@@ -223,6 +229,8 @@ export function createWorkflowRun(input: {
     finished_at: null,
     created_at: now,
     error: input.error || null,
+    trigger_source: input.trigger_source === 'scheduled' ? 'scheduled' : 'manual',
+    scheduled_at: input.scheduled_at ?? null,
   }
   const row = {
     id: record.id,
@@ -240,6 +248,8 @@ export function createWorkflowRun(input: {
     finished_at: record.finished_at,
     created_at: record.created_at,
     error: record.error,
+    trigger_source: record.trigger_source,
+    scheduled_at: record.scheduled_at,
   }
   const db = getDb()
   if (!db) {
@@ -250,8 +260,8 @@ export function createWorkflowRun(input: {
     INSERT INTO ${WORKFLOW_RUNS_TABLE} (
       id, workflow_id, profile, workspace, start_node_ids_json, status,
       snapshot_nodes_json, snapshot_edges_json, compiled_loops_json, requested_timeout_ms, deadline_at,
-      started_at, finished_at, created_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      started_at, finished_at, created_at, error, trigger_source, scheduled_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.workflow_id,
@@ -268,6 +278,8 @@ export function createWorkflowRun(input: {
     row.finished_at,
     row.created_at,
     row.error,
+    row.trigger_source,
+    row.scheduled_at,
   )
   return record
 }

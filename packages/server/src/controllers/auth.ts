@@ -223,6 +223,7 @@ export async function login(ctx: Context) {
   ctx.body = {
     token: result.token,
     userId: result.user.id,
+    profiles: accessibleProfileNames(result.user),
     theme: toUserThemePayload(getUserTheme(result.user.id)),
   }
 }

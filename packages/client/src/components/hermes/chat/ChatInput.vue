@@ -19,7 +19,13 @@ import { useMicRecorder } from '@/composables/useMicRecorder'
 import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
 import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceDialogue } from '@/composables/useVoiceDialogue'
-import { transcribeSpeech } from '@/api/hermes/stt'
+import {
+  cancelLocalSttStream,
+  finishLocalSttStream,
+  pushLocalSttStreamChunk,
+  startLocalSttStream,
+  transcribeSpeech,
+} from '@/api/hermes/stt'
 import type { StoredSttProvider } from '@/api/hermes/stt-settings'
 import { useSttSettings } from '@/composables/useSttSettings'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
@@ -140,6 +146,15 @@ const pcmRecorder = usePcmStreamRecorder({
     recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
   },
 })
+const localPcmRecorder = usePcmStreamRecorder({
+  continuous: true,
+  maxSegmentDurationMs: 1_000,
+  onChunk: queueLocalStreamChunk,
+  messages: {
+    unsupported: t('chat.voiceInput.microphoneUnsupported'),
+    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
+  },
+})
 const sttSettings = useSttSettings()
 const browserRecognition = useBrowserSpeechRecognition({
   messages: {
@@ -148,7 +163,13 @@ const browserRecognition = useBrowserSpeechRecognition({
     failedWithReason: (reason) => t('chat.voiceInput.browserSpeechFailedWithReason', { error: reason }),
   },
 })
-const activeVoiceCaptureMode = ref<'browser' | 'backend' | 'pcm' | null>(null)
+const activeVoiceCaptureMode = ref<'browser' | 'backend' | 'pcm' | 'local' | null>(null)
+const localStreamTranscript = ref('')
+const localStreamError = ref<Error | null>(null)
+let localStreamSessionId: string | null = null
+let localStreamGeneration = 0
+let localStreamQueue: Promise<void> = Promise.resolve()
+let localStreamFailure: unknown = null
 const configuredTextareaHeight = computed(() =>
   isMobileViewport.value ? null : clampChatInputHeight(settingsStore.display.chat_input_height),
 )
@@ -257,6 +278,9 @@ const voiceDialogue = useVoiceDialogue({
   stopOutputAudio: () => speech.stop(true),
 })
 const voiceDialogueTranscript = computed(() => {
+  if (activeVoiceCaptureMode.value === 'local' && voiceDialogue.status.value === 'capturing') {
+    return localStreamTranscript.value
+  }
   if (activeVoiceCaptureMode.value !== 'browser' || voiceDialogue.status.value !== 'capturing') {
     return voiceDialogue.transcript.value
   }
@@ -271,7 +295,9 @@ const shouldShowBrowserRecognitionError = computed(() =>
 )
 const voiceDialogueError = computed(() =>
   voiceDialogue.error.value?.message
+  ?? localStreamError.value?.message
   ?? (shouldShowBrowserRecognitionError.value ? browserRecognition.error.value?.message : null)
+  ?? localPcmRecorder.error.value?.message
   ?? pcmRecorder.error.value?.message
   ?? micRecorder.state.value.error?.message
   ?? null,
@@ -1004,19 +1030,80 @@ function handleSend() {
   }
 }
 
+function resetLocalStreamCapture() {
+  localStreamGeneration += 1
+  localStreamQueue = Promise.resolve()
+  localStreamFailure = null
+  localStreamTranscript.value = ''
+  localStreamError.value = null
+}
+
+async function cancelActiveLocalStreamCapture() {
+  const sessionId = localStreamSessionId
+  localStreamSessionId = null
+  if (!sessionId) return
+  await cancelLocalSttStream(sessionId).catch(() => undefined)
+}
+
+function failLocalStreamCapture(cause: unknown, generation: number) {
+  if (generation !== localStreamGeneration) return
+  localStreamFailure = cause
+  localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
+  localPcmRecorder.cancel()
+  activeVoiceCaptureMode.value = null
+  const captureId = voiceDialogue.activeCaptureId.value
+  localStreamGeneration += 1
+  void cancelActiveLocalStreamCapture()
+  voiceDialogue.cancelCapture(captureId)
+}
+
+function queueLocalStreamChunk(audio: Blob) {
+  const generation = localStreamGeneration
+  const sessionId = localStreamSessionId
+  if (!sessionId || audio.size <= 44) return localStreamQueue
+
+  localStreamQueue = localStreamQueue.then(async () => {
+    if (generation !== localStreamGeneration) return
+    const result = await pushLocalSttStreamChunk(sessionId, audio)
+    if (generation !== localStreamGeneration) return
+    localStreamTranscript.value = normalizeVoiceTranscript(result.text)
+  }).catch(cause => failLocalStreamCapture(cause, generation))
+
+  return localStreamQueue
+}
+
 async function startVoiceCapture() {
   browserRecognition.clearError()
+  localStreamError.value = null
   const { captureId } = await voiceDialogue.beginCapture()
   const useBrowserProvider = sttSettings.provider.value === 'browser'
-  const usePcmCapture = !useBrowserProvider && (isDesktopShell() || isMobileDevice())
+  const useLocalProvider = sttSettings.provider.value === 'local'
+  const usePcmCapture = !useBrowserProvider && !useLocalProvider && (isDesktopShell() || isMobileDevice())
 
   activeVoiceCaptureMode.value = useBrowserProvider
     ? 'browser'
-    : usePcmCapture ? 'pcm' : 'backend'
+    : useLocalProvider ? 'local' : usePcmCapture ? 'pcm' : 'backend'
 
   try {
     if (useBrowserProvider) {
       await browserRecognition.start({ language: browserCaptureLanguage() })
+      return
+    }
+
+    if (useLocalProvider) {
+      resetLocalStreamCapture()
+      const generation = localStreamGeneration
+      const session = await startLocalSttStream()
+      if (
+        generation !== localStreamGeneration
+        || activeVoiceCaptureMode.value !== 'local'
+        || voiceDialogue.activeCaptureId.value !== captureId
+      ) {
+        await cancelLocalSttStream(session.sessionId).catch(() => undefined)
+        return
+      }
+      localStreamSessionId = session.sessionId
+      await localPcmRecorder.start()
       return
     }
 
@@ -1025,7 +1112,13 @@ async function startVoiceCapture() {
     } else {
       await micRecorder.start()
     }
-  } catch {
+  } catch (cause) {
+    if (useLocalProvider) {
+      localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
+      localStreamGeneration += 1
+      localPcmRecorder.cancel()
+      await cancelActiveLocalStreamCapture()
+    }
     activeVoiceCaptureMode.value = null
     voiceDialogue.cancelCapture(captureId)
   }
@@ -1052,6 +1145,44 @@ async function stopVoiceCapture() {
       await voiceDialogue.commitTranscript(captureId, transcript)
     } catch {
       // Voice dialogue state already tracks send errors.
+    }
+    return
+  }
+
+  if (activeVoiceCaptureMode.value === 'local') {
+    const generation = localStreamGeneration
+    const sessionId = localStreamSessionId
+    if (!sessionId || localPcmRecorder.status.value === 'requesting') {
+      localStreamGeneration += 1
+      localPcmRecorder.cancel()
+      activeVoiceCaptureMode.value = null
+      await cancelActiveLocalStreamCapture()
+      voiceDialogue.cancelCapture(captureId)
+      return
+    }
+
+    try {
+      const finalChunk = await localPcmRecorder.stop()
+      if (finalChunk) queueLocalStreamChunk(finalChunk)
+      await localStreamQueue
+      if (generation !== localStreamGeneration) return
+      if (localStreamFailure) throw localStreamFailure
+
+      localStreamSessionId = null
+      const result = await finishLocalSttStream(sessionId)
+      if (generation !== localStreamGeneration) return
+      localStreamTranscript.value = normalizeVoiceTranscript(result.text) || localStreamTranscript.value
+      activeVoiceCaptureMode.value = null
+      await voiceDialogue.commitTranscript(captureId, localStreamTranscript.value)
+      localStreamTranscript.value = ''
+    } catch (cause) {
+      if (generation !== localStreamGeneration) return
+      localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
+      localStreamGeneration += 1
+      localPcmRecorder.cancel()
+      activeVoiceCaptureMode.value = null
+      await cancelActiveLocalStreamCapture()
+      voiceDialogue.cancelCapture(captureId)
     }
     return
   }
@@ -1097,6 +1228,12 @@ async function stopVoiceCapture() {
 function cancelVoiceCapture() {
   if (activeVoiceCaptureMode.value === 'browser') {
     browserRecognition.cancel()
+  } else if (activeVoiceCaptureMode.value === 'local') {
+    localStreamGeneration += 1
+    localPcmRecorder.cancel()
+    void cancelActiveLocalStreamCapture()
+    localStreamTranscript.value = ''
+    localStreamError.value = null
   } else if (activeVoiceCaptureMode.value === 'pcm') {
     pcmRecorder.cancel()
   } else {
@@ -1207,6 +1344,11 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocumentMousedown)
   window.removeEventListener('resize', syncViewport)
+  if (activeVoiceCaptureMode.value === 'local') {
+    localStreamGeneration += 1
+    localPcmRecorder.cancel()
+    void cancelActiveLocalStreamCapture()
+  }
 })
 
 function removeAttachment(id: string) {

@@ -109,6 +109,24 @@ for await (const chunk of bridge.streamOutput(run.run_id)) {
 }
 ```
 
+To stop only the foreground run at a Hermes-owned safe boundary, bind the
+request to the active Bridge run ID:
+
+```ts
+const boundary = await bridge.requestBoundaryInterrupt(
+  sessionId,
+  run.run_id,
+  profile,
+)
+```
+
+The model phase is interrupted immediately. An in-flight `_execute_tool_calls`
+batch is allowed to finish before Hermes starts another model request. The
+Bridge checks the installed Hermes runtime before enabling this capability and
+returns `status: 'unsupported'` with `guarantee: 'none'` when its private
+whole-batch boundary is incompatible; it never falls back to the broader user
+stop that also interrupts tools and detached subagents.
+
 The external chat call only sends `session_id` and `message`. Provider, model,
 keys, tools, reasoning, and session DB are resolved by hermes-agent from the
 normal Hermes config and environment.

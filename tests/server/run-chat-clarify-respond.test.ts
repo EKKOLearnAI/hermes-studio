@@ -23,11 +23,13 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
-  getSession: vi.fn(() => null),
+const sessionStoreMock = vi.hoisted(() => ({
+  getSession: vi.fn(() => ({ id: 'session-1', profile: 'default' })),
   getSessionMetadata: vi.fn(() => null),
   getSessionDetail: vi.fn(() => null),
 }))
+
+vi.mock('../../packages/server/src/db/hermes/session-store', () => sessionStoreMock)
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
@@ -73,6 +75,8 @@ function createSocketHarness() {
 describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
   beforeEach(() => {
     vi.resetModules()
+    sessionStoreMock.getSession.mockReset()
+    sessionStoreMock.getSession.mockReturnValue({ id: 'session-1', profile: 'default' })
     bridgeMock.clarifyRespond.mockReset()
     bridgeMock.statusIfLoaded.mockReset()
     respondToEkkoClarificationMock.mockReset()

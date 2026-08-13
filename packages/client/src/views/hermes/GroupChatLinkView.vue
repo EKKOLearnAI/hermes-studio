@@ -575,24 +575,6 @@ onUnmounted(() => {
         <NButton type="primary" @click="closeWindow">{{ t('groupChat.agentLinkClose') }}</NButton>
       </div>
       <template v-else>
-        <div v-if="!editingMode && connections.length" class="existing-connections">
-          <label>{{ t('groupChat.agents') }}</label>
-          <div v-for="connection in connections" :key="connection.connectorId" class="connection-row">
-            <div>
-              <strong>{{ connection.agent.name }}</strong>
-              <span>{{ connection.cloudOrigin }}</span>
-            </div>
-            <span
-              class="connection-state"
-              :class="{ online: connection.connected }"
-              :title="connection.connected ? t('groupChat.agentLinkConnected') : t('groupChat.agentLinkError')"
-              :aria-label="connection.connected ? t('groupChat.agentLinkConnected') : t('groupChat.agentLinkError')"
-            >
-              {{ connection.connected ? '●' : '○' }}
-            </span>
-          </div>
-        </div>
-
         <div v-if="profileAgents.length" class="link-form agent-config-form">
           <label>{{ t('groupChat.agentLinkSelectAgent') }}</label>
           <div class="group-agent-avatar-editor">
@@ -836,59 +818,6 @@ onUnmounted(() => {
 
 .group-agent-avatar-file {
   display: none;
-}
-
-.existing-connections {
-  display: grid;
-  gap: 9px;
-  margin-top: 22px;
-
-  > label {
-    color: $text-secondary;
-    font-size: 13px;
-    font-weight: 600;
-  }
-}
-
-.connection-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid $border-color;
-  border-radius: 10px;
-
-  > div {
-    display: grid;
-    min-width: 0;
-    gap: 2px;
-  }
-
-  strong,
-  span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  strong {
-    color: $text-primary;
-    font-size: 13px;
-  }
-
-  span {
-    color: $text-muted;
-    font-size: 11px;
-  }
-}
-
-.connection-state {
-  color: $text-muted;
-
-  &.online {
-    color: $success;
-  }
 }
 
 .link-form label {

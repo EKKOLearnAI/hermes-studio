@@ -44,4 +44,18 @@ describe('GroupChatView settings preload', () => {
     expect(groupStore.loadRooms).toHaveBeenCalledOnce()
     expect(settingsStore.fetchSettings).toHaveBeenCalledOnce()
   })
+
+  it('keeps the application-level group socket connected after leaving the group-chat route', async () => {
+    const groupStore = useGroupChatStore()
+    vi.spyOn(groupStore, 'connect').mockImplementation(() => undefined)
+    vi.spyOn(groupStore, 'loadRooms').mockResolvedValue(undefined as any)
+    vi.spyOn(groupStore, 'disconnect')
+    vi.spyOn(useSettingsStore(), 'fetchSettings').mockResolvedValue(undefined as any)
+
+    const wrapper = mount(GroupChatView)
+    await flushPromises()
+    wrapper.unmount()
+
+    expect(groupStore.disconnect).not.toHaveBeenCalled()
+  })
 })

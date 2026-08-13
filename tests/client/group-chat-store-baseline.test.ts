@@ -34,6 +34,7 @@ const groupChatApiMock = vi.hoisted(() => {
     emit: vi.fn((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack(joinAck)
       if (event === 'message' && ack) ack({ id: data?.id })
+      if (event === 'approval.respond' && ack) ack({ ok: true, resolved: true })
       return socket
     }),
     disconnect: vi.fn(),
@@ -71,11 +72,26 @@ const authApiMock = vi.hoisted(() => ({
   fetchCurrentUser: vi.fn(),
 }))
 const fetchMock = vi.hoisted(() => vi.fn())
+const completionSoundMock = vi.hoisted(() => ({
+  primeCompletionSound: vi.fn(),
+}))
+const settingsStoreMock = vi.hoisted(() => ({
+  display: {
+    bell_on_complete: false,
+    approval_bell: true,
+  },
+}))
 
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => clientApiMock)
 vi.mock('@/api/auth', () => authApiMock)
 vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/utils/completion-sound', () => ({
+  primeCompletionSound: completionSoundMock.primeCompletionSound,
+}))
+vi.mock('@/stores/hermes/settings', () => ({
+  useSettingsStore: () => settingsStoreMock,
+}))
 vi.stubGlobal('fetch', fetchMock)
 
 function emitSocket(event: string, payload: unknown) {
@@ -131,6 +147,7 @@ describe('group chat store baseline lifecycle', () => {
     vi.useRealTimers()
     setActivePinia(createPinia())
     localStorage.clear()
+    completionSoundMock.primeCompletionSound.mockClear()
     groupChatApiMock.handlers.clear()
     groupChatApiMock.setJoinAck({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
     for (const key of Object.keys(groupChatApiMock)) {
@@ -159,6 +176,7 @@ describe('group chat store baseline lifecycle', () => {
     groupChatApiMock.socket.emit.mockReset()
     groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
       if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'load_pending_approvals' && ack) ack({ pendingApprovals: [] })
       if (event === 'message' && ack) ack({ id: data?.id })
       return groupChatApiMock.socket
     })
@@ -180,6 +198,105 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('approval.requested', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
+  })
+
+  it('restores directed approvals when the Agent owner comes online without joining the room', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'load_pending_approvals' && ack) ack({
+        pendingApprovals: [{
+          roomId: 'room-offline', agentName: 'Agent', approval_id: 'approval-offline',
+          command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+        }],
+      })
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+
+    await store.connect()
+
+    expect([...store.pendingApprovals.values()]).toEqual([
+      expect.objectContaining({
+        roomId: 'room-offline',
+        agentName: 'Agent',
+        approvalId: 'approval-offline',
+      }),
+    ])
+  })
+
+  it('uses server persisted activity time instead of an agent display timestamp for live room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'future-agent', createdAt: 1, lastActiveAt: 1 },
+      { ...room, id: 'recent-room', createdAt: 2, lastActiveAt: 2 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'future-agent-message',
+      roomId: 'future-agent',
+      senderId: 'agent-1',
+      senderName: 'Agent',
+      role: 'assistant',
+      timestamp: 9_999_999_999_999,
+      persistedAt: 3,
+    }))
+    emitSocket('message', userMessage({
+      id: 'recent-room-message',
+      roomId: 'recent-room',
+      timestamp: 4,
+      persistedAt: 4,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['recent-room', 'future-agent'])
+  })
+
+  it('does not let live tool or streaming messages change room ordering', async () => {
+    const store = await loadStore()
+    store.rooms = [
+      { ...room, id: 'visible-room', createdAt: 2, lastActiveAt: 2 },
+      { ...room, id: 'internal-room', createdAt: 1, lastActiveAt: 1 },
+    ]
+
+    await store.connect()
+    emitSocket('message', userMessage({
+      id: 'tool-message',
+      roomId: 'internal-room',
+      role: 'tool',
+      persistedAt: 100,
+    }))
+    emitSocket('message', userMessage({
+      id: 'streaming-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'streaming',
+      persistedAt: 101,
+    }))
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['visible-room', 'internal-room'])
+    expect(store.rooms.find((item: RoomInfo) => item.id === 'internal-room')?.lastActiveAt).toBe(1)
+
+    emitSocket('message', userMessage({
+      id: 'visible-message',
+      roomId: 'internal-room',
+      role: 'assistant',
+      finish_reason: 'stop',
+      persistedAt: 102,
+    }))
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['internal-room', 'visible-room'])
+  })
+
+  it('keeps the REST room order based on the server public lastActiveAt instead of createdAt', async () => {
+    const store = await loadStore()
+    groupChatApiMock.listRooms.mockResolvedValue({
+      rooms: [
+        { ...room, id: 'room-old-active', createdAt: 100, lastActiveAt: 300 },
+        { ...room, id: 'room-new-created', createdAt: 200, lastActiveAt: 200 },
+      ],
+    })
+
+    await store.loadRooms()
+
+    expect(store.rooms.map((item: RoomInfo) => item.id)).toEqual(['room-old-active', 'room-new-created'])
   })
 
   it('binds autoplay events to the responding agent profile', async () => {
@@ -392,6 +509,38 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.agents).toEqual([])
   })
 
+  it('keeps remaining Agent owner badges when a removal response omits ownership fields', async () => {
+    const store = await loadStore()
+    const remainingAgent = {
+      ...agent,
+      id: 'row-remaining-agent',
+      agentId: 'remaining-agent',
+      executorType: 'remote' as const,
+      ownerMemberId: 'other-owner',
+    }
+    groupChatApiMock.removeAgent.mockResolvedValue({
+      agents: [{
+        ...remainingAgent,
+        ownerMemberId: undefined,
+        connectorId: 'other-owner-secret',
+        remoteOrigin: 'http://127.0.0.1:9999',
+      }],
+      members: [member],
+    })
+    store.agents = [agent, remainingAgent]
+
+    await store.removeAgentFromRoom('room-1', agent.id)
+
+    expect(store.agents).toEqual([
+      expect.objectContaining({
+        id: 'row-remaining-agent',
+        ownerMemberId: 'other-owner',
+      }),
+    ])
+    expect(store.agents[0]).not.toHaveProperty('connectorId')
+    expect(store.agents[0]).not.toHaveProperty('remoteOrigin')
+  })
+
   it('keeps the current room agent roster in sync with realtime broadcasts', async () => {
     const store = await loadStore()
     const updatedAgent = { ...agent, name: 'Realtime Agent' }
@@ -462,11 +611,23 @@ describe('group chat store baseline lifecycle', () => {
       connectorId: undefined,
       remoteOrigin: undefined,
     }
+    const otherOwnedAgent = {
+      ...agent,
+      id: 'row-other-agent',
+      agentId: 'other-agent',
+      executorType: 'remote' as const,
+      ownerMemberId: 'other-owner',
+      connectorId: 'other-owner-secret',
+      remoteOrigin: 'http://127.0.0.1:9999',
+    }
 
     await store.connect()
     store.currentRoomId = 'room-1'
-    store.agents = [ownedAgent]
-    emitSocket('agents_updated', { roomId: 'room-1', agents: [publicUpdate] })
+    store.agents = [ownedAgent, otherOwnedAgent]
+    emitSocket('agents_updated', {
+      roomId: 'room-1',
+      agents: [publicUpdate, { ...otherOwnedAgent, ownerMemberId: undefined }],
+    })
 
     expect(store.agents[0]).toMatchObject({
       name: 'Updated Agent',
@@ -474,6 +635,12 @@ describe('group chat store baseline lifecycle', () => {
       connectorId: '11111111-2222-4333-8444-555555555555',
       remoteOrigin: 'http://127.0.0.1:8648',
     })
+    expect(store.agents[1]).toMatchObject({
+      id: 'row-other-agent',
+      ownerMemberId: 'other-owner',
+    })
+    expect(store.agents[1]).not.toHaveProperty('connectorId')
+    expect(store.agents[1]).not.toHaveProperty('remoteOrigin')
   })
 
   it('joins invite-only rooms entirely over realtime when the socket starts disconnected', async () => {
@@ -524,6 +691,30 @@ describe('group chat store baseline lifecycle', () => {
       content: 'hello room',
     }), expect.any(Function))
     expect(store.error).toBeNull()
+  })
+
+  it('primes approval sound on group send when completion sound is disabled', async () => {
+    const store = await loadStore()
+    settingsStoreMock.display.bell_on_complete = false
+    settingsStoreMock.display.approval_bell = true
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    await store.sendMessage('request approval')
+
+    expect(completionSoundMock.primeCompletionSound).toHaveBeenCalledOnce()
+  })
+
+  it('does not prime notification sound on group send when both sound settings are disabled', async () => {
+    const store = await loadStore()
+    settingsStoreMock.display.bell_on_complete = false
+    settingsStoreMock.display.approval_bell = false
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    await store.sendMessage('silent request')
+
+    expect(completionSoundMock.primeCompletionSound).not.toHaveBeenCalled()
   })
 
   it('waits for a reconnect room join before sending the next message', async () => {
@@ -762,14 +953,136 @@ describe('group chat store baseline lifecycle', () => {
       choices: ['once', 'session', 'deny'],
     })
 
-    expect(store.pendingApprovals.get('approval-1')).toMatchObject({
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({
       roomId: 'room-1',
       agentName: 'Agent',
       approvalId: 'approval-1',
       choices: ['once', 'session', 'deny'],
-    })
-    emitSocket('approval.resolved', { approval_id: 'approval-1' })
+    }))
+    emitSocket('approval.resolved', { roomId: 'room-1', approval_id: 'approval-1' })
     expect(store.pendingApprovals.size).toBe(0)
+  })
+
+  it('tracks group clarifications and removes them when resolved', async () => {
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    emitSocket('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-1',
+      question: 'Which environment?', choices: ['staging', 'production'], timeout_ms: 300000,
+    })
+
+    expect([...store.pendingClarifies.values()]).toContainEqual(expect.objectContaining({
+      roomId: 'room-1', agentName: 'Agent', clarifyId: 'clarify-1',
+      question: 'Which environment?', choices: ['staging', 'production'],
+    }))
+    emitSocket('clarify.resolved', { roomId: 'room-1', clarify_id: 'clarify-1' })
+    expect(store.pendingClarifies.size).toBe(0)
+  })
+
+  it('responds to a clarification from an inactive room without switching rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.currentRoomId = 'room-a'
+    emitSocket('clarify.requested', {
+      roomId: 'room-b', agentName: 'Agent', clarify_id: 'clarify-b',
+      question: 'Which environment?', choices: null,
+    })
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'clarify.respond') ack?.({ ok: true, resolved: true })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondClarifyFor('room-b', 'clarify-b', 'staging')
+
+    expect(store.currentRoomId).toBe('room-a')
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('clarify.respond', {
+      roomId: 'room-b', clarify_id: 'clarify-b', response: 'staging',
+    }, expect.any(Function))
+    expect(store.pendingClarifies.size).toBe(0)
+  })
+
+  it('restores pending room interactions when joining after a refresh', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data: any, ack?: Function) => {
+      if (event === 'join' && ack) ack({
+        roomId: 'room-1', members: [], agents: [], typingUsers: [], contextStatuses: [],
+        pendingApprovals: [{
+          roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-restored',
+          command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+        }],
+        pendingClarifies: [{
+          roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-restored',
+          question: 'Which environment?', choices: null, timeout_ms: 300000,
+        }],
+      })
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ approvalId: 'approval-restored' }))
+    expect([...store.pendingClarifies.values()]).toContainEqual(expect.objectContaining({ clarifyId: 'clarify-restored' }))
+  })
+
+  it('keeps same-id approvals isolated across rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-a', agentName: 'Agent A', approval_id: 'approval-shared',
+      command: 'touch a', description: 'room a', choices: ['once', 'deny'],
+    })
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent B', approval_id: 'approval-shared',
+      command: 'touch b', description: 'room b', choices: ['once', 'deny'],
+    })
+
+    expect([...store.pendingApprovals.values()].map(item => item.roomId).sort()).toEqual(['room-a', 'room-b'])
+    emitSocket('approval.resolved', { roomId: 'room-a', approval_id: 'approval-shared' })
+    expect([...store.pendingApprovals.values()]).toEqual([
+      expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-shared' }),
+    ])
+  })
+
+  it('responds to an approval from an inactive room without joining or switching rooms', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.currentRoomId = 'room-a'
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockClear()
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'approval.respond') ack?.({ ok: true, resolved: true })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondApprovalFor('room-b', 'approval-b', 'once')
+
+    expect(store.currentRoomId).toBe('room-a')
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('approval.respond', {
+      roomId: 'room-b', approval_id: 'approval-b', choice: 'once',
+    }, expect.any(Function))
+    expect(groupChatApiMock.socket.emit).not.toHaveBeenCalledWith('join', expect.anything(), expect.anything())
+  })
+
+  it('keeps an inactive-room approval pending when the authoritative response is unresolved', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, data: any, ack?: Function) => {
+      if (event === 'approval.respond') ack?.({ ok: true, resolved: false })
+      return groupChatApiMock.socket
+    })
+
+    await store.respondApprovalFor('room-b', 'approval-b', 'once')
+
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-b' }))
   })
 
   it('updates the current room name and token display on room_updated', async () => {
@@ -784,5 +1097,43 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.rooms[0].totalTokens).toBe(42)
     expect(store.rooms[0].name).toBe('Renamed Room')
     expect(store.roomName).toBe('Renamed Room')
+  })
+
+  it('hydrates and live-updates durable handoff stops for the current room', async () => {
+    const store = await loadStore()
+    const chain = {
+      chainId: 'chain-1',
+      roomId: 'room-1',
+      sourceMessageId: 'msg-1',
+      currentDepth: 4,
+      maxDepth: 4,
+      unlimited: 0,
+      targetAgentId: 'agent-1',
+      status: 'stopped',
+      stopReason: 'max_depth',
+      continueUsed: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    groupChatApiMock.getRoomDetail.mockResolvedValue({
+      room,
+      messages: [],
+      agents: [],
+      members: [],
+      handoffChains: [chain],
+      total: 0,
+      hasMore: false,
+    })
+
+    await store.connect()
+    await store.joinRoom('room-1')
+    expect(store.handoffChains.get('chain-1')).toMatchObject({ status: 'stopped' })
+
+    emitSocket('handoff_updated', { ...chain, status: 'claimed', attemptId: 'attempt-1', updatedAt: 2 })
+    expect(store.handoffChains.get('chain-1')).toMatchObject({
+      status: 'claimed',
+      attemptId: 'attempt-1',
+      updatedAt: 2,
+    })
   })
 })

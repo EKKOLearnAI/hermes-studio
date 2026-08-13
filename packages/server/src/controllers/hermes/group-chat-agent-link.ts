@@ -256,11 +256,6 @@ function normalizeCloudOrigin(value: unknown): string {
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new Error('Cloud URL must use HTTP or HTTPS')
   }
-  const host = url.hostname.toLowerCase()
-  const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1'
-  if (url.protocol === 'http:' && !loopback) {
-    throw new Error('Remote group chat server must use HTTPS')
-  }
   return url.origin
 }
 
@@ -341,6 +336,36 @@ export async function disconnectLocalAgent(ctx: Context): Promise<void> {
   }
   const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
   ctx.body = { ok: await manager.disconnect(connectorId) }
+}
+
+export async function renameLocalRoom(ctx: Context): Promise<void> {
+  const server = serverOrUnavailable(ctx)
+  if (!server) return
+  try {
+    const connectorId = String(ctx.params.connectorId || '').trim()
+    if (!UUID_PATTERN.test(connectorId)) throw new Error('connectorId is invalid')
+    const name = String((ctx.request.body as any)?.name || '').trim()
+    const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
+    ctx.body = { ok: true, updated: await manager.renameRoom(connectorId, name) }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { error: error instanceof Error ? error.message : 'Could not rename local Agent room' }
+  }
+}
+
+export async function leaveLocalRoom(ctx: Context): Promise<void> {
+  const server = serverOrUnavailable(ctx)
+  if (!server) return
+  try {
+    const connectorId = String(ctx.params.connectorId || '').trim()
+    if (!UUID_PATTERN.test(connectorId)) throw new Error('connectorId is invalid')
+    const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
+    const result = await manager.leaveRoom(connectorId)
+    ctx.body = { ok: result.removed > 0, ...result }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { error: error instanceof Error ? error.message : 'Could not leave remote Agent room' }
+  }
 }
 
 export async function updateLocalAgent(ctx: Context): Promise<void> {

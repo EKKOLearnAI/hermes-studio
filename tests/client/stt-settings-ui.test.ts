@@ -12,6 +12,8 @@ const mockClearSttSecret = vi.fn()
 const mockDeleteSttProvider = vi.fn()
 const mockDeleteSttBaseUrlPreset = vi.fn()
 const mockTranscribeSpeech = vi.fn()
+const mockFetchLocalSttModelStatus = vi.fn()
+const mockDownloadLocalSttModel = vi.fn()
 const mockFetchTtsSettings = vi.fn()
 const mockSaveTtsSettings = vi.fn()
 const mockSaveActiveTtsProvider = vi.fn()
@@ -54,6 +56,29 @@ const translations: Record<string, string> = {
   'settings.voice.ttsProvidersDescription': 'Manage text-to-speech integrations used to play assistant responses and voice previews.',
   'settings.voice.sttProvidersTitle': 'STT providers',
   'settings.voice.sttProvidersDescription': 'Manage speech-to-text integrations used by the microphone and voice input flow.',
+  'settings.voice.localSttModelTitle': 'Local Chinese-English STT',
+  'settings.voice.localSttModelDescription': 'Private on-device recognition.',
+  'settings.voice.localSttModelUnavailable': 'Download and validate the local STT model first.',
+  'settings.voice.localSttModelReady': 'Ready',
+  'settings.voice.localSttModelDownloading': 'Downloading',
+  'settings.voice.localSttModelNotInstalled': 'Not installed',
+  'settings.voice.localSttLanguages': 'Languages',
+  'settings.voice.localSttLanguagesValue': 'Chinese + English',
+  'settings.voice.localSttDownloadSize': 'Download size',
+  'settings.voice.localSttRuntime': 'Runtime',
+  'settings.voice.localSttDownloadCf': 'Cloudflare download',
+  'settings.voice.localSttDownloadGithub': 'GitHub download',
+  'settings.voice.localSttBackgroundHint': 'Runs in the background.',
+  'settings.voice.localSttDownloadFailed': 'Download failed: {error}',
+  'settings.voice.localSttStage.queued': 'Waiting to download…',
+  'settings.voice.localSttStage.resolve': 'Preparing download…',
+  'settings.voice.localSttStage.download': 'Downloading model…',
+  'settings.voice.localSttStage.verify': 'Verifying checksum…',
+  'settings.voice.localSttStage.extract': 'Extracting model…',
+  'settings.voice.localSttStage.validate': 'Validating model…',
+  'settings.voice.localSttStage.install': 'Installing model…',
+  'settings.voice.localSttStage.completed': 'Model is ready',
+  'settings.voice.localSttStage.failed': 'Download failed',
   'settings.voice.noneSelected': 'None selected',
   'settings.voice.keyStored': 'Stored',
   'settings.voice.keyMissing': 'Missing',
@@ -344,6 +369,12 @@ vi.mock('naive-ui', () => ({
     emits: ['click'],
     template: '<button type="button" v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>',
   }),
+  NProgress: defineComponent({
+    name: 'NProgress',
+    inheritAttrs: false,
+    props: { percentage: { type: Number, default: 0 } },
+    template: '<progress v-bind="$attrs" :value="percentage" max="100" />',
+  }),
   NSlider: defineComponent({
     name: 'NSlider',
     inheritAttrs: false,
@@ -380,6 +411,11 @@ vi.mock('@/api/hermes/stt-settings', () => ({
 
 vi.mock('@/api/hermes/stt', () => ({
   transcribeSpeech: mockTranscribeSpeech,
+}))
+
+vi.mock('@/api/hermes/local-stt-model', () => ({
+  fetchLocalSttModelStatus: mockFetchLocalSttModelStatus,
+  downloadLocalSttModel: mockDownloadLocalSttModel,
 }))
 
 vi.mock('@/composables/usePcmStreamRecorder', () => ({
@@ -524,6 +560,19 @@ describe('useSttSettings', () => {
     mockDeleteSttProvider.mockReset()
     mockDeleteSttBaseUrlPreset.mockReset()
     mockTranscribeSpeech.mockReset()
+    mockFetchLocalSttModelStatus.mockReset()
+    mockDownloadLocalSttModel.mockReset()
+    mockFetchLocalSttModelStatus.mockResolvedValue({
+      id: 'local-model',
+      name: 'Streaming Zipformer Chinese-English INT8',
+      languages: ['zh', 'en'],
+      archiveSize: 176344382,
+      extractedSize: 199056205,
+      installed: false,
+      usable: false,
+      validationError: '',
+      job: null,
+    })
     mockMicStart.mockReset()
     mockMicStop.mockReset()
     mockMicRecorderState.value = { status: 'idle', error: null, startedAt: null, mimeType: null }
@@ -734,6 +783,19 @@ describe('VoiceSettings STT UI', () => {
     mockDeleteSttProvider.mockReset()
     mockDeleteSttBaseUrlPreset.mockReset()
     mockTranscribeSpeech.mockReset()
+    mockFetchLocalSttModelStatus.mockReset()
+    mockDownloadLocalSttModel.mockReset()
+    mockFetchLocalSttModelStatus.mockResolvedValue({
+      id: 'local-model',
+      name: 'Streaming Zipformer Chinese-English INT8',
+      languages: ['zh', 'en'],
+      archiveSize: 176344382,
+      extractedSize: 199056205,
+      installed: false,
+      usable: false,
+      validationError: '',
+      job: null,
+    })
     mockMicStart.mockReset()
     mockMicStop.mockReset()
     mockMicRecorderState.value = { status: 'idle', error: null, startedAt: null, mimeType: null }
@@ -811,12 +873,50 @@ describe('VoiceSettings STT UI', () => {
 
     expect(wrapper.text()).toContain('Edge TTS')
     expect(wrapper.text()).toContain('Browser STT')
+    expect(wrapper.text()).toContain('Local Chinese-English STT')
+    expect(wrapper.text()).toContain('Cloudflare download')
+    expect(wrapper.text()).toContain('GitHub download')
     expect(wrapper.text()).toContain('MiMo TTS')
     expect(wrapper.text()).toContain('Groq STT')
     expect(wrapper.text()).toContain('Stored')
     expect(wrapper.text()).not.toContain('raw-openai-secret')
     expect(wrapper.find('[data-testid="stt-provider-select"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="stt-custom-base-url"]').exists()).toBe(false)
+  })
+
+  it('starts the fixed local model download from the selected channel without blocking the card', async () => {
+    mockDownloadLocalSttModel.mockResolvedValue({
+      success: true,
+      job: {
+        id: 'local-job',
+        source: 'cf',
+        status: 'running',
+        stage: 'download',
+        error: '',
+        percent: 25,
+        receivedBytes: 44_086_095,
+        totalBytes: 176_344_382,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    })
+    mockFetchLocalSttModelStatus.mockImplementation(async () => ({
+      id: 'local-model', name: 'Streaming Zipformer Chinese-English INT8', languages: ['zh', 'en'],
+      archiveSize: 176344382, extractedSize: 199056205, installed: false, usable: false, validationError: '',
+      job: mockDownloadLocalSttModel.mock.calls.length
+        ? { id: 'local-job', source: 'cf', status: 'running', stage: 'download', error: '', percent: 25, receivedBytes: 44_086_095, totalBytes: 176_344_382, createdAt: '', updatedAt: '' }
+        : null,
+    }))
+
+    const wrapper = await mountComponent({ kind: 'stt' })
+    await flushPromises()
+    await wrapper.get('[data-testid="local-stt-download-cf"]').trigger('click')
+    await flushPromises()
+
+    expect(mockDownloadLocalSttModel).toHaveBeenCalledWith('cf')
+    expect(wrapper.find('progress').attributes('value')).toBe('25')
+    expect(wrapper.text()).toContain('Runs in the background.')
+    wrapper.unmount()
   })
 
   it('renders only the voice API kind selected by the Models page tab', async () => {

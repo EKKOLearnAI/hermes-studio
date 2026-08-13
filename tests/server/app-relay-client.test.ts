@@ -84,10 +84,15 @@ describe('AppRelayClient', () => {
   })
 
   it('forwards local API requests with safe headers and binary support', async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }))
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/hermes/tts/synthesize')
+      ? new Response(Uint8Array.from([7, 8, 9]), {
+          status: 200,
+          headers: { 'content-type': 'audio/mpeg' },
+        })
+      : new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }))
     const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
@@ -122,6 +127,24 @@ describe('AppRelayClient', () => {
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
     expect(headers.get('authorization')).toBe('Bearer local-user-token')
     expect(headers.has('host')).toBe(false)
+
+    const binaryAck = vi.fn()
+    remote.__handlers.get('app.http.request')({
+      id: 'binary-1',
+      method: 'POST',
+      path: '/api/hermes/tts/synthesize',
+      headers: { 'content-type': 'application/octet-stream' },
+      bodyBytes: Uint8Array.from([1, 2, 3]),
+    }, binaryAck)
+    await vi.waitFor(() => expect(binaryAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'binary-1',
+      status: 200,
+      bodyBytes: expect.any(Uint8Array),
+    })))
+    const binaryRequest = fetchImpl.mock.calls[1][1]
+    expect(Buffer.from(binaryRequest?.body as Uint8Array)).toEqual(Buffer.from([1, 2, 3]))
+    const binaryResponse = binaryAck.mock.calls[0][0].bodyBytes as Uint8Array
+    expect(Buffer.from(binaryResponse)).toEqual(Buffer.from([7, 8, 9]))
   })
 
   it('bridges the full-duplex /chat-run socket without using MCU events', async () => {
@@ -158,7 +181,27 @@ describe('AppRelayClient', () => {
       payload: { session_id: 'session-1', input: 'hello' },
     }, runAck)
     expect(local.emit).toHaveBeenCalledWith('run', { session_id: 'session-1', input: 'hello' })
-    expect(runAck).toHaveBeenCalledWith(expect.objectContaining({ id: 'relay-chat-1', ok: true, event: 'run' }))
+    await vi.waitFor(() => expect(runAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'run',
+    })))
+
+    const insertAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-chat-1',
+      event: 'insert_queued_run',
+      payload: { session_id: 'session-1', queue_id: 'queue-1' },
+    }, insertAck)
+    expect(local.emit).toHaveBeenCalledWith('insert_queued_run', {
+      session_id: 'session-1',
+      queue_id: 'queue-1',
+    })
+    await vi.waitFor(() => expect(insertAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'insert_queued_run',
+    })))
 
     local.__onAny('message.delta', { session_id: 'session-1', delta: 'hi' })
     expect(remote.emit).toHaveBeenCalledWith('app.socket.event', {

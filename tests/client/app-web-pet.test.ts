@@ -71,6 +71,10 @@ vi.mock('@/components/hermes/models/ProviderConfigurationPrompt.vue', () => ({
   default: { name: 'ProviderConfigurationPrompt', template: '<div />' },
 }))
 
+vi.mock('@/components/layout/GlobalPendingActions.vue', () => ({
+  default: { name: 'GlobalPendingActions', template: '<div class="global-pending-actions-test" />' },
+}))
+
 vi.mock('@/components/hermes/chat/SessionSearchModal.vue', () => ({
   default: { name: 'SessionSearchModal', template: '<div />' },
 }))
@@ -125,6 +129,13 @@ describe('App web pet mounting', () => {
     appStoreMock.sidebarCollapsed = false
     appStoreMock.pageSidebarExpanded = true
     delete (window as WindowWithDesktop).hermesDesktop
+  })
+
+  it('mounts the global pending-action host in the normal app shell', async () => {
+    const wrapper = mountApp()
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'GlobalPendingActions' }).exists()).toBe(true)
   })
 
   it('mounts the web pet in the browser web app', async () => {

@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { setApiKey, clearApiKey, hasApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 import { isDesktopShell } from "@/utils/desktop-bridge";
+import { resolveLoginRedirect } from "@/utils/login-redirect";
 import { useTheme } from "@/composables/useTheme";
 
 const { t } = useI18n();
@@ -24,12 +25,7 @@ if (desktopShell) {
   // request can reuse them and show an unrelated expiry notice.
   clearApiKey();
 } else if (hasApiKey()) {
-  router.replace(safeRedirectPath());
-}
-
-function safeRedirectPath(): string {
-  const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "";
-  return redirect.startsWith("/") && !redirect.startsWith("//") ? redirect : "/hermes/chat";
+  router.replace(resolveLoginRedirect(route.query.redirect));
 }
 
 onMounted(async () => {
@@ -58,7 +54,7 @@ async function handlePasswordLogin() {
     const session = await loginWithPassword(username.value.trim(), password.value);
     setApiKey(session.token);
     activateUserTheme(session.userId, session.theme);
-    router.replace(safeRedirectPath());
+    router.replace(resolveLoginRedirect(route.query.redirect));
   } catch (err: any) {
     if (err.status === 429 || err.status === 503) {
       errorMsg.value = t("login.tooManyAttempts");

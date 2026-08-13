@@ -9,6 +9,8 @@ export interface PcmStreamRecorderOptions {
   preRollMs?: number
   targetSampleRate?: number
   voiceActivityThreshold?: number
+  /** Emit contiguous transport chunks without dropping silence or a short final tail. */
+  continuous?: boolean
   constraints?: MediaStreamConstraints
   onChunk?: (audio: Blob) => void
   messages?: {
@@ -26,6 +28,7 @@ const DEFAULT_VOICE_ACTIVITY_THRESHOLD = 0.035
 const MIN_FINAL_CHUNK_MS = 350
 const MIN_VOICE_ACTIVITY_MS = 350
 const STREAM_WARMUP_MS = 500
+const AUDIO_DRAIN_TIMEOUT_GRACE_MS = 50
 const SUPPORT_ERROR_MESSAGE = 'Streaming microphone capture is not supported in this browser.'
 
 export function encodePcmWav(
@@ -81,6 +84,7 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
   let capturedSampleCount = 0
   let consecutiveVoiceSampleCount = 0
   let sessionToken = 0
+  let finishPendingAudioDrain: (() => void) | null = null
 
   function setError(cause: unknown) {
     const normalized = cause instanceof Error
@@ -96,6 +100,7 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
   }
 
   function clearAudioGraph() {
+    finishPendingAudioDrain?.()
     if (processor) processor.onaudioprocess = null
     try { processor?.disconnect() } catch { /* already disconnected */ }
     try { source?.disconnect() } catch { /* already disconnected */ }
@@ -155,10 +160,20 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
 
   function emitReadySegment() {
     const minSamples = sampleRate * Math.max(250, options.minSegmentDurationMs ?? DEFAULT_MIN_SEGMENT_DURATION_MS) / 1_000
-    const maxSamples = sampleRate * Math.max(1_000, options.maxSegmentDurationMs ?? DEFAULT_MAX_SEGMENT_DURATION_MS) / 1_000
+    const maxSamples = Math.floor(sampleRate * Math.max(1_000, options.maxSegmentDurationMs ?? DEFAULT_MAX_SEGMENT_DURATION_MS) / 1_000)
     const endSilenceSamples = sampleRate * Math.max(200, options.speechEndSilenceMs ?? DEFAULT_SPEECH_END_SILENCE_MS) / 1_000
     const preRollSamples = sampleRate * Math.max(0, options.preRollMs ?? DEFAULT_PRE_ROLL_MS) / 1_000
     const minVoiceSamples = sampleRate * MIN_VOICE_ACTIVITY_MS / 1_000
+
+    // Streaming ASR keeps its own recognizer state across requests. Chunks are
+    // only a transport cadence, so every sample must be retained even when a
+    // phoneme crosses the boundary or the final tail is shorter than VAD limits.
+    if (options.continuous && options.onChunk) {
+      while (bufferedSampleCount >= maxSamples) {
+        options.onChunk(encodePcmWav(takeSamples(maxSamples), sampleRate, options.targetSampleRate))
+      }
+      return
+    }
 
     if (!bufferedHasVoice) {
       // Single-shot capture (the settings STT test) keeps the whole recording;
@@ -226,6 +241,33 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
     bufferedSamples.push(mono)
     bufferedSampleCount += mono.length
     emitReadySegment()
+    finishPendingAudioDrain?.()
+  }
+
+  function drainPendingAudioFrame() {
+    const currentContext = context
+    const currentProcessor = processor
+    if (!currentContext || currentContext.state !== 'running' || !currentProcessor) return Promise.resolve()
+
+    return new Promise<void>((resolve) => {
+      let settled = false
+      const bufferSize = currentProcessor.bufferSize || 4_096
+      const timeout = setTimeout(
+        finish,
+        Math.ceil(bufferSize / sampleRate * 1_000) + AUDIO_DRAIN_TIMEOUT_GRACE_MS,
+      )
+
+      function finish() {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (finishPendingAudioDrain === finish) finishPendingAudioDrain = null
+        resolve()
+      }
+
+      finishPendingAudioDrain?.()
+      finishPendingAudioDrain = finish
+    })
   }
 
   async function start() {
@@ -291,10 +333,19 @@ export function usePcmStreamRecorder(options: PcmStreamRecorderOptions = {}) {
 
   async function stop() {
     sessionToken += 1
+    // ScriptProcessor delivers microphone input one buffer behind real time.
+    // Wait for one final callback so a button release cannot cut off the last
+    // phoneme before the continuous stream tail is encoded.
+    await drainPendingAudioFrame()
     const remainingDurationMs = bufferedSampleCount / sampleRate * 1_000
-    const finalChunk = remainingDurationMs >= MIN_FINAL_CHUNK_MS
-      && bufferedHasVoice
-      && voicedSampleCount >= sampleRate * MIN_VOICE_ACTIVITY_MS / 1_000
+    const flushContinuousTail = options.continuous
+      && Boolean(options.onChunk)
+      && bufferedSampleCount > 0
+    const shouldFlushFinalChunk = flushContinuousTail
+      || (remainingDurationMs >= MIN_FINAL_CHUNK_MS
+        && bufferedHasVoice
+        && voicedSampleCount >= sampleRate * MIN_VOICE_ACTIVITY_MS / 1_000)
+    const finalChunk = shouldFlushFinalChunk
       ? encodePcmWav(takeSamples(bufferedSampleCount), sampleRate, options.targetSampleRate)
       : null
     resetCaptureState()

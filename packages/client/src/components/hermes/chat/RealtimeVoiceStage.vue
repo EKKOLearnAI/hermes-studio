@@ -2,7 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { createMcuSpeechSegmenter } from '@/api/hermes/mcu-interaction'
-import { transcribeSpeech } from '@/api/hermes/stt'
+import {
+  cancelLocalSttStream,
+  finishLocalSttStream,
+  pushLocalSttStreamChunk,
+  startLocalSttStream,
+  transcribeSpeech,
+} from '@/api/hermes/stt'
 import { fetchSttSettings, type SttProviderSettingsResponse } from '@/api/hermes/stt-settings'
 import { isServerTtsProvider, synthesizeSpeech } from '@/api/hermes/tts'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
@@ -37,6 +43,7 @@ const BACKEND_STREAM_VOICE_LEVEL = 0.035
 const BACKEND_STREAM_END_SILENCE_MS = 700
 const BACKEND_STREAM_MIN_SEGMENT_MS = 1_800
 const BACKEND_STREAM_MAX_SEGMENT_MS = 8_000
+const LOCAL_STREAM_MAX_SEGMENT_MS = 1_000
 const MAX_CONCURRENT_TTS_SYNTHESIS = 5
 
 const emit = defineEmits<{
@@ -66,6 +73,15 @@ const pcmStreamRecorder = usePcmStreamRecorder({
   speechEndSilenceMs: BACKEND_STREAM_END_SILENCE_MS,
   maxSegmentDurationMs: BACKEND_STREAM_MAX_SEGMENT_MS,
   voiceActivityThreshold: BACKEND_STREAM_VOICE_LEVEL,
+  onChunk: queueBackendStreamChunk,
+  messages: {
+    unsupported: t('chat.voiceInput.microphoneUnsupported'),
+    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
+  },
+})
+const localPcmStreamRecorder = usePcmStreamRecorder({
+  continuous: true,
+  maxSegmentDurationMs: LOCAL_STREAM_MAX_SEGMENT_MS,
   onChunk: queueBackendStreamChunk,
   messages: {
     unsupported: t('chat.voiceInput.microphoneUnsupported'),
@@ -110,6 +126,7 @@ let handlingRecognitionFailure = false
 let backendStreamGeneration = 0
 let backendStreamQueue: Promise<void> = Promise.resolve()
 let backendStreamFailure: unknown = null
+let localStreamSessionId: string | null = null
 const speechQueueIdleWaiters = new Set<() => void>()
 const synthesisControllers = new Set<AbortController>()
 const synthesisJobs: SpeechSynthesisJob[] = []
@@ -215,7 +232,7 @@ function browserCaptureContinuous() {
 }
 
 function shouldUseBackendStream(setting: SttProviderSettingsResponse | null) {
-  return Boolean(setting && (isDesktopShell() || isMobileDevice()))
+  return Boolean(setting && (setting.provider === 'local' || isDesktopShell() || isMobileDevice()))
 }
 
 function clearTimers() {
@@ -445,7 +462,7 @@ async function loadActiveBackendSetting() {
     .then((response) => {
       const provider = response.activeProvider
       if (!provider || provider === 'browser') return null
-      return response.providers.find(row => row.provider === provider && row.secrets?.apiKey === '[stored]') || null
+      return response.providers.find(row => row.provider === provider && (provider === 'local' || row.secrets?.apiKey === '[stored]')) || null
     })
     .catch(() => null)
 
@@ -474,24 +491,40 @@ function resetBackendStream() {
   backendStreamTranscript.value = ''
 }
 
+function activeBackendStreamRecorder() {
+  return activeBackendSetting?.provider === 'local' ? localPcmStreamRecorder : pcmStreamRecorder
+}
+
+async function cancelActiveLocalStream() {
+  const sessionId = localStreamSessionId
+  localStreamSessionId = null
+  if (!sessionId) return
+  await cancelLocalSttStream(sessionId).catch(() => undefined)
+}
+
 function queueBackendStreamChunk(audio: Blob) {
   const setting = activeBackendSetting
   const generation = backendStreamGeneration
+  const localSessionId = setting?.provider === 'local' ? localStreamSessionId : null
   if (!setting || audio.size <= 44) return backendStreamQueue
 
   const settings = setting.settings
   backendStreamQueue = backendStreamQueue.then(async () => {
     if (generation !== backendStreamGeneration) return
     try {
-      const result = await transcribeSpeech({
-        audio,
-        provider: setting.provider,
-        language: typeof settings.language === 'string' ? settings.language : undefined,
-        prompt: typeof settings.prompt === 'string' ? settings.prompt : undefined,
-      })
+      const result = setting.provider === 'local'
+        ? await pushLocalSttStreamChunk(localSessionId || '', audio)
+        : await transcribeSpeech({
+            audio,
+            provider: setting.provider,
+            language: typeof settings.language === 'string' ? settings.language : undefined,
+            prompt: typeof settings.prompt === 'string' ? settings.prompt : undefined,
+          })
       if (generation !== backendStreamGeneration) return
       const text = normalizeText(result.text)
-      if (text) {
+      if (setting.provider === 'local') {
+        backendStreamTranscript.value = text
+      } else if (text) {
         backendStreamTranscript.value = normalizeText(`${backendStreamTranscript.value} ${text}`)
       }
     } catch (cause) {
@@ -502,7 +535,8 @@ function queueBackendStreamChunk(audio: Blob) {
   }).catch((cause) => {
     if (generation !== backendStreamGeneration || isNoSpeechError(cause)) return
     backendStreamFailure = cause
-    pcmStreamRecorder.cancel()
+    activeBackendStreamRecorder().cancel()
+    void cancelActiveLocalStream()
     activeCaptureMode = null
     stopVisualizer()
     setError(cause)
@@ -513,10 +547,26 @@ function queueBackendStreamChunk(audio: Blob) {
 
 async function startBackendStreamCapture() {
   resetBackendStream()
+  if (activeBackendSetting?.provider === 'local') {
+    const generation = backendStreamGeneration
+    const session = await startLocalSttStream()
+    if (generation !== backendStreamGeneration) {
+      await cancelLocalSttStream(session.sessionId).catch(() => undefined)
+      return
+    }
+    localStreamSessionId = session.sessionId
+  }
+
   activeCaptureMode = 'backend-stream'
-  await pcmStreamRecorder.start()
+  const recorder = activeBackendStreamRecorder()
+  try {
+    await recorder.start()
+  } catch (cause) {
+    await cancelActiveLocalStream()
+    throw cause
+  }
   mode.value = 'listening'
-  void startVisualizer(pcmStreamRecorder.stream.value)
+  void startVisualizer(recorder.stream.value)
 }
 
 async function startCapture() {
@@ -554,7 +604,6 @@ async function startCapture() {
       await startBackendStreamCapture()
       return
     }
-
     if (activeBackendSetting) {
       try {
         await micRecorder.start()
@@ -572,6 +621,9 @@ async function startCapture() {
   } catch (cause) {
     activeCaptureMode = null
     micRecorder.cancel()
+    pcmStreamRecorder.cancel()
+    localPcmStreamRecorder.cancel()
+    void cancelActiveLocalStream()
     setError(cause)
   }
 }
@@ -672,12 +724,20 @@ async function stopCapture(manual = false) {
   mode.value = 'processing'
 
   if (activeCaptureMode === 'backend-stream' && activeBackendSetting) {
+    const recorder = activeBackendStreamRecorder()
     try {
-      const finalChunk = await pcmStreamRecorder.stop()
+      const finalChunk = await recorder.stop()
       stopVisualizer()
       if (finalChunk) queueBackendStreamChunk(finalChunk)
       await backendStreamQueue
       if (backendStreamFailure) return
+      if (activeBackendSetting.provider === 'local') {
+        const sessionId = localStreamSessionId
+        localStreamSessionId = null
+        if (!sessionId) throw new Error('Local STT stream session is not active')
+        const result = await finishLocalSttStream(sessionId)
+        backendStreamTranscript.value = normalizeText(result.text) || backendStreamTranscript.value
+      }
       activeCaptureMode = null
       if (!backendStreamTranscript.value) {
         mode.value = manual ? 'paused' : 'idle'
@@ -694,7 +754,8 @@ async function stopCapture(manual = false) {
         return
       }
       activeCaptureMode = null
-      pcmStreamRecorder.cancel()
+      recorder.cancel()
+      await cancelActiveLocalStream()
       stopVisualizer()
       setError(cause)
     }
@@ -732,7 +793,9 @@ async function stopActiveTurn() {
   browserRecognition.cancel()
   micRecorder.cancel()
   pcmStreamRecorder.cancel()
+  localPcmStreamRecorder.cancel()
   backendStreamGeneration += 1
+  void cancelActiveLocalStream()
   activeCaptureMode = null
   stopVisualizer()
   waitingForResponse.value = false
@@ -1005,7 +1068,9 @@ function closeStage() {
   browserRecognition.cancel()
   micRecorder.cancel()
   pcmStreamRecorder.cancel()
+  localPcmStreamRecorder.cancel()
   backendStreamGeneration += 1
+  void cancelActiveLocalStream()
   activeCaptureMode = null
   stopVisualizer()
   speech.stop(true)
@@ -1013,7 +1078,7 @@ function closeStage() {
 }
 
 watch(currentTranscript, (value) => {
-  if (mode.value !== 'listening' || activeCaptureMode === 'backend-stream' || !value) return
+  if (mode.value !== 'listening' || activeCaptureMode !== 'browser' || !value) return
   scheduleSilenceCommit()
 })
 watch(() => pcmStreamRecorder.level.value, (value) => {
@@ -1021,6 +1086,16 @@ watch(() => pcmStreamRecorder.level.value, (value) => {
     mode.value !== 'listening'
     || activeCaptureMode !== 'backend-stream'
     || !pcmStreamRecorder.hasSpeech.value
+    || value < BACKEND_STREAM_VOICE_LEVEL
+  ) return
+  scheduleSilenceCommit()
+})
+watch(() => localPcmStreamRecorder.level.value, (value) => {
+  if (
+    mode.value !== 'listening'
+    || activeCaptureMode !== 'backend-stream'
+    || activeBackendSetting?.provider !== 'local'
+    || !localPcmStreamRecorder.hasSpeech.value
     || value < BACKEND_STREAM_VOICE_LEVEL
   ) return
   scheduleSilenceCommit()
@@ -1061,7 +1136,9 @@ onBeforeUnmount(() => {
   browserRecognition.cancel()
   micRecorder.cancel()
   pcmStreamRecorder.cancel()
+  localPcmStreamRecorder.cancel()
   backendStreamGeneration += 1
+  void cancelActiveLocalStream()
   activeCaptureMode = null
   stopVisualizer()
   speech.stop(true)

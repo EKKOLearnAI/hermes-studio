@@ -71,6 +71,14 @@ export function latestWorkflowNodeSession(
   }, undefined)
 }
 
+export function workflowNodeSessionByExecution(
+  sessions: WorkflowRunNodeSessionRecord[] | undefined,
+  nodeId: string,
+  executionId: string,
+): WorkflowRunNodeSessionRecord | undefined {
+  return (sessions || []).find(session => session.node_id === nodeId && session.execution_id === executionId)
+}
+
 function workflowNodeTitleMap(snapshotNodes: unknown[] | undefined): Map<string, string> {
   const titles = new Map<string, string>()
   for (const raw of snapshotNodes || []) {

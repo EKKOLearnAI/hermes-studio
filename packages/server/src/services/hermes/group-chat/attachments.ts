@@ -1,11 +1,10 @@
-import { createHash } from 'node:crypto'
-import { lstatSync } from 'node:fs'
-import { readdir, rm, stat } from 'node:fs/promises'
+import { createHash, randomBytes } from 'node:crypto'
+import { constants as fsConstants, lstatSync } from 'node:fs'
+import { chmod, copyFile, lstat, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { basename, extname, resolve } from 'node:path'
 import { config } from '../../../config'
 import { isPathWithin } from '../hermes-path'
 
-const MAX_GROUP_CHAT_ATTACHMENT_SIZE = 20 * 1024 * 1024
 const MAX_GROUP_CHAT_CONTENT_BLOCKS = 32
 const STORED_ATTACHMENT_NAME_PATTERN = /^[a-f0-9]{32}(?:\.[a-z0-9]{1,12})?$/
 const SAFE_IMAGE_MEDIA_TYPES: Record<string, string> = {
@@ -15,6 +14,25 @@ const SAFE_IMAGE_MEDIA_TYPES: Record<string, string> = {
     '.png': 'image/png',
     '.webp': 'image/webp',
 }
+const ATTACHMENT_MEDIA_TYPES: Record<string, string> = {
+    ...SAFE_IMAGE_MEDIA_TYPES,
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.m4a': 'audio/mp4',
+    '.md': 'text/markdown',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.mp4': 'video/mp4',
+    '.ogg': 'audio/ogg',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.wav': 'audio/wav',
+    '.webm': 'video/webm',
+    '.zip': 'application/zip',
+}
+export const MAX_GROUP_CHAT_ATTACHMENT_SIZE = 20 * 1024 * 1024
+export const MAX_GROUP_CHAT_ROOM_ATTACHMENT_BYTES = 500 * 1024 * 1024
+const roomAttachmentWriteQueues = new Map<string, Promise<unknown>>()
 
 function roomAttachmentSegment(roomId: string): string {
     return createHash('sha256').update(roomId).digest('hex')
@@ -50,6 +68,86 @@ export async function getGroupChatAttachmentBytes(roomId: string): Promise<numbe
 
 export async function deleteGroupChatAttachments(roomId: string): Promise<void> {
     await rm(getGroupChatAttachmentDir(roomId), { recursive: true, force: true })
+}
+
+export async function withGroupChatAttachmentWriteLock<T>(roomId: string, task: () => Promise<T>): Promise<T> {
+    const previous = roomAttachmentWriteQueues.get(roomId) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(task)
+    roomAttachmentWriteQueues.set(roomId, current)
+    try {
+        return await current
+    } finally {
+        if (roomAttachmentWriteQueues.get(roomId) === current) roomAttachmentWriteQueues.delete(roomId)
+    }
+}
+
+export type PublishedGroupChatAttachmentBlock = {
+    type: 'image' | 'file'
+    name: string
+    path: string
+    media_type: string
+}
+
+/**
+ * Copy an Agent-produced workspace artifact into the room's private attachment
+ * store so its message remains downloadable even if the workspace file changes.
+ */
+export async function storeAgentGroupChatAttachment(
+    roomId: string,
+    sourcePath: string,
+    displayName: string,
+): Promise<PublishedGroupChatAttachmentBlock> {
+    const safeName = safeAttachmentDisplayName(displayName, 'attachment')
+    const extension = extname(safeName).toLowerCase()
+    const safeExtension = /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ''
+
+    return withGroupChatAttachmentWriteLock(roomId, async () => {
+        const sourceInfo = await lstat(sourcePath)
+        if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() || sourceInfo.size > MAX_GROUP_CHAT_ATTACHMENT_SIZE) {
+            throw Object.assign(new Error('Invalid group chat Agent attachment'), {
+                code: 'invalid_attachment',
+                status: 400,
+            })
+        }
+        const existingBytes = await getGroupChatAttachmentBytes(roomId)
+        if (existingBytes + sourceInfo.size > MAX_GROUP_CHAT_ROOM_ATTACHMENT_BYTES) {
+            throw Object.assign(new Error('Group chat attachment storage quota exceeded'), {
+                code: 'attachment_quota_exceeded',
+                status: 413,
+            })
+        }
+
+        const uploadDir = getGroupChatAttachmentDir(roomId)
+        await mkdir(uploadDir, { recursive: true, mode: 0o700 })
+        let storedName = ''
+        let storedPath = ''
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            storedName = `${randomBytes(16).toString('hex')}${safeExtension}`
+            storedPath = getGroupChatAttachmentPath(roomId, storedName) || ''
+            if (!storedPath) continue
+            try {
+                await copyFile(sourcePath, storedPath, fsConstants.COPYFILE_EXCL)
+                await chmod(storedPath, 0o600)
+                break
+            } catch (error: any) {
+                if (error?.code !== 'EEXIST') {
+                    await rm(storedPath, { force: true }).catch(() => undefined)
+                    throw error
+                }
+                if (attempt === 2) throw error
+                storedPath = ''
+            }
+        }
+        if (!storedName || !storedPath) throw new Error('Failed to store group chat Agent attachment')
+
+        const mediaType = ATTACHMENT_MEDIA_TYPES[extension] || 'application/octet-stream'
+        return {
+            type: SAFE_IMAGE_MEDIA_TYPES[extension] ? 'image' : 'file',
+            name: safeName,
+            path: storedName,
+            media_type: mediaType,
+        }
+    })
 }
 
 type GroupChatContentBlock =

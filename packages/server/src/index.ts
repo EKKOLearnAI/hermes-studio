@@ -22,6 +22,7 @@ import {
   GroupAgentRelayServer,
 } from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
+import { startChatWebhookDispatcher } from './services/hermes/chat-webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
@@ -30,6 +31,7 @@ import { refreshConfiguredProviderModelCatalogsInBackground } from './services/h
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
+import { startLocalAppRelayServer } from './services/app-relay/server'
 import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
@@ -296,6 +298,7 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
   initAllStores()
+  startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
 
   app.use(securityHeaders())
@@ -321,10 +324,10 @@ export async function bootstrap() {
     },
   }))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
+    if ((ctx.method === 'GET' || ctx.method === 'HEAD') &&
+      !ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/upload') {
       ctx.set('Cache-Control', SPA_ENTRY_CACHE_CONTROL)
       await send(ctx, 'index.html', { root: distDir })
     }
@@ -342,6 +345,8 @@ export async function bootstrap() {
   getLanPeerSocketManager().setupServer(servers)
   console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
 
+  const loopbackBaseUrl = getLoopbackBaseUrl(server)
+
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
@@ -352,6 +357,8 @@ export async function bootstrap() {
   setChatRunServer(chatRunServer)
   groupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
+  startLocalAppRelayServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
+  console.log('[bootstrap] local App relay server ready')
   void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.
@@ -362,6 +369,8 @@ export async function bootstrap() {
   if (recoveredWorkflows.runs > 0) {
     logger.warn('Recovered %d orphaned workflow runs and aborted %d sessions', recoveredWorkflows.runs, recoveredWorkflows.sessions)
   }
+  const { getWorkflowScheduleService } = await import('./services/workflow-schedule-service')
+  getWorkflowScheduleService().start()
 
   workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
   workflowSocketServer.init()
@@ -369,7 +378,6 @@ export async function bootstrap() {
   petStateSocketServer = new PetStateSocketServer(groupChatServer.getIO())
   petStateSocketServer.init()
 
-  const loopbackBaseUrl = getLoopbackBaseUrl(server)
   startGlobalAgentServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
   console.log('[bootstrap] global agent server ready')
 

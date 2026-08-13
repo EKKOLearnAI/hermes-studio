@@ -5,11 +5,15 @@ const stopPreviewRuntimeMock = vi.hoisted(() => vi.fn(async () => {}))
 const shutdownManagedGatewaysMock = vi.hoisted(() => vi.fn(async () => ({ stopped: 0 })))
 const stopOutboundRelayClientMock = vi.hoisted(() => vi.fn())
 const codingAgentShutdownMock = vi.hoisted(() => vi.fn())
+const shutdownLocalSttRuntimeMock = vi.hoisted(() => vi.fn(async () => {}))
 
 vi.mock('../../packages/server/src/db', () => ({ closeDb: closeDbMock }))
 vi.mock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: stopPreviewRuntimeMock }))
 vi.mock('../../packages/server/src/services/hermes/gateway-runner', () => ({
   shutdownManagedGateways: shutdownManagedGatewaysMock,
+}))
+vi.mock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
+  shutdownLocalSttRuntime: shutdownLocalSttRuntimeMock,
 }))
 vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({
   stopOutboundRelayClient: stopOutboundRelayClientMock,
@@ -73,6 +77,7 @@ describe('graceful shutdown background delivery ordering', () => {
       'http-close',
     ])
     expect(closeDbMock).toHaveBeenCalledOnce()
+    expect(shutdownLocalSttRuntimeMock).toHaveBeenCalledOnce()
     expect(process.exit).toHaveBeenCalledWith(0)
   })
 

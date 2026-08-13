@@ -21,12 +21,26 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'x-hermes-profile',
   'x-request-id',
 ])
-const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run'])
+const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat'])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
   'abort',
+  'insert_queued_run',
   'cancel_queued_run',
+  'approval.respond',
+  'clarify.respond',
+])
+const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
+  'join',
+  'load_pending_approvals',
+  'load_messages',
+  'update_member_profile',
+  'message',
+  'typing',
+  'stop_typing',
+  'interrupt_agent',
+  'remove_agent',
   'approval.respond',
   'clarify.respond',
 ])
@@ -53,6 +67,7 @@ export interface AppRelayHttpRequest {
   path?: string
   headers?: Record<string, string | string[] | undefined>
   body?: unknown
+  bodyBytes?: ArrayBuffer | ArrayBufferView
   bodyBase64?: string
   timeoutMs?: number
 }
@@ -62,6 +77,7 @@ export interface AppRelayHttpResponse {
   status?: number
   headers?: Record<string, string>
   body?: string
+  bodyBytes?: Uint8Array
   bodyBase64?: string
   truncated?: boolean
   error?: { code: string; message: string }
@@ -80,6 +96,8 @@ export interface AppRelaySocketEventRequest {
   event?: string
   payload?: unknown
   stream?: boolean
+  ack?: boolean
+  timeoutMs?: number
 }
 
 export interface AppRelaySocketCloseRequest {
@@ -186,7 +204,7 @@ export class AppRelayClient {
       ack?.(this.openLocalSocket(request))
     })
     this.socket.on('app.socket.event', (request: AppRelaySocketEventRequest, ack?: (response: AppRelaySocketResponse) => void) => {
-      ack?.(this.emitLocalSocketEvent(request))
+      void this.emitLocalSocketEvent(request).then(response => ack?.(response))
     })
     this.socket.on('app.socket.close', (request: AppRelaySocketCloseRequest, ack?: (response: AppRelaySocketResponse) => void) => {
       ack?.(this.closeLocalSocket(request))
@@ -333,20 +351,28 @@ export class AppRelayClient {
     return { id, ok: true, namespace, stream: bridge.stream }
   }
 
-  private emitLocalSocketEvent(request: AppRelaySocketEventRequest): AppRelaySocketResponse {
+  private async emitLocalSocketEvent(request: AppRelaySocketEventRequest): Promise<AppRelaySocketResponse> {
     const id = normalizeBridgeId(request.id)
     if (!id) return socketError(request.id, 'invalid_socket_id', 'Relay socket id is required')
     const event = String(request.event || '').trim()
-    if (!ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)) return socketError(id, 'event_not_allowed', 'Relay socket event is not allowed')
     const bridge = this.bridges.get(id)
     if (!bridge) return socketError(id, 'socket_not_open', 'Relay socket is not open')
+    if (!isAllowedSocketEvent(bridge.namespace, event)) return socketError(id, 'event_not_allowed', 'Relay socket event is not allowed')
     if (typeof request.stream === 'boolean') bridge.stream = request.stream
     if (event === 'run') {
       bridge.output = ''
       bridge.reasoning = ''
     }
-    bridge.socket.emit(event, request.payload)
-    return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream }
+    if (!request.ack) {
+      bridge.socket.emit(event, request.payload)
+      return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream }
+    }
+    try {
+      const payload = await emitLocalSocketWithAck(bridge.socket, event, request.payload, normalizeTimeout(request.timeoutMs))
+      return { id, ok: true, namespace: bridge.namespace, event, stream: bridge.stream, payload }
+    } catch (error) {
+      return socketError(id, 'socket_ack_timeout', error instanceof Error ? error.message : 'Socket acknowledgement timed out')
+    }
   }
 
   private closeLocalSocket(request: AppRelaySocketCloseRequest): AppRelaySocketResponse {
@@ -493,7 +519,10 @@ function normalizeHeaders(input: AppRelayHttpRequest['headers']): Headers {
 function normalizeRequestBody(request: AppRelayHttpRequest, method: string, headers: Headers): NormalizedBody | AppRelayHttpResponse {
   if (method === 'GET' || method === 'HEAD') return {}
   let body: BodyInit | undefined
-  if (typeof request.bodyBase64 === 'string') body = Buffer.from(request.bodyBase64, 'base64')
+  const byteBody = relayByteBuffer(request.bodyBytes)
+  if (byteBody) body = Uint8Array.from(byteBody)
+  else if (request.bodyBytes != null) return httpError(request.id, 'invalid_binary_body', 'Relay binary request body is invalid', 400)
+  else if (typeof request.bodyBase64 === 'string') body = Buffer.from(request.bodyBase64, 'base64')
   else if (typeof request.body === 'string') body = request.body
   else if (request.body != null) {
     body = JSON.stringify(request.body)
@@ -518,7 +547,7 @@ function responseHeaders(response: Response): Record<string, string> {
   return headers
 }
 
-async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBase64' | 'truncated'>> {
+async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBytes' | 'truncated'>> {
   if (!response.body) return {}
   const reader = response.body.getReader()
   const chunks: Buffer[] = []
@@ -541,7 +570,14 @@ async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpRe
   const buffer = Buffer.concat(chunks)
   const contentType = response.headers.get('content-type') || ''
   const textual = TEXTUAL_RESPONSE_TYPES.some(prefix => contentType.toLowerCase().startsWith(prefix) || contentType.toLowerCase().includes(prefix))
-  return textual ? { body: buffer.toString('utf8'), truncated } : { bodyBase64: buffer.toString('base64'), truncated }
+  return textual ? { body: buffer.toString('utf8'), truncated } : { bodyBytes: buffer, truncated }
+}
+
+function relayByteBuffer(value: unknown): Buffer | null {
+  if (Buffer.isBuffer(value)) return value
+  if (value instanceof ArrayBuffer) return Buffer.from(value)
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  return null
 }
 
 function normalizeBridgeId(value: unknown): string {
@@ -561,6 +597,29 @@ function normalizeTimeout(value: unknown): number {
   const timeout = Number(value)
   if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
   return Math.min(Math.floor(timeout), MAX_REQUEST_TIMEOUT_MS)
+}
+
+function isAllowedSocketEvent(namespace: string, event: string): boolean {
+  if (namespace === '/chat-run') return ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)
+  if (namespace === '/group-chat') return ALLOWED_GROUP_CHAT_CLIENT_EVENTS.has(event)
+  return false
+}
+
+function emitLocalSocketWithAck(socket: Socket, event: string, payload: unknown, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error(`Socket acknowledgement timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    socket.emit(event, payload, (...args: unknown[]) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(args.length <= 1 ? args[0] : args)
+    })
+  })
 }
 
 function httpError(id: string | undefined, code: string, message: string, status?: number): AppRelayHttpResponse {

@@ -15,6 +15,7 @@ import {
     type RemoteGroupAgentDescriptor,
 } from '@/api/hermes/group-chat-agent-link'
 import { GROUP_CHAT_MEMBER_REMOVED, useGroupChatStore } from '@/stores/hermes/group-chat'
+import { generateClientUuid } from '@/utils/client-random'
 import { copyToClipboard } from '@/utils/clipboard'
 import { parseStoredAvatar } from '@/utils/group-agent-avatar'
 
@@ -70,9 +71,7 @@ const agentLinkStatusText = computed(() => {
 })
 
 function randomState(): string {
-    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    return generateClientUuid()
 }
 
 function randomSecret(): string {
@@ -84,7 +83,7 @@ function randomSecret(): string {
 }
 
 function randomRequestId(): string {
-    return crypto.randomUUID()
+    return generateClientUuid()
 }
 
 function normalizeTargetOrigin(value: string): string {
@@ -428,9 +427,7 @@ async function submitGuestName(): Promise<void> {
 }
 
 function randomizeGuestAvatar(): void {
-    const randomPart = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : Math.random().toString(36).slice(2)
+    const randomPart = generateClientUuid()
     guestAvatarDraft.value = { type: 'generated', seed: `guest-${randomPart}` }
     guestAvatarError.value = ''
 }

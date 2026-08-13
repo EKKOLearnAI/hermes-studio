@@ -125,6 +125,90 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.socket.disconnect.mockClear()
   })
 
+  it('settles a historical Tool call without a persisted result instead of spinning forever', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-orphan_part_0_toolcall_call-orphan',
+        run_id: 'run-orphan',
+        senderName: 'QA Engineer',
+        tool_calls: [{
+          id: 'call-orphan',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    expect(store.sortedMessages).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call-orphan',
+        toolStatus: 'interrupted',
+      }),
+    ])
+  })
+
+  it('keeps an unmatched Tool call running while its streamed message is live', async () => {
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-live_part_0',
+      run_id: 'run-live',
+    }))
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+    emitSocket('message', assistantMessage({
+      id: 'run-live_part_0_toolcall_call-live',
+      run_id: 'run-live',
+      isStreaming: true,
+      tool_calls: [{
+        id: 'call-live',
+        type: 'function',
+        function: { name: 'Bash', arguments: JSON.stringify({ command: 'pwd' }) },
+      }],
+      finish_reason: 'tool_calls',
+    }))
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')).toEqual(
+      expect.objectContaining({ toolStatus: 'running' }),
+    )
+  })
+
+  it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'run-old_part_0_toolcall_call-old',
+        run_id: 'run-old',
+        senderName: 'bot',
+        timestamp: 1,
+        tool_calls: [{
+          id: 'call-old',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'old' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+      assistantMessage({
+        id: 'run-live_part_0_toolcall_call-live',
+        run_id: 'run-live',
+        senderName: 'bot',
+        timestamp: 2,
+        tool_calls: [{
+          id: 'call-live',
+          type: 'function',
+          function: { name: 'Bash', arguments: JSON.stringify({ command: 'live' }) },
+        }],
+        finish_reason: 'tool_calls',
+      }),
+    ])
+
+    emitSocket('context_status', { roomId: 'room-1', agentName: 'bot', status: 'replying' })
+
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-old')?.toolStatus)
+      .toBe('interrupted')
+    expect(store.sortedMessages.find((message: ChatMessage) => message.toolCallId === 'call-live')?.toolStatus)
+      .toBe('running')
+  })
+
   it('preserves streamed reasoning when the final message supplies content only', async () => {
     const store = await createJoinedStore()
 
@@ -140,6 +224,51 @@ describe('group chat store streaming merge', () => {
       reasoning_content: 'thinking...',
       isStreaming: false,
     })
+  })
+
+  it('batches rapid content and reasoning deltas without replacing the live message', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-batched' }))
+    const liveMessage = store.messages[0]
+    const renderedMessage = store.sortedMessages[0]
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'hello' })
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' world' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: 'think' })
+    emitSocket('message_reasoning_delta', { roomId: 'room-1', id: 'msg-batched', delta: ' twice' })
+
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.messages[0].content).toBe('')
+    expect(store.messages[0].reasoning).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(49)
+    expect(store.messages[0].content).toBe('')
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.messages[0]).toBe(liveMessage)
+    expect(store.sortedMessages[0]).toBe(renderedMessage)
+    expect(store.messages[0]).toMatchObject({
+      content: 'hello world',
+      reasoning: 'think twice',
+      reasoning_content: 'think twice',
+      isStreaming: true,
+    })
+  })
+
+  it('flushes a queued delta immediately when the stream ends', async () => {
+    vi.useFakeTimers()
+    const store = await createJoinedStore()
+
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-ending' }))
+    emitSocket('message_stream_delta', { roomId: 'room-1', id: 'msg-ending', delta: 'complete' })
+    emitSocket('message_stream_end', { roomId: 'room-1', id: 'msg-ending' })
+
+    expect(store.messages[0]).toMatchObject({
+      content: 'complete',
+      isStreaming: false,
+    })
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('preserves streamed content when the final message payload is blank', async () => {

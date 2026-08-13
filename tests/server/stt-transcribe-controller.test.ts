@@ -474,6 +474,7 @@ describe('stt transcribe controller', () => {
   })
 
   it('passes MCU WAV audio to Doubao without ffmpeg normalization', async () => {
+    const startMcuVoiceChatTurn = vi.fn()
     const audioConvertMock = {
       transcodeToWav: vi.fn(async (audio: Buffer) => ({
         audio: Buffer.concat([Buffer.from('converted:'), audio]),
@@ -486,6 +487,9 @@ describe('stt transcribe controller', () => {
       config: { appHome: tempDir },
     }))
     vi.doMock('../../packages/server/src/services/hermes/stt-providers/audio-convert', () => audioConvertMock)
+    vi.doMock('../../packages/server/src/services/global-agent/server', () => ({
+      getActiveGlobalAgentServer: () => ({ emitMcuEvent: vi.fn(), startMcuVoiceChatTurn }),
+    }))
 
     mockFetch
       .mockResolvedValueOnce({
@@ -517,6 +521,8 @@ describe('stt transcribe controller', () => {
         'content-type': 'audio/wav',
         authorization: 'Bearer user-token',
         'x-hermes-mcu-interaction-id': 'voice-1',
+        'x-hermes-mcu-device-id': 'device-1',
+        'x-hermes-mcu-agent-runtime': 'hermes',
       },
     )
 
@@ -525,12 +531,21 @@ describe('stt transcribe controller', () => {
     expect(ctx.status).toBe(200)
     expect(ctx.body).toMatchObject({ ok: true, accepted: true, interactionId: 'voice-1' })
     await waitForMockCalls(mockFetch, 2)
+    await waitForMockCalls(startMcuVoiceChatTurn, 1)
     expect(audioConvertMock.transcodeToWav).not.toHaveBeenCalled()
     expect(mockFetch).toHaveBeenCalledTimes(2)
     const [, init] = mockFetch.mock.calls[0] as [string | URL, RequestInit]
     expect(JSON.parse(String(init.body)).audio).toEqual({
       format: 'wav',
       data: wav.toString('base64'),
+    })
+    expect(startMcuVoiceChatTurn).toHaveBeenCalledWith({
+      userToken: 'user-token',
+      profile: 'default',
+      interactionId: 'voice-1',
+      transcript: '你好',
+      clientId: 'device-1',
+      agentRuntime: 'hermes',
     })
   })
 
