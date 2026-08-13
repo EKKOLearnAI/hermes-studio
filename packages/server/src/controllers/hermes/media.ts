@@ -5,6 +5,7 @@ import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '.
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
+import { resolveEkkoProviderRuntimeConfig } from '../../services/ekko-agent/provider-runtime'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -12,6 +13,17 @@ const XAI_VIDEO_MODEL = 'grok-imagine-video'
 const APIKEY_IMAGE_PROVIDER = 'fun-codex'
 const APIKEY_IMAGE_MODEL = 'gpt-image-2'
 const APIKEY_IMAGE_TO_IMAGE_MODEL = 'gpt-5.4-mini'
+const MINIMAX_IMAGE_PROVIDERS = {
+  minimax: {
+    endpoint: 'https://api.minimax.io/v1/image_generation',
+    model: 'image-01',
+  },
+  'minimax-cn': {
+    endpoint: 'https://api.minimaxi.com/v1/image_generation',
+    model: 'image-01',
+  },
+} as const
+const MINIMAX_IMAGE_RESPONSE_FORMATS = new Set(['url', 'base64'])
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
@@ -23,11 +35,20 @@ type AuthJson = {
 
 type ApiKeyImageMode = 'text' | 'image' | 'edit'
 
+type ApiKeyImageResult = {
+  images: string[]
+  metadata?: {
+    success_count: number
+    failed_count: number
+  }
+}
+
 type ApiKeyImageProvider = {
   name: string
   apiKey: string
   baseUrl: string
   model: string
+  kind: 'openai-compatible' | 'minimax'
 }
 
 function requestedProfileName(ctx: Context): string {
@@ -91,6 +112,15 @@ function requestedApiKeyImageProviderName(body: any): string {
   return normalizeCustomProviderName(body?.provider || body?.provider_name || body?.custom_provider) || APIKEY_IMAGE_PROVIDER
 }
 
+function miniMaxImageProviderConfig(providerName: string) {
+  const name = providerName.trim().toLowerCase()
+  if (!Object.prototype.hasOwnProperty.call(MINIMAX_IMAGE_PROVIDERS, name)) return null
+  return {
+    name,
+    ...MINIMAX_IMAGE_PROVIDERS[name as keyof typeof MINIMAX_IMAGE_PROVIDERS],
+  }
+}
+
 function apiKeyFromCustomProvider(provider: any): string {
   const direct = String(provider?.api_key || '').trim()
   if (direct) return direct
@@ -100,6 +130,23 @@ function apiKeyFromCustomProvider(provider: any): string {
 
 async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY_IMAGE_PROVIDER): Promise<ApiKeyImageProvider | null> {
   const requestedName = normalizeCustomProviderName(providerName) || APIKEY_IMAGE_PROVIDER
+  const miniMaxConfig = miniMaxImageProviderConfig(requestedName)
+  if (miniMaxConfig) {
+    const runtime = await resolveEkkoProviderRuntimeConfig({
+      profile,
+      provider: miniMaxConfig.name,
+    })
+    const apiKey = String(runtime.apiKey || '').trim()
+    if (!apiKey) return null
+    return {
+      name: miniMaxConfig.name,
+      apiKey,
+      baseUrl: miniMaxConfig.endpoint,
+      model: miniMaxConfig.model,
+      kind: 'minimax',
+    }
+  }
+
   const hermesConfig = await readConfigYamlForProfile(profile)
   const customProviders = getCompatibleCustomProviders(hermesConfig)
   const provider = customProviders.find(entry => normalizeCustomProviderName(entry?.name) === requestedName)
@@ -111,6 +158,7 @@ async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY
     apiKey,
     baseUrl,
     model: String(provider?.model || '').trim(),
+    kind: 'openai-compatible',
   }
 }
 
@@ -314,6 +362,43 @@ function normalizePositiveInt(value: unknown, fallback: number, key: string): nu
   return Math.floor(parsed)
 }
 
+function normalizeMiniMaxResponseFormat(value: unknown): 'url' | 'base64' {
+  const responseFormat = String(value || 'url').trim().toLowerCase()
+  if (MINIMAX_IMAGE_RESPONSE_FORMATS.has(responseFormat)) return responseFormat as 'url' | 'base64'
+  const err: any = new Error('response_format must be url or base64 for MiniMax image generation')
+  err.status = 400
+  throw err
+}
+
+function miniMaxSubjectReference(mode: ApiKeyImageMode, body: any): unknown {
+  if (body.subject_reference !== undefined) {
+    if (!Array.isArray(body.subject_reference) || body.subject_reference.length === 0) {
+      const err: any = new Error('subject_reference must be a non-empty array')
+      err.status = 400
+      throw err
+    }
+    return body.subject_reference
+  }
+  if (mode !== 'image') return undefined
+  return [{
+    type: 'character',
+    image_file: normalizeImageInput(body),
+  }]
+}
+
+function imageResultBase64(value: string): string {
+  const match = value.match(/^data:image\/[^;,]+;base64,([\s\S]+)$/i)
+  return match ? match[1] : value
+}
+
+async function normalizeMiniMaxImageResult(value: string): Promise<string> {
+  if (/^https?:\/\//i.test(value)) {
+    const image = await fetchImageBytes(value)
+    return image.buffer.toString('base64')
+  }
+  return imageResultBase64(value)
+}
+
 function collectImageBase64(event: any, images: string[] = []): string[] {
   if (!event || typeof event !== 'object') return images
   for (const key of ['b64_json', 'base64', 'image_base64', 'partial_image_b64']) {
@@ -370,7 +455,84 @@ async function readSseImageResults(res: Response, limit: number): Promise<string
   return images.slice(0, limit)
 }
 
-async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyImageMode, body: any): Promise<string[]> {
+async function requestMiniMaxImage(
+  provider: ApiKeyImageProvider,
+  mode: ApiKeyImageMode,
+  body: any,
+  prompt: string,
+  n: number,
+  timeoutMs: number,
+): Promise<ApiKeyImageResult> {
+  if (mode === 'edit') {
+    const err: any = new Error('MiniMax image generation supports text and image modes')
+    err.status = 400
+    throw err
+  }
+
+  const responseFormat = normalizeMiniMaxResponseFormat(body.response_format)
+  const requestBody: Record<string, unknown> = {
+    model: body.model || provider.model,
+    prompt,
+    response_format: responseFormat,
+    n,
+  }
+  const subjectReference = miniMaxSubjectReference(mode, body)
+  if (subjectReference !== undefined) requestBody.subject_reference = subjectReference
+  for (const field of ['aspect_ratio', 'width', 'height', 'seed', 'prompt_optimizer']) {
+    if (body[field] !== undefined) requestBody[field] = body[field]
+  }
+
+  const res = await fetch(provider.baseUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${provider.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify(requestBody),
+  })
+  const text = await res.text()
+  let payload: any = null
+  try { payload = text ? JSON.parse(text) : null } catch {}
+
+  if (!res.ok) {
+    const detail = payload?.base_resp?.status_msg || payload?.error?.message || text || res.statusText
+    const err: any = new Error(`MiniMax image generation request failed: ${res.status} ${detail}`)
+    err.status = 502
+    throw err
+  }
+
+  const statusCode = Number(payload?.base_resp?.status_code ?? 0)
+  if (statusCode !== 0) {
+    const detail = payload?.base_resp?.status_msg || 'upstream request failed'
+    const err: any = new Error(`MiniMax image generation failed: ${statusCode} ${detail}`)
+    err.status = 502
+    throw err
+  }
+
+  const values = Array.isArray(payload?.data?.image_urls)
+    ? payload.data.image_urls.filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+    : []
+  if (values.length === 0) {
+    const err: any = new Error('MiniMax image generation returned no image data')
+    err.status = 502
+    throw err
+  }
+
+  const images = await Promise.all(values.slice(0, n).map(normalizeMiniMaxImageResult))
+  const successCount = Number(payload?.metadata?.success_count)
+  const failedCount = Number(payload?.metadata?.failed_count)
+  return {
+    images,
+    metadata: {
+      success_count: Number.isFinite(successCount) ? successCount : images.length,
+      failed_count: Number.isFinite(failedCount) ? failedCount : 0,
+    },
+  }
+}
+
+async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyImageMode, body: any): Promise<ApiKeyImageResult> {
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (!prompt) {
     const err: any = new Error('prompt is required')
@@ -380,6 +542,10 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
 
   const n = normalizePositiveInt(body.n, 1, 'n')
   const timeoutMs = normalizePositiveInt(body.timeout_ms, DEFAULT_TIMEOUT_MS, 'timeout_ms')
+  if (provider.kind === 'minimax') {
+    return requestMiniMaxImage(provider, mode, body, prompt, n, timeoutMs)
+  }
+
   const headers = {
     Accept: 'text/event-stream',
     Authorization: `Bearer ${provider.apiKey}`,
@@ -460,7 +626,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
     err.status = 502
     throw err
   }
-  return images
+  return { images }
 }
 
 function saveGeneratedImages(images: string[], requestedOutputPath?: string): string[] {
@@ -492,18 +658,25 @@ export async function apiKeyImageGenerate(ctx: Context) {
   if (!provider) {
     ctx.status = 401
     const isDefaultProvider = providerName === APIKEY_IMAGE_PROVIDER
+    const isMiniMaxProvider = miniMaxImageProviderConfig(providerName) !== null
     ctx.body = {
-      error: `Missing ${providerName} provider in profile "${profile}" config.yaml.`,
-      code: isDefaultProvider ? 'missing_fun_codex_provider' : 'missing_apikey_image_provider',
+      error: isMiniMaxProvider
+        ? `Missing MiniMax API key for profile "${profile}".`
+        : `Missing ${providerName} provider in profile "${profile}" config.yaml.`,
+      code: isDefaultProvider
+        ? 'missing_fun_codex_provider'
+        : isMiniMaxProvider
+          ? 'missing_minimax_image_provider'
+          : 'missing_apikey_image_provider',
     }
     return
   }
 
   try {
     const mode = normalizeImageMode(body.mode)
-    const images = await requestApiKeyImage(provider, mode, body)
+    const result = await requestApiKeyImage(provider, mode, body)
     const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
-    const outputPaths = saveGeneratedImages(images, requestedOutputPath || undefined)
+    const outputPaths = saveGeneratedImages(result.images, requestedOutputPath || undefined)
     ctx.body = {
       ok: true,
       mode,
@@ -511,6 +684,7 @@ export async function apiKeyImageGenerate(ctx: Context) {
       provider: provider.name,
       base_url: provider.baseUrl,
       profile,
+      ...(result.metadata ? { metadata: result.metadata } : {}),
     }
   } catch (err: any) {
     ctx.status = err.status || 500
