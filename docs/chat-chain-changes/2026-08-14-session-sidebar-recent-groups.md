@@ -1,6 +1,6 @@
 ---
 date: 2026-08-14
-pr: pending
+pr: 2546
 feature: Session sidebar recent and category groups
 impact: Recent sessions remain visible in their assigned categories, while pinned sessions stay in the pinned group without consuming the recent-session limit.
 ---
