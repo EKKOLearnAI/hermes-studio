@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -22,10 +23,15 @@ async function waitFor(
 }
 
 afterAll(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await Promise.all(roots.splice(0).map(root => rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  })))
 })
 
-describeWindows('real Windows Pi .cmd RPC launch', () => {
+describeWindows('real Windows .cmd Pi-compatible RPC launch', () => {
   it('preserves non-ASCII paths and sends long UTF-8 text and images over RPC stdin', async () => {
     const root = await mkdtemp(join(tmpdir(), 'Hermes Pi 中文 '))
     roots.push(root)
@@ -71,9 +77,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     ;(manager as any).startWorkspaceRunDiff = () => {}
     ;(manager as any).completeWorkspaceRunDiff = () => undefined
     ;(manager as any).startCodingAgentMemoryExport = () => {}
-    // Keep this Windows process/encoding regression independent from cold
-    // tokenizer/provider initialization performed by usage accounting.
-    ;(manager as any).refreshCodingAgentUsage = async () => {}
 
     manager.start({
       agentSessionId: 'windows-pi-agent-session',
@@ -95,18 +98,29 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       state: { messages: [], isWorking: false, events: [], queue: [] },
     })
 
-    const prompt = `Windows UTF-8：${'超长中文'.repeat(5000)}`
-    manager.send('windows-pi-chat-session', prompt, {
-      images: [{ name: '图片 示例.png', path: imagePath, mediaType: 'image/png' }],
-    })
-    await waitFor(events, 'run.completed')
+    const child = (manager as any).runs.get('windows-pi-agent-session')?.currentChild
+    const childClosed = child?.exitCode == null
+      ? once(child, 'close').then(() => undefined)
+      : Promise.resolve()
+    try {
+      const prompt = `Windows UTF-8：${'超长中文'.repeat(5000)}`
+      manager.send('windows-pi-chat-session', prompt, {
+        images: [{ name: '图片 示例.png', path: imagePath, mediaType: 'image/png' }],
+      })
+      await waitFor(events, 'run.completed')
 
-    expect(events).toContainEqual(expect.objectContaining({
-      event: 'message.delta',
-      payload: expect.objectContaining({
-        delta: `windows-rpc:${prompt.length}:images=1`,
-      }),
-    }))
-    manager.stop('windows-pi-chat-session', { reportClosed: false })
+      expect(events).toContainEqual(expect.objectContaining({
+        event: 'message.delta',
+        payload: expect.objectContaining({
+          delta: `windows-rpc:${prompt.length}:images=1`,
+        }),
+      }))
+    } finally {
+      manager.stop('windows-pi-chat-session', { reportClosed: false })
+      await Promise.race([
+        childClosed,
+        new Promise(resolve => setTimeout(resolve, 5_000)),
+      ])
+    }
   }, 30_000)
 })

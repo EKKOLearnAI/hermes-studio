@@ -129,6 +129,8 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+const TERMINAL_USAGE_WAIT_MS = 2_000
+
 function makeId(): string {
   return `car_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -2188,10 +2190,30 @@ export class CodingAgentRunManager {
     const usageRefresh = run.terminalUsageRefresh
     run.terminalUsageRefresh = undefined
     if (usageRefresh) {
-      try {
-        await usageRefresh
-      } catch (err) {
-        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] terminal usage refresh failed before completion')
+      let settled = false
+      const guardedRefresh = usageRefresh
+        .then(() => {
+          settled = true
+        })
+        .catch((err) => {
+          settled = true
+          logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] terminal usage refresh failed before completion')
+        })
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        guardedRefresh,
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, TERMINAL_USAGE_WAIT_MS)
+          timeout.unref?.()
+        }),
+      ])
+      if (timeout) clearTimeout(timeout)
+      if (!settled) {
+        logger.debug({
+          runId: run.id,
+          sessionId: run.launch.sessionId,
+          waitMs: TERMINAL_USAGE_WAIT_MS,
+        }, '[coding-agent-run] terminal completion proceeding before usage refresh finishes')
       }
     }
     this.emitAndMarkPrintChatRunCompleted(run, event, payload)

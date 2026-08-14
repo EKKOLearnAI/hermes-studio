@@ -56,6 +56,41 @@ describe('agent runner endpoint resolver', () => {
 })
 
 describe('coding agent completion errors', () => {
+  it('does not let a stalled usage refresh block the terminal chat event', async () => {
+    vi.useFakeTimers()
+    try {
+      const manager = new CodingAgentRunManager()
+      const emitted = vi.fn()
+      ;(manager as any).emitToChat = emitted
+      ;(manager as any).completeWorkspaceRunDiff = () => undefined
+      ;(manager as any).markChatRunCompleted = () => {}
+      ;(manager as any).startCodingAgentMemoryExport = () => {}
+      const run: any = {
+        id: 'agent-stalled-usage',
+        launch: { sessionId: 'chat-stalled-usage' },
+        state: { queue: [], events: [], isWorking: true },
+        terminalUsageRefresh: new Promise<void>(() => {}),
+      }
+
+      const completion = (manager as any).emitAndMarkPrintChatRunCompletedAfterUsage(
+        run,
+        'run.completed',
+        { event: 'run.completed' },
+      )
+      await vi.advanceTimersByTimeAsync(2_000)
+      await completion
+
+      expect(emitted).toHaveBeenCalledWith(
+        'chat-stalled-usage',
+        'run.completed',
+        expect.objectContaining({ event: 'run.completed' }),
+      )
+      expect(run.state.isWorking).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('treats gateway API error text as a failed coding-agent run', () => {
     const error = 'API Error: 529 [1305][The service may be temporarily overloaded, please try again later]'
 
