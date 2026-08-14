@@ -52,7 +52,7 @@ const priorityText = computed(() => {
         {{ priorityText }}
       </span>
     </div>
-    <div class="card-title">{{ task.title }}</div>
+    <div class="card-title" dir="auto">{{ task.title }}</div>
     <div class="card-footer">
       <NTooltip v-if="task.assignee" trigger="hover">
         <template #trigger>
