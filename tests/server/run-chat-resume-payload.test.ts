@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildOutboundToolMessage,
   buildOutboundRunEvent,
   buildResumeEvents,
   buildResumeMessages,
@@ -120,5 +121,29 @@ describe('buildResumeMessages', () => {
     expect(outbound[0]).not.toBe(stateEvents[0])
     expect(outbound[0].data.output.length).toBe(RESUME_TOOL_RESULT_DISPLAY_LIMIT)
     expect(stateEvents[0].data.output).toBe(completeOutput)
+  })
+
+  it('reuses the display boundary for group-chat tool rows while preserving selected payload tools', () => {
+    const completeResult = 'group-result-'.repeat(400)
+    const persisted = {
+      id: 'group-tool-1',
+      roomId: 'room-1',
+      role: 'tool',
+      tool_name: 'read_file',
+      content: completeResult,
+    }
+
+    const outbound = buildOutboundToolMessage(persisted)
+    const workspaceDiff = buildOutboundToolMessage(
+      { ...persisted, tool_name: 'workspace_diff' },
+      { preserveToolNames: ['workspace_diff'] },
+    )
+
+    expect(outbound).not.toBe(persisted)
+    expect(outbound.content).toHaveLength(RESUME_TOOL_RESULT_DISPLAY_LIMIT)
+    expect(outbound.content_truncated).toBe(true)
+    expect(outbound.content_original_length).toBe(completeResult.length)
+    expect(persisted.content).toBe(completeResult)
+    expect(workspaceDiff.content).toBe(completeResult)
   })
 })

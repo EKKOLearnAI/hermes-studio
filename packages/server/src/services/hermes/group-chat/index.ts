@@ -36,6 +36,7 @@ import {
     shouldRouteGroupChatAgentHandoff,
     type GroupChatAgentHandoffPolicy,
 } from './handoff-depth'
+import { buildOutboundToolMessage } from '../run-chat/resume-payload'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -69,6 +70,14 @@ interface ChatMessage {
     mentionDepth?: number
     handoffChainId?: string
     agentSessionId?: string
+}
+
+const GROUP_CHAT_FULL_PAYLOAD_TOOL_NAMES = ['workspace_diff'] as const
+
+function buildOutboundGroupMessage(message: ChatMessage): ChatMessage {
+    return buildOutboundToolMessage(message as ChatMessage & Record<string, unknown>, {
+        preserveToolNames: GROUP_CHAT_FULL_PAYLOAD_TOOL_NAMES,
+    }) as ChatMessage
 }
 
 type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
@@ -1674,7 +1683,7 @@ class ChatStorage {
         const roomCache = new Map<string, RoomInfo | undefined>()
         return this.compactMessageAgentMetadata(
             page.map(row => this.mapStoredMessageRow(row, agentCache, roomCache)),
-        )
+        ).map(buildOutboundGroupMessage)
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
@@ -2902,7 +2911,7 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status })
         })
         this.agentClients.setWorkspaceDiffBroadcaster((roomId, msg, totalTokens) => {
-            this.nsp.to(roomId).emit('message', msg)
+            this.nsp.to(roomId).emit('message', buildOutboundGroupMessage(msg))
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         })
         // Restore agent connections — call restoreWhenReady() after server is listening.
@@ -3070,7 +3079,7 @@ export class GroupChatServer {
             role: 'assistant',
         }
         const saved = this.storage.saveMessageAndRefreshRoom(message)
-        this.nsp.to(input.roomId).emit('message', saved.message)
+        this.nsp.to(input.roomId).emit('message', buildOutboundGroupMessage(saved.message))
         this.nsp.to(input.roomId).emit('room_updated', {
             roomId: input.roomId,
             totalTokens: saved.totalTokens,
@@ -4078,7 +4087,7 @@ export class GroupChatServer {
         const savedMsg = saved.message
         const totalTokens = saved.totalTokens
 
-        this.nsp.to(roomId).emit('message', savedMsg)
+        this.nsp.to(roomId).emit('message', buildOutboundGroupMessage(savedMsg))
         this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         ack?.({ id: savedMsg.id })
 
