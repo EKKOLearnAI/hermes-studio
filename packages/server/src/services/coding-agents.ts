@@ -256,6 +256,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   }
   /** Internal Pi transport: terminal launches are interactive; Studio runs use RPC. */
   piOutputMode?: 'interactive' | 'rpc'
+  approveProjectConfig?: boolean
 }
 
 export interface CodingAgentLaunchResult {
@@ -2136,6 +2137,7 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
 
   deletingTools.add(tool.id)
   try {
+    codingAgentRunManager.stopMatching(launch => launch.agentId === tool.id, { reportClosed: false })
     const env = await commandEnv()
     const packagePrefixes = await getCommandPackagePrefixes(tool, env)
     const uninstallArgsList = packagePrefixes.length > 0
@@ -2257,6 +2259,11 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
 
   await mkdir(dirname(definition.absolutePath), { recursive: true })
   await writeFile(definition.absolutePath, buffer)
+  codingAgentRunManager.stopMatching(launch => (
+    launch.agentId === id &&
+    launch.profile === normalizedScope.profile &&
+    normalizeScopeSegment(launch.provider, 'default', 'provider') === normalizedScope.provider
+  ), { reportClosed: false })
   return {
     ...definition,
     ...normalizedScope,
@@ -2331,8 +2338,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
   const reasoningEffort = String(input.reasoningEffort || '').trim()
   const groupSystemPrompt = String(input.groupSystemPrompt || '').trim()
-  const scopedSystemPrompt = groupSystemPrompt || getSystemPrompt()
-  const rootDir = getScopedRuntimeConfigRoot(tool.id, scope, input)
+  const scopedSystemPrompt = tool.id === 'pi' && groupSystemPrompt ? getSystemPrompt() : groupSystemPrompt || getSystemPrompt()
+  const isolatedInput = tool.id === 'pi'
+    ? {
+        ...input,
+        sessionId: input.sessionId || randomUUID(),
+        agentSessionId: input.agentSessionId || randomUUID(),
+      }
+    : input
+  const rootDir = getScopedRuntimeConfigRoot(tool.id, scope, isolatedInput)
   const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
   await mkdir(rootDir, { recursive: true })
   await mkdir(workspaceDir, { recursive: true })
@@ -2365,8 +2379,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           apiMode,
           reasoningEffort,
           agentId: tool.id,
-          agentSessionId: input.agentSessionId,
-          chatSessionId: input.sessionId,
+          agentSessionId: isolatedInput.agentSessionId,
+          chatSessionId: isolatedInput.sessionId,
         })
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -2429,8 +2443,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           apiMode,
           reasoningEffort,
           agentId: tool.id,
-          agentSessionId: input.agentSessionId,
-          chatSessionId: input.sessionId,
+          agentSessionId: isolatedInput.agentSessionId,
+          chatSessionId: isolatedInput.sessionId,
         })
       : null
     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -2495,8 +2509,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           apiMode,
           reasoningEffort,
           agentId: tool.id,
-          agentSessionId: input.agentSessionId,
-          chatSessionId: input.sessionId,
+        agentSessionId: isolatedInput.agentSessionId,
+        chatSessionId: isolatedInput.sessionId,
         })
       : null
     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -2553,7 +2567,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ...(input.agentNativeSessionId ? ['--session-id', input.agentNativeSessionId] : []),
       '--session-dir', sessionsDir,
       '--append-system-prompt', join(rootDir, 'APPEND_SYSTEM.md'),
-      ...(input.piOutputMode === 'rpc' ? ['--approve'] : []),
+      ...(input.piOutputMode === 'rpc'
+        ? [input.approveProjectConfig === true ? '--approve' : '--no-approve']
+        : []),
     ]
   }
 
@@ -2641,15 +2657,16 @@ export async function startCodingAgentRun(
     isolateSettings: true,
     piOutputMode: id === 'pi' ? 'rpc' : undefined,
   })
-  const runtimeEnv = process.platform === 'win32'
+  const commandExecutionEnv = process.platform === 'win32'
     ? {
         ...(await commandEnv()),
         ...launch.env,
       }
     : launch.env
   const runtimeCommand = process.platform === 'win32'
-    ? await resolveCommandForExecution(launch.command, runtimeEnv)
+    ? await resolveCommandForExecution(launch.command, commandExecutionEnv)
     : launch.command
+  const runtimeEnv = launch.agentId === 'pi' ? launch.env : commandExecutionEnv
   const persistedProvider = String(resolvedInput.provider || launch.provider || '').trim() || launch.provider
   const started = codingAgentRunManager.start({
     agentSessionId,

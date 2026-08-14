@@ -124,6 +124,7 @@ interface ManagedCodingAgentRun {
   piFinishReason?: string
   turnActive?: boolean
   piUiRequests?: Map<string, any>
+  piTextBuffer?: string
 }
 
 interface CodingAgentRunSendOptions {
@@ -666,7 +667,6 @@ export class CodingAgentRunManager {
     if (!text && images.length === 0) throw new Error('Input is required')
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
-    run.turnActive = true
     run.assistantMessageId = undefined
     const messageId = this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
@@ -681,7 +681,12 @@ export class CodingAgentRunManager {
       return { runId: run.id, messageId }
     }
     if (run.launch.agentId === 'pi') {
-      this.startPiRpcTurn(run, text, systemPrompt, images)
+      try {
+        this.startPiRpcTurn(run, text, systemPrompt, images)
+      } catch (err) {
+        run.turnActive = false
+        throw err
+      }
       return { runId: run.id, messageId }
     }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
@@ -714,14 +719,11 @@ export class CodingAgentRunManager {
     const run = this.getBySession(sessionId)
     const request = run?.piUiRequests?.get(approvalId)
     if (!run || !request) return { handled: false, resolved: false }
-    run.piUiRequests?.delete(approvalId)
     const normalizedChoice = String(choice || 'deny').trim().toLowerCase()
+    if (!['once', 'session', 'deny'].includes(normalizedChoice)) return { handled: true, resolved: false }
+    const response: Record<string, unknown> = { type: 'extension_ui_response', id: approvalId }
     if (request.method === 'confirm') {
-      this.writePiRpcCommand(run, {
-        type: 'extension_ui_response',
-        id: approvalId,
-        ...(normalizedChoice === 'deny' ? { confirmed: false } : { confirmed: true }),
-      })
+      response.confirmed = normalizedChoice !== 'deny'
     } else if (request.method === 'select') {
       const options = Array.isArray(request.options) ? request.options.map((value: unknown) => String(value)) : []
       const match = normalizedChoice === 'session'
@@ -729,21 +731,17 @@ export class CodingAgentRunManager {
         : normalizedChoice === 'once'
           ? options.find((value: string) => /once|allow/i.test(value) && !/session/i.test(value))
           : undefined
-      this.writePiRpcCommand(run, {
-        type: 'extension_ui_response',
-        id: approvalId,
-        ...(match ? { value: match } : { cancelled: true }),
-      })
+      if (match) response.value = match
+      else response.cancelled = true
     } else {
-      this.writePiRpcCommand(run, { type: 'extension_ui_response', id: approvalId, cancelled: true })
+      response.cancelled = true
     }
-    this.emitToChat(sessionId, 'approval.resolved', {
-      event: 'approval.resolved',
-      session_id: sessionId,
-      approval_id: approvalId,
-      choice: normalizedChoice,
-      resolved: true,
-    })
+    try {
+      this.writePiRpcCommand(run, response)
+    } catch {
+      return { handled: true, resolved: false }
+    }
+    run.piUiRequests?.delete(approvalId)
     return { handled: true, resolved: true }
   }
 
@@ -1037,6 +1035,17 @@ export class CodingAgentRunManager {
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
     run.piDetachJsonl?.()
     run.piDetachJsonl = undefined
+    for (const approvalId of run.piUiRequests?.keys() || []) {
+      this.emitToChat(run.launch.sessionId, 'approval.resolved', {
+        event: 'approval.resolved',
+        session_id: run.launch.sessionId,
+        approval_id: approvalId,
+        choice: 'deny',
+        resolved: false,
+        error: 'Coding agent session closed',
+      })
+    }
+    run.piUiRequests?.clear()
     this.flushTerminalOutput(run)
     if (run.terminalFlushTimer) clearTimeout(run.terminalFlushTimer)
     this.runs.delete(run.id)
@@ -1139,6 +1148,7 @@ export class CodingAgentRunManager {
     run.piWillRetry = false
     run.piFinalText = undefined
     run.piFinishReason = undefined
+    run.piTextBuffer = ''
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1163,6 +1173,7 @@ export class CodingAgentRunManager {
     }
     const dynamicPromptPath = String(run.launch.env?.HERMES_PI_DYNAMIC_PROMPT_FILE || '').trim()
     if (dynamicPromptPath) writeFileSync(dynamicPromptPath, systemPrompt, 'utf8')
+    run.turnActive = true
     this.writePiRpcCommand(run, {
       id: `prompt_${responseId}`,
       type: 'prompt',
@@ -1240,18 +1251,7 @@ export class CodingAgentRunManager {
       const delta = event.assistantMessageEvent || {}
       if (delta.type === 'text_delta' && delta.delta) {
         const text = String(delta.delta)
-        this.ensureClaudePrintText(run)
-        run.printText = `${run.printText || ''}${text}`
-        this.handleClaudePrintResponseEvent(run, {
-          type: 'response.output_text.delta',
-          data: {
-            type: 'response.output_text.delta',
-            item_id: run.printMessageId,
-            output_index: 0,
-            content_index: 0,
-            delta: text,
-          },
-        })
+        run.piTextBuffer = `${run.piTextBuffer || ''}${text}`
       } else if (delta.type === 'thinking_delta' && delta.delta) {
         this.handleClaudePrintResponseEvent(run, {
           type: 'response.reasoning.delta',
@@ -1321,7 +1321,7 @@ export class CodingAgentRunManager {
         this.failClaudePrintTurn(run, run.piPendingError)
         return
       }
-      const finalText = run.piFinalText || ''
+      const finalText = run.piFinalText || run.piTextBuffer || ''
       if (finalText) {
         const existing = run.printText || ''
         if (finalText !== existing) {
@@ -1347,6 +1347,10 @@ export class CodingAgentRunManager {
           .reverse()
           .find(message => message.runMarker === run.runMarker && message.role === 'assistant' && !message.tool_calls?.length)
         if (assistantMessage) assistantMessage.finish_reason = 'length'
+      }
+      const dynamicPromptPath = String(run.launch.env?.HERMES_PI_DYNAMIC_PROMPT_FILE || '').trim()
+      if (dynamicPromptPath) {
+        try { writeFileSync(dynamicPromptPath, '', 'utf8') } catch {}
       }
       this.completeClaudePrintTurn(run)
     }

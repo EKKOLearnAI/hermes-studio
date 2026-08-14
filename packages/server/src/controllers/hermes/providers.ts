@@ -166,12 +166,16 @@ export async function patchEditor(ctx: any) {
   const providerId = decodeURIComponent(ctx.params.poolKey)
   const patch = (ctx.request.body || {}) as ProviderEditorPatch
   try {
+    const profile = requestedProfile(ctx)
     const result = await updateProviderEditorDetail(
-      requestedProfile(ctx),
+      profile,
       providerId,
       patch,
       expectedRevision(ctx),
     )
+    if (result.changed.some(field => field === 'api_key' || field === 'base_url' || field === 'api_mode')) {
+      await revokeCodingAgentProviderRuntime(profile, providerId)
+    }
     setRevisionHeader(ctx, result.detail.revision)
     appendAuditSafely({
       actor: actorForAudit(ctx),

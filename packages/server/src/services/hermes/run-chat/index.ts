@@ -617,7 +617,16 @@ export class ChatRunSocket {
         data.approval_id,
         data.choice,
       )
-      if (codingAgentResult.handled) return
+      if (codingAgentResult.handled) {
+        this.emitToSession(socket, data.session_id, 'approval.resolved', {
+          event: 'approval.resolved',
+          approval_id: data.approval_id,
+          choice: data.choice || 'deny',
+          resolved: codingAgentResult.resolved,
+          ...(!codingAgentResult.resolved ? { error: 'Approval could not be applied.' } : {}),
+        })
+        return
+      }
       try {
         const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
         this.emitToSession(socket, data.session_id, 'approval.resolved', {

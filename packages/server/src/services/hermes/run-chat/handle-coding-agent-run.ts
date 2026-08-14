@@ -137,7 +137,7 @@ export async function handleCodingAgentRun(
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi'
     const runPrompt = [
       groupSystemPrompt || (includeBaseSystemPrompt ? getSystemPrompt(undefined, { source: data.session_source || data.source }) : ''),
-      String(data.instructions || '').trim(),
+      String(data.instructions || '').trim() === groupSystemPrompt ? '' : String(data.instructions || '').trim(),
     ].filter(Boolean).join('\n')
     const sent = await (Array.isArray(data.input)
       ? sendCodingAgentRunInput(
