@@ -806,6 +806,77 @@ describe('group chat REST route baseline', () => {
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
+  it('creates, adds, and updates Pi room agents through the local API', async () => {
+    const createRoom = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Pi Room',
+        inviteCode: 'PIROOM',
+        agents: [{
+          agent: 'pi',
+          profile: 'default',
+          provider: 'openai',
+          model: 'pi-create-model',
+          apiMode: 'codex_responses',
+          name: 'Pi Creator',
+        }],
+      }),
+    })
+    expect(createRoom.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'pi',
+      model: 'pi-create-model',
+      apiMode: 'codex_responses',
+    }))
+
+    storage.rooms.set('room-pi', { id: 'room-pi', name: 'Pi Room', inviteCode: 'PIROOM2' })
+    const addAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-add-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'medium',
+        name: 'Pi Worker',
+      }),
+    })
+    expect(addAgent.status).toBe(200)
+    const added = await addAgent.json()
+    expect(added.agent).toMatchObject({
+      agent: 'pi',
+      profile: 'research',
+      model: 'pi-add-model',
+      apiMode: 'codex_responses',
+    })
+
+    const updateAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents/${added.agent.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        name: 'Pi Reviewer',
+      }),
+    })
+    expect(updateAgent.status).toBe(200)
+    await expect(updateAgent.json()).resolves.toMatchObject({
+      agent: expect.objectContaining({
+        agent: 'pi',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+      }),
+    })
+  })
+
   it('rejects incomplete or invalid room agent runtime configuration', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
 

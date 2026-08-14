@@ -2231,7 +2231,13 @@ export class CodingAgentRunManager {
   private startCodingAgentMemoryExport(run: ManagedCodingAgentRun) {
     if (run.memoryExportStarted) return
     const agentId = run.launch.agentId
-    const source = agentId === 'codex' ? 'codex' : agentId === 'claude-code' ? 'claude-code' : ''
+    const source = agentId === 'codex'
+      ? 'codex'
+      : agentId === 'claude-code'
+        ? 'claude-code'
+        : agentId === 'pi'
+          ? 'pi'
+          : ''
     if (!source) return
     const nativeSessionId = String(run.launch.agentNativeSessionId || '').trim()
     if (!nativeSessionId) {
@@ -2245,6 +2251,11 @@ export class CodingAgentRunManager {
     if (source === 'codex') {
       const codexHome = run.launch.env?.CODEX_HOME || process.env.CODEX_HOME
       if (codexHome) env.CODEX_HOME = codexHome
+    } else if (source === 'pi') {
+      const piHome = run.launch.env?.PI_CODING_AGENT_DIR || process.env.PI_CODING_AGENT_DIR
+      const piSessionDir = run.launch.env?.PI_CODING_AGENT_SESSION_DIR || process.env.PI_CODING_AGENT_SESSION_DIR
+      if (piHome) env.PI_CODING_AGENT_DIR = piHome
+      if (piSessionDir) env.PI_CODING_AGENT_SESSION_DIR = piSessionDir
     }
 
     let child: ChildProcess

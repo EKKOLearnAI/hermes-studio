@@ -2,6 +2,16 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('GroupChatPanel workspace save handling', () => {
+  it('offers Pi in ordinary and paired group chat and filters it as the Pi provider target', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const linkView = readFileSync('packages/client/src/views/hermes/GroupChatLinkView.vue', 'utf8')
+
+    for (const source of [panel, linkView]) {
+      expect(source).toContain("{ label: 'Pi', value: 'pi' }")
+      expect(source).toMatch(/selectedAgentType\.value === 'pi'[\s\S]*?\\? 'pi'/)
+    }
+  })
+
   it('keeps free-text input available alongside clarification choices in single and group chat', () => {
     const sources = [
       readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8'),

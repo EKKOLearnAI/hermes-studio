@@ -476,11 +476,12 @@ describe('group chat baseline behavior', () => {
       now: 1_000,
     })
     const agent = relayStore.normalizeRemoteGroupAgentDescriptor({
-      agent: 'codex',
+      agent: 'pi',
       profile: 'default',
       provider: 'openai',
       model: 'gpt-test',
-      name: 'Remote Codex',
+      apiMode: 'codex_responses',
+      name: 'Remote Pi',
     })
 
     expect(draft.status).toBe('draft')
@@ -496,7 +497,10 @@ describe('group chat baseline behavior', () => {
       requestSecret,
       agent,
       1_100,
-    )).toMatchObject({ status: 'pending', agent: { name: 'Remote Codex' } })
+    )).toMatchObject({
+      status: 'pending',
+      agent: { agent: 'pi', name: 'Remote Pi', apiMode: 'codex_responses' },
+    })
     expect(relayStore.submitGroupAgentPairingHandoff(
       draft.id,
       requestSecret,

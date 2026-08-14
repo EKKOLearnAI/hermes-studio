@@ -1,5 +1,5 @@
 import { execFile } from 'child_process'
-import { createHash, randomUUID } from 'crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
@@ -35,6 +35,8 @@ const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
+const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
+const PI_PROXY_TARGET_ENCRYPTION_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
   { name: 'hermes-studio-browser', toolset: 'browser' },
@@ -52,6 +54,84 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const HERMES_PROMPT_BLOCK_BEGIN = '<!-- BEGIN HERMES WEB UI PROMPT -->'
 const HERMES_PROMPT_BLOCK_END = '<!-- END HERMES WEB UI PROMPT -->'
+
+interface EncryptedPiProxyApiKey {
+  v: 1
+  algorithm: 'aes-256-gcm'
+  iv: string
+  tag: string
+  ciphertext: string
+}
+
+function piProxyTargetKeyPath(): string {
+  return join(getWebUiHome(), CODING_AGENT_HOME_DIR, PI_PROXY_TARGET_KEY_FILE)
+}
+
+async function readOrCreatePiProxyTargetKey(): Promise<Buffer> {
+  const path = piProxyTargetKeyPath()
+  await mkdir(dirname(path), { recursive: true })
+  try {
+    const existing = await readFile(path)
+    if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
+    await chmod(path, 0o600)
+    return existing
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') throw err
+  }
+
+  const generated = randomBytes(32)
+  try {
+    await writeFile(path, generated, { mode: 0o600, flag: 'wx' })
+    return generated
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST') throw err
+    const existing = await readFile(path)
+    if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
+    await chmod(path, 0o600)
+    return existing
+  }
+}
+
+async function encryptPiProxyApiKey(apiKey: string): Promise<EncryptedPiProxyApiKey> {
+  const key = await readOrCreatePiProxyTargetKey()
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  cipher.setAAD(PI_PROXY_TARGET_ENCRYPTION_AAD)
+  const ciphertext = Buffer.concat([cipher.update(apiKey, 'utf8'), cipher.final()])
+  return {
+    v: 1,
+    algorithm: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ciphertext: ciphertext.toString('base64'),
+  }
+}
+
+async function decryptPiProxyApiKey(value: unknown): Promise<string> {
+  const encrypted = value as Partial<EncryptedPiProxyApiKey> | null
+  if (encrypted?.v !== 1 || encrypted.algorithm !== 'aes-256-gcm') return ''
+  if (!encrypted.iv || !encrypted.tag || !encrypted.ciphertext) return ''
+  const key = await readOrCreatePiProxyTargetKey()
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(encrypted.iv, 'base64'))
+  decipher.setAAD(PI_PROXY_TARGET_ENCRYPTION_AAD)
+  decipher.setAuthTag(Buffer.from(encrypted.tag, 'base64'))
+  return Buffer.concat([
+    decipher.update(Buffer.from(encrypted.ciphertext, 'base64')),
+    decipher.final(),
+  ]).toString('utf8')
+}
+
+async function serializePiProxyTarget(
+  input: Record<string, unknown>,
+  apiKey: string,
+  token: string,
+): Promise<string> {
+  return `${JSON.stringify({
+    input,
+    apiKeyEncrypted: await encryptPiProxyApiKey(apiKey),
+    token,
+  }, null, 2)}\n`
+}
 
 interface CommandExecution {
   command: string
@@ -1288,20 +1368,16 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
         }, null)
         const apiKey = String(resolved.apiKey || '').trim()
         if (!apiKey) continue
-        content = `${JSON.stringify({
-          input: {
-            profile,
-            provider,
-            model,
-            apiMode,
-            baseUrl,
-            apiKey,
-            agentId: 'pi',
-            agentSessionId,
-            chatSessionId,
-          },
-          token,
-        }, null, 2)}\n`
+        content = await serializePiProxyTarget({
+          profile,
+          provider,
+          model,
+          apiMode,
+          baseUrl,
+          agentId: 'pi',
+          agentSessionId,
+          chatSessionId,
+        }, apiKey, token)
         await writeFile(targetPath, content, { encoding: 'utf-8', mode: 0o600 })
       } catch {
         continue
@@ -1311,13 +1387,27 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
       const persisted = JSON.parse(content)
       const input = persisted?.input
       const token = String(persisted?.token || '').trim()
+      const legacyApiKey = String(input?.apiKey || '').trim()
+      const apiKey = legacyApiKey || String(await decryptPiProxyApiKey(persisted?.apiKeyEncrypted) || '').trim()
       if (!input || typeof input !== 'object' || !token) continue
       if (!String(input.profile || '').trim()
         || !String(input.provider || '').trim()
         || !String(input.model || '').trim()
         || !String(input.baseUrl || '').trim()
-        || !String(input.apiKey || '').trim()) continue
-      restoreCodexProxyTarget(input, token)
+        || !apiKey) continue
+      const restoredInput = { ...input, apiKey }
+      delete restoredInput.apiKeyEncrypted
+      restoreCodexProxyTarget(restoredInput, token)
+      if (legacyApiKey) {
+        const migratedInput = { ...input }
+        delete migratedInput.apiKey
+        await writeFile(
+          targetPath,
+          await serializePiProxyTarget(migratedInput, apiKey, token),
+          { encoding: 'utf-8', mode: 0o600 },
+        )
+        await chmod(targetPath, 0o600)
+      }
       restoredCount += 1
     } catch {
       // Ignore invalid or legacy files; preparing the launch rewrites them.
@@ -2334,21 +2424,17 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     }))
     if (proxyTarget) {
       const proxyTargetPath = join(rootDir, PI_PROXY_TARGET_FILE)
-      await writeRuntimeFile('proxy_target', PI_PROXY_TARGET_FILE, `${JSON.stringify({
-        input: {
+      await writeRuntimeFile('proxy_target', PI_PROXY_TARGET_FILE, await serializePiProxyTarget({
           profile: scope.profile,
           provider,
           model,
           baseUrl,
-          apiKey,
           apiMode,
           reasoningEffort,
           agentId: tool.id,
           agentSessionId: input.agentSessionId,
           chatSessionId: input.sessionId,
-        },
-        token: proxyTarget.token,
-      }, null, 2)}\n`)
+        }, apiKey, proxyTarget.token))
       await chmod(proxyTargetPath, 0o600)
     }
     await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(

@@ -4,7 +4,7 @@ import { readdir, realpath } from 'fs/promises'
 import { readConfigYamlForProfile, safeReadFile } from './config-helpers'
 import { getProfileDir } from './hermes/hermes-profile'
 
-export type WorkflowSkillTarget = 'hermes' | 'claude' | 'codex'
+export type WorkflowSkillTarget = 'hermes' | 'claude' | 'codex' | 'pi'
 
 export interface ResolvedWorkflowSkill {
   name: string
@@ -16,6 +16,7 @@ export interface ResolvedWorkflowSkill {
 function targetForAgent(agent?: string | null): WorkflowSkillTarget {
   if (agent === 'claude-code') return 'claude'
   if (agent === 'codex') return 'codex'
+  if (agent === 'pi') return 'pi'
   return 'hermes'
 }
 
@@ -85,6 +86,7 @@ async function configuredHermesSkillRoots(profile: string): Promise<string[]> {
 async function skillRootsForTarget(target: WorkflowSkillTarget, profile: string): Promise<string[]> {
   if (target === 'hermes') return configuredHermesSkillRoots(profile)
   if (target === 'claude') return [join(homedir(), '.claude', 'skills')]
+  if (target === 'pi') return [join(homedir(), '.agents', 'skills')]
   return [
     join(homedir(), '.agents', 'skills'),
     join(homedir(), '.codex', 'skills', '.system'),

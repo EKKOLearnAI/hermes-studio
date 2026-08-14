@@ -843,9 +843,18 @@ const newChatApiModeOptions = computed(() => [
 ]);
 
 const newChatAgentModeOptions = computed(() => [
-  { label: t("codingAgents.launchModeGlobal"), value: "global" },
+  ...(newChatAgent.value === "pi"
+    ? []
+    : [{ label: t("codingAgents.launchModeGlobal"), value: "global" }]),
   { label: t("codingAgents.launchModeScoped"), value: "scoped" },
 ]);
+
+function effectiveNewChatMode(
+  agent: typeof newChatAgent.value,
+  requestedMode: typeof newChatAgentMode.value,
+) {
+  return agent === "ekko-agent" || agent === "pi" ? "scoped" : requestedMode;
+}
 
 function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
@@ -856,7 +865,7 @@ function getModelGroupsForProfile(profile: string) {
 
 function isNewChatProviderAllowed(group: AvailableModelGroup) {
   if (group.provider === "moa") return newChatAgent.value === "hermes";
-  const mode = newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value;
+  const mode = effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value);
   if (!(newChatAgent.value !== "hermes" && mode === "scoped")) return true;
   return canScopedCodingAgentUseProvider(newChatAgent.value as ChatCodingAgentId, group.provider);
 }
@@ -945,7 +954,7 @@ const selectedNewChatProviderGroup = computed(() =>
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
 const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi");
 const effectiveNewChatAgentMode = computed(() =>
-  newChatAgent.value === "ekko-agent" || newChatAgent.value === "pi" ? "scoped" : newChatAgentMode.value,
+  effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value),
 );
 const isNewChatGlobalCodingAgent = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
@@ -1039,6 +1048,9 @@ function ensureNewChatProviderSelection() {
 watch(
   () => [newChatAgent.value, newChatAgentMode.value, newChatProfile.value],
   () => {
+    if (newChatAgent.value === "pi" && newChatAgentMode.value !== "scoped") {
+      newChatAgentMode.value = "scoped";
+    }
     ensureNewChatProviderSelection();
     // Reload workspace data when profile changes
     if (newChatProfile.value) {

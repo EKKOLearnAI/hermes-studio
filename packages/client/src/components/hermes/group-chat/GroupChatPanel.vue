@@ -190,6 +190,7 @@ const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentT
     { label: 'Hermes', value: 'hermes' },
     { label: 'Claude Code', value: 'claude' },
     { label: 'Codex', value: 'codex' },
+    { label: 'Pi', value: 'pi' },
     { label: 'Ekko Agent', value: 'ekko' },
 ])
 
@@ -202,7 +203,9 @@ function getAgentModelGroups(profile: string) {
                 ? 'ekko-agent'
                 : selectedAgentType.value === 'claude'
                     ? 'claude-code'
-                    : 'codex'
+                    : selectedAgentType.value === 'pi'
+                        ? 'pi'
+                        : 'codex'
             return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
         })
 }

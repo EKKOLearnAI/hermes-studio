@@ -161,15 +161,22 @@ describe('coding agent launch preparation', () => {
     expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
     expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')
     const persistedProxyTargetPath = join(result.rootDir, 'proxy-target.json')
-    const persistedProxyTarget = JSON.parse(readFileSync(persistedProxyTargetPath, 'utf-8'))
+    const persistedProxyTargetContent = readFileSync(persistedProxyTargetPath, 'utf-8')
+    const persistedProxyTarget = JSON.parse(persistedProxyTargetContent)
     expect(persistedProxyTarget.input).toMatchObject({
       profile: 'default',
       provider: 'custom:test',
       model: 'test-model',
       baseUrl: 'https://api.example.com/v1',
-      apiKey: 'sk-runtime-secret',
       apiMode: 'codex_responses',
     })
+    expect(persistedProxyTarget.input).not.toHaveProperty('apiKey')
+    expect(persistedProxyTarget.apiKeyEncrypted).toMatchObject({
+      v: 1,
+      algorithm: 'aes-256-gcm',
+    })
+    expect(persistedProxyTargetContent).not.toContain('sk-runtime-secret')
+    expect(existsSync(join(home, 'coding-agent', '.pi-proxy-target.key'))).toBe(true)
     expect(persistedProxyTarget.token).toBe(runtimeModels.providers['hermes-studio'].apiKey)
     await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
     expect(result.args).not.toContain('rpc')
@@ -188,6 +195,45 @@ describe('coding agent launch preparation', () => {
     })
     expect(rpcResult.args).toEqual(expect.arrayContaining(['--mode', 'rpc']))
     expect(readFileSync(join(rpcResult.rootDir, 'launch.sh'), 'utf-8')).toContain('--mode rpc')
+  })
+
+  it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
+    const home = makeHome()
+    const targetPath = join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_test',
+      'pi',
+      'runs',
+      'legacy-run',
+      'proxy-target.json',
+    )
+    mkdirSync(dirname(targetPath), { recursive: true })
+    writeFileSync(targetPath, `${JSON.stringify({
+      input: {
+        profile: 'default',
+        provider: 'custom:test',
+        model: 'legacy-model',
+        baseUrl: 'https://legacy.example.com/v1',
+        apiKey: 'sk-legacy-plaintext',
+        apiMode: 'codex_responses',
+        agentId: 'pi',
+        agentSessionId: 'legacy-agent-session',
+        chatSessionId: 'legacy-chat-session',
+      },
+      token: 'hwui_legacy_token',
+    }, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+
+    const migratedContent = readFileSync(targetPath, 'utf8')
+    const migrated = JSON.parse(migratedContent)
+    expect(migrated.input).not.toHaveProperty('apiKey')
+    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 1, algorithm: 'aes-256-gcm' })
+    expect(migratedContent).not.toContain('sk-legacy-plaintext')
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
   })
 
   it('launches Claude Code with the global config when requested', async () => {

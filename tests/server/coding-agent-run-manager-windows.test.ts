@@ -31,6 +31,7 @@ vi.mock('child_process', () => ({
     const child = new testState.TestEmitter() as any
     child.stdin = new testState.TestEmitter()
     child.stdin.end = vi.fn()
+    child.stdin.write = vi.fn()
     child.stdout = new testState.TestEmitter()
     child.stderr = new testState.TestEmitter()
     child.pid = 1234
@@ -68,6 +69,154 @@ afterEach(() => {
 })
 
 describe('coding agent Windows process launch', () => {
+  it('exports completed Pi native sessions through nmem with isolated Pi directories', () => {
+    const manager = new CodingAgentRunManager()
+    const run = {
+      id: 'agent-session-pi-memory',
+      launch: {
+        agentSessionId: 'agent-session-pi-memory',
+        agentNativeSessionId: 'pi-native-memory',
+        agentId: 'pi',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'pi-test',
+        sessionId: 'chat-session-pi-memory',
+        command: 'pi.cmd',
+        args: ['--mode', 'rpc'],
+        shellCommand: 'pi',
+        workspaceDir: process.cwd(),
+        env: {
+          PI_CODING_AGENT_DIR: 'C:\\用户\\Pi 配置',
+          PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\Pi 会话',
+        },
+      },
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      memoryExportStarted: false,
+    }
+
+    ;(manager as any).startCodingAgentMemoryExport(run)
+
+    expect(testState.spawnCalls[0]).toMatchObject({
+      command: 'nmem',
+      args: ['threads', 'save', '--from', 'pi', '--truncate', '--session-id', 'pi-native-memory'],
+      options: {
+        env: expect.objectContaining({
+          PI_CODING_AGENT_DIR: 'C:\\用户\\Pi 配置',
+          PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\Pi 会话',
+        }),
+      },
+    })
+    expect(run.memoryExportStarted).toBe(true)
+  })
+
+  it('fails closed for interactive Pi extension UI requests in Studio RPC mode', () => {
+    const manager = new CodingAgentRunManager()
+    const stdin = new testState.TestEmitter() as any
+    stdin.write = vi.fn()
+    const run: any = {
+      id: 'agent-session-pi-ui',
+      launch: {
+        agentSessionId: 'agent-session-pi-ui',
+        agentId: 'pi',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'pi-test',
+        sessionId: 'chat-session-pi-ui',
+        command: 'pi.cmd',
+        args: ['--mode', 'rpc'],
+        shellCommand: 'pi',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      currentChild: {
+        stdin,
+        exitCode: null,
+        signalCode: null,
+        killed: false,
+      },
+    }
+
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'confirm-1',
+      method: 'confirm',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'input-1',
+      method: 'input',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'notify-1',
+      method: 'notify',
+    })
+
+    expect(stdin.write.mock.calls.map((call: any[]) => JSON.parse(call[0]))).toEqual([
+      { type: 'extension_ui_response', id: 'confirm-1', confirmed: false },
+      { type: 'extension_ui_response', id: 'input-1', cancelled: true },
+    ])
+  })
+
+  it('runs Pi RPC through a non-ASCII npm .cmd path and sends long UTF-8 prompts over stdin', () => {
+    const manager = new CodingAgentRunManager()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-pi-1',
+      agentNativeSessionId: 'pi-native-session-1',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: '默认',
+      provider: 'test-provider',
+      model: 'pi-test',
+      sessionId: 'chat-session-pi-1',
+      command: 'C:\\用户\\管理员\\AppData\\Roaming\\npm\\pi.cmd',
+      args: ['--mode', 'rpc', '--session-dir', 'C:\\用户\\会话 目录'],
+      env: {
+        PI_CODING_AGENT_DIR: 'C:\\用户\\配置 目录',
+        PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\会话 目录',
+      },
+      shellCommand: 'pi',
+      workspaceDir: 'C:\\用户\\项目 目录',
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    const prompt = `检查非 ASCII 路径。\n${'超长中文内容'.repeat(4000)}`
+    manager.send('chat-session-pi-1', prompt)
+
+    const call = testState.spawnCalls[0]
+    expect(call.command).toBe('cmd.exe')
+    expect(call.args[3]).toContain('C:\\用户\\管理员\\AppData\\Roaming\\npm\\pi.cmd')
+    expect(call.args[3]).toContain('C:\\用户\\会话^ 目录')
+    expect(call.args[3]).not.toContain('超长中文内容')
+    expect(call.args[3].length).toBeLessThan(8191)
+    expect(call.options.env).toMatchObject({
+      PI_CODING_AGENT_DIR: 'C:\\用户\\配置 目录',
+      PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\会话 目录',
+    })
+    expect(call.options.windowsVerbatimArguments).toBe(true)
+    expect(call.child.stdin.write).toHaveBeenCalledOnce()
+    expect(JSON.parse(call.child.stdin.write.mock.calls[0][0])).toMatchObject({
+      type: 'prompt',
+      message: prompt,
+    })
+
+    const run = (manager as any).runs.get('agent-session-pi-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
+
   it('runs npm .cmd shims through cmd.exe for hidden Claude Code chat turns', () => {
     const manager = new CodingAgentRunManager()
     ;(manager as any).ensureDbSession = () => {}

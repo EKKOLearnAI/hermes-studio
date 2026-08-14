@@ -16,7 +16,7 @@ export type RemoteGroupAgentDescriptor = {
   avatar: string
 }
 
-const REMOTE_AGENT_TYPES = new Set<RemoteGroupAgentDescriptor['agent']>(['hermes', 'ekko', 'codex', 'claude'])
+const REMOTE_AGENT_TYPES = new Set<RemoteGroupAgentDescriptor['agent']>(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const REMOTE_AGENT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
 const REMOTE_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const PAIRING_AUDIT_RETENTION_MS = 7 * 24 * 60 * 60_000
