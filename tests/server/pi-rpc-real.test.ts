@@ -112,6 +112,10 @@ function createStudioManager() {
   ;(manager as any).emitToChat = (sessionId: string, event: string, payload: any) => {
     emitted.push({ sessionId, event, payload })
   }
+  ;(manager as any).persistTerminalResponse = (run: any) => {
+    run.state.responseRun = undefined
+    return undefined
+  }
   ;(manager as any).markChatRunCompleted = () => {}
   ;(manager as any).startWorkspaceRunDiff = () => {}
   ;(manager as any).completeWorkspaceRunDiff = () => undefined

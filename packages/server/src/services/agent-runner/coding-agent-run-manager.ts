@@ -764,9 +764,7 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     }
     if (isTerminalEvent) {
-      run.assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
-      run.state.responseRun = undefined
-      updateSessionStats(run.launch.sessionId)
+      run.assistantMessageId = this.persistTerminalResponse(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       if (run.launch.mode !== 'scoped' && final?.usage) {
         const usage = normalizeTokenUsage(final.usage)
@@ -811,6 +809,13 @@ export class CodingAgentRunManager {
         if (deferPiUsageRefresh) this.schedulePiTerminalUsageRefresh(run)
       }
     }
+  }
+
+  private persistTerminalResponse(run: ManagedCodingAgentRun): string | undefined {
+    const assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
+    run.state.responseRun = undefined
+    updateSessionStats(run.launch.sessionId)
+    return assistantMessageId
   }
 
   private schedulePiTerminalUsageRefresh(run: ManagedCodingAgentRun) {
