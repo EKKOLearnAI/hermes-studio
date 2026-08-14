@@ -215,15 +215,6 @@ const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
 const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
 const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
-const assistantAgentLogo = computed(() => {
-  const session = chatStore.activeSession;
-  const agent = session?.codingAgentId || session?.agent;
-  if (agent === "codex") return { src: "/coding-agents/codex-openai.png", alt: "Codex" };
-  if (agent === "pi") return { src: "/coding-agents/pi.svg", alt: "Pi" };
-  if (agent === "claude" || agent === "claude-code") return { src: "/coding-agents/claude-code.svg", alt: "Claude Code" };
-  if (agent === "ekko-agent") return { src: "/coding-agents/ekko-agent.png", alt: "Ekko Agent" };
-  return null;
-});
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -959,14 +950,8 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <img
-          v-if="message.role === 'assistant' && assistantAgentLogo"
-          class="msg-avatar msg-agent-avatar"
-          :src="assistantAgentLogo.src"
-          :alt="assistantAgentLogo.alt"
-        />
         <ProfileAvatar
-          v-else-if="message.role === 'assistant'"
+          v-if="message.role === 'assistant'"
           class="msg-avatar"
           :name="assistantProfileName"
           :avatar="assistantProfileAvatar"
@@ -1277,11 +1262,6 @@ onBeforeUnmount(() => {
       height: 40px;
       flex-shrink: 0;
       margin-top: 2px;
-    }
-
-    .msg-agent-avatar {
-      border-radius: 10px;
-      object-fit: contain;
     }
 
     .message-bubble {
