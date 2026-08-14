@@ -240,7 +240,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
       const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
-      const limit = Math.max(1, Number(url.searchParams.get('limit')) || 150)
+      const limit = Math.min(150, Math.max(1, Number(url.searchParams.get('limit')) || 150))
       roomDetailRequests.push({ roomId, offset, limit })
       const failureKey = `${roomId}:${offset}`
       const remainingFailures = roomDetailFailures.get(failureKey) || 0
@@ -525,6 +525,11 @@ test.describe('group chat room deep links', () => {
     await expect(page.getByRole('heading', { name: 'Alpha Room' })).toBeVisible()
     await expect(page.getByText('Archive message 1', { exact: true })).toBeVisible()
     await expect(page.getByText('Archive message 700', { exact: true })).toBeVisible()
+    const historyOffsets = api.roomDetailRequests
+      .filter(request => request.roomId === 'room-alpha')
+      .map(request => request.offset)
+    expect(new Set(historyOffsets)).toEqual(new Set([0, 150, 300, 450, 600]))
+    expect(historyOffsets).not.toContain(750)
     await expect(page.locator('textarea')).toHaveCount(0)
   })
 

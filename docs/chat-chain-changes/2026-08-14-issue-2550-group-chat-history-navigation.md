@@ -13,3 +13,7 @@ The complete-history route uses the same authenticated room API and message
 presentation, but loads every available room page into a read-only transcript.
 It does not connect the realtime room or expose message input and management
 actions.
+
+UI history paging reads the complete persisted Room transcript and reports the
+full message count. The Agent context path remains independently bounded to its
+latest 500 messages, so archive access does not expand runtime prompt context.

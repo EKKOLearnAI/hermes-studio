@@ -493,7 +493,7 @@ function isExpiredInteractionError(value: unknown): boolean {
         || message.includes('clarification is not pending')
 }
 
-const GROUP_CHAT_MESSAGE_WINDOW = 500
+const GROUP_CHAT_CONTEXT_MESSAGE_WINDOW = 500
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_SUMMARY_SCAN_LIMIT = 10_000
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
@@ -1637,7 +1637,7 @@ class ChatStorage {
         options: { excludeWorkspaceDiff?: boolean; throughMessageId?: string } = {},
     ): any[] {
         const db = this.db()
-        const boundedLimit = Math.min(GROUP_CHAT_MESSAGE_WINDOW, Math.max(0, Math.floor(limit)))
+        const boundedLimit = Math.max(0, Math.floor(limit))
         if (!db || boundedLimit === 0) return []
 
         const where = ['roomId = ?']
@@ -1687,7 +1687,7 @@ class ChatStorage {
     }
 
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
-        const rows = this.getRecentMessageRows(roomId, GROUP_CHAT_MESSAGE_WINDOW, {
+        const rows = this.getRecentMessageRows(roomId, GROUP_CHAT_CONTEXT_MESSAGE_WINDOW, {
             excludeWorkspaceDiff: true,
             throughMessageId: cutoff?.throughMessageId,
         })
@@ -1958,7 +1958,7 @@ class ChatStorage {
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'
              ORDER BY timestamp DESC, id DESC
              LIMIT 1 OFFSET ?`,
-        ).get(roomId, GROUP_CHAT_MESSAGE_WINDOW - 1) as { timestamp: number } | undefined
+        ).get(roomId, GROUP_CHAT_CONTEXT_MESSAGE_WINDOW - 1) as { timestamp: number } | undefined
         const rows = db.prepare(
             `SELECT id FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'${boundary ? ' AND timestamp >= ?' : ''}
@@ -1967,7 +1967,7 @@ class ChatStorage {
         ).all(
             roomId,
             ...(boundary ? [boundary.timestamp] : []),
-            GROUP_CHAT_MESSAGE_WINDOW + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
+            GROUP_CHAT_CONTEXT_MESSAGE_WINDOW + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
         ) as Array<{ id: string }>
         return rows.map(row => String(row.id))
     }
@@ -3811,10 +3811,7 @@ export class GroupChatServer {
 
         // Load history from SQLite
         const messages = this.storage.getRecentMessagesForUI(roomId)
-        const total = Math.min(
-            GROUP_CHAT_MESSAGE_WINDOW,
-            this.storage.getMessageCount?.(roomId) ?? messages.length,
-        )
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
         const agents = this.getRoomAgentViews(
             roomId,
             this.canSocketManageRoom(socket, roomId),
@@ -3858,10 +3855,7 @@ export class GroupChatServer {
         const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
         const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
         const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
-        const total = Math.min(
-            GROUP_CHAT_MESSAGE_WINDOW,
-            this.storage.getMessageCount?.(roomId) ?? messages.length,
-        )
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
         ack?.({
             messages,
             total,

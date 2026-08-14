@@ -1364,9 +1364,11 @@ describe('group chat history windows', () => {
       seeded.slice(1).map(message => message.id),
     )
     expect(storage.getRecentMessagesForUI('room-1', 150, 450).map(message => message.id)).toEqual(
-      seeded.slice(1, 51).map(message => message.id),
+      seeded.slice(0, 51).map(message => message.id),
     )
-    expect(storage.getRecentMessagesForUI('room-1', 150, 500)).toEqual([])
+    expect(storage.getRecentMessagesForUI('room-1', 150, 500).map(message => message.id)).toEqual([
+      'msg-1',
+    ])
     expect(contextMessages).toHaveLength(500)
     expect(contextMessages.some(message => message.id === 'msg-1')).toBe(false)
     expect(context.summary).toBe('Earlier summary')
@@ -1382,6 +1384,33 @@ describe('group chat history windows', () => {
     expect(storage.getMessageCount('room-1')).toBe(0)
     expect(storage.getMessage('msg-1')).toBeNull()
     expect(storage.getMessagesForContext('room-1')).toEqual([])
+  })
+
+  it('paginates the complete UI history beyond the 500-message Agent context window', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const seeded = Array.from({ length: 725 }, (_value, index) => makeMessage({
+      id: `history-${String(index + 1).padStart(4, '0')}`,
+      content: `history ${index + 1}`,
+      timestamp: index + 1,
+    }))
+    for (const message of seeded) storage.saveMessageAndRefreshRoom(message as any)
+
+    const pages: string[][] = []
+    let offset = 0
+    while (offset < seeded.length) {
+      const page = storage.getRecentMessagesForUI('room-1', 150, offset)
+      pages.unshift(page.map(message => message.id))
+      offset += page.length
+      if (page.length === 0) break
+    }
+
+    expect(pages.flat()).toEqual(seeded.map(message => message.id))
+    expect(new Set(pages.flat())).toHaveLength(seeded.length)
+    expect(storage.getRecentMessagesForUI('room-1', 150, 600)).toHaveLength(125)
+    expect(storage.getRecentMessagesForUI('room-1', 150, 725)).toEqual([])
+    expect(storage.getMessagesForContext('room-1')).toHaveLength(500)
+    expect(storage.getMessagesForContext('room-1')[0]?.id).toBe('history-0226')
   })
 
   it('builds Agent context from the full retained transcript rather than the UI page', () => {

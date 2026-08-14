@@ -1017,7 +1017,7 @@ describe('Group Chat member/agent identity sync', () => {
     }]])
     server.storage = {
       getRecentMessagesForUI: vi.fn(() => [{ id: 'older-1' }]),
-      getMessageCount: vi.fn(() => 3),
+      getMessageCount: vi.fn(() => 725),
     }
     const ack = vi.fn()
 
@@ -1030,7 +1030,7 @@ describe('Group Chat member/agent identity sync', () => {
     expect(server.storage.getRecentMessagesForUI).toHaveBeenCalledWith('room-1', 1, 1)
     expect(ack).toHaveBeenCalledWith({
       messages: [{ id: 'older-1' }],
-      total: 3,
+      total: 725,
       offset: 1,
       limit: 1,
       hasMore: true,
