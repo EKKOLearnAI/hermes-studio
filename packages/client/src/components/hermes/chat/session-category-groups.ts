@@ -66,13 +66,13 @@ export function partitionRecentSessions<T extends RecentSessionAssignment>(
   const recent = [...sessions]
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     .slice(0, safeLimit);
-  const recentIds = new Set(recent.map(session => session.id));
   return {
     group: {
       key: "recent",
       label,
       sessions: recent,
     },
-    remaining: sessions.filter(session => !recentIds.has(session.id)),
+    // “最近”是快捷入口，不从真实分类中移除对应会话。
+    remaining: [...sessions],
   };
 }

@@ -120,6 +120,48 @@ describe('group chat history windows', () => {
     )
   })
 
+  it('bounds tool results only in the outbound UI page and retains full group history', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const completeResult = 'tool-result-'.repeat(400)
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'tool-result-1',
+      role: 'tool',
+      tool_name: 'read_file',
+      tool_call_id: 'call-1',
+      content: completeResult,
+    }) as any)
+
+    const [outbound] = storage.getRecentMessagesForUI('room-1') as Array<Record<string, any>>
+
+    expect(outbound.content).toHaveLength(1_000)
+    expect(outbound.content_truncated).toBe(true)
+    expect(outbound.content_original_length).toBe(completeResult.length)
+    expect(storage.getMessage('tool-result-1')?.content).toBe(completeResult)
+    expect(storage.getMessagesForContext('room-1')[0]?.content).toBe(completeResult)
+  })
+
+  it('keeps workspace diff payloads complete in the outbound UI page', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const completeDiff = JSON.stringify({
+      kind: 'workspace_diff',
+      files: [{ path: 'large.ts', patch: '+'.repeat(4_000) }],
+    })
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'workspace-diff-1',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: completeDiff,
+    }) as any)
+
+    const [outbound] = storage.getRecentMessagesForUI('room-1') as Array<Record<string, any>>
+
+    expect(outbound.content).toBe(completeDiff)
+    expect(outbound.content_truncated).toBeUndefined()
+  })
+
   it('does not split same-timestamp multipart assistant/tool runs across UI page boundaries', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')

@@ -25,7 +25,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'x-hermes-profile',
   'x-request-id',
 ])
-const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat'])
+const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat', '/workflow'])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
@@ -47,6 +47,11 @@ const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
   'remove_agent',
   'approval.respond',
   'clarify.respond',
+])
+const ALLOWED_WORKFLOW_CLIENT_EVENTS = new Set([
+  'workflows.list',
+  'workflow.status.subscribe',
+  'workflow.status.unsubscribe',
 ])
 const TEXTUAL_RESPONSE_TYPES = [
   'application/json',
@@ -841,6 +846,7 @@ function normalizeTimeout(value: unknown): number {
 function isAllowedSocketEvent(namespace: string, event: string): boolean {
   if (namespace === '/chat-run') return ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)
   if (namespace === '/group-chat') return ALLOWED_GROUP_CHAT_CLIENT_EVENTS.has(event)
+  if (namespace === '/workflow') return ALLOWED_WORKFLOW_CLIENT_EVENTS.has(event)
   return false
 }
 

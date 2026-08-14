@@ -508,4 +508,60 @@ describe('LocalAppRelayServer', () => {
       payload: { roomName: 'Relay room', messages: [] },
     })))
   })
+
+  it('bridges workflow status subscriptions with the authenticated Studio token', async () => {
+    const namespace = createMockNamespace()
+    const io = { of: vi.fn(() => namespace) }
+    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const server = new LocalAppRelayServer(io as any, {
+      machineId: 'hwui_local_machine_1234567890',
+      localBaseUrl: 'http://127.0.0.1:8748',
+    })
+    server.init()
+
+    const app = createMockAppSocket('app-workflow', {
+      role: 'app',
+      token: 'local-user-token',
+      machineId: 'hwui_local_machine_1234567890',
+    })
+    await connectApp(namespace, app)
+    const openAck = vi.fn()
+    app.__handlers.get('socket.open')({
+      id: 'workflow-1',
+      namespace: '/workflow',
+      auth: { token: 'untrusted-token' },
+    }, openAck)
+
+    await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'workflow-1',
+      ok: true,
+      namespace: '/workflow',
+    })))
+    expect(clientSocketMocks.io).toHaveBeenCalledWith(
+      'http://127.0.0.1:8748/workflow',
+      expect.objectContaining({ auth: { token: 'local-user-token' } }),
+    )
+
+    const local = clientSocketMocks.sockets[0]
+    local.emit.mockImplementation((event: string, payload: unknown, ack?: (response: unknown) => void) => {
+      if (event === 'workflow.status.subscribe') {
+        ack?.({ ok: true, data: { statuses: [{ workflowId: 'workflow-a', status: 'idle' }] } })
+      }
+    })
+    const eventAck = vi.fn()
+    app.__handlers.get('socket.event')({
+      id: 'workflow-1',
+      event: 'workflow.status.subscribe',
+      payload: { workflowId: 'workflow-a' },
+      ack: true,
+    }, eventAck)
+
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'workflow-1',
+      ok: true,
+      namespace: '/workflow',
+      event: 'workflow.status.subscribe',
+      payload: { ok: true, data: { statuses: [{ workflowId: 'workflow-a', status: 'idle' }] } },
+    })))
+  })
 })
