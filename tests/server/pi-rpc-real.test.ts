@@ -116,6 +116,9 @@ function createStudioManager() {
   ;(manager as any).startWorkspaceRunDiff = () => {}
   ;(manager as any).completeWorkspaceRunDiff = () => undefined
   ;(manager as any).startCodingAgentMemoryExport = () => {}
+  // Usage refresh loads provider/tokenizer state that is unrelated to the RPC
+  // lifecycle under test and can exceed the event timeout on cold CI runners.
+  ;(manager as any).refreshCodingAgentUsage = async () => {}
   return { manager, emitted }
 }
 

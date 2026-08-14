@@ -1,6 +1,6 @@
 ---
 date: 2026-08-13
-pr: pending
+pr: 2528
 feature: Pi Coding Agent integration
 impact: Hermes Studio can manage and run Pi in RPC mode with scoped provider routing and four lazy Studio MCP servers through pi-mcp-adapter.
 ---

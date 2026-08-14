@@ -42,12 +42,17 @@ jobs:
       - name: Checkout repository
         if: github.event_name != 'workflow_run'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Checkout desktop release ref
         if: github.event_name == 'workflow_run'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch || github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Verify immutable source revision
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createCipheriv, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -243,6 +244,58 @@ describe('coding agent launch preparation', () => {
       await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
       expect(statSync(targetPath).mode & 0o777).toBe(0o600)
     }
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+  })
+
+  it('restores legacy v1 encrypted Pi proxy targets and rewrites them with authenticated v2 metadata', async () => {
+    const home = makeHome()
+    const keyPath = join(home, 'coding-agent', '.pi-proxy-target.key')
+    const targetPath = join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_test',
+      'pi',
+      'runs',
+      'legacy-v1-run',
+      'proxy-target.json',
+    )
+    mkdirSync(dirname(keyPath), { recursive: true })
+    mkdirSync(dirname(targetPath), { recursive: true })
+    const key = randomBytes(32)
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    cipher.setAAD(Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8'))
+    const ciphertext = Buffer.concat([cipher.update('sk-legacy-v1-secret', 'utf8'), cipher.final()])
+    writeFileSync(keyPath, key, { mode: 0o600 })
+    writeFileSync(targetPath, `${JSON.stringify({
+      input: {
+        profile: 'default',
+        provider: 'custom:test',
+        model: 'legacy-v1-model',
+        baseUrl: 'https://legacy-v1.example.com/v1',
+        apiMode: 'codex_responses',
+        agentId: 'pi',
+        agentSessionId: 'legacy-v1-agent-session',
+        chatSessionId: 'legacy-v1-chat-session',
+      },
+      token: 'hwui_legacy_v1_token',
+      apiKeyEncrypted: {
+        v: 1,
+        algorithm: 'aes-256-gcm',
+        iv: iv.toString('base64'),
+        tag: cipher.getAuthTag().toString('base64'),
+        ciphertext: ciphertext.toString('base64'),
+      },
+    }, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+
+    const migratedContent = readFileSync(targetPath, 'utf8')
+    const migrated = JSON.parse(migratedContent)
+    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 2, algorithm: 'aes-256-gcm' })
+    expect(migratedContent).not.toContain('sk-legacy-v1-secret')
     await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
   })
 

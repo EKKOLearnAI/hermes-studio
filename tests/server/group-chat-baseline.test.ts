@@ -547,8 +547,11 @@ describe('group chat baseline behavior', () => {
       ownerName: 'Relay Guest',
       targetOrigin: 'http://127.0.0.1:8648',
       agent: relayStore.normalizeRemoteGroupAgentDescriptor({
-        agent: 'hermes',
+        agent: 'pi',
         profile: 'default',
+        provider: 'openai',
+        model: 'pi-relay-model',
+        apiMode: 'codex_responses',
         name: 'Remote Relay Agent',
       }),
     })
@@ -614,7 +617,12 @@ describe('group chat baseline behavior', () => {
       roomId: 'room-relay',
       roomName: 'Relay Room',
       inviteCode: 'RELAY1',
-      agent: { name: 'Remote Relay Agent' },
+      agent: {
+        agent: 'pi',
+        model: 'pi-relay-model',
+        apiMode: 'codex_responses',
+        name: 'Remote Relay Agent',
+      },
     })
     expect(relayStore.getGroupAgentPairingRequestForRequester(
       created.request.id,
@@ -622,6 +630,8 @@ describe('group chat baseline behavior', () => {
     )?.status).toBe('consumed')
     expect(storage.getRoomAgents('room-relay')).toEqual([
       expect.objectContaining({
+        agent: 'pi',
+        model: 'pi-relay-model',
         name: 'Remote Relay Agent',
         executorType: 'remote',
         remoteOrigin: 'http://127.0.0.1:8648',

@@ -71,6 +71,9 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     ;(manager as any).startWorkspaceRunDiff = () => {}
     ;(manager as any).completeWorkspaceRunDiff = () => undefined
     ;(manager as any).startCodingAgentMemoryExport = () => {}
+    // Keep this Windows process/encoding regression independent from cold
+    // tokenizer/provider initialization performed by usage accounting.
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
 
     manager.start({
       agentSessionId: 'windows-pi-agent-session',
