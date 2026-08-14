@@ -1062,8 +1062,7 @@ function piSettingsConfig(): string {
 const PI_RUNTIME_MCP_SETTINGS: Record<string, unknown> = {
   hostConfigDiscovery: 'off',
   toolPrefix: 'none',
-  directTools: true,
-  freezeDirectTools: true,
+  directTools: false,
   scriptMode: false,
   outputGuard: true,
   showStatusIcon: false,
@@ -1130,7 +1129,7 @@ function piMcpConfig(profile: string, ...externalContents: Array<string | null |
     return [item.name, {
       ...server,
       lifecycle: 'lazy',
-      directTools: true,
+      directTools: false,
       toolPrefix: 'none',
       requestTimeoutMs,
     }]
