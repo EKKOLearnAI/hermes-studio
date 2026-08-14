@@ -152,7 +152,7 @@ const liveReasoningDetail = computed<{
 const emptyState = computed(() => {
   const session = chatStore.activeSession;
   const codingAgentId = session?.codingAgentId
-    || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
+    || (session?.agent === "codex" ? "codex" : session?.agent === "pi" ? "pi" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
   if (codingAgentId === "codex") {
     return {
       logo: "/coding-agents/codex-openai.png",
@@ -165,6 +165,13 @@ const emptyState = computed(() => {
       logo: "/coding-agents/claude-code.svg",
       alt: "Claude Code",
       text: t("chat.emptyStateAgent", { agent: "Claude Code" }),
+    };
+  }
+  if (codingAgentId === "pi") {
+    return {
+      logo: "/coding-agents/pi.svg",
+      alt: "Pi",
+      text: t("chat.emptyStateAgent", { agent: "Pi" }),
     };
   }
   if (codingAgentId === "ekko-agent") {
@@ -285,7 +292,7 @@ const canInsertQueuedMessages = computed(() => {
   if (agent === "ekko-agent") {
     return session.source === "coding_agent" || session.source === "global_agent";
   }
-  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
+  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return false;
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);

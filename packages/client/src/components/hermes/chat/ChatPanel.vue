@@ -1123,6 +1123,8 @@ async function confirmNewChat() {
     ? "codex"
     : newChatAgent.value === "claude-code"
       ? "claude"
+      : newChatAgent.value === "pi"
+        ? "pi"
       : newChatAgent.value === "ekko-agent"
         ? "ekko-agent"
       : "hermes";

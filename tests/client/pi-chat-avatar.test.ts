@@ -1,0 +1,22 @@
+import { readFileSync } from 'fs'
+import { describe, expect, it } from 'vitest'
+
+describe('Pi chat identity', () => {
+  it('uses the Pi logo for assistant messages', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
+
+    expect(source).toContain('if (agent === "pi") return { src: "/coding-agents/pi.svg", alt: "Pi" }')
+    expect(source).toContain('v-if="message.role === \'assistant\' && assistantAgentLogo"')
+    expect(source).toContain(':src="assistantAgentLogo.src"')
+  })
+
+  it('uses the Pi logo in empty state and completion notifications', () => {
+    const messageList = readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8')
+    const chatStore = readFileSync('packages/client/src/stores/hermes/chat.ts', 'utf8')
+
+    expect(messageList).toContain('session?.agent === "pi" ? "pi"')
+    expect(messageList).toContain('logo: "/coding-agents/pi.svg"')
+    expect(chatStore).toContain("if (codingAgentId === 'pi')")
+    expect(chatStore).toContain("return { icon: '/coding-agents/pi.svg' }")
+  })
+})

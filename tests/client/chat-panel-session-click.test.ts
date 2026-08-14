@@ -90,6 +90,14 @@ describe('ChatPanel session clicks', () => {
     expect(source).not.toContain('import.meta.env.DEV')
   })
 
+  it('persists Pi as the Pi agent instead of falling back to Hermes', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
+
+    expect(source).toContain('newChatAgent.value === "pi"')
+    expect(source).toContain('? "pi"')
+    expect(source).toContain('codingAgentId: newChatAgent.value === "hermes" ? undefined : newChatAgent.value')
+  })
+
   it('shows and persists the API mode for Ekko chats and model switches', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 
