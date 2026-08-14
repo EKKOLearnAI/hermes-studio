@@ -125,6 +125,8 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
     roomId: string
     agentId: string
   }
+  /** Internal Pi transport: terminal launches are interactive; Studio runs use RPC. */
+  piOutputMode?: 'interactive' | 'rpc'
 }
 
 export interface CodingAgentLaunchResult {
@@ -2244,7 +2246,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       PI_SKIP_VERSION_CHECK: '1',
     }
     args = [
-      '--mode', 'rpc',
+      ...(input.piOutputMode === 'rpc' ? ['--mode', 'rpc'] : []),
       '--provider', PI_PROVIDER_ID,
       '--model', model,
       ...(input.agentNativeSessionId ? ['--session-id', input.agentNativeSessionId] : []),
@@ -2336,6 +2338,7 @@ export async function startCodingAgentRun(
     sessionId,
     agentSessionId,
     isolateSettings: true,
+    piOutputMode: id === 'pi' ? 'rpc' : undefined,
   })
   const runtimeEnv = process.platform === 'win32'
     ? {

@@ -159,6 +159,22 @@ describe('coding agent launch preparation', () => {
     const runtimeModels = JSON.parse(readFileSync(join(result.rootDir, 'models.json'), 'utf-8'))
     expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
     expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')
+    expect(result.args).not.toContain('rpc')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')).not.toContain('--mode rpc')
+
+    const rpcResult = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-2',
+      agentSessionId: 'agent-session-2',
+      piOutputMode: 'rpc',
+    })
+    expect(rpcResult.args).toEqual(expect.arrayContaining(['--mode', 'rpc']))
+    expect(readFileSync(join(rpcResult.rootDir, 'launch.sh'), 'utf-8')).toContain('--mode rpc')
   })
 
   it('launches Claude Code with the global config when requested', async () => {
