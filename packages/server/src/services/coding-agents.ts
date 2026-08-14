@@ -1118,6 +1118,14 @@ function piModelsConfig(input: {
   }, null, 2)}\n`
 }
 
+function piLiveConfigDefault(key: string, profile: string): string | null {
+  if (key === 'settings') return piSettingsConfig()
+  if (key === 'models') return `${JSON.stringify({ providers: {} }, null, 2)}\n`
+  if (key === 'mcp') return piMcpConfig(profile)
+  if (key === 'prompt') return `${getSystemPrompt().trim()}\n`
+  return null
+}
+
 function buildLaunchShellCommand(input: {
   workspaceDir: string
   env: Record<string, string>
@@ -1747,7 +1755,18 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
   const normalizedScope = normalizeConfigScope(scope)
 
   try {
-    const info = await stat(definition.absolutePath)
+    let info
+    try {
+      info = await stat(definition.absolutePath)
+    } catch (err: any) {
+      const defaultContent = id === 'pi'
+        ? piLiveConfigDefault(key, normalizedScope.profile)
+        : null
+      if (err?.code !== 'ENOENT' || defaultContent == null) throw err
+      await mkdir(dirname(definition.absolutePath), { recursive: true })
+      await writeFile(definition.absolutePath, defaultContent, 'utf-8')
+      info = await stat(definition.absolutePath)
+    }
     if (!info.isFile()) {
       const err = new Error('Config path is not a file')
       ;(err as any).status = 400
