@@ -29,7 +29,6 @@ describe('Pi config editor defaults', () => {
     expect(settings.content).toContain('pi-mcp-adapter')
     expect(mcp.exists).toBe(true)
     expect(JSON.parse(mcp.content)).toEqual({
-      settings: { hostConfigDiscovery: 'off' },
       mcpServers: {},
     })
     expect(existsSync(join(home, '.pi', 'agent', 'settings.json'))).toBe(true)
@@ -59,7 +58,6 @@ describe('Pi config editor defaults', () => {
 
     expect(JSON.parse(mcp.content)).toEqual({
       settings: {
-        hostConfigDiscovery: 'off',
         agentPluginPaths: ['./plugins'],
       },
       mcpServers: {

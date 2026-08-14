@@ -1075,7 +1075,7 @@ function parsePiExternalMcpConfig(...contents: Array<string | null | undefined>)
   settings: Record<string, unknown>
   mcpServers: Record<string, unknown>
 } {
-  const settings: Record<string, unknown> = { hostConfigDiscovery: 'off' }
+  const settings: Record<string, unknown> = {}
   const mcpServers: Record<string, unknown> = {}
 
   for (const content of contents) {
@@ -1085,7 +1085,7 @@ function parsePiExternalMcpConfig(...contents: Array<string | null | undefined>)
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
       if (parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) {
         for (const [key, value] of Object.entries(parsed.settings)) {
-          if (key !== 'hostConfigDiscovery' && key in PI_RUNTIME_MCP_SETTINGS) continue
+          if (key in PI_RUNTIME_MCP_SETTINGS) continue
           settings[key] = value
         }
       }
@@ -1106,7 +1106,11 @@ function parsePiExternalMcpConfig(...contents: Array<string | null | undefined>)
 }
 
 function piUserMcpConfig(...existingContents: Array<string | null | undefined>): string {
-  return `${JSON.stringify(parsePiExternalMcpConfig(...existingContents), null, 2)}\n`
+  const external = parsePiExternalMcpConfig(...existingContents)
+  return `${JSON.stringify({
+    ...(Object.keys(external.settings).length > 0 ? { settings: external.settings } : {}),
+    mcpServers: external.mcpServers,
+  }, null, 2)}\n`
 }
 
 function isPiMcpConfigObject(content: string): boolean {
