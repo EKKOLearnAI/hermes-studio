@@ -24,6 +24,22 @@ function createMockManagedChild(pid: number): MockManagedChild {
   return child
 }
 
+async function listenOnRandomTcpPort(server: Server): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    const handleError = (error: Error) => reject(error)
+    server.once('error', handleError)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', handleError)
+      resolve()
+    })
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected the test TCP server to expose a numeric port')
+  }
+  return `tcp://127.0.0.1:${address.port}`
+}
+
 describe('agent bridge manager command resolution', () => {
   const originalEnv = { ...process.env }
   let tempDir = ''
@@ -223,17 +239,12 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('reports readiness when a fake TCP server answers ping with pong', async () => {
-    const endpoint = `tcp://127.0.0.1:${33000 + (process.pid % 10000)}`
     const server = createServer((socket) => {
       socket.once('data', () => {
         socket.end(`${JSON.stringify({ ok: true, pong: true })}\n`)
       })
     })
-
-    await new Promise<void>((resolve) => {
-      const url = new URL(endpoint)
-      server.listen(Number(url.port), url.hostname, resolve)
-    })
+    const endpoint = await listenOnRandomTcpPort(server)
 
     try {
       const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
@@ -360,7 +371,6 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('attaches to an already running bridge instead of spawning a replacement', async () => {
-    const endpoint = `tcp://127.0.0.1:${34000 + (process.pid % 10000)}`
     const actions: string[] = []
     const server = createServer((socket) => {
       socket.once('data', (chunk) => {
@@ -369,15 +379,7 @@ describe('agent bridge manager command resolution', () => {
         socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
       })
     })
-
-    await new Promise<void>((resolve) => {
-      if (endpoint.startsWith('ipc://')) {
-        server.listen(endpoint.slice('ipc://'.length), resolve)
-      } else {
-        const url = new URL(endpoint)
-        server.listen(Number(url.port), url.hostname, resolve)
-      }
-    })
+    const endpoint = await listenOnRandomTcpPort(server)
 
     try {
       const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
@@ -406,7 +408,6 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('requests shutdown when stopping an attached bridge', async () => {
-    const endpoint = `tcp://127.0.0.1:${35000 + (process.pid % 10000)}`
     const actions: string[] = []
     const server = createServer((socket) => {
       socket.once('data', (chunk) => {
@@ -415,11 +416,7 @@ describe('agent bridge manager command resolution', () => {
         socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
       })
     })
-
-    await new Promise<void>((resolve) => {
-      const url = new URL(endpoint)
-      server.listen(Number(url.port), url.hostname, resolve)
-    })
+    const endpoint = await listenOnRandomTcpPort(server)
 
     try {
       const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
@@ -488,7 +485,6 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('clears stopping after stop completes for an attached bridge', async () => {
-    const endpoint = `tcp://127.0.0.1:${36000 + (process.pid % 10000)}`
     const actions: string[] = []
     const server = createServer((socket) => {
       socket.once('data', (chunk) => {
@@ -502,11 +498,7 @@ describe('agent bridge manager command resolution', () => {
       })
     })
     const serverClosed = new Promise<void>((resolve) => server.once('close', () => resolve()))
-
-    await new Promise<void>((resolve) => {
-      const url = new URL(endpoint)
-      server.listen(Number(url.port), url.hostname, resolve)
-    })
+    const endpoint = await listenOnRandomTcpPort(server)
 
     try {
       const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
