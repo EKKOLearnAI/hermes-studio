@@ -16,6 +16,7 @@ import {
 } from '../../services/hermes/provider-editor'
 import { refreshProviderModels, restoreProviderModels } from '../../services/hermes/provider-model-refresh'
 import { appendProviderAuditEvent } from '../../db/hermes/provider-audit-store'
+import { revokeCodingAgentProviderRuntime } from '../../services/coding-agents'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
@@ -383,6 +384,7 @@ export async function update(ctx: any) {
   const customApiMode = normalizeApiMode(api_mode)
   try {
     const profile = requestedProfile(ctx)
+    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
       const found = await updateConfigYamlForProfile(profile, (config) => {
@@ -425,6 +427,7 @@ export async function remove(ctx: any) {
   const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
   try {
     const profile = requestedProfile(ctx)
+    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {

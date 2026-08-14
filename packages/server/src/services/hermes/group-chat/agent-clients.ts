@@ -414,6 +414,17 @@ export class AgentClient implements GroupAgentExecutor {
     }
 
     disconnect(): void {
+        for (const sessionId of this.activeSessions.values()) {
+            this.markSessionInterrupted(sessionId)
+            void this.chatRunService?.abortSession(sessionId, 'Coding agent removed, reconfigured, or disconnected')
+                .catch((err: any) => {
+                    logger.warn(`[AgentClients] failed to abort disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
+                })
+            void this.chatRunService?.disposeSession?.(sessionId).catch((err: any) => {
+                logger.warn(`[AgentClients] failed to dispose disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
+            })
+        }
+        this.activeSessions.clear()
         this.eventSink?.disconnect?.()
         if (this.socket) {
             this.socket.disconnect()

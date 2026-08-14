@@ -1,5 +1,5 @@
 import { dirname, join } from 'path'
-import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync } from 'fs'
+import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
@@ -77,6 +77,7 @@ export interface CodingAgentRunLaunch {
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   reasoningEffort?: string
+  approvalRequired?: boolean
 }
 
 interface ManagedCodingAgentRun {
@@ -117,6 +118,11 @@ interface ManagedCodingAgentRun {
   assistantMessageId?: string
   piDetachJsonl?: () => void
   piToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
+  piPendingError?: string
+  piWillRetry?: boolean
+  piFinalText?: string
+  piFinishReason?: string
+  turnActive?: boolean
 }
 
 interface CodingAgentRunSendOptions {
@@ -345,6 +351,42 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
     detached: process.platform !== 'win32',
     windowsHide: process.platform === 'win32',
   })
+}
+
+const CODING_AGENT_CHILD_ENV_KEYS = new Set([
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TERM',
+  'TMP', 'TEMP', 'TMPDIR',
+  'LANG', 'LANGUAGE', 'TZ',
+  'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
+  'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+  'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+  'NODE_PATH', 'NODE_EXTRA_CA_CERTS',
+])
+
+export function isolatedCodingAgentChildEnv(
+  launchEnv: NodeJS.ProcessEnv = {},
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(sourceEnv)) {
+    if (value === undefined) continue
+    if (CODING_AGENT_CHILD_ENV_KEYS.has(key) || key.startsWith('LC_')) env[key] = value
+  }
+  for (const [key, value] of Object.entries(launchEnv)) {
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
+function piAssistantMessageText(message: any): string {
+  if (!message || message.role !== 'assistant') return ''
+  if (typeof message.content === 'string') return message.content
+  if (!Array.isArray(message.content)) return ''
+  return message.content
+    .map((part: any) => part?.type === 'text' && typeof part.text === 'string' ? part.text : '')
+    .join('')
 }
 
 function childProcessErrorMessage(err: unknown): string {
@@ -623,6 +665,7 @@ export class CodingAgentRunManager {
     if (!text && images.length === 0) throw new Error('Input is required')
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
+    run.turnActive = true
     run.assistantMessageId = undefined
     const messageId = this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
@@ -637,7 +680,7 @@ export class CodingAgentRunManager {
       return { runId: run.id, messageId }
     }
     if (run.launch.agentId === 'pi') {
-      this.startPiRpcTurn(run, text, images)
+      this.startPiRpcTurn(run, text, systemPrompt, images)
       return { runId: run.id, messageId }
     }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
@@ -651,6 +694,19 @@ export class CodingAgentRunManager {
     if (options.reportClosed === false) run.stoppedByUser = true
     this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? true })
     return true
+  }
+
+  stopMatching(
+    predicate: (launch: CodingAgentRunLaunch) => boolean,
+    options: { reportClosed?: boolean } = {},
+  ): number {
+    let stopped = 0
+    for (const run of [...this.runs.values()]) {
+      if (!predicate(run.launch)) continue
+      this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? false })
+      stopped += 1
+    }
+    return stopped
   }
 
   touchByAgentSession(agentSessionId?: string | null) {
@@ -924,6 +980,10 @@ export class CodingAgentRunManager {
       const current = this.runs.get(run.id)
       if (!current) return
       const remaining = this.idleMs - (Date.now() - current.lastActiveAt)
+      if (current.turnActive) {
+        this.touch(current)
+        return
+      }
       if (remaining > 0) {
         this.touch(current)
         return
@@ -955,6 +1015,7 @@ export class CodingAgentRunManager {
     }
     run.exited = true
     run.state.isWorking = false
+    run.turnActive = false
     if (shouldReportClosed) {
       const workspaceRunChange = this.completeWorkspaceRunDiff(run)
       this.emitToChat(run.launch.sessionId, 'run.failed', {
@@ -970,8 +1031,7 @@ export class CodingAgentRunManager {
     const child = spawnCodingAgentChild(run.launch.command, run.launch.args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
       env: {
-        ...process.env,
-        ...(run.launch.env || {}),
+        ...isolatedCodingAgentChildEnv(run.launch.env),
       },
       pipeStdin: true,
     })
@@ -1016,7 +1076,12 @@ export class CodingAgentRunManager {
     stdin.write(`${JSON.stringify(command)}\n`)
   }
 
-  private startPiRpcTurn(run: ManagedCodingAgentRun, input: string, images: CodingAgentImageInput[]) {
+  private startPiRpcTurn(
+    run: ManagedCodingAgentRun,
+    input: string,
+    systemPrompt = '',
+    images: CodingAgentImageInput[] = [],
+  ) {
     if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not running')
     if (run.printResponseId && !run.printCompleted) throw new Error('Pi is still processing the previous input')
 
@@ -1031,6 +1096,10 @@ export class CodingAgentRunManager {
     run.runMarker = undefined
     run.memoryExportStarted = false
     run.piToolBlocks = new Map()
+    run.piPendingError = undefined
+    run.piWillRetry = false
+    run.piFinalText = undefined
+    run.piFinishReason = undefined
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1045,6 +1114,16 @@ export class CodingAgentRunManager {
       data: readFileSync(image.path).toString('base64'),
       mimeType: normalizedImageMediaType(image),
     }))
+    const thinkingLevel = String(run.launch.reasoningEffort || '').trim()
+    if (thinkingLevel && thinkingLevel !== 'default') {
+      this.writePiRpcCommand(run, {
+        id: `thinking_${responseId}`,
+        type: 'set_thinking_level',
+        level: thinkingLevel,
+      })
+    }
+    const dynamicPromptPath = String(run.launch.env?.HERMES_PI_DYNAMIC_PROMPT_FILE || '').trim()
+    if (dynamicPromptPath) writeFileSync(dynamicPromptPath, systemPrompt, 'utf8')
     this.writePiRpcCommand(run, {
       id: `prompt_${responseId}`,
       type: 'prompt',
@@ -1061,6 +1140,14 @@ export class CodingAgentRunManager {
       if (event.success === false && event.command === 'prompt' && !run.printCompleted) {
         this.failClaudePrintTurn(run, String(event.error || 'Pi rejected the prompt'))
       }
+      if (event.success === false && event.command === 'set_thinking_level') {
+        logger.warn({
+          runId: run.id,
+          sessionId: run.launch.sessionId,
+          level: run.launch.reasoningEffort,
+          error: event.error,
+        }, '[coding-agent-run] Pi rejected requested thinking level')
+      }
       return
     }
 
@@ -1074,15 +1161,31 @@ export class CodingAgentRunManager {
     }
 
     if (run.printCompleted) return
-    if (event.type === 'message_end') {
-      const message = event.message || {}
-      if (message.role === 'assistant' && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
-        this.failClaudePrintTurn(run, String(message.errorMessage || `Pi run ${message.stopReason}`))
-      }
+    if (event.type === 'auto_retry_start') {
+      run.piWillRetry = true
       return
     }
-    if (event.type === 'auto_retry_end' && event.success === false && event.finalError) {
-      this.failClaudePrintTurn(run, String(event.finalError))
+    if (event.type === 'auto_retry_end') {
+      run.piWillRetry = false
+      if (event.success === false && event.finalError) run.piPendingError = String(event.finalError)
+      return
+    }
+    if (event.type === 'agent_end') {
+      run.piWillRetry = event.willRetry === true
+      return
+    }
+    if (event.type === 'message_end') {
+      const message = event.message || {}
+      if (message.role === 'assistant') {
+        const finalText = piAssistantMessageText(message)
+        if (finalText) run.piFinalText = finalText
+        run.piFinishReason = String(message.stopReason || '')
+        if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+          run.piPendingError = String(message.errorMessage || `Pi run ${message.stopReason}`)
+        } else {
+          run.piPendingError = undefined
+        }
+      }
       return
     }
     if (event.type === 'message_update') {
@@ -1165,6 +1268,38 @@ export class CodingAgentRunManager {
     }
 
     if (event.type === 'agent_settled') {
+      if (run.piWillRetry) return
+      if (run.piPendingError) {
+        this.failClaudePrintTurn(run, run.piPendingError)
+        return
+      }
+      const finalText = run.piFinalText || ''
+      if (finalText) {
+        const existing = run.printText || ''
+        if (finalText !== existing) {
+          const delta = appendedTextDelta(existing, finalText)
+          if (delta) {
+            this.ensureClaudePrintText(run)
+            run.printText = `${existing}${delta}`
+            this.handleClaudePrintResponseEvent(run, {
+              type: 'response.output_text.delta',
+              data: {
+                type: 'response.output_text.delta',
+                item_id: run.printMessageId,
+                output_index: 0,
+                content_index: 0,
+                delta,
+              },
+            })
+          }
+        }
+      }
+      if (run.piFinishReason === 'length') {
+        const assistantMessage = [...run.state.messages]
+          .reverse()
+          .find(message => message.runMarker === run.runMarker && message.role === 'assistant' && !message.tool_calls?.length)
+        if (assistantMessage) assistantMessage.finish_reason = 'length'
+      }
       this.completeClaudePrintTurn(run)
     }
   }
@@ -2261,6 +2396,7 @@ export class CodingAgentRunManager {
       }
     }
     run.state.isWorking = false
+    run.turnActive = false
     run.state.runId = undefined
     run.state.abortController = undefined
     run.state.activeRunMarker = undefined

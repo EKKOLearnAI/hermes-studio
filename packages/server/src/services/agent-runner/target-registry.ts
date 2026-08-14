@@ -63,4 +63,14 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
     }
     return null
   }
+
+  removeWhere(predicate: (target: RegisteredAgentTarget<T>) => boolean): number {
+    let removed = 0
+    for (const [key, target] of this.targets) {
+      if (!predicate(target)) continue
+      this.targets.delete(key)
+      removed += 1
+    }
+    return removed
+  }
 }

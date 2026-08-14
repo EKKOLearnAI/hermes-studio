@@ -9,10 +9,10 @@ import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
 import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
-import { registerCodexProxyTarget, restoreCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
+import { registerCodexProxyTarget, restoreCodexProxyTarget, revokeCodexProxyTargets } from './agent-runner/proxies/codex-proxy'
 import type { ApiMode, CodingAgentImageInput } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
-import { getModelContextLength } from './hermes/model-context'
+import { getModelContextLength, getModelRuntimeCapabilities } from './hermes/model-context'
 import { getProfileDir } from './hermes/hermes-profile'
 import { getSystemPrompt } from '../lib/llm-prompt'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
@@ -35,6 +35,8 @@ const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
+const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
+const PI_STUDIO_EXTENSION_FILE = 'hermes-studio-runtime.ts'
 const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
 const PI_PROXY_TARGET_LEGACY_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
@@ -798,6 +800,17 @@ function getScopedRuntimeConfigRoot(
   const rootDir = getScopedConfigRoot(id, scope)
   const sessionId = String(input.sessionId || '').trim()
   const agentSessionId = String(input.agentSessionId || '').trim()
+  if ((!sessionId || !agentSessionId) && id === 'pi') {
+    const runtimeKey = createHash('sha256')
+      .update(JSON.stringify([
+        sessionId || randomUUID(),
+        agentSessionId || randomUUID(),
+        process.pid,
+        Date.now(),
+      ]))
+      .digest('hex')
+    return join(rootDir, 'runs', runtimeKey)
+  }
   if (!sessionId || !agentSessionId) return rootDir
   const runtimeKey = createHash('sha256')
     .update(JSON.stringify([sessionId, agentSessionId]))
@@ -1180,12 +1193,43 @@ function getPiMcpAdapterEntry(): string {
   return join(getPiMcpAdapterRoot(), 'node_modules', 'pi-mcp-adapter', 'index.ts')
 }
 
-function piSettingsConfig(): string {
+function piSettingsConfig(existingContent = '', runtimeExtensionPath = ''): string {
+  let existing: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(existingContent)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed
+  } catch {}
+  const configuredExtensions = Array.isArray(existing.extensions)
+    ? existing.extensions.filter(value => typeof value === 'string' && value.trim())
+    : []
   return `${JSON.stringify({
+    ...existing,
     defaultProjectTrust: 'never',
     enableSkillCommands: true,
-    extensions: [getPiMcpAdapterEntry()],
+    extensions: [...new Set([
+      ...configuredExtensions,
+      getPiMcpAdapterEntry(),
+      ...(runtimeExtensionPath ? [runtimeExtensionPath] : []),
+    ])],
   }, null, 2)}\n`
+}
+
+function piStudioRuntimeExtension(): string {
+  return [
+    'import { readFileSync } from "node:fs";',
+    '',
+    'export default function hermesStudioRuntime(pi: any) {',
+    '  pi.on("before_agent_start", async (event: any) => {',
+    '    const path = String(process.env.HERMES_PI_DYNAMIC_PROMPT_FILE || "").trim();',
+    '    if (!path) return;',
+    '    let instructions = "";',
+    '    try { instructions = readFileSync(path, "utf8").trim(); } catch {}',
+    '    if (!instructions) return;',
+    '    return { systemPrompt: `${event.systemPrompt}\\n\\n${instructions}` };',
+    '  });',
+    '}',
+    '',
+  ].join('\n')
 }
 
 const PI_RUNTIME_MCP_SETTINGS: Record<string, unknown> = {
@@ -1470,7 +1514,7 @@ function piModelsConfig(input: {
   profile: string
   provider: string
 }): string {
-  const contextWindow = getModelContextLength(input)
+  const capabilities = getModelRuntimeCapabilities(input)
   return `${JSON.stringify({
     providers: {
       [PI_PROVIDER_ID]: {
@@ -1482,10 +1526,10 @@ function piModelsConfig(input: {
         models: [{
           id: input.model,
           name: displayNameForModel(input.model),
-          reasoning: true,
-          input: ['text', 'image'],
-          contextWindow,
-          maxTokens: Math.min(32_000, contextWindow),
+          reasoning: capabilities.reasoning,
+          input: capabilities.input,
+          contextWindow: capabilities.contextWindow,
+          maxTokens: capabilities.outputLimit,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         }],
       },
@@ -2458,8 +2502,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
     const piApiKey = proxyTarget?.token || apiKey
     const sessionsDir = join(rootDir, 'sessions')
+    const dynamicPromptPath = join(rootDir, PI_DYNAMIC_PROMPT_FILE)
+    const studioExtensionPath = join(rootDir, PI_STUDIO_EXTENSION_FILE)
     await mkdir(sessionsDir, { recursive: true })
-    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig())
+    await writeRuntimeFile('studio_extension', PI_STUDIO_EXTENSION_FILE, piStudioRuntimeExtension())
+    await writeRuntimeFile('dynamic_prompt', PI_DYNAMIC_PROMPT_FILE, '')
+    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig(
+      (await safeReadFile(getScopedConfigFileDefinition(tool.id, 'settings', scope)?.absolutePath || '')) || '',
+      studioExtensionPath,
+    ))
     await writeRuntimeFile('models', 'models.json', piModelsConfig({
       baseUrl: piBaseUrl,
       apiKey: piApiKey,
@@ -2493,6 +2544,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       PI_CODING_AGENT_DIR: rootDir,
       PI_CODING_AGENT_SESSION_DIR: sessionsDir,
       PI_SKIP_VERSION_CHECK: '1',
+      HERMES_PI_DYNAMIC_PROMPT_FILE: dynamicPromptPath,
     }
     args = [
       ...(input.piOutputMode === 'rpc' ? ['--mode', 'rpc'] : []),
@@ -2501,7 +2553,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ...(input.agentNativeSessionId ? ['--session-id', input.agentNativeSessionId] : []),
       '--session-dir', sessionsDir,
       '--append-system-prompt', join(rootDir, 'APPEND_SYSTEM.md'),
-      '--no-approve',
+      ...(input.piOutputMode === 'rpc' ? ['--approve'] : []),
     ]
   }
 
@@ -2653,6 +2705,25 @@ export function sendCodingAgentRunInput(
 
 export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
   return { stopped: codingAgentRunManager.stop(sessionId) }
+}
+
+export async function revokeCodingAgentProviderRuntime(profileInput: string, providerInput: string): Promise<{
+  stoppedRuns: number
+  revokedTargets: number
+}> {
+  const profile = normalizeScopeSegment(profileInput, 'default', 'profile')
+  const providerIdentity = normalizeProviderIdentity(providerInput)
+  const provider = normalizeScopeSegment(providerIdentity, 'default', 'provider')
+  const stoppedRuns = codingAgentRunManager.stopMatching(launch => (
+    launch.profile === profile && launch.provider === providerIdentity
+  ), { reportClosed: false })
+  const revokedTargets = revokeCodexProxyTargets(profile, providerIdentity)
+  const piRoot = getScopedConfigRoot('pi', { profile, provider })
+  await Promise.all([
+    rm(join(piRoot, 'runs'), { recursive: true, force: true }),
+    rm(join(piRoot, 'group-chat'), { recursive: true, force: true }),
+  ])
+  return { stoppedRuns, revokedTargets }
 }
 
 export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {

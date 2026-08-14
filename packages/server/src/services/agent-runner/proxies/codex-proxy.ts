@@ -60,6 +60,14 @@ export function restoreCodexProxyTarget(
   return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
 }
 
+export function revokeCodexProxyTargets(profile: string, provider: string): number {
+  const normalizedProfile = String(profile || '').trim()
+  const normalizedProvider = String(provider || '').trim()
+  return targetRegistry.removeWhere(target => (
+    target.profile === normalizedProfile && target.provider === normalizedProvider
+  ))
+}
+
 function findTarget(routeKey: string): CodexProxyTarget | null {
   return targetRegistry.find(routeKey)
 }

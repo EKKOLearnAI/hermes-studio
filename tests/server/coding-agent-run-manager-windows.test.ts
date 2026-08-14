@@ -14,6 +14,12 @@ const testState = vi.hoisted(() => {
       return this
     }
 
+    off(event: string, handler: (...args: any[]) => void) {
+      const handlers = this.handlers.get(event) || []
+      this.handlers.set(event, handlers.filter(item => item !== handler))
+      return this
+    }
+
     emit(event: string, ...args: any[]) {
       for (const handler of this.handlers.get(event) || []) handler(...args)
       return true
@@ -51,7 +57,10 @@ vi.mock('../../packages/server/src/db/hermes/session-store', async (importOrigin
   updateSessionStats: vi.fn(),
 }))
 
-import { CodingAgentRunManager } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import {
+  CodingAgentRunManager,
+  isolatedCodingAgentChildEnv,
+} from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -69,6 +78,23 @@ afterEach(() => {
 })
 
 describe('coding agent Windows process launch', () => {
+  it('does not inherit unrelated Studio secrets into coding-agent children', () => {
+    expect(isolatedCodingAgentChildEnv(
+      { PI_CODING_AGENT_DIR: 'C:\\Pi' },
+      {
+        PATH: 'C:\\Windows',
+        HOME: 'C:\\Users\\agent',
+        DATABASE_URL: 'secret-db',
+        HERMES_TOKEN: 'secret-token',
+        OPENAI_API_KEY: 'secret-key',
+      },
+    )).toEqual({
+      PATH: 'C:\\Windows',
+      HOME: 'C:\\Users\\agent',
+      PI_CODING_AGENT_DIR: 'C:\\Pi',
+    })
+  })
+
   it('exports completed Pi native sessions through nmem with isolated Pi directories', () => {
     const manager = new CodingAgentRunManager()
     const run = {
@@ -192,7 +218,7 @@ describe('coding agent Windows process launch', () => {
     })
 
     const prompt = `检查非 ASCII 路径。\n${'超长中文内容'.repeat(4000)}`
-    manager.send('chat-session-pi-1', prompt)
+    manager.send('chat-session-pi-1', prompt, { systemPrompt: '每轮动态工作流指令' })
 
     const call = testState.spawnCalls[0]
     expect(call.command).toBe('cmd.exe')
@@ -215,6 +241,100 @@ describe('coding agent Windows process launch', () => {
     if (run?.idleTimer) clearTimeout(run.idleTimer)
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()
+  })
+
+  it('waits for Pi retry settlement and reconciles authoritative final text once', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).persistTerminalResponse = () => undefined
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+    ;(manager as any).completeWorkspaceRunDiff = () => undefined
+    ;(manager as any).markChatRunCompleted = () => {}
+    ;(manager as any).startCodingAgentMemoryExport = () => {}
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => emitted.push({ event, payload })
+
+    manager.start({
+      agentSessionId: 'agent-session-pi-retry',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'pi-test',
+      sessionId: 'chat-session-pi-retry',
+      command: 'pi.cmd',
+      args: ['--mode', 'rpc'],
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    manager.send('chat-session-pi-retry', 'retry')
+    const run = (manager as any).runs.get('agent-session-pi-retry')
+
+    ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_start' })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_end',
+      message: { role: 'assistant', stopReason: 'error', errorMessage: 'transient' },
+    })
+    expect(emitted.some(item => item.event === 'run.failed')).toBe(false)
+
+    ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_end', success: true })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'final' },
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_end',
+      message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'final answer' }] },
+    })
+    ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+
+    const deltas = emitted.filter(item => item.event === 'message.delta').map(item => item.payload.delta).join('')
+    expect(deltas).toBe('final answer')
+    expect(emitted.filter(item => item.event === 'run.completed')).toHaveLength(1)
+    expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(0)
+  })
+
+  it('does not idle-clean an active Pi retry but cleans the settled runner later', async () => {
+    vi.useFakeTimers()
+    try {
+      const manager = new CodingAgentRunManager(50)
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).addUserMessage = () => 1
+      ;(manager as any).emitToChat = () => {}
+      ;(manager as any).persistTerminalResponse = () => undefined
+      ;(manager as any).refreshCodingAgentUsage = async () => {}
+      ;(manager as any).completeWorkspaceRunDiff = () => undefined
+      ;(manager as any).markChatRunCompleted = () => {}
+      ;(manager as any).startCodingAgentMemoryExport = () => {}
+      manager.start({
+        agentSessionId: 'agent-session-pi-idle',
+        agentId: 'pi',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'pi-test',
+        sessionId: 'chat-session-pi-idle',
+        command: 'pi.cmd',
+        args: ['--mode', 'rpc'],
+        shellCommand: 'pi',
+        workspaceDir: process.cwd(),
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+      manager.send('chat-session-pi-idle', 'retry')
+      const run = (manager as any).runs.get('agent-session-pi-idle')
+      ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_start' })
+
+      await vi.advanceTimersByTimeAsync(150)
+      expect((manager as any).runs.has('agent-session-pi-idle')).toBe(true)
+
+      ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_end', success: true })
+      ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+      await vi.advanceTimersByTimeAsync(100)
+      expect((manager as any).runs.has('agent-session-pi-idle')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('runs npm .cmd shims through cmd.exe for hidden Claude Code chat turns', () => {
