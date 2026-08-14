@@ -785,7 +785,10 @@ export class CodingAgentRunManager {
           })
         }
       }
-      run.terminalUsageRefresh = this.refreshCodingAgentUsage(run)
+      const deferPiUsageRefresh = run.launch.agentId === 'pi'
+      run.terminalUsageRefresh = deferPiUsageRefresh
+        ? undefined
+        : this.refreshCodingAgentUsage(run)
       const finalText = extractResponseText(final)
       const terminalError = storageSafeResponseEvent.type === 'response.failed'
         ? responseErrorMessage(final?.error || (responseEvent.data as any).error) || 'Coding agent run failed'
@@ -805,8 +808,20 @@ export class CodingAgentRunManager {
         run.pendingChatCompletionPayload = chatCompletionPayload
       } else {
         void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload)
+        if (deferPiUsageRefresh) this.schedulePiTerminalUsageRefresh(run)
       }
     }
+  }
+
+  private schedulePiTerminalUsageRefresh(run: ManagedCodingAgentRun) {
+    // Pi RPC's agent_settled event is the authoritative lifecycle boundary.
+    // Tokenizer/provider initialization can be CPU-heavy on a cold host and
+    // must not delay run.completed/run.failed or keep the chat UI spinning.
+    setImmediate(() => {
+      void this.refreshCodingAgentUsage(run).catch((err) => {
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] deferred Pi usage refresh failed')
+      })
+    })
   }
 
   private async refreshCodingAgentUsage(run: ManagedCodingAgentRun) {
