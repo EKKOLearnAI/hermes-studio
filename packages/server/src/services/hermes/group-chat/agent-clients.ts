@@ -105,6 +105,7 @@ type AgentActivityBroadcaster = (
     agentName: string,
     status: 'compressing' | 'replying' | 'ready',
 ) => void
+type ExecutionQueueBroadcaster = (roomId: string) => void
 
 function isUnknownBridgeSessionError(err: unknown): boolean {
     const message = String((err as any)?.message || err || '').toLowerCase()
@@ -1978,11 +1979,12 @@ export class AgentClients {
     private _chatRunService: GroupChatRunService | null = null
     private _roomSummaryService: GroupRoomSummaryService | null = null
     private _activityBroadcaster: AgentActivityBroadcaster | null = null
+    private _executionQueueBroadcaster: ExecutionQueueBroadcaster | null = null
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
     private _mentionQueue = new Map<string, Array<{
-        agents: GroupAgentExecutor[]
+        targets: Array<{ agent: GroupAgentExecutor; queueId: string | null }>
         msg: MentionMessage
         resolve: (error: MentionQueueError | null) => void
     }>>()
@@ -2182,12 +2184,22 @@ export class AgentClients {
         if (roomCounts?.size === 0) this._scheduledAgentCounts.delete(roomId)
         const queue = this._mentionQueue.get(roomId)
         if (queue) {
-            for (const entry of queue) {
-                for (const agent of entry.agents) {
-                    if (agent.name === agentName) agent.releaseInvocation?.()
+            for (let index = queue.length - 1; index >= 0; index -= 1) {
+                const entry = queue[index]
+                for (const target of entry.targets) {
+                    if (target.agent.name === agentName) {
+                        target.agent.releaseInvocation?.()
+                        if (target.queueId) this._storage?.failExecutionQueueItem?.(target.queueId, 'Agent was removed')
+                    }
                 }
-                entry.agents = entry.agents.filter(agent => agent.name !== agentName)
+                entry.targets = entry.targets.filter(target => target.agent.name !== agentName)
+                if (entry.targets.length === 0) {
+                    queue.splice(index, 1)
+                    entry.resolve({ message: `Agent "${agentName}" is not connected`, outcomeUnknown: false })
+                }
             }
+            if (queue.length === 0) this._mentionQueue.delete(roomId)
+            this._executionQueueBroadcaster?.(roomId)
         }
         if (hadScheduledWork) this.reportAgentActivity(roomId, agentName, 'ready')
     }
@@ -2196,9 +2208,13 @@ export class AgentClients {
         const queue = this._mentionQueue.get(roomId)
         this._mentionQueue.delete(roomId)
         for (const entry of queue || []) {
-            for (const agent of entry.agents) agent.releaseInvocation?.()
+            for (const target of entry.targets) {
+                target.agent.releaseInvocation?.()
+                if (target.queueId) this._storage?.failExecutionQueueItem?.(target.queueId, 'Room execution queue was cleared')
+            }
             entry.resolve({ message: 'Continuation target Agent is not connected', outcomeUnknown: false })
         }
+        this._executionQueueBroadcaster?.(roomId)
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
         for (const agentName of roomCounts?.keys() || []) {
@@ -2214,12 +2230,50 @@ export class AgentClients {
         }
         let resolve!: (error: MentionQueueError | null) => void
         const completed = new Promise<MentionQueueError | null>(done => { resolve = done })
-        queue.push({ agents, msg, resolve })
+        const targets = agents.map(agent => {
+            const queued = msg.role === 'user' && msg.messageId
+                ? this._storage?.enqueueExecutionQueueItem?.({
+                    roomId,
+                    messageId: msg.messageId,
+                    targetAgentId: agent.agentId,
+                    targetAgentName: agent.name,
+                    requesterMemberId: msg.senderId,
+                    textSummary: msg.content,
+                })
+                : null
+            return { agent, queueId: queued?.id || null }
+        })
+        queue.push({ targets, msg, resolve })
         for (const agent of agents) {
             agent.reserveInvocation?.()
             this.scheduleAgentActivity(roomId, agent.name)
         }
+        if (targets.some(target => target.queueId)) this._executionQueueBroadcaster?.(roomId)
         return completed
+    }
+
+    cancelQueuedMention(roomId: string, queueId: string, requesterMemberId: string): boolean {
+        const cancelled = this._storage?.cancelExecutionQueueItem?.(roomId, queueId, requesterMemberId)
+        if (!cancelled) return false
+        const queue = this._mentionQueue.get(roomId)
+        if (queue) {
+            for (let index = queue.length - 1; index >= 0; index -= 1) {
+                const entry = queue[index]
+                const targetIndex = entry.targets.findIndex(target => target.queueId === queueId)
+                if (targetIndex < 0) continue
+                const [target] = entry.targets.splice(targetIndex, 1)
+                target.agent.releaseInvocation?.()
+                this.finishAgentActivity(roomId, target.agent.name)
+                if (entry.targets.length === 0) {
+                    queue.splice(index, 1)
+                    entry.resolve(null)
+                }
+                break
+            }
+            if (queue.length === 0) this._mentionQueue.delete(roomId)
+        }
+        this._executionQueueBroadcaster?.(roomId)
+        return true
     }
 
     async interruptAgent(roomId: string, agentName: string): Promise<void> {
@@ -2276,6 +2330,9 @@ export class AgentClients {
      * Disconnect all agents in all rooms.
      */
     disconnectAll(): void {
+        for (const roomId of this._mentionQueue.keys()) {
+            this.clearMentionQueuesForRoom(roomId)
+        }
         this.rooms.forEach((room) => {
             room.forEach((client) => client.disconnect())
         })
@@ -2313,6 +2370,10 @@ export class AgentClients {
 
     setActivityBroadcaster(broadcaster: AgentActivityBroadcaster | null): void {
         this._activityBroadcaster = broadcaster
+    }
+
+    setExecutionQueueBroadcaster(broadcaster: ExecutionQueueBroadcaster | null): void {
+        this._executionQueueBroadcaster = broadcaster
     }
 
 
@@ -2474,7 +2535,11 @@ export class AgentClients {
                     const runtimeContext = this._roomSummaryService
                         ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
                         : { summary: '', history: [] }
-                    const results = await Promise.allSettled(next.agents.map(async (agent) => {
+                    const runnableTargets = next.targets.filter(target => (
+                        !target.queueId || this._storage?.startExecutionQueueItem?.(target.queueId) !== false
+                    ))
+                    if (runnableTargets.some(target => target.queueId)) this._executionQueueBroadcaster?.(roomId)
+                    const results = await Promise.allSettled(runnableTargets.map(async ({ agent }) => {
                         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                             if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
                         }
@@ -2506,20 +2571,25 @@ export class AgentClients {
                     }))
                     for (let index = 0; index < results.length; index += 1) {
                         const result = results[index]
+                        const target = runnableTargets[index]
                         if (result.status === 'rejected') {
                             const message = result.reason?.message || String(result.reason)
                             queueError ||= {
                                 message,
                                 outcomeUnknown: result.reason?.outcomeUnknown === true,
                             }
-                            logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${message}`)
+                            if (target?.queueId) this._storage?.finishExecutionQueueItem?.(target.queueId, 'failed', message)
+                            logger.error(`[AgentClients] error processing mention for ${target?.agent.name}: ${message}`)
+                        } else if (target?.queueId) {
+                            this._storage?.finishExecutionQueueItem?.(target.queueId, 'completed')
                         }
                     }
                 } finally {
-                    for (const agent of next.agents) {
-                        agent.releaseInvocation?.()
-                        this.finishAgentActivity(roomId, agent.name)
+                    for (const target of next.targets) {
+                        target.agent.releaseInvocation?.()
+                        this.finishAgentActivity(roomId, target.agent.name)
                     }
+                    this._executionQueueBroadcaster?.(roomId)
                     next.resolve(queueError)
                 }
             }

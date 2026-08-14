@@ -792,6 +792,31 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   reasoning_content: 'TEXT',
 }
 
+export const GC_EXECUTION_QUEUE_TABLE = 'gc_execution_queue'
+
+export const GC_EXECUTION_QUEUE_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  messageId: 'TEXT NOT NULL',
+  targetAgentId: 'TEXT NOT NULL',
+  targetAgentName: 'TEXT NOT NULL',
+  requesterMemberId: 'TEXT NOT NULL',
+  textSummary: "TEXT NOT NULL DEFAULT ''",
+  sequence: 'INTEGER NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'queued'",
+  createdAt: 'INTEGER NOT NULL',
+  startedAt: 'INTEGER',
+  finishedAt: 'INTEGER',
+  lastError: 'TEXT',
+}
+
+export const GC_EXECUTION_QUEUE_INDEXES = {
+  idx_gc_execution_queue_message_target:
+    'CREATE UNIQUE INDEX idx_gc_execution_queue_message_target ON gc_execution_queue(messageId, targetAgentId)',
+  idx_gc_execution_queue_room_status_sequence:
+    'CREATE INDEX idx_gc_execution_queue_room_status_sequence ON gc_execution_queue(roomId, status, sequence)',
+}
+
 export const GC_ACTIVITY_MIGRATIONS_TABLE = 'gc_activity_migrations'
 
 export const GC_ACTIVITY_MIGRATIONS_SCHEMA: Record<string, string> = {
@@ -1526,6 +1551,9 @@ export function initAllHermesTables(): void {
     // need the context-window index migrated explicitly to avoid scanning and
     // sorting the full message table on every persisted message.
     createIndexes(db, groupChatMessageIndexes)
+    syncTable(GC_EXECUTION_QUEUE_TABLE, GC_EXECUTION_QUEUE_SCHEMA, {
+      indexes: GC_EXECUTION_QUEUE_INDEXES,
+    })
     syncTable(GC_ACTIVITY_MIGRATIONS_TABLE, GC_ACTIVITY_MIGRATIONS_SCHEMA)
     migrateGroupChatActivityTimes(db, Date.now())
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)

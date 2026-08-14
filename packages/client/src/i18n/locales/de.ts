@@ -2569,6 +2569,9 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   groupChat: {
+    executionQueueTitle: 'Ausführungswarteschlange',
+    executionQueueCancel: 'Wartenden Auftrag für {agent} abbrechen',
+    executionQueueCancelFailed: 'Der wartende Auftrag konnte nicht abgebrochen werden.',
     agentLinkButton: 'Eigenen Agent hinzufügen',
     agentOwner: 'Besitzer: {name}',
     agentLinkTitle: 'Einen Agent zu diesem Raum hinzufügen',

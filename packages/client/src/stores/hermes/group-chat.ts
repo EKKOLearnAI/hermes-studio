@@ -19,6 +19,7 @@ import {
     type RoomSummaryState,
     type ChatMessage,
     type GroupChatMention,
+    type GroupExecutionQueueItem,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
     createRoom,
@@ -182,6 +183,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
     const roomSummaryStates = ref<Map<string, RoomSummaryState>>(new Map())
     const handoffChains = ref<Map<string, RoomAgentHandoffChain>>(new Map())
+    const executionQueue = ref<GroupExecutionQueueItem[]>([])
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const pendingClarifies = ref<Map<string, GroupPendingClarify>>(new Map())
@@ -598,6 +600,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         } else {
             contextStatuses.value.clear()
         }
+        executionQueue.value = Array.isArray(res.executionQueue) ? res.executionQueue : []
         if (typeof res.roomId === 'string' && res.roomId) {
             replaceRoomPendingInteractions(res.roomId, res.pendingApprovals, res.pendingClarifies)
         }
@@ -970,6 +973,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             roomName.value = ''
             clearRemoteTypingState()
             contextStatuses.value.clear()
+            executionQueue.value = []
             pendingApprovals.value.clear()
             pendingClarifies.value.clear()
         })
@@ -1015,6 +1019,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     contextStatuses.value = new Map(contextStatuses.value)
                 }
             }
+        })
+
+        socket.on('execution_queue_updated', (data: { roomId: string; items?: GroupExecutionQueueItem[] }) => {
+            if (data.roomId !== currentRoomId.value) return
+            executionQueue.value = Array.isArray(data.items) ? data.items : []
         })
 
         socket.on('room_summary_updated', (summary: RoomSummaryState) => {
@@ -1123,6 +1132,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 resetMessagePaging()
                 clearRemoteTypingState()
                 contextStatuses.value.clear()
+                executionQueue.value = []
                 pendingApprovals.value.clear()
                 pendingClarifies.value.clear()
             }
@@ -1151,6 +1161,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         agents.value = []
         roomName.value = ''
         contextStatuses.value.clear()
+        executionQueue.value = []
         roomSummaryStates.value.clear()
         handoffChains.value.clear()
         pendingApprovals.value.clear()
@@ -1705,6 +1716,21 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         await respondClarifyFor(pending.roomId, pending.clarifyId, response)
     }
 
+    async function cancelExecutionQueueItem(queueId: string) {
+        const roomId = currentRoomId.value
+        if (!roomId) return
+        const socket = await ensureRealtimeRoomReady(roomId)
+        await new Promise<void>((resolve, reject) => {
+            socket.emit('cancel_execution_queue_item', { roomId, queueId }, (res: any) => {
+                if (res?.error) {
+                    reject(new Error(res.error))
+                    return
+                }
+                resolve()
+            })
+        })
+    }
+
     return {
         // State
         connected,
@@ -1721,6 +1747,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         contextStatuses,
         roomSummaryStates,
         handoffChains,
+        executionQueue,
         pendingApprovals,
         pendingClarifies,
         activePendingApproval,
@@ -1764,6 +1791,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         respondApprovalFor,
         respondClarify,
         respondClarifyFor,
+        cancelExecutionQueueItem,
         createNewRoom,
         joinByCode,
         deleteRoom,

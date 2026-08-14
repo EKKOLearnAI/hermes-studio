@@ -2568,6 +2568,9 @@ export default {
 
   // 更新履歴
   groupChat: {
+    executionQueueTitle: '実行キュー',
+    executionQueueCancel: '{agent} の待機中タスクをキャンセル',
+    executionQueueCancelFailed: '待機中タスクをキャンセルできませんでした。',
     agentLinkButton: '自分の Agent を参加させる',
     agentOwner: '所有者: {name}',
     agentLinkTitle: 'Agent をこのルームに参加させる',

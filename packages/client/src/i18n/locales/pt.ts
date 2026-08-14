@@ -2569,6 +2569,9 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   groupChat: {
+    executionQueueTitle: 'Fila de execução',
+    executionQueueCancel: 'Cancelar trabalho na fila para {agent}',
+    executionQueueCancelFailed: 'Não foi possível cancelar o trabalho na fila.',
     agentLinkButton: 'Adicionar seu Agent',
     agentOwner: 'Proprietário: {name}',
     agentLinkTitle: 'Adicionar um Agent a esta sala',

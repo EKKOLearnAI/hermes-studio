@@ -2503,6 +2503,9 @@ export default {
 
 
   groupChat: {
+    executionQueueTitle: 'Очередь выполнения',
+    executionQueueCancel: 'Отменить задачу в очереди для {agent}',
+    executionQueueCancelFailed: 'Не удалось отменить задачу в очереди.',
     agentLinkButton: 'Добавить своего Agent',
     agentOwner: 'Владелец: {name}',
     agentLinkTitle: 'Добавить Agent в эту комнату',

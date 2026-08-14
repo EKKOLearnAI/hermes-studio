@@ -172,6 +172,20 @@ export interface GroupChatMention {
     displayName: string
 }
 
+export interface GroupExecutionQueueItem {
+    id: string
+    roomId: string
+    messageId: string
+    targetAgentId: string
+    targetAgentName: string
+    requesterMemberId: string
+    textSummary: string
+    sequence: number
+    position: number
+    status: 'queued'
+    createdAt: number
+}
+
 export interface GroupWorkspaceDiffFile {
     id: string | number
     path: string

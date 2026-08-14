@@ -2847,6 +2847,9 @@ export default {
 
   // Group Chat
   groupChat: {
+    executionQueueTitle: 'قائمة انتظار التنفيذ',
+    executionQueueCancel: 'إلغاء العمل المنتظر لـ {agent}',
+    executionQueueCancelFailed: 'تعذر إلغاء العمل المنتظر.',
     agentLinkButton: 'إضافة Agent الخاص بك',
     agentOwner: 'المالك: {name}',
     agentLinkTitle: 'إضافة Agent إلى هذه الغرفة',

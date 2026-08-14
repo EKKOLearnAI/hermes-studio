@@ -2569,6 +2569,9 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   groupChat: {
+    executionQueueTitle: 'Cola de ejecución',
+    executionQueueCancel: 'Cancelar trabajo en cola para {agent}',
+    executionQueueCancelFailed: 'No se pudo cancelar el trabajo en cola.',
     agentLinkButton: 'Añadir tu Agent',
     agentOwner: 'Propietario: {name}',
     agentLinkTitle: 'Añadir un Agent a esta sala',

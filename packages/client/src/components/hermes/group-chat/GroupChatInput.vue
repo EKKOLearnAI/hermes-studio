@@ -10,6 +10,8 @@ import { buildMentionOptions, type MentionOption } from './mention-options'
 import type { GroupChatMention } from '@/api/hermes/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
+import VoiceDialogueControls from '@/components/hermes/chat/VoiceDialogueControls.vue'
+import { normalizeComposerVoiceTranscript, useComposerVoiceInput } from '@/composables/useComposerVoiceInput'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{
@@ -398,6 +400,33 @@ function replaceInputRange(start: number, end: number, replacement: string, ment
     }
 }
 
+function insertVoiceTranscriptIntoInput(text: string) {
+    const transcript = normalizeComposerVoiceTranscript(text)
+    if (!transcript) return
+    const el = textareaRef.value
+    const selectionStart = el?.selectionStart ?? inputText.value.length
+    const selectionEnd = el?.selectionEnd ?? selectionStart
+    const before = inputText.value.slice(0, selectionStart)
+    const after = inputText.value.slice(selectionEnd)
+    const prefix = before && !/\s$/.test(before) ? ' ' : ''
+    const suffix = after && !/^\s/.test(after) ? ' ' : ''
+    const inserted = `${prefix}${transcript}${suffix}`
+    replaceInputRange(selectionStart, selectionEnd, inserted)
+    mentionActive.value = false
+    store.emitTyping()
+    nextTick(() => {
+        if (!el) return
+        const cursor = selectionStart + prefix.length + transcript.length
+        el.focus()
+        el.setSelectionRange(cursor, cursor)
+        autoSizeTextarea(el)
+    })
+}
+
+const voiceInput = useComposerVoiceInput({
+    insertTranscript: insertVoiceTranscriptIntoInput,
+})
+
 function insertStructuredMention(mention: GroupChatMention) {
     const normalized = normalizeMention(mention)
     if (!normalized) return
@@ -715,6 +744,15 @@ function isImage(type: string): boolean {
                     </NDropdown>
                 </div>
                 <div class="input-actions">
+                    <VoiceDialogueControls
+                        :status="voiceInput.dialogue.status.value"
+                        :transcript="voiceInput.transcript.value"
+                        :error="voiceInput.error.value"
+                        :events="voiceInput.dialogue.events.value"
+                        :on-start="voiceInput.start"
+                        :on-stop="voiceInput.stop"
+                        :on-cancel="voiceInput.cancel"
+                    />
                     <NButton
                         size="medium"
                         type="primary"

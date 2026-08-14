@@ -268,8 +268,11 @@ async function mockGroupChatSocket(page: Page) {
       contentType: 'application/javascript',
       body: `
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
+state.executionQueues = state.executionQueues || {}
+state.nextSocketId = state.nextSocketId || 1
 const roomMessages = ${JSON.stringify(messagesByRoom)}
 const roomAgents = ${JSON.stringify(agentsByRoom)}
+const roomNames = ${JSON.stringify(Object.fromEntries(baseRooms.map(room => [room.id, room.name])))}
 function makeSocket(url, options) {
   const listeners = new Map()
   const socket = {
@@ -286,10 +289,23 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
+      }
+      if (event === 'cancel_execution_queue_item' && typeof ack === 'function') {
+        const roomId = payload && payload.roomId
+        const queueId = payload && payload.queueId
+        const items = state.executionQueues[roomId] || []
+        const next = items.filter(item => item.id !== queueId)
+        if (next.length === items.length) {
+          setTimeout(() => ack({ error: 'Queue item is no longer cancellable' }), 0)
+        } else {
+          state.executionQueues[roomId] = next.map((item, index) => ({ ...item, position: index + 1 }))
+          for (const peer of state.sockets) peer.__trigger('execution_queue_updated', { roomId, items: state.executionQueues[roomId] })
+          setTimeout(() => ack({ ok: true, status: 'cancelled' }), 0)
+        }
       }
       return this
     },
@@ -331,6 +347,53 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
   }, platform)
 }
 
+async function installMockVoiceCapture(page: Page) {
+  await page.addInitScript(() => {
+    const state = { recorderState: 'inactive' }
+    ;(window as any).__PW_FAKE_GROUP_VOICE_CAPTURE__ = state
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true }
+      state = 'inactive'
+      mimeType: string
+      ondataavailable: ((event: { data: Blob }) => void) | null = null
+      onstop: (() => void) | null = null
+      constructor(_stream: unknown, options: { mimeType?: string } = {}) {
+        this.mimeType = options.mimeType || 'audio/webm'
+      }
+      start() {
+        this.state = 'recording'
+        state.recorderState = 'recording'
+      }
+      stop() {
+        this.state = 'inactive'
+        state.recorderState = 'inactive'
+        setTimeout(() => {
+          this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) })
+          this.onstop?.()
+        }, 0)
+      }
+    }
+    const track = { stop() {} }
+    const stream = { getTracks: () => [track], getAudioTracks: () => [track], getVideoTracks: () => [] }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(globalThis, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    })
+    window.localStorage.setItem('hermes-stt-settings-v1', JSON.stringify({
+      provider: 'openai',
+      openaiModel: 'gpt-4o-transcribe',
+      openaiLanguage: '',
+      openaiPrompt: '',
+      customBaseUrl: '',
+      customModel: 'gpt-4o-transcribe',
+      customLanguage: '',
+      customPrompt: '',
+    }))
+  })
+}
+
 async function setup(page: Page, path: string, platform?: DesktopPlatform, offlinePresence = false) {
   if (platform) await installDesktopBridge(page, platform)
   await page.addInitScript(() => {
@@ -344,11 +407,25 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform, offli
 }
 
 async function triggerGroupSocket(page: Page, event: string, payload: unknown) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
   await page.evaluate(({ event, payload }) => {
-    const socket = (window as any).__PW_GROUP_SOCKET__?.latest
-    if (!socket) throw new Error('Group chat socket is not connected')
-    socket.__trigger(event, payload)
+    const sockets = (window as any).__PW_GROUP_SOCKET__?.sockets || []
+    if (sockets.length === 0) throw new Error('Group chat socket is not connected')
+    for (const socket of sockets) socket.__trigger(event, payload)
   }, { event, payload })
+}
+
+async function connectGroupSocket(page: Page) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
+  await page.evaluate(() => {
+    const state = (window as any).__PW_GROUP_SOCKET__
+    for (const socket of state.sockets) {
+      if (String(socket.url).endsWith('/group-chat') && !socket.id) {
+        socket.id = `pw-group-socket-${state.nextSocketId++}`
+      }
+    }
+  })
+  await triggerGroupSocket(page, 'connect', undefined)
 }
 
 test.describe('group chat room deep links', () => {
@@ -854,6 +931,85 @@ test.describe('group chat room deep links', () => {
     await expect(first.getByText('Beta room message')).toHaveCount(0)
     await expect(second.getByText('Beta room message')).toBeVisible()
     await expect(second.getByText('Alpha room message')).toHaveCount(0)
+  })
+
+  test('renders authoritative queue order and only cancels the queued item without removing its message', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('gc_user_id', 'user-1')
+      window.localStorage.setItem('gc_user_name', 'User One')
+    })
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+    const items = [
+        {
+          id: 'queue-1', roomId: 'room-alpha', messageId: 'alpha-msg',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'user-1', textSummary: '@Worker first queued task',
+          sequence: 10, position: 1, status: 'queued', createdAt: 10,
+        },
+        {
+          id: 'queue-2', roomId: 'room-alpha', messageId: 'alpha-file',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'someone-else', textSummary: '@Worker observer task',
+          sequence: 11, position: 2, status: 'queued', createdAt: 11,
+        },
+      ]
+    await page.evaluate((queuedItems) => {
+      const state = (window as any).__PW_GROUP_SOCKET__
+      state.executionQueues['room-alpha'] = queuedItems
+    }, items)
+    await triggerGroupSocket(page, 'execution_queue_updated', { roomId: 'room-alpha', items })
+
+    const queue = page.getByTestId('group-execution-queue')
+    await expect(queue.locator('.group-execution-queue-position')).toHaveText(['1', '2'])
+    await expect(queue.locator('.group-execution-queue-summary')).toHaveText([
+      '@Worker first queued task',
+      '@Worker observer task',
+    ])
+    await expect(queue.locator('.group-execution-queue-cancel')).toHaveCount(1)
+
+    await queue.locator('.group-execution-queue-cancel').click()
+    await expect(queue.locator('[data-queue-id="queue-1"]')).toHaveCount(0)
+    await expect(queue.locator('[data-queue-id="queue-2"]')).toBeVisible()
+    await expect(page.getByText('Alpha room message')).toBeVisible()
+  })
+
+  test('records and transcribes into the editable group composer without sending automatically', async ({ page }) => {
+    await installMockVoiceCapture(page)
+    let transcriptions = 0
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.route('**/api/hermes/stt/transcribe', async (route) => {
+      transcriptions += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ text: 'voice group draft', provider: 'openai' }),
+      })
+    })
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+
+    const toggle = page.getByTestId('voice-record-toggle')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await toggle.click()
+
+    const textarea = page.locator('.chat-input-area textarea')
+    await expect(textarea).toHaveValue('voice group draft')
+    expect(transcriptions).toBe(1)
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
+
+    await textarea.fill('edited voice group draft')
+    await expect(textarea).toHaveValue('edited voice group draft')
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
   })
 
   test('unknown route room id falls back to the first available room', async ({ page }) => {

@@ -2809,6 +2809,9 @@ export default {
 
   // 群聊
   groupChat: {
+    executionQueueTitle: '執行佇列',
+    executionQueueCancel: '取消 {agent} 的排隊工作',
+    executionQueueCancelFailed: '無法取消排隊工作。',
     agentLinkButton: '帶自己的 Agent 入群',
     agentOwner: '歸屬人：{name}',
     agentLinkTitle: '把你的 Agent 加入房間',

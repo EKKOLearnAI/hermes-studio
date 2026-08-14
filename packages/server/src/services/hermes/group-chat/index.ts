@@ -113,6 +113,23 @@ interface PendingGroupClarifyRoute {
     requestedAt: number
 }
 
+export interface GroupExecutionQueueItem {
+    id: string
+    roomId: string
+    messageId: string
+    targetAgentId: string
+    targetAgentName: string
+    requesterMemberId: string
+    textSummary: string
+    sequence: number
+    position?: number
+    status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed'
+    createdAt: number
+    startedAt: number | null
+    finishedAt: number | null
+    lastError: string | null
+}
+
 function contentToStorageString(content: unknown): string {
     if (typeof content === 'string') return content
     return JSON.stringify(content ?? '')
@@ -654,6 +671,16 @@ class ChatStorage {
                )`
         ).run(Date.now())
         const now = Date.now()
+        db.prepare(
+            `UPDATE gc_execution_queue
+             SET status = 'failed', finishedAt = ?, lastError = 'Studio restarted before queued work started'
+             WHERE status = 'queued'`,
+        ).run(now)
+        db.prepare(
+            `UPDATE gc_execution_queue
+             SET status = 'failed', finishedAt = ?, lastError = 'Studio restarted while work was running'
+             WHERE status = 'running'`,
+        ).run(now)
         // A source-side receipt is only durable admission. It is never
         // completion: only a target inbox row with terminal evidence can
         // advance the source chain to resumed.
@@ -2109,12 +2136,114 @@ class ChatStorage {
             db.prepare('DELETE FROM gc_handoff_outbox WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_attempts WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_chains WHERE roomId = ?').run(roomId)
+            db.prepare('DELETE FROM gc_execution_queue WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_agents WHERE roomId = ? AND removedAt > 0').run(roomId)
             db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
             db.prepare('UPDATE gc_rooms SET totalTokens = 0, sessionSeed = ?, summaryGeneration = summaryGeneration + 1 WHERE id = ?').run(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, roomId)
         })
+    }
+
+    enqueueExecutionQueueItem(input: {
+        roomId: string
+        messageId: string
+        targetAgentId: string
+        targetAgentName: string
+        requesterMemberId: string
+        textSummary: string
+    }): GroupExecutionQueueItem {
+        const db = this.db()
+        if (!db) throw new Error('Database unavailable')
+        return this.withImmediateTransaction(db, () => {
+            const existing = db.prepare(
+                'SELECT * FROM gc_execution_queue WHERE messageId = ? AND targetAgentId = ?',
+            ).get(input.messageId, input.targetAgentId) as GroupExecutionQueueItem | undefined
+            if (existing) return existing
+            const sequenceRow = db.prepare(
+                'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM gc_execution_queue WHERE roomId = ?',
+            ).get(input.roomId) as { sequence: number }
+            const item: GroupExecutionQueueItem = {
+                id: randomUUID(),
+                ...input,
+                textSummary: input.textSummary.replace(/\s+/g, ' ').trim().slice(0, 160),
+                sequence: Number(sequenceRow.sequence),
+                status: 'queued',
+                createdAt: Date.now(),
+                startedAt: null,
+                finishedAt: null,
+                lastError: null,
+            }
+            db.prepare(
+                `INSERT INTO gc_execution_queue (
+                    id, roomId, messageId, targetAgentId, targetAgentName,
+                    requesterMemberId, textSummary, sequence, status,
+                    createdAt, startedAt, finishedAt, lastError
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+            ).run(
+                item.id,
+                item.roomId,
+                item.messageId,
+                item.targetAgentId,
+                item.targetAgentName,
+                item.requesterMemberId,
+                item.textSummary,
+                item.sequence,
+                item.status,
+                item.createdAt,
+            )
+            return item
+        })
+    }
+
+    getExecutionQueueItem(id: string): GroupExecutionQueueItem | null {
+        const row = this.db()?.prepare('SELECT * FROM gc_execution_queue WHERE id = ?').get(id)
+        return (row as unknown as GroupExecutionQueueItem | undefined) || null
+    }
+
+    listQueuedExecutionItems(roomId: string): GroupExecutionQueueItem[] {
+        const rows = (this.db()?.prepare(
+            `SELECT * FROM gc_execution_queue
+             WHERE roomId = ? AND status = 'queued'
+             ORDER BY sequence ASC`,
+        ).all(roomId) || []) as unknown as GroupExecutionQueueItem[]
+        return rows.map((item, index) => ({ ...item, position: index + 1 }))
+    }
+
+    startExecutionQueueItem(id: string): boolean {
+        const result = this.db()?.prepare(
+            `UPDATE gc_execution_queue
+             SET status = 'running', startedAt = ?, lastError = NULL
+             WHERE id = ? AND status = 'queued'`,
+        ).run(Date.now(), id)
+        return Number(result?.changes || 0) === 1
+    }
+
+    finishExecutionQueueItem(id: string, status: 'completed' | 'failed', lastError?: string): void {
+        this.db()?.prepare(
+            `UPDATE gc_execution_queue
+             SET status = ?, finishedAt = ?, lastError = ?
+             WHERE id = ? AND status = 'running'`,
+        ).run(status, Date.now(), status === 'failed' ? String(lastError || 'Execution failed') : null, id)
+    }
+
+    failExecutionQueueItem(id: string, lastError: string): void {
+        this.db()?.prepare(
+            `UPDATE gc_execution_queue
+             SET status = 'failed', finishedAt = ?, lastError = ?
+             WHERE id = ? AND status IN ('queued', 'running')`,
+        ).run(Date.now(), String(lastError || 'Execution failed'), id)
+    }
+
+    cancelExecutionQueueItem(roomId: string, id: string, requesterMemberId: string): GroupExecutionQueueItem | null {
+        const db = this.db()
+        if (!db) return null
+        const result = db.prepare(
+            `UPDATE gc_execution_queue
+             SET status = 'cancelled', finishedAt = ?, lastError = NULL
+             WHERE id = ? AND roomId = ? AND requesterMemberId = ? AND status = 'queued'`,
+        ).run(Date.now(), id, roomId, requesterMemberId)
+        return Number(result.changes || 0) === 1 ? this.getExecutionQueueItem(id) : null
     }
 
     // ─── Room Agents ──────────────────────────────────────────
@@ -2518,6 +2647,7 @@ class ChatStorage {
         if (!db) return
         this.withImmediateTransaction(db, () => {
             this.deleteWorkspaceDiffChanges(roomId)
+            db.prepare('DELETE FROM gc_execution_queue WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
             db.prepare('DELETE FROM gc_handoff_deliveries WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
             db.prepare('DELETE FROM gc_handoff_inbox WHERE attemptId IN (SELECT attemptId FROM gc_handoff_attempts WHERE roomId = ?)').run(roomId)
@@ -2910,6 +3040,9 @@ export class GroupChatServer {
             }
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status })
         })
+        this.agentClients.setExecutionQueueBroadcaster((roomId) => {
+            this.broadcastExecutionQueue(roomId)
+        })
         this.agentClients.setWorkspaceDiffBroadcaster((roomId, msg, totalTokens) => {
             this.nsp.to(roomId).emit('message', buildOutboundGroupMessage(msg))
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
@@ -2925,6 +3058,19 @@ export class GroupChatServer {
 
     getStorage(): ChatStorage {
         return this.storage
+    }
+
+    private executionQueueSnapshot(roomId: string): GroupExecutionQueueItem[] {
+        return typeof this.storage.listQueuedExecutionItems === 'function'
+            ? this.storage.listQueuedExecutionItems(roomId)
+            : []
+    }
+
+    private broadcastExecutionQueue(roomId: string): void {
+        this.nsp.to(roomId).emit('execution_queue_updated', {
+            roomId,
+            items: this.executionQueueSnapshot(roomId),
+        })
     }
 
     async dispatchPendingHandoffs(): Promise<number> {
@@ -3507,6 +3653,7 @@ export class GroupChatServer {
         socket.on('typing', (data: { roomId?: string }) => this.handleTyping(socket, data))
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
+        socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
@@ -3834,6 +3981,7 @@ export class GroupChatServer {
             hasMore: messages.length < total,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            executionQueue: this.executionQueueSnapshot(roomId),
             pendingApprovals: this.pendingApprovalSnapshots(roomId, socket),
             pendingClarifies: this.canSocketManageRoom(socket, roomId) ? this.pendingClarifySnapshots(roomId) : [],
             ...(isInviteGuest && source !== 'agent'
@@ -4361,6 +4509,30 @@ export class GroupChatServer {
             logger.warn(`[GroupChat] failed to interrupt agent ${agentName} in room ${roomId}: ${err.message}`)
             ack?.({ error: err.message || 'interrupt failed' })
         }
+    }
+
+    private handleCancelExecutionQueueItem(
+        socket: Socket,
+        data: { roomId?: string; queueId?: string } | undefined,
+        ack?: (response?: unknown) => void,
+    ): void {
+        const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
+        const queueId = typeof data?.queueId === 'string' ? data.queueId.trim() : ''
+        const joined = roomId ? this.getOnlineRoomMember(socket, roomId) : null
+        if (!roomId || !queueId || !joined || joined.member.source !== 'human') {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+        const item = this.storage.getExecutionQueueItem(queueId)
+        if (!item || item.roomId !== roomId || item.requesterMemberId !== joined.member.userId) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+        if (!this.agentClients.cancelQueuedMention(roomId, queueId, joined.member.userId)) {
+            ack?.({ error: 'Queue item is no longer cancellable', status: this.storage.getExecutionQueueItem(queueId)?.status })
+            return
+        }
+        ack?.({ ok: true, status: 'cancelled' })
     }
 
     private handleRemoveAgent(

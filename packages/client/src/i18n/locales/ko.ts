@@ -2568,6 +2568,9 @@ export default {
 
   // 변경 이력
   groupChat: {
+    executionQueueTitle: '실행 대기열',
+    executionQueueCancel: '{agent}의 대기 작업 취소',
+    executionQueueCancelFailed: '대기 작업을 취소하지 못했습니다.',
     agentLinkButton: '내 Agent 참여시키기',
     agentOwner: '소유자: {name}',
     agentLinkTitle: '이 방에 Agent 참여시키기',

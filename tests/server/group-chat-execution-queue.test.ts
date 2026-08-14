@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  connectGroupChatClient,
+  createTestGroupChatServer,
+  emitAck,
+  once,
+} from './group-chat-test-helpers'
+
+describe('group chat authoritative execution queue', () => {
+  let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    harness = await createTestGroupChatServer()
+    harness.groupServer.getStorage().saveRoom('room-1', 'Room 1', 'ROOM1')
+    harness.groupServer.getStorage().addRoomAgent('room-1', 'agent-worker', 'default', 'Worker', '', 0)
+  })
+
+  afterEach(() => {
+    harness?.cleanup()
+  })
+
+  it('publishes queued work with stable ordering, restores it on another tab, and only lets its requester cancel', async () => {
+    let finishFirst!: () => void
+    let started = 0
+    const executor = {
+      agentId: 'agent-worker',
+      name: 'Worker',
+      connected: true,
+      replyToMention: vi.fn(async () => {
+        started += 1
+        if (started === 1) await new Promise<void>(resolve => { finishFirst = resolve })
+      }),
+    }
+    harness.groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+    const owner = await connectGroupChatClient(harness.port, 'human-1', 'Owner')
+    const observer = await connectGroupChatClient(harness.port, 'human-2', 'Observer')
+    harness.sockets.push(owner, observer)
+    await emitAck(owner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await emitAck(observer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    await emitAck(owner, 'message', {
+      roomId: 'room-1',
+      id: 'message-running',
+      content: '@Worker first',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+    })
+    await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
+
+    const queueUpdate = once<any>(owner, 'execution_queue_updated')
+    await emitAck(owner, 'message', {
+      roomId: 'room-1',
+      id: 'message-queued',
+      content: '@Worker second task with a longer body',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+    })
+    const queued = await queueUpdate
+    expect(queued.items).toEqual([
+      expect.objectContaining({
+        roomId: 'room-1',
+        messageId: 'message-queued',
+        targetAgentId: 'agent-worker',
+        targetAgentName: 'Worker',
+        requesterMemberId: 'human-1',
+        textSummary: '@Worker second task with a longer body',
+        position: 1,
+        status: 'queued',
+      }),
+    ])
+
+    const restored = await emitAck<any>(observer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(restored.executionQueue).toEqual(queued.items)
+
+    observer.disconnect()
+    const reconnectedObserver = await connectGroupChatClient(harness.port, 'human-2', 'Observer')
+    harness.sockets.push(reconnectedObserver)
+    const reconnected = await emitAck<any>(reconnectedObserver, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(reconnected.executionQueue).toEqual(queued.items)
+
+    const forbidden = await emitAck<any>(reconnectedObserver, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.items[0].id,
+    })
+    expect(forbidden).toMatchObject({ error: 'Access denied' })
+
+    const cancelled = await emitAck<any>(owner, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.items[0].id,
+    })
+    expect(cancelled).toMatchObject({ ok: true, status: 'cancelled' })
+    expect(harness.groupServer.getStorage().getMessage('message-queued')).not.toBeNull()
+
+    finishFirst()
+    await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
+  })
+
+  it('settles a cancel-versus-start race to exactly one authoritative state', () => {
+    const storage = harness.groupServer.getStorage() as any
+    const item = storage.enqueueExecutionQueueItem({
+      roomId: 'room-1',
+      messageId: 'race-message',
+      targetAgentId: 'agent-worker',
+      targetAgentName: 'Worker',
+      requesterMemberId: 'human-1',
+      textSummary: 'race',
+    })
+
+    const started = storage.startExecutionQueueItem(item.id)
+    const cancelled = storage.cancelExecutionQueueItem('room-1', item.id, 'human-1')
+
+    expect([started, cancelled].filter(Boolean)).toHaveLength(1)
+    expect(storage.getExecutionQueueItem(item.id).status).toBe(started ? 'running' : 'cancelled')
+
+    const reverse = storage.enqueueExecutionQueueItem({
+      roomId: 'room-1',
+      messageId: 'reverse-race-message',
+      targetAgentId: 'agent-worker',
+      targetAgentName: 'Worker',
+      requesterMemberId: 'human-1',
+      textSummary: 'reverse race',
+    })
+    const reverseCancelled = storage.cancelExecutionQueueItem('room-1', reverse.id, 'human-1')
+    const reverseStarted = storage.startExecutionQueueItem(reverse.id)
+
+    expect([reverseStarted, reverseCancelled].filter(Boolean)).toHaveLength(1)
+    expect(storage.getExecutionQueueItem(reverse.id).status).toBe('cancelled')
+  })
+})
