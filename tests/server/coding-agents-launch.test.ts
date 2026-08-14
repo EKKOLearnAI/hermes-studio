@@ -4,7 +4,10 @@ import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/claude-code-proxy'
 import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/codex-proxy'
-import { prepareCodingAgentLaunch } from '../../packages/server/src/services/coding-agents'
+import {
+  migratePersistedPiRuntimeMcpConfigs,
+  prepareCodingAgentLaunch,
+} from '../../packages/server/src/services/coding-agents'
 
 const homes: string[] = []
 
@@ -52,6 +55,50 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('migrates persisted Pi MCP runtime configs from direct tools to proxy mode', async () => {
+    const home = makeHome()
+    const piHome = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    const runtimeMcpPath = join(piHome, 'runs', 'old-run', 'mcp.json')
+    const userMcpPath = join(home, 'coding-agent', 'model', 'default', 'user_only', 'pi', 'mcp.json')
+    mkdirSync(dirname(runtimeMcpPath), { recursive: true })
+    mkdirSync(dirname(userMcpPath), { recursive: true })
+    writeFileSync(runtimeMcpPath, `${JSON.stringify({
+      settings: {
+        directTools: true,
+        freezeDirectTools: true,
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp', directTools: true },
+        'hermes-studio-api': {
+          command: 'node',
+          env: { HERMES_WEB_UI_MANAGED_MCP: '1' },
+          directTools: true,
+        },
+      },
+    }, null, 2)}\n`)
+    const userContent = `${JSON.stringify({
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+      },
+    }, null, 2)}\n`
+    writeFileSync(userMcpPath, userContent)
+
+    await expect(migratePersistedPiRuntimeMcpConfigs()).resolves.toBe(1)
+
+    const migrated = JSON.parse(readFileSync(runtimeMcpPath, 'utf-8'))
+    expect(migrated.settings.directTools).toBe(false)
+    expect(migrated.settings.agentPluginPaths).toEqual(['./plugins'])
+    expect(migrated.settings).not.toHaveProperty('freezeDirectTools')
+    expect(migrated.mcpServers.user_docs.directTools).toBe(true)
+    expect(migrated.mcpServers['hermes-studio-api']).toMatchObject({
+      directTools: false,
+      lifecycle: 'lazy',
+    })
+    expect(readFileSync(userMcpPath, 'utf-8')).toBe(userContent)
+    await expect(migratePersistedPiRuntimeMcpConfigs()).resolves.toBe(0)
+  })
+
   it('keeps stable credential-free Pi config files beside isolated run directories', async () => {
     const home = makeHome()
     const adapterEntry = join(

@@ -1146,6 +1146,86 @@ function piMcpConfig(profile: string, ...externalContents: Array<string | null |
   }, null, 2)}\n`
 }
 
+function migratePiRuntimeMcpContent(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const servers = parsed.mcpServers
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return null
+    const managedServers = Object.entries(servers)
+      .filter(([name, server]) => HERMES_MCP_SERVER_NAMES.has(name) || isManagedHermesMcpServer(server))
+    if (managedServers.length === 0) return null
+
+    const settings = parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)
+      ? parsed.settings
+      : {}
+    parsed.settings = {
+      ...settings,
+      ...PI_RUNTIME_MCP_SETTINGS,
+    }
+    delete parsed.settings.freezeDirectTools
+
+    for (const [, server] of managedServers) {
+      if (!server || typeof server !== 'object' || Array.isArray(server)) continue
+      const managedServer = server as Record<string, unknown>
+      managedServer.lifecycle = 'lazy'
+      managedServer.directTools = false
+    }
+
+    const migrated = `${JSON.stringify(parsed, null, 2)}\n`
+    return migrated === content ? null : migrated
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Upgrade persisted Pi runtime files created before MCP proxy mode became the
+ * default. LazyCat app upgrades preserve /home, so old launchers may otherwise
+ * keep registering every MCP tool directly until the user prepares a new run.
+ */
+export async function migratePersistedPiRuntimeMcpConfigs(): Promise<number> {
+  const modelRoot = join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'model')
+  if (!existsSync(modelRoot)) return 0
+
+  const candidates: string[] = []
+  const directories = (path: string) => {
+    try {
+      return readdirSync(path, { withFileTypes: true }).filter(entry => entry.isDirectory())
+    } catch {
+      return []
+    }
+  }
+
+  for (const profile of directories(modelRoot)) {
+    const profileRoot = join(modelRoot, profile.name)
+    for (const provider of directories(profileRoot)) {
+      const piRoot = join(profileRoot, provider.name, 'pi')
+      if (!existsSync(piRoot)) continue
+      candidates.push(join(piRoot, 'mcp.json'))
+      for (const run of directories(join(piRoot, 'runs'))) {
+        candidates.push(join(piRoot, 'runs', run.name, 'mcp.json'))
+      }
+      for (const room of directories(join(piRoot, 'group-chat'))) {
+        for (const agent of directories(join(piRoot, 'group-chat', room.name))) {
+          candidates.push(join(piRoot, 'group-chat', room.name, agent.name, 'mcp.json'))
+        }
+      }
+    }
+  }
+
+  let migratedCount = 0
+  for (const path of candidates) {
+    const content = await safeReadFile(path)
+    if (!content) continue
+    const migrated = migratePiRuntimeMcpContent(content)
+    if (!migrated) continue
+    await writeFile(path, migrated, 'utf-8')
+    migratedCount += 1
+  }
+  return migratedCount
+}
+
 function piModelsConfig(input: {
   baseUrl: string
   apiKey: string
