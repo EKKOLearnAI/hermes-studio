@@ -196,6 +196,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const loadedMessageCount = ref(0)
     const hasMoreBefore = ref(false)
     const isLoadingOlderMessages = ref(false)
+    const olderMessagesError = ref<string | null>(null)
     const hasReachedMessageDisplayLimit = computed(() =>
         hasMoreBefore.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
     )
@@ -218,6 +219,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         loadedMessageCount.value = 0
         hasMoreBefore.value = false
         isLoadingOlderMessages.value = false
+        olderMessagesError.value = null
     }
 
     function streamDeltaKey(roomId: string, messageId: string): string {
@@ -1235,6 +1237,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         const offset = loadedMessageCount.value
         if (offset >= GROUP_CHAT_MAX_DISPLAY_MESSAGES) return false
         isLoadingOlderMessages.value = true
+        olderMessagesError.value = null
         try {
             const limit = Math.min(GROUP_CHAT_MESSAGE_PAGE_SIZE, GROUP_CHAT_MAX_DISPLAY_MESSAGES - offset)
             const res = inviteGuest.value
@@ -1254,6 +1257,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     })
                 })
                 : await getRoomDetail(roomId, { offset, limit })
+            if (currentRoomId.value !== roomId) return false
             const existingIds = new Set(messages.value.map(message => message.id))
             captureHistoricalMessageAgents(res.messages)
             const olderMessages = res.messages.filter(message => !existingIds.has(message.id))
@@ -1263,7 +1267,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
             return olderMessages.length > 0
         } catch (err: any) {
-            error.value = err.message
+            olderMessagesError.value = err.message
             return false
         } finally {
             isLoadingOlderMessages.value = false
@@ -1731,6 +1735,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         loadedMessageCount,
         hasMoreBefore,
         isLoadingOlderMessages,
+        olderMessagesError,
         hasReachedMessageDisplayLimit,
         userId,
         userName,

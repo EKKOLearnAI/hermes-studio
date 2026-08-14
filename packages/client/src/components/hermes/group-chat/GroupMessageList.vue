@@ -100,13 +100,21 @@ function handleScrollBottomClick(): void {
 
 async function handleTopReach(): Promise<void> {
     if (!store.hasMoreBefore || store.isLoadingOlderMessages || store.hasReachedMessageDisplayLimit) return
-    const snapshot = listRef.value?.captureScrollPosition() ?? null
+    const snapshot = listRef.value?.captureViewportPosition() ?? null
     const loaded = await store.loadOlderMessages()
     if (!loaded) return
     await nextTick()
-    listRef.value?.restoreScrollPosition(snapshot)
+    listRef.value?.restoreViewportPosition(snapshot)
     updateScrollBottomButton()
 }
+
+function retryOlderMessages(): void {
+    void handleTopReach()
+}
+
+const completeHistoryHref = computed(() => store.currentRoomId
+    ? `#/hermes/group-chat/history/${encodeURIComponent(store.currentRoomId)}`
+    : '#/hermes/group-chat')
 
 watch(() => store.currentRoomId, (roomId) => {
     pendingInitialBottomRoomId = roomId
@@ -174,9 +182,21 @@ defineExpose({ scrollToBottom })
             <template #before>
                 <div
                     v-if="store.hasReachedMessageDisplayLimit"
-                    class="history-limit-notice"
+                    class="history-archive-link-wrap"
                 >
-                    {{ t('groupChat.messageDisplayLimit') }}
+                    <a class="history-archive-link" :href="completeHistoryHref">
+                        {{ t('groupChat.viewCompleteHistory') }}
+                    </a>
+                </div>
+                <div
+                    v-else-if="store.olderMessagesError"
+                    class="history-load-error"
+                    role="alert"
+                >
+                    <span>{{ t('groupChat.olderMessagesLoadFailed') }}</span>
+                    <button type="button" @click="retryOlderMessages">
+                        {{ t('groupChat.retryOlderMessages') }}
+                    </button>
                 </div>
                 <div
                     v-else-if="store.hasMoreBefore || store.isLoadingOlderMessages"
@@ -464,18 +484,40 @@ defineExpose({ scrollToBottom })
     }
 }
 
-.history-limit-notice {
-    width: fit-content;
-    max-width: min(100%, 420px);
-    margin: 0 auto 8px;
-    padding: 6px 10px;
+.history-archive-link-wrap,
+.history-load-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+.history-archive-link,
+.history-load-error button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 5px 10px;
     border: 1px solid rgba(var(--accent-info-rgb), 0.22);
     border-radius: 999px;
     background: rgba(var(--accent-info-rgb), 0.08);
+    color: var(--accent-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+    text-align: center;
+}
+
+.history-load-error {
     color: $text-secondary;
     font-size: 12px;
-    line-height: 1.3;
-    text-align: center;
+}
+
+.history-load-error button {
+    cursor: pointer;
 }
 
 @keyframes spin {

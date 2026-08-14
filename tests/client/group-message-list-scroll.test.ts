@@ -8,6 +8,8 @@ import type { ChatMessage, RoomAgentHandoffChain } from '@/api/hermes/group-chat
 const mockScrollToBottom = vi.hoisted(() => vi.fn())
 const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
 const mockRestoreScrollPosition = vi.hoisted(() => vi.fn())
+const mockCaptureViewportPosition = vi.hoisted(() => vi.fn())
+const mockRestoreViewportPosition = vi.hoisted(() => vi.fn())
 const mockIsNearBottom = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('vue-i18n', () => ({
@@ -67,6 +69,8 @@ vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
         scrollToBottom: mockScrollToBottom,
         captureScrollPosition: mockCaptureScrollPosition,
         restoreScrollPosition: mockRestoreScrollPosition,
+        captureViewportPosition: mockCaptureViewportPosition,
+        restoreViewportPosition: mockRestoreViewportPosition,
       })
     },
     template: `
