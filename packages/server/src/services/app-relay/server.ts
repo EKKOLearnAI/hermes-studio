@@ -53,7 +53,12 @@ const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
   'approval.respond',
   'clarify.respond',
 ])
-const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat'])
+const ALLOWED_WORKFLOW_CLIENT_EVENTS = new Set([
+  'workflows.list',
+  'workflow.status.subscribe',
+  'workflow.status.unsubscribe',
+])
+const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat', '/workflow'])
 const NON_STREAMING_SUPPRESSED_EVENTS = new Set([
   'message.delta',
   'message.interim',
@@ -199,7 +204,7 @@ export class LocalAppRelayServer {
       role: 'app',
       machineId,
       hostConnected: true,
-      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat'],
+      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat', 'socket.workflow'],
     })
     if (socket.data.localUserToken) this.scheduleTokenExpiry(socket)
 
@@ -645,6 +650,7 @@ function normalizeTimeout(value: unknown): number {
 function isAllowedSocketEvent(namespace: string, event: string): boolean {
   if (namespace === '/chat-run') return ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)
   if (namespace === '/group-chat') return ALLOWED_GROUP_CHAT_CLIENT_EVENTS.has(event)
+  if (namespace === '/workflow') return ALLOWED_WORKFLOW_CLIENT_EVENTS.has(event)
   return false
 }
 
