@@ -37,13 +37,15 @@ describe('Pi config editor defaults', () => {
     expect(readFileSync(join(home, '.pi', 'agent', 'mcp.json'), 'utf-8')).toBe(mcp.content)
   })
 
-  it('materializes valid non-empty model and prompt files', async () => {
-    makeHome()
+  it('leaves optional user files absent and keeps runtime-only files out of the user config directory', async () => {
+    const home = makeHome()
 
-    const models = await readCodingAgentConfigFile('pi', 'models')
-    const prompt = await readCodingAgentConfigFile('pi', 'prompt')
+    const auth = await readCodingAgentConfigFile('pi', 'auth')
+    const agents = await readCodingAgentConfigFile('pi', 'agents')
 
-    expect(JSON.parse(models.content)).toEqual({ providers: {} })
-    expect(prompt.content.trim().length).toBeGreaterThan(0)
+    expect(auth).toMatchObject({ exists: false, content: '', path: '~/.pi/agent/auth.json' })
+    expect(agents).toMatchObject({ exists: false, content: '', path: '~/.pi/agent/AGENTS.md' })
+    expect(existsSync(join(home, '.pi', 'agent', 'models.json'))).toBe(false)
+    expect(existsSync(join(home, '.pi', 'agent', 'APPEND_SYSTEM.md'))).toBe(false)
   })
 })

@@ -134,10 +134,10 @@ const configFiles: Record<CodingAgentId, ConfigFileEntry[]> = {
     { key: 'agents', path: '~/.codex/AGENTS.md', language: 'markdown' },
   ],
   pi: [
+    { key: 'auth', path: '~/.pi/agent/auth.json', language: 'json' },
     { key: 'settings', path: '~/.pi/agent/settings.json', language: 'json' },
-    { key: 'models', path: '~/.pi/agent/models.json', language: 'json' },
+    { key: 'agents', path: '~/.pi/agent/AGENTS.md', language: 'markdown' },
     { key: 'mcp', path: '~/.pi/agent/mcp.json', language: 'json' },
-    { key: 'prompt', path: '~/.pi/agent/APPEND_SYSTEM.md', language: 'markdown' },
   ],
 }
 

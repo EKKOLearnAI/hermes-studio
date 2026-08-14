@@ -191,10 +191,10 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
     { key: 'agents', path: '~/.codex/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
   pi: [
+    { key: 'auth', path: '~/.pi/agent/auth.json', scopedPath: 'auth.json', language: 'json' },
     { key: 'settings', path: '~/.pi/agent/settings.json', scopedPath: 'settings.json', language: 'json' },
-    { key: 'models', path: '~/.pi/agent/models.json', scopedPath: 'models.json', language: 'json' },
+    { key: 'agents', path: '~/.pi/agent/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
     { key: 'mcp', path: '~/.pi/agent/mcp.json', scopedPath: 'mcp.json', language: 'json' },
-    { key: 'prompt', path: '~/.pi/agent/APPEND_SYSTEM.md', scopedPath: 'APPEND_SYSTEM.md', language: 'markdown' },
   ],
 }
 
@@ -1120,9 +1120,7 @@ function piModelsConfig(input: {
 
 function piLiveConfigDefault(key: string, profile: string): string | null {
   if (key === 'settings') return piSettingsConfig()
-  if (key === 'models') return `${JSON.stringify({ providers: {} }, null, 2)}\n`
   if (key === 'mcp') return piMcpConfig(profile)
-  if (key === 'prompt') return `${getSystemPrompt().trim()}\n`
   return null
 }
 
@@ -1919,6 +1917,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await writeFile(definition.absolutePath, content, 'utf-8')
     files.push({ key, path: definition.path, absolutePath: definition.absolutePath })
   }
+  const writeRuntimeFile = async (key: string, path: string, content: string) => {
+    const absolutePath = join(rootDir, path)
+    await mkdir(dirname(absolutePath), { recursive: true })
+    await writeFile(absolutePath, content, 'utf-8')
+    files.push({ key, path, absolutePath })
+  }
 
   let args: string[] = []
   let env: Record<string, string> = {}
@@ -2071,8 +2075,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const piApiKey = proxyTarget?.token || apiKey
     const sessionsDir = join(rootDir, 'sessions')
     await mkdir(sessionsDir, { recursive: true })
-    await writeScopedFile('settings', piSettingsConfig())
-    await writeScopedFile('models', piModelsConfig({
+    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig())
+    await writeRuntimeFile('models', 'models.json', piModelsConfig({
       baseUrl: piBaseUrl,
       apiKey: piApiKey,
       apiMode,
@@ -2080,8 +2084,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       profile: scope.profile,
       provider,
     }))
-    await writeScopedFile('mcp', piMcpConfig(scope.profile))
-    await writeScopedFile('prompt', `${scopedSystemPrompt.trim()}\n`)
+    await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(scope.profile))
+    await writeRuntimeFile('prompt', 'APPEND_SYSTEM.md', `${scopedSystemPrompt.trim()}\n`)
     env = {
       PI_CODING_AGENT_DIR: rootDir,
       PI_CODING_AGENT_SESSION_DIR: sessionsDir,

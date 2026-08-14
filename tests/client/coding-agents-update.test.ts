@@ -174,4 +174,16 @@ describe('CodingAgentsView update state', () => {
     expect(wrapper.text()).not.toContain('codingAgents.upToDate')
     expect(wrapper.text()).not.toContain('codingAgents.checkingUpdate')
   })
+
+  it('shows Pi user configuration files without exposing runtime-only files', async () => {
+    const wrapper = mount(CodingAgentsView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('~/.pi/agent/auth.json')
+    expect(wrapper.text()).toContain('~/.pi/agent/settings.json')
+    expect(wrapper.text()).toContain('~/.pi/agent/AGENTS.md')
+    expect(wrapper.text()).toContain('~/.pi/agent/mcp.json')
+    expect(wrapper.text()).not.toContain('~/.pi/agent/models.json')
+    expect(wrapper.text()).not.toContain('~/.pi/agent/APPEND_SYSTEM.md')
+  })
 })
