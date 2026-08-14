@@ -123,6 +123,7 @@ interface ManagedCodingAgentRun {
   piFinalText?: string
   piFinishReason?: string
   turnActive?: boolean
+  piUiRequests?: Map<string, any>
 }
 
 interface CodingAgentRunSendOptions {
@@ -709,6 +710,43 @@ export class CodingAgentRunManager {
     return stopped
   }
 
+  resolveApproval(sessionId: string, approvalId: string, choice = 'deny'): { handled: boolean; resolved: boolean } {
+    const run = this.getBySession(sessionId)
+    const request = run?.piUiRequests?.get(approvalId)
+    if (!run || !request) return { handled: false, resolved: false }
+    run.piUiRequests?.delete(approvalId)
+    const normalizedChoice = String(choice || 'deny').trim().toLowerCase()
+    if (request.method === 'confirm') {
+      this.writePiRpcCommand(run, {
+        type: 'extension_ui_response',
+        id: approvalId,
+        ...(normalizedChoice === 'deny' ? { confirmed: false } : { confirmed: true }),
+      })
+    } else if (request.method === 'select') {
+      const options = Array.isArray(request.options) ? request.options.map((value: unknown) => String(value)) : []
+      const match = normalizedChoice === 'session'
+        ? options.find((value: string) => /session/i.test(value))
+        : normalizedChoice === 'once'
+          ? options.find((value: string) => /once|allow/i.test(value) && !/session/i.test(value))
+          : undefined
+      this.writePiRpcCommand(run, {
+        type: 'extension_ui_response',
+        id: approvalId,
+        ...(match ? { value: match } : { cancelled: true }),
+      })
+    } else {
+      this.writePiRpcCommand(run, { type: 'extension_ui_response', id: approvalId, cancelled: true })
+    }
+    this.emitToChat(sessionId, 'approval.resolved', {
+      event: 'approval.resolved',
+      session_id: sessionId,
+      approval_id: approvalId,
+      choice: normalizedChoice,
+      resolved: true,
+    })
+    return { handled: true, resolved: true }
+  }
+
   touchByAgentSession(agentSessionId?: string | null) {
     if (!agentSessionId) return
     const run = this.runs.get(agentSessionId)
@@ -1038,6 +1076,7 @@ export class CodingAgentRunManager {
     run.currentChild = child
     run.currentChildStderr = ''
     run.piToolBlocks = new Map()
+    run.piUiRequests = new Map()
     run.piDetachJsonl = child.stdout
       ? attachPiJsonlReader(
           child.stdout,
@@ -1153,10 +1192,19 @@ export class CodingAgentRunManager {
 
     if (event.type === 'extension_ui_request') {
       if (event.method === 'notify' || event.method === 'setStatus' || event.method === 'setWidget' || event.method === 'setTitle') return
-      const response = event.method === 'confirm'
-        ? { type: 'extension_ui_response', id: event.id, confirmed: false }
-        : { type: 'extension_ui_response', id: event.id, cancelled: true }
-      this.writePiRpcCommand(run, response)
+      const approvalId = String(event.id || '').trim()
+      if (!approvalId) return
+      run.piUiRequests ??= new Map()
+      run.piUiRequests.set(approvalId, event)
+      this.emitToChat(run.launch.sessionId, 'approval.requested', {
+        event: 'approval.requested',
+        session_id: run.launch.sessionId,
+        approval_id: approvalId,
+        title: String(event.title || 'Pi approval required'),
+        description: String(event.message || event.prompt || ''),
+        choices: ['once', 'session', 'deny'],
+        source: 'pi',
+      })
       return
     }
 

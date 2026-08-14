@@ -138,8 +138,10 @@ describe('coding agent Windows process launch', () => {
     expect(run.memoryExportStarted).toBe(true)
   })
 
-  it('fails closed for interactive Pi extension UI requests in Studio RPC mode', () => {
+  it('routes Pi extension UI approval requests through Studio and resolves them', () => {
     const manager = new CodingAgentRunManager()
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
     const stdin = new testState.TestEmitter() as any
     stdin.write = vi.fn()
     const run: any = {
@@ -167,6 +169,8 @@ describe('coding agent Windows process launch', () => {
         killed: false,
       },
     }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
 
     ;(manager as any).handlePiRpcEvent(run, {
       type: 'extension_ui_request',
@@ -175,18 +179,21 @@ describe('coding agent Windows process launch', () => {
     })
     ;(manager as any).handlePiRpcEvent(run, {
       type: 'extension_ui_request',
-      id: 'input-1',
-      method: 'input',
-    })
-    ;(manager as any).handlePiRpcEvent(run, {
-      type: 'extension_ui_request',
       id: 'notify-1',
       method: 'notify',
     })
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-pi-ui',
+      'approval.requested',
+      expect.objectContaining({ approval_id: 'confirm-1', choices: ['once', 'session', 'deny'] }),
+    )
+    expect(manager.resolveApproval('chat-session-pi-ui', 'confirm-1', 'once')).toEqual({
+      handled: true,
+      resolved: true,
+    })
 
     expect(stdin.write.mock.calls.map((call: any[]) => JSON.parse(call[0]))).toEqual([
-      { type: 'extension_ui_response', id: 'confirm-1', confirmed: false },
-      { type: 'extension_ui_response', id: 'input-1', cancelled: true },
+      { type: 'extension_ui_response', id: 'confirm-1', confirmed: true },
     ])
   })
 

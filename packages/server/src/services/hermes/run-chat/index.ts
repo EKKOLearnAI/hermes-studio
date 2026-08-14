@@ -612,6 +612,12 @@ export class ChatRunSocket {
         }
         return
       }
+      const codingAgentResult = codingAgentRunManager.resolveApproval(
+        data.session_id,
+        data.approval_id,
+        data.choice,
+      )
+      if (codingAgentResult.handled) return
       try {
         const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
@@ -1615,7 +1621,10 @@ export class ChatRunSocket {
           return
         }
         try {
-          const result = await this.bridge.approvalRespond(approvalId, choice)
+          const codingAgentResult = codingAgentRunManager.resolveApproval(sessionId, approvalId, choice)
+          const result = codingAgentResult.handled
+            ? codingAgentResult
+            : await this.bridge.approvalRespond(approvalId, choice)
           const resolvedPayload = {
             event: 'approval.resolved',
             session_id: sessionId,
