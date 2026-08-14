@@ -64,6 +64,17 @@ describe('coding agent launch preparation', () => {
     )
     mkdirSync(dirname(adapterEntry), { recursive: true })
     writeFileSync(adapterEntry, 'export default {}')
+    const userMcpPath = join(home, 'global-home', '.pi', 'agent', 'mcp.json')
+    mkdirSync(dirname(userMcpPath), { recursive: true })
+    writeFileSync(userMcpPath, `${JSON.stringify({
+      settings: {
+        hostConfigDiscovery: 'off',
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+      },
+    }, null, 2)}\n`)
 
     const result = await prepareCodingAgentLaunch('pi', {
       profile: 'default',
@@ -87,6 +98,15 @@ describe('coding agent launch preparation', () => {
     expect(existsSync(join(result.rootDir, 'settings.json'))).toBe(true)
     expect(existsSync(join(result.rootDir, 'mcp.json'))).toBe(true)
     expect(existsSync(join(result.rootDir, 'APPEND_SYSTEM.md'))).toBe(true)
+    const stableMcp = JSON.parse(readFileSync(join(piHome, 'mcp.json'), 'utf-8'))
+    expect(stableMcp.mcpServers).toEqual({})
+    const runtimeMcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    expect(runtimeMcp.settings.agentPluginPaths).toEqual(['./plugins'])
+    expect(runtimeMcp.mcpServers.user_docs).toEqual({ url: 'https://docs.example.com/mcp' })
+    expect(runtimeMcp.mcpServers['hermes-studio-api']).toBeDefined()
+    expect(runtimeMcp.mcpServers['hermes-studio-browser']).toBeDefined()
+    expect(runtimeMcp.mcpServers['hermes-studio-devices']).toBeDefined()
+    expect(runtimeMcp.mcpServers['hermes-studio-use']).toBeDefined()
     const runtimeModels = JSON.parse(readFileSync(join(result.rootDir, 'models.json'), 'utf-8'))
     expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
     expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')

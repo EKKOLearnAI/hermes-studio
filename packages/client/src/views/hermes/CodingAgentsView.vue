@@ -125,7 +125,7 @@ const agentBlocks: CodingAgentBlock[] = [
 const configFiles: Record<CodingAgentId, ConfigFileEntry[]> = {
   'claude-code': [
     { key: 'settings', path: '~/.claude/settings.json', language: 'json' },
-    { key: 'mcp', path: '~/.claude.json', language: 'json' },
+    { key: 'mcp', path: '~/.claude/mcp.json', language: 'json' },
     { key: 'prompt', path: '~/.claude/CLAUDE.md', language: 'markdown' },
   ],
   codex: [

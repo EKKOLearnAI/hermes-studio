@@ -1059,7 +1059,67 @@ function piSettingsConfig(): string {
   }, null, 2)}\n`
 }
 
-function piMcpConfig(profile: string): string {
+const PI_RUNTIME_MCP_SETTINGS: Record<string, unknown> = {
+  hostConfigDiscovery: 'off',
+  toolPrefix: 'none',
+  directTools: true,
+  freezeDirectTools: true,
+  scriptMode: false,
+  outputGuard: true,
+  showStatusIcon: false,
+  mcpFooterStatus: 'off',
+  requestTimeoutMs: 120_000,
+}
+
+function parsePiExternalMcpConfig(...contents: Array<string | null | undefined>): {
+  settings: Record<string, unknown>
+  mcpServers: Record<string, unknown>
+} {
+  const settings: Record<string, unknown> = { hostConfigDiscovery: 'off' }
+  const mcpServers: Record<string, unknown> = {}
+
+  for (const content of contents) {
+    if (!content?.trim()) continue
+    try {
+      const parsed = JSON.parse(content)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+      if (parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) {
+        for (const [key, value] of Object.entries(parsed.settings)) {
+          if (key !== 'hostConfigDiscovery' && key in PI_RUNTIME_MCP_SETTINGS) continue
+          settings[key] = value
+        }
+      }
+      if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
+        for (const [name, server] of Object.entries(parsed.mcpServers)) {
+          if (HERMES_MCP_SERVER_NAMES.has(name)) continue
+          if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) continue
+          if (isManagedHermesMcpServer(server)) continue
+          mcpServers[name] = server
+        }
+      }
+    } catch {
+      // Invalid user JSON remains editable and is ignored only for launch-time merging.
+    }
+  }
+
+  return { settings, mcpServers }
+}
+
+function piUserMcpConfig(...existingContents: Array<string | null | undefined>): string {
+  return `${JSON.stringify(parsePiExternalMcpConfig(...existingContents), null, 2)}\n`
+}
+
+function isPiMcpConfigObject(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content)
+    return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+  } catch {
+    return false
+  }
+}
+
+function piMcpConfig(profile: string, ...externalContents: Array<string | null | undefined>): string {
+  const external = parsePiExternalMcpConfig(...externalContents)
   const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
@@ -1073,17 +1133,13 @@ function piMcpConfig(profile: string): string {
   }))
   return `${JSON.stringify({
     settings: {
-      hostConfigDiscovery: 'off',
-      toolPrefix: 'none',
-      directTools: true,
-      freezeDirectTools: true,
-      scriptMode: false,
-      outputGuard: true,
-      showStatusIcon: false,
-      mcpFooterStatus: 'off',
-      requestTimeoutMs: 120_000,
+      ...external.settings,
+      ...PI_RUNTIME_MCP_SETTINGS,
     },
-    mcpServers,
+    mcpServers: {
+      ...external.mcpServers,
+      ...mcpServers,
+    },
   }, null, 2)}\n`
 }
 
@@ -1118,9 +1174,9 @@ function piModelsConfig(input: {
   }, null, 2)}\n`
 }
 
-function piLiveConfigDefault(key: string, profile: string): string | null {
+function piLiveConfigDefault(key: string, _profile: string): string | null {
   if (key === 'settings') return piSettingsConfig()
-  if (key === 'mcp') return piMcpConfig(profile)
+  if (key === 'mcp') return piUserMcpConfig()
   return null
 }
 
@@ -1790,11 +1846,20 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
       ;(err as any).status = 413
       throw err
     }
+    let content = await readFile(definition.absolutePath, 'utf-8')
+    if (id === 'pi' && key === 'mcp' && isPiMcpConfigObject(content)) {
+      const normalized = piUserMcpConfig(content)
+      if (normalized !== content) {
+        await writeFile(definition.absolutePath, normalized, 'utf-8')
+        content = normalized
+        info = await stat(definition.absolutePath)
+      }
+    }
     return {
       ...definition,
       ...normalizedScope,
       rootDir: dirname(definition.absolutePath),
-      content: await readFile(definition.absolutePath, 'utf-8'),
+      content,
       exists: true,
       size: info.size,
     }
@@ -2084,7 +2149,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       profile: scope.profile,
       provider,
     }))
-    await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(scope.profile))
+    await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(
+      scope.profile,
+      await safeReadFile(getLiveConfigFileDefinition(tool.id, 'mcp')?.absolutePath || ''),
+      await safeReadFile(getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath || ''),
+    ))
     await writeRuntimeFile('prompt', 'APPEND_SYSTEM.md', `${scopedSystemPrompt.trim()}\n`)
     env = {
       PI_CODING_AGENT_DIR: rootDir,

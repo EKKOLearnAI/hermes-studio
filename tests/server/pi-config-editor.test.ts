@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -19,7 +19,7 @@ function makeHome() {
 }
 
 describe('Pi config editor defaults', () => {
-  it('materializes the managed Pi settings and four Studio MCP servers', async () => {
+  it('materializes minimal user configuration without runtime Studio servers', async () => {
     const home = makeHome()
 
     const settings = await readCodingAgentConfigFile('pi', 'settings', { profile: 'reviewer' })
@@ -28,13 +28,57 @@ describe('Pi config editor defaults', () => {
     expect(settings.exists).toBe(true)
     expect(settings.content).toContain('pi-mcp-adapter')
     expect(mcp.exists).toBe(true)
-    expect(mcp.content).toContain('"hermes-studio-api"')
-    expect(mcp.content).toContain('"hermes-studio-browser"')
-    expect(mcp.content).toContain('"hermes-studio-devices"')
-    expect(mcp.content).toContain('"hermes-studio-use"')
-    expect(mcp.content).toContain('"HERMES_WEB_UI_PROFILE": "reviewer"')
+    expect(JSON.parse(mcp.content)).toEqual({
+      settings: { hostConfigDiscovery: 'off' },
+      mcpServers: {},
+    })
     expect(existsSync(join(home, '.pi', 'agent', 'settings.json'))).toBe(true)
     expect(readFileSync(join(home, '.pi', 'agent', 'mcp.json'), 'utf-8')).toBe(mcp.content)
+  })
+
+  it('removes managed Studio servers while preserving user MCP entries', async () => {
+    const home = makeHome()
+    const mcpPath = join(home, '.pi', 'agent', 'mcp.json')
+    mkdirSync(join(home, '.pi', 'agent'), { recursive: true })
+    writeFileSync(mcpPath, `${JSON.stringify({
+      settings: {
+        hostConfigDiscovery: 'off',
+        directTools: true,
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+        'hermes-studio-api': {
+          command: 'stale-managed',
+          env: { HERMES_WEB_UI_MANAGED_MCP: '1' },
+        },
+      },
+    }, null, 2)}\n`)
+
+    const mcp = await readCodingAgentConfigFile('pi', 'mcp')
+
+    expect(JSON.parse(mcp.content)).toEqual({
+      settings: {
+        hostConfigDiscovery: 'off',
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+      },
+    })
+    expect(readFileSync(mcpPath, 'utf-8')).toBe(mcp.content)
+  })
+
+  it('does not overwrite invalid user JSON while it is being corrected', async () => {
+    const home = makeHome()
+    const mcpPath = join(home, '.pi', 'agent', 'mcp.json')
+    mkdirSync(join(home, '.pi', 'agent'), { recursive: true })
+    writeFileSync(mcpPath, '{ "mcpServers": ')
+
+    const mcp = await readCodingAgentConfigFile('pi', 'mcp')
+
+    expect(mcp.content).toBe('{ "mcpServers": ')
+    expect(readFileSync(mcpPath, 'utf-8')).toBe(mcp.content)
   })
 
   it('leaves optional user files absent and keeps runtime-only files out of the user config directory', async () => {

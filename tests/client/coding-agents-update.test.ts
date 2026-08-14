@@ -179,6 +179,8 @@ describe('CodingAgentsView update state', () => {
     const wrapper = mount(CodingAgentsView)
     await flushPromises()
 
+    expect(wrapper.text()).toContain('~/.claude/mcp.json')
+    expect(wrapper.text()).not.toContain('~/.claude.json')
     expect(wrapper.text()).toContain('~/.pi/agent/auth.json')
     expect(wrapper.text()).toContain('~/.pi/agent/settings.json')
     expect(wrapper.text()).toContain('~/.pi/agent/AGENTS.md')
