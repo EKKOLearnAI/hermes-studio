@@ -1,3 +1,4 @@
+import { createHmac } from 'crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('user auth tables and middleware', () => {
@@ -365,6 +366,24 @@ describe('user auth tables and middleware', () => {
     expect(auth.verifyUserJwt(token, 'wrong', 1000)).toBeNull()
   })
 
+  it('rejects tokens issued for the legacy hermes-web-ui audience', async () => {
+    const { auth } = await initUsers()
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+    const body = Buffer.from(JSON.stringify({
+      sub: '1',
+      username: 'admin',
+      role: 'super_admin',
+      type: 'access',
+      aud: 'hermes-web-ui',
+      iat: 1,
+      exp: 3601,
+    })).toString('base64url')
+    const unsigned = `${header}.${body}`
+    const signature = createHmac('sha256', 'secret').update(unsigned).digest('base64url')
+
+    expect(auth.verifyUserJwt(`${unsigned}.${signature}`, 'secret', 1000)).toBeNull()
+  })
+
   it('signs model run JWTs with the same payload shape and a one hour expiry', async () => {
     const { auth } = await initUsers()
     const token = auth.signUserJwt(
@@ -380,7 +399,7 @@ describe('user auth tables and middleware', () => {
       username: 'admin',
       role: 'super_admin',
       type: 'access',
-      aud: 'hermes-web-ui',
+      aud: 'hermes-studio',
       iat: 1,
       exp: 3601,
     })

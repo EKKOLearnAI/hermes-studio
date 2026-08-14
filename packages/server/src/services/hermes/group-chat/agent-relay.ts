@@ -348,18 +348,19 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
-  readonly profile: string
-  readonly provider: string
-  readonly model: string
-  readonly apiMode: string
-  readonly reasoningEffort: string
-  readonly name: string
-  readonly description: string
-  readonly avatar: string
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+  profile: string
+  provider: string
+  model: string
+  apiMode: string
+  reasoningEffort: string
+  name: string
+  description: string
+  avatar: string
   readonly ownerMemberId: string
   private activeSessions = new Map<string, string>()
   private pendingRun: PendingRelayRun | null = null
+  private reservedInvocations = 0
   private detached = false
   private eventQueue: Promise<void> = Promise.resolve()
   private workspaceDiffBroadcaster: WorkspaceDiffBroadcaster | null = null
@@ -396,7 +397,27 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   }
 
   get busy(): boolean {
-    return this.pendingRun !== null
+    return this.pendingRun !== null || this.reservedInvocations > 0
+  }
+
+  reserveInvocation(): void {
+    this.reservedInvocations += 1
+  }
+
+  releaseInvocation(): void {
+    this.reservedInvocations = Math.max(0, this.reservedInvocations - 1)
+  }
+
+  updateConfiguration(agent: any): void {
+    this.agent = agent.agent || 'hermes'
+    this.profile = String(agent.profile || 'default')
+    this.provider = String(agent.provider || '')
+    this.model = String(agent.model || '')
+    this.apiMode = String(agent.apiMode || '')
+    this.reasoningEffort = String(agent.reasoningEffort || '')
+    this.name = String(agent.name || this.profile)
+    this.description = String(agent.description || '')
+    this.avatar = String(agent.avatar || '')
   }
 
   setStorage(_storage: any): void {}
@@ -1078,7 +1099,17 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     }
     this.pendingRun = null
     this.activeSessions.delete(pending.roomId)
-    if (error) pending.reject(error)
+    if (error) {
+      const relayFailure = error as Error & { code?: string; outcomeUnknown?: boolean }
+      // A run.failed event is an authoritative remote terminal result. Every
+      // other source-side termination after run.request was emitted (timeout,
+      // disconnect, interrupt without acknowledgement, invalid/missing event)
+      // cannot prove that the remote invocation stopped.
+      if (relayFailure.code !== 'GROUP_AGENT_REMOTE_RUN_FAILED') {
+        relayFailure.outcomeUnknown = true
+      }
+      pending.reject(relayFailure)
+    }
     else pending.resolve()
   }
 }
@@ -1341,6 +1372,7 @@ export class GroupAgentRelayServer {
             if (!updated || updated.executorType !== 'remote' || updated.connectorId !== connector!.id) {
               throw relayError('Remote Agent registration no longer exists', 'GROUP_AGENT_REGISTRATION_MISSING')
             }
+            executor.updateConfiguration(updated)
             lastAgentConfigUpdateAt = now
             const agent = normalizeRemoteGroupAgentDescriptor(updated)
             this.groupChatServer.broadcastRoomAgents(connector!.roomId)

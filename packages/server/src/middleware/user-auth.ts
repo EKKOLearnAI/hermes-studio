@@ -1,5 +1,5 @@
 import type { Context, Next } from 'koa'
-import { createHmac, timingSafeEqual } from 'crypto'
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto'
 import { getToken } from '../services/auth'
 import {
   findUserById,
@@ -9,6 +9,12 @@ import {
   type UserRecord,
   type UserRole,
 } from '../db/hermes/users-store'
+import {
+  getAppConnectionTokenStatus,
+  isAppConnectionTokenActive,
+  type AppConnectionTokenStatus,
+  type AppConnectionType,
+} from '../db/hermes/app-connections-store'
 
 export interface AuthenticatedUser {
   id: number
@@ -21,12 +27,22 @@ export interface RequestProfile {
   name: string
 }
 
+export interface AppUserTokenInspection {
+  status: AppConnectionTokenStatus
+  user: AuthenticatedUser | null
+  deviceCode: string
+  connectionType: AppConnectionType
+}
+
 interface JwtPayload {
   sub: string
   username: string
   role: UserRole
-  type: 'access'
-  aud: 'hermes-web-ui'
+  type: 'access' | 'app_access'
+  app_device_code?: string
+  app_connection_type?: AppConnectionType
+  app_token_id?: string
+  aud: 'hermes-studio'
   iat: number
   exp: number
 }
@@ -39,7 +55,7 @@ declare module 'koa' {
   }
 }
 
-const JWT_AUDIENCE = 'hermes-web-ui'
+const JWT_AUDIENCE = 'hermes-studio'
 const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 30
 const MIN_EXPIRES_SECONDS = 1
 const MAX_EXPIRES_SECONDS = 60 * 60 * 24 * 365
@@ -163,7 +179,39 @@ export function signUserJwt(
   return `${unsigned}.${sign(unsigned, secret)}`
 }
 
-export function verifyUserJwt(token: string, secret: string, now = Date.now()): JwtPayload | null {
+export function signAppJwt(
+  user: Pick<UserRecord, 'id' | 'username' | 'role'>,
+  deviceCode: string,
+  connectionType: AppConnectionType,
+  secret: string,
+  now = Date.now(),
+  expiresSeconds = DEFAULT_EXPIRES_SECONDS,
+): string {
+  const iat = Math.floor(now / 1000)
+  const payload: JwtPayload = {
+    sub: String(user.id),
+    username: user.username,
+    role: user.role,
+    type: 'app_access',
+    app_device_code: deviceCode,
+    app_connection_type: connectionType,
+    app_token_id: randomUUID(),
+    aud: JWT_AUDIENCE,
+    iat,
+    exp: iat + expiresSeconds,
+  }
+  const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' })
+  const body = base64UrlJson(payload)
+  const unsigned = `${header}.${body}`
+  return `${unsigned}.${sign(unsigned, secret)}`
+}
+
+function verifyUserJwtPayload(
+  token: string,
+  secret: string,
+  now: number,
+  allowExpired: boolean,
+): JwtPayload | null {
   const parts = token.split('.')
   if (parts.length !== 3) return null
 
@@ -173,18 +221,36 @@ export function verifyUserJwt(token: string, secret: string, now = Date.now()): 
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf-8')) as Partial<JwtPayload>
-    if (payload.type !== 'access' || payload.aud !== JWT_AUDIENCE) return null
+    if ((payload.type !== 'access' && payload.type !== 'app_access') || payload.aud !== JWT_AUDIENCE) return null
     if (!payload.sub || !payload.username || !payload.role || !payload.exp) return null
-    if (Math.floor(now / 1000) >= payload.exp) return null
+    if (payload.type === 'app_access' && (
+      !payload.app_device_code
+      || (payload.app_connection_type !== 'lan' && payload.app_connection_type !== 'cloud')
+      || !payload.app_token_id
+    )) return null
+    if (!allowExpired && Math.floor(now / 1000) >= payload.exp) return null
     return payload as JwtPayload
   } catch {
     return null
   }
 }
 
+export function verifyUserJwt(token: string, secret: string, now = Date.now()): JwtPayload | null {
+  return verifyUserJwtPayload(token, secret, now, false)
+}
+
 export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
   const secret = await getJwtSecret()
   return signUserJwt(user, secret, Date.now(), getUserJwtExpiresSeconds())
+}
+
+export async function issueAppJwt(
+  user: Pick<UserRecord, 'id' | 'username' | 'role'>,
+  deviceCode: string,
+  connectionType: AppConnectionType,
+): Promise<string> {
+  const secret = await getJwtSecret()
+  return signAppJwt(user, deviceCode, connectionType, secret, Date.now(), getUserJwtExpiresSeconds())
 }
 
 export async function issueModelRunJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
@@ -204,11 +270,40 @@ export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | '
   return authenticated
 }
 
+export async function inspectAppUserToken(token: string): Promise<AppUserTokenInspection | null> {
+  const secret = await getJwtSecret()
+  const payload = token ? verifyUserJwtPayload(token, secret, Date.now(), true) : null
+  if (!payload || payload.type !== 'app_access') return null
+
+  const deviceCode = payload.app_device_code || ''
+  const connectionType = payload.app_connection_type || 'lan'
+  const status = getAppConnectionTokenStatus(
+    deviceCode,
+    connectionType,
+    token,
+    Number(payload.sub),
+  )
+  const user = findUserById(payload.sub)
+  return {
+    status: !user || user.status !== 'active' ? 'invalid' : status,
+    user: user?.status === 'active' ? toAuthenticatedUser(user) : null,
+    deviceCode,
+    connectionType,
+  }
+}
+
 export async function authenticateUserToken(token: string): Promise<AuthenticatedUser | null> {
   const secret = await getJwtSecret()
 
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) return null
+
+  if (payload.type === 'app_access' && !isAppConnectionTokenActive(
+    payload.app_device_code || '',
+    payload.app_connection_type || 'lan',
+    token,
+    Number(payload.sub),
+  )) return null
 
   const user = findUserById(payload.sub)
   if (!user || user.status !== 'active') return null
@@ -234,6 +329,17 @@ export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
       await next()
       return
     }
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return
+  }
+
+  if (payload.type === 'app_access' && !isAppConnectionTokenActive(
+    payload.app_device_code || '',
+    payload.app_connection_type || 'lan',
+    token,
+    Number(payload.sub),
+  )) {
     ctx.status = 401
     ctx.body = { error: 'Unauthorized' }
     return

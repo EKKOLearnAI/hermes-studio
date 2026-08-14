@@ -176,6 +176,16 @@ function selectLocalAddress(remoteAddress: string): string {
   return interfaces[0]?.address || '127.0.0.1'
 }
 
+function normalizeRemoteAddress(value: string): string {
+  const address = String(value || '').trim()
+  return address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address
+}
+
+export function getLanBackendUrl(remoteAddress = '', httpPort = config.port): string {
+  const address = selectLocalAddress(normalizeRemoteAddress(remoteAddress))
+  return `http://${address}:${httpPort}`
+}
+
 export function getDiscoveryTargetAddresses(): string[] {
   const targets = new Set<string>(['255.255.255.255'])
   for (const iface of getIpv4Interfaces()) {

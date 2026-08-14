@@ -153,6 +153,10 @@
       "description": "Authentication management"
     },
     {
+      "name": "App Connections",
+      "description": "Mobile App authorization and connection management"
+    },
+    {
       "name": "Devices",
       "description": "Device pairing and LAN peer operations"
     },
@@ -174,6 +178,170 @@
     }
   ],
   "paths": {
+    "/api/app-connections": {
+      "get": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Get app-connections",
+        "description": "GET /api/app-connections",
+        "operationId": "listAppConnectionsController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/app-connections/authorization-codes/cloud": {
+      "post": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Create cloud",
+        "description": "POST /api/app-connections/authorization-codes/cloud",
+        "operationId": "createCloudAppAuthorizationCodeController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-connections/authorization-codes/lan": {
+      "post": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Create lan",
+        "description": "POST /api/app-connections/authorization-codes/lan",
+        "operationId": "createAppAuthorizationCodeController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-connections/{id}": {
+      "delete": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/app-connections/:id",
+        "operationId": "deleteAppConnectionController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/auth/app-login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Create app-login",
+        "description": "POST /api/auth/app-login",
+        "operationId": "appLogin",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/avatar": {
       "get": {
         "tags": [

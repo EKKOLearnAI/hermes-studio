@@ -817,6 +817,31 @@ describe('group chat baseline behavior', () => {
       error: 'Name is already in use in this room',
     })
 
+    ;(groupServer.agentClients as any)._pausedRooms.add('room-relay')
+    const queuedReply = groupServer.agentClients.processMentions('room-relay', {
+      messageId: 'queued-config-fence',
+      content: '@Remote Relay Agent queued',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: executor.agentId }],
+    })
+    const queuedUpdate = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
+      agent: 'codex', profile: 'default', provider: 'openai', model: 'should-not-apply',
+      apiMode: 'codex_responses', reasoningEffort: 'high', name: 'Queued Mutation', description: '', avatar: '',
+    })
+    expect(queuedUpdate).toMatchObject({ code: 'GROUP_AGENT_BUSY' })
+    const queuedRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    ;(groupServer.agentClients as any)._pausedRooms.delete('room-relay')
+    const drainQueued = (groupServer.agentClients as any)._drainRoomQueue('room-relay')
+    const queuedRun = await queuedRunRequested
+    expect(queuedRun.message).toMatchObject({ messageId: 'queued-config-fence' })
+    intendedTarget.emit('run.accepted', { runId: queuedRun.runId })
+    intendedTarget.emit('run.completed', { runId: queuedRun.runId })
+    await drainQueued
+    await queuedReply
+
     const updated = await emitAck<any>(intendedTarget as any, 'agent.config.update', {
       agent: 'codex',
       profile: 'default',
@@ -842,6 +867,11 @@ describe('group chat baseline behavior', () => {
       name: 'Updated Relay Agent',
       ownerMemberId: 'guest-relay',
     })
+    expect(groupServer.agentClients.getAgent('room-relay', readyPayload.agent.agentId)).toMatchObject({
+      agent: 'codex',
+      model: 'gpt-updated',
+      name: 'Updated Relay Agent',
+    })
 
     const allRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
     const processAll = groupServer.agentClients.processMentions('room-relay', {
@@ -861,7 +891,41 @@ describe('group chat baseline behavior', () => {
     intendedTarget.emit('run.completed', { runId: allRun.runId })
     await processAll
 
+    const failedRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const failedReply = executor.replyToMention('room-relay', {
+      messageId: 'known-failure-message',
+      content: '@Updated Relay Agent fail with a terminal result',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const failedRun = await failedRunRequested
+    intendedTarget.emit('run.accepted', { runId: failedRun.runId })
+    intendedTarget.emit('run.failed', { runId: failedRun.runId, error: 'Known remote failure' })
+    const failedError = await failedReply.then(
+      () => null,
+      error => error as Error & { code?: string; outcomeUnknown?: boolean },
+    )
+    expect(failedError).toMatchObject({ code: 'GROUP_AGENT_REMOTE_RUN_FAILED' })
+    expect(failedError?.outcomeUnknown).not.toBe(true)
+
+    const uncertainRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const uncertainReply = executor.replyToMention('room-relay', {
+      messageId: 'transport-loss-message',
+      content: '@Updated Relay Agent keep running across a transport loss',
+      senderName: 'Relay Guest',
+      senderId: 'guest-relay',
+      timestamp: Date.now(),
+      role: 'user',
+    })
+    const uncertainRun = await uncertainRunRequested
+    intendedTarget.emit('run.accepted', { runId: uncertainRun.runId })
     intendedTarget.disconnect()
+    await expect(uncertainReply).rejects.toMatchObject({
+      code: 'GROUP_AGENT_OFFLINE',
+      outcomeUnknown: true,
+    })
     await vi.waitFor(() => {
       expect(storage.getMentionableRoomAgents('room-relay')).toEqual([])
     })

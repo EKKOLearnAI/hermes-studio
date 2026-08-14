@@ -32,6 +32,11 @@ import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-disco
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
 import { startLocalAppRelayServer } from './services/app-relay/server'
+import {
+  hasPendingCloudAppConnectionRevocations,
+  listAppConnections,
+} from './db/hermes/app-connections-store'
+import { ensureAppRelayHostClient } from './services/app-relay/connection'
 import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
@@ -381,6 +386,12 @@ export async function bootstrap() {
   chatRunServer.init()
   startLocalAppRelayServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
   console.log('[bootstrap] local App relay server ready')
+  if (
+    listAppConnections().some(connection => connection.connection_type === 'cloud')
+    || hasPendingCloudAppConnectionRevocations()
+  ) {
+    void ensureAppRelayHostClient().catch(err => logger.warn(err, '[app-relay] cloud host restore failed'))
+  }
   void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.

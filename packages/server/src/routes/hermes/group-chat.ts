@@ -24,6 +24,8 @@ export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
+const roomAgentUpdates = new Set<string>()
+const roomDeletions = new Set<string>()
 
 export function setGroupChatServer(server: GroupChatServer | null) {
     chatServer = server
@@ -825,6 +827,11 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
     if (previous.executorType === 'remote') {
         ctx.status = 409
         ctx.body = { error: 'Remote Agents must be changed from their connected Hermes service or re-paired' }
@@ -853,6 +860,13 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Failed to validate participant name' }
         return
     }
+    const updateKey = `${roomId}:${previous.agentId}`
+    if (roomAgentUpdates.has(updateKey)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
+    roomAgentUpdates.add(updateKey)
     let replacement: Awaited<ReturnType<typeof createRoomAgentRuntimeClient>> | null = null
     let runtimeSwapped = false
     try {
@@ -899,6 +913,8 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
+    } finally {
+        roomAgentUpdates.delete(updateKey)
     }
 })
 
@@ -1012,6 +1028,16 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
+    if (roomAgentUpdates.has(`${roomId}:${agent.agentId}`)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
 
     if (agent.executorType === 'remote' && agent.connectorId) {
         revokeGroupAgentConnector(agent.connectorId)
@@ -1047,6 +1073,17 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.body = { error: 'Access denied' }
         return
     }
+    if ([...roomAgentUpdates].some(key => key.startsWith(`${roomId}:`))) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
+    roomDeletions.add(roomId)
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
     try {
         await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
@@ -1058,6 +1095,8 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
+    } finally {
+        roomDeletions.delete(roomId)
     }
     ctx.body = { success: true }
 })
@@ -1243,6 +1282,15 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
     }
     if (existing.status === 'resumed' && Number(existing.continueUsed) === 1) {
         ctx.body = { success: true, replay: true, chain: existing }
+        return
+    }
+    if (existing.status === 'outcome_unknown') {
+        ctx.status = 409
+        ctx.body = {
+            code: 'HANDOFF_OUTCOME_UNKNOWN',
+            error: 'Remote handoff outcome is unknown; automatic retry is disabled',
+            chain: existing,
+        }
         return
     }
     const chain = storage.claimHandoffContinuation(roomId, chainId)

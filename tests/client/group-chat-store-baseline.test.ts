@@ -200,6 +200,38 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
   })
 
+  it('invalidates cached handoff stops when another client changes the Room policy', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.rooms = [{ ...room, agentHandoffEnabled: 1, agentHandoffMaxDepth: 4, agentHandoffUnlimited: 0 }]
+    store.currentRoomId = 'room-1'
+    store.handoffChains.set('chain-1', {
+      chainId: 'chain-1', roomId: 'room-1', sourceMessageId: 'msg-1',
+      currentDepth: 4, maxDepth: 4, unlimited: false, targetAgentId: 'agent-1',
+      status: 'stopped', stopReason: 'max_depth', continueUsed: false,
+      createdAt: 1, updatedAt: 1, lastError: null,
+    } as any)
+
+    emitSocket('room_updated', { roomId: 'room-1', agentHandoffMaxDepth: 6 })
+
+    expect(store.rooms[0].agentHandoffMaxDepth).toBe(6)
+    expect(store.handoffChains.size).toBe(0)
+  })
+
+  it('keeps cached handoff stops for unrelated Room metadata updates', async () => {
+    const store = await loadStore()
+    await store.connect()
+    store.rooms = [{ ...room }]
+    store.currentRoomId = 'room-1'
+    store.handoffChains.set('chain-1', {
+      chainId: 'chain-1', roomId: 'room-1', sourceMessageId: 'msg-1',
+    } as any)
+
+    emitSocket('room_updated', { roomId: 'room-1', totalTokens: 9 })
+
+    expect(store.handoffChains.has('chain-1')).toBe(true)
+  })
+
   it('restores directed approvals when the Agent owner comes online without joining the room', async () => {
     groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
       if (event === 'load_pending_approvals' && ack) ack({

@@ -154,6 +154,80 @@ describe('group chat agent routing baseline', () => {
     }))
   })
 
+  it('creates a max-depth stop at the exact finite boundary for a trusted concrete Agent target', async () => {
+    const { agent } = await joinHumanAndAgent()
+    const storage = groupServer.getStorage()
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
+    storage.updateRoomConfig('room-1', {
+      agentHandoffEnabled: true,
+      agentHandoffMaxDepth: 4,
+      agentHandoffUnlimited: false,
+    })
+    storage.registerTrustedAgentMessageMetadata('room-1', 'agent-msg-boundary', 4, 'handoff:agent-msg-boundary')
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1', id: 'agent-msg-boundary', content: '@Reviewer stop at boundary', role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    })
+
+    expect(processMentions).not.toHaveBeenCalled()
+    expect(storage.getHandoffChain('room-1', 'handoff:agent-msg-boundary')).toMatchObject({
+      status: 'stopped',
+      stopReason: 'max_depth',
+      sourceMessageId: 'agent-msg-boundary',
+      targetAgentId: 'agent-reviewer',
+      currentDepth: 4,
+      maxDepth: 4,
+      unlimited: 0,
+    })
+  })
+
+  it('does not create a depth-stop record when Agent handoffs are disabled', async () => {
+    const { agent } = await joinHumanAndAgent()
+    const storage = groupServer.getStorage()
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue({
+      targetCount: 0,
+      deliveredCount: 0,
+      errors: [],
+    })
+    storage.updateRoomConfig('room-1', {
+      agentHandoffEnabled: false,
+      agentHandoffMaxDepth: 4,
+      agentHandoffUnlimited: false,
+    })
+    storage.registerTrustedAgentMessageMetadata('room-1', 'agent-msg-disabled', 1, 'handoff:agent-msg-disabled')
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1',
+      id: 'agent-msg-disabled',
+      content: '@Reviewer do not route',
+      role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    })
+
+    expect(processMentions).not.toHaveBeenCalled()
+    expect(storage.getHandoffChain('room-1', 'handoff:agent-msg-disabled')).toBeNull()
+  })
+
+  it('does not create a depth-stop record for a trusted @all handoff without a concrete Agent target', async () => {
+    const { agent } = await joinHumanAndAgent()
+    const storage = groupServer.getStorage()
+    storage.registerTrustedAgentMessageMetadata('room-1', 'agent-msg-all', 4, 'handoff:agent-msg-all')
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1',
+      id: 'agent-msg-all',
+      content: '@all stop here',
+      role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'all', displayName: 'all' }],
+    })
+
+    expect(storage.getHandoffChain('room-1', 'handoff:agent-msg-all')).toBeNull()
+  })
+
   it('does not trust forged agent depth or chain identity', async () => {
     const { agent } = await joinHumanAndAgent()
     const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue(undefined)
@@ -170,5 +244,29 @@ describe('group chat agent routing baseline', () => {
     })
 
     expect(processMentions).not.toHaveBeenCalled()
+    expect(groupServer.getStorage().getHandoffChain('room-1', 'handoff:agent-msg-2')).toBeNull()
+  })
+
+  it('routes a trusted structured handoff in unlimited mode without creating a stop', async () => {
+    const { agent } = await joinHumanAndAgent()
+    const storage = groupServer.getStorage()
+    const processMentions = vi.spyOn(groupServer.agentClients, 'processMentions').mockResolvedValue({
+      targetCount: 1, deliveredCount: 1, errors: [],
+    })
+    storage.updateRoomConfig('room-1', {
+      agentHandoffEnabled: true,
+      agentHandoffMaxDepth: null,
+      agentHandoffUnlimited: true,
+    })
+    storage.registerTrustedAgentMessageMetadata('room-1', 'agent-msg-unlimited', 400, 'handoff:agent-msg-unlimited')
+
+    await emitAck(agent, 'message', {
+      roomId: 'room-1', id: 'agent-msg-unlimited', content: '@Reviewer continue', role: 'assistant',
+      agentSessionId: currentAgentSessionId(),
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+    })
+
+    expect(processMentions).toHaveBeenCalled()
+    expect(storage.getHandoffChain('room-1', 'handoff:agent-msg-unlimited')).toBeNull()
   })
 })

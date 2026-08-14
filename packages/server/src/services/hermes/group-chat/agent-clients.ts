@@ -225,6 +225,8 @@ export interface GroupAgentExecutor {
     readonly name: string
     readonly description: string
     readonly connected: boolean
+    reserveInvocation?(): void
+    releaseInvocation?(): void
     disconnect(): void
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
     interrupt(roomId: string): Promise<boolean>
@@ -247,6 +249,12 @@ export interface MentionDeliveryResult {
     targetCount: number
     deliveredCount: number
     errors: string[]
+    outcomeUnknown?: boolean
+}
+
+type MentionQueueError = {
+    message: string
+    outcomeUnknown: boolean
 }
 
 export interface GroupChatRunService {
@@ -1975,7 +1983,11 @@ export class AgentClients {
 
     // Per-room processing lock + mention queue
     private _processingRooms = new Set<string>()
-    private _mentionQueue = new Map<string, Array<{ agents: GroupAgentExecutor[]; msg: MentionMessage }>>()
+    private _mentionQueue = new Map<string, Array<{
+        agents: GroupAgentExecutor[]
+        msg: MentionMessage
+        resolve: (error: MentionQueueError | null) => void
+    }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
 
@@ -2173,6 +2185,9 @@ export class AgentClients {
         const queue = this._mentionQueue.get(roomId)
         if (queue) {
             for (const entry of queue) {
+                for (const agent of entry.agents) {
+                    if (agent.name === agentName) agent.releaseInvocation?.()
+                }
                 entry.agents = entry.agents.filter(agent => agent.name !== agentName)
             }
         }
@@ -2180,7 +2195,12 @@ export class AgentClients {
     }
 
     private clearMentionQueuesForRoom(roomId: string): void {
+        const queue = this._mentionQueue.get(roomId)
         this._mentionQueue.delete(roomId)
+        for (const entry of queue || []) {
+            for (const agent of entry.agents) agent.releaseInvocation?.()
+            entry.resolve({ message: 'Continuation target Agent is not connected', outcomeUnknown: false })
+        }
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
         for (const agentName of roomCounts?.keys() || []) {
@@ -2188,14 +2208,20 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): void {
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<MentionQueueError | null> {
         let queue = this._mentionQueue.get(roomId)
         if (!queue) {
             queue = []
             this._mentionQueue.set(roomId, queue)
         }
-        queue.push({ agents, msg })
-        for (const agent of agents) this.scheduleAgentActivity(roomId, agent.name)
+        let resolve!: (error: MentionQueueError | null) => void
+        const completed = new Promise<MentionQueueError | null>(done => { resolve = done })
+        queue.push({ agents, msg, resolve })
+        for (const agent of agents) {
+            agent.reserveInvocation?.()
+            this.scheduleAgentActivity(roomId, agent.name)
+        }
+        return completed
     }
 
     async interruptAgent(roomId: string, agentName: string): Promise<void> {
@@ -2292,6 +2318,23 @@ export class AgentClients {
     }
 
 
+    private handoffRuntimeSnapshot(roomId: string, agent: GroupAgentExecutor): Record<string, string> {
+        const persisted = this._storage?.getHandoffTargetSnapshot?.(roomId, agent.agentId)
+        if (!persisted || typeof persisted !== 'object') return {}
+        return {
+            ...persisted,
+            agentId: String(agent.agentId || ''),
+            agent: String(agent.agent || ''),
+            profile: String(agent.profile || ''),
+            provider: String(agent.provider || ''),
+            model: String(agent.model || ''),
+            apiMode: String(agent.apiMode || ''),
+            reasoningEffort: String(agent.reasoningEffort || ''),
+            name: String(agent.name || ''),
+            description: String(agent.description || ''),
+        }
+    }
+
     /**
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
@@ -2321,7 +2364,7 @@ export class AgentClients {
                 msg.continuationAttemptId,
                 mentioned[0].agentId,
                 msg as unknown as Record<string, unknown>,
-                { agentId: mentioned[0].agentId, name: mentioned[0].name },
+                this.handoffRuntimeSnapshot(roomId, mentioned[0]),
             )
             if (!admission) {
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target admission was rejected'] }
@@ -2344,26 +2387,21 @@ export class AgentClients {
                 this._storage?.releaseHandoffDelivery?.(msg.continuationAttemptId)
                 return { targetCount: 1, deliveredCount: 0, errors: ['Continuation attempt is no longer dispatchable'] }
             }
-            const executionId = `handoff:${msg.continuationAttemptId}`
-            const running = this._storage?.markHandoffTargetRunning?.(
-                msg.continuationAttemptId,
-                executionId,
-                Date.now() + 60_000,
-            )
-            if (!running && admission.status !== 'already') {
-                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target could not claim the invocation'] }
-            }
-            const started = this._storage?.markHandoffTargetInvocationStarted?.(msg.continuationAttemptId)
-            const current = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
-            if (!started && !current?.invocationStartedAt) {
-                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation invocation marker could not be persisted'] }
-            }
         }
-        this.queueMention(roomId, mentioned, msg)
+        const completed = this.queueMention(roomId, mentioned, msg)
         if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
             await this._drainRoomQueue(roomId)
         }
         if (msg.continuationAttemptId && mentioned.length === 1) {
+            const queueError = await completed
+            if (queueError) {
+                return {
+                    targetCount: 1,
+                    deliveredCount: 0,
+                    errors: [queueError.message],
+                    outcomeUnknown: queueError.outcomeUnknown,
+                }
+            }
             const status = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
             if (status?.status !== 'completed') {
                 this._storage?.failHandoffTarget?.(
@@ -2433,28 +2471,58 @@ export class AgentClients {
                 if (!next) break
                 if (queue?.length === 0) this._mentionQueue.delete(roomId)
 
-                const runtimeContext = this._roomSummaryService
-                    ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
-                    : { summary: '', history: [] }
-                const results = await Promise.allSettled(next.agents.map(async (agent) => {
-                    const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-                        if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
-                    }
-                    try {
+                let queueError: MentionQueueError | null = null
+                try {
+                    const runtimeContext = this._roomSummaryService
+                        ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
+                        : { summary: '', history: [] }
+                    const results = await Promise.allSettled(next.agents.map(async (agent) => {
+                        const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
+                            if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
+                        }
+                        if (next.msg.continuationAttemptId) {
+                            if (!agent.connected) {
+                                throw new Error('Continuation target Agent is not connected')
+                            }
+                            const attemptId = next.msg.continuationAttemptId
+                            const running = this._storage?.markHandoffTargetRunning?.(
+                                attemptId,
+                                `handoff:${attemptId}`,
+                                Date.now() + 60_000,
+                            )
+                            const current = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!running && current?.status !== 'running') {
+                                throw new Error('Continuation target could not claim the invocation')
+                            }
+                            const started = this._storage?.markHandoffTargetInvocationStarted?.(attemptId)
+                            const startedState = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!started && !startedState?.invocationStartedAt) {
+                                throw new Error('Continuation invocation marker could not be persisted')
+                            }
+                        }
                         const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
                         const targetMessage = targetOwnerMemberId
                             ? { ...next.msg, targetOwnerMemberId }
                             : next.msg
                         await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
-                    } finally {
+                    }))
+                    for (let index = 0; index < results.length; index += 1) {
+                        const result = results[index]
+                        if (result.status === 'rejected') {
+                            const message = result.reason?.message || String(result.reason)
+                            queueError ||= {
+                                message,
+                                outcomeUnknown: result.reason?.outcomeUnknown === true,
+                            }
+                            logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${message}`)
+                        }
+                    }
+                } finally {
+                    for (const agent of next.agents) {
+                        agent.releaseInvocation?.()
                         this.finishAgentActivity(roomId, agent.name)
                     }
-                }))
-                for (let index = 0; index < results.length; index += 1) {
-                    const result = results[index]
-                    if (result.status === 'rejected') {
-                        logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${result.reason?.message || result.reason}`)
-                    }
+                    next.resolve(queueError)
                 }
             }
         } finally {

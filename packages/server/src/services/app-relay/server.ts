@@ -1,7 +1,8 @@
 import type { Server as SocketIoServer, Socket } from 'socket.io'
 import { io as createClientSocket, type Socket as ClientSocket } from 'socket.io-client'
 import { config } from '../../config'
-import { authenticateUserToken } from '../../middleware/user-auth'
+import type { AppConnectionType } from '../../db/hermes/app-connections-store'
+import { authenticateUserToken, inspectAppUserToken } from '../../middleware/user-auth'
 import { getDeviceId } from '../system-info'
 import { logger } from '../logger'
 import type {
@@ -103,6 +104,7 @@ type NormalizedBody = {
 export class LocalAppRelayServer {
   private readonly namespace: ReturnType<SocketIoServer['of']>
   private readonly bridges = new Map<string, LocalSocketBridge>()
+  private readonly appSockets = new Map<string, Socket>()
   private readonly localBaseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly configuredMachineId: string
@@ -125,8 +127,21 @@ export class LocalAppRelayServer {
         const machineId = normalizeIdentifier(auth.machineId || auth.machine_id || auth.instanceId)
         const localMachineId = this.configuredMachineId || await getDeviceId()
         const token = String(auth.token || '').trim()
-        const user = token ? await authenticateUserToken(token) : null
-        if (role !== 'app' || !machineId || machineId !== localMachineId || (token && !user)) {
+        if (role !== 'app' || !machineId || machineId !== localMachineId) {
+          next(new Error('app_relay_unauthorized'))
+          return
+        }
+        const appToken = token ? await inspectAppUserToken(token) : null
+        if (appToken?.status === 'revoked') {
+          next(new Error('app_connection_deleted'))
+          return
+        }
+        const user = appToken?.status === 'active' && appToken.user
+          ? appToken.user
+          : token && !appToken
+            ? await authenticateUserToken(token)
+            : null
+        if (token && !user) {
           next(new Error('app_relay_unauthorized'))
           return
         }
@@ -134,6 +149,10 @@ export class LocalAppRelayServer {
         socket.data.machineId = localMachineId
         socket.data.localUser = user
         socket.data.localUserToken = token
+        if (appToken?.status === 'active') {
+          socket.data.appDeviceCode = appToken.deviceCode
+          socket.data.appConnectionType = appToken.connectionType
+        }
         next()
       } catch (err) {
         logger.warn({ err }, '[app-relay:lan] socket authentication failed')
@@ -148,7 +167,33 @@ export class LocalAppRelayServer {
     return APP_RELAY_NAMESPACE
   }
 
+  isConnectionOnline(deviceCode: string, connectionType: AppConnectionType): boolean {
+    return Array.from(this.appSockets.values()).some(socket => (
+      socket.connected
+      && socket.data.appDeviceCode === deviceCode
+      && socket.data.appConnectionType === connectionType
+    ))
+  }
+
+  notifyConnectionDeleted(deviceCode: string, connectionType: AppConnectionType): number {
+    const sockets = Array.from(this.appSockets.values()).filter(socket => (
+      socket.connected
+      && socket.data.appDeviceCode === deviceCode
+      && socket.data.appConnectionType === connectionType
+    ))
+    for (const socket of sockets) {
+      socket.emit('relay.connection.deleted', {
+        machineId: socket.data.machineId,
+        deviceCode,
+        connectionType,
+      })
+      setImmediate(() => socket.disconnect(true))
+    }
+    return sockets.length
+  }
+
   private onConnection(socket: Socket): void {
+    this.appSockets.set(socket.id, socket)
     const machineId = String(socket.data.machineId)
     socket.emit('relay.ready', {
       role: 'app',
@@ -170,7 +215,10 @@ export class LocalAppRelayServer {
     socket.on('socket.close', (request: AppRelaySocketCloseRequest = {}, ack?: (response: AppRelaySocketResponse) => void) => {
       ack?.(this.closeSocket(socket, request))
     })
-    socket.on('disconnect', () => this.closeOwnerBridges(socket.id))
+    socket.on('disconnect', () => {
+      this.appSockets.delete(socket.id)
+      this.closeOwnerBridges(socket.id)
+    })
   }
 
   private async handleHttpRequest(socket: Socket, request: AppRelayHttpRequest): Promise<AppRelayHttpResponse> {
@@ -179,7 +227,8 @@ export class LocalAppRelayServer {
     const path = normalizeRelayPath(request.path)
     if (!path) return httpError(request.id, 'path_not_allowed', 'Relay request path is not allowed', 403)
 
-    const loginRequest = method === 'POST' && path === '/api/auth/login'
+    const appLoginRequest = method === 'POST' && path === '/api/auth/app-login'
+    const loginRequest = method === 'POST' && (path === '/api/auth/login' || appLoginRequest)
     const authenticated = Boolean(socket.data.localUserToken) && await this.authorized(socket)
     if (!authenticated && !loginRequest) {
       return httpError(request.id, 'app_relay_unauthorized', 'Log in to Hermes Studio before using the App relay', 401)
@@ -187,6 +236,7 @@ export class LocalAppRelayServer {
 
     const headers = normalizeHeaders(request.headers)
     headers.delete('authorization')
+    if (appLoginRequest) headers.set('x-hermes-app-connection', 'lan')
     if (authenticated) headers.set('authorization', `Bearer ${socket.data.localUserToken}`)
     const normalizedBody = normalizeRequestBody(request, method, headers)
     if (isHttpErrorResponse(normalizedBody)) return normalizedBody
@@ -355,7 +405,22 @@ export class LocalAppRelayServer {
   }
 
   private async authorized(socket: Socket): Promise<boolean> {
-    const user = await authenticateUserToken(String(socket.data.localUserToken || ''))
+    const token = String(socket.data.localUserToken || '')
+    const appToken = await inspectAppUserToken(token)
+    if (appToken?.status === 'revoked') {
+      socket.emit('relay.connection.deleted', {
+        machineId: socket.data.machineId,
+        deviceCode: appToken.deviceCode,
+        connectionType: appToken.connectionType,
+      })
+      setImmediate(() => socket.disconnect(true))
+      return false
+    }
+    const user = appToken?.status === 'active' && appToken.user
+      ? appToken.user
+      : !appToken
+        ? await authenticateUserToken(token)
+        : null
     if (user) return true
     socket.emit('relay.access.revoked', {
       machineId: socket.data.machineId,
@@ -369,10 +434,19 @@ export class LocalAppRelayServer {
     try {
       const body = JSON.parse(responseBody) as Record<string, unknown>
       const token = String(body.token || '').trim()
-      const user = token ? await authenticateUserToken(token) : null
+      const appToken = token ? await inspectAppUserToken(token) : null
+      const user = appToken?.status === 'active' && appToken.user
+        ? appToken.user
+        : token && !appToken
+          ? await authenticateUserToken(token)
+          : null
       if (!token || !user) return
       socket.data.localUserToken = token
       socket.data.localUser = user
+      if (appToken?.status === 'active') {
+        socket.data.appDeviceCode = appToken.deviceCode
+        socket.data.appConnectionType = appToken.connectionType
+      }
       this.scheduleTokenExpiry(socket)
     } catch {
       // A malformed success response is returned unchanged and does not
@@ -419,6 +493,20 @@ export function startLocalAppRelayServer(
   activeLocalAppRelayServer = new LocalAppRelayServer(io, options)
   activeLocalAppRelayServer.init()
   return activeLocalAppRelayServer
+}
+
+export function isLocalAppConnectionOnline(
+  deviceCode: string,
+  connectionType: AppConnectionType,
+): boolean {
+  return activeLocalAppRelayServer?.isConnectionOnline(deviceCode, connectionType) || false
+}
+
+export function notifyLocalAppConnectionDeleted(
+  deviceCode: string,
+  connectionType: AppConnectionType,
+): number {
+  return activeLocalAppRelayServer?.notifyConnectionDeleted(deviceCode, connectionType) || 0
 }
 
 function normalizeIdentifier(value: unknown): string {

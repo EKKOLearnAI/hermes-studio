@@ -65,9 +65,7 @@ const remoteRelay = {
   url: 'https://api.hermes-studio.ai',
 }
 const appRelay = {
-  url: process.env.NODE_ENV === 'production'
-    ? 'https://api.hermes-studio.ai'
-    : 'http://127.0.0.1:8077',
+  url: 'https://api.hermes-studio.ai',
 }
 
 export const config = {

@@ -37,7 +37,7 @@ export interface RoomAgentHandoffChain {
     maxDepth: number | null
     unlimited: number
     targetAgentId: string
-    status: 'stopped' | 'claimed' | 'resumed'
+    status: 'stopped' | 'claimed' | 'resumed' | 'outcome_unknown'
     stopReason: string
     continueUsed: number
     attemptId?: string | null

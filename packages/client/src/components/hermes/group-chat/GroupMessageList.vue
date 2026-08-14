@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { groupAgentRunMessages, useGroupChatStore } from '@/stores/hermes/group-chat'
 import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
+import { handoffErrorTranslationKey, isPresentableHandoffChain } from './handoff-presentation'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
@@ -11,8 +12,10 @@ import VirtualMessageList from '../chat/VirtualMessageList.vue'
 const store = useGroupChatStore()
 const props = withDefaults(defineProps<{
     allowSpeech?: boolean
+    canManageHandoff?: boolean
 }>(), {
     allowSpeech: true,
+    canManageHandoff: false,
 })
 const emit = defineEmits<{
     mentionAgent: [agent: import('@/api/hermes/group-chat').RoomAgent]
@@ -61,11 +64,18 @@ function containsSummaryAnchor(message: import('@/api/hermes/group-chat').ChatMe
 
 function handoffChainFor(message: import('@/api/hermes/group-chat').ChatMessage): RoomAgentHandoffChain | null {
     const messageIds = new Set((message.runItems || [message]).map(item => item.id))
-    return [...store.handoffChains.values()].find(chain => messageIds.has(chain.sourceMessageId)) || null
+    return [...store.handoffChains.values()].find(chain =>
+        isPresentableHandoffChain(chain) && messageIds.has(chain.sourceMessageId)
+    ) || null
 }
 
 function targetAgentName(chain: RoomAgentHandoffChain): string {
     return store.messageAgents.find(agent => agent.agentId === chain.targetAgentId)?.name || chain.targetAgentId || '—'
+}
+
+function handoffErrorText(error: string | null | undefined): string {
+    const key = handoffErrorTranslationKey(error)
+    return key ? t(key) : ''
 }
 
 function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
@@ -201,11 +211,12 @@ defineExpose({ scrollToBottom })
                         role="status"
                         :data-handoff-chain-id="handoffChainFor(msg)!.chainId"
                     >
-                        <strong>{{ t('groupChat.agentHandoffStopped') }}</strong>
+                        <strong>{{ t(handoffChainFor(msg)!.status === 'outcome_unknown' ? 'groupChat.agentHandoffOutcomeUnknownTitle' : 'groupChat.agentHandoffStopped') }}</strong>
                         <span>{{ t('groupChat.agentHandoffDepthState', { current: handoffChainFor(msg)!.currentDepth, max: handoffChainFor(msg)!.unlimited ? '∞' : handoffChainFor(msg)!.maxDepth }) }}</span>
                         <span>{{ t('groupChat.agentHandoffTarget', { target: targetAgentName(handoffChainFor(msg)!) }) }}</span>
-                        <span v-if="handoffChainFor(msg)!.lastError">{{ handoffChainFor(msg)!.lastError }}</span>
-                        <div v-if="handoffChainFor(msg)!.status === 'stopped' && !handoffChainFor(msg)!.continueUsed" class="handoff-stop-actions">
+                        <span v-if="handoffChainFor(msg)!.status === 'outcome_unknown'">{{ t('groupChat.agentHandoffOutcomeUnknownDescription') }}</span>
+                        <span v-else-if="handoffChainFor(msg)!.lastError">{{ handoffErrorText(handoffChainFor(msg)!.lastError) }}</span>
+                        <div v-if="props.canManageHandoff && handoffChainFor(msg)!.status === 'stopped' && !handoffChainFor(msg)!.continueUsed" class="handoff-stop-actions">
                             <button type="button" @click="emit('continueHandoff', handoffChainFor(msg)!.chainId)">
                                 {{ t('groupChat.agentHandoffContinue') }}
                             </button>
@@ -213,7 +224,7 @@ defineExpose({ scrollToBottom })
                                 {{ t('groupChat.agentHandoffAdjustSettings') }}
                             </button>
                         </div>
-                        <span v-else>{{ t('groupChat.agentHandoffContinueState', { state: handoffChainFor(msg)!.status, updated: new Date(handoffChainFor(msg)!.updatedAt).toLocaleString() }) }}</span>
+                        <span v-else-if="handoffChainFor(msg)!.status !== 'stopped' || handoffChainFor(msg)!.continueUsed">{{ t('groupChat.agentHandoffContinueState', { state: handoffChainFor(msg)!.status, updated: new Date(handoffChainFor(msg)!.updatedAt).toLocaleString() }) }}</span>
                     </div>
                     <div
                         v-if="containsSummaryAnchor(msg)"

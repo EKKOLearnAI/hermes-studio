@@ -1082,6 +1082,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (typeof data.allowRemoteWorkspaceAccess === 'number') {
                 room.allowRemoteWorkspaceAccess = data.allowRemoteWorkspaceAccess
             }
+            const handoffPolicyChanged = Object.prototype.hasOwnProperty.call(data, 'agentHandoffEnabled')
+                || Object.prototype.hasOwnProperty.call(data, 'agentHandoffMaxDepth')
+                || Object.prototype.hasOwnProperty.call(data, 'agentHandoffUnlimited')
             if (typeof data.agentHandoffEnabled === 'number') {
                 room.agentHandoffEnabled = data.agentHandoffEnabled
             }
@@ -1090,6 +1093,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
             if (typeof data.agentHandoffUnlimited === 'number') {
                 room.agentHandoffUnlimited = data.agentHandoffUnlimited
+            }
+            if (handoffPolicyChanged) {
+                for (const [chainId, chain] of handoffChains.value) {
+                    if (chain.roomId === data.roomId) handoffChains.value.delete(chainId)
+                }
+                handoffChains.value = new Map(handoffChains.value)
             }
             if (typeof data.name === 'string' && data.name.trim()) {
                 room.name = data.name.trim()
@@ -1910,7 +1919,7 @@ function mapGroupMessages(msgs: ChatMessage[], activeAgentNames = new Set<string
             !msg.tool_calls?.length &&
             !runtimePayloadText((msg as any).content).trim() &&
             !msg.reasoning?.trim() &&
-            (!msg.isStreaming || msg.finish_reason === 'streaming')
+            !msg.isStreaming
         ) {
             continue
         }
@@ -2003,7 +2012,8 @@ export function groupAgentRunMessages(messages: ChatMessage[]): ChatMessage[] {
             result.push(message)
             continue
         }
-        const groupKey = `${message.senderId}\u0000${runId}`
+        const ownerId = String(message.senderAgentRecordId || message.senderId || '').trim()
+        const groupKey = `${ownerId}\u0000${runId}`
         const existing = groupedByRun.get(groupKey)
         if (existing) {
             existing.runItems!.push(message)
@@ -2012,7 +2022,7 @@ export function groupAgentRunMessages(messages: ChatMessage[]): ChatMessage[] {
         }
         const grouped: ChatMessage = {
             ...message,
-            id: `group-agent-run:${message.senderId}:${runId}`,
+            id: `group-agent-run:${ownerId}:${runId}`,
             run_id: runId,
             role: 'agent_run',
             content: '',
