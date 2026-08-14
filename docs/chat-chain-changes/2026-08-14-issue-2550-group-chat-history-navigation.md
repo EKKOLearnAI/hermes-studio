@@ -1,6 +1,6 @@
 ---
 date: 2026-08-14
-pr: pending
+pr: 2553
 feature: Group Chat history loading and complete archive
 impact: Live rooms load older messages with retry and viewport anchoring, then link to a read-only complete room transcript after the 600-message live display cap.
 ---
