@@ -9,7 +9,7 @@ import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
 import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
-import { registerCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
+import { registerCodexProxyTarget, restoreCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
 import type { ApiMode, CodingAgentImageInput } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength } from './hermes/model-context'
@@ -34,6 +34,7 @@ const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
 const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_PROVIDER_ID = 'hermes-studio'
+const PI_PROXY_TARGET_FILE = 'proxy-target.json'
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
   { name: 'hermes-studio-browser', toolset: 'browser' },
@@ -1228,6 +1229,103 @@ export async function migratePersistedPiRuntimeMcpConfigs(): Promise<number> {
   return migratedCount
 }
 
+function persistedPiRuntimeRoots(): string[] {
+  const modelRoot = join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'model')
+  if (!existsSync(modelRoot)) return []
+  const roots: string[] = []
+  const directories = (path: string) => {
+    try {
+      return readdirSync(path, { withFileTypes: true }).filter(entry => entry.isDirectory())
+    } catch {
+      return []
+    }
+  }
+
+  for (const profile of directories(modelRoot)) {
+    const profileRoot = join(modelRoot, profile.name)
+    for (const provider of directories(profileRoot)) {
+      const piRoot = join(profileRoot, provider.name, 'pi')
+      if (!existsSync(piRoot)) continue
+      roots.push(piRoot)
+      for (const run of directories(join(piRoot, 'runs'))) {
+        roots.push(join(piRoot, 'runs', run.name))
+      }
+      for (const room of directories(join(piRoot, 'group-chat'))) {
+        for (const agent of directories(join(piRoot, 'group-chat', room.name))) {
+          roots.push(join(piRoot, 'group-chat', room.name, agent.name))
+        }
+      }
+    }
+  }
+  return roots
+}
+
+export async function restorePersistedPiProxyTargets(): Promise<number> {
+  let restoredCount = 0
+  for (const root of persistedPiRuntimeRoots()) {
+    const targetPath = join(root, PI_PROXY_TARGET_FILE)
+    let content = await safeReadFile(targetPath)
+    if (!content) {
+      const modelsContent = await safeReadFile(join(root, 'models.json'))
+      if (!modelsContent) continue
+      try {
+        const models = JSON.parse(modelsContent)
+        const providerConfig = models?.providers?.[PI_PROVIDER_ID]
+        const proxyBaseUrl = String(providerConfig?.baseUrl || '').trim()
+        const token = String(providerConfig?.apiKey || '').trim()
+        const routeKey = proxyBaseUrl.match(/\/api\/codex-proxy\/([^/]+)\/v1\/?$/)?.[1] || ''
+        if (!routeKey || !token) continue
+        const keyParts = JSON.parse(Buffer.from(routeKey, 'base64url').toString('utf-8'))
+        if (!Array.isArray(keyParts) || keyParts.length < 5) continue
+        const [profile, provider, model, apiMode, baseUrl, agentSessionId = '', chatSessionId = ''] = keyParts.map(value => String(value || ''))
+        const resolved = await resolveStoredProviderLaunchInput({
+          profile,
+          provider,
+          model,
+          apiMode: normalizeLaunchApiMode(apiMode, 'chat_completions'),
+          baseUrl,
+          sessionId: chatSessionId,
+        }, null)
+        const apiKey = String(resolved.apiKey || '').trim()
+        if (!apiKey) continue
+        content = `${JSON.stringify({
+          input: {
+            profile,
+            provider,
+            model,
+            apiMode,
+            baseUrl,
+            apiKey,
+            agentId: 'pi',
+            agentSessionId,
+            chatSessionId,
+          },
+          token,
+        }, null, 2)}\n`
+        await writeFile(targetPath, content, { encoding: 'utf-8', mode: 0o600 })
+      } catch {
+        continue
+      }
+    }
+    try {
+      const persisted = JSON.parse(content)
+      const input = persisted?.input
+      const token = String(persisted?.token || '').trim()
+      if (!input || typeof input !== 'object' || !token) continue
+      if (!String(input.profile || '').trim()
+        || !String(input.provider || '').trim()
+        || !String(input.model || '').trim()
+        || !String(input.baseUrl || '').trim()
+        || !String(input.apiKey || '').trim()) continue
+      restoreCodexProxyTarget(input, token)
+      restoredCount += 1
+    } catch {
+      // Ignore invalid or legacy files; preparing the launch rewrites them.
+    }
+  }
+  return restoredCount
+}
+
 function piModelsConfig(input: {
   baseUrl: string
   apiKey: string
@@ -2234,6 +2332,25 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       profile: scope.profile,
       provider,
     }))
+    if (proxyTarget) {
+      const proxyTargetPath = join(rootDir, PI_PROXY_TARGET_FILE)
+      await writeRuntimeFile('proxy_target', PI_PROXY_TARGET_FILE, `${JSON.stringify({
+        input: {
+          profile: scope.profile,
+          provider,
+          model,
+          baseUrl,
+          apiKey,
+          apiMode,
+          reasoningEffort,
+          agentId: tool.id,
+          agentSessionId: input.agentSessionId,
+          chatSessionId: input.sessionId,
+        },
+        token: proxyTarget.token,
+      }, null, 2)}\n`)
+      await chmod(proxyTargetPath, 0o600)
+    }
     await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(
       scope.profile,
       await safeReadFile(getLiveConfigFileDefinition(tool.id, 'mcp')?.absolutePath || ''),

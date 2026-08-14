@@ -7,6 +7,7 @@ import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from 
 import {
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
+  restorePersistedPiProxyTargets,
 } from '../../packages/server/src/services/coding-agents'
 
 const homes: string[] = []
@@ -159,6 +160,18 @@ describe('coding agent launch preparation', () => {
     const runtimeModels = JSON.parse(readFileSync(join(result.rootDir, 'models.json'), 'utf-8'))
     expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
     expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')
+    const persistedProxyTargetPath = join(result.rootDir, 'proxy-target.json')
+    const persistedProxyTarget = JSON.parse(readFileSync(persistedProxyTargetPath, 'utf-8'))
+    expect(persistedProxyTarget.input).toMatchObject({
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+    })
+    expect(persistedProxyTarget.token).toBe(runtimeModels.providers['hermes-studio'].apiKey)
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
     expect(result.args).not.toContain('rpc')
     expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')).not.toContain('--mode rpc')
 

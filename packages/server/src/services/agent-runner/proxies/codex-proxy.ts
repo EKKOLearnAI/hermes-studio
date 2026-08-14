@@ -48,6 +48,18 @@ export function registerCodexProxyTarget(input: CodexProxyTargetInput): { baseUr
   return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
 }
 
+export function restoreCodexProxyTarget(
+  input: CodexProxyTargetInput,
+  token: string,
+): { baseUrl: string; token: string; routeKey: string } {
+  const target = targetRegistry.register({
+    ...input,
+    profile: input.profile.trim(),
+  }, { token })
+
+  return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
+}
+
 function findTarget(routeKey: string): CodexProxyTarget | null {
   return targetRegistry.find(routeKey)
 }

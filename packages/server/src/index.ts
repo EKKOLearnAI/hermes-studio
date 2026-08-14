@@ -42,7 +42,10 @@ import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
 import { createRequestBodyParser } from './middleware/request-body-parser'
-import { migratePersistedPiRuntimeMcpConfigs } from './services/coding-agents'
+import {
+  migratePersistedPiRuntimeMcpConfigs,
+  restorePersistedPiProxyTargets,
+} from './services/coding-agents'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -295,6 +298,15 @@ export async function bootstrap() {
     }
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to migrate persisted Pi MCP runtime configs')
+  }
+
+  try {
+    const restoredPiProxyTargets = await restorePersistedPiProxyTargets()
+    if (restoredPiProxyTargets > 0) {
+      console.log(`[bootstrap] restored ${restoredPiProxyTargets} persisted Pi proxy target(s)`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to restore persisted Pi proxy targets')
   }
 
   setupGlobalEkkoAgent()
