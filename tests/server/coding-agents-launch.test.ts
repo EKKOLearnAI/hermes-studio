@@ -52,6 +52,42 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('keeps stable credential-free Pi config files beside isolated run directories', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-1',
+      agentSessionId: 'agent-session-1',
+    })
+
+    const piHome = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    expect(result.rootDir).toMatch(new RegExp(`${piHome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[/\\\\]runs[/\\\\]`))
+    expect(existsSync(join(piHome, 'settings.json'))).toBe(true)
+    expect(existsSync(join(piHome, 'models.json'))).toBe(true)
+    expect(existsSync(join(piHome, 'mcp.json'))).toBe(true)
+    expect(existsSync(join(piHome, 'APPEND_SYSTEM.md'))).toBe(true)
+    expect(readFileSync(join(piHome, 'models.json'), 'utf-8')).not.toContain('sk-runtime-secret')
+    const runtimeModels = JSON.parse(readFileSync(join(result.rootDir, 'models.json'), 'utf-8'))
+    expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
+    expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')
+  })
+
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
 

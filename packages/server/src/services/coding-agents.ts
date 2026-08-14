@@ -1126,6 +1126,21 @@ function piLiveConfigDefault(key: string, profile: string): string | null {
   return null
 }
 
+async function ensurePiScopedBaseConfigFiles(scope: Required<CodingAgentConfigScope>): Promise<void> {
+  const rootDir = getScopedConfigRoot('pi', scope)
+  await mkdir(rootDir, { recursive: true })
+
+  for (const definition of CONFIG_FILE_DEFINITIONS.pi) {
+    const content = piLiveConfigDefault(definition.key, scope.profile)
+    if (content == null) continue
+    const absolutePath = join(rootDir, definition.scopedPath)
+    if (existsSync(absolutePath)) continue
+    await writeFile(absolutePath, content, { encoding: 'utf-8', flag: 'wx' }).catch((err: any) => {
+      if (err?.code !== 'EEXIST') throw err
+    })
+  }
+}
+
 function buildLaunchShellCommand(input: {
   workspaceDir: string
   env: Record<string, string>
@@ -2034,6 +2049,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ;(err as any).status = 400
       throw err
     }
+    // Keep a stable, credential-free Pi config set at the same level as the
+    // Claude Code and Codex homes. Each conversation still gets an isolated
+    // runs/<hash> directory containing its provider credentials and sessions.
+    await ensurePiScopedBaseConfigFiles(scope)
     const proxyTarget = baseUrl && apiKey
       ? registerCodexProxyTarget({
           profile: scope.profile,
