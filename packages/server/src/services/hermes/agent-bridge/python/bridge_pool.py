@@ -1097,7 +1097,7 @@ class AgentPool:
                         event = process_registry.completion_queue.get_nowait()
                     except Exception:
                         break
-                    if event.get("type") != "async_delegation" or not owns_event(event):
+                    if event.get("type") not in ("async_delegation", "completion") or not owns_event(event):
                         deferred.append(event)
                         continue
                     claim_id = claim_event_delivery(event, "agent-bridge")
@@ -1105,6 +1105,18 @@ class AgentPool:
                         pending_notification_count += 1
                         deferred.append(event)
                         continue
+                    # Terminal completion events (notify_on_complete) carry no
+                    # delegation_id and claim_event_delivery() returns "" for
+                    # them (only async_delegation events are DB-backed). The
+                    # TypeScript side requires non-empty delegation_id/claim_id
+                    # to route the notification back into the session, so
+                    # synthesize stable tokens keyed by the process session.
+                    if event.get("type") == "completion":
+                        _proc_session = str(event.get("session_id") or "")
+                        if claim_id == "":
+                            claim_id = f"terminal:{_proc_session}:{uuid.uuid4().hex}"
+                        _evt_delegation_id = f"terminal:{_proc_session}"
+                        event["delegation_id"] = _evt_delegation_id
                     delegation_id = str(event.get("delegation_id") or "")
                     with self._lock:
                         suppressed = delegation_id in self._suppressed_background_delegations
