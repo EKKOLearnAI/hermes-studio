@@ -1,6 +1,6 @@
 ---
 date: 2026-08-14
-pr: pending
+pr: 2538
 feature: Group Chat per-room full local access switch
 impact: Room owners can grant non-owner-triggered local Agents full local file access by disabling the authorized_workspace constraint injection for that room
 ---
