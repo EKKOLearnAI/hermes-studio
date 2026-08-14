@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -172,11 +172,16 @@ describe('coding agent launch preparation', () => {
     })
     expect(persistedProxyTarget.input).not.toHaveProperty('apiKey')
     expect(persistedProxyTarget.apiKeyEncrypted).toMatchObject({
-      v: 1,
+      v: 2,
       algorithm: 'aes-256-gcm',
     })
     expect(persistedProxyTargetContent).not.toContain('sk-runtime-secret')
-    expect(existsSync(join(home, 'coding-agent', '.pi-proxy-target.key'))).toBe(true)
+    const encryptionKeyPath = join(home, 'coding-agent', '.pi-proxy-target.key')
+    expect(existsSync(encryptionKeyPath)).toBe(true)
+    if (process.platform !== 'win32') {
+      expect(statSync(encryptionKeyPath).mode & 0o777).toBe(0o600)
+      expect(statSync(persistedProxyTargetPath).mode & 0o777).toBe(0o600)
+    }
     expect(persistedProxyTarget.token).toBe(runtimeModels.providers['hermes-studio'].apiKey)
     await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
     expect(result.args).not.toContain('rpc')
@@ -231,9 +236,51 @@ describe('coding agent launch preparation', () => {
     const migratedContent = readFileSync(targetPath, 'utf8')
     const migrated = JSON.parse(migratedContent)
     expect(migrated.input).not.toHaveProperty('apiKey')
-    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 1, algorithm: 'aes-256-gcm' })
+    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 2, algorithm: 'aes-256-gcm' })
     expect(migratedContent).not.toContain('sk-legacy-plaintext')
+    if (process.platform !== 'win32') {
+      chmodSync(targetPath, 0o644)
+      await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+      expect(statSync(targetPath).mode & 0o777).toBe(0o600)
+    }
     await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+  })
+
+  it('rejects encrypted Pi proxy credentials when authenticated target metadata is tampered', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-authenticated-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'tamper-session',
+      agentSessionId: 'tamper-agent-session',
+    })
+    const targetPath = join(result.rootDir, 'proxy-target.json')
+    const persisted = JSON.parse(readFileSync(targetPath, 'utf8'))
+    const tamperedBaseUrl = structuredClone(persisted)
+    tamperedBaseUrl.input.baseUrl = 'https://attacker.example.com/v1'
+    writeFileSync(targetPath, `${JSON.stringify(tamperedBaseUrl, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(0)
+
+    const tamperedToken = structuredClone(persisted)
+    tamperedToken.token = 'hwui_attacker_token'
+    writeFileSync(targetPath, `${JSON.stringify(tamperedToken, null, 2)}\n`)
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(0)
   })
 
   it('launches Claude Code with the global config when requested', async () => {

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { CodingAgentRunManager } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
 
 const realE2eEnabled = process.env.PI_REAL_RPC_E2E === '1'
 const describeReal = realE2eEnabled ? describe : describe.skip
@@ -94,6 +95,45 @@ async function promptAndSettle(rpc: RpcProcess, id: string, message: string, ima
   return rpc.events.slice(from)
 }
 
+function createStudioManager() {
+  const manager = new CodingAgentRunManager(60_000)
+  const emitted: Array<{ sessionId: string; event: string; payload: any }> = []
+  ;(manager as any).ensureDbSession = () => {}
+  ;(manager as any).addUserMessage = (run: any, content: string) => {
+    run.state.messages.push({
+      id: run.state.messages.length + 1,
+      session_id: run.launch.sessionId,
+      role: 'user',
+      content,
+      timestamp: Math.floor(Date.now() / 1000),
+    })
+    return run.state.messages.length
+  }
+  ;(manager as any).emitToChat = (sessionId: string, event: string, payload: any) => {
+    emitted.push({ sessionId, event, payload })
+  }
+  ;(manager as any).markChatRunCompleted = () => {}
+  ;(manager as any).startWorkspaceRunDiff = () => {}
+  ;(manager as any).completeWorkspaceRunDiff = () => undefined
+  ;(manager as any).startCodingAgentMemoryExport = () => {}
+  return { manager, emitted }
+}
+
+async function waitForStudioEvent(
+  emitted: Array<{ sessionId: string; event: string; payload: any }>,
+  predicate: (event: { sessionId: string; event: string; payload: any }) => boolean,
+  from = 0,
+  timeoutMs = 15_000,
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const found = emitted.slice(from).find(predicate)
+    if (found) return found
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 10))
+  }
+  throw new Error(`Timed out waiting for Studio Pi event: ${JSON.stringify(emitted.slice(from))}`)
+}
+
 describeReal('real Pi RPC end-to-end', () => {
   let root = ''
   let configDir = ''
@@ -109,7 +149,10 @@ describeReal('real Pi RPC end-to-end', () => {
     imagePath = join(root, '图片 示例.png')
     await mkdir(configDir, { recursive: true })
     await mkdir(sessionDir, { recursive: true })
-    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    await writeFile(
+      imagePath,
+      Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nksAAAAASUVORK5CYII=', 'base64'),
+    )
 
     const adapterEntry = resolve(
       process.env.PI_RPC_E2E_ADAPTER_ENTRY
@@ -238,5 +281,99 @@ describeReal('real Pi RPC end-to-end', () => {
     expect(resumed.data.messageCount).toBeGreaterThan(0)
     const recovered = await promptAndSettle(rpc, 'prompt-recovered', 'E2E_RECOVERED')
     expect(JSON.stringify(recovered)).toContain('reply:E2E_RECOVERED')
+  }, 60_000)
+
+  it('runs the real Pi process through CodingAgentRunManager and canonical Studio events', async () => {
+    const managerSessionDir = join(root, 'Studio Manager 会话')
+    await mkdir(managerSessionDir, { recursive: true })
+    const nativeSessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const launch = (sessionId: string) => ({
+      agentSessionId: `agent-${sessionId}`,
+      agentNativeSessionId: nativeSessionId,
+      agentId: 'pi' as const,
+      mode: 'scoped' as const,
+      profile: 'default',
+      provider: 'hermes-e2e',
+      model: 'e2e-model',
+      sessionId,
+      command: findPiCommand(),
+      args: [
+        '--mode', 'rpc',
+        '--provider', 'hermes-e2e',
+        '--model', 'e2e-model',
+        '--session-id', nativeSessionId,
+        '--session-dir', managerSessionDir,
+        '--no-approve',
+        '--offline',
+      ],
+      env: {
+        PI_CODING_AGENT_DIR: configDir,
+        PI_CODING_AGENT_SESSION_DIR: managerSessionDir,
+        PI_SKIP_VERSION_CHECK: '1',
+      },
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    const firstStudio = createStudioManager()
+    firstStudio.manager.start(launch('studio-pi-chat-1'))
+
+    let from = firstStudio.emitted.length
+    firstStudio.manager.send('studio-pi-chat-1', 'Studio E2E image', {
+      images: [{ name: '图片 示例.png', path: imagePath, mediaType: 'image/png' }],
+    })
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
+    expect(firstStudio.emitted.slice(from)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'run.started' }),
+      expect.objectContaining({
+        event: 'message.delta',
+        payload: expect.objectContaining({ delta: expect.stringContaining('images=1') }),
+      }),
+      expect.objectContaining({ event: 'run.completed' }),
+    ]))
+
+    from = firstStudio.emitted.length
+    firstStudio.manager.send('studio-pi-chat-1', 'E2E_LOCAL_TOOL')
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
+    expect(firstStudio.emitted.slice(from).some(event => event.event === 'tool.started')).toBe(true)
+    expect(firstStudio.emitted.slice(from).some(event => (
+      event.event === 'tool.completed'
+      && JSON.stringify(event.payload).includes('local:works')
+    ))).toBe(true)
+
+    from = firstStudio.emitted.length
+    firstStudio.manager.send('studio-pi-chat-1', 'E2E_MCP_TOOL')
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
+    expect(firstStudio.emitted.slice(from).some(event => (
+      event.event === 'tool.completed'
+      && JSON.stringify(event.payload).includes('mcp:mcp-works')
+    ))).toBe(true)
+
+    from = firstStudio.emitted.length
+    firstStudio.manager.send('studio-pi-chat-1', 'E2E_FAIL')
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.failed', from)
+    expect(JSON.stringify(firstStudio.emitted.slice(from))).toContain('intentional Pi provider failure')
+
+    from = firstStudio.emitted.length
+    firstStudio.manager.send('studio-pi-chat-1', 'E2E_ABORT')
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.started', from)
+    expect(firstStudio.manager.stop('studio-pi-chat-1')).toBe(true)
+    await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.failed', from)
+    expect(JSON.stringify(firstStudio.emitted.slice(from))).toContain('Coding agent session closed')
+
+    const recoveredStudio = createStudioManager()
+    recoveredStudio.manager.start(launch('studio-pi-chat-2'))
+    from = recoveredStudio.emitted.length
+    recoveredStudio.manager.send('studio-pi-chat-2', 'E2E_RECOVERED')
+    await waitForStudioEvent(recoveredStudio.emitted, event => event.event === 'run.completed', from)
+    const recoveredText = recoveredStudio.emitted
+      .slice(from)
+      .filter(event => event.event === 'message.delta')
+      .map(event => String(event.payload?.delta || ''))
+      .join('')
+    expect(recoveredText).toContain('reply:E2E_RECOVERED')
+    expect(Number(recoveredText.match(/messages=(\d+)/)?.[1] || 0)).toBeGreaterThan(2)
+    recoveredStudio.manager.stop('studio-pi-chat-2', { reportClosed: false })
   }, 60_000)
 })

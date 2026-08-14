@@ -405,11 +405,20 @@ describe('group chat baseline behavior', () => {
       ownerName: 'Guest',
       targetOrigin: 'http://127.0.0.1:8648',
       agent: relayStore.normalizeRemoteGroupAgentDescriptor({
-        agent: 'hermes',
+        agent: 'pi',
         profile: 'default',
-        name: 'Remote',
+        provider: 'openai',
+        model: 'pi-remote-model',
+        apiMode: 'codex_responses',
+        name: 'Remote Pi',
       }),
       now: 1_000,
+    })
+    expect(created.request.agent).toMatchObject({
+      agent: 'pi',
+      model: 'pi-remote-model',
+      apiMode: 'codex_responses',
+      name: 'Remote Pi',
     })
 
     expect(relayStore.getGroupAgentPairingRequestForRequester(

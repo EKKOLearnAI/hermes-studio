@@ -40,5 +40,5 @@ impact: Hermes Studio can manage and run Pi in RPC mode with scoped provider rou
 ### Interactive extension UI
 
 - Native Pi terminal/TUI sessions retain Pi's full interactive extension UI.
-- Studio RPC chat accepts non-interactive extension notifications (`notify`, status, widget, and title updates).
+- Studio RPC chat receives but intentionally ignores non-interactive extension notifications (`notify`, status, widget, and title updates); they are not rendered or persisted.
 - Interactive RPC requests such as confirmation, input, and selection are fail-closed: confirmations are rejected and other requests are cancelled. A future Web UI protocol may add explicit two-way rendering; this release does not silently approve extension actions.
