@@ -662,6 +662,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
   maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
   allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
+  fullLocalAccess: 'INTEGER NOT NULL DEFAULT 0',
   agentHandoffEnabled: 'INTEGER NOT NULL DEFAULT 1',
   agentHandoffMaxDepth: 'INTEGER',
   agentHandoffUnlimited: 'INTEGER NOT NULL DEFAULT 0',

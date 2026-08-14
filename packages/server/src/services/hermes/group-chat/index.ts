@@ -260,6 +260,7 @@ export interface RoomInfo {
     guestAgentApproval: 'owner'
     maxGuestAgentsPerMember: number
     allowRemoteWorkspaceAccess: number
+    fullLocalAccess: number
     agentHandoffEnabled: number
     agentHandoffMaxDepth: number | null
     agentHandoffUnlimited: number
@@ -289,6 +290,7 @@ const ROOM_SELECT_COLUMNS = [
     'guestAgentApproval',
     'maxGuestAgentsPerMember',
     'allowRemoteWorkspaceAccess',
+    'fullLocalAccess',
     'agentHandoffEnabled',
     'agentHandoffMaxDepth',
     'agentHandoffUnlimited',
@@ -1578,6 +1580,16 @@ class ChatStorage {
         if (String(room.workspace || '') === nextWorkspace) return room
         const seed = this.newRoomSessionSeed()
         this.db()?.prepare('UPDATE gc_rooms SET workspace = ?, sessionSeed = ? WHERE id = ?').run(nextWorkspace, seed, roomId)
+        return this.getRoom(roomId) || null
+    }
+
+    updateRoomFullLocalAccess(roomId: string, enabled: boolean): RoomInfo | null {
+        const room = this.getRoom(roomId)
+        if (!room) return null
+        const next = enabled ? 1 : 0
+        if (room.fullLocalAccess === next) return room
+        const seed = this.newRoomSessionSeed()
+        this.db()?.prepare('UPDATE gc_rooms SET fullLocalAccess = ?, sessionSeed = ? WHERE id = ?').run(next, seed, roomId)
         return this.getRoom(roomId) || null
     }
 

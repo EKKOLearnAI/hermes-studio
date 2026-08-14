@@ -981,6 +981,7 @@ export class AgentClient implements GroupAgentExecutor {
             msg?.targetOwnerMemberId
             && msg.senderId
             && msg.senderId !== msg.targetOwnerMemberId
+            && !room?.fullLocalAccess
         ) {
             promptParts.push(buildNonOwnerRequestSecurityPrompt({
                 requesterName: msg.senderName,

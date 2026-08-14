@@ -126,6 +126,8 @@ const clarifyResponse = ref('')
 const allowGuestAgentsDraft = ref(false)
 const maxGuestAgentsPerMemberDraft = ref(1)
 const allowRemoteWorkspaceAccessDraft = ref(false)
+const fullLocalAccessDraft = ref(false)
+const isSavingFullLocalAccess = ref(false)
 const isSavingGuestAgentPolicy = ref(false)
 let agentPairingRefreshTimer: ReturnType<typeof setInterval> | null = null
 let remoteRoomRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -1443,6 +1445,7 @@ async function handleOpenRoomSettings() {
         allowGuestAgentsDraft.value = Number(room.allowGuestAgents || 0) === 1
         maxGuestAgentsPerMemberDraft.value = Math.max(1, Number(room.maxGuestAgentsPerMember || 1))
         allowRemoteWorkspaceAccessDraft.value = Number(room.allowRemoteWorkspaceAccess || 0) === 1
+        fullLocalAccessDraft.value = Number(room.fullLocalAccess || 0) === 1
         summaryConfig.value = {
             summaryProfile: room.summaryProfile || profilesStore.activeProfileName || 'default',
             summaryProvider: room.summaryProvider || '',
@@ -1531,6 +1534,20 @@ async function handleSaveGuestAgentPolicy(): Promise<void> {
         message.error(error?.message || t('common.saveFailed'))
     } finally {
         isSavingGuestAgentPolicy.value = false
+    }
+}
+
+async function handleSaveFullLocalAccess(): Promise<void> {
+    const roomId = store.currentRoomId
+    if (!roomId || !currentRoomCanManage.value || isSavingFullLocalAccess.value) return
+    isSavingFullLocalAccess.value = true
+    try {
+        await store.setRoomFullLocalAccess(roomId, fullLocalAccessDraft.value)
+        message.success(t('groupChat.fullLocalAccessSaved'))
+    } catch (error: any) {
+        message.error(error?.message || t('groupChat.fullLocalAccessSaveFailed'))
+    } finally {
+        isSavingFullLocalAccess.value = false
     }
 }
 
@@ -2799,6 +2816,41 @@ async function handleClarify(response?: string) {
                                 type="primary"
                                 :loading="isSavingGuestAgentPolicy"
                                 @click="handleSaveGuestAgentPolicy"
+                            >
+                                {{ t('common.save') }}
+                            </NButton>
+                        </section>
+                        <section class="settings-section">
+                            <h4>{{ t('groupChat.fullLocalAccess') }}</h4>
+                            <div class="guest-agent-policy-row">
+                                <div>
+                                    <strong>{{ t('groupChat.fullLocalAccess') }}</strong>
+                                    <p class="form-hint">{{ t('groupChat.fullLocalAccessHint') }}</p>
+                                    <p v-if="fullLocalAccessDraft" class="full-access-danger">
+                                        {{ t('groupChat.fullLocalAccessDangerHint') }}
+                                    </p>
+                                </div>
+                                <NSwitch v-model:value="fullLocalAccessDraft" />
+                            </div>
+                            <NPopconfirm
+                                v-if="fullLocalAccessDraft"
+                                :title="t('groupChat.fullLocalAccessConfirmTitle')"
+                                :positive-text="t('common.confirm')"
+                                :negative-text="t('common.cancel')"
+                                @positive-click="handleSaveFullLocalAccess"
+                            >
+                                <template #trigger>
+                                    <NButton type="primary" :loading="isSavingFullLocalAccess">
+                                        {{ t('common.save') }}
+                                    </NButton>
+                                </template>
+                                {{ t('groupChat.fullLocalAccessConfirmContent') }}
+                            </NPopconfirm>
+                            <NButton
+                                v-else
+                                type="primary"
+                                :loading="isSavingFullLocalAccess"
+                                @click="handleSaveFullLocalAccess"
                             >
                                 {{ t('common.save') }}
                             </NButton>
@@ -4336,7 +4388,6 @@ export default defineComponent({ components: { CreateRoomForm } })
     justify-content: space-between;
     gap: 18px;
     margin-bottom: 14px;
-
     strong {
         color: $text-primary;
         font-size: 13px;
@@ -4346,6 +4397,13 @@ export default defineComponent({ components: { CreateRoomForm } })
     .form-hint {
         margin: 5px 0 0;
     }
+}
+
+.full-access-danger {
+    margin: 8px 0 0;
+    color: #d03050;
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 .agent-pairing-float-panel {
