@@ -1,6 +1,6 @@
 ---
 date: 2026-08-14
-pr: pending
+pr: 2555
 feature: Group Chat speech input and authoritative execution queue
 impact: Group Chat reuses the existing speech-to-text pipeline and exposes queued Agent work that safely converges across clients and can be cancelled before execution.
 ---
