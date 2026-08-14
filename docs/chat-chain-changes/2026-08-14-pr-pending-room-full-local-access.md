@@ -15,7 +15,7 @@ This feature removes a prompt-level workspace hint, it does not add or remove an
 
 - New `PUT /api/hermes/group-chat/rooms/:roomId/full-local-access` endpoint (manager-only, boolean body, 404/403/400 handling) mirroring the workspace endpoint semantics: fence + interrupt active room Agent sessions on actual state change.
 - Non-owner prompt injection in `agent-clients.ts` is gated by `!room.fullLocalAccess`.
-- Room settings UI shows the switch only for managers; enabling requires a confirmation popconfirm; zh/en locale keys added.
+- Room settings UI shows the switch only for managers; enabling requires a confirmation popconfirm; locale keys added for all 11 existing locales.
 - Default remains off, so existing behavior is unchanged for all rooms until an owner opts in.
 
 ## Notes
