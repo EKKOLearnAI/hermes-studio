@@ -165,7 +165,7 @@ describe('MessageList session scroll position', () => {
       runtime: 'Ekko',
       session: { source: 'global_agent', agent: 'ekko-agent', codingAgentId: 'ekko-agent' },
       logo: '/coding-agents/ekko-agent.png',
-      alt: 'Ekko Agent',
+      alt: 'Ekko',
     },
   ])('renders the $runtime logo for an empty Global Agent session', async ({ session, logo, alt }) => {
     const chatStore = useChatStore()

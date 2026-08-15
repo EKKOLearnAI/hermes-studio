@@ -830,10 +830,10 @@ const hiddenDefaultWorkspaces = computed(() => {
 
 const newChatAgentOptions = computed(() => [
   { label: "Hermes", value: "hermes" },
+  { label: "Ekko", value: "ekko-agent" },
   { label: "Claude Code", value: "claude-code" },
   { label: "Codex", value: "codex" },
   { label: "Pi", value: "pi" },
-  { label: "Ekko Agent", value: "ekko-agent" },
 ]);
 
 const newChatApiModeOptions = computed(() => [

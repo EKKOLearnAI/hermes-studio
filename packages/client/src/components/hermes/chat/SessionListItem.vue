@@ -48,7 +48,7 @@ const isGlobalAgentSession = computed(() => props.session.source === 'global_age
 const sessionAgentLogo = computed(() => {
   if (isGlobalAgentSession.value) {
     if (props.session.codingAgentId === 'ekko-agent' || props.session.agent === 'ekko-agent') {
-      return { label: 'Ekko Agent', src: '/coding-agents/ekko-agent.png' }
+      return { label: 'Ekko', src: '/coding-agents/ekko-agent.png' }
     }
     return { label: 'Hermes', src: '/coding-agents/hermes.png' }
   }
@@ -60,7 +60,7 @@ const sessionAgentLogo = computed(() => {
       return { label: 'Pi', src: '/coding-agents/pi.svg' }
     }
     if (props.session.codingAgentId === 'ekko-agent' || props.session.agent === 'ekko-agent') {
-      return { label: 'Ekko Agent', src: '/coding-agents/ekko-agent.png' }
+      return { label: 'Ekko', src: '/coding-agents/ekko-agent.png' }
     }
     return { label: 'Claude Code', src: '/coding-agents/claude-code.svg' }
   }

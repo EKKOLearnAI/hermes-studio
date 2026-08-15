@@ -177,8 +177,8 @@ const emptyState = computed(() => {
   if (codingAgentId === "ekko-agent") {
     return {
       logo: "/coding-agents/ekko-agent.png",
-      alt: "Ekko Agent",
-      text: t("chat.emptyStateAgent", { agent: "Ekko Agent" }),
+      alt: "Ekko",
+      text: t("chat.emptyStateAgent", { agent: "Ekko" }),
     };
   }
   return {

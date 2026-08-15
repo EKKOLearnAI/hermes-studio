@@ -222,7 +222,7 @@ describe('SessionListItem', () => {
 
     const logo = wrapper.get('.session-item-agent-logo')
     expect(logo.attributes('src')).toBe('/coding-agents/ekko-agent.png')
-    expect(logo.attributes('alt')).toBe('Ekko Agent')
+    expect(logo.attributes('alt')).toBe('Ekko')
   })
 
   it('defaults old sessions without agent metadata to the Hermes logo', () => {

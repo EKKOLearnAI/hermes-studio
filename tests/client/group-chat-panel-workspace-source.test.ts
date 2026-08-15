@@ -473,7 +473,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain("{ label: 'Hermes', value: 'hermes' }")
     expect(source).toContain("{ label: 'Claude Code', value: 'claude' }")
     expect(source).toContain("{ label: 'Codex', value: 'codex' }")
-    expect(source).toContain("{ label: 'Ekko Agent', value: 'ekko' }")
+    expect(source).toContain("{ label: 'Ekko', value: 'ekko' }")
     expect(source).toContain('v-model:value="agentName"')
     expect(source).toContain('v-model:value="agentDescription"')
     expect(source).toContain('avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value)')

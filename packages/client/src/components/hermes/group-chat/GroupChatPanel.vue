@@ -188,10 +188,10 @@ type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
 
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
     { label: 'Hermes', value: 'hermes' },
+    { label: 'Ekko', value: 'ekko' },
     { label: 'Claude Code', value: 'claude' },
     { label: 'Codex', value: 'codex' },
     { label: 'Pi', value: 'pi' },
-    { label: 'Ekko Agent', value: 'ekko' },
 ])
 
 function getAgentModelGroups(profile: string) {
