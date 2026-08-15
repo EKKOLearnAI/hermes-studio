@@ -178,6 +178,8 @@ const voiceInput = useComposerVoiceInput({
   insertTranscript: insertVoiceTranscriptIntoInput,
 })
 
+const CODING_AGENT_SLASH_COMMANDS = ['context', 'compact', 'usage', 'status']
+
 const bridgeCommands = computed<SlashCommandOption[]>(() =>
   BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
     key: command.key,
@@ -216,7 +218,14 @@ const isBridgeSession = computed(() => {
 })
 const isCodingAgentSession = computed(() => {
   const session = chatStore.activeSession
-  return !!session && (session.source === 'coding_agent' || session.agent === 'claude' || session.agent === 'codex' || session.agent === 'pi')
+  return !!session && (
+    session.source === 'coding_agent'
+    || !!session.codingAgentId
+    || session.agent === 'claude'
+    || session.agent === 'codex'
+    || session.agent === 'claude-code'
+    || session.agent === 'pi'
+  )
 })
 const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
 const skillPickerItems = computed(() => {
@@ -242,7 +251,7 @@ const filteredBridgeCommands = computed(() => {
   const commands = isBridgeSession.value
     ? bridgeCommands.value
     : isCodingAgentSession.value
-      ? bridgeCommands.value.filter(command => ['context', 'compact', 'usage', 'status'].includes(command.name))
+      ? bridgeCommands.value.filter(command => CODING_AGENT_SLASH_COMMANDS.includes(command.name))
       : isForkCommandSession.value
         ? bridgeCommands.value.filter(command => command.name === 'fork')
         : []
@@ -543,7 +552,7 @@ function scrollCommandIntoView() {
 }
 
 function updateSlashState() {
-  if (!isBridgeSession.value && !isForkCommandSession.value) {
+  if (!isBridgeSession.value && !isCodingAgentSession.value && !isForkCommandSession.value) {
     slashActive.value = false
     return
   }
