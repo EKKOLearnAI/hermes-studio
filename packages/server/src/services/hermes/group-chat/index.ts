@@ -4822,8 +4822,11 @@ export class GroupChatServer {
         if (remoteExecutor?.respondApproval) {
             try {
                 const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
-                if (resolved) this.takePendingApprovalRoute(routeKey)
-                ack?.({ ok: true, resolved })
+                if (resolved) {
+                    this.takePendingApprovalRoute(routeKey)
+                    ack?.({ ok: true, resolved: true })
+                    return
+                }
             } catch (err: any) {
                 if (isExpiredInteractionError(err?.message || err)) {
                     this.expirePendingAgentInteractions(
@@ -4837,8 +4840,8 @@ export class GroupChatServer {
                     return
                 }
                 ack?.({ error: err.message || 'approval response failed' })
+                return
             }
-            return
         }
         const ekkoResult = pendingRoute.agentSessionId
             ? respondToEkkoToolApproval(
@@ -4956,8 +4959,11 @@ export class GroupChatServer {
         if (remoteExecutor?.respondClarify) {
             try {
                 const resolved = await remoteExecutor.respondClarify(data.clarify_id, response)
-                if (resolved) this.takePendingClarifyRoute(routeKey)
-                ack?.({ ok: true, resolved })
+                if (resolved) {
+                    this.takePendingClarifyRoute(routeKey)
+                    ack?.({ ok: true, resolved: true })
+                    return
+                }
             } catch (err: any) {
                 if (isExpiredInteractionError(err?.message || err)) {
                     this.expirePendingAgentInteractions(
@@ -4971,8 +4977,8 @@ export class GroupChatServer {
                     return
                 }
                 ack?.({ error: err.message || 'clarification response failed' })
+                return
             }
-            return
         }
         const ekkoResult = pendingRoute.agentSessionId
             ? respondToEkkoClarification(pendingRoute.agentSessionId, data.clarify_id, response)
