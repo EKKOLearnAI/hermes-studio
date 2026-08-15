@@ -1,6 +1,6 @@
 ---
 date: 2026-08-15
-pr: pending
+pr: 2559
 feature: Cross-agent session handoff
 impact: Codex / Claude Code sessions can now be continued in a new Hermes session from the session context menu.
 ---
