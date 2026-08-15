@@ -84,6 +84,25 @@ describe('AppRelayClient', () => {
     expect(auth.timestamp).toEqual(expect.any(Number))
   })
 
+  it('keeps waiting across transient connect errors while Socket.IO retries', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })!
+    const remote = sockets[0]
+    const connected = client.waitForConnected(1000)
+
+    remote.__handlers.get('connect_error')?.(new Error('temporary network failure'))
+    remote.connected = true
+    remote.__handlers.get('connect')?.()
+
+    await expect(connected).resolves.toBe(true)
+  })
+
   it('forwards local API requests with safe headers and binary support', async () => {
     const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/hermes/tts/synthesize')
       ? new Response(Uint8Array.from([7, 8, 9]), {
