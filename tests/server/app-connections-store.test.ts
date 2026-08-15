@@ -48,7 +48,32 @@ describe('App connections store', () => {
       .toThrow('app_authorization_code_expired')
   })
 
-  it('deduplicates by phone code and connection type and validates each bound token', async () => {
+  it('migrates the legacy global device/type uniqueness to cloud-account uniqueness', async () => {
+    db.exec('DROP INDEX uniq_app_connections_device_type_cloud_user')
+    db.exec('DROP INDEX idx_app_connections_cloud_user')
+    db.exec('ALTER TABLE app_connections DROP COLUMN cloud_user_id')
+    db.exec('CREATE UNIQUE INDEX uniq_app_connections_device_type ON app_connections(device_code, connection_type)')
+    db.prepare(`
+      INSERT INTO app_connections (
+        device_code, device_name, device_brand, device_model, connection_type, user_id,
+        token_hash, token_expires_at, last_connected_at, revoked_at,
+        cloud_revocation_pending, created_at, updated_at
+      ) VALUES ('legacy-phone', 'Legacy Phone', '', '', 'cloud', 7, 'hash', 5000, 3000, NULL, 1, 3000, 3000)
+    `).run()
+
+    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    initAllHermesTables()
+
+    const columns = db.prepare('PRAGMA table_info(app_connections)').all() as Array<{ name: string }>
+    const indexes = db.prepare('PRAGMA index_list(app_connections)').all() as Array<{ name: string }>
+    expect(columns.map(column => column.name)).toContain('cloud_user_id')
+    expect(indexes.map(index => index.name)).toContain('uniq_app_connections_device_type_cloud_user')
+    expect(indexes.map(index => index.name)).not.toContain('uniq_app_connections_device_type')
+    expect(db.prepare('SELECT cloud_user_id, cloud_revocation_pending FROM app_connections WHERE device_code = ?')
+      .get('legacy-phone')).toMatchObject({ cloud_user_id: 0, cloud_revocation_pending: 0 })
+  })
+
+  it('deduplicates by phone, connection type, and cloud account while validating each token', async () => {
     const store = await import('../../packages/server/src/db/hermes/app-connections-store')
     const first = store.upsertAppConnection({
       deviceCode: 'phone-001',
@@ -94,6 +119,7 @@ describe('App connections store', () => {
       deviceModel: 'iPhone 17,1',
       connectionType: 'cloud',
       userId: 7,
+      cloudUserId: 101,
       token: 'cloud-token',
       tokenExpiresAt: 5_000,
       now: 3_200,
@@ -102,6 +128,23 @@ describe('App connections store', () => {
     expect(store.listAppConnections()).toHaveLength(2)
     expect(store.isAppConnectionTokenActive('phone-001', 'cloud', 'cloud-token', 7, 3_300)).toBe(true)
     expect(store.isAppConnectionTokenActive('phone-001', 'lan', 'cloud-token', 7, 3_300)).toBe(false)
+
+    const secondCloudAccount = store.upsertAppConnection({
+      deviceCode: 'phone-001',
+      deviceName: 'Alice iPhone 16',
+      deviceBrand: 'Apple',
+      deviceModel: 'iPhone 17,1',
+      connectionType: 'cloud',
+      userId: 7,
+      cloudUserId: 202,
+      token: 'second-cloud-token',
+      tokenExpiresAt: 5_000,
+      now: 3_300,
+    })
+    expect(secondCloudAccount.id).not.toBe(cloud.id)
+    expect(store.listAppConnections()).toHaveLength(3)
+    expect(store.isAppConnectionTokenActive('phone-001', 'cloud', 'cloud-token', 7, 3_400)).toBe(true)
+    expect(store.isAppConnectionTokenActive('phone-001', 'cloud', 'second-cloud-token', 7, 3_400)).toBe(true)
   })
 
   it('hides revoked connections while retaining the tombstone for an offline App reconnect', async () => {
@@ -127,5 +170,59 @@ describe('App connections store', () => {
     expect(store.getAppConnectionTokenStatus('phone-offline', 'lan', 'offline-token', 7, 3_300)).toBe('revoked')
     expect(store.isAppConnectionTokenActive('phone-offline', 'lan', 'offline-token', 7, 3_300)).toBe(false)
     expect(store.revokeAppConnection(connection.id, 3_400)).toBeNull()
+  })
+
+  it('queues an exact cloud-account revoke but never guesses an account for a legacy row', async () => {
+    const store = await import('../../packages/server/src/db/hermes/app-connections-store')
+    const exact = store.upsertAppConnection({
+      deviceCode: 'shared-phone',
+      deviceName: 'Shared Phone',
+      deviceBrand: 'Google',
+      deviceModel: 'Pixel',
+      connectionType: 'cloud',
+      userId: 7,
+      cloudUserId: 101,
+      token: 'exact-token',
+      tokenExpiresAt: 5_000,
+      now: 3_000,
+    })
+    const legacy = store.upsertAppConnection({
+      deviceCode: 'legacy-phone',
+      deviceName: 'Legacy Phone',
+      deviceBrand: 'Google',
+      deviceModel: 'Pixel',
+      connectionType: 'cloud',
+      userId: 7,
+      token: 'legacy-token',
+      tokenExpiresAt: 5_000,
+      now: 3_000,
+    })
+
+    expect(store.revokeAppConnection(exact.id, 3_100)).toMatchObject({ cloud_revocation_pending: 1 })
+    expect(store.revokeAppConnection(legacy.id, 3_100)).toMatchObject({ cloud_revocation_pending: 0 })
+    expect(store.listPendingCloudAppConnectionRevocations()).toEqual([
+      expect.objectContaining({ id: exact.id, cloud_user_id: 101 }),
+    ])
+  })
+
+  it('assigns a legacy row only when the relay provides one exact cloud account', async () => {
+    const store = await import('../../packages/server/src/db/hermes/app-connections-store')
+    const legacy = store.upsertAppConnection({
+      deviceCode: 'legacy-phone',
+      deviceName: 'Legacy Phone',
+      deviceBrand: 'Google',
+      deviceModel: 'Pixel',
+      connectionType: 'cloud',
+      userId: 7,
+      token: 'legacy-token',
+      tokenExpiresAt: 5_000,
+      now: 3_000,
+    })
+
+    expect(store.assignLegacyCloudAppConnectionUser('legacy-phone', 101)).toBe(true)
+    expect(store.listAppConnections()).toEqual([
+      expect.objectContaining({ id: legacy.id, cloud_user_id: 101 }),
+    ])
+    expect(store.assignLegacyCloudAppConnectionUser('legacy-phone', 202)).toBe(false)
   })
 })
