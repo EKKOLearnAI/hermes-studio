@@ -2299,9 +2299,10 @@ class ChatStorage {
         queueId: string,
         requesterMemberId: string,
         cancelCapabilityHash: string,
+        allowAuthenticatedAccountOwnership = false,
     ): RetractedQueuedMessage | null {
         const db = this.db()
-        if (!db || !requesterMemberId || !cancelCapabilityHash) return null
+        if (!db || !requesterMemberId || (!cancelCapabilityHash && !allowAuthenticatedAccountOwnership)) return null
         return this.withImmediateTransaction(db, () => {
             const selected = db.prepare(
                 'SELECT * FROM gc_execution_queue WHERE id = ? AND roomId = ?',
@@ -2320,7 +2321,8 @@ class ChatStorage {
                 || siblings.some(item => (
                     item.status !== 'queued'
                     || item.requesterMemberId !== requesterMemberId
-                    || !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash)
+                    || (!allowAuthenticatedAccountOwnership
+                        && !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash))
                 ))) {
                 return null
             }
@@ -4653,18 +4655,22 @@ export class GroupChatServer {
         const queueId = typeof data?.queueId === 'string' ? data.queueId.trim() : ''
         const cancelCapabilityHash = executionQueueCapabilityHash(data?.executionQueueCapability)
         const joined = roomId ? this.getOnlineRoomMember(socket, roomId) : null
-        if (!roomId || !queueId || !cancelCapabilityHash || !joined || joined.member.source !== 'human') {
+        if (!roomId || !queueId || !joined || joined.member.source !== 'human') {
             ack?.({ error: 'Access denied' })
             return
         }
+        const authUser = socket.data?.authUser as AuthenticatedUser | undefined
+        const authenticatedRequesterMemberId = typeof authUser?.id === 'number'
+            ? authenticatedGroupUserId(authUser.id)
+            : ''
+        const accountOwnsItem = Boolean(authenticatedRequesterMemberId)
+            && authenticatedRequesterMemberId === joined.member.userId
         const item = this.storage.getExecutionQueueItem(queueId)
         if (!item
             || item.roomId !== roomId
-            || !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash)) {
-            ack?.({ error: 'Access denied' })
-            return
-        }
-        if (item.requesterMemberId !== joined.member.userId) {
+            || (item.requesterMemberId !== joined.member.userId)
+            || (!accountOwnsItem
+                && !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash))) {
             ack?.({ error: 'Access denied' })
             return
         }
@@ -4673,6 +4679,7 @@ export class GroupChatServer {
             queueId,
             joined.member.userId,
             cancelCapabilityHash,
+            accountOwnsItem,
         )
         if (!retracted) {
             ack?.({ error: 'Queue item is no longer cancellable', status: this.storage.getExecutionQueueItem(queueId)?.status })
