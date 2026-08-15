@@ -5031,6 +5031,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function openHandoffSession(input: {
+    id: string
+    title: string
+    source: string
+    agent?: string
+    workspace?: string | null
+    profile?: string
+  }) {
+    const existing = sessions.value.find(s => s.id === input.id)
+    if (existing) {
+      void switchSession(input.id)
+      return
+    }
+    sessions.value.unshift({
+      id: input.id,
+      profile: input.profile || useProfilesStore().activeProfileName || 'default',
+      title: input.title || '',
+      source: input.source || 'cli',
+      agent: input.agent || 'hermes',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      workspace: input.workspace || null,
+      isLocalOnly: false,
+    })
+    void switchSession(input.id)
+  }
+
   // Persisted in localStorage keyed by sessionId so the choice survives
   // page reloads. Cleared on session deletion is NOT implemented (best-effort
   // — orphan keys are tiny and never read again).
@@ -5148,5 +5176,6 @@ export const useChatStore = defineStore('chat', () => {
     loadWorkspaceRunChangeFile,
     setSessionReasoningEffort,
     setRuntimeMode,
+    openHandoffSession,
   }
 })

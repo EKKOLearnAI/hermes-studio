@@ -39,6 +39,7 @@ import {
 } from '../../services/hermes/workspace-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
+import { createHermesHandoffSession } from '../../services/hermes/session-handoff'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
@@ -1186,6 +1187,28 @@ export async function importHermesSession(ctx: any) {
   })
 
   ctx.body = { ok: true, imported: true, session: localGetSessionDetail(detail.id) }
+}
+
+export async function createHermesHandoff(ctx: any) {
+  const sourceId = ctx.params.id
+  const source = localGetSession(sourceId)
+  if (denySessionAccess(ctx, source)) return
+
+  const profile = requestedProfile(ctx) || source?.profile || getActiveProfileName()
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile || 'default'}" is not available for this user` }
+    return
+  }
+
+  const result = createHermesHandoffSession(sourceId, { profile })
+  if (!result.ok) {
+    ctx.status = result.status
+    ctx.body = { error: result.error }
+    return
+  }
+
+  ctx.body = { ok: true, session: localGetSessionDetail(result.session.id) }
 }
 
 export async function remove(ctx: any) {

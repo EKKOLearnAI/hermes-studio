@@ -5,6 +5,7 @@ import {
   deleteSessionCategory,
   exportSession,
   fetchSessionCategories,
+  handoffSessionToHermes,
   renameSession,
   renameSessionCategory,
   setSessionCategory,
@@ -1396,6 +1397,10 @@ const contextMenuOptions = computed(() => {
     options.push({ label: t("chat.setModel"), key: "model" })
   }
 
+  if (contextSession.value?.agent === "codex" || contextSession.value?.agent === "claude") {
+    options.push({ label: t("chat.continueInHermes"), key: "handoff-hermes" })
+  }
+
   options.push({
     label: t("chat.moveToCategory"),
     key: "category",
@@ -1471,6 +1476,28 @@ async function handleContextMenuSelect(key: string) {
   if (!contextSessionId.value) return;
   if (key === "pin") {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value);
+    return;
+  }
+  if (key === "handoff-hermes") {
+    const source = contextSession.value;
+    if (!source) return;
+    try {
+      const result = await handoffSessionToHermes(contextSessionId.value, source.profile || null);
+      if (!result.ok || !result.session) {
+        throw new Error(t("chat.continueInHermesFailed"));
+      }
+      chatStore.openHandoffSession({
+        id: result.session.id,
+        title: result.session.title || "",
+        source: "cli",
+        agent: "hermes",
+        workspace: result.session.workspace ?? null,
+        profile: result.session.profile || undefined,
+      });
+      message.success(t("chat.continueInHermesSuccess"));
+    } catch (error: any) {
+      message.error(error?.message || t("chat.continueInHermesFailed"));
+    }
     return;
   }
   if (key.startsWith("category:")) {

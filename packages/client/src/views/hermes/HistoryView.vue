@@ -14,9 +14,11 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, handoffSessionToHermes, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { useChatStore } from '@/stores/hermes/chat'
 
 const appStore = useAppStore()
+const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
@@ -130,6 +132,9 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       key: 'import-webui',
       disabled: Boolean(contextSessionSummary.value?.webui_imported),
     },
+    ...(contextSessionSummary.value?.agent === 'codex' || contextSessionSummary.value?.agent === 'claude'
+      ? [{ label: t('chat.continueInHermes'), key: 'handoff-hermes' }]
+      : []),
     { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
     ...(contextSessionSummary.value?.is_archived ? [{ label: t('chat.unarchiveSession'), key: 'unarchive' }] : []),
     { label: t('chat.copySessionLink'), key: 'copy-link' },
@@ -714,6 +719,31 @@ async function handleContextMenuSelect(key: string) {
   if (!contextSessionId.value) return
   if (key === 'pin') {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
+  } else if (key === 'handoff-hermes') {
+    const summary = contextSessionSummary.value
+    if (!summary) return
+    try {
+      const result = await handoffSessionToHermes(contextSessionId.value, summary.profile || null)
+      if (!result.ok || !result.session) {
+        throw new Error(t('chat.continueInHermesFailed'))
+      }
+      chatStore.openHandoffSession({
+        id: result.session.id,
+        title: result.session.title || '',
+        source: 'cli',
+        agent: 'hermes',
+        workspace: result.session.workspace ?? null,
+        profile: result.session.profile || undefined,
+      })
+      message.success(t('chat.continueInHermesSuccess'))
+      await router.push({
+        name: 'hermes.session',
+        params: { sessionId: result.session.id },
+        query: result.session.profile ? { profile: result.session.profile } : {},
+      })
+    } catch (error: any) {
+      message.error(error?.message || t('chat.continueInHermesFailed'))
+    }
   } else if (key === 'copy-link') {
     await copySessionLink(contextSessionId.value)
   } else if (key === 'copy-id') {
