@@ -85,7 +85,7 @@ export interface RoomAgent {
     id: string
     roomId: string
     agentId: string
-    agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider: string
     model: string
@@ -104,7 +104,7 @@ export interface RoomAgent {
 }
 
 export interface RoomAgentInput {
-    agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -170,6 +170,20 @@ export interface GroupChatMention {
     type: 'agent' | 'all'
     participantId?: string
     displayName: string
+}
+
+export interface GroupExecutionQueueItem {
+    id: string
+    roomId: string
+    messageId: string
+    targetAgentId: string
+    targetAgentName: string
+    requesterMemberId: string
+    textSummary: string
+    sequence: number
+    position: number
+    status: 'queued'
+    createdAt: number
 }
 
 export interface GroupWorkspaceDiffFile {

@@ -15,6 +15,7 @@ export interface AppConnectionRecord {
   device_model: string
   connection_type: AppConnectionType
   user_id: number
+  cloud_user_id: number
   token_hash: string
   token_expires_at: number
   last_connected_at: number
@@ -64,6 +65,11 @@ function normalizeConnectionType(value: unknown): AppConnectionType {
   return value === 'cloud' ? 'cloud' : 'lan'
 }
 
+function normalizeCloudUserId(connectionType: AppConnectionType, value: unknown): number {
+  const userId = Number(value)
+  return connectionType === 'cloud' && Number.isSafeInteger(userId) && userId > 0 ? userId : 0
+}
+
 function connectionRowToRecord(row: StoredAppConnectionRow | Record<string, any>): AppConnectionRecord {
   return {
     id: Number(row.id),
@@ -73,6 +79,7 @@ function connectionRowToRecord(row: StoredAppConnectionRow | Record<string, any>
     device_model: String(row.device_model || ''),
     connection_type: normalizeConnectionType(row.connection_type),
     user_id: Number(row.user_id || 0),
+    cloud_user_id: Number(row.cloud_user_id || 0),
     token_hash: String(row.token_hash || ''),
     token_expires_at: Number(row.token_expires_at || 0),
     last_connected_at: Number(row.last_connected_at || 0),
@@ -172,18 +179,24 @@ export function upsertAppConnection(input: {
   deviceModel: string
   connectionType: AppConnectionType
   userId: number
+  cloudUserId?: number
   token: string
   tokenExpiresAt: number
   now?: number
 }): AppConnectionRecord {
   const now = input.now ?? epochSeconds()
   const tokenHash = hashAppCredential(input.token)
+  const cloudUserId = normalizeCloudUserId(input.connectionType, input.cloudUserId)
   const db = getDb()
   if (!db) {
     const rows = jsonGetAll(APP_CONNECTIONS_TABLE)
     const existing = Object.values(rows)
       .map(connectionRowToRecord)
-      .find(record => record.device_code === input.deviceCode && record.connection_type === input.connectionType)
+      .find(record => (
+        record.device_code === input.deviceCode
+        && record.connection_type === input.connectionType
+        && record.cloud_user_id === cloudUserId
+      ))
     const nextId = Math.max(0, ...Object.values(rows).map(value => Number(value.id || 0))) + 1
     const row: AppConnectionRecord = {
       id: existing?.id || nextId,
@@ -193,6 +206,7 @@ export function upsertAppConnection(input: {
       device_model: input.deviceModel,
       connection_type: input.connectionType,
       user_id: input.userId,
+      cloud_user_id: cloudUserId,
       token_hash: tokenHash,
       token_expires_at: input.tokenExpiresAt,
       last_connected_at: now,
@@ -207,10 +221,10 @@ export function upsertAppConnection(input: {
 
   db.prepare(`
     INSERT INTO ${APP_CONNECTIONS_TABLE} (
-      device_code, device_name, device_brand, device_model, connection_type, user_id, token_hash,
+      device_code, device_name, device_brand, device_model, connection_type, user_id, cloud_user_id, token_hash,
       token_expires_at, last_connected_at, revoked_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-    ON CONFLICT(device_code, connection_type) DO UPDATE SET
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    ON CONFLICT(device_code, connection_type, cloud_user_id) DO UPDATE SET
       device_name = excluded.device_name,
       device_brand = excluded.device_brand,
       device_model = excluded.device_model,
@@ -229,6 +243,7 @@ export function upsertAppConnection(input: {
     input.deviceModel,
     input.connectionType,
     input.userId,
+    cloudUserId,
     tokenHash,
     input.tokenExpiresAt,
     now,
@@ -236,8 +251,8 @@ export function upsertAppConnection(input: {
     now,
   )
   const row = db.prepare(
-    `SELECT * FROM ${APP_CONNECTIONS_TABLE} WHERE device_code = ? AND connection_type = ?`,
-  ).get(input.deviceCode, input.connectionType) as unknown as StoredAppConnectionRow
+    `SELECT * FROM ${APP_CONNECTIONS_TABLE} WHERE device_code = ? AND connection_type = ? AND cloud_user_id = ?`,
+  ).get(input.deviceCode, input.connectionType, cloudUserId) as unknown as StoredAppConnectionRow
   return connectionRowToRecord(row)
 }
 
@@ -255,6 +270,51 @@ export function listAppConnections(): AppConnectionRecord[] {
   return rows.map(connectionRowToRecord)
 }
 
+export function assignLegacyCloudAppConnectionUser(deviceCode: string, cloudUserId: number): boolean {
+  const normalizedDeviceCode = String(deviceCode || '').trim()
+  const normalizedCloudUserId = normalizeCloudUserId('cloud', cloudUserId)
+  if (!normalizedDeviceCode || !normalizedCloudUserId) return false
+  const db = getDb()
+  if (!db) {
+    const connections = Object.values(jsonGetAll(APP_CONNECTIONS_TABLE)).map(connectionRowToRecord)
+    if (connections.some(connection => (
+      connection.device_code === normalizedDeviceCode
+      && connection.connection_type === 'cloud'
+      && connection.cloud_user_id === normalizedCloudUserId
+    ))) return false
+    const legacy = connections.find(connection => (
+      connection.device_code === normalizedDeviceCode
+      && connection.connection_type === 'cloud'
+      && connection.cloud_user_id === 0
+      && connection.revoked_at == null
+    ))
+    if (!legacy) return false
+    jsonSet(APP_CONNECTIONS_TABLE, String(legacy.id), {
+      ...legacy,
+      cloud_user_id: normalizedCloudUserId,
+    } as any)
+    return true
+  }
+
+  const exact = db.prepare(`
+    SELECT 1 FROM ${APP_CONNECTIONS_TABLE}
+    WHERE device_code = ? AND connection_type = 'cloud' AND cloud_user_id = ?
+    LIMIT 1
+  `).get(normalizedDeviceCode, normalizedCloudUserId)
+  if (exact) return false
+  const legacy = db.prepare(`
+    SELECT id FROM ${APP_CONNECTIONS_TABLE}
+    WHERE device_code = ? AND connection_type = 'cloud' AND cloud_user_id = 0 AND revoked_at IS NULL
+    LIMIT 1
+  `).get(normalizedDeviceCode) as { id?: number } | undefined
+  if (!legacy?.id) return false
+  const result = db.prepare(`
+    UPDATE ${APP_CONNECTIONS_TABLE} SET cloud_user_id = ?
+    WHERE id = ? AND cloud_user_id = 0
+  `).run(normalizedCloudUserId, legacy.id)
+  return Number(result.changes) === 1
+}
+
 export function getAppConnectionTokenStatus(
   deviceCode: string,
   connectionType: AppConnectionType,
@@ -263,15 +323,17 @@ export function getAppConnectionTokenStatus(
   now = epochSeconds(),
 ): AppConnectionTokenStatus {
   const db = getDb()
-  const row = db
-    ? db.prepare(`SELECT * FROM ${APP_CONNECTIONS_TABLE} WHERE device_code = ? AND connection_type = ?`).get(deviceCode, connectionType)
-    : Object.values(jsonGetAll(APP_CONNECTIONS_TABLE)).find(value => (
+  const rows = db
+    ? db.prepare(`SELECT * FROM ${APP_CONNECTIONS_TABLE} WHERE device_code = ? AND connection_type = ?`).all(deviceCode, connectionType)
+    : Object.values(jsonGetAll(APP_CONNECTIONS_TABLE)).filter(value => (
         String(value.device_code || '') === deviceCode
         && normalizeConnectionType(value.connection_type) === connectionType
       ))
-  if (!row) return 'invalid'
-  const record = connectionRowToRecord(row as Record<string, any>)
-  if (record.user_id !== userId || !hashesEqual(record.token_hash, hashAppCredential(token))) return 'invalid'
+  const tokenHash = hashAppCredential(token)
+  const record = (rows as Record<string, any>[])
+    .map(connectionRowToRecord)
+    .find(candidate => candidate.user_id === userId && hashesEqual(candidate.token_hash, tokenHash))
+  if (!record) return 'invalid'
   if (record.revoked_at != null) return 'revoked'
   if (record.token_expires_at <= now) return 'expired'
   return 'active'
@@ -298,7 +360,7 @@ export function revokeAppConnection(id: number, now = epochSeconds()): AppConnec
     const revoked = {
       ...row,
       revoked_at: now,
-      cloud_revocation_pending: row.connection_type === 'cloud' ? 1 : 0,
+      cloud_revocation_pending: row.connection_type === 'cloud' && row.cloud_user_id > 0 ? 1 : 0,
       updated_at: now,
     }
     jsonSet(APP_CONNECTIONS_TABLE, String(row.id), revoked as any)
@@ -311,13 +373,15 @@ export function revokeAppConnection(id: number, now = epochSeconds()): AppConnec
   if (!row) return null
   db.prepare(`
     UPDATE ${APP_CONNECTIONS_TABLE}
-    SET revoked_at = ?, cloud_revocation_pending = CASE WHEN connection_type = 'cloud' THEN 1 ELSE 0 END, updated_at = ?
+    SET revoked_at = ?, cloud_revocation_pending = CASE
+      WHEN connection_type = 'cloud' AND cloud_user_id > 0 THEN 1 ELSE 0 END, updated_at = ?
     WHERE id = ? AND revoked_at IS NULL
   `).run(now, now, id)
   return {
     ...connectionRowToRecord(row),
     revoked_at: now,
-    cloud_revocation_pending: connectionRowToRecord(row).connection_type === 'cloud' ? 1 : 0,
+    cloud_revocation_pending: connectionRowToRecord(row).connection_type === 'cloud'
+      && connectionRowToRecord(row).cloud_user_id > 0 ? 1 : 0,
     updated_at: now,
   }
 }
@@ -327,24 +391,51 @@ export function hasPendingCloudAppConnectionRevocations(): boolean {
   if (!db) {
     return Object.values(jsonGetAll(APP_CONNECTIONS_TABLE))
       .map(connectionRowToRecord)
-      .some(connection => connection.connection_type === 'cloud' && connection.cloud_revocation_pending === 1)
+      .some(connection => (
+        connection.connection_type === 'cloud'
+        && connection.cloud_revocation_pending === 1
+        && connection.cloud_user_id > 0
+      ))
   }
   const row = db.prepare(`
     SELECT 1 FROM ${APP_CONNECTIONS_TABLE}
-    WHERE connection_type = 'cloud' AND cloud_revocation_pending = 1
+    WHERE connection_type = 'cloud' AND cloud_revocation_pending = 1 AND cloud_user_id > 0
     LIMIT 1
   `).get()
   return Boolean(row)
 }
 
-export function markCloudAppConnectionRevocationSynced(deviceCode: string): void {
+export function listPendingCloudAppConnectionRevocations(): AppConnectionRecord[] {
+  const db = getDb()
+  if (!db) {
+    return Object.values(jsonGetAll(APP_CONNECTIONS_TABLE))
+      .map(connectionRowToRecord)
+      .filter(connection => (
+        connection.connection_type === 'cloud'
+        && connection.cloud_revocation_pending === 1
+        && connection.cloud_user_id > 0
+      ))
+  }
+  const rows = db.prepare(`
+    SELECT * FROM ${APP_CONNECTIONS_TABLE}
+    WHERE connection_type = 'cloud' AND cloud_revocation_pending = 1 AND cloud_user_id > 0
+  `).all() as unknown as StoredAppConnectionRow[]
+  return rows.map(connectionRowToRecord)
+}
+
+export function markCloudAppConnectionRevocationSynced(deviceCode: string, cloudUserId: number): void {
   const normalized = String(deviceCode || '').trim()
-  if (!normalized) return
+  const normalizedCloudUserId = normalizeCloudUserId('cloud', cloudUserId)
+  if (!normalized || !normalizedCloudUserId) return
   const db = getDb()
   if (!db) {
     for (const value of Object.values(jsonGetAll(APP_CONNECTIONS_TABLE))) {
       const connection = connectionRowToRecord(value)
-      if (connection.device_code !== normalized || connection.connection_type !== 'cloud') continue
+      if (
+        connection.device_code !== normalized
+        || connection.connection_type !== 'cloud'
+        || (connection.cloud_user_id !== normalizedCloudUserId && connection.cloud_user_id !== 0)
+      ) continue
       jsonSet(APP_CONNECTIONS_TABLE, String(connection.id), { ...connection, cloud_revocation_pending: 0 } as any)
     }
     return
@@ -352,6 +443,6 @@ export function markCloudAppConnectionRevocationSynced(deviceCode: string): void
   db.prepare(`
     UPDATE ${APP_CONNECTIONS_TABLE}
     SET cloud_revocation_pending = 0
-    WHERE device_code = ? AND connection_type = 'cloud'
-  `).run(normalized)
+    WHERE device_code = ? AND connection_type = 'cloud' AND cloud_user_id IN (0, ?)
+  `).run(normalized, normalizedCloudUserId)
 }

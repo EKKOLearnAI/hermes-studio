@@ -37,7 +37,7 @@ import { getChatRunServer } from '../routes/hermes/chat-run'
 import type { ContentBlock } from './hermes/run-chat'
 import type { AuthenticatedUser } from '../middleware/user-auth'
 import { resolveWorkflowSkillContent } from './workflow-skill-resolver'
-import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from './coding-agents/runtime/run-manager'
 import { deleteSessionForProfile } from './hermes/hermes-cli'
 import { listProfileNamesFromDisk } from './hermes/hermes-profile'
 import { logger } from './logger'
@@ -46,13 +46,13 @@ export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 
 export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'skipped' | 'failed' | 'approval_rejected' | 'canceled'
 export type WorkflowRunType = 'workflow'
-export type WorkflowNodeAgent = 'hermes' | 'claude-code' | 'codex'
+export type WorkflowNodeAgent = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi'
 
 export interface WorkflowNodeRunTarget {
   type: WorkflowRunType
   source: 'workflow'
-  agent: 'hermes' | 'claude' | 'codex'
-  codingAgentId?: 'claude-code' | 'codex'
+  agent: 'hermes' | 'ekko-agent' | 'claude' | 'codex' | 'pi'
+  codingAgentId?: 'ekko-agent' | 'claude-code' | 'codex' | 'pi'
 }
 
 export interface WorkflowRuntimeStatus {
@@ -225,6 +225,14 @@ function idleStatus(workflowId: string): WorkflowRuntimeStatus {
 }
 
 export function resolveWorkflowNodeRunTarget(agent?: string | null): WorkflowNodeRunTarget {
+  if (agent === 'ekko-agent') {
+    return {
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'ekko-agent',
+      codingAgentId: 'ekko-agent',
+    }
+  }
   if (agent === 'claude-code') {
     return {
       type: 'workflow',
@@ -239,6 +247,14 @@ export function resolveWorkflowNodeRunTarget(agent?: string | null): WorkflowNod
       source: 'workflow',
       agent: 'codex',
       codingAgentId: 'codex',
+    }
+  }
+  if (agent === 'pi') {
+    return {
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'pi',
+      codingAgentId: 'pi',
     }
   }
   if (agent === 'hermes') {
@@ -274,7 +290,7 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
     join = orchestration.join
   }
   const agent = typeof data.agent === 'string' && data.agent.trim() ? data.agent.trim() : 'hermes'
-  if (agent !== 'hermes' && agent !== 'claude-code' && agent !== 'codex') {
+  if (agent !== 'hermes' && agent !== 'ekko-agent' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
     throw new Error(`workflow node ${id} has unsupported agent runtime`)
   }
   const provider = typeof data.provider === 'string' ? data.provider.trim() : ''
@@ -880,7 +896,7 @@ function workflowOutputConditionContext(output: string, edges: WorkflowEdgeSnaps
 
 function isWorkflowCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
   const agent = String(session?.agent || '').trim()
-  return agent === 'claude' || agent === 'codex' || Boolean(session?.agent_session_id)
+  return agent === 'ekko-agent' || agent === 'claude' || agent === 'codex' || agent === 'pi' || Boolean(session?.agent_session_id)
 }
 
 async function deleteHermesSessionIfPresent(sessionId: string, profile: string): Promise<void> {
@@ -1464,9 +1480,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           profile, workspace: workspace, model: node.data.model || undefined,
           provider: node.data.provider || undefined, mode: node.data.agent === 'hermes' ? undefined : 'scoped',
           coding_agent_id: target.codingAgentId, agent_id: target.codingAgentId,
-          ...(node.data.agent === 'hermes'
+          ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
             ? { background_delegation_enabled: false }
-            : { apiMode: node.data.apiMode || undefined }),
+            : {}),
+          ...(node.data.agent === 'hermes' ? {} : { apiMode: node.data.apiMode || undefined }),
           one_shot_model: true,
           ...(node.data.reasoningEffort !== 'default' ? { reasoning_effort: node.data.reasoningEffort } : {}),
         }, { profile, user: args.user, timeoutMs: remainingTimeoutMs, approvalChoice: 'once' })
@@ -1979,9 +1996,10 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             mode: node.data.agent === 'hermes' ? undefined : 'scoped',
             coding_agent_id: target.codingAgentId,
             agent_id: target.codingAgentId,
-            ...(node.data.agent === 'hermes'
+            ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
               ? { background_delegation_enabled: false }
-              : { apiMode: node.data.apiMode || undefined }),
+              : {}),
+            ...(node.data.agent === 'hermes' ? {} : { apiMode: node.data.apiMode || undefined }),
             one_shot_model: true,
             ...(node.data.reasoningEffort !== 'default' ? { reasoning_effort: node.data.reasoningEffort } : {}),
           }, {

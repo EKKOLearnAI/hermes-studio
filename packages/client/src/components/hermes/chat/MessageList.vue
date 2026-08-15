@@ -16,10 +16,12 @@ import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import LiveReasoningStatus from "./LiveReasoningStatus.vue";
+import MessageQueueFloatPanel from "./MessageQueueFloatPanel.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
+import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -149,35 +151,16 @@ const liveReasoningDetail = computed<{
   return null;
 });
 
+const assistantAgent = computed(() => chatSessionAgentAvatar(chatStore.activeSession));
+
 const emptyState = computed(() => {
-  const session = chatStore.activeSession;
-  const codingAgentId = session?.codingAgentId
-    || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
-  if (codingAgentId === "codex") {
-    return {
-      logo: "/coding-agents/codex-openai.png",
-      alt: "Codex",
-      text: t("chat.emptyStateAgent", { agent: "Codex" }),
-    };
-  }
-  if (codingAgentId === "claude-code") {
-    return {
-      logo: "/coding-agents/claude-code.svg",
-      alt: "Claude Code",
-      text: t("chat.emptyStateAgent", { agent: "Claude Code" }),
-    };
-  }
-  if (codingAgentId === "ekko-agent") {
-    return {
-      logo: "/coding-agents/ekko-agent.png",
-      alt: "Ekko Agent",
-      text: t("chat.emptyStateAgent", { agent: "Ekko Agent" }),
-    };
-  }
+  const agent = assistantAgent.value;
   return {
-    logo: "/coding-agents/hermes.png",
-    alt: "Hermes",
-    text: t("chat.emptyState"),
+    logo: agent.src,
+    alt: agent.label,
+    text: agent.label === "Hermes"
+      ? t("chat.emptyState")
+      : t("chat.emptyStateAgent", { agent: agent.label }),
   };
 });
 
@@ -273,6 +256,10 @@ const queuedMessages = computed(() => {
   if (!sid) return [];
   return chatStore.queuedUserMessages.get(sid) || [];
 });
+const queuedFloatItems = computed(() => queuedMessages.value.map(message => ({
+  id: message.id,
+  text: queuedPreview(message.content),
+})));
 const activeQueueInsertion = computed(() => {
   const sid = chatStore.activeSessionId;
   if (!sid) return null;
@@ -285,12 +272,16 @@ const canInsertQueuedMessages = computed(() => {
   if (agent === "ekko-agent") {
     return session.source === "coding_agent" || session.source === "global_agent";
   }
-  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
+  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return false;
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
+watch(
+  () => visibleClarify.value?.clarifyId,
+  () => { clarifyResponse.value = visibleClarify.value?.initialResponse || ""; },
+);
 const hasFloatingPrompt = computed(() => !!visibleApproval.value || !!visibleClarify.value);
 const virtualListPadding = computed(() => {
   if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return "20px 20px 380px";
@@ -351,7 +342,11 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
 }
 
 function handleClarify(response?: string) {
-  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  const finalResponse = response !== undefined
+    ? response
+    : visibleClarify.value?.responseMode === "editor"
+      ? clarifyResponse.value
+      : clarifyResponse.value.trim();
   chatStore.respondToClarify(finalResponse);
   clarifyResponse.value = "";
 }
@@ -652,6 +647,7 @@ defineExpose({
         <MessageItem
           v-else
           :message="msg"
+          :assistant-agent="assistantAgent"
           :highlight="chatStore.focusMessageId === msg.id"
           :show-fork-action="canForkActiveSession && msg.id === lastForkActionMessageId"
         />
@@ -972,6 +968,7 @@ defineExpose({
             <NInput
               v-model:value="clarifyResponse"
               size="small"
+              :type="visibleClarify.responseMode === 'editor' ? 'textarea' : 'text'"
               :placeholder="t('chat.clarifyPlaceholder')"
             />
             <NButton size="small" type="primary" @click="handleClarify()">
@@ -981,51 +978,14 @@ defineExpose({
         </div>
       </Transition>
       <Transition name="queue-float">
-        <div v-if="queuedMessages.length > 0" class="queue-float-panel">
-          <div class="queue-float-header">
-            <span class="queue-orbit" aria-hidden="true">
-              <span></span>
-            </span>
-            <span>{{ t('chat.messageQueue') }}</span>
-            <strong>{{ queuedMessages.length }}</strong>
-          </div>
-          <div class="queue-float-list">
-            <div
-              v-for="(message, index) in queuedMessages"
-              :key="message.id"
-              class="queue-float-item"
-            >
-              <span class="queue-index">{{ index + 1 }}</span>
-              <span class="queue-text">{{ queuedPreview(message.content) }}</span>
-              <button
-                v-if="canInsertQueuedMessages"
-                type="button"
-                class="queue-insert"
-                :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
-                :disabled="!!activeQueueInsertion"
-                :title="queueInsertionTitle(message.id)"
-                :aria-label="queueInsertionTitle(message.id)"
-                @click="insertQueuedMessage(message.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 19V5" />
-                  <path d="m5 12 7-7 7 7" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="queue-remove"
-                :title="t('chat.removeQueuedMessage')"
-                @click="removeQueuedMessage(message.id)"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
+        <MessageQueueFloatPanel
+          :items="queuedFloatItems"
+          :can-insert="canInsertQueuedMessages"
+          :active-insert-id="activeQueueInsertion?.queueId"
+          :insert-title="item => queueInsertionTitle(item.id)"
+          @insert="insertQueuedMessage"
+          @remove="removeQueuedMessage"
+        />
       </Transition>
     </div>
   </div>

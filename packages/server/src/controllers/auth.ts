@@ -274,6 +274,7 @@ export async function appLogin(ctx: Context) {
   const username = normalizeAppLoginField(body?.username ?? body?.account, 80)
   const rawPassword = typeof body?.password === 'string' ? body.password : ''
   const password = rawPassword.length <= 256 ? rawPassword : ''
+  const requestedCloudUserId = Number(body?.cloud_user_id ?? body?.cloudUserId)
   const passwordCredentialsProvided = Boolean(username && password)
   if (!deviceCode || !deviceName || (!authorizationCode && !passwordCredentialsProvided)) {
     ctx.status = 400
@@ -317,6 +318,14 @@ export async function appLogin(ctx: Context) {
     return
   }
   const connectionType = appConnectionType(ctx)
+  const cloudUserId = connectionType === 'cloud' && Number.isSafeInteger(requestedCloudUserId) && requestedCloudUserId > 0
+    ? requestedCloudUserId
+    : 0
+  if (connectionType === 'cloud' && !cloudUserId) {
+    ctx.status = 400
+    ctx.body = { error: 'cloud_user_id is required for cloud App connections' }
+    return
+  }
   const token = await issueAppJwt(user, deviceCode, connectionType)
   if (authenticatedPasswordIp) recordPasswordSuccess(authenticatedPasswordIp)
   const now = Math.floor(Date.now() / 1000)
@@ -328,6 +337,7 @@ export async function appLogin(ctx: Context) {
     deviceModel,
     connectionType,
     userId: user.id,
+    cloudUserId,
     token,
     tokenExpiresAt,
     now,
@@ -344,6 +354,7 @@ export async function appLogin(ctx: Context) {
       device_brand: connection.device_brand,
       device_model: connection.device_model,
       connection_type: connection.connection_type,
+      cloud_user_id: connection.cloud_user_id,
       token_expires_at: connection.token_expires_at,
     },
   }

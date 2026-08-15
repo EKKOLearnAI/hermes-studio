@@ -1,5 +1,5 @@
 import type { ContentBlock } from './types'
-import type { CodingAgentImageInput } from '../../agent-runner/types'
+import type { CodingAgentImageInput } from '../../coding-agents/shared/types'
 
 type ResponseContentPart = { type: string; text?: string; image_url?: string }
 type AgentContentPart = { type: string; text?: string; image_url?: { url: string } }

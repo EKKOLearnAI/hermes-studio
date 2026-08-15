@@ -7,10 +7,10 @@ import { useI18n } from 'vue-i18n'
 import WorkflowModelSelector from './WorkflowModelSelector.vue'
 import WorkflowFieldHelp from './WorkflowFieldHelp.vue'
 import type { WorkflowAgentNodeData, WorkflowAgentNodeEditableData } from './types'
-import type { CodingAgentApiMode } from '@/api/coding-agents'
+import type { ChatCodingAgentId, CodingAgentApiMode } from '@/api/coding-agents'
 import type { ProviderApiMode } from '@/api/hermes/system'
 import { getFileDownloadUrl } from '@/api/hermes/files'
-import { isAuthModelProvider } from '@/utils/codingAgentProviders'
+import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 
 import '@vue-flow/node-resizer/dist/style.css'
 
@@ -32,7 +32,10 @@ const statusTip = computed(() => (
 const isCodingAgent = computed(() => props.data.agent !== 'hermes')
 const selectableModelGroups = computed(() => (
   isCodingAgent.value
-    ? props.data.modelGroups.filter(group => !isAuthModelProvider(group.provider))
+    ? props.data.modelGroups.filter(group => canScopedCodingAgentUseProvider(
+        props.data.agent as ChatCodingAgentId,
+        group.provider,
+      ))
     : props.data.modelGroups
 ))
 const apiModeOptions = computed(() => [

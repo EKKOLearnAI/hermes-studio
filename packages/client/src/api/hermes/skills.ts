@@ -1,7 +1,7 @@
 import { request, getBaseUrlValue, getApiKey, getActiveProfileName } from '../client'
 
 export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
-export type SkillTarget = 'hermes' | 'claude' | 'codex'
+export type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi'
 
 export interface SkillInfo {
   name: string

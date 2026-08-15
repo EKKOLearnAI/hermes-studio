@@ -47,6 +47,10 @@ import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
 import { createRequestBodyParser } from './middleware/request-body-parser'
+import {
+  migratePersistedPiRuntimeMcpConfigs,
+  restorePersistedPiProxyTargets,
+} from './services/coding-agents'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -290,6 +294,24 @@ export async function bootstrap() {
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to inject bundled MCP server')
     console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
+  }
+
+  try {
+    const migratedPiMcpConfigs = await migratePersistedPiRuntimeMcpConfigs()
+    if (migratedPiMcpConfigs > 0) {
+      console.log(`[bootstrap] migrated ${migratedPiMcpConfigs} persisted Pi MCP runtime config(s) to proxy mode`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to migrate persisted Pi MCP runtime configs')
+  }
+
+  try {
+    const restoredPiProxyTargets = await restorePersistedPiProxyTargets()
+    if (restoredPiProxyTargets > 0) {
+      console.log(`[bootstrap] restored ${restoredPiProxyTargets} persisted Pi proxy target(s)`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to restore persisted Pi proxy targets')
   }
 
   setupGlobalEkkoAgent()

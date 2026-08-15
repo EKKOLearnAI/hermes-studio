@@ -79,7 +79,7 @@ export interface RunEvent {
   output?: string | null
   /** Run-level workspace diff summary attached to terminal run events. */
   workspace_run_change?: unknown
-  /** Provider/runtime context returned by Ekko Agent for follow-up runs. */
+  /** Provider/runtime context returned by Ekko for follow-up runs. */
   context?: unknown
   usage?: {
     input_tokens: number

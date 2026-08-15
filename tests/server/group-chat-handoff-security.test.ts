@@ -9,7 +9,7 @@ import { setGroupChatRuntimeServer } from '../../packages/server/src/services/he
 
 vi.mock('../../packages/server/src/services/hermes/group-chat/agent-relay', () => ({
   getGroupAgentOutboundRelayManager: vi.fn(() => ({ connect: vi.fn() })),
-  GROUP_AGENT_RELAY_PROTOCOL_VERSION: 1,
+  GROUP_AGENT_RELAY_PROTOCOL_VERSION: 2,
 }))
 
 function handoffBody(index = 1): Record<string, unknown> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentRunGateway, ProviderApiError } from '../../packages/server/src/services/agent-runner/gateway'
+import { AgentRunGateway, ProviderApiError } from '../../packages/server/src/services/coding-agents/shared/gateway'
 
 afterEach(() => {
   vi.unstubAllGlobals()

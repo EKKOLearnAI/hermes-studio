@@ -10,6 +10,7 @@ export interface AppConnection {
   device_model: string
   connection_type: AppConnectionType
   user_id: number
+  cloud_user_id: number
   username: string
   token_expires_at: number
   last_connected_at: number
@@ -21,6 +22,17 @@ export interface AppConnection {
 
 export interface AppConnectionListResponse {
   connections: AppConnection[]
+  access_failure: AppConnectionAccessFailure | null
+}
+
+export interface AppConnectionAccessFailure {
+  code: string
+  deviceCode: string
+  deviceName: string
+  cloudUserId: number
+  plan: string
+  tokenTtlSeconds?: number
+  occurredAt: number
 }
 
 export interface LanAppAuthorizationResponse {

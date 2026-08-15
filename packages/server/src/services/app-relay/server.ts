@@ -5,6 +5,12 @@ import type { AppConnectionType } from '../../db/hermes/app-connections-store'
 import { authenticateUserToken, inspectAppUserToken } from '../../middleware/user-auth'
 import { getDeviceId } from '../system-info'
 import { logger } from '../logger'
+import {
+  inspectAppEntitlementToken,
+  verifyAppEntitlementToken,
+  type AppEntitlementClaims,
+  type AppEntitlementInspection,
+} from '../app-entitlement'
 import type {
   AppRelayHttpRequest,
   AppRelayHttpResponse,
@@ -80,6 +86,18 @@ interface LocalAppRelayServerOptions {
   localBaseUrl?: string
   machineId?: string
   fetchImpl?: typeof fetch
+  entitlementRequired?: boolean
+  verifyEntitlementToken?: (token: string) => AppEntitlementClaims | null
+  inspectEntitlementToken?: (token: string) => AppEntitlementInspection
+}
+
+export interface AppEntitlementFailure {
+  code: string
+  deviceCode: string
+  cloudUserId: number
+  plan: string
+  tokenTtlSeconds?: number
+  occurredAt: number
 }
 
 interface LocalSocketBridge {
@@ -113,6 +131,10 @@ export class LocalAppRelayServer {
   private readonly localBaseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly configuredMachineId: string
+  private readonly entitlementRequired: boolean
+  private readonly verifyEntitlementToken: (token: string) => AppEntitlementClaims | null
+  private readonly inspectEntitlementToken: (token: string) => AppEntitlementInspection
+  private latestEntitlementFailure: AppEntitlementFailure | null = null
   private initialized = false
 
   constructor(io: SocketIoServer, options: LocalAppRelayServerOptions = {}) {
@@ -120,6 +142,15 @@ export class LocalAppRelayServer {
     this.localBaseUrl = (options.localBaseUrl || `http://127.0.0.1:${config.port}`).replace(/\/$/, '')
     this.configuredMachineId = String(options.machineId || '').trim()
     this.fetchImpl = options.fetchImpl || fetch
+    this.entitlementRequired = options.entitlementRequired ?? config.appRelay.entitlementRequired
+    this.verifyEntitlementToken = options.verifyEntitlementToken || verifyAppEntitlementToken
+    this.inspectEntitlementToken = options.inspectEntitlementToken
+      || (options.verifyEntitlementToken
+        ? (token: string) => {
+            const claims = this.verifyEntitlementToken(token)
+            return claims ? { status: 'valid', claims } : { status: 'invalid', claims: null }
+          }
+        : inspectAppEntitlementToken)
   }
 
   init(): void {
@@ -132,8 +163,50 @@ export class LocalAppRelayServer {
         const machineId = normalizeIdentifier(auth.machineId || auth.machine_id || auth.instanceId)
         const localMachineId = this.configuredMachineId || await getDeviceId()
         const token = String(auth.token || '').trim()
+        const entitlementToken = String(
+          auth.entitlementToken
+          || auth.entitlement_token
+          || auth.accessLease
+          || auth.access_lease
+          || '',
+        ).trim()
         if (role !== 'app' || !machineId || machineId !== localMachineId) {
           next(new Error('app_relay_unauthorized'))
+          return
+        }
+        const declaredDeviceCode = normalizeIdentifier(auth.deviceCode || auth.device_code)
+        const declaredCloudUserId = normalizePositiveInteger(auth.cloudUserId || auth.cloud_user_id)
+        const entitlementInspection = entitlementToken ? this.inspectEntitlementToken(entitlementToken) : null
+        const entitlement = entitlementInspection?.status === 'valid' ? entitlementInspection.claims : null
+        if (entitlementInspection?.status === 'expired' && entitlementInspection.claims) {
+          this.recordEntitlementFailure(
+            'app_entitlement_expired',
+            declaredDeviceCode || entitlementInspection.claims.deviceCode,
+            declaredCloudUserId || entitlementInspection.claims.userId,
+            entitlementInspection.claims.plan,
+            Math.max(0, entitlementInspection.claims.expiresAt - entitlementInspection.claims.issuedAt),
+          )
+          next(new Error('app_entitlement_expired'))
+          return
+        }
+        if (entitlementToken && !entitlement) {
+          this.recordEntitlementFailure('app_entitlement_invalid', declaredDeviceCode, declaredCloudUserId, '')
+          next(new Error('app_entitlement_invalid'))
+          return
+        }
+        if (this.entitlementRequired && !entitlement) {
+          this.recordEntitlementFailure('app_entitlement_required', declaredDeviceCode, declaredCloudUserId, '')
+          next(new Error('app_entitlement_required'))
+          return
+        }
+        if (entitlement && (!declaredDeviceCode || declaredDeviceCode !== entitlement.deviceCode)) {
+          this.recordEntitlementFailure('app_entitlement_device_mismatch', declaredDeviceCode, declaredCloudUserId, entitlement.plan)
+          next(new Error('app_entitlement_device_mismatch'))
+          return
+        }
+        if (entitlement && declaredCloudUserId && declaredCloudUserId !== entitlement.userId) {
+          this.recordEntitlementFailure('app_entitlement_account_mismatch', declaredDeviceCode, declaredCloudUserId, entitlement.plan)
+          next(new Error('app_entitlement_account_mismatch'))
           return
         }
         const appToken = token ? await inspectAppUserToken(token) : null
@@ -150,14 +223,24 @@ export class LocalAppRelayServer {
           next(new Error('app_relay_unauthorized'))
           return
         }
+        if (entitlement && appToken?.status === 'active' && appToken.deviceCode !== entitlement.deviceCode) {
+          this.recordEntitlementFailure('app_entitlement_device_mismatch', declaredDeviceCode, declaredCloudUserId, entitlement.plan)
+          next(new Error('app_entitlement_device_mismatch'))
+          return
+        }
         socket.data.appRelayRole = 'app'
         socket.data.machineId = localMachineId
         socket.data.localUser = user
         socket.data.localUserToken = token
+        socket.data.appEntitlement = entitlement
+        socket.data.appCloudUserId = entitlement?.userId || declaredCloudUserId
         if (appToken?.status === 'active') {
           socket.data.appDeviceCode = appToken.deviceCode
           socket.data.appConnectionType = appToken.connectionType
+        } else if (entitlement) {
+          socket.data.appDeviceCode = entitlement.deviceCode
         }
+        if (entitlement) this.clearEntitlementFailure(entitlement.deviceCode, entitlement.userId)
         next()
       } catch (err) {
         logger.warn({ err }, '[app-relay:lan] socket authentication failed')
@@ -170,6 +253,12 @@ export class LocalAppRelayServer {
 
   getNamespace(): string {
     return APP_RELAY_NAMESPACE
+  }
+
+  getLatestEntitlementFailure(now = Date.now()): AppEntitlementFailure | null {
+    const failure = this.latestEntitlementFailure
+    if (!failure || now - failure.occurredAt > 30 * 60 * 1000) return null
+    return { ...failure }
   }
 
   isConnectionOnline(deviceCode: string, connectionType: AppConnectionType): boolean {
@@ -204,9 +293,10 @@ export class LocalAppRelayServer {
       role: 'app',
       machineId,
       hostConnected: true,
-      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat', 'socket.workflow'],
+      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat', 'socket.workflow', 'app.entitlement'],
     })
     if (socket.data.localUserToken) this.scheduleTokenExpiry(socket)
+    if (socket.data.appEntitlement) this.scheduleEntitlementExpiry(socket)
 
     socket.on('http.request', (request: AppRelayHttpRequest = {}, ack?: (response: AppRelayHttpResponse) => void) => {
       void this.handleHttpRequest(socket, request).then(response => ack?.(response))
@@ -234,6 +324,17 @@ export class LocalAppRelayServer {
 
     const appLoginRequest = method === 'POST' && path === '/api/auth/app-login'
     const loginRequest = method === 'POST' && (path === '/api/auth/login' || appLoginRequest)
+    const entitlement = socket.data.appEntitlement as AppEntitlementClaims | null | undefined
+    if (appLoginRequest && entitlement) {
+      const loginDeviceCode = relayRequestIdentifier(request.body, 'device_code', 'deviceCode')
+      if (!loginDeviceCode || loginDeviceCode !== entitlement.deviceCode) {
+        return httpError(request.id, 'app_entitlement_device_mismatch', 'The App device does not match its cloud entitlement', 403)
+      }
+      const loginCloudUserId = relayRequestPositiveInteger(request.body, 'cloud_user_id', 'cloudUserId')
+      if (loginCloudUserId && loginCloudUserId !== entitlement.userId) {
+        return httpError(request.id, 'app_entitlement_account_mismatch', 'The App account does not match its cloud entitlement', 403)
+      }
+    }
     const authenticated = Boolean(socket.data.localUserToken) && await this.authorized(socket)
     if (!authenticated && !loginRequest) {
       return httpError(request.id, 'app_relay_unauthorized', 'Log in to Hermes Studio before using the App relay', 401)
@@ -410,6 +511,15 @@ export class LocalAppRelayServer {
   }
 
   private async authorized(socket: Socket): Promise<boolean> {
+    const entitlement = socket.data.appEntitlement as AppEntitlementClaims | null | undefined
+    if (this.entitlementRequired && !entitlement) {
+      this.revokeEntitlement(socket, 'entitlement_required')
+      return false
+    }
+    if (entitlement && entitlement.expiresAt <= Math.floor(Date.now() / 1000)) {
+      this.revokeEntitlement(socket, 'entitlement_expired')
+      return false
+    }
     const token = String(socket.data.localUserToken || '')
     const appToken = await inspectAppUserToken(token)
     if (appToken?.status === 'revoked') {
@@ -419,6 +529,10 @@ export class LocalAppRelayServer {
         connectionType: appToken.connectionType,
       })
       setImmediate(() => socket.disconnect(true))
+      return false
+    }
+    if (entitlement && appToken?.status === 'active' && appToken.deviceCode !== entitlement.deviceCode) {
+      this.revokeEntitlement(socket, 'entitlement_device_mismatch')
       return false
     }
     const user = appToken?.status === 'active' && appToken.user
@@ -446,6 +560,11 @@ export class LocalAppRelayServer {
           ? await authenticateUserToken(token)
           : null
       if (!token || !user) return
+      const entitlement = socket.data.appEntitlement as AppEntitlementClaims | null | undefined
+      if (entitlement && appToken?.status === 'active' && appToken.deviceCode !== entitlement.deviceCode) {
+        this.revokeEntitlement(socket, 'entitlement_device_mismatch')
+        return
+      }
       socket.data.localUserToken = token
       socket.data.localUser = user
       if (appToken?.status === 'active') {
@@ -486,6 +605,77 @@ export class LocalAppRelayServer {
       socket.data.appRelayTokenExpiryTimer = undefined
     })
   }
+
+  private scheduleEntitlementExpiry(socket: Socket): void {
+    const entitlement = socket.data.appEntitlement as AppEntitlementClaims | null | undefined
+    if (!entitlement) return
+    const expiresAt = entitlement.expiresAt * 1000
+    const existingTimer = socket.data.appRelayEntitlementExpiryTimer as NodeJS.Timeout | undefined
+    if (existingTimer) clearTimeout(existingTimer)
+
+    const schedule = () => {
+      const remaining = expiresAt - Date.now()
+      if (remaining <= 0) {
+        this.revokeEntitlement(socket, 'entitlement_expired', false)
+        return
+      }
+      const timer = setTimeout(schedule, Math.min(remaining, 2_147_000_000))
+      timer.unref()
+      socket.data.appRelayEntitlementExpiryTimer = timer
+    }
+    schedule()
+    socket.once('disconnect', () => {
+      const timer = socket.data.appRelayEntitlementExpiryTimer as NodeJS.Timeout | undefined
+      if (timer) clearTimeout(timer)
+      socket.data.appRelayEntitlementExpiryTimer = undefined
+    })
+  }
+
+  private revokeEntitlement(socket: Socket, reason: string, asyncDisconnect = true): void {
+    if (reason.startsWith('entitlement_')) {
+      const entitlement = socket.data.appEntitlement as AppEntitlementClaims | null | undefined
+      this.recordEntitlementFailure(
+        `app_${reason}`,
+        String(entitlement?.deviceCode || socket.data.appDeviceCode || ''),
+        Number(entitlement?.userId || socket.data.appCloudUserId || 0),
+        String(entitlement?.plan || ''),
+        entitlement
+          ? Math.max(0, entitlement.expiresAt - entitlement.issuedAt)
+          : undefined,
+      )
+    }
+    socket.emit('relay.access.revoked', {
+      machineId: socket.data.machineId,
+      reason,
+    })
+    if (asyncDisconnect) setImmediate(() => socket.disconnect(true))
+    else socket.disconnect(true)
+  }
+
+  private recordEntitlementFailure(
+    code: string,
+    deviceCode: string,
+    cloudUserId: number,
+    plan: string,
+    tokenTtlSeconds?: number,
+  ): void {
+    this.latestEntitlementFailure = {
+      code,
+      deviceCode,
+      cloudUserId,
+      plan,
+      ...(tokenTtlSeconds == null ? {} : { tokenTtlSeconds }),
+      occurredAt: Date.now(),
+    }
+  }
+
+  private clearEntitlementFailure(deviceCode: string, cloudUserId: number): void {
+    const failure = this.latestEntitlementFailure
+    if (!failure) return
+    if (failure.deviceCode === deviceCode && (!failure.cloudUserId || failure.cloudUserId === cloudUserId)) {
+      this.latestEntitlementFailure = null
+    }
+  }
 }
 
 let activeLocalAppRelayServer: LocalAppRelayServer | null = null
@@ -514,9 +704,49 @@ export function notifyLocalAppConnectionDeleted(
   return activeLocalAppRelayServer?.notifyConnectionDeleted(deviceCode, connectionType) || 0
 }
 
+export function getLatestLocalAppEntitlementFailure(): AppEntitlementFailure | null {
+  return activeLocalAppRelayServer?.getLatestEntitlementFailure() || null
+}
+
 function normalizeIdentifier(value: unknown): string {
   const normalized = String(value || '').trim()
   return normalized && normalized.length <= 255 ? normalized : ''
+}
+
+function normalizePositiveInteger(value: unknown): number {
+  const normalized = Number(value)
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : 0
+}
+
+function relayRequestRecord(value: unknown): Record<string, unknown> | null {
+  if (isRecord(value)) return value
+  if (typeof value !== 'string' || value.length > MAX_REQUEST_BODY_BYTES) return null
+  try {
+    const parsed = JSON.parse(value)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function relayRequestIdentifier(value: unknown, ...keys: string[]): string {
+  const record = relayRequestRecord(value)
+  if (!record) return ''
+  for (const key of keys) {
+    const normalized = normalizeIdentifier(record[key])
+    if (normalized) return normalized
+  }
+  return ''
+}
+
+function relayRequestPositiveInteger(value: unknown, ...keys: string[]): number {
+  const record = relayRequestRecord(value)
+  if (!record) return 0
+  for (const key of keys) {
+    const normalized = normalizePositiveInteger(record[key])
+    if (normalized) return normalized
+  }
+  return 0
 }
 
 function normalizeMethod(value: unknown): string | null {

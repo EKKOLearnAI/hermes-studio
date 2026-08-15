@@ -298,8 +298,8 @@ describe('devices controller', () => {
       return {
         ...actual,
         networkInterfaces: () => ({
-          lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
-          en0: [{ family: 'IPv4', internal: false, address: '192.168.1.88' }],
+          lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1', netmask: '255.0.0.0' }],
+          en0: [{ family: 'IPv4', internal: false, address: '192.168.1.88', netmask: '255.255.255.0' }],
         }),
       }
     })
@@ -320,6 +320,29 @@ describe('devices controller', () => {
     expect(ctx.body).toEqual({
       code: 'pair-secret',
       link: 'http://192.168.1.88:8648/#/hermes/devices?pairing_code=pair-secret',
+    })
+  })
+
+  it('uses a private request host instead of a Docker container interface for pairing links', async () => {
+    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+      getDevicePairingCode: () => 'pair-secret',
+      verifyDevicePairingCode: () => false,
+    }))
+
+    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      protocol: 'http',
+      host: '192.168.10.102:6060',
+      ip: '172.19.0.1',
+      req: { socket: { remoteAddress: '172.19.0.1' } },
+      get: () => '',
+    }
+
+    await getDevicePairingLink(ctx)
+
+    expect(ctx.body).toEqual({
+      code: 'pair-secret',
+      link: 'http://192.168.10.102:6060/#/hermes/devices?pairing_code=pair-secret',
     })
   })
 

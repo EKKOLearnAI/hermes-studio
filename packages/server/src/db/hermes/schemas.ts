@@ -497,6 +497,7 @@ export const APP_CONNECTIONS_SCHEMA: Record<string, string> = {
   device_model: "TEXT NOT NULL DEFAULT ''",
   connection_type: "TEXT NOT NULL DEFAULT 'lan'",
   user_id: 'INTEGER NOT NULL',
+  cloud_user_id: 'INTEGER NOT NULL DEFAULT 0',
   token_hash: "TEXT NOT NULL DEFAULT ''",
   token_expires_at: 'INTEGER NOT NULL DEFAULT 0',
   last_connected_at: 'INTEGER NOT NULL DEFAULT 0',
@@ -507,8 +508,9 @@ export const APP_CONNECTIONS_SCHEMA: Record<string, string> = {
 }
 
 export const APP_CONNECTIONS_INDEXES = {
-  uniq_app_connections_device_type: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_app_connections_device_type ON app_connections(device_code, connection_type)',
+  uniq_app_connections_device_type_cloud_user: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_app_connections_device_type_cloud_user ON app_connections(device_code, connection_type, cloud_user_id)',
   idx_app_connections_user: 'CREATE INDEX IF NOT EXISTS idx_app_connections_user ON app_connections(user_id)',
+  idx_app_connections_cloud_user: 'CREATE INDEX IF NOT EXISTS idx_app_connections_cloud_user ON app_connections(cloud_user_id)',
   idx_app_connections_updated_at: 'CREATE INDEX IF NOT EXISTS idx_app_connections_updated_at ON app_connections(updated_at)',
 }
 
@@ -788,6 +790,32 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
   reasoning: 'TEXT',
   reasoning_details: 'TEXT',
   reasoning_content: 'TEXT',
+}
+
+export const GC_EXECUTION_QUEUE_TABLE = 'gc_execution_queue'
+
+export const GC_EXECUTION_QUEUE_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  messageId: 'TEXT NOT NULL',
+  targetAgentId: 'TEXT NOT NULL',
+  targetAgentName: 'TEXT NOT NULL',
+  requesterMemberId: 'TEXT NOT NULL',
+  cancelCapabilityHash: "TEXT NOT NULL DEFAULT ''",
+  textSummary: "TEXT NOT NULL DEFAULT ''",
+  sequence: 'INTEGER NOT NULL',
+  status: "TEXT NOT NULL DEFAULT 'queued'",
+  createdAt: 'INTEGER NOT NULL',
+  startedAt: 'INTEGER',
+  finishedAt: 'INTEGER',
+  lastError: 'TEXT',
+}
+
+export const GC_EXECUTION_QUEUE_INDEXES = {
+  idx_gc_execution_queue_message_target:
+    'CREATE UNIQUE INDEX idx_gc_execution_queue_message_target ON gc_execution_queue(messageId, targetAgentId)',
+  idx_gc_execution_queue_room_status_sequence:
+    'CREATE INDEX idx_gc_execution_queue_room_status_sequence ON gc_execution_queue(roomId, status, sequence)',
 }
 
 export const GC_ACTIVITY_MIGRATIONS_TABLE = 'gc_activity_migrations'
@@ -1453,6 +1481,13 @@ export function initAllHermesTables(): void {
     syncTable(APP_CONNECTIONS_TABLE, APP_CONNECTIONS_SCHEMA, {
       indexes: APP_CONNECTIONS_INDEXES,
     })
+    db.exec('DROP INDEX IF EXISTS uniq_app_connections_device_type')
+    createIndexes(db, APP_CONNECTIONS_INDEXES)
+    db.exec(`
+      UPDATE ${APP_CONNECTIONS_TABLE}
+      SET cloud_revocation_pending = 0
+      WHERE connection_type = 'cloud' AND cloud_user_id = 0 AND cloud_revocation_pending <> 0
+    `)
     syncTable(APP_AUTHORIZATION_CODES_TABLE, APP_AUTHORIZATION_CODES_SCHEMA, {
       indexes: APP_AUTHORIZATION_CODES_INDEXES,
     })
@@ -1517,6 +1552,9 @@ export function initAllHermesTables(): void {
     // need the context-window index migrated explicitly to avoid scanning and
     // sorting the full message table on every persisted message.
     createIndexes(db, groupChatMessageIndexes)
+    syncTable(GC_EXECUTION_QUEUE_TABLE, GC_EXECUTION_QUEUE_SCHEMA, {
+      indexes: GC_EXECUTION_QUEUE_INDEXES,
+    })
     syncTable(GC_ACTIVITY_MIGRATIONS_TABLE, GC_ACTIVITY_MIGRATIONS_SCHEMA)
     migrateGroupChatActivityTimes(db, Date.now())
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
