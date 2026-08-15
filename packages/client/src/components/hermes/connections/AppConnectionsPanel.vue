@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, NDataTable, NEmpty, NModal, NPopconfirm, NSpin, NTabPane, NTabs, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDataTable, NEmpty, NModal, NPopconfirm, NSpin, NTabPane, NTabs, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
@@ -10,14 +10,19 @@ import {
   deleteAppConnection,
   fetchAppConnections,
   type AppConnection,
+  type AppConnectionAccessFailure,
   type CloudAppAuthorizationResponse,
   type LanAppAuthorizationResponse,
 } from '@/api/hermes/app-connections'
+
+const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
 
 const { t } = useI18n()
 const message = useMessage()
 const loading = ref(false)
 const connections = ref<AppConnection[]>([])
+const accessFailure = ref<AppConnectionAccessFailure | null>(null)
+const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
 const showScanModal = ref(false)
 const connectionTab = ref<'lan' | 'cloud'>('lan')
 const authorizationLoading = ref(false)
@@ -46,6 +51,32 @@ const remainingTime = computed(() => {
   const minutes = Math.floor(remainingSeconds.value / 60).toString().padStart(2, '0')
   const seconds = (remainingSeconds.value % 60).toString().padStart(2, '0')
   return `${minutes}:${seconds}`
+})
+const accessFailureReason = computed(() => {
+  const failure = accessFailure.value
+  if (!failure) return ''
+  if (failure.plan === 'internal' || failure.plan === 'public_beta') {
+    return t('connections.app.accessFailures.tokenExpired')
+  }
+  if (failure.plan === 'paid' && failure.code === 'app_entitlement_expired') {
+    if (failure.tokenTtlSeconds === 0) {
+      return t('connections.app.accessFailures.paidAccountRequired')
+    }
+    return t('connections.app.accessFailures.tokenExpired')
+  }
+  const reasonKeys: Record<string, string> = {
+    app_entitlement_required: 'required',
+    app_entitlement_invalid: 'invalid',
+    app_entitlement_expired: 'expired',
+    app_entitlement_account_mismatch: 'accountMismatch',
+    app_entitlement_device_mismatch: 'deviceMismatch',
+  }
+  return t(`connections.app.accessFailures.${reasonKeys[failure.code] || 'unknown'}`)
+})
+const accessFailureMode = computed(() => {
+  const plan = accessFailure.value?.plan || 'unknown'
+  const knownPlan = plan === 'internal' || plan === 'public_beta' || plan === 'paid' ? plan : 'unknown'
+  return t(`connections.app.accessModes.${knownPlan}`)
 })
 
 const columns = computed<DataTableColumns<AppConnection>>(() => [
@@ -155,6 +186,10 @@ async function loadConnections(options: { silent?: boolean; detectScanConnection
   try {
     const response = await fetchAppConnections()
     connections.value = response.connections
+    const nextFailure = response.access_failure || null
+    accessFailure.value = nextFailure && nextFailure.occurredAt > dismissedAccessFailureAt.value
+      ? nextFailure
+      : null
     if (options.detectScanConnection && showScanModal.value) {
       const connected = response.connections.some(connection => (
         connection.active
@@ -174,6 +209,28 @@ async function loadConnections(options: { silent?: boolean; detectScanConnection
     connectionsRequestInFlight = false
     if (!options.silent) loading.value = false
   }
+}
+
+function readDismissedAccessFailureAt(): number {
+  try {
+    const value = Number(localStorage.getItem(DISMISSED_ACCESS_FAILURE_KEY) || 0)
+    return Number.isFinite(value) && value > 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function dismissAccessFailure(): void {
+  const occurredAt = Number(accessFailure.value?.occurredAt || 0)
+  if (occurredAt > dismissedAccessFailureAt.value) {
+    dismissedAccessFailureAt.value = occurredAt
+    try {
+      localStorage.setItem(DISMISSED_ACCESS_FAILURE_KEY, String(occurredAt))
+    } catch {
+      // The in-memory dismissal still prevents the polling loop from reopening it.
+    }
+  }
+  accessFailure.value = null
 }
 
 function authorizationErrorMessage(error: any): string {
@@ -271,6 +328,25 @@ onUnmounted(() => {
         {{ t('connections.app.scanToAdd') }}
       </NButton>
     </header>
+
+    <NAlert
+      v-if="accessFailure"
+      class="app-access-failure"
+      type="error"
+      :title="t('connections.app.accessFailureTitle')"
+      :bordered="false"
+      closable
+      @close="dismissAccessFailure"
+    >
+      <div class="app-access-failure__reason">{{ accessFailureReason }}</div>
+      <div class="app-access-failure__meta">
+        <span>{{ t('connections.app.accessFailureMode', { mode: accessFailureMode }) }}</span>
+        <span v-if="accessFailure.deviceName">
+          {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
+        </span>
+        <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
+      </div>
+    </NAlert>
 
     <div class="app-connections-table">
       <NDataTable
@@ -444,6 +520,26 @@ onUnmounted(() => {
   }
 }
 
+.app-access-failure {
+  flex: 0 0 auto;
+  margin: 12px 20px 0;
+
+  &__reason {
+    color: $text-primary;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  &__meta {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
 .connection-pane {
   min-height: 374px;
   padding: 8px 0 4px;
@@ -517,6 +613,10 @@ onUnmounted(() => {
 
   .app-connections-table {
     padding: 12px;
+  }
+
+  .app-access-failure {
+    margin: 12px 12px 0;
   }
 
   .connection-qr {

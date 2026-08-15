@@ -22,6 +22,17 @@ export interface AppConnection {
 
 export interface AppConnectionListResponse {
   connections: AppConnection[]
+  access_failure: AppConnectionAccessFailure | null
+}
+
+export interface AppConnectionAccessFailure {
+  code: string
+  deviceCode: string
+  deviceName: string
+  cloudUserId: number
+  plan: string
+  tokenTtlSeconds?: number
+  occurredAt: number
 }
 
 export interface LanAppAuthorizationResponse {

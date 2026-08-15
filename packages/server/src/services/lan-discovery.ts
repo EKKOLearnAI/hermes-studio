@@ -182,8 +182,45 @@ function normalizeRemoteAddress(value: string): string {
 }
 
 export function getLanBackendUrl(remoteAddress = '', httpPort = config.port): string {
+  const advertised = normalizeAdvertisedOrigin(config.lanAdvertiseUrl)
+  if (advertised) return advertised
   const address = selectLocalAddress(normalizeRemoteAddress(remoteAddress))
   return `http://${address}:${httpPort}`
+}
+
+export function getLanBackendUrlForRequest(
+  remoteAddress = '',
+  requestOrigin = '',
+  httpPort = config.port,
+  advertisedUrl = config.lanAdvertiseUrl,
+): string {
+  const advertised = normalizeAdvertisedOrigin(advertisedUrl)
+  if (advertised) return advertised
+  const requested = normalizeAdvertisedOrigin(requestOrigin, true)
+  if (requested) return requested
+  const address = selectLocalAddress(normalizeRemoteAddress(remoteAddress))
+  return `http://${address}:${httpPort}`
+}
+
+function normalizeAdvertisedOrigin(value: string, rejectLoopback = false): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw.includes('://') ? raw : `http://${raw}`)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    if (!url.hostname || url.username || url.password) return ''
+    const hostname = url.hostname.toLowerCase()
+    if (rejectLoopback && (
+      hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || hostname === '::1'
+      || hostname === '0.0.0.0'
+      || hostname.startsWith('127.')
+    )) return ''
+    return url.origin
+  } catch {
+    return ''
+  }
 }
 
 export function getDiscoveryTargetAddresses(): string[] {

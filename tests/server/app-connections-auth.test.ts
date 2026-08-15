@@ -35,7 +35,7 @@ describe('App connection authorization', () => {
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     vi.doMock('../../packages/server/src/services/lan-discovery', async importOriginal => ({
       ...await importOriginal<typeof import('../../packages/server/src/services/lan-discovery')>(),
-      getLanBackendUrl: () => 'http://192.168.1.20:8648',
+      getLanBackendUrlForRequest: () => 'http://192.168.1.20:8648',
     }))
     vi.doMock('../../packages/server/src/services/system-info', async importOriginal => ({
       ...await importOriginal<typeof import('../../packages/server/src/services/system-info')>(),

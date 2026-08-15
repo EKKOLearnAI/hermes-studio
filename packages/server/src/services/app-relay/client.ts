@@ -405,22 +405,16 @@ export class AppRelayClient {
       const cleanup = () => {
         clearTimeout(timer)
         socket.off('connect', onConnect)
-        socket.off('connect_error', onFailure)
       }
       const onConnect = () => {
         cleanup()
         resolve(true)
-      }
-      const onFailure = () => {
-        cleanup()
-        resolve(false)
       }
       const timer = setTimeout(() => {
         cleanup()
         resolve(false)
       }, timeoutMs)
       socket.once('connect', onConnect)
-      socket.once('connect_error', onFailure)
     })
   }
 

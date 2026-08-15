@@ -332,6 +332,9 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 |---|---|---|
 | `PORT` | `8648` | Web UI 监听端口。 |
 | `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
+| `HERMES_LAN_ADVERTISE_URL` | 未设置 | App 局域网二维码使用的可访问 Studio 地址。Docker 中若通过 `localhost` 打开，请设置为宿主机局域网 URL，例如 `http://192.168.1.20:6060`。 |
+| `HERMES_APP_ENTITLEMENT_REQUIRED` | `true` | App 局域网 Relay 必须携带有效的云端签名。仅在临时兼容排查时设置为 `false`。 |
+| `HERMES_APP_ENTITLEMENT_PUBLIC_KEY` | 内置 | 可选的 RS256 App 签名 PEM 公钥覆盖。签名 issuer 为 `hermes-studio-server`，audience 为 `ekko-studio`。 |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
 | `HERMES_WEBUI_STATE_DIR` | 未设置 | `HERMES_WEB_UI_HOME` 的兼容别名。 |
 | `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | 未设置 | 关闭启动时向 Hermes profile 配置自动注入托管的 `hermes-studio` MCP server。 |

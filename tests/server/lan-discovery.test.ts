@@ -6,6 +6,7 @@ import {
   discoveryPortForHttpPort,
   getDiscoveryHttpPorts,
   getLanBackendUrl,
+  getLanBackendUrlForRequest,
   getLanEndpointKind,
   isPrivateOrLoopbackIPv4,
   resetLanDiscoveryState,
@@ -71,6 +72,30 @@ describe('LAN discovery', () => {
     expect(url.protocol).toBe('http:')
     expect(url.port).toBe('19004')
     expect(isPrivateOrLoopbackIPv4(url.hostname)).toBe(true)
+  })
+
+  it('uses the externally requested host instead of a Docker container interface', () => {
+    expect(getLanBackendUrlForRequest(
+      '172.19.0.1',
+      'http://192.168.10.102:6060',
+      6060,
+      '',
+    )).toBe('http://192.168.10.102:6060')
+  })
+
+  it('supports an explicit Docker LAN advertise URL and ignores localhost request origins', () => {
+    expect(getLanBackendUrlForRequest(
+      '172.19.0.1',
+      'http://localhost:6060',
+      6060,
+      'http://192.168.10.102:16060',
+    )).toBe('http://192.168.10.102:16060')
+    expect(getLanBackendUrlForRequest(
+      '192.168.10.20',
+      'http://localhost:6060',
+      6060,
+      '',
+    )).not.toBe('http://localhost:6060')
   })
 
   it('limits discovery responses to local/private IPv4 senders', () => {
