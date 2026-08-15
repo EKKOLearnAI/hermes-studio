@@ -1421,7 +1421,27 @@ describe('group chat history windows', () => {
       content: `archive ${index + 1}`,
       timestamp: 1_900_000_000 + Math.floor(index / 225),
     }))
-    for (const message of seeded) storage.saveMessageAndRefreshRoom(message as any)
+    const insert = dbMock.current!.prepare(
+      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    dbMock.current!.exec('BEGIN')
+    try {
+      for (const message of seeded) {
+        insert.run(
+          message.id,
+          message.roomId,
+          message.senderId,
+          message.senderName,
+          message.content,
+          message.timestamp,
+        )
+      }
+      dbMock.current!.exec('COMMIT')
+    } catch (error) {
+      dbMock.current!.exec('ROLLBACK')
+      throw error
+    }
 
     const pages: string[][] = []
     let beforeMessageId: string | undefined
@@ -1436,7 +1456,7 @@ describe('group chat history windows', () => {
     expect(loaded).toEqual(seeded.map(message => message.id))
     expect(new Set(loaded)).toHaveLength(seeded.length)
     expect(pages).toHaveLength(Math.ceil(seeded.length / 150))
-  }, 20_000)
+  })
 
   it('builds Agent context from the full retained transcript rather than the UI page', () => {
     const messages = Array.from({ length: 160 }, (_value, index) => ({
