@@ -13,6 +13,7 @@ const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions
 const listHermesSessionGroupsMock = vi.fn(async (ctx: any) => { ctx.body = { groups: [] } })
 const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const importHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id } })
+const createHermesHandoffMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const getContextMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
@@ -58,6 +59,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   listHermesSessionGroups: listHermesSessionGroupsMock,
   getHermesSession: getHermesSessionMock,
   importHermesSession: importHermesSessionMock,
+  createHermesHandoff: createHermesHandoffMock,
   search: searchMock,
   get: getMock,
   getContext: getContextMock,
@@ -106,6 +108,7 @@ describe('session routes', () => {
     listHermesSessionGroupsMock.mockClear()
     getHermesSessionMock.mockClear()
     importHermesSessionMock.mockClear()
+    createHermesHandoffMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
     getContextMock.mockClear()
@@ -147,6 +150,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/hermes/groups',
       '/api/hermes/sessions/hermes/:id',
       '/api/hermes/sessions/hermes/:id/import',
+      '/api/hermes/sessions/:id/handoff',
       '/api/hermes/search/sessions',
       '/api/hermes/sessions/search',
       '/api/hermes/sessions/usage',
@@ -174,6 +178,24 @@ describe('session routes', () => {
       '/api/hermes/workspace/folders',
       '/api/hermes/workspace/folders/rename',
     ]))
+  })
+
+  it('delegates session handoff to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const handoffLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/hermes/sessions/:id/handoff' && entry.methods.includes('POST'),
+    )
+    const ctx: any = {
+      params: { id: 'src-codex' },
+      query: {},
+      request: { body: {} },
+      body: null,
+    }
+
+    await handoffLayer.stack[0](ctx)
+
+    expect(createHermesHandoffMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ ok: true })
   })
 
   it('delegates global category routes and session assignment', async () => {
