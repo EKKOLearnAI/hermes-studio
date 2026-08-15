@@ -23,7 +23,7 @@ describe('compactCodexThread', () => {
     vi.clearAllMocks()
   })
 
-  it('sends JSON-RPC initialize and thread/compact/start and resolves on compaction', async () => {
+  it('resumes the thread before thread/compact/start and resolves on compaction', async () => {
     const child = makeChild()
     spawnMock.mockReturnValue(child)
 
@@ -36,14 +36,17 @@ describe('compactCodexThread', () => {
 
     child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":0,"result":{"codexHome":"/tmp/codex"}}\n'))
     child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":1,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":2,"result":{}}\n'))
     child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","method":"thread/compacted","params":{"threadId":"thread-1","turnId":"turn-1"}}\n'))
 
     await expect(promise).resolves.toEqual({ compacted: true, summary: undefined })
     const writes = child.stdin.write.mock.calls.map((call: any[]) => call[0])
     expect(writes[0]).toContain('"method":"initialize"')
     expect(writes[1]).toContain('"method":"initialized"')
-    expect(writes[2]).toContain('"method":"thread/compact/start"')
+    expect(writes[2]).toContain('"method":"thread/resume"')
     expect(writes[2]).toContain('"threadId":"thread-1"')
+    expect(writes[3]).toContain('"method":"thread/compact/start"')
+    expect(writes[3]).toContain('"threadId":"thread-1"')
   })
 
   it('rejects when the app-server returns a JSON-RPC error', async () => {
@@ -60,5 +63,22 @@ describe('compactCodexThread', () => {
     child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}\n'))
 
     await expect(promise).rejects.toThrow('method not found')
+  })
+
+  it('rejects when thread/compact/start returns a JSON-RPC error', async () => {
+    const child = makeChild()
+    spawnMock.mockReturnValue(child)
+
+    const { compactCodexThread } = await import('../../packages/server/src/services/coding-agents/runtime/codex-compact')
+    const promise = compactCodexThread({
+      command: 'codex',
+      env: { CODEX_HOME: '/tmp/codex' },
+    }, 'thread-1')
+
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":0,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":1,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"thread not found"}}\n'))
+
+    await expect(promise).rejects.toThrow('thread not found')
   })
 })

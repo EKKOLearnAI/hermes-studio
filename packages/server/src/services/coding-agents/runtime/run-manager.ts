@@ -178,6 +178,11 @@ function responseErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function compactTokenNumber(value: unknown): number | null {
+  const num = Number(value)
+  return Number.isFinite(num) && num >= 0 ? Math.floor(num) : null
+}
+
 function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
   const data: any = event.data || {}
   const item = data.item || data.output_item || data
@@ -1720,6 +1725,33 @@ export class CodingAgentRunManager {
 
     if ((event.type === 'assistant' || event.type === 'user') && event.message) {
       this.handleClaudeTopLevelMessage(run, event.message)
+      return
+    }
+
+    if (event.type === 'system' && event.subtype === 'compact_boundary') {
+      const metadata = event.compact_metadata || event.compactMetadata || {}
+      const preTokens = compactTokenNumber(metadata.pre_tokens)
+      const postTokens = compactTokenNumber(metadata.post_tokens)
+      const trigger = String(metadata.trigger || 'manual')
+      const summary = [
+        `Compaction completed (${trigger}).`,
+        preTokens != null ? `Before: ${preTokens} tokens.` : '',
+        postTokens != null ? `After: ${postTokens} tokens.` : '',
+      ].filter(Boolean).join(' ')
+      if (summary) {
+        this.ensureClaudePrintText(run)
+        run.printText = `${run.printText || ''}${summary}`
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            item_id: run.printMessageId,
+            output_index: 0,
+            content_index: 0,
+            delta: summary,
+          },
+        })
+      }
       return
     }
 

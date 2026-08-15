@@ -48,6 +48,7 @@ export async function compactCodexThread(
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderr = ''
+    let resumeAccepted = false
     let compactAccepted = false
     let compactCompleted = false
     let settled = false
@@ -102,13 +103,29 @@ export async function compactCodexThread(
         child.stdin?.write(JSON.stringify({
           jsonrpc: '2.0',
           id: 1,
+          method: 'thread/resume',
+          params: { threadId },
+        }) + '\n')
+        return
+      }
+
+      if (message.id === 1 && !resumeAccepted) {
+        resumeAccepted = true
+        if (message.error) {
+          compactError = message.error.message || `Codex app-server error ${message.error.code || ''}`.trim()
+          settle(() => reject(new Error(compactError || 'Codex thread resume failed')))
+          return
+        }
+        child.stdin?.write(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
           method: 'thread/compact/start',
           params: { threadId },
         }) + '\n')
         return
       }
 
-      if (message.id === 1 && !compactAccepted) {
+      if (message.id === 2 && !compactAccepted) {
         compactAccepted = true
         if (message.error) {
           compactError = message.error.message || `Codex app-server error ${message.error.code || ''}`.trim()
