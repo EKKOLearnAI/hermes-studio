@@ -9,7 +9,6 @@ import {
 
 const APP_SERVER_READY_TIMEOUT_MS = 30_000
 const COMPACT_TIMEOUT_MS = 5 * 60 * 1000
-const MAX_SUMMARY_CHARS = 8_000
 
 export interface CodexCompactLaunch {
   command: string
@@ -29,7 +28,7 @@ export async function compactCodexThread(
   launch: CodexCompactLaunch,
   threadId: string,
   options: { timeoutMs?: number } = {},
-): Promise<{ compacted: boolean; summary?: string }> {
+): Promise<{ compacted: boolean; beforeTokens?: number | null; afterTokens?: number | null }> {
   const cwd = launch.workspaceDir && existsSync(launch.workspaceDir) ? launch.workspaceDir : homedir()
   const command = process.platform === 'win32' ? normalizeWindowsCommandPath(launch.command) : launch.command
   const appArgs = ['app-server', '--stdio']
@@ -52,10 +51,11 @@ export async function compactCodexThread(
     let compactAccepted = false
     let compactCompleted = false
     let settled = false
-    let summary = ''
     let compactError: string | null = null
     let readyTimer: ReturnType<typeof setTimeout> | null = null
     let compactTimer: ReturnType<typeof setTimeout> | null = null
+    let beforeTokens: number | null = null
+    let afterTokens: number | null = null
 
     const settle = (fn: () => void) => {
       if (settled) return
@@ -78,23 +78,27 @@ export async function compactCodexThread(
         return
       }
 
-      if (message.method === 'item/agentMessage/delta') {
-        const text = typeof message.params?.text === 'string' ? message.params.text : ''
-        if (text) {
-          summary = `${summary}${text}`.slice(-MAX_SUMMARY_CHARS)
-        }
-        return
-      }
-
       if (message.method === 'thread/compacted' && String(message.params?.threadId || '') === threadId) {
         compactCompleted = true
-        settle(() => resolve({ compacted: true, summary: summary || undefined }))
+        settle(() => resolve({ compacted: true, beforeTokens, afterTokens }))
         return
       }
 
       if (message.method === 'turn/completed' && String(message.params?.threadId || '') === threadId) {
         compactCompleted = true
-        settle(() => resolve({ compacted: true, summary: summary || undefined }))
+        settle(() => resolve({ compacted: true, beforeTokens, afterTokens }))
+        return
+      }
+
+      if (message.method === 'thread/tokenUsage/updated' && String(message.params?.threadId || '') === threadId) {
+        const last = message.params?.tokenUsage?.last
+        const totalTokens = typeof last?.totalTokens === 'number' && Number.isFinite(last.totalTokens)
+          ? Math.floor(last.totalTokens)
+          : null
+        if (totalTokens != null) {
+          if (beforeTokens == null) beforeTokens = totalTokens
+          afterTokens = totalTokens
+        }
         return
       }
 

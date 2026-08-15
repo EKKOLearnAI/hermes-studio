@@ -5,6 +5,7 @@ import { forceCompressBridgeHistory, getOrCreateSession } from '../hermes/run-ch
 import { calcAndUpdateUsage } from '../hermes/run-chat/usage'
 import type { SessionState } from '../hermes/run-chat/types'
 import { codingAgentRunManager } from './runtime/run-manager'
+import { compactStoredCodingAgentSession, startCodingAgentRun } from './index'
 
 export type CodingAgentCommandName = 'context' | 'compact' | 'usage' | 'status'
 
@@ -136,7 +137,17 @@ export async function handleCodingAgentSessionCommand(
 
   if (command.name === 'compact') {
     try {
-      const result = await codingAgentRunManager.compact(sessionId, command.args)
+      let result: { started: boolean } | {
+        compacted: boolean
+        beforeTokens?: number | null
+        afterTokens?: number | null
+      }
+      try {
+        result = await codingAgentRunManager.compact(sessionId, command.args)
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.includes('Coding agent session not found')) throw err
+        result = await restartCodingAgentRunForCompact(sessionId, profile, state)
+      }
       if ('started' in result) {
         emitCommand({
           action: 'compact',
@@ -149,9 +160,7 @@ export async function handleCodingAgentSessionCommand(
       emitCommand({
         action: 'compact',
         terminal: true,
-        message: result.compacted
-          ? `Compaction completed.${result.summary ? `\n\n${result.summary}` : ''}`
-          : 'Compaction completed without changes.',
+        message: compactionCompletionMessage(result),
         compacted: result.compacted,
       })
     } catch (err) {
@@ -179,6 +188,50 @@ export async function handleCodingAgentSessionCommand(
     }
     return
   }
+}
+
+async function restartCodingAgentRunForCompact(
+  sessionId: string,
+  profile: string,
+  state: SessionState,
+): Promise<{ started: boolean } | {
+  compacted: boolean
+  beforeTokens?: number | null
+  afterTokens?: number | null
+}> {
+  const row = getSession(sessionId)
+  if (!row || (row.agent !== 'codex' && row.agent !== 'claude')) {
+    throw new Error('Coding agent session not found or is not a Codex/Claude Code session')
+  }
+  if (row.agent === 'codex') {
+    return compactStoredCodingAgentSession(sessionId, profile)
+  }
+  const agentId = 'claude-code'
+  await startCodingAgentRun(agentId, {
+    sessionId,
+    profile,
+    mode: row.agent_mode === 'global' ? 'global' : 'scoped',
+    workspace: row.workspace || undefined,
+    agentNativeSessionId: row.agent_native_session_id || undefined,
+    agentSessionId: row.agent_session_id || undefined,
+  }, state)
+  const result = await codingAgentRunManager.compact(sessionId, '')
+  if (!('started' in result) && !('compacted' in result)) {
+    throw new Error('Coding agent compact returned an unexpected result')
+  }
+  return result
+}
+
+function compactionCompletionMessage(result: {
+  compacted: boolean
+  beforeTokens?: number | null
+  afterTokens?: number | null
+}): string {
+  if (!result.compacted) return 'Compaction completed without changes.'
+  const parts = ['Compaction completed.']
+  if (result.beforeTokens != null) parts.push(`Before: ${result.beforeTokens} tokens.`)
+  if (result.afterTokens != null) parts.push(`After: ${result.afterTokens} tokens.`)
+  return parts.join(' ')
 }
 
 async function compressStudioTranscript(

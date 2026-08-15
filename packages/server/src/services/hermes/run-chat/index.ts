@@ -28,6 +28,10 @@ import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
+import {
+  handleCodingAgentSessionCommand,
+  parseCodingAgentSessionCommand,
+} from '../../coding-agents/session-command'
 import { contentBlocksToString } from './content-blocks'
 import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessages } from './resume-payload'
 import type {
@@ -400,6 +404,15 @@ export class ChatRunSocket {
             })
           }
           return
+        }
+        if (isCodingAgentExecution(source, data)) {
+          if (typeof data.input === 'string') {
+            const codingAgentCommand = parseCodingAgentSessionCommand(data.input)
+            if (codingAgentCommand) {
+              await handleCodingAgentSessionCommand(this.nsp, socket, data, codingAgentCommand, runProfile, this.sessionMap)
+              return
+            }
+          }
         }
         if (state.isWorking) {
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`

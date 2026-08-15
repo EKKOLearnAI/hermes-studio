@@ -730,7 +730,11 @@ export class CodingAgentRunManager {
     }
   }
 
-  compact(sessionId: string, args = ''): { started: boolean } | Promise<{ compacted: boolean; summary?: string }> {
+  compact(sessionId: string, args = ''): { started: boolean } | Promise<{
+    compacted: boolean
+    beforeTokens?: number | null
+    afterTokens?: number | null
+  }> {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
     if (childIsRunning(run.currentChild)) throw new Error('Coding agent is still processing the previous input')

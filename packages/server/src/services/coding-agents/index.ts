@@ -10,6 +10,7 @@ import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from '../con
 import { getCompatibleCustomProviders } from '../hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './claude-code/proxy'
 import { registerCodexProxyTarget, restoreCodexProxyTarget } from './codex/proxy'
+import { compactCodexThread } from './runtime/codex-compact'
 import type { ApiMode, CodingAgentImageInput } from './shared/types'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from '../hermes/model-context'
@@ -2751,6 +2752,45 @@ export async function startCodingAgentRun(
     sessionId,
     pid: started.pid,
   }
+}
+
+export async function compactStoredCodingAgentSession(
+  sessionId: string,
+  profile: string,
+): Promise<{ compacted: boolean; beforeTokens?: number | null; afterTokens?: number | null }> {
+  const session = getSession(sessionId)
+  if (!session || (session.agent !== 'codex' && session.agent !== 'claude')) {
+    throw new Error('Coding agent session not found or is not a Codex/Claude Code session')
+  }
+  if (session.agent !== 'codex') {
+    throw new Error('Claude Code compact requires an active session run')
+  }
+  const resolved = await resolveStoredProviderLaunchInput({
+    sessionId,
+    profile,
+    mode: session.agent_mode === 'global' ? 'global' : 'scoped',
+    workspace: session.workspace || undefined,
+    agentNativeSessionId: session.agent_native_session_id || undefined,
+    agentSessionId: session.agent_session_id || undefined,
+  }, session)
+  const launch = await prepareCodingAgentLaunch('codex', {
+    ...resolved,
+    sessionId,
+    profile,
+    isolateSettings: true,
+  })
+  const launchEnv = {
+    ...process.env,
+    ...launch.env,
+  }
+  const command = process.platform === 'win32'
+    ? await resolveCommandForExecution(launch.command, launchEnv)
+    : launch.command
+  return compactCodexThread({
+    command,
+    env: launchEnv,
+    workspaceDir: launch.workspaceDir,
+  }, String(session.agent_native_session_id || '').trim())
 }
 
 export function sendCodingAgentRunInput(
