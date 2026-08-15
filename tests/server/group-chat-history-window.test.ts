@@ -188,6 +188,54 @@ describe('group chat history windows', () => {
     ])
   })
 
+  it('expands complete-history pages instead of splitting an Agent run at the nominal boundary', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    const runMessages = [
+      makeMessage({
+        id: 'boundary-run_part_0',
+        role: 'assistant',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: 'starting',
+        timestamp: 100,
+      }),
+      makeMessage({
+        id: 'boundary-run_part_0_toolcall_t',
+        role: 'assistant',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: '',
+        timestamp: 101,
+      }),
+      makeMessage({
+        id: 'boundary-run_part_0_toolresult_t',
+        role: 'tool',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: 'tool result',
+        timestamp: 102,
+      }),
+    ]
+    const newerMessages = Array.from({ length: 149 }, (_value, index) => makeMessage({
+      id: `newer-${String(index + 1).padStart(3, '0')}`,
+      content: `newer ${index + 1}`,
+      timestamp: 1_000 + index,
+    }))
+    for (const message of [...runMessages, ...newerMessages]) {
+      storage.saveMessageAndRefreshRoom(message as any)
+    }
+
+    const page = storage.getHistoryPageForUI('room-1', 150)
+
+    expect(page.messages).toHaveLength(152)
+    expect(page.messages.slice(0, 3).map(message => message.id)).toEqual(
+      runMessages.map(message => message.id),
+    )
+    expect(page.hasMore).toBe(false)
+  })
+
   it('bounds same-timestamp overflow while retaining the newest context messages', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -1416,14 +1464,23 @@ describe('group chat history windows', () => {
   it('keyset-paginates 13,000+ archived messages with stable ids and equal timestamps', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
+    const boundaryRunIndexes = new Set([12_923, 12_924, 12_925])
     const seeded = Array.from({ length: 13_075 }, (_value, index) => makeMessage({
       id: `archive-${String(index + 1).padStart(5, '0')}`,
       content: `archive ${index + 1}`,
       timestamp: 1_900_000_000 + Math.floor(index / 225),
+      ...(boundaryRunIndexes.has(index)
+        ? {
+            role: index === 12_924 ? 'tool' : 'assistant',
+            run_id: 'archive-boundary-run',
+            senderId: 'agent-1',
+            senderName: 'Agent',
+          }
+        : {}),
     }))
     const insert = dbMock.current!.prepare(
-      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     dbMock.current!.exec('BEGIN')
     try {
@@ -1435,6 +1492,8 @@ describe('group chat history windows', () => {
           message.senderName,
           message.content,
           message.timestamp,
+          message.role,
+          message.run_id || null,
         )
       }
       dbMock.current!.exec('COMMIT')
@@ -1456,6 +1515,10 @@ describe('group chat history windows', () => {
     expect(loaded).toEqual(seeded.map(message => message.id))
     expect(new Set(loaded)).toHaveLength(seeded.length)
     expect(pages).toHaveLength(Math.ceil(seeded.length / 150))
+    const boundaryRunIds = [...boundaryRunIndexes].map(index => seeded[index].id)
+    expect(pages.filter(page => boundaryRunIds.some(id => page.includes(id)))).toEqual([
+      expect.arrayContaining(boundaryRunIds),
+    ])
   })
 
   it('builds Agent context from the full retained transcript rather than the UI page', () => {

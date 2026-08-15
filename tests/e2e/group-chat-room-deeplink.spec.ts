@@ -725,6 +725,102 @@ test.describe('group chat room deep links', () => {
     expect(historyRequests[1]).toMatchObject({ before: 'short-archive-11', limit: 150 })
   })
 
+  test('anchors complete history to the rendered Agent run when the page starts inside that run', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/history/group-chat/room-alpha')
+    const boundaryRun = [
+      {
+        id: 'boundary-run-assistant',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: 'Boundary run started.',
+        timestamp: 1_790_300_003,
+        role: 'assistant',
+        run_id: 'history-boundary-run',
+      },
+      {
+        id: 'boundary-run-tool',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: '{"result":"boundary"}',
+        timestamp: 1_790_300_004,
+        role: 'tool',
+        run_id: 'history-boundary-run',
+        tool_name: 'boundary_tool',
+        tool_call_id: 'boundary-call',
+      },
+      {
+        id: 'boundary-run-answer',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: 'Boundary run finished.',
+        timestamp: 1_790_300_005,
+        role: 'assistant',
+        run_id: 'history-boundary-run',
+      },
+    ]
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': [
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `before-boundary-${index + 1}`,
+          roomId: 'room-alpha',
+          senderId: 'user-1',
+          senderName: 'Alice',
+          content: `Before boundary ${index + 1}`,
+          timestamp: 1_790_300_000 + index,
+          role: 'user',
+        })),
+        ...boundaryRun,
+        ...Array.from({ length: 147 }, (_, index) => ({
+          id: `after-boundary-${index + 1}`,
+          roomId: 'room-alpha',
+          senderId: 'user-1',
+          senderName: 'Alice',
+          content: `After boundary ${index + 1}`,
+          timestamp: 1_790_300_006 + index,
+          role: 'user',
+        })),
+      ],
+    })
+    await page.reload()
+
+    const scroller = page.locator('[data-group-history-scroller]')
+    const runCard = page.locator('.group-agent-run[data-run-id="history-boundary-run"]')
+    await expect(runCard).toHaveCount(1)
+    await expect(runCard).toContainText('Boundary run finished.')
+    const anchorBefore = await scroller.evaluate(element => {
+      element.scrollTop = 0
+      const anchor = element.querySelector(
+        '[data-group-message-id="group-agent-run:agent-1:history-boundary-run"]',
+      )
+      const offset = anchor
+        ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
+        : Number.NaN
+      element.dispatchEvent(new Event('scroll'))
+      return offset
+    })
+
+    await expect(page.getByText('Before boundary 1', { exact: true })).toBeVisible()
+    await expect(runCard).toHaveCount(1)
+    await expect.poll(() => scroller.evaluate((element, expectedOffset) => {
+      const anchor = element.querySelector(
+        '[data-group-message-id="group-agent-run:agent-1:history-boundary-run"]',
+      )
+      const currentOffset = anchor
+        ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
+        : Number.NaN
+      return Math.abs(currentOffset - expectedOffset)
+    }, anchorBefore)).toBeLessThanOrEqual(2)
+    const historyRequests = api.roomDetailRequests.filter(request =>
+      request.roomId === 'room-alpha' && request.history,
+    )
+    expect(historyRequests).toHaveLength(2)
+    expect(historyRequests[1]).toMatchObject({ before: 'boundary-run-assistant', limit: 150 })
+  })
+
   test('keeps runtime Tools bounded, newest-first, and stable after completion and refresh', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-beta')
     await expect(page.getByText('Beta room message')).toBeVisible()

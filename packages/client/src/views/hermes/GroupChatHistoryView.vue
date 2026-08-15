@@ -82,9 +82,10 @@ async function loadInitialHistory(): Promise<void> {
 async function loadOlderHistory(): Promise<void> {
   const element = scroller.value
   const before = messages.value[0]?.id
-  if (!element || !before || loadingOlder.value || !hasMoreBefore.value) return
+  const anchorId = displayMessages.value[0]?.id
+  if (!element || !before || !anchorId || loadingOlder.value || !hasMoreBefore.value) return
 
-  const anchor = element.querySelector<HTMLElement>(`[data-group-message-id="${CSS.escape(before)}"]`)
+  const anchor = element.querySelector<HTMLElement>(`[data-group-message-id="${CSS.escape(anchorId)}"]`)
   const anchorOffset = anchor
     ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
     : 0
@@ -102,7 +103,7 @@ async function loadOlderHistory(): Promise<void> {
       const keepAnchor = () => {
         if (scroller.value !== element || Date.now() > keepAnchorUntil) return
         const currentAnchor = element.querySelector<HTMLElement>(
-          `[data-group-message-id="${CSS.escape(before)}"]`,
+          `[data-group-message-id="${CSS.escape(anchorId)}"]`,
         )
         if (currentAnchor) {
           const currentOffset = currentAnchor.getBoundingClientRect().top

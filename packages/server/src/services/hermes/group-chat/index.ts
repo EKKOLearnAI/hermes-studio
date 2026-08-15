@@ -556,6 +556,21 @@ const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_SUMMARY_SCAN_LIMIT = 10_000
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
 
+function storedGroupAgentRunIdentity(row: any): {
+    ownerId: string
+    runId?: string
+    idPrefix?: string
+} | null {
+    const role = String(row?.role || '')
+    if (role !== 'assistant' && role !== 'tool') return null
+    const ownerId = String(row?.senderAgentRecordId || row?.senderId || '').trim()
+    if (!ownerId) return null
+    const runId = String(row?.run_id || '').trim()
+    if (runId) return { ownerId, runId }
+    const match = String(row?.id || '').match(/^(.+)_part_\d+(?:_tool(?:call|result)_.+)?$/)
+    return match?.[1] ? { ownerId, idPrefix: `${match[1]}_part_` } : null
+}
+
 class ChatStorage {
     private readonly trustedAgentMessageMetadata = new Map<string, { mentionDepth: number; handoffChainId: string; continuationAttemptId: string }>()
     private roomAgentOnlineProvider: ((roomId: string, agentId: string) => boolean) | null = null
@@ -1788,14 +1803,62 @@ class ChatStorage {
             params.push(cursor.timestamp, cursor.timestamp, cursor.id)
         }
 
-        const rows = db.prepare(
+        let pageRowsDescending = db.prepare(
             `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages
              WHERE roomId = ?${cursorPredicate}
              ORDER BY timestamp DESC, id DESC
              LIMIT ?`,
-        ).all(...params, safeLimit + 1) as any[]
-        const hasMore = rows.length > safeLimit
-        const pageRows = rows.slice(0, safeLimit).reverse()
+        ).all(...params, safeLimit) as any[]
+
+        const boundary = pageRowsDescending.at(-1)
+        const runIdentity = storedGroupAgentRunIdentity(boundary)
+        if (boundary && runIdentity) {
+            const runPredicate = runIdentity.runId
+                ? 'run_id = ?'
+                : "(COALESCE(run_id, '') = '' AND INSTR(id, ?) = 1)"
+            const oldestRunRow = db.prepare(
+                `SELECT timestamp, id FROM gc_messages
+                 WHERE roomId = ?${cursorPredicate}
+                   AND role IN ('assistant', 'tool')
+                   AND COALESCE(NULLIF(senderAgentRecordId, ''), senderId) = ?
+                   AND ${runPredicate}
+                 ORDER BY timestamp ASC, id ASC
+                 LIMIT 1`,
+            ).get(
+                ...params,
+                runIdentity.ownerId,
+                runIdentity.runId || runIdentity.idPrefix!,
+            ) as { timestamp: number; id: string } | undefined
+
+            if (
+                oldestRunRow
+                && (
+                    oldestRunRow.timestamp !== boundary.timestamp
+                    || oldestRunRow.id !== boundary.id
+                )
+            ) {
+                pageRowsDescending = db.prepare(
+                    `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages
+                     WHERE roomId = ?${cursorPredicate}
+                       AND (timestamp > ? OR (timestamp = ? AND id >= ?))
+                     ORDER BY timestamp DESC, id DESC`,
+                ).all(
+                    ...params,
+                    oldestRunRow.timestamp,
+                    oldestRunRow.timestamp,
+                    oldestRunRow.id,
+                ) as any[]
+            }
+        }
+
+        const oldestPageRow = pageRowsDescending.at(-1)
+        const hasMore = Boolean(oldestPageRow && db.prepare(
+            `SELECT 1 FROM gc_messages
+             WHERE roomId = ?
+               AND (timestamp < ? OR (timestamp = ? AND id < ?))
+             LIMIT 1`,
+        ).get(roomId, oldestPageRow.timestamp, oldestPageRow.timestamp, oldestPageRow.id))
+        const pageRows = pageRowsDescending.reverse()
         const agentCache = new Map<string, RoomAgent | null>()
         const roomCache = new Map<string, RoomInfo | undefined>()
         const messages = this.compactMessageAgentMetadata(
