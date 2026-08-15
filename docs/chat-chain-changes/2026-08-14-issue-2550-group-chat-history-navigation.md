@@ -14,6 +14,12 @@ presentation, but loads every available room page into a read-only transcript.
 It does not connect the realtime room or expose message input and management
 actions.
 
+The complete transcript now lives under the Hermes History route and reuses the
+same page-sidebar layout as direct-chat history. Direct and Group Chat live
+message caps also share one archive-link component, and the complete Group Chat
+transcript owns an explicit vertical scroll container so long histories remain
+reachable after direct navigation or refresh.
+
 UI history paging reads the complete persisted Room transcript and reports the
 full message count. The Agent context path remains independently bounded to its
 latest 500 messages, so archive access does not expand runtime prompt context.

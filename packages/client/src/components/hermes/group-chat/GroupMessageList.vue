@@ -8,6 +8,7 @@ import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
+import HistoryArchiveLink from '../chat/HistoryArchiveLink.vue'
 
 const store = useGroupChatStore()
 const props = withDefaults(defineProps<{
@@ -113,7 +114,7 @@ function retryOlderMessages(): void {
 }
 
 const completeHistoryHref = computed(() => store.currentRoomId
-    ? `#/hermes/group-chat/history/${encodeURIComponent(store.currentRoomId)}`
+    ? `#/hermes/history/group-chat/${encodeURIComponent(store.currentRoomId)}`
     : '#/hermes/group-chat')
 
 watch(() => store.currentRoomId, (roomId) => {
@@ -180,14 +181,11 @@ defineExpose({ scrollToBottom })
                 </div>
             </template>
             <template #before>
-                <div
+                <HistoryArchiveLink
                     v-if="store.hasReachedMessageDisplayLimit"
-                    class="history-archive-link-wrap"
-                >
-                    <a class="history-archive-link" :href="completeHistoryHref">
-                        {{ t('groupChat.viewCompleteHistory') }}
-                    </a>
-                </div>
+                    :href="completeHistoryHref"
+                    :label="t('groupChat.viewCompleteHistory')"
+                />
                 <div
                     v-else-if="store.olderMessagesError"
                     class="history-load-error"
@@ -484,7 +482,6 @@ defineExpose({ scrollToBottom })
     }
 }
 
-.history-archive-link-wrap,
 .history-load-error {
     display: flex;
     align-items: center;
@@ -493,7 +490,6 @@ defineExpose({ scrollToBottom })
     padding-bottom: 8px;
 }
 
-.history-archive-link,
 .history-load-error button {
     display: inline-flex;
     align-items: center;

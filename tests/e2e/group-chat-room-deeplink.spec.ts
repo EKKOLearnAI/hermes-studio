@@ -605,17 +605,65 @@ test.describe('group chat room deep links', () => {
 
     const historyLink = page.getByRole('link', { name: 'View complete group chat history' })
     await expect(historyLink).toBeVisible()
-    await expect(historyLink).toHaveAttribute('href', '#/hermes/group-chat/history/room-alpha')
+    await expect(historyLink).toHaveClass(/history-archive-link/)
+    await expect(historyLink).toHaveAttribute('href', '#/hermes/history/group-chat/room-alpha')
     await historyLink.click()
-    await expect(page).toHaveURL(/#\/hermes\/group-chat\/history\/room-alpha$/)
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-alpha$/)
+    await expect(page.locator('.history-panel')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Alpha Room' })).toBeVisible()
     await expect(page.getByText('Archive message 1', { exact: true })).toBeVisible()
     await expect(page.getByText('Archive message 700', { exact: true })).toBeVisible()
+    const completeHistoryScroller = page.locator('[data-group-history-scroller]')
+    await expect(completeHistoryScroller).toBeVisible()
+    const dimensions = await completeHistoryScroller.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight)
+    await completeHistoryScroller.hover()
+    await page.mouse.wheel(0, 800)
+    await expect.poll(() => completeHistoryScroller.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await completeHistoryScroller.evaluate(element => {
+      element.scrollTop = element.scrollHeight
+    })
+    await expect.poll(() => completeHistoryScroller.evaluate(element =>
+      Math.round(element.scrollTop + element.clientHeight),
+    )).toBeGreaterThanOrEqual(Math.floor(dimensions.scrollHeight))
+    await expect.poll(() => completeHistoryScroller.evaluate(element => {
+      const item = element.querySelector('[data-group-message-id="archive-700"]')?.getBoundingClientRect()
+      const viewport = element.getBoundingClientRect()
+      return !!item && item.bottom <= viewport.bottom && item.top >= viewport.top
+    })).toBe(true)
+    await completeHistoryScroller.evaluate(element => {
+      element.scrollTop = 0
+    })
+    await expect.poll(() => completeHistoryScroller.evaluate(element => element.scrollTop)).toBe(0)
+    await expect.poll(() => completeHistoryScroller.evaluate(element => {
+      const item = element.querySelector('[data-group-message-id="archive-1"]')?.getBoundingClientRect()
+      const viewport = element.getBoundingClientRect()
+      return !!item && item.bottom <= viewport.bottom && item.top >= viewport.top
+    })).toBe(true)
     const historyOffsets = api.roomDetailRequests
       .filter(request => request.roomId === 'room-alpha')
       .map(request => request.offset)
     expect(new Set(historyOffsets)).toEqual(new Set([0, 150, 300, 450, 600]))
     expect(historyOffsets).not.toContain(750)
+    await expect(page.locator('textarea')).toHaveCount(0)
+
+    await page.reload()
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-alpha$/)
+    await expect(page.getByRole('heading', { name: 'Alpha Room' })).toBeVisible()
+    await page.getByRole('link', { name: 'Back to room' }).click()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-alpha$/)
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+  })
+
+  test('fails closed when complete group history is missing', async ({ page }) => {
+    await setup(page, '/#/hermes/history/group-chat/missing-room')
+
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/missing-room$/)
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('[data-group-history-scroller]')).toHaveCount(0)
     await expect(page.locator('textarea')).toHaveCount(0)
   })
 
