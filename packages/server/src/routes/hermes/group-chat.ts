@@ -562,8 +562,22 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     }
 
     const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
-    const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 150) : 150
-    const messages = storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
+    const limit = ctx.query.limit
+        ? Math.min(150, Math.max(1, parseInt(ctx.query.limit as string, 10) || 150))
+        : 150
+    const beforeMessageId = typeof ctx.query.before === 'string'
+        ? String(ctx.query.before).trim()
+        : ''
+    const historyPage = beforeMessageId || ctx.query.history === '1'
+        ? storage.getHistoryPageForUI(ctx.params.roomId, limit, beforeMessageId || undefined)
+        : null
+    if (historyPage && !historyPage.cursorFound) {
+        ctx.status = 400
+        ctx.body = { error: 'History cursor not found' }
+        return
+    }
+    const messages = historyPage?.messages
+        ?? storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
     const total = storage.getMessageCount(ctx.params.roomId)
     const agents = typeof chatServer.getRoomAgentViews === 'function'
         ? chatServer.getRoomAgentViews(ctx.params.roomId, canManage)
@@ -578,7 +592,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         total,
         offset,
         limit,
-        hasMore: offset + messages.length < total,
+        hasMore: historyPage?.hasMore ?? offset + messages.length < total,
     }
 })
 

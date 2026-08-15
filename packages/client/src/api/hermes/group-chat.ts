@@ -348,11 +348,13 @@ export async function listRooms(): Promise<{ rooms: RoomInfo[] }> {
 
 export async function getRoomDetail(
     roomId: string,
-    options: { offset?: number; limit?: number } = {},
+    options: { offset?: number; limit?: number; before?: string; history?: boolean } = {},
 ): Promise<{ room: RoomInfo; messages: ChatMessage[]; agents: RoomAgent[]; members: MemberInfo[]; handoffChains?: RoomAgentHandoffChain[]; total?: number; offset?: number; limit?: number; hasMore?: boolean }> {
     const params = new URLSearchParams()
     if (options.offset != null) params.set('offset', String(options.offset))
     if (options.limit != null) params.set('limit', String(options.limit))
+    if (options.before) params.set('before', options.before)
+    if (options.history) params.set('history', '1')
     const query = params.toString()
     return request(`/api/hermes/group-chat/rooms/${roomId}${query ? `?${query}` : ''}`)
 }
