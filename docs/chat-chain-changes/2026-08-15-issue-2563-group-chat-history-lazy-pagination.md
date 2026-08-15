@@ -1,6 +1,6 @@
 ---
 date: 2026-08-15
-pr: pending
+pr: 2564
 feature: Lazy complete Group Chat history pagination
 impact: Complete history opens at the newest page and loads one stable-ID page upward without losing the reader's viewport anchor.
 ---
