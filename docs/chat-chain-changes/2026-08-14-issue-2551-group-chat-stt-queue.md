@@ -11,6 +11,9 @@ composer and are never sent automatically.
 
 Each mentioned Agent invocation is durably queued by the server with stable
 ordering and requester identity. Room members receive the authoritative queue
-on join and through live updates. Only the requesting member can cancel work
-that has not started; cancellation does not remove the originating user
-message, and the server atomically resolves cancellation-versus-start races.
+on join and through live updates. Cancellation requires a private,
+browser-held capability whose hash is bound to the queued work and omitted
+from Room snapshots, so a member cannot gain cancellation authority by
+spoofing the displayed requester identity. Cancellation does not remove the
+originating user message, and the server atomically resolves
+cancellation-versus-start races.

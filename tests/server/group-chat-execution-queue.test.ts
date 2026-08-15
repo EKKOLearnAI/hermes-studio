@@ -8,6 +8,8 @@ import {
 
 describe('group chat authoritative execution queue', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
+  const ownerCapability = 'a'.repeat(64)
+  const attackerCapability = 'b'.repeat(64)
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -20,7 +22,7 @@ describe('group chat authoritative execution queue', () => {
     harness?.cleanup()
   })
 
-  it('publishes queued work with stable ordering, restores it on another tab, and only lets its requester cancel', async () => {
+  it('publishes queued work with stable ordering, restores it on reconnect, and requires its private capability to cancel', async () => {
     let finishFirst!: () => void
     let started = 0
     const executor = {
@@ -45,6 +47,7 @@ describe('group chat authoritative execution queue', () => {
       id: 'message-running',
       content: '@Worker first',
       mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
     })
     await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
 
@@ -54,6 +57,7 @@ describe('group chat authoritative execution queue', () => {
       id: 'message-queued',
       content: '@Worker second task with a longer body',
       mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
     })
     const queued = await queueUpdate
     expect(queued.items).toEqual([
@@ -71,22 +75,44 @@ describe('group chat authoritative execution queue', () => {
 
     const restored = await emitAck<any>(observer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
     expect(restored.executionQueue).toEqual(queued.items)
+    expect(JSON.stringify(restored.executionQueue)).not.toContain(ownerCapability)
+    expect(JSON.stringify(restored.executionQueue)).not.toContain('cancelCapability')
 
     observer.disconnect()
-    const reconnectedObserver = await connectGroupChatClient(harness.port, 'human-2', 'Observer')
-    harness.sockets.push(reconnectedObserver)
-    const reconnected = await emitAck<any>(reconnectedObserver, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    owner.disconnect()
+    const impersonator = await connectGroupChatClient(harness.port, 'human-1', 'Owner', {
+      inviteCode: 'ROOM1',
+    })
+    harness.sockets.push(impersonator)
+    const impersonated = await emitAck<any>(impersonator, 'join', {
+      roomId: 'room-1',
+      inviteCode: 'ROOM1',
+      name: 'Owner',
+    })
+    expect(impersonated.executionQueue).toEqual(queued.items)
+    const forged = await emitAck<any>(impersonator, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.items[0].id,
+      executionQueueCapability: attackerCapability,
+    })
+    expect(forged).toMatchObject({ error: 'Access denied' })
+
+    impersonator.disconnect()
+    const reconnectedOwner = await connectGroupChatClient(harness.port, 'human-1', 'Owner', {
+      inviteCode: 'ROOM1',
+    })
+    harness.sockets.push(reconnectedOwner)
+    const reconnected = await emitAck<any>(reconnectedOwner, 'join', {
+      roomId: 'room-1',
+      inviteCode: 'ROOM1',
+      name: 'Owner',
+    })
     expect(reconnected.executionQueue).toEqual(queued.items)
 
-    const forbidden = await emitAck<any>(reconnectedObserver, 'cancel_execution_queue_item', {
+    const cancelled = await emitAck<any>(reconnectedOwner, 'cancel_execution_queue_item', {
       roomId: 'room-1',
       queueId: queued.items[0].id,
-    })
-    expect(forbidden).toMatchObject({ error: 'Access denied' })
-
-    const cancelled = await emitAck<any>(owner, 'cancel_execution_queue_item', {
-      roomId: 'room-1',
-      queueId: queued.items[0].id,
+      executionQueueCapability: ownerCapability,
     })
     expect(cancelled).toMatchObject({ ok: true, status: 'cancelled' })
     expect(harness.groupServer.getStorage().getMessage('message-queued')).not.toBeNull()
@@ -103,11 +129,12 @@ describe('group chat authoritative execution queue', () => {
       targetAgentId: 'agent-worker',
       targetAgentName: 'Worker',
       requesterMemberId: 'human-1',
+      cancelCapabilityHash: 'owner-capability-hash',
       textSummary: 'race',
     })
 
     const started = storage.startExecutionQueueItem(item.id)
-    const cancelled = storage.cancelExecutionQueueItem('room-1', item.id, 'human-1')
+    const cancelled = storage.cancelExecutionQueueItem('room-1', item.id, 'owner-capability-hash')
 
     expect([started, cancelled].filter(Boolean)).toHaveLength(1)
     expect(storage.getExecutionQueueItem(item.id).status).toBe(started ? 'running' : 'cancelled')
@@ -118,9 +145,10 @@ describe('group chat authoritative execution queue', () => {
       targetAgentId: 'agent-worker',
       targetAgentName: 'Worker',
       requesterMemberId: 'human-1',
+      cancelCapabilityHash: 'owner-capability-hash',
       textSummary: 'reverse race',
     })
-    const reverseCancelled = storage.cancelExecutionQueueItem('room-1', reverse.id, 'human-1')
+    const reverseCancelled = storage.cancelExecutionQueueItem('room-1', reverse.id, 'owner-capability-hash')
     const reverseStarted = storage.startExecutionQueueItem(reverse.id)
 
     expect([reverseStarted, reverseCancelled].filter(Boolean)).toHaveLength(1)

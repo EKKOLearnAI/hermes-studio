@@ -801,6 +801,7 @@ export const GC_EXECUTION_QUEUE_SCHEMA: Record<string, string> = {
   targetAgentId: 'TEXT NOT NULL',
   targetAgentName: 'TEXT NOT NULL',
   requesterMemberId: 'TEXT NOT NULL',
+  cancelCapabilityHash: "TEXT NOT NULL DEFAULT ''",
   textSummary: "TEXT NOT NULL DEFAULT ''",
   sequence: 'INTEGER NOT NULL',
   status: "TEXT NOT NULL DEFAULT 'queued'",

@@ -62,6 +62,8 @@ export type MentionMessage = {
     mentionDepth?: number
     handoffChainId?: string
     mentions?: StructuredMention[]
+    /** SHA-256 proof binding queued work to the originating browser; never broadcast. */
+    executionQueueCapabilityHash?: string
     /** Server-issued durable continuation identity; never accepted from an Agent socket. */
     continuationAttemptId?: string
     /** Trusted, target-specific ownership context added by AgentClients. */
@@ -2238,6 +2240,7 @@ export class AgentClients {
                     targetAgentId: agent.agentId,
                     targetAgentName: agent.name,
                     requesterMemberId: msg.senderId,
+                    cancelCapabilityHash: msg.executionQueueCapabilityHash || '',
                     textSummary: msg.content,
                 })
                 : null
@@ -2252,8 +2255,8 @@ export class AgentClients {
         return completed
     }
 
-    cancelQueuedMention(roomId: string, queueId: string, requesterMemberId: string): boolean {
-        const cancelled = this._storage?.cancelExecutionQueueItem?.(roomId, queueId, requesterMemberId)
+    cancelQueuedMention(roomId: string, queueId: string, cancelCapabilityHash: string): boolean {
+        const cancelled = this._storage?.cancelExecutionQueueItem?.(roomId, queueId, cancelCapabilityHash)
         if (!cancelled) return false
         const queue = this._mentionQueue.get(roomId)
         if (queue) {

@@ -86,6 +86,7 @@ type IncomingGroupChatMessage = Omit<Partial<ChatMessage>, 'content'> & {
     id?: string
     mentionDepth?: number
     handoffChainId?: string
+    executionQueueCapability?: string
 }
 
 interface PendingGroupApprovalRoute {
@@ -128,6 +129,36 @@ export interface GroupExecutionQueueItem {
     startedAt: number | null
     finishedAt: number | null
     lastError: string | null
+}
+
+interface StoredGroupExecutionQueueItem extends GroupExecutionQueueItem {
+    cancelCapabilityHash: string
+}
+
+const EXECUTION_QUEUE_PUBLIC_COLUMNS = [
+    'id',
+    'roomId',
+    'messageId',
+    'targetAgentId',
+    'targetAgentName',
+    'requesterMemberId',
+    'textSummary',
+    'sequence',
+    'status',
+    'createdAt',
+    'startedAt',
+    'finishedAt',
+    'lastError',
+].join(', ')
+
+function executionQueueCapabilityHash(value: unknown): string {
+    if (typeof value !== 'string' || !/^[a-f0-9]{64}$/i.test(value)) return ''
+    return createHash('sha256').update(value.toLowerCase()).digest('hex')
+}
+
+function executionQueueCapabilityMatches(actualHash: string, expectedHash: string): boolean {
+    if (!/^[a-f0-9]{64}$/.test(actualHash) || !/^[a-f0-9]{64}$/.test(expectedHash)) return false
+    return timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'))
 }
 
 function contentToStorageString(content: unknown): string {
@@ -2151,19 +2182,20 @@ class ChatStorage {
         targetAgentId: string
         targetAgentName: string
         requesterMemberId: string
+        cancelCapabilityHash: string
         textSummary: string
-    }): GroupExecutionQueueItem {
+    }): StoredGroupExecutionQueueItem {
         const db = this.db()
         if (!db) throw new Error('Database unavailable')
         return this.withImmediateTransaction(db, () => {
             const existing = db.prepare(
                 'SELECT * FROM gc_execution_queue WHERE messageId = ? AND targetAgentId = ?',
-            ).get(input.messageId, input.targetAgentId) as GroupExecutionQueueItem | undefined
+            ).get(input.messageId, input.targetAgentId) as StoredGroupExecutionQueueItem | undefined
             if (existing) return existing
             const sequenceRow = db.prepare(
                 'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM gc_execution_queue WHERE roomId = ?',
             ).get(input.roomId) as { sequence: number }
-            const item: GroupExecutionQueueItem = {
+            const item: StoredGroupExecutionQueueItem = {
                 id: randomUUID(),
                 ...input,
                 textSummary: input.textSummary.replace(/\s+/g, ' ').trim().slice(0, 160),
@@ -2177,9 +2209,9 @@ class ChatStorage {
             db.prepare(
                 `INSERT INTO gc_execution_queue (
                     id, roomId, messageId, targetAgentId, targetAgentName,
-                    requesterMemberId, textSummary, sequence, status,
+                    requesterMemberId, cancelCapabilityHash, textSummary, sequence, status,
                     createdAt, startedAt, finishedAt, lastError
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
             ).run(
                 item.id,
                 item.roomId,
@@ -2187,6 +2219,7 @@ class ChatStorage {
                 item.targetAgentId,
                 item.targetAgentName,
                 item.requesterMemberId,
+                item.cancelCapabilityHash,
                 item.textSummary,
                 item.sequence,
                 item.status,
@@ -2196,14 +2229,14 @@ class ChatStorage {
         })
     }
 
-    getExecutionQueueItem(id: string): GroupExecutionQueueItem | null {
+    getExecutionQueueItem(id: string): StoredGroupExecutionQueueItem | null {
         const row = this.db()?.prepare('SELECT * FROM gc_execution_queue WHERE id = ?').get(id)
-        return (row as unknown as GroupExecutionQueueItem | undefined) || null
+        return (row as unknown as StoredGroupExecutionQueueItem | undefined) || null
     }
 
     listQueuedExecutionItems(roomId: string): GroupExecutionQueueItem[] {
         const rows = (this.db()?.prepare(
-            `SELECT * FROM gc_execution_queue
+            `SELECT ${EXECUTION_QUEUE_PUBLIC_COLUMNS} FROM gc_execution_queue
              WHERE roomId = ? AND status = 'queued'
              ORDER BY sequence ASC`,
         ).all(roomId) || []) as unknown as GroupExecutionQueueItem[]
@@ -2235,14 +2268,14 @@ class ChatStorage {
         ).run(Date.now(), String(lastError || 'Execution failed'), id)
     }
 
-    cancelExecutionQueueItem(roomId: string, id: string, requesterMemberId: string): GroupExecutionQueueItem | null {
+    cancelExecutionQueueItem(roomId: string, id: string, cancelCapabilityHash: string): GroupExecutionQueueItem | null {
         const db = this.db()
-        if (!db) return null
+        if (!db || !cancelCapabilityHash) return null
         const result = db.prepare(
             `UPDATE gc_execution_queue
              SET status = 'cancelled', finishedAt = ?, lastError = NULL
-             WHERE id = ? AND roomId = ? AND requesterMemberId = ? AND status = 'queued'`,
-        ).run(Date.now(), id, roomId, requesterMemberId)
+             WHERE id = ? AND roomId = ? AND cancelCapabilityHash = ? AND cancelCapabilityHash != '' AND status = 'queued'`,
+        ).run(Date.now(), id, roomId, cancelCapabilityHash)
         return Number(result.changes || 0) === 1 ? this.getExecutionQueueItem(id) : null
     }
 
@@ -3653,7 +3686,7 @@ export class GroupChatServer {
         socket.on('typing', (data: { roomId?: string }) => this.handleTyping(socket, data))
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
         socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
-        socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
+        socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string; executionQueueCapability?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
@@ -4293,6 +4326,9 @@ export class GroupChatServer {
                 mentionDepth,
                 handoffChainId,
                 mentions: savedMsg.mentions,
+                executionQueueCapabilityHash: isHumanMessage
+                    ? executionQueueCapabilityHash(data.executionQueueCapability)
+                    : '',
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
             }).finally(() => {
@@ -4513,22 +4549,25 @@ export class GroupChatServer {
 
     private handleCancelExecutionQueueItem(
         socket: Socket,
-        data: { roomId?: string; queueId?: string } | undefined,
+        data: { roomId?: string; queueId?: string; executionQueueCapability?: string } | undefined,
         ack?: (response?: unknown) => void,
     ): void {
         const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
         const queueId = typeof data?.queueId === 'string' ? data.queueId.trim() : ''
+        const cancelCapabilityHash = executionQueueCapabilityHash(data?.executionQueueCapability)
         const joined = roomId ? this.getOnlineRoomMember(socket, roomId) : null
-        if (!roomId || !queueId || !joined || joined.member.source !== 'human') {
+        if (!roomId || !queueId || !cancelCapabilityHash || !joined || joined.member.source !== 'human') {
             ack?.({ error: 'Access denied' })
             return
         }
         const item = this.storage.getExecutionQueueItem(queueId)
-        if (!item || item.roomId !== roomId || item.requesterMemberId !== joined.member.userId) {
+        if (!item
+            || item.roomId !== roomId
+            || !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash)) {
             ack?.({ error: 'Access denied' })
             return
         }
-        if (!this.agentClients.cancelQueuedMention(roomId, queueId, joined.member.userId)) {
+        if (!this.agentClients.cancelQueuedMention(roomId, queueId, cancelCapabilityHash)) {
             ack?.({ error: 'Queue item is no longer cancellable', status: this.storage.getExecutionQueueItem(queueId)?.status })
             return
         }

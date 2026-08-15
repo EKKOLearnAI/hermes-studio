@@ -91,6 +91,7 @@ const GROUP_CHAT_JOIN_TIMEOUT_MS = 30000
 const GROUP_CHAT_TYPING_HEARTBEAT_MS = 2500
 const GROUP_CHAT_TYPING_IDLE_MS = 4000
 const GROUP_CHAT_REMOTE_TYPING_TTL_MS = 5000
+const GROUP_CHAT_EXECUTION_QUEUE_CAPABILITY_PREFIX = 'gc_execution_queue_capability:'
 
 function normalizeLocalFilePath(path: string): string {
     return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
@@ -98,6 +99,17 @@ function normalizeLocalFilePath(path: string): string {
 
 function hasText(value?: string | null): boolean {
     return !!value?.trim()
+}
+
+function executionQueueCapability(roomId: string): string {
+    const key = `${GROUP_CHAT_EXECUTION_QUEUE_CAPABILITY_PREFIX}${roomId}`
+    const stored = localStorage.getItem(key)
+    if (stored && /^[a-f0-9]{64}$/i.test(stored)) return stored.toLowerCase()
+    const bytes = new Uint8Array(32)
+    globalThis.crypto.getRandomValues(bytes)
+    const capability = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+    localStorage.setItem(key, capability)
+    return capability
 }
 
 function authenticatedGroupUserId(authUserId: number): string {
@@ -1327,7 +1339,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
         emitStopTyping(roomId)
         return new Promise<void>((resolve, reject) => {
-            socket.emit('message', { roomId, id: messageId, content: finalContent, mentions }, (res: { id?: string; error?: string }) => {
+            socket.emit('message', {
+                roomId,
+                id: messageId,
+                content: finalContent,
+                mentions,
+                executionQueueCapability: executionQueueCapability(roomId),
+            }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     messages.value = messages.value.filter(m => m.id !== messageId)
                     reject(new Error(res.error))
@@ -1721,7 +1739,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         if (!roomId) return
         const socket = await ensureRealtimeRoomReady(roomId)
         await new Promise<void>((resolve, reject) => {
-            socket.emit('cancel_execution_queue_item', { roomId, queueId }, (res: any) => {
+            socket.emit('cancel_execution_queue_item', {
+                roomId,
+                queueId,
+                executionQueueCapability: executionQueueCapability(roomId),
+            }, (res: any) => {
                 if (res?.error) {
                     reject(new Error(res.error))
                     return

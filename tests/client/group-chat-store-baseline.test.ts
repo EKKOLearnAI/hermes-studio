@@ -202,6 +202,7 @@ describe('group chat store baseline lifecycle', () => {
   })
 
   it('restores authoritative queued work, converges on socket updates, and cancels through the server', async () => {
+    localStorage.setItem('gc_execution_queue_capability:room-1', 'c'.repeat(64))
     const queued = {
       id: 'queue-1',
       roomId: 'room-1',
@@ -257,7 +258,11 @@ describe('group chat store baseline lifecycle', () => {
     await store.cancelExecutionQueueItem('queue-1')
     expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
       'cancel_execution_queue_item',
-      { roomId: 'room-1', queueId: 'queue-1' },
+      {
+        roomId: 'room-1',
+        queueId: 'queue-1',
+        executionQueueCapability: 'c'.repeat(64),
+      },
       expect.any(Function),
     )
   })
@@ -783,6 +788,7 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
       content: 'hello room',
+      executionQueueCapability: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), expect.any(Function))
     expect(store.error).toBeNull()
   })
