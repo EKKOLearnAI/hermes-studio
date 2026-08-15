@@ -518,14 +518,15 @@ test.describe('group chat room deep links', () => {
     await expect(historicalPanel.locator('.tool-name')).toHaveText('historical_tool')
     await expect.poll(() => page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-card').evaluate(
       element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-transcript', 'run-tool-list'])
+    )).toEqual(['run-tool-list', 'run-transcript'])
 
     const dimensions = await panel.evaluate(element => ({
       clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight,
     }))
     expect(dimensions.clientHeight).toBeLessThan(dimensions.scrollHeight)
-    expect(dimensions.clientHeight).toBeLessThanOrEqual(180)
+    expect(dimensions.clientHeight).toBeGreaterThan(180)
+    expect(dimensions.clientHeight).toBeLessThanOrEqual(360)
 
     await panel.hover()
     await expect.poll(async () => {
@@ -904,7 +905,7 @@ test.describe('group chat room deep links', () => {
     await expect(runCard.locator('.tool-message')).toHaveCount(2)
     await expect.poll(() => runCard.locator('.run-card').evaluate(
       element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-transcript', 'run-tool-list'])
+    )).toEqual(['run-tool-list', 'run-transcript'])
 
     api.setRoomMessages({
       ...messagesByRoom,
@@ -944,7 +945,7 @@ test.describe('group chat room deep links', () => {
     await expect(page.locator('.group-message-list > .tool-message')).toHaveCount(0)
     await expect.poll(() => refreshedRunCard.locator('.run-card').evaluate(
       element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-transcript', 'run-tool-list'])
+    )).toEqual(['run-tool-list', 'run-transcript'])
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {

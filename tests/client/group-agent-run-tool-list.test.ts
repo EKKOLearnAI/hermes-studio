@@ -89,7 +89,7 @@ function mountCard(message: ChatMessage) {
 }
 
 describe('GroupAgentRunCard tool list', () => {
-  it('places the current Agent/Run tool calls newest-first after its transcript', () => {
+  it('places the current Agent/Run tool calls newest-first before its transcript', () => {
     const wrapper = mountCard(runMessage([
       runItem({ id: 'current-tool-1', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
       runItem({ id: 'current-reasoning', content: 'Checking the result.', isStreaming: true, timestamp: 2 }),
@@ -107,11 +107,13 @@ describe('GroupAgentRunCard tool list', () => {
     ])
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
-    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
-    expect(wrapper.get('.run-card').element.children[1]).toBe(panel.element)
+    expect(wrapper.get('.run-column').element.children[0]).toBe(wrapper.get('.run-header').element)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(panel.element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
+    expect(wrapper.get('.run-column').element.children[2]).toBe(wrapper.get('.run-time').element)
   })
 
-  it('keeps completed historical tool calls in the same bounded panel after its transcript', () => {
+  it('keeps completed historical tool calls in the same bounded panel before its transcript', () => {
     const wrapper = mountCard(runMessage([
       runItem({ id: 'historical-tool-1', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
       runItem({ id: 'historical-answer', content: 'Finished.', timestamp: 2 }),
@@ -128,7 +130,7 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript').text()).not.toContain('read_file')
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-1"]')).toHaveLength(1)
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-2"]')).toHaveLength(1)
-    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-transcript').element)
-    expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-tool-list').element)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-tool-list').element)
+    expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
   })
 })
