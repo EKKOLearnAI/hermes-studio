@@ -136,6 +136,14 @@ export async function handleCodingAgentSessionCommand(
   }
 
   if (command.name === 'compact') {
+    const compactRow = getSession(sessionId)
+    const compactAgentName = compactRow?.agent === 'codex' ? 'Codex' : 'Claude Code'
+    emitCommand({
+      action: 'compact',
+      terminal: false,
+      started: true,
+      message: `Native /compact sent to ${compactAgentName}.`,
+    })
     try {
       let result: { started: boolean } | {
         compacted: boolean
@@ -149,12 +157,6 @@ export async function handleCodingAgentSessionCommand(
         result = await restartCodingAgentRunForCompact(sessionId, profile, state)
       }
       if ('started' in result) {
-        emitCommand({
-          action: 'compact',
-          terminal: false,
-          started: true,
-          message: 'Native /compact sent to Claude Code.',
-        })
         return
       }
       emitCommand({

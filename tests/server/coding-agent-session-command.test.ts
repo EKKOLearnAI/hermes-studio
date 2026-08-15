@@ -99,13 +99,16 @@ describe('coding agent session commands', () => {
 
   it('emits native compact completion for Codex', async () => {
     compactMock.mockResolvedValue({ compacted: true, beforeTokens: 500, afterTokens: 200 })
+    getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
     const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
     }, { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
 
-    const command = emitted.find(item => item.event === 'session.command')?.payload
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    const command = commands.at(-1)
+    expect(commands[0].message).toContain('Native /compact sent to Codex.')
     expect(command.action).toBe('compact')
     expect(command.compacted).toBe(true)
     expect(command.message).toContain('Before: 500 tokens')
@@ -127,7 +130,8 @@ describe('coding agent session commands', () => {
       session_id: 'session-1',
     }, { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
 
-    const command = emitted.find(item => item.event === 'session.command')?.payload
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    const command = commands.at(-1)
     expect(command.action).toBe('compact')
     expect(command.compacted).toBe(true)
     expect(command.message).toContain('Studio compressed its transcript')
@@ -155,7 +159,9 @@ describe('coding agent session commands', () => {
 
     expect(compactStoredCodingAgentSessionMock).toHaveBeenCalledWith('session-1', 'default')
     expect(startCodingAgentRunMock).not.toHaveBeenCalled()
-    const command = emitted.find(item => item.event === 'session.command')?.payload
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    const command = commands.at(-1)
+    expect(commands[0].message).toContain('Native /compact sent to Codex.')
     expect(command.action).toBe('compact')
     expect(command.compacted).toBe(true)
     expect(command.message).toContain('Before: 100 tokens')
