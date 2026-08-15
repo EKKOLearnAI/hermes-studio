@@ -254,6 +254,7 @@ describe('coding agent Windows process launch', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => 1
     ;(manager as any).persistTerminalResponse = () => undefined
     ;(manager as any).refreshCodingAgentUsage = async () => {}
     ;(manager as any).completeWorkspaceRunDiff = () => undefined
@@ -277,6 +278,7 @@ describe('coding agent Windows process launch', () => {
     })
     manager.send('chat-session-pi-retry', 'retry')
     const run = (manager as any).runs.get('agent-session-pi-retry')
+    const piChild = testState.spawnCalls[0].child
 
     ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_start' })
     ;(manager as any).handlePiRpcEvent(run, {
@@ -295,11 +297,100 @@ describe('coding agent Windows process launch', () => {
       message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'final answer' }] },
     })
     ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+    piChild.exitCode = 0
+    piChild.emit('close', 0)
 
     const deltas = emitted.filter(item => item.event === 'message.delta').map(item => item.payload.delta).join('')
     expect(deltas).toBe('final answer')
     expect(emitted.filter(item => item.event === 'run.completed')).toHaveLength(1)
     expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(0)
+    expect(manager.hasSession('chat-session-pi-retry')).toBe(false)
+  })
+
+  it('defers provider invalidation until the active turn completes', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => 1
+    ;(manager as any).persistTerminalResponse = () => undefined
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+    ;(manager as any).completeWorkspaceRunDiff = () => undefined
+    ;(manager as any).startCodingAgentMemoryExport = () => {}
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => emitted.push({ event, payload })
+    ;(manager as any).markChatRunCompleted = () => {
+      expect(manager.hasSession('chat-session-provider-change')).toBe(false)
+    }
+
+    manager.start({
+      agentSessionId: 'agent-session-provider-change',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: 'research',
+      provider: 'custom:test-provider',
+      model: 'pi-test',
+      sessionId: 'chat-session-provider-change',
+      command: 'pi.cmd',
+      args: ['--mode', 'rpc'],
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    manager.send('chat-session-provider-change', 'keep this turn running')
+    const run = (manager as any).runs.get('agent-session-provider-change')
+    const piChild = testState.spawnCalls[0].child
+
+    expect(manager.invalidateMatching(launch => (
+      launch.profile === 'research' && launch.provider === 'custom:test-provider'
+    ))).toEqual({ invalidated: 1, deferred: 1 })
+    expect(manager.hasSession('chat-session-provider-change')).toBe(true)
+    expect(emitted.some(item => item.event === 'run.failed')).toBe(false)
+
+    ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+    piChild.exitCode = 0
+    piChild.emit('close', 0)
+
+    expect(emitted.filter(item => item.event === 'run.completed')).toHaveLength(1)
+    expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(0)
+    expect(manager.hasSession('chat-session-provider-change')).toBe(false)
+  })
+
+  it('releases a stale Claude runtime before queued work is allowed to start', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).completeWorkspaceRunDiff = () => undefined
+    ;(manager as any).startCodingAgentMemoryExport = () => {}
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => emitted.push({ event, payload })
+    ;(manager as any).markChatRunCompleted = () => {
+      expect(manager.hasSession('chat-session-claude-provider-change')).toBe(false)
+    }
+
+    manager.start({
+      agentSessionId: 'agent-session-claude-provider-change',
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'research',
+      provider: 'custom:test-provider',
+      model: 'claude-test',
+      sessionId: 'chat-session-claude-provider-change',
+      command: 'claude.cmd',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    const run = (manager as any).runs.get('agent-session-claude-provider-change')
+
+    expect(manager.invalidateMatching(launch => launch.provider === 'custom:test-provider')).toEqual({
+      invalidated: 1,
+      deferred: 1,
+    })
+    expect(manager.hasSession('chat-session-claude-provider-change')).toBe(true)
+
+    ;(manager as any).emitAndMarkPrintChatRunCompleted(run, 'run.completed', { event: 'run.completed' })
+
+    expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(0)
+    expect(manager.hasSession('chat-session-claude-provider-change')).toBe(false)
   })
 
   it('does not idle-clean an active Pi retry but cleans the settled runner later', async () => {
@@ -330,6 +421,7 @@ describe('coding agent Windows process launch', () => {
       })
       manager.send('chat-session-pi-idle', 'retry')
       const run = (manager as any).runs.get('agent-session-pi-idle')
+      const piChild = testState.spawnCalls[0].child
       ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_start' })
 
       await vi.advanceTimersByTimeAsync(150)
@@ -337,6 +429,8 @@ describe('coding agent Windows process launch', () => {
 
       ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_end', success: true })
       ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+      piChild.exitCode = 0
+      piChild.emit('close', 0)
       await vi.advanceTimersByTimeAsync(100)
       expect((manager as any).runs.has('agent-session-pi-idle')).toBe(false)
     } finally {

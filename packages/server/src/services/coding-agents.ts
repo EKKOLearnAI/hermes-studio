@@ -9,7 +9,7 @@ import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
 import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
-import { registerCodexProxyTarget, restoreCodexProxyTarget, revokeCodexProxyTargets } from './agent-runner/proxies/codex-proxy'
+import { registerCodexProxyTarget, restoreCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
 import type { ApiMode, CodingAgentImageInput } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from './hermes/model-context'
@@ -2724,23 +2724,16 @@ export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
   return { stopped: codingAgentRunManager.stop(sessionId) }
 }
 
-export async function revokeCodingAgentProviderRuntime(profileInput: string, providerInput: string): Promise<{
-  stoppedRuns: number
-  revokedTargets: number
-}> {
+export function invalidateCodingAgentProviderRuntime(profileInput: string, providerInput: string): {
+  invalidatedRuns: number
+  deferredRuns: number
+} {
   const profile = normalizeScopeSegment(profileInput, 'default', 'profile')
   const providerIdentity = normalizeProviderIdentity(providerInput)
-  const provider = normalizeScopeSegment(providerIdentity, 'default', 'provider')
-  const stoppedRuns = codingAgentRunManager.stopMatching(launch => (
+  const result = codingAgentRunManager.invalidateMatching(launch => (
     launch.profile === profile && launch.provider === providerIdentity
-  ), { reportClosed: false })
-  const revokedTargets = revokeCodexProxyTargets(profile, providerIdentity)
-  const piRoot = getScopedConfigRoot('pi', { profile, provider })
-  await Promise.all([
-    rm(join(piRoot, 'runs'), { recursive: true, force: true }),
-    rm(join(piRoot, 'group-chat'), { recursive: true, force: true }),
-  ])
-  return { stoppedRuns, revokedTargets }
+  ))
+  return { invalidatedRuns: result.invalidated, deferredRuns: result.deferred }
 }
 
 export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {

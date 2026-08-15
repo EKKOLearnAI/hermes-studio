@@ -14,6 +14,13 @@ impact: Hermes Studio can manage and run Pi in RPC mode with scoped provider rou
 - Uses the existing short-lived scoped provider proxy and model-run token flow.
 - Streams strict LF-framed Pi JSONL events into the existing canonical chat event pipeline and completes on `agent_settled`.
 
+## Runtime lifecycle
+
+- Studio-managed Pi RPC processes are turn-scoped. After `agent_settled`, Studio closes the child process before publishing the terminal run event and releasing queued work.
+- Pi conversation state remains in its isolated session directory and the next turn restores the same native session id, while provider files and proxy routing are prepared again from current configuration.
+- Provider credential, base URL, and API-mode changes invalidate matching Coding Agent runtimes without interrupting active turns. Idle runtimes close immediately; active Claude/Codex runtimes close after their current terminal event, and Pi closes after every turn.
+- Failed provider updates do not invalidate runtimes, and successful API-key replace/clear operations use the provider editor's actual changed-field names.
+
 ## Product boundaries
 
 ### Launch mode and provider selection

@@ -4,8 +4,14 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
 
+const mockInvalidateProviderRuntime = vi.hoisted(() => vi.fn())
+
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../packages/server/src/services/coding-agents', () => ({
+  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
 let hermesHome = ''
@@ -73,6 +79,17 @@ describe('providers controller update', () => {
     expect(ctx.body).toEqual({ success: true })
     expect(readFileSync(join(hermesHome, '.env'), 'utf-8')).toContain('DEEPSEEK_API_KEY=keep-default-key')
     expect(readFileSync(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')).toContain('DEEPSEEK_API_KEY=new-research-key')
+    expect(mockInvalidateProviderRuntime).toHaveBeenCalledWith('research', 'deepseek')
+  })
+
+  it('does not invalidate a runtime when a custom provider update is rejected', async () => {
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:missing-provider', { api_key: 'unused-key' })
+
+    await update(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(mockInvalidateProviderRuntime).not.toHaveBeenCalled()
   })
 
   it('updates custom provider API keys in the request-scoped profile config only', async () => {

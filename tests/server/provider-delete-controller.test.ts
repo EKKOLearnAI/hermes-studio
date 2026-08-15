@@ -4,8 +4,14 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
 
+const mockInvalidateProviderRuntime = vi.hoisted(() => vi.fn())
+
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../packages/server/src/services/coding-agents', () => ({
+  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
 let hermesHome = ''
@@ -87,6 +93,17 @@ describe('providers controller delete', () => {
     expect(authAfter.credential_pool.openrouter).toEqual([
       { label: 'OPENROUTER_API_KEY', source: 'env:OPENROUTER_API_KEY' },
     ])
+    expect(mockInvalidateProviderRuntime).toHaveBeenCalledWith('default', 'deepseek')
+  })
+
+  it('does not invalidate a runtime when a custom provider removal is rejected', async () => {
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('custom:missing-provider')
+
+    await remove(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(mockInvalidateProviderRuntime).not.toHaveBeenCalled()
   })
 
   it('does not remove unrelated base URL env for a provider without a base URL env mapping', async () => {

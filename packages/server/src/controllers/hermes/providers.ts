@@ -16,7 +16,7 @@ import {
 } from '../../services/hermes/provider-editor'
 import { refreshProviderModels, restoreProviderModels } from '../../services/hermes/provider-model-refresh'
 import { appendProviderAuditEvent } from '../../db/hermes/provider-audit-store'
-import { revokeCodingAgentProviderRuntime } from '../../services/coding-agents'
+import { invalidateCodingAgentProviderRuntime } from '../../services/coding-agents'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
@@ -173,8 +173,8 @@ export async function patchEditor(ctx: any) {
       patch,
       expectedRevision(ctx),
     )
-    if (result.changed.some(field => field === 'api_key' || field === 'base_url' || field === 'api_mode')) {
-      await revokeCodingAgentProviderRuntime(profile, providerId)
+    if (result.changed.some(field => field === 'api_key_replaced' || field === 'api_key_cleared' || field === 'base_url' || field === 'api_mode')) {
+      invalidateCodingAgentProviderRuntime(profile, providerId)
     }
     setRevisionHeader(ctx, result.detail.revision)
     appendAuditSafely({
@@ -388,7 +388,6 @@ export async function update(ctx: any) {
   const customApiMode = normalizeApiMode(api_mode)
   try {
     const profile = requestedProfile(ctx)
-    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
       const found = await updateConfigYamlForProfile(profile, (config) => {
@@ -414,6 +413,7 @@ export async function update(ctx: any) {
       }
       if (api_key !== undefined) { await saveEnvValueForProfile(profile, envMapping.api_key_env, api_key) }
     }
+    invalidateCodingAgentProviderRuntime(profile, poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
@@ -431,7 +431,6 @@ export async function remove(ctx: any) {
   const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
   try {
     const profile = requestedProfile(ctx)
-    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
@@ -488,6 +487,7 @@ export async function remove(ctx: any) {
       }
     }
     await clearStoredAuthProvider(profile, poolKey)
+    invalidateCodingAgentProviderRuntime(profile, poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
