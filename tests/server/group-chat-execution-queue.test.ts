@@ -140,6 +140,73 @@ describe('group chat authoritative execution queue', () => {
     await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
   })
 
+  it('allows the same authenticated account to retract queued work from another device', async () => {
+    let finishFirst!: () => void
+    const executor = {
+      agentId: 'agent-worker',
+      name: 'Worker',
+      connected: true,
+      replyToMention: vi.fn(async () => {
+        if (executor.replyToMention.mock.calls.length === 1) {
+          await new Promise<void>(resolve => { finishFirst = resolve })
+        }
+      }),
+    }
+    harness.groupServer.agentClients.registerAgentForRoom('room-1', executor as any)
+
+    const mobile = await connectGroupChatClient(harness.port, 'auth:1', 'Owner')
+    const web = await connectGroupChatClient(harness.port, 'auth:1', 'Owner')
+    harness.sockets.push(mobile, web)
+    for (const client of [mobile, web]) {
+      harness.groupServer.getIO().of('/group-chat').sockets.get(client.id!)!.data.authUser = {
+        id: 1, role: 'user', profiles: ['default'],
+      }
+      await emitAck(client, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    }
+
+    await emitAck(mobile, 'message', {
+      roomId: 'room-1',
+      id: 'mobile-running',
+      content: '@Worker first',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
+    })
+    await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
+
+    await emitAck(mobile, 'message', {
+      roomId: 'room-1',
+      id: 'mobile-queued',
+      content: '@Worker second',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
+    })
+    await vi.waitFor(() => expect(
+      harness.groupServer.getStorage().listQueuedExecutionItems('room-1'),
+    ).toHaveLength(1))
+    const [queued] = harness.groupServer.getStorage().listQueuedExecutionItems('room-1')
+
+    const otherAccount = await connectGroupChatClient(harness.port, 'auth:2', 'Other')
+    harness.sockets.push(otherAccount)
+    harness.groupServer.getIO().of('/group-chat').sockets.get(otherAccount.id!)!.data.authUser = {
+      id: 2, role: 'user', profiles: ['default'],
+    }
+    await emitAck(otherAccount, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    await expect(emitAck<any>(otherAccount, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.id,
+      executionQueueCapability: ownerCapability,
+    })).resolves.toEqual({ error: 'Access denied' })
+
+    await expect(emitAck<any>(web, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.id,
+      executionQueueCapability: attackerCapability,
+    })).resolves.toMatchObject({ ok: true, status: 'retracted', messageId: 'mobile-queued' })
+    expect(harness.groupServer.getStorage().getMessage('mobile-queued')).toBeNull()
+
+    finishFirst()
+  })
+
   it('retracts every target for one message all-or-nothing and rejects after any target starts', () => {
     const storage = harness.groupServer.getStorage() as any
     const capabilityHash = 'c'.repeat(64)

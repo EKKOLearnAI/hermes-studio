@@ -2310,12 +2310,14 @@ export class AgentClients {
         queueId: string,
         requesterMemberId: string,
         cancelCapabilityHash: string,
+        allowAuthenticatedAccountOwnership = false,
     ): { messageId: string; queueIds: string[]; messageCount: number; totalTokens: number; lastActiveAt: number } | null {
         const retracted = this._storage?.retractQueuedMessage?.(
             roomId,
             queueId,
             requesterMemberId,
             cancelCapabilityHash,
+            allowAuthenticatedAccountOwnership,
         )
         if (!retracted) return null
         const queueIds = new Set<string>(retracted.queueIds)
