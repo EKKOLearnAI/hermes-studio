@@ -965,14 +965,15 @@ test.describe('group chat room deep links', () => {
     await triggerGroupSocket(page, 'execution_queue_updated', { roomId: 'room-alpha', items })
 
     const queue = page.getByTestId('group-execution-queue')
-    await expect(queue.locator('.group-execution-queue-position')).toHaveText(['1', '2'])
-    await expect(queue.locator('.group-execution-queue-summary')).toHaveText([
+    await expect(queue.locator('.queue-index')).toHaveText(['1', '2'])
+    await expect(queue.locator('.queue-agent')).toHaveText(['Worker', 'Worker'])
+    await expect(queue.locator('.queue-text')).toHaveText([
       '@Worker first queued task',
       '@Worker observer task',
     ])
-    await expect(queue.locator('.group-execution-queue-cancel')).toHaveCount(1)
+    await expect(queue.locator('.queue-remove')).toHaveCount(2)
 
-    await queue.locator('.group-execution-queue-cancel').click()
+    await queue.locator('.queue-remove').first().click()
     await expect(queue.locator('[data-queue-id="queue-1"]')).toHaveCount(0)
     await expect(queue.locator('[data-queue-id="queue-2"]')).toBeVisible()
     await expect(page.getByText('Alpha room message')).toBeVisible()

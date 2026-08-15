@@ -2240,7 +2240,12 @@ class ChatStorage {
              WHERE roomId = ? AND status = 'queued'
              ORDER BY sequence ASC`,
         ).all(roomId) || []) as unknown as GroupExecutionQueueItem[]
-        return rows.map((item, index) => ({ ...item, position: index + 1 }))
+        const agentPositions = new Map<string, number>()
+        return rows.map((item) => {
+            const position = (agentPositions.get(item.targetAgentId) || 0) + 1
+            agentPositions.set(item.targetAgentId, position)
+            return { ...item, position }
+        })
     }
 
     startExecutionQueueItem(id: string): boolean {

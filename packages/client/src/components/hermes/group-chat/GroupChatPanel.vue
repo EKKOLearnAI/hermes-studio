@@ -19,6 +19,7 @@ import {
 } from '@/api/hermes/group-chat-agent-link'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import MessageQueueFloatPanel from '@/components/hermes/chat/MessageQueueFloatPanel.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
@@ -2223,31 +2224,18 @@ async function handleClarify(response?: string) {
                             </span>
                         </div>
                     </Transition>
-                    <div
-                        v-if="store.executionQueue.length > 0"
-                        class="group-execution-queue"
-                        data-testid="group-execution-queue"
-                        aria-live="polite"
-                    >
-                        <div class="group-execution-queue-title">{{ t('groupChat.executionQueueTitle') }}</div>
-                        <div
-                            v-for="item in store.executionQueue"
-                            :key="item.id"
-                            class="group-execution-queue-item"
-                            :data-queue-id="item.id"
-                        >
-                            <span class="group-execution-queue-position">{{ item.position }}</span>
-                            <span class="group-execution-queue-agent">{{ item.targetAgentName }}</span>
-                            <span class="group-execution-queue-summary">{{ item.textSummary }}</span>
-                            <button
-                                v-if="item.requesterMemberId === store.userId"
-                                type="button"
-                                class="group-execution-queue-cancel"
-                                :aria-label="t('groupChat.executionQueueCancel', { agent: item.targetAgentName })"
-                                :title="t('groupChat.executionQueueCancel', { agent: item.targetAgentName })"
-                                @click="handleCancelQueuedExecution(item.id)"
-                            >×</button>
-                        </div>
+                    <div v-if="store.executionQueue.length > 0" class="group-execution-queue-float-stack">
+                        <MessageQueueFloatPanel
+                            :items="store.executionQueue.map(item => ({
+                                id: item.id,
+                                text: item.textSummary,
+                                secondary: item.targetAgentName,
+                                position: item.position,
+                            }))"
+                            test-id="group-execution-queue"
+                            :remove-title="item => t('groupChat.executionQueueCancel', { agent: item.secondary || '' })"
+                            @remove="handleCancelQueuedExecution"
+                        />
                     </div>
                     <GroupChatInput
                         ref="groupChatInputRef"
@@ -2990,56 +2978,13 @@ export default defineComponent({ components: { CreateRoomForm } })
     background-color: $bg-card;
 }
 
-.group-execution-queue {
-    margin: 0 20px 6px;
-    padding: 8px 10px;
-    border: 1px solid $border-color;
-    border-radius: $radius-sm;
-    background: $bg-secondary;
-}
-
-.group-execution-queue-title {
-    margin-bottom: 5px;
-    color: $text-muted;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-.group-execution-queue-item {
-    display: grid;
-    grid-template-columns: 20px minmax(70px, auto) minmax(0, 1fr) 24px;
-    align-items: center;
-    gap: 7px;
-    min-height: 28px;
-    color: $text-secondary;
-    font-size: 12px;
-}
-
-.group-execution-queue-position,
-.group-execution-queue-agent {
-    font-weight: 600;
-}
-
-.group-execution-queue-summary {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.group-execution-queue-cancel {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: $text-muted;
-    cursor: pointer;
-
-    &:hover {
-        color: $text-primary;
-        background: rgba(var(--text-primary-rgb), 0.08);
-    }
+.group-execution-queue-float-stack {
+    position: absolute;
+    right: 16px;
+    bottom: 82px;
+    z-index: 8;
+    width: min(380px, calc(100% - 32px));
+    pointer-events: none;
 }
 
 .sidebar-backdrop {

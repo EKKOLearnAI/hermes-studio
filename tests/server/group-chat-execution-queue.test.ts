@@ -154,4 +154,79 @@ describe('group chat authoritative execution queue', () => {
     expect([reverseStarted, reverseCancelled].filter(Boolean)).toHaveLength(1)
     expect(storage.getExecutionQueueItem(reverse.id).status).toBe('cancelled')
   })
+
+  it('serializes work per Agent while allowing different Agents to run in parallel', async () => {
+    harness.groupServer.getStorage().addRoomAgent('room-1', 'agent-reviewer', 'default', 'Reviewer', '', 1)
+
+    let finishWorkerFirst!: () => void
+    const workerCalls: string[] = []
+    const reviewerCalls: string[] = []
+    const worker = {
+      agentId: 'agent-worker',
+      name: 'Worker',
+      connected: true,
+      replyToMention: vi.fn(async (_roomId: string, msg: { content: string }) => {
+        workerCalls.push(msg.content)
+        if (workerCalls.length === 1) {
+          await new Promise<void>(resolve => { finishWorkerFirst = resolve })
+        }
+      }),
+    }
+    const reviewer = {
+      agentId: 'agent-reviewer',
+      name: 'Reviewer',
+      connected: true,
+      replyToMention: vi.fn(async (_roomId: string, msg: { content: string }) => {
+        reviewerCalls.push(msg.content)
+      }),
+    }
+    harness.groupServer.agentClients.registerAgentForRoom('room-1', worker as any)
+    harness.groupServer.agentClients.registerAgentForRoom('room-1', reviewer as any)
+
+    const owner = await connectGroupChatClient(harness.port, 'human-1', 'Owner')
+    harness.sockets.push(owner)
+    await emitAck(owner, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    await emitAck(owner, 'message', {
+      roomId: 'room-1',
+      id: 'worker-first',
+      content: '@Worker first',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
+    })
+    await vi.waitFor(() => expect(worker.replyToMention).toHaveBeenCalledTimes(1))
+
+    await emitAck(owner, 'message', {
+      roomId: 'room-1',
+      id: 'worker-second',
+      content: '@Worker second',
+      mentions: [{ type: 'agent', participantId: 'agent-worker', displayName: 'Worker' }],
+      executionQueueCapability: ownerCapability,
+    })
+    await emitAck(owner, 'message', {
+      roomId: 'room-1',
+      id: 'reviewer-first',
+      content: '@Reviewer independent',
+      mentions: [{ type: 'agent', participantId: 'agent-reviewer', displayName: 'Reviewer' }],
+      executionQueueCapability: ownerCapability,
+    })
+
+    await vi.waitFor(() => expect(reviewer.replyToMention).toHaveBeenCalledTimes(1))
+    expect(worker.replyToMention).toHaveBeenCalledTimes(1)
+    expect(reviewerCalls).toEqual(['@Reviewer independent'])
+
+    const queued = harness.groupServer.getStorage().listQueuedExecutionItems('room-1')
+    expect(queued).toEqual([
+      expect.objectContaining({
+        messageId: 'worker-second',
+        targetAgentId: 'agent-worker',
+        position: 1,
+        status: 'queued',
+      }),
+    ])
+
+    finishWorkerFirst()
+    await vi.waitFor(() => expect(worker.replyToMention).toHaveBeenCalledTimes(2))
+    expect(workerCalls).toEqual(['@Worker first', '@Worker second'])
+  })
 })

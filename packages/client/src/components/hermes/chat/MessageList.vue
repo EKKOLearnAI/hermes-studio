@@ -16,6 +16,7 @@ import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import LiveReasoningStatus from "./LiveReasoningStatus.vue";
+import MessageQueueFloatPanel from "./MessageQueueFloatPanel.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
@@ -273,6 +274,10 @@ const queuedMessages = computed(() => {
   if (!sid) return [];
   return chatStore.queuedUserMessages.get(sid) || [];
 });
+const queuedFloatItems = computed(() => queuedMessages.value.map(message => ({
+  id: message.id,
+  text: queuedPreview(message.content),
+})));
 const activeQueueInsertion = computed(() => {
   const sid = chatStore.activeSessionId;
   if (!sid) return null;
@@ -981,51 +986,14 @@ defineExpose({
         </div>
       </Transition>
       <Transition name="queue-float">
-        <div v-if="queuedMessages.length > 0" class="queue-float-panel">
-          <div class="queue-float-header">
-            <span class="queue-orbit" aria-hidden="true">
-              <span></span>
-            </span>
-            <span>{{ t('chat.messageQueue') }}</span>
-            <strong>{{ queuedMessages.length }}</strong>
-          </div>
-          <div class="queue-float-list">
-            <div
-              v-for="(message, index) in queuedMessages"
-              :key="message.id"
-              class="queue-float-item"
-            >
-              <span class="queue-index">{{ index + 1 }}</span>
-              <span class="queue-text">{{ queuedPreview(message.content) }}</span>
-              <button
-                v-if="canInsertQueuedMessages"
-                type="button"
-                class="queue-insert"
-                :class="{ 'queue-insert--active': activeQueueInsertion?.queueId === message.id }"
-                :disabled="!!activeQueueInsertion"
-                :title="queueInsertionTitle(message.id)"
-                :aria-label="queueInsertionTitle(message.id)"
-                @click="insertQueuedMessage(message.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 19V5" />
-                  <path d="m5 12 7-7 7 7" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="queue-remove"
-                :title="t('chat.removeQueuedMessage')"
-                @click="removeQueuedMessage(message.id)"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
+        <MessageQueueFloatPanel
+          :items="queuedFloatItems"
+          :can-insert="canInsertQueuedMessages"
+          :active-insert-id="activeQueueInsertion?.queueId"
+          :insert-title="item => queueInsertionTitle(item.id)"
+          @insert="insertQueuedMessage"
+          @remove="removeQueuedMessage"
+        />
       </Transition>
     </div>
   </div>
