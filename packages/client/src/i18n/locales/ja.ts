@@ -613,6 +613,7 @@ export default {
     },
     slashCommands: {
       usage: '現在のセッション使用量を計算',
+      context: '現在のコンテキスト使用量を表示',
       status: 'セッション状態とキューを表示',
       yolo: 'セッションの YOLO モードを切り替え、危険なコマンドの承認を省略',
       abort: '実行中の Bridge を停止',
@@ -630,6 +631,7 @@ export default {
       clearHistory: 'このセッションの保存済みメッセージ履歴を削除',
       title: 'このセッション名を変更',
       compress: 'アイドル時にコンテキスト圧縮を実行',
+      compact: 'ネイティブ CLI /compact で現在の会話を圧縮',
       steer: '実行中の Bridge に誘導テキストを送信',
       destroy: 'このセッションの Bridge Agent を解放',
       reloadMcp: 'MCP サーバーを再読み込み',

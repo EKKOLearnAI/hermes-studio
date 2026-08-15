@@ -613,6 +613,7 @@ export default {
     },
     slashCommands: {
       usage: '현재 세션 사용량 계산',
+      context: '현재 컨텍스트 사용량 표시',
       status: '세션 상태와 대기열 표시',
       yolo: '세션 YOLO 모드를 전환하고 위험한 명령 승인을 건너뛰기',
       abort: '활성 Bridge 실행 중지',
@@ -630,6 +631,7 @@ export default {
       clearHistory: '이 세션의 저장된 메시지 기록 삭제',
       title: '이 세션 이름 변경',
       compress: '유휴 상태에서 컨텍스트 압축 실행',
+      compact: '네이티브 CLI /compact로 현재 대화 압축',
       steer: '활성 Bridge 실행에 지시 텍스트 보내기',
       destroy: '이 세션의 Bridge Agent 해제',
       reloadMcp: 'MCP 서버 다시 로드',

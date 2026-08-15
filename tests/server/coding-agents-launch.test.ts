@@ -10,6 +10,7 @@ import {
   prepareCodingAgentLaunch,
   restorePersistedPiProxyTargets,
 } from '../../packages/server/src/services/coding-agents'
+import { getModelContextLength } from '../../packages/server/src/services/hermes/model-context'
 import {
   normalizePiThinkingLevel,
   piModelSupportsThinking,
@@ -602,6 +603,13 @@ describe('coding agent launch preparation', () => {
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
     expect(settings.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
+    expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(getModelContextLength({
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+    })))
+    expect(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('50')
+    expect(settings.env.ENABLE_TOOL_SEARCH).toBe('true')
     expect(settings.env).toMatchObject({
       ANTHROPIC_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
       ANTHROPIC_CUSTOM_MODEL_OPTION: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
@@ -614,6 +622,9 @@ describe('coding agent launch preparation', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
     })
     expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toBe('claude-sonnet-4-6')
+    expect(result.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW)
+    expect(result.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('50')
+    expect(result.env.ENABLE_TOOL_SEARCH).toBe('true')
 
     const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
     expect(mcp.mcpServers['hermes-studio-api']).toMatchObject({
@@ -1138,6 +1149,9 @@ describe('coding agent launch preparation', () => {
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     expect(config).toContain('requires_openai_auth = false')
+    expect(config).toContain('[features]')
+    expect(config).toContain('tool_search = true')
+    expect(config).toContain('tool_search_always_defer_mcp_tools = true')
     expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')

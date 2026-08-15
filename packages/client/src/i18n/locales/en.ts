@@ -650,6 +650,7 @@ export default {
     },
     slashCommands: {
       usage: 'Calculate current session usage',
+      context: 'Show current context usage',
       status: 'Show session status and queue',
       yolo: 'Toggle session YOLO mode and skip dangerous command approvals',
       abort: 'Stop the active bridge run',
@@ -668,6 +669,7 @@ export default {
       clearHistory: 'Delete this session’s stored message history',
       title: 'Rename this session',
       compress: 'Run context compression while idle',
+      compact: 'Compact current conversation using the native CLI /compact',
       fork: 'Fork this idle session into a new linked conversation',
       steer: 'Send steering text to the active bridge run',
       destroy: 'Release the bridge agent for this session',

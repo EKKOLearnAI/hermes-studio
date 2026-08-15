@@ -32,6 +32,10 @@ const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
 const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
+// Claude Code auto-compact is on by default, but Studio never tells it the
+// model context window, so it can compact too late for the 20MB proxy body
+// limit. Mirror Hermes' 50% compression budget and pass Studio's window.
+const CLAUDE_CODE_AUTO_COMPACT_PERCENT = 50
 const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_CODING_AGENT_VERSION = '0.84.1'
@@ -2401,6 +2405,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   let env: Record<string, string> = {}
 
   if (tool.id === 'claude-code') {
+    const contextWindow = getModelContextLength({ profile: scope.profile, provider, model })
     const proxyTarget = baseUrl && apiKey
       ? registerClaudeCodeProxyTarget({
           provider,
@@ -2434,6 +2439,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: modelName,
         ANTHROPIC_DEFAULT_OPUS_MODEL: model,
         ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: modelName,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(CLAUDE_CODE_AUTO_COMPACT_PERCENT),
+        ENABLE_TOOL_SEARCH: 'true',
       },
     }
     env = settings.env
@@ -2503,6 +2511,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
         await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
       ),
+      '',
+      '[features]',
+      'tool_search = true',
+      'tool_search_always_defer_mcp_tools = true',
     ].join('\n')
     const catalog = buildCodexModelCatalog({
       profile: scope.profile,

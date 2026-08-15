@@ -629,6 +629,7 @@ export default {
     },
     slashCommands: {
       usage: '計算目前會話用量',
+      context: '查看目前上下文使用情況',
       status: '查看會話狀態和佇列',
       yolo: '切換目前會話 YOLO 模式並略過危險命令審批',
       abort: '停止目前 Bridge 執行',
@@ -646,6 +647,7 @@ export default {
       clearHistory: '刪除目前會話已儲存的訊息歷史',
       title: '重新命名目前會話',
       compress: '空閒時觸發上下文壓縮',
+      compact: '壓縮目前對話（橋接底層 CLI /compact）',
       fork: '將目前空閒會話 fork 成一個新的關聯對話',
       steer: '向目前 Bridge 執行傳送引導文字',
       destroy: '釋放目前會話的 Bridge Agent',

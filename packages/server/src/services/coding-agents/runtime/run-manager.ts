@@ -17,6 +17,7 @@ import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { getChatRunServer } from '../../hermes/run-chat/server-registry'
+import { compactCodexThread } from './codex-compact'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -80,6 +81,17 @@ export interface CodingAgentRunLaunch {
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   reasoningEffort?: string
   approvalRequired?: boolean
+}
+
+export interface CodingAgentRunInfo {
+  exists: boolean
+  running: boolean
+  agentId: string
+  model: string
+  provider: string
+  workspaceDir: string
+  nativeSessionId: string
+  messageCount: number
 }
 
 interface ManagedCodingAgentRun {
@@ -696,6 +708,45 @@ export class CodingAgentRunManager {
     if (!run.pty) throw new Error('Coding agent terminal is not available')
     run.pty.write(`${text}\r`)
     return { runId: run.id, messageId }
+  }
+
+  getRunInfo(sessionId: string): CodingAgentRunInfo | null {
+    const run = this.getBySession(sessionId)
+    if (!run) return null
+    return {
+      exists: true,
+      running: childIsRunning(run.currentChild) || run.turnActive === true,
+      agentId: run.launch.agentId,
+      model: run.launch.model,
+      provider: run.launch.provider,
+      workspaceDir: run.launch.workspaceDir,
+      nativeSessionId: String(run.launch.agentNativeSessionId || '').trim(),
+      messageCount: run.state.messages.length,
+    }
+  }
+
+  compact(sessionId: string, args = ''): { started: boolean } | Promise<{ compacted: boolean; summary?: string }> {
+    const run = this.getBySession(sessionId)
+    if (!run) throw new Error('Coding agent session not found')
+    if (childIsRunning(run.currentChild)) throw new Error('Coding agent is still processing the previous input')
+    const nativeSessionId = String(run.launch.agentNativeSessionId || '').trim()
+    if (run.launch.agentId === 'claude-code') {
+      if (!nativeSessionId) throw new Error('Claude Code session has no native session to compact')
+      this.startClaudePrintTurn(run, `/compact${args ? ` ${args}` : ''}`, '', [])
+      return { started: true }
+    }
+    if (run.launch.agentId === 'codex') {
+      if (!nativeSessionId) throw new Error('Codex session has no native thread to compact')
+      return compactCodexThread({
+        command: run.launch.command,
+        env: {
+          ...process.env,
+          ...(run.launch.env || {}),
+        },
+        workspaceDir: run.launch.workspaceDir,
+      }, nativeSessionId)
+    }
+    throw new Error(`Native /compact is not supported for ${run.launch.agentId}`)
   }
 
   stop(sessionId: string, options: { reportClosed?: boolean } = {}): boolean {

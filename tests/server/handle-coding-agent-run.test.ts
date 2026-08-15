@@ -12,6 +12,8 @@ const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefin
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionMock = vi.hoisted(() => vi.fn())
+const handleCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn(async () => undefined))
+const parseCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
@@ -39,6 +41,11 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
+vi.mock('../../packages/server/src/services/coding-agents/session-command', () => ({
+  handleCodingAgentSessionCommand: handleCodingAgentSessionCommandMock,
+  parseCodingAgentSessionCommand: parseCodingAgentSessionCommandMock,
+}))
+
 describe('handleCodingAgentRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -46,6 +53,7 @@ describe('handleCodingAgentRun', () => {
     managerMock.isSessionProcessing.mockReturnValue(false)
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')
+    parseCodingAgentSessionCommandMock.mockReturnValue(null)
   })
 
   it('restarts an existing coding-agent runner when the requested launch mode changes', async () => {
@@ -383,5 +391,36 @@ describe('handleCodingAgentRun', () => {
     expect(prompt).not.toContain('Hermes Web UI LAN device capabilities are MCP tools')
     expect(prompt).not.toContain('list_mcp_resources')
     expect(prompt).not.toContain('mcp__hermes-studio__')
+  })
+
+  it('routes CLI-style coding agent commands before sending input to the CLI', async () => {
+    parseCodingAgentSessionCommandMock.mockReturnValue({
+      name: 'compact',
+      rawName: 'compact',
+      args: '',
+    })
+    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const state = {
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    }
+    const sessionMap = new Map([['session-1', state]])
+    const socket = {
+      join: vi.fn(),
+      emit: vi.fn(),
+    }
+
+    await handleCodingAgentRun({} as any, socket as any, {
+      session_id: 'session-1',
+      input: '/compact',
+      coding_agent_id: 'claude-code',
+    }, 'default', sessionMap as any)
+
+    expect(handleCodingAgentSessionCommandMock).toHaveBeenCalled()
+    expect(sendCodingAgentRunInputMock).not.toHaveBeenCalled()
+    expect(startCodingAgentRunMock).not.toHaveBeenCalled()
   })
 })

@@ -650,6 +650,7 @@ export default {
     },
     slashCommands: {
       usage: '计算当前会话用量',
+      context: '查看当前上下文使用情况',
       status: '查看会话状态和队列',
       yolo: '切换当前会话 YOLO 模式并跳过危险命令审批',
       abort: '停止当前 Bridge 运行',
@@ -668,6 +669,7 @@ export default {
       clearHistory: '删除当前会话已入库的消息历史',
       title: '重命名当前会话',
       compress: '空闲时触发上下文压缩',
+      compact: '压缩当前对话（桥接底层 CLI /compact）',
       fork: '将当前空闲会话 fork 成一个新的关联对话',
       steer: '向当前 Bridge 运行发送引导文本',
       destroy: '释放当前会话的 Bridge Agent',

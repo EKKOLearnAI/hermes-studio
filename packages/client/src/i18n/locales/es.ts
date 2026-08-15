@@ -613,6 +613,7 @@ export default {
     },
     slashCommands: {
       usage: 'Calcular el uso de la sesión actual',
+      context: 'Mostrar uso actual del contexto',
       status: 'Mostrar estado de sesión y cola',
       yolo: 'Alternar el modo YOLO de la sesión y omitir aprobaciones de comandos peligrosos',
       abort: 'Detener la ejecución activa de Bridge',
@@ -630,6 +631,7 @@ export default {
       clearHistory: 'Eliminar el historial de mensajes guardado de esta sesión',
       title: 'Renombrar esta sesión',
       compress: 'Ejecutar compresión de contexto cuando esté inactiva',
+      compact: 'Compactar la conversación actual con el /compact nativo del CLI',
       steer: 'Enviar texto de guía a la ejecución activa de Bridge',
       destroy: 'Liberar el agente Bridge de esta sesión',
       reloadMcp: 'Recargar servidores MCP',
