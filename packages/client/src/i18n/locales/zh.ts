@@ -3047,7 +3047,7 @@ export default {
     joined: '已加入房间',
     joinFailed: '加入房间失败',
     inputPlaceholder: '输入消息... (Enter 发送)',
-    messageDisplayLimit: '群聊最多展示 600 条消息',
+    messageDisplayLimit: '群聊最多展示 500 条消息',
     viewCompleteHistory: '查看完整群聊历史',
     olderMessagesLoadFailed: '更早的消息加载失败。',
     retryOlderMessages: '重试加载更早消息',

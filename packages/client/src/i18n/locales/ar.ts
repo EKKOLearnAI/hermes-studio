@@ -2967,7 +2967,7 @@ export default {
     joined: 'تم الانضمام إلى الغرفة',
     joinFailed: 'تعذّر الانضمام إلى الغرفة',
     inputPlaceholder: 'اكتب رسالة... (Enter للإرسال)',
-    messageDisplayLimit: 'تعرض المحادثة الجماعية حتى 600 رسالة',
+    messageDisplayLimit: 'تعرض المحادثة الجماعية حتى 500 رسالة',
     viewCompleteHistory: 'عرض سجل المحادثة الجماعية الكامل',
     olderMessagesLoadFailed: 'تعذر تحميل الرسائل السابقة.',
     retryOlderMessages: 'إعادة محاولة تحميل الرسائل السابقة',

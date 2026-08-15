@@ -2623,7 +2623,7 @@ export default {
     joined: 'Вы присоединились к комнате',
     joinFailed: 'Не удалось присоединиться к комнате',
     inputPlaceholder: 'Введите сообщение... (Enter — отправить)',
-    messageDisplayLimit: 'Групповой чат показывает не более 600 сообщений',
+    messageDisplayLimit: 'Групповой чат показывает не более 500 сообщений',
     viewCompleteHistory: 'Открыть полную историю группового чата',
     olderMessagesLoadFailed: 'Не удалось загрузить предыдущие сообщения.',
     retryOlderMessages: 'Повторить загрузку предыдущих сообщений',

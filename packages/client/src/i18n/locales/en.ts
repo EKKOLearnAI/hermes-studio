@@ -3005,7 +3005,7 @@ export default {
     joined: 'Joined room',
     joinFailed: 'Failed to join room',
     inputPlaceholder: 'Type a message... (Enter to send)',
-    messageDisplayLimit: 'Group chat displays up to 600 messages',
+    messageDisplayLimit: 'Group chat displays up to 500 messages',
     viewCompleteHistory: 'View complete group chat history',
     olderMessagesLoadFailed: 'Earlier messages could not be loaded.',
     retryOlderMessages: 'Retry loading earlier messages',

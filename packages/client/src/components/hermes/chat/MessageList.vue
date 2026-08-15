@@ -17,7 +17,6 @@ import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import LiveReasoningStatus from "./LiveReasoningStatus.vue";
 import MessageQueueFloatPanel from "./MessageQueueFloatPanel.vue";
-import HistoryArchiveLink from "./HistoryArchiveLink.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
@@ -613,11 +612,11 @@ defineExpose({
         </div>
       </template>
       <template #before>
-        <HistoryArchiveLink
-          v-if="showHistoryArchiveLink"
-          :href="historyArchiveHref"
-          :label="t('chat.viewOlderInHistory')"
-        />
+        <div v-if="showHistoryArchiveLink" class="history-archive-link-wrap">
+          <a class="history-archive-link" :href="historyArchiveHref">
+            {{ t("chat.viewOlderInHistory") }}
+          </a>
+        </div>
         <div
           v-else-if="chatStore.activeSession?.hasMoreBefore || chatStore.activeSession?.isLoadingOlderMessages"
           class="history-loader"
@@ -1462,6 +1461,35 @@ defineExpose({
     border-color: rgba(255, 255, 255, 0.18);
     border-top-color: $accent-primary;
   }
+}
+
+.history-archive-link-wrap {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+
+.history-archive-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.22);
+  border-radius: 999px;
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-decoration: none;
+  white-space: normal;
+  text-align: center;
+}
+
+.history-archive-link:hover {
+  background: rgba(var(--accent-primary-rgb), 0.14);
 }
 
  .fork-divider {

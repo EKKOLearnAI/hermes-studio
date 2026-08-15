@@ -2682,7 +2682,7 @@ export default {
     joined: '방에 참여했습니다',
     joinFailed: '방 참여 실패',
     inputPlaceholder: '메시지 입력... (Enter로 전송)',
-    messageDisplayLimit: '그룹 채팅에는 최대 600개의 메시지가 표시됩니다',
+    messageDisplayLimit: '그룹 채팅에는 최대 500개의 메시지가 표시됩니다',
     viewCompleteHistory: '전체 그룹 채팅 기록 보기',
     olderMessagesLoadFailed: '이전 메시지를 불러오지 못했습니다.',
     retryOlderMessages: '이전 메시지 다시 불러오기',

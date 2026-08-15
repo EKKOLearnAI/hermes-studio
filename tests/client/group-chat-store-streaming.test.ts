@@ -798,12 +798,13 @@ describe('group chat store streaming merge', () => {
     expect(store.contextStatus).toEqual(expect.objectContaining({ agentName: 'Worker', status: 'replying' }))
   })
 
-  it('loads group history in 150-message pages and stops at the 600-message display cap', async () => {
+  it('loads group history to the authoritative 500-message display cap', async () => {
     const store = await createJoinedStore()
     store.loadedMessageCount = 450
-    store.totalMessages = 700
+    store.totalMessages = 500
     store.hasMoreBefore = true
-    const olderMessages = Array.from({ length: 150 }, (_, index) =>
+    store.historyTruncated = true
+    const olderMessages = Array.from({ length: 50 }, (_, index) =>
       assistantMessage({ id: `older-${index}`, timestamp: index + 1, content: `older ${index}` }),
     )
     groupChatApiMock.getRoomDetail.mockResolvedValueOnce({
@@ -811,17 +812,18 @@ describe('group chat store streaming merge', () => {
       messages: olderMessages,
       agents: [],
       members: [],
-      total: 700,
+      total: 500,
       offset: 450,
-      limit: 150,
-      hasMore: true,
+      limit: 50,
+      hasMore: false,
+      historyTruncated: true,
     })
 
     await expect(store.loadOlderMessages()).resolves.toBe(true)
 
-    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1', { offset: 450, limit: 150 })
-    expect(store.loadedMessageCount).toBe(600)
-    expect(store.hasMoreBefore).toBe(true)
+    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1', { offset: 450, limit: 50 })
+    expect(store.loadedMessageCount).toBe(500)
+    expect(store.hasMoreBefore).toBe(false)
     expect(store.hasReachedMessageDisplayLimit).toBe(true)
 
     groupChatApiMock.getRoomDetail.mockClear()

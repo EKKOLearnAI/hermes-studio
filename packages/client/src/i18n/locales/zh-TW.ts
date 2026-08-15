@@ -2929,7 +2929,7 @@ export default {
     joined: '已加入房間',
     joinFailed: '加入房間失敗',
     inputPlaceholder: '輸入訊息... (Enter 發送)',
-    messageDisplayLimit: '群聊最多顯示 600 則訊息',
+    messageDisplayLimit: '群聊最多顯示 500 則訊息',
     viewCompleteHistory: '查看完整群聊歷史',
     olderMessagesLoadFailed: '較早的訊息載入失敗。',
     retryOlderMessages: '重試載入較早訊息',

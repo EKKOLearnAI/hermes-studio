@@ -562,14 +562,12 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         return
     }
 
-    const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
-    const limit = ctx.query.limit
+    const offset = ctx.query?.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
+    const limit = ctx.query?.limit
         ? Math.min(150, Math.max(1, parseInt(ctx.query.limit as string, 10) || 150))
         : 150
-    const beforeMessageId = typeof ctx.query.before === 'string'
-        ? String(ctx.query.before).trim()
-        : ''
-    const historyPage = beforeMessageId || ctx.query.history === '1'
+    const beforeMessageId = String(ctx.query?.before || '').trim()
+    const historyPage = beforeMessageId || ctx.query?.history === '1'
         ? storage.getHistoryPageForUI(ctx.params.roomId, limit, beforeMessageId || undefined)
         : null
     if (historyPage && !historyPage.cursorFound) {
@@ -618,8 +616,22 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const user = ctx.state?.user
     const storage = chatServer.getStorage()
-    const rooms = visibleRoomsForUser(storage, user)
-    ctx.body = { rooms }
+    const visibleRooms = visibleRoomsForUser(storage, user)
+    const paginated = ctx.query?.offset !== undefined || ctx.query?.limit !== undefined
+    const offset = paginated && ctx.query?.offset
+        ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0)
+        : 0
+    const limit = paginated && ctx.query?.limit
+        ? Math.min(50, Math.max(1, parseInt(ctx.query.limit as string, 10) || 50))
+        : visibleRooms.length
+    const rooms = visibleRooms.slice(offset, offset + limit)
+    ctx.body = paginated ? {
+        rooms,
+        total: visibleRooms.length,
+        offset,
+        limit,
+        hasMore: offset + rooms.length < visibleRooms.length,
+    } : { rooms }
 })
 
 // Update room invite code

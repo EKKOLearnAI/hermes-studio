@@ -342,14 +342,24 @@ export async function cloneRoom(roomId: string, data?: { name?: string; inviteCo
     })
 }
 
-export async function listRooms(): Promise<{ rooms: RoomInfo[] }> {
-    return request('/api/hermes/group-chat/rooms')
+export async function listRooms(options: { offset?: number; limit?: number } = {}): Promise<{
+    rooms: RoomInfo[]
+    total?: number
+    offset?: number
+    limit?: number
+    hasMore?: boolean
+}> {
+    const params = new URLSearchParams()
+    if (options.offset != null) params.set('offset', String(options.offset))
+    if (options.limit != null) params.set('limit', String(options.limit))
+    const query = params.toString()
+    return request(`/api/hermes/group-chat/rooms${query ? `?${query}` : ''}`)
 }
 
 export async function getRoomDetail(
     roomId: string,
     options: { offset?: number; limit?: number; before?: string; history?: boolean } = {},
-): Promise<{ room: RoomInfo; messages: ChatMessage[]; agents: RoomAgent[]; members: MemberInfo[]; handoffChains?: RoomAgentHandoffChain[]; total?: number; offset?: number; limit?: number; hasMore?: boolean }> {
+): Promise<{ room: RoomInfo; messages: ChatMessage[]; agents: RoomAgent[]; members: MemberInfo[]; handoffChains?: RoomAgentHandoffChain[]; total?: number; offset?: number; limit?: number; hasMore?: boolean; historyTruncated?: boolean }> {
     const params = new URLSearchParams()
     if (options.offset != null) params.set('offset', String(options.offset))
     if (options.limit != null) params.set('limit', String(options.limit))

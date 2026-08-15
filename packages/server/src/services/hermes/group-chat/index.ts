@@ -4195,6 +4195,7 @@ export class GroupChatServer {
             GROUP_CHAT_MESSAGE_WINDOW,
             this.storage.getMessageCount?.(roomId) ?? messages.length,
         )
+        const historyTruncated = (this.storage.getMessageCount?.(roomId) ?? messages.length) > GROUP_CHAT_MESSAGE_WINDOW
         const agents = this.getRoomAgentViews(
             roomId,
             this.canSocketManageRoom(socket, roomId),
@@ -4212,6 +4213,7 @@ export class GroupChatServer {
             offset: 0,
             limit: messages.length,
             hasMore: messages.length < total,
+            historyTruncated,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
             executionQueue: this.executionQueueSnapshot(roomId),
@@ -4239,13 +4241,15 @@ export class GroupChatServer {
         const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
         const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
         const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
-        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
+        const storedTotal = this.storage.getMessageCount?.(roomId) ?? messages.length
+        const total = Math.min(GROUP_CHAT_MESSAGE_WINDOW, storedTotal)
         ack?.({
             messages,
             total,
             offset,
             limit,
             hasMore: offset + messages.length < total,
+            historyTruncated: storedTotal > GROUP_CHAT_MESSAGE_WINDOW,
         })
     }
 

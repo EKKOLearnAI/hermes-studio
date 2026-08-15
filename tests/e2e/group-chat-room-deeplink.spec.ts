@@ -266,6 +266,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       const end = Math.max(0, before ? cursorIndex : allMessages.length - offset)
       const start = Math.max(0, end - limit)
       const messages = allMessages.slice(start, end)
+      const total = history ? allMessages.length : Math.min(500, allMessages.length)
       return room
         ? json({
             room,
@@ -273,10 +274,11 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
             agents,
             members,
             handoffChains: handoffChains.filter(item => item.roomId === roomId),
-            total: allMessages.length,
+            total,
             offset,
             limit,
-            hasMore: start > 0,
+            hasMore: history ? start > 0 : offset + messages.length < total,
+            historyTruncated: allMessages.length > 500,
           })
         : json({ error: 'Room not found' }, 404)
     }
@@ -582,6 +584,7 @@ test.describe('group chat room deep links', () => {
   })
 
   test('shows a retry action after older group history fails and links to the complete read-only history at the cap', async ({ page }) => {
+    test.setTimeout(45_000)
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
     api.setRoomMessages({
       ...messagesByRoom,

@@ -86,7 +86,7 @@ function uid(): string {
 const STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS = 300
 export const GROUP_CHAT_STREAM_FLUSH_INTERVAL_MS = 50
 export const GROUP_CHAT_MESSAGE_PAGE_SIZE = 150
-export const GROUP_CHAT_MAX_DISPLAY_MESSAGES = 600
+export const GROUP_CHAT_MAX_DISPLAY_MESSAGES = 500
 const GROUP_CHAT_JOIN_TIMEOUT_MS = 30000
 const GROUP_CHAT_TYPING_HEARTBEAT_MS = 2500
 const GROUP_CHAT_TYPING_IDLE_MS = 4000
@@ -211,10 +211,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const totalMessages = ref(0)
     const loadedMessageCount = ref(0)
     const hasMoreBefore = ref(false)
+    const historyTruncated = ref(false)
     const isLoadingOlderMessages = ref(false)
     const olderMessagesError = ref<string | null>(null)
     const hasReachedMessageDisplayLimit = computed(() =>
-        hasMoreBefore.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
+        historyTruncated.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
     )
     const currentUserAvatar = ref('')
     const inviteGuest = ref(false)
@@ -234,6 +235,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         totalMessages.value = 0
         loadedMessageCount.value = 0
         hasMoreBefore.value = false
+        historyTruncated.value = false
         isLoadingOlderMessages.value = false
         olderMessagesError.value = null
     }
@@ -299,10 +301,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         scheduleStreamDeltaFlush()
     }
 
-    function applyMessagePaging(res: { messages: ChatMessage[]; total?: number; hasMore?: boolean }) {
+    function applyMessagePaging(res: { messages: ChatMessage[]; total?: number; hasMore?: boolean; historyTruncated?: boolean }) {
         loadedMessageCount.value = res.messages.length
         totalMessages.value = res.total ?? res.messages.length
         hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
+        historyTruncated.value = Boolean(res.historyTruncated)
     }
 
     function setAutoPlaySpeech(enabled: boolean) {
@@ -1822,6 +1825,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         totalMessages,
         loadedMessageCount,
         hasMoreBefore,
+        historyTruncated,
         isLoadingOlderMessages,
         olderMessagesError,
         hasReachedMessageDisplayLimit,

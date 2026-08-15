@@ -5714,7 +5714,25 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/group-chat/rooms/join/{code}": {
@@ -5791,10 +5809,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": [
-                "string"
-              ]
+              "type": "string"
             }
           },
           {

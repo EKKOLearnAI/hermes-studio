@@ -245,6 +245,19 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('History for Older Group Room')).toBeVisible()
   })
 
+  test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/#/hermes/history/group-chat/room-new')
+
+    await page.locator('.hamburger-btn').click()
+    await expect(page.locator('.session-group-header', { hasText: 'GROUP' })).toBeVisible()
+    await page.getByText('Older Group Room').first().click()
+
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
+    await expect(page.locator('[data-group-history-scroller]')).toBeVisible()
+  })
+
   test('clicking another history session updates URL and reload preserves it', async ({ page }) => {
     await page.goto('/#/hermes/history/session/hist-alpha')
     await expect(page.getByText('Answer from Alpha History Session')).toBeVisible()

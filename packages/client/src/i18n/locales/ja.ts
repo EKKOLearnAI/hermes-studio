@@ -2682,7 +2682,7 @@ export default {
     joined: 'ルームに参加しました',
     joinFailed: 'ルームへの参加に失敗しました',
     inputPlaceholder: 'メッセージを入力...（Enter で送信）',
-    messageDisplayLimit: 'グループチャットには最大 600 件のメッセージを表示します',
+    messageDisplayLimit: 'グループチャットには最大 500 件のメッセージを表示します',
     viewCompleteHistory: 'グループチャットの全履歴を表示',
     olderMessagesLoadFailed: '以前のメッセージを読み込めませんでした。',
     retryOlderMessages: '以前のメッセージを再読み込み',

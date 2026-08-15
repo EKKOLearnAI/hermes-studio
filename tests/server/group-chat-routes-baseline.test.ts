@@ -494,7 +494,7 @@ describe('group chat REST route baseline', () => {
       lastActiveAt: 501,
     })
     storage.getRoomsForProfiles.mockReturnValue([storage.rooms.get('room-history')])
-    storage.messages.set('room-history', Array.from({ length: 501 }, (_, index) => ({
+    const retainedMessages = Array.from({ length: 500 }, (_, index) => ({
       id: `message-${String(index + 1).padStart(4, '0')}`,
       roomId: 'room-history',
       senderId: 'member',
@@ -502,7 +502,27 @@ describe('group chat REST route baseline', () => {
       content: `Message ${index + 1}`,
       timestamp: index + 1,
       role: 'user',
-    })))
+    }))
+    storage.messages.set('room-history', retainedMessages)
+
+    const exactWindow = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(exactWindow.status).toBe(200)
+    await expect(exactWindow.json()).resolves.toMatchObject({
+      total: 500,
+      historyTruncated: false,
+    })
+
+    retainedMessages.push({
+      id: 'message-0501',
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: 'Message 501',
+      timestamp: 501,
+      role: 'user',
+    })
 
     const recent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
       headers: { 'x-test-user': 'member' },
