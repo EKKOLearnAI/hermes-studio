@@ -1,3 +1,4 @@
+/** A decoded server-sent event frame. */
 export interface SseFrame {
   event?: string
   data: string

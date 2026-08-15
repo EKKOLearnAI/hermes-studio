@@ -27,8 +27,8 @@ import { isAuthModelProvider } from '@/utils/codingAgentProviders'
 
 type CodingAgentBlock = {
   id: CodingAgentId
-  tool: 'Claude Code' | 'Codex'
-  provider: 'Anthropic' | 'OpenAI'
+  tool: 'Claude' | 'Codex' | 'Pi'
+  provider: 'Anthropic' | 'OpenAI' | 'Pi'
 }
 
 type ConfigFileEntry = {
@@ -56,26 +56,32 @@ const tools = ref<CodingAgentToolStatus[]>([])
 const installing = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
+  pi: false,
 })
 const installFailureHints = ref<Record<CodingAgentId, string>>({
   'claude-code': '',
   codex: '',
+  pi: '',
 })
 const installFailureDetails = ref<Record<CodingAgentId, string>>({
   'claude-code': '',
   codex: '',
+  pi: '',
 })
 const deleting = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
+  pi: false,
 })
 const checkingUpdate = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
+  pi: false,
 })
 const updateInfo = ref<Record<CodingAgentId, CodingAgentUpdateResult | null>>({
   'claude-code': null,
   codex: null,
+  pi: null,
 })
 const launchModalVisible = ref(false)
 const launchLoading = ref(false)
@@ -93,14 +99,15 @@ const terminalCommand = ref('')
 const terminalKey = ref(0)
 
 const agentLogos: Record<CodingAgentBlock['tool'], string> = {
-  'Claude Code': '/coding-agents/claude-code.svg',
+  'Claude': '/coding-agents/claude-code.svg',
   Codex: '/coding-agents/codex-openai.png',
+  Pi: '/coding-agents/pi.svg',
 }
 
 const agentBlocks: CodingAgentBlock[] = [
   {
     id: 'claude-code',
-    tool: 'Claude Code',
+    tool: 'Claude',
     provider: 'Anthropic',
   },
   {
@@ -108,18 +115,29 @@ const agentBlocks: CodingAgentBlock[] = [
     tool: 'Codex',
     provider: 'OpenAI',
   },
+  {
+    id: 'pi',
+    tool: 'Pi',
+    provider: 'Pi',
+  },
 ]
 
 const configFiles: Record<CodingAgentId, ConfigFileEntry[]> = {
   'claude-code': [
     { key: 'settings', path: '~/.claude/settings.json', language: 'json' },
-    { key: 'mcp', path: '~/.claude.json', language: 'json' },
+    { key: 'mcp', path: '~/.claude/mcp.json', language: 'json' },
     { key: 'prompt', path: '~/.claude/CLAUDE.md', language: 'markdown' },
   ],
   codex: [
     { key: 'auth', path: '~/.codex/auth.json', language: 'json' },
     { key: 'config', path: '~/.codex/config.toml', language: 'ini' },
     { key: 'agents', path: '~/.codex/AGENTS.md', language: 'markdown' },
+  ],
+  pi: [
+    { key: 'auth', path: '~/.pi/agent/auth.json', language: 'json' },
+    { key: 'settings', path: '~/.pi/agent/settings.json', language: 'json' },
+    { key: 'agents', path: '~/.pi/agent/AGENTS.md', language: 'markdown' },
+    { key: 'mcp', path: '~/.pi/agent/mcp.json', language: 'json' },
   ],
 }
 
@@ -133,6 +151,13 @@ const configEditorStates = ref<Record<CodingAgentId, ConfigEditorState>>({
   },
   codex: {
     selectedKey: 'config',
+    content: '',
+    originalContent: '',
+    loading: false,
+    saving: false,
+  },
+  pi: {
+    selectedKey: 'settings',
     content: '',
     originalContent: '',
     loading: false,
@@ -222,6 +247,7 @@ async function loadStatus() {
     tools.value = data.tools
     updateInfo.value['claude-code'] = null
     updateInfo.value.codex = null
+    updateInfo.value.pi = null
   } catch (err: any) {
     loadError.value = err?.message || t('codingAgents.loadFailed')
   } finally {
@@ -451,10 +477,13 @@ async function handleCheckUpdate(id: CodingAgentId) {
   }
 }
 
-onMounted(() => {
-  void loadStatus()
+onMounted(async () => {
+  await loadStatus()
   void loadConfigFile('claude-code', configFiles['claude-code'][0])
   void loadConfigFile('codex', configFiles.codex[1])
+  if (statusFor('pi')?.installed) {
+    void loadConfigFile('pi', configFiles.pi[0])
+  }
 })
 </script>
 

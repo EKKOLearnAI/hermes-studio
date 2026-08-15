@@ -1,3 +1,4 @@
+/** Wire formats supported by the shared Coding Agent provider bridge. */
 export type AgentApiMode =
   | 'chat_completions'
   | 'codex_responses'

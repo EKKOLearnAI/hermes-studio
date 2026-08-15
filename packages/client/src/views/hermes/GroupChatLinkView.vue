@@ -92,9 +92,10 @@ const hasServerHandoff = computed(() => (
 ))
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
   { label: 'Hermes', value: 'hermes' },
-  { label: 'Claude Code', value: 'claude' },
+  { label: 'Ekko', value: 'ekko' },
+  { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
-  { label: 'Ekko Agent', value: 'ekko' },
+  { label: 'Pi', value: 'pi' },
 ])
 const profileOptions = computed(() => profileAgents.value.map(agent => ({
   label: agent.profile,
@@ -110,7 +111,9 @@ function getAgentModelGroups(profile: string) {
         ? 'ekko-agent'
         : selectedAgentType.value === 'claude'
           ? 'claude-code'
-          : 'codex'
+          : selectedAgentType.value === 'pi'
+            ? 'pi'
+            : 'codex'
       return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
     })
 }
@@ -432,14 +435,14 @@ function decodePairingCode(value: string): {
   agent: RemoteGroupAgentDescriptor
 } {
   const trimmed = value.trim()
-  if (!trimmed.startsWith('HGC1.') || trimmed.length > 2_100_000) {
+  if (!trimmed.startsWith('HGC2.') || trimmed.length > 2_100_000) {
     throw new Error(t('groupChat.agentLinkInvalidPairingCode'))
   }
   const encoded = trimmed.slice(5).replace(/-/g, '+').replace(/_/g, '/')
   const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')
   const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0))
   const parsed = JSON.parse(new TextDecoder().decode(bytes))
-  if (parsed?.protocolVersion !== 1 || !parsed?.cloudOrigin || !parsed?.pairingTicket || !parsed?.agent) {
+  if (parsed?.protocolVersion !== 2 || !parsed?.cloudOrigin || !parsed?.pairingTicket || !parsed?.agent) {
     throw new Error(t('groupChat.agentLinkInvalidPairingCode'))
   }
   return parsed

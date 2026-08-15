@@ -33,7 +33,7 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
 
   constructor(private readonly keyParts: (input: NormalizedAgentTargetInput<T>) => string[]) {}
 
-  register(input: T): RegisteredAgentTarget<T> {
+  register(input: T, persisted?: { token?: string }): RegisteredAgentTarget<T> {
     const normalized = {
       ...input,
       provider: input.provider.trim(),
@@ -44,7 +44,7 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
     const key = JSON.stringify(this.keyParts(normalized))
     const existing = this.targets.get(key)
     const routeKey = existing?.routeKey || Buffer.from(key, 'utf-8').toString('base64url')
-    const token = existing?.token || `hwui_${randomBytes(24).toString('base64url')}`
+    const token = existing?.token || persisted?.token?.trim() || `hwui_${randomBytes(24).toString('base64url')}`
     const target = {
       ...normalized,
       key,
@@ -62,5 +62,15 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
       if (target.routeKey === routeKey) return target
     }
     return null
+  }
+
+  removeWhere(predicate: (target: RegisteredAgentTarget<T>) => boolean): number {
+    let removed = 0
+    for (const [key, target] of this.targets) {
+      if (!predicate(target)) continue
+      this.targets.delete(key)
+      removed += 1
+    }
+    return removed
   }
 }

@@ -1,4 +1,4 @@
-import type { CanonicalResponsesEvent } from './adapters/responses-stream'
+import type { CanonicalResponsesEvent } from '../shared/adapters/responses-stream'
 
 export interface CodingAgentMappedEvent {
   event: string

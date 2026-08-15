@@ -669,7 +669,7 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(body.reasoning_effort).toBeUndefined()
   })
 
-  it('sends the hidden API mode when starting a scoped Ekko Agent run', async () => {
+  it('sends the hidden API mode when starting a scoped Ekko run', async () => {
     const store = useChatStore()
     const session = makeSession()
     session.source = 'coding_agent'

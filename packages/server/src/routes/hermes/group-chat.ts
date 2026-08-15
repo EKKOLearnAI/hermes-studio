@@ -121,7 +121,7 @@ function contentPreview(content: unknown): string {
 }
 
 type AgentInput = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -142,7 +142,7 @@ type RoomSummaryInput = {
 }
 
 const GROUP_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-const GROUP_AGENT_TYPES = new Set(['hermes', 'ekko', 'codex', 'claude'])
+const GROUP_AGENT_TYPES = new Set(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const GROUP_AGENT_API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
 const GROUP_AGENT_AVATAR_MAX_LENGTH = 1_500_000
 
@@ -322,8 +322,8 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
         return persisted
     } catch (err) {
         if (persisted) storage.removeRoomAgent(roomId, persisted.id || agentId)
-        else client.disconnect?.()
-        server.agentClients.removeAgentFromRoom(roomId, client.agentId)
+        else await client.disconnect?.()
+        await server.agentClients.removeAgentFromRoom(roomId, client.agentId)
         throw err
     }
 }
@@ -340,7 +340,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         name?: string
         inviteCode?: string
         agents?: {
-            agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+            agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
             profile: string
             provider?: string
             model?: string
@@ -872,7 +872,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
     try {
         // Establish the new gateway connection before interrupting the current room client.
         replacement = await createRoomAgentRuntimeClient(chatServer, previous.agentId, nextInput)
-        chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
+        await chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
         runtimeSwapped = true
         await chatServer.agentClients.addAgentToRoom(roomId, replacement)
         const updated = storage.updateRoomAgent(
@@ -899,7 +899,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         }
     } catch (err: any) {
         if (runtimeSwapped) {
-            chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
+            await chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
             try {
                 const restored = await createRoomAgentRuntimeClient(chatServer, previous.agentId, previous)
                 await chatServer.agentClients.addAgentToRoom(roomId, restored)
@@ -907,7 +907,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
                 console.error(`[GroupChat] Failed to restore agent ${previous.profile} in room ${roomId}: ${sanitizeAgentConnectReason(restoreErr.message)}`)
             }
         } else {
-            replacement?.disconnect?.()
+            await replacement?.disconnect?.()
         }
         if (applyParticipantNameConflict(ctx, err)) return
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
@@ -991,7 +991,7 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/members/:userId', a
         if (agent.connectorId) revokeGroupAgentConnector(agent.connectorId)
         storage.removeRoomMembersForAgent(roomId, agent)
         storage.removeRoomAgent(roomId, agent.id)
-        chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+        await chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     }
 
     const members = chatServer.removeRoomMember(roomId, userId)
@@ -1044,7 +1044,7 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
     }
     storage.removeRoomMembersForAgent(roomId, agent)
     storage.removeRoomAgent(roomId, requestedAgentId)
-    chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+    await chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     const agents = chatServer.broadcastRoomAgents(roomId)
     ctx.body = {
         success: true,

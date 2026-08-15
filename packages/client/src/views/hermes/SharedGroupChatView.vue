@@ -102,7 +102,7 @@ function normalizeTargetOrigin(value: string): string {
 
 function encodePairingCode(agent: RemoteGroupAgentDescriptor): string {
     const json = JSON.stringify({
-        protocolVersion: 1,
+        protocolVersion: 2,
         cloudOrigin: window.location.origin,
         pairingTicket,
         agent,
@@ -110,7 +110,7 @@ function encodePairingCode(agent: RemoteGroupAgentDescriptor): string {
     const bytes = new TextEncoder().encode(json)
     let binary = ''
     bytes.forEach(byte => { binary += String.fromCharCode(byte) })
-    return `HGC1.${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`
+    return `HGC2.${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`
 }
 
 function clearPairingPoll(): void {

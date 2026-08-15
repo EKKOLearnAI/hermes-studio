@@ -1,14 +1,15 @@
-# Agent Runner Gateway
+# Coding Agent services
 
-This directory is the planning and implementation home for a unified agent run
-gateway. The goal is to make Claude Code, Codex, and internal Web UI runs share
-one protocol pipeline, one stream subscription model, and one persistence path.
+`packages/server/src/services/coding-agents/` is the implementation home for
+managed Claude Code, Codex, and Pi runs. The services share one canonical event
+pipeline, one stream subscription model, and one persistence path while keeping
+agent-specific process and protocol behavior in named subdirectories.
 
 ## Goals
 
 - Provide shared protocol plumbing that can be used by:
-  - Claude Code local proxy routes.
-  - Codex local proxy routes.
+  - Claude Code and Codex local proxy routes.
+  - Pi RPC turns.
   - Hidden Coding Agent sessions launched from the Web UI Chat surface.
 - Normalize upstream provider streams into one internal event shape.
 - Let subscribers consume the same stream for HTTP/SSE responses, Socket.IO
@@ -24,18 +25,33 @@ one protocol pipeline, one stream subscription model, and one persistence path.
 - Do not make one large class that owns Koa, Socket.IO, provider fetches, and DB
   writes at the same time.
 
-## Current Facts
+## Current layout
 
-- `proxies/claude-code-proxy.ts` exposes an Anthropic-compatible local proxy for
-  Claude Code.
-- `proxies/codex-proxy.ts` exposes a Responses-compatible local proxy for Codex.
+```text
+services/coding-agents/
+  index.ts                 public install/config/launch facade
+  runtime/                 managed-run lifecycle and canonical event mapping
+  shared/                  provider bridge, stream utilities, and adapters
+  claude-code/             Claude Code proxy behavior
+  codex/                   Codex proxy behavior
+  pi/                      Pi RPC parsing and thinking-level translation
+```
+
+- `claude-code/proxy.ts` exposes an Anthropic-compatible local proxy for Claude
+  Code.
+- `codex/proxy.ts` exposes a Responses-compatible local proxy for Codex and Pi.
+- `pi/jsonl-parser.ts` decodes Pi's RPC stdout stream.
+- `shared/provider-policy.ts` owns the scoped Coding Agent Provider allow/deny
+  boundary used by launches and Workflow capability checks.
+- `runtime/run-manager.ts` owns managed Claude Code, Codex, and Pi process
+  lifecycle for chat-driven Coding Agent sessions.
+- `index.ts` is the public facade for installation, configuration, and launch
+  preparation. Consumers should not reach into an agent-specific directory.
 - `run-chat/handle-bridge-run.ts` is the active Web UI Hermes bridge path.
 - `run-chat/handle-api-run.ts` already contains a Responses-stream persistence
   path, but it remains separate from the Coding Agent runner.
 - `run-chat/response-stream.ts` already maps Responses events into in-memory
   session messages and flushes assistant/tool messages to the DB.
-- `coding-agent-run-manager.ts` owns hidden Claude/Codex process lifecycle for
-  Chat-driven Coding Agent sessions.
 
 ## Architecture
 
@@ -170,16 +186,17 @@ Codex:
 
 ## Internal Web UI Flow
 
-1. Chat creates or reuses a hidden Coding Agent session.
-2. The session launches Claude Code or Codex in the existing scoped
+1. Chat creates or reuses a managed Coding Agent session.
+2. The session launches Claude Code, Codex, or Pi in the existing scoped
    `profile/provider/agent` config/workspace layout.
-3. Chat input is written to the hidden process stdin.
-4. The process calls a local Claude/Codex proxy instead of the upstream
+3. Chat input is sent to the agent process.
+4. The process calls a local Claude/Codex-compatible proxy instead of the upstream
    provider directly.
 5. The proxy tees provider SSE: one branch goes back to the CLI, the other is
    normalized to canonical Responses events for DB persistence and Chat events.
-6. Hidden sessions are recycled after 30 minutes of inactivity and on service
-   shutdown.
+6. Claude Code and Codex sessions are recycled after 30 minutes of inactivity
+   and on service shutdown. Pi restores native session state into a fresh RPC
+   process for each turn.
 
 ## Session Binding
 
@@ -211,10 +228,11 @@ If no session ID is present, the proxy should not write to the chat DB.
 
 Status:
 
-- Added `target-registry.ts`, `endpoint-resolver.ts`, and `sse.ts`.
-- Moved Claude/Codex proxy implementations under `agent-runner/proxies/`.
+- Added `shared/target-registry.ts`, `shared/endpoint-resolver.ts`, and
+  `shared/sse.ts`.
+- Moved proxy implementations under `claude-code/` and `codex/`.
 - Updated `run-chat/sse-utils.ts` to reuse the shared CRLF-safe parser.
-- Kept old service import paths as re-export shims.
+- Removed the old `services/agent-runner/` import surface.
 
 ### Phase 2: Canonical adapters
 
@@ -224,21 +242,21 @@ Status:
 
 Status:
 
-- Added `adapters/responses.ts` for non-streaming Codex proxy conversions:
+- Added `shared/adapters/responses.ts` for non-streaming Codex proxy conversions:
   - Responses request body to OpenAI Chat request body.
   - Responses request body to Anthropic Messages request body.
   - OpenAI Chat response to Responses response.
   - Anthropic Messages response to Responses response.
-- Added `adapters/responses-stream.ts` for streaming Codex proxy conversions:
+- Added `shared/adapters/responses-stream.ts` for streaming Codex proxy conversions:
   - OpenAI Chat SSE to canonical Responses events.
   - Anthropic Messages SSE to canonical Responses events.
   - Native Responses SSE to canonical Responses events.
-- Added `adapters/anthropic.ts` for non-streaming Claude proxy conversions:
+- Added `shared/adapters/anthropic.ts` for non-streaming Claude proxy conversions:
   - Anthropic request body to OpenAI Chat request body.
   - Anthropic request body to OpenAI Responses request body.
   - OpenAI Chat response to Anthropic message.
   - OpenAI Responses response to Anthropic message.
-- Added `adapters/anthropic-stream.ts` for streaming Claude proxy conversions:
+- Added `shared/adapters/anthropic-stream.ts` for streaming Claude proxy conversions:
   - OpenAI Chat SSE to Anthropic Messages events.
   - OpenAI Responses SSE to Anthropic Messages events.
 - Added focused adapter tests.
@@ -254,7 +272,7 @@ Status:
 
 Status:
 
-- Added `gateway.ts` with `completeJson()` and `streamBytes()`.
+- Added `shared/gateway.ts` with `completeJson()` and `streamBytes()`.
 - Gateway centralizes upstream POST, bearer auth, provider JSON error parsing,
   and empty stream checks.
 - Codex proxy now uses the gateway for non-streaming and streaming upstream
@@ -284,8 +302,8 @@ Status:
 
 Status:
 
-- Added `coding-agent-run-manager.ts` with hidden process start/send/stop,
-  30-minute idle recycling, and shutdown cleanup.
+- Added `runtime/run-manager.ts` with managed process start/send/stop,
+  idle recycling, turn-scoped Pi execution, and shutdown cleanup.
 - `prepareCodingAgentLaunch()` can bind proxy targets to an `agentSessionId`
   and Chat `sessionId`.
 - Codex now routes `codex_responses` providers through the local proxy too, so
@@ -315,6 +333,8 @@ Compatibility constraints:
 
 - Claude Code expects Anthropic-shaped errors and Messages SSE events.
 - Codex expects OpenAI/Responses-shaped errors and Responses SSE events.
+- Pi expects LF-framed RPC JSONL and uses `agent_settled` as the authoritative
+  turn boundary.
 - Some OpenAI-compatible providers expect `/v1/chat/completions`.
 - Some providers already include a non-`/v1` OpenAI root path in `baseUrl`.
 - Endpoint resolver behavior should be driven by provider-preset tests, not

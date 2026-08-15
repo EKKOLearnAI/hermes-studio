@@ -375,9 +375,9 @@ defineExpose({ scrollToBottom })
     height: 44px;
     margin-inline-start: -8px;
     overflow: hidden;
-    border: 2px solid $bg-primary;
+    box-sizing: border-box;
+    border: 1px solid #fff;
     border-radius: 50%;
-    background: $bg-secondary;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
 
     img {

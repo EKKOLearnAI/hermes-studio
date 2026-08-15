@@ -21,6 +21,7 @@ import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, typ
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
+import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -150,35 +151,16 @@ const liveReasoningDetail = computed<{
   return null;
 });
 
+const assistantAgent = computed(() => chatSessionAgentAvatar(chatStore.activeSession));
+
 const emptyState = computed(() => {
-  const session = chatStore.activeSession;
-  const codingAgentId = session?.codingAgentId
-    || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
-  if (codingAgentId === "codex") {
-    return {
-      logo: "/coding-agents/codex-openai.png",
-      alt: "Codex",
-      text: t("chat.emptyStateAgent", { agent: "Codex" }),
-    };
-  }
-  if (codingAgentId === "claude-code") {
-    return {
-      logo: "/coding-agents/claude-code.svg",
-      alt: "Claude Code",
-      text: t("chat.emptyStateAgent", { agent: "Claude Code" }),
-    };
-  }
-  if (codingAgentId === "ekko-agent") {
-    return {
-      logo: "/coding-agents/ekko-agent.png",
-      alt: "Ekko Agent",
-      text: t("chat.emptyStateAgent", { agent: "Ekko Agent" }),
-    };
-  }
+  const agent = assistantAgent.value;
   return {
-    logo: "/coding-agents/hermes.png",
-    alt: "Hermes",
-    text: t("chat.emptyState"),
+    logo: agent.src,
+    alt: agent.label,
+    text: agent.label === "Hermes"
+      ? t("chat.emptyState")
+      : t("chat.emptyStateAgent", { agent: agent.label }),
   };
 });
 
@@ -290,12 +272,16 @@ const canInsertQueuedMessages = computed(() => {
   if (agent === "ekko-agent") {
     return session.source === "coding_agent" || session.source === "global_agent";
   }
-  if (agent === "codex" || agent === "claude" || agent === "claude-code") return false;
+  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return false;
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
+watch(
+  () => visibleClarify.value?.clarifyId,
+  () => { clarifyResponse.value = visibleClarify.value?.initialResponse || ""; },
+);
 const hasFloatingPrompt = computed(() => !!visibleApproval.value || !!visibleClarify.value);
 const virtualListPadding = computed(() => {
   if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return "20px 20px 380px";
@@ -356,7 +342,11 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
 }
 
 function handleClarify(response?: string) {
-  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  const finalResponse = response !== undefined
+    ? response
+    : visibleClarify.value?.responseMode === "editor"
+      ? clarifyResponse.value
+      : clarifyResponse.value.trim();
   chatStore.respondToClarify(finalResponse);
   clarifyResponse.value = "";
 }
@@ -657,6 +647,7 @@ defineExpose({
         <MessageItem
           v-else
           :message="msg"
+          :assistant-agent="assistantAgent"
           :highlight="chatStore.focusMessageId === msg.id"
           :show-fork-action="canForkActiveSession && msg.id === lastForkActionMessageId"
         />
@@ -977,6 +968,7 @@ defineExpose({
             <NInput
               v-model:value="clarifyResponse"
               size="small"
+              :type="visibleClarify.responseMode === 'editor' ? 'textarea' : 'text'"
               :placeholder="t('chat.clarifyPlaceholder')"
             />
             <NButton size="small" type="primary" @click="handleClarify()">

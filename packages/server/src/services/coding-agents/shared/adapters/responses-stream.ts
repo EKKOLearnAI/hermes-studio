@@ -1,3 +1,4 @@
+// Shared Responses stream translation for Coding Agent provider proxies.
 import { readSseFrameTexts } from '../sse'
 import { normalizeResponseFunctionCall, responseToolNamespaceForName } from './responses'
 
@@ -84,6 +85,31 @@ function openAiChatUsageToResponsesUsage(usage: Record<string, any>): Record<str
   }
 }
 
+function openAiChatReasoningDetailsText(details: unknown): string {
+  const entries = Array.isArray(details) ? details : [details]
+  return entries.map((entry) => {
+    if (typeof entry === 'string') return entry
+    if (entry && typeof entry === 'object' && typeof (entry as any).text === 'string') {
+      return (entry as any).text
+    }
+    return ''
+  }).join('')
+}
+
+function openAiChatReasoningDelta(delta: any, accumulated: string): string {
+  // OpenAI-compatible providers do not agree on one reasoning field. Prefer
+  // normal deltas, then normalize split/cumulative reasoning details without
+  // tying the proxy to a provider name or model family.
+  for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+    if (typeof delta?.[field] === 'string' && delta[field]) return delta[field]
+  }
+
+  const detailsText = openAiChatReasoningDetailsText(delta?.reasoning_details)
+  if (detailsText.startsWith(accumulated)) return detailsText.slice(accumulated.length)
+  if (detailsText && !accumulated.endsWith(detailsText)) return detailsText
+  return ''
+}
+
 export async function* openAiChatSseToResponsesEvents(
   stream: AsyncIterable<Uint8Array>,
   target: ResponsesStreamAdapterTarget,
@@ -91,12 +117,17 @@ export async function* openAiChatSseToResponsesEvents(
   const decoder = new TextDecoder()
   const id = `resp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   const messageId = `msg_${id}`
+  const reasoningId = `rs_${id}`
   let buffer = ''
+  let nextOutputIndex = 0
+  let reasoningStarted = false
+  let reasoningOutputIndex = -1
   let textStarted = false
+  let textOutputIndex = -1
   let text = ''
   let reasoning = ''
   let usage: Record<string, unknown> | undefined
-  const toolCalls = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
+  const toolCalls = new Map<number, { id: string; name: string; arguments: string; added: boolean; outputIndex: number }>()
 
   yield {
     type: 'response.created',
@@ -122,15 +153,34 @@ export async function* openAiChatSseToResponsesEvents(
         if (!choice) continue
 
         const delta = choice.delta || {}
-        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-          reasoning += delta.reasoning_content
+        const reasoningDelta = openAiChatReasoningDelta(delta, reasoning)
+        if (reasoningDelta) {
+          if (!reasoningStarted) {
+            reasoningStarted = true
+            reasoningOutputIndex = nextOutputIndex
+            nextOutputIndex += 1
+            yield {
+              type: 'response.output_item.added',
+              data: {
+                type: 'response.output_item.added',
+                output_index: reasoningOutputIndex,
+                item: {
+                  type: 'reasoning',
+                  id: reasoningId,
+                  summary: [],
+                },
+              },
+            }
+          }
+          reasoning += reasoningDelta
           yield {
-            type: 'response.reasoning.delta',
+            type: 'response.reasoning_summary_text.delta',
             data: {
-              type: 'response.reasoning.delta',
-              item_id: messageId,
-              output_index: 0,
-              delta: delta.reasoning_content,
+              type: 'response.reasoning_summary_text.delta',
+              item_id: reasoningId,
+              output_index: reasoningOutputIndex,
+              summary_index: 0,
+              delta: reasoningDelta,
             },
           }
         }
@@ -138,11 +188,13 @@ export async function* openAiChatSseToResponsesEvents(
         if (typeof delta.content === 'string' && delta.content) {
           if (!textStarted) {
             textStarted = true
+            textOutputIndex = nextOutputIndex
+            nextOutputIndex += 1
             yield {
               type: 'response.output_item.added',
               data: {
                 type: 'response.output_item.added',
-                output_index: 0,
+                output_index: textOutputIndex,
                 item: {
                   type: 'message',
                   id: messageId,
@@ -157,7 +209,7 @@ export async function* openAiChatSseToResponsesEvents(
               data: {
                 type: 'response.content_part.added',
                 item_id: messageId,
-                output_index: 0,
+                output_index: textOutputIndex,
                 content_index: 0,
                 part: { type: 'output_text', text: '', annotations: [] },
               },
@@ -169,7 +221,7 @@ export async function* openAiChatSseToResponsesEvents(
             data: {
               type: 'response.output_text.delta',
               item_id: messageId,
-              output_index: 0,
+              output_index: textOutputIndex,
               content_index: 0,
               delta: delta.content,
             },
@@ -185,7 +237,9 @@ export async function* openAiChatSseToResponsesEvents(
               name: String(toolCall.function?.name || 'tool'),
               arguments: '',
               added: false,
+              outputIndex: nextOutputIndex,
             }
+            nextOutputIndex += 1
             toolCalls.set(index, call)
           }
           if (toolCall.id) call.id = String(toolCall.id)
@@ -196,7 +250,7 @@ export async function* openAiChatSseToResponsesEvents(
               type: 'response.output_item.added',
               data: {
                 type: 'response.output_item.added',
-                output_index: textStarted ? index + 1 : index,
+                output_index: call.outputIndex,
                 item: functionCallItem({ id: call.id, name: call.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces, status: 'in_progress' }),
               },
             }
@@ -210,7 +264,7 @@ export async function* openAiChatSseToResponsesEvents(
                 data: {
                   type: 'response.function_call_arguments.delta',
                   item_id: call.id,
-                  output_index: textStarted ? index + 1 : index,
+                  output_index: call.outputIndex,
                   delta: argsDelta,
                 },
               }
@@ -221,13 +275,22 @@ export async function* openAiChatSseToResponsesEvents(
     }
   }
 
-  const output: any[] = []
-  if (reasoning) {
-    output.push({
+  const indexedOutput: Array<{ outputIndex: number; item: any }> = []
+  if (reasoningStarted) {
+    const reasoningItem = {
       type: 'reasoning',
-      id: `rs_${id}`,
+      id: reasoningId,
       summary: [{ type: 'summary_text', text: reasoning }],
-    })
+    }
+    indexedOutput.push({ outputIndex: reasoningOutputIndex, item: reasoningItem })
+    yield {
+      type: 'response.output_item.done',
+      data: {
+        type: 'response.output_item.done',
+        output_index: reasoningOutputIndex,
+        item: reasoningItem,
+      },
+    }
   }
   if (textStarted) {
     const messageItem = {
@@ -237,13 +300,13 @@ export async function* openAiChatSseToResponsesEvents(
       role: 'assistant',
       content: [{ type: 'output_text', text, annotations: [] }],
     }
-    output.push(messageItem)
+    indexedOutput.push({ outputIndex: textOutputIndex, item: messageItem })
     yield {
       type: 'response.output_text.done',
       data: {
         type: 'response.output_text.done',
         item_id: messageId,
-        output_index: 0,
+        output_index: textOutputIndex,
         content_index: 0,
         text,
       },
@@ -253,7 +316,7 @@ export async function* openAiChatSseToResponsesEvents(
       data: {
         type: 'response.content_part.done',
         item_id: messageId,
-        output_index: 0,
+        output_index: textOutputIndex,
         content_index: 0,
         part: { type: 'output_text', text, annotations: [] },
       },
@@ -262,25 +325,27 @@ export async function* openAiChatSseToResponsesEvents(
       type: 'response.output_item.done',
       data: {
         type: 'response.output_item.done',
-        output_index: 0,
+        output_index: textOutputIndex,
         item: messageItem,
       },
     }
   }
 
-  for (const [index, call] of toolCalls.entries()) {
-    const outputIndex = textStarted ? index + 1 : index
+  for (const call of toolCalls.values()) {
     const callItem = functionCallItem({ id: call.id, name: call.name, arguments: call.arguments || '{}', annotateNamespace: target.annotateMcpToolNamespaces })
-    output.push(callItem)
+    indexedOutput.push({ outputIndex: call.outputIndex, item: callItem })
     yield {
       type: 'response.output_item.done',
       data: {
         type: 'response.output_item.done',
-        output_index: outputIndex,
+        output_index: call.outputIndex,
         item: callItem,
       },
     }
   }
+  const output = indexedOutput
+    .sort((left, right) => left.outputIndex - right.outputIndex)
+    .map(entry => entry.item)
   yield {
     type: 'response.completed',
     data: {
@@ -330,11 +395,16 @@ export async function* anthropicMessagesSseToResponsesEvents(
   let id = `resp_${Date.now()}`
   let messageId = `msg_${id}`
   let buffer = ''
+  let nextOutputIndex = 0
+  let reasoningStarted = false
+  let reasoningId = ''
+  let reasoningOutputIndex = -1
   let textStarted = false
+  let textOutputIndex = -1
   let text = ''
   let reasoning = ''
   let usage: Record<string, unknown> | undefined
-  const toolBlocks = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
+  const toolBlocks = new Map<number, { id: string; name: string; arguments: string; added: boolean; outputIndex: number }>()
 
   yield {
     type: 'response.created',
@@ -344,14 +414,33 @@ export async function* anthropicMessagesSseToResponsesEvents(
     },
   }
 
-  const ensureText = function* (): Generator<CanonicalResponsesEvent> {
-    if (!textStarted) {
-      textStarted = true
+  const ensureReasoning = function* (): Generator<CanonicalResponsesEvent> {
+    if (!reasoningStarted) {
+      reasoningStarted = true
+      reasoningId = `rs_${id}`
+      reasoningOutputIndex = nextOutputIndex
+      nextOutputIndex += 1
       yield {
         type: 'response.output_item.added',
         data: {
           type: 'response.output_item.added',
-          output_index: 0,
+          output_index: reasoningOutputIndex,
+          item: { type: 'reasoning', id: reasoningId, summary: [] },
+        },
+      }
+    }
+  }
+
+  const ensureText = function* (): Generator<CanonicalResponsesEvent> {
+    if (!textStarted) {
+      textStarted = true
+      textOutputIndex = nextOutputIndex
+      nextOutputIndex += 1
+      yield {
+        type: 'response.output_item.added',
+        data: {
+          type: 'response.output_item.added',
+          output_index: textOutputIndex,
           item: { type: 'message', id: messageId, status: 'in_progress', role: 'assistant', content: [] },
         },
       }
@@ -360,7 +449,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
         data: {
           type: 'response.content_part.added',
           item_id: messageId,
-          output_index: 0,
+          output_index: textOutputIndex,
           content_index: 0,
           part: { type: 'output_text', text: '', annotations: [] },
         },
@@ -368,10 +457,17 @@ export async function* anthropicMessagesSseToResponsesEvents(
     }
   }
 
-  const ensureTool = function* (index: number, idValue?: string, name?: string): Generator<CanonicalResponsesEvent, { id: string; name: string; arguments: string; added: boolean }> {
+  const ensureTool = function* (index: number, idValue?: string, name?: string): Generator<CanonicalResponsesEvent, { id: string; name: string; arguments: string; added: boolean; outputIndex: number }> {
     let block = toolBlocks.get(index)
     if (!block) {
-      block = { id: idValue || `toolu_${index}`, name: name || 'tool', arguments: '', added: false }
+      block = {
+        id: idValue || `toolu_${index}`,
+        name: name || 'tool',
+        arguments: '',
+        added: false,
+        outputIndex: nextOutputIndex,
+      }
+      nextOutputIndex += 1
       toolBlocks.set(index, block)
     }
     if (idValue) block.id = idValue
@@ -382,7 +478,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
         type: 'response.output_item.added',
         data: {
           type: 'response.output_item.added',
-          output_index: textStarted ? index + 1 : index,
+          output_index: block.outputIndex,
           item: functionCallItem({ id: block.id, name: block.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces, status: 'in_progress' }),
         },
       }
@@ -426,13 +522,15 @@ export async function* anthropicMessagesSseToResponsesEvents(
           const delta = data?.delta || {}
           if (delta.type === 'thinking_delta' && delta.thinking) {
             const textDelta = String(delta.thinking)
+            yield* ensureReasoning()
             reasoning += textDelta
             yield {
-              type: 'response.reasoning.delta',
+              type: 'response.reasoning_summary_text.delta',
               data: {
-                type: 'response.reasoning.delta',
-                item_id: messageId,
-                output_index: Number(data.index || 0),
+                type: 'response.reasoning_summary_text.delta',
+                item_id: reasoningId,
+                output_index: reasoningOutputIndex,
+                summary_index: 0,
                 delta: textDelta,
               },
             }
@@ -445,7 +543,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
               data: {
                 type: 'response.output_text.delta',
                 item_id: messageId,
-                output_index: 0,
+                output_index: textOutputIndex,
                 content_index: 0,
                 delta: String(delta.text),
               },
@@ -462,7 +560,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
                 data: {
                   type: 'response.function_call_arguments.delta',
                   item_id: block.id,
-                  output_index: textStarted ? index + 1 : index,
+                  output_index: block.outputIndex,
                   delta: argsDelta,
                 },
               }
@@ -473,13 +571,22 @@ export async function* anthropicMessagesSseToResponsesEvents(
     }
   }
 
-  const output: any[] = []
-  if (reasoning) {
-    output.push({
+  const indexedOutput: Array<{ outputIndex: number; item: any }> = []
+  if (reasoningStarted) {
+    const reasoningItem = {
       type: 'reasoning',
-      id: `rs_${id}`,
+      id: reasoningId,
       summary: [{ type: 'summary_text', text: reasoning }],
-    })
+    }
+    indexedOutput.push({ outputIndex: reasoningOutputIndex, item: reasoningItem })
+    yield {
+      type: 'response.output_item.done',
+      data: {
+        type: 'response.output_item.done',
+        output_index: reasoningOutputIndex,
+        item: reasoningItem,
+      },
+    }
   }
   if (textStarted) {
     const messageItem = {
@@ -489,13 +596,13 @@ export async function* anthropicMessagesSseToResponsesEvents(
       role: 'assistant',
       content: [{ type: 'output_text', text, annotations: [] }],
     }
-    output.push(messageItem)
+    indexedOutput.push({ outputIndex: textOutputIndex, item: messageItem })
     yield {
       type: 'response.output_text.done',
       data: {
         type: 'response.output_text.done',
         item_id: messageId,
-        output_index: 0,
+        output_index: textOutputIndex,
         content_index: 0,
         text,
       },
@@ -505,7 +612,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
       data: {
         type: 'response.content_part.done',
         item_id: messageId,
-        output_index: 0,
+        output_index: textOutputIndex,
         content_index: 0,
         part: { type: 'output_text', text, annotations: [] },
       },
@@ -514,24 +621,26 @@ export async function* anthropicMessagesSseToResponsesEvents(
       type: 'response.output_item.done',
       data: {
         type: 'response.output_item.done',
-        output_index: 0,
+        output_index: textOutputIndex,
         item: messageItem,
       },
     }
   }
-  for (const [index, block] of toolBlocks.entries()) {
-    const outputIndex = textStarted ? index + 1 : index
+  for (const block of toolBlocks.values()) {
     const item = functionCallItem({ id: block.id, name: block.name, arguments: block.arguments || '{}', annotateNamespace: target.annotateMcpToolNamespaces })
-    output.push(item)
+    indexedOutput.push({ outputIndex: block.outputIndex, item })
     yield {
       type: 'response.output_item.done',
       data: {
         type: 'response.output_item.done',
-        output_index: outputIndex,
+        output_index: block.outputIndex,
         item,
       },
     }
   }
+  const output = indexedOutput
+    .sort((left, right) => left.outputIndex - right.outputIndex)
+    .map(entry => entry.item)
   yield {
     type: 'response.completed',
     data: {

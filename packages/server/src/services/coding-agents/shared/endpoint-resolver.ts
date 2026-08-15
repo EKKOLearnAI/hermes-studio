@@ -1,3 +1,4 @@
+/** Provider endpoint families shared by all Coding Agent proxies. */
 export type AgentEndpointKind = 'chat_completions' | 'responses' | 'anthropic_messages'
 
 function normalizedBaseUrl(baseUrl: string): URL {

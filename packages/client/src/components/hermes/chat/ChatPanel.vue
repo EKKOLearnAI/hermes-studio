@@ -830,9 +830,10 @@ const hiddenDefaultWorkspaces = computed(() => {
 
 const newChatAgentOptions = computed(() => [
   { label: "Hermes", value: "hermes" },
-  { label: "Claude Code", value: "claude-code" },
+  { label: "Ekko", value: "ekko-agent" },
+  { label: "Claude", value: "claude-code" },
   { label: "Codex", value: "codex" },
-  { label: "Ekko Agent", value: "ekko-agent" },
+  { label: "Pi", value: "pi" },
 ]);
 
 const newChatApiModeOptions = computed(() => [
@@ -846,6 +847,13 @@ const newChatAgentModeOptions = computed(() => [
   { label: t("codingAgents.launchModeScoped"), value: "scoped" },
 ]);
 
+function effectiveNewChatMode(
+  agent: typeof newChatAgent.value,
+  requestedMode: typeof newChatAgentMode.value,
+) {
+  return agent === "ekko-agent" ? "scoped" : requestedMode;
+}
+
 function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
@@ -855,7 +863,7 @@ function getModelGroupsForProfile(profile: string) {
 
 function isNewChatProviderAllowed(group: AvailableModelGroup) {
   if (group.provider === "moa") return newChatAgent.value === "hermes";
-  const mode = newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value;
+  const mode = effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value);
   if (!(newChatAgent.value !== "hermes" && mode === "scoped")) return true;
   return canScopedCodingAgentUseProvider(newChatAgent.value as ChatCodingAgentId, group.provider);
 }
@@ -942,9 +950,9 @@ const selectedNewChatProviderGroup = computed(() =>
 );
 
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
-const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex");
+const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi");
 const effectiveNewChatAgentMode = computed(() =>
-  newChatAgent.value === "ekko-agent" ? "scoped" : newChatAgentMode.value,
+  effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value),
 );
 const isNewChatGlobalCodingAgent = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
@@ -1102,7 +1110,7 @@ async function confirmNewChat() {
       const status = await fetchCodingAgentsStatus();
       const tool = status.tools.find((item) => item.id === agentId);
       if (!tool?.installed) {
-        const fallbackName = agentId === "codex" ? "Codex" : "Claude Code";
+        const fallbackName = agentId === "codex" ? "Codex" : agentId === "pi" ? "Pi" : "Claude";
         message.warning(t("codingAgents.installRequired", { agent: tool?.name || fallbackName }));
         showNewChatModal.value = false;
         await router.push({ name: "hermes.codingAgents" });
@@ -1124,6 +1132,8 @@ async function confirmNewChat() {
     ? "codex"
     : newChatAgent.value === "claude-code"
       ? "claude"
+      : newChatAgent.value === "pi"
+        ? "pi"
       : newChatAgent.value === "ekko-agent"
         ? "ekko-agent"
       : "hermes";

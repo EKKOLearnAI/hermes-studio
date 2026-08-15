@@ -233,6 +233,40 @@ describe('skills controller', () => {
     }
   })
 
+  it('lists shared user skills without Codex system skills for the pi target', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-pi-skills-'))
+    const previousHome = process.env.HOME
+    const userSkillDir = join(root, '.agents', 'skills', 'pi-user-skill')
+    const systemSkillDir = join(root, '.codex', 'skills', '.system', 'codex-only-skill')
+
+    await mkdir(userSkillDir, { recursive: true })
+    await mkdir(systemSkillDir, { recursive: true })
+    await writeFile(join(userSkillDir, 'SKILL.md'), '# Pi User Skill\nshared agent skill\n', 'utf-8')
+    await writeFile(join(systemSkillDir, 'SKILL.md'), '# Codex Only\nmust not be exposed to Pi\n', 'utf-8')
+    process.env.HOME = root
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { query: { target: 'pi' }, state: { profile: { name: 'research' } }, body: null }
+
+      await list(ctx)
+
+      const misc = ctx.body.categories.find((category: any) => category.name === 'misc')
+      expect(misc.skills).toEqual([
+        expect.objectContaining({ name: 'pi-user-skill', source: 'local', description: 'shared agent skill' }),
+      ])
+      expect(ctx.body.paths).toEqual({
+        local: join(root, '.agents', 'skills'),
+        external: [],
+      })
+      expect(mockReadConfigYamlForProfile).not.toHaveBeenCalled()
+    } finally {
+      if (previousHome == null) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reads Codex system skill details for the codex target', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-codex-system-skill-'))
     const previousHome = process.env.HOME

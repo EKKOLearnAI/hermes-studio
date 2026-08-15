@@ -1,3 +1,4 @@
+// Shared Responses payload translation for Coding Agent provider proxies.
 import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
 
 export interface ResponsesAdapterTarget {
@@ -814,16 +815,31 @@ function usageFromAnthropic(data: any) {
   }
 }
 
+function openAiChatReasoningText(message: any): string {
+  for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+    if (typeof message?.[field] === 'string' && message[field]) return message[field]
+  }
+
+  const details = Array.isArray(message?.reasoning_details)
+    ? message.reasoning_details
+    : [message?.reasoning_details]
+  return details.map((entry: any) => {
+    if (typeof entry === 'string') return entry
+    return typeof entry?.text === 'string' ? entry.text : ''
+  }).join('')
+}
+
 export function openAiChatToResponses(data: any, target: ResponsesAdapterTarget): any {
   const choice = data?.choices?.[0] || {}
   const message = choice.message || {}
   const output: any[] = []
+  const reasoningText = openAiChatReasoningText(message)
 
-  if (message.reasoning_content) {
+  if (reasoningText) {
     output.push({
       type: 'reasoning',
       id: `rs_${responseId(data)}`,
-      summary: [{ type: 'summary_text', text: String(message.reasoning_content) }],
+      summary: [{ type: 'summary_text', text: reasoningText }],
     })
   }
 

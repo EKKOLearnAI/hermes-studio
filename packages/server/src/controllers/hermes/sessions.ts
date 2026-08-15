@@ -42,7 +42,7 @@ import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
-import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from '../../services/coding-agents/runtime/run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 import { defaultHermesWorkspace, ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE, validatePath } from '../../services/hermes/file-provider'
@@ -206,6 +206,7 @@ function isCodingAgentSession(session?: { source?: string | null; agent?: string
   return session?.source === 'coding_agent' ||
     session?.agent === 'claude' ||
     session?.agent === 'codex' ||
+    session?.agent === 'pi' ||
     Boolean(session?.agent_session_id)
 }
 

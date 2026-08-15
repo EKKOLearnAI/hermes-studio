@@ -1,3 +1,4 @@
+// Shared Anthropic stream translation for Coding Agent provider proxies.
 import { readSseFrameTexts } from '../sse'
 import {
   createAnthropicToolInputSchemas,

@@ -4,6 +4,7 @@ import type { WorkflowSelectOption } from '@/components/hermes/workflow/types'
 export function workflowAgentToSkillTarget(agent: string): SkillTarget {
   if (agent === 'claude-code') return 'claude'
   if (agent === 'codex') return 'codex'
+  if (agent === 'pi') return 'pi'
   return 'hermes'
 }
 

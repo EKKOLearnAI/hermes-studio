@@ -162,6 +162,8 @@ export interface GroupPendingClarify {
     clarifyId: string
     question: string
     choices: string[] | null
+    initialResponse: string
+    responseMode: string
     timeoutMs: number
     requestedAt: number
 }
@@ -431,7 +433,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
     }
 
-    function upsertPendingClarify(data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number; requested_at?: number }) {
+    function upsertPendingClarify(data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; requested_at?: number }) {
         if (!data.roomId || !data.clarify_id) return
         pendingClarifies.value.set(pendingClarifyKey(data.roomId, data.clarify_id), {
             roomId: data.roomId,
@@ -439,6 +441,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             clarifyId: data.clarify_id,
             question: data.question || '',
             choices: Array.isArray(data.choices) ? data.choices.map(String) : null,
+            initialResponse: String(data.initial_response || ''),
+            responseMode: String(data.response_mode || ''),
             timeoutMs: Number(data.timeout_ms) || 300_000,
             requestedAt: Number(data.requested_at) || Date.now(),
         })
@@ -1061,7 +1065,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
-        socket.on('clarify.requested', (data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number }) => {
+        socket.on('clarify.requested', (data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number }) => {
             upsertPendingClarify(data)
             pendingClarifies.value = new Map(pendingClarifies.value)
         })

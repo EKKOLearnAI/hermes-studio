@@ -49,7 +49,9 @@ import {
   startWorkspaceRunCheckpoint,
 } from '../run-chat/workspace-diff-tracker'
 
-export const GROUP_AGENT_RELAY_PROTOCOL_VERSION = 1
+// Version 2 adds Pi to the remote Agent descriptor. Bumping the protocol keeps
+// older Studio builds from accepting a descriptor they cannot validate.
+export const GROUP_AGENT_RELAY_PROTOCOL_VERSION = 2
 const RELAY_ACCEPT_TIMEOUT_MS = 10_000
 const RELAY_RUN_TIMEOUT_MS = 150_000
 const RELAY_INTERACTION_TIMEOUT_MS = 330_000
@@ -76,7 +78,7 @@ type RelayAttachmentSource = RelayAttachment & {
 }
 
 type RelayRunRequest = {
-  protocolVersion: 1
+  protocolVersion: 2
   runId: string
   room: { id: string; name: string; summaryProfile?: string }
   members: Array<{ userId?: string; id?: string; name: string; description?: string }>
@@ -348,7 +350,7 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
   profile: string
   provider: string
   model: string
@@ -1025,6 +1027,10 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
       choices: Array.isArray(data.choices)
         ? data.choices.map(choice => String(choice).slice(0, 2_000)).slice(0, 20)
         : null,
+      initial_response: String(data.initial_response || '').slice(0, 20_000),
+      response_mode: ['select', 'input', 'editor'].includes(String(data.response_mode || ''))
+        ? String(data.response_mode)
+        : '',
       timeout_ms: this.remoteInteractionTimeout(data.timeout_ms),
     }
   }
@@ -1403,12 +1409,14 @@ export class GroupAgentRelayServer {
         revokeGroupAgentConnector(connector!.id, Date.now(), { notify: false })
         ack?.({ ok: true })
         queueMicrotask(() => {
-          this.groupChatServer.agentClients.removeAgentFromRoom(connector!.roomId, connector!.agentId)
-          storage.removeRoomAgent(connector!.roomId, connector!.roomAgentId)
-          this.groupChatServer.broadcastRoomAgents(connector!.roomId)
+          void (async () => {
+            await this.groupChatServer.agentClients.removeAgentFromRoom(connector!.roomId, connector!.agentId)
+            storage.removeRoomAgent(connector!.roomId, connector!.roomAgentId)
+            this.groupChatServer.broadcastRoomAgents(connector!.roomId)
+          })()
         })
       })
-      socket.on('disconnect', () => this.handleDisconnect(connector!.id, connector!.roomId, executor))
+      socket.on('disconnect', () => { void this.handleDisconnect(connector!.id, connector!.roomId, executor) })
     } catch (error) {
       proxy?.disconnect()
       if (pairingRequestId) releaseGroupAgentPairingClaim(pairingRequestId)
@@ -1425,13 +1433,13 @@ export class GroupAgentRelayServer {
     }
   }
 
-  private handleDisconnect(connectorId: string, roomId: string, executor: RelayGroupAgentExecutor): void {
+  private async handleDisconnect(connectorId: string, roomId: string, executor: RelayGroupAgentExecutor): Promise<void> {
     const socket = this.connectorSockets.get(connectorId)
     if (socket?.data?.executor === executor) this.connectorSockets.delete(connectorId)
     if (this.executors.get(connectorId) !== executor) return
     this.executors.delete(connectorId)
     touchGroupAgentConnector(connectorId, 'offline')
-    this.groupChatServer.agentClients.removeAgentFromRoom(roomId, executor.agentId)
+    await this.groupChatServer.agentClients.removeAgentFromRoom(roomId, executor.agentId)
     this.groupChatServer.broadcastRoomAgents(roomId)
   }
 }
