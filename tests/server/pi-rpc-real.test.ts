@@ -321,13 +321,15 @@ describeReal('real Pi RPC end-to-end', () => {
     })
 
     const firstStudio = createStudioManager()
-    firstStudio.manager.start(launch('studio-pi-chat-1'))
+    const startFirstStudioTurn = () => firstStudio.manager.start(launch('studio-pi-chat-1'))
+    startFirstStudioTurn()
 
     let from = firstStudio.emitted.length
     firstStudio.manager.send('studio-pi-chat-1', 'Studio E2E image', {
       images: [{ name: '图片 示例.png', path: imagePath, mediaType: 'image/png' }],
     })
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
+    expect(firstStudio.manager.hasSession('studio-pi-chat-1')).toBe(false)
     expect(firstStudio.emitted.slice(from)).toEqual(expect.arrayContaining([
       expect.objectContaining({ event: 'run.started' }),
       expect.objectContaining({
@@ -338,6 +340,7 @@ describeReal('real Pi RPC end-to-end', () => {
     ]))
 
     from = firstStudio.emitted.length
+    startFirstStudioTurn()
     firstStudio.manager.send('studio-pi-chat-1', 'E2E_LOCAL_TOOL')
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
     expect(firstStudio.emitted.slice(from).some(event => event.event === 'tool.started')).toBe(true)
@@ -347,6 +350,7 @@ describeReal('real Pi RPC end-to-end', () => {
     ))).toBe(true)
 
     from = firstStudio.emitted.length
+    startFirstStudioTurn()
     firstStudio.manager.send('studio-pi-chat-1', 'E2E_MCP_TOOL')
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
     expect(firstStudio.emitted.slice(from).some(event => (
@@ -355,11 +359,13 @@ describeReal('real Pi RPC end-to-end', () => {
     ))).toBe(true)
 
     from = firstStudio.emitted.length
+    startFirstStudioTurn()
     firstStudio.manager.send('studio-pi-chat-1', 'E2E_FAIL')
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.failed', from)
     expect(JSON.stringify(firstStudio.emitted.slice(from))).toContain('intentional Pi provider failure')
 
     from = firstStudio.emitted.length
+    startFirstStudioTurn()
     firstStudio.manager.send('studio-pi-chat-1', 'E2E_ABORT')
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.started', from)
     expect(firstStudio.manager.stop('studio-pi-chat-1')).toBe(true)
@@ -378,6 +384,6 @@ describeReal('real Pi RPC end-to-end', () => {
       .join('')
     expect(recoveredText).toContain('reply:E2E_RECOVERED')
     expect(Number(recoveredText.match(/messages=(\d+)/)?.[1] || 0)).toBeGreaterThan(2)
-    recoveredStudio.manager.stop('studio-pi-chat-2', { reportClosed: false })
+    expect(recoveredStudio.manager.hasSession('studio-pi-chat-2')).toBe(false)
   }, 60_000)
 })

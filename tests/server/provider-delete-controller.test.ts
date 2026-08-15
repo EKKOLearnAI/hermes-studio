@@ -4,13 +4,13 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
 
-const revokeCodingAgentProviderRuntimeMock = vi.fn()
+const mockInvalidateProviderRuntime = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('../../packages/server/src/services/coding-agents', () => ({
-  revokeCodingAgentProviderRuntime: revokeCodingAgentProviderRuntimeMock,
+  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
 let hermesHome = ''
@@ -41,8 +41,7 @@ function readYaml(filePath: string) {
 
 describe('providers controller delete', () => {
   beforeEach(() => {
-    revokeCodingAgentProviderRuntimeMock.mockReset()
-    revokeCodingAgentProviderRuntimeMock.mockResolvedValue({ stoppedRuns: 0, revokedTargets: 0 })
+    mockInvalidateProviderRuntime.mockReset()
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-provider-delete-'))
     mkdirSync(hermesHome, { recursive: true })
     writeFileSync(join(hermesHome, 'config.yaml'), 'model:\n  provider: openai-codex\n  default: gpt-5.5\n')
@@ -94,17 +93,17 @@ describe('providers controller delete', () => {
     expect(authAfter.credential_pool.openrouter).toEqual([
       { label: 'OPENROUTER_API_KEY', source: 'env:OPENROUTER_API_KEY' },
     ])
-    expect(revokeCodingAgentProviderRuntimeMock).toHaveBeenCalledWith('default', 'deepseek')
+    expect(mockInvalidateProviderRuntime).toHaveBeenCalledWith('default', 'deepseek')
   })
 
-  it('does not revoke active runtimes when the provider removal is rejected', async () => {
+  it('does not invalidate a runtime when a custom provider removal is rejected', async () => {
     const { remove } = await loadProvidersController()
     const ctx = makeCtx('custom:missing-provider')
 
     await remove(ctx)
 
     expect(ctx.status).toBe(404)
-    expect(revokeCodingAgentProviderRuntimeMock).not.toHaveBeenCalled()
+    expect(mockInvalidateProviderRuntime).not.toHaveBeenCalled()
   })
 
   it('does not remove unrelated base URL env for a provider without a base URL env mapping', async () => {

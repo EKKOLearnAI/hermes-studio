@@ -123,6 +123,7 @@ interface ManagedCodingAgentRun {
   piFinalText?: string
   piFinishReason?: string
   turnActive?: boolean
+  disposeAfterTurn?: boolean
   piUiRequests?: Map<string, any>
   piTextBuffer?: string
   piCurrentMessageText?: string
@@ -716,6 +717,25 @@ export class CodingAgentRunManager {
     return stopped
   }
 
+  invalidateMatching(predicate: (launch: CodingAgentRunLaunch) => boolean): {
+    invalidated: number
+    deferred: number
+  } {
+    let invalidated = 0
+    let deferred = 0
+    for (const run of [...this.runs.values()]) {
+      if (!predicate(run.launch)) continue
+      invalidated += 1
+      if (run.state.isWorking || run.turnActive || run.pendingChatCompletionEvent) {
+        run.disposeAfterTurn = true
+        deferred += 1
+        continue
+      }
+      this.cleanupRun(run, { kill: true, reportClosed: false })
+    }
+    return { invalidated, deferred }
+  }
+
   resolveApproval(sessionId: string, approvalId: string, choice = 'deny'): { handled: boolean; resolved: boolean } {
     const run = this.getBySession(sessionId)
     const request = run?.piUiRequests?.get(approvalId)
@@ -909,9 +929,10 @@ export class CodingAgentRunManager {
         output: finalText,
         error: terminalError || undefined,
       }
-      if (run.launch.agentId !== 'pi' && childIsRunning(run.currentChild)) {
+      if (childIsRunning(run.currentChild)) {
         run.pendingChatCompletionEvent = chatCompletionEvent
         run.pendingChatCompletionPayload = chatCompletionPayload
+        if (run.launch.agentId === 'pi') this.closePiRpcProcessAfterTurn(run)
       } else {
         void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, chatCompletionEvent, chatCompletionPayload)
         if (deferPiUsageRefresh) this.schedulePiTerminalUsageRefresh(run)
@@ -1068,7 +1089,7 @@ export class CodingAgentRunManager {
     this.runs.delete(run.id)
     if (this.sessionIndex.get(run.launch.sessionId) === run.id) this.sessionIndex.delete(run.launch.sessionId)
     if (options.kill && !run.exited) {
-      if (run.launch.agentId === 'pi' && childIsRunning(run.currentChild)) {
+      if (run.launch.agentId === 'pi' && run.turnActive && childIsRunning(run.currentChild)) {
         this.writePiRpcCommand(run, { id: `abort_${Date.now()}`, type: 'abort' })
       }
       try { run.pty?.kill() } catch {}
@@ -1124,15 +1145,32 @@ export class CodingAgentRunManager {
       if (!run.printCompleted) this.failClaudePrintTurn(run, childProcessErrorMessage(err))
     })
     child.on('close', (code) => {
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      run.currentChildKillTimer = undefined
       run.piDetachJsonl?.()
       run.piDetachJsonl = undefined
       run.currentChild = undefined
       if (run.exited || run.stoppedByUser) return
+      if (run.pendingChatCompletionEvent) {
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        this.schedulePiTerminalUsageRefresh(run)
+        return
+      }
       const message = exitErrorMessage('Pi', code, run.currentChildStderr)
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] Pi RPC exited')
       if (run.state.isWorking && !run.printCompleted) this.failClaudePrintTurn(run, message)
       this.cleanupRun(run, { kill: false, reportClosed: false })
     })
+  }
+
+  private closePiRpcProcessAfterTurn(run: ManagedCodingAgentRun) {
+    const child = run.currentChild
+    if (!childIsRunning(child)) return
+    run.turnActive = false
+    terminateChildProcess(child)
+    if (!childIsRunning(child)) return
+    run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(child), 1500)
+    run.currentChildKillTimer.unref?.()
   }
 
   private writePiRpcCommand(run: ManagedCodingAgentRun, command: Record<string, unknown>) {
@@ -2546,9 +2584,14 @@ export class CodingAgentRunManager {
     run.state.abortController = undefined
     run.state.activeRunMarker = undefined
     run.state.events = []
-    this.markChatRunCompleted(run.launch.sessionId, event)
     if (event === 'run.completed') this.startCodingAgentMemoryExport(run)
     run.runMarker = undefined
+    if (run.launch.agentId === 'pi' || run.disposeAfterTurn) {
+      this.cleanupRun(run, { kill: true, reportClosed: false })
+    }
+    // Completion can synchronously release a queued run. Dispose the stale or
+    // turn-scoped runtime first so the queued turn prepares fresh provider data.
+    this.markChatRunCompleted(run.launch.sessionId, event)
   }
 
   private startCodingAgentMemoryExport(run: ManagedCodingAgentRun) {
