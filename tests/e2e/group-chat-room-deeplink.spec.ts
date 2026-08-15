@@ -270,7 +270,7 @@ async function mockGroupChatSocket(page: Page) {
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
 state.executionQueues = state.executionQueues || {}
 state.nextSocketId = state.nextSocketId || 1
-const roomMessages = ${JSON.stringify(messagesByRoom)}
+const roomMessages = structuredClone(${JSON.stringify(messagesByRoom)})
 const roomAgents = ${JSON.stringify(agentsByRoom)}
 const roomNames = ${JSON.stringify(Object.fromEntries(baseRooms.map(room => [room.id, room.name])))}
 function makeSocket(url, options) {
@@ -289,7 +289,8 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
+        const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: (roomMessages[roomId] || []).filter(message => !retracted.has(message.id)), agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
@@ -298,13 +299,21 @@ function makeSocket(url, options) {
         const roomId = payload && payload.roomId
         const queueId = payload && payload.queueId
         const items = state.executionQueues[roomId] || []
-        const next = items.filter(item => item.id !== queueId)
-        if (next.length === items.length) {
+        const selected = items.find(item => item.id === queueId)
+        const siblings = selected ? items.filter(item => item.messageId === selected.messageId) : []
+        if (!selected || siblings.some(item => item.status !== 'queued')) {
           setTimeout(() => ack({ error: 'Queue item is no longer cancellable' }), 0)
         } else {
-          state.executionQueues[roomId] = next.map((item, index) => ({ ...item, position: index + 1 }))
+          state.executionQueues[roomId] = items
+            .filter(item => item.messageId !== selected.messageId)
+            .map((item, index) => ({ ...item, position: index + 1 }))
+          roomMessages[roomId] = (roomMessages[roomId] || []).filter(message => message.id !== selected.messageId)
+          const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+          retracted.add(selected.messageId)
+          window.localStorage.setItem('__pw_group_retracted__', JSON.stringify([...retracted]))
+          for (const peer of state.sockets) peer.__trigger('message_retracted', { roomId, messageId: selected.messageId, totalTokens: 0 })
           for (const peer of state.sockets) peer.__trigger('execution_queue_updated', { roomId, items: state.executionQueues[roomId] })
-          setTimeout(() => ack({ ok: true, status: 'cancelled' }), 0)
+          setTimeout(() => ack({ ok: true, status: 'retracted', messageId: selected.messageId }), 0)
         }
       }
       return this
@@ -933,12 +942,12 @@ test.describe('group chat room deep links', () => {
     await expect(second.getByText('Alpha room message')).toHaveCount(0)
   })
 
-  test('renders authoritative queue order and only cancels the queued item without removing its message', async ({ page }) => {
+  test('atomically retracts one queued message across the live view and a reload', async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem('gc_user_id', 'user-1')
       window.localStorage.setItem('gc_user_name', 'User One')
     })
-    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
     await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
     await connectGroupSocket(page)
     await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
@@ -976,7 +985,16 @@ test.describe('group chat room deep links', () => {
     await queue.locator('.queue-remove').first().click()
     await expect(queue.locator('[data-queue-id="queue-1"]')).toHaveCount(0)
     await expect(queue.locator('[data-queue-id="queue-2"]')).toBeVisible()
-    await expect(page.getByText('Alpha room message')).toBeVisible()
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
+
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': messagesByRoom['room-alpha'].filter(message => message.id !== 'alpha-msg'),
+    })
+    await page.reload()
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
   })
 
   test('records and transcribes into the editable group composer without sending automatically', async ({ page }) => {

@@ -1042,6 +1042,36 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             executionQueue.value = Array.isArray(data.items) ? data.items : []
         })
 
+        socket.on('message_retracted', (data: {
+            roomId: string
+            messageId: string
+            messageCount?: number
+            totalTokens?: number
+            lastActiveAt?: number
+        }) => {
+            if (!data.roomId || !data.messageId) return
+            executionQueue.value = executionQueue.value.filter(item => item.messageId !== data.messageId)
+            const room = rooms.value.find(item => item.id === data.roomId)
+            if (room) {
+                if (typeof data.totalTokens === 'number') room.totalTokens = data.totalTokens
+                if (typeof data.lastActiveAt === 'number') room.lastActiveAt = data.lastActiveAt
+                sortRoomsByActivity()
+            }
+            roomSummaryStates.value.delete(data.roomId)
+            roomSummaryStates.value = new Map(roomSummaryStates.value)
+            const reference = messageReferences.value.get(data.roomId)
+            if (reference?.id === data.messageId) clearMessageReference(data.roomId)
+            if (data.roomId !== currentRoomId.value) return
+            flushPendingStreamDeltas(data.roomId, data.messageId)
+            const removed = messages.value.some(message => message.id === data.messageId)
+            messages.value = messages.value.filter(message => message.id !== data.messageId)
+            if (removed) loadedMessageCount.value = Math.max(0, loadedMessageCount.value - 1)
+            totalMessages.value = typeof data.messageCount === 'number'
+                ? Math.max(0, data.messageCount)
+                : Math.max(0, totalMessages.value - (removed ? 1 : 0))
+            hasMoreBefore.value = loadedMessageCount.value < totalMessages.value
+        })
+
         socket.on('room_summary_updated', (summary: RoomSummaryState) => {
             if (!summary?.roomId) return
             roomSummaryStates.value.set(summary.roomId, summary)
@@ -1095,10 +1125,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             agentHandoffEnabled?: number
             agentHandoffMaxDepth?: number | null
             agentHandoffUnlimited?: number
+            lastActiveAt?: number
         }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (!room) return
             if (typeof data.totalTokens === 'number') room.totalTokens = data.totalTokens
+            if (typeof data.lastActiveAt === 'number') {
+                room.lastActiveAt = data.lastActiveAt
+                sortRoomsByActivity()
+            }
             if (typeof data.allowGuestAgents === 'number') room.allowGuestAgents = data.allowGuestAgents
             if (data.guestAgentApproval === 'owner') room.guestAgentApproval = data.guestAgentApproval
             if (typeof data.maxGuestAgentsPerMember === 'number') {

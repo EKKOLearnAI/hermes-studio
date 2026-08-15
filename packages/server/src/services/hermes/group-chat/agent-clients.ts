@@ -2305,24 +2305,33 @@ export class AgentClients {
         return Promise.all(completions).then(errors => errors.find(Boolean) || null)
     }
 
-    cancelQueuedMention(roomId: string, queueId: string, cancelCapabilityHash: string): boolean {
-        const cancelled = this._storage?.cancelExecutionQueueItem?.(roomId, queueId, cancelCapabilityHash)
-        if (!cancelled) return false
+    retractQueuedMention(
+        roomId: string,
+        queueId: string,
+        requesterMemberId: string,
+        cancelCapabilityHash: string,
+    ): { messageId: string; queueIds: string[]; messageCount: number; totalTokens: number; lastActiveAt: number } | null {
+        const retracted = this._storage?.retractQueuedMessage?.(
+            roomId,
+            queueId,
+            requesterMemberId,
+            cancelCapabilityHash,
+        )
+        if (!retracted) return null
+        const queueIds = new Set<string>(retracted.queueIds)
         for (const [key, queue] of this._mentionQueues) {
             if (this.mentionQueueRoomId(key) !== roomId) continue
             for (let index = queue.length - 1; index >= 0; index -= 1) {
                 const entry = queue[index]
-                if (entry.target?.queueId !== queueId) continue
+                if (!entry.target?.queueId || !queueIds.has(entry.target.queueId)) continue
                 entry.target.agent.releaseInvocation?.()
                 this.finishAgentActivity(roomId, entry.target.agent.name)
                 queue.splice(index, 1)
                 entry.resolve(null)
-                break
             }
             if (queue.length === 0) this._mentionQueues.delete(key)
         }
-        this._executionQueueBroadcaster?.(roomId)
-        return true
+        return retracted
     }
 
     async interruptAgent(roomId: string, agentName: string): Promise<void> {

@@ -137,6 +137,14 @@ interface StoredGroupExecutionQueueItem extends GroupExecutionQueueItem {
     cancelCapabilityHash: string
 }
 
+interface RetractedQueuedMessage {
+    messageId: string
+    queueIds: string[]
+    messageCount: number
+    totalTokens: number
+    lastActiveAt: number
+}
+
 const EXECUTION_QUEUE_PUBLIC_COLUMNS = [
     'id',
     'roomId',
@@ -936,6 +944,17 @@ class ChatStorage {
 
     getRoom(roomId: string): RoomInfo | undefined {
         return this.db()?.prepare(`SELECT ${ROOM_SELECT_COLUMNS} FROM gc_rooms WHERE id = ?`).get(roomId) as any
+    }
+
+    getRoomActivityAt(roomId: string): number {
+        const row = this.db()?.prepare(
+            `SELECT ${roomActivityAtSql('m')} AS lastActiveAt
+             FROM gc_rooms r
+             LEFT JOIN gc_messages m ON m.roomId = r.id
+             WHERE r.id = ?
+             GROUP BY r.id`,
+        ).get(roomId) as { lastActiveAt?: number } | undefined
+        return Number(row?.lastActiveAt || 0)
     }
 
     getRoomByInviteCode(code: string): RoomInfo | undefined {
@@ -2275,15 +2294,83 @@ class ChatStorage {
         ).run(Date.now(), String(lastError || 'Execution failed'), id)
     }
 
-    cancelExecutionQueueItem(roomId: string, id: string, cancelCapabilityHash: string): GroupExecutionQueueItem | null {
+    retractQueuedMessage(
+        roomId: string,
+        queueId: string,
+        requesterMemberId: string,
+        cancelCapabilityHash: string,
+    ): RetractedQueuedMessage | null {
         const db = this.db()
-        if (!db || !cancelCapabilityHash) return null
-        const result = db.prepare(
-            `UPDATE gc_execution_queue
-             SET status = 'cancelled', finishedAt = ?, lastError = NULL
-             WHERE id = ? AND roomId = ? AND cancelCapabilityHash = ? AND cancelCapabilityHash != '' AND status = 'queued'`,
-        ).run(Date.now(), id, roomId, cancelCapabilityHash)
-        return Number(result.changes || 0) === 1 ? this.getExecutionQueueItem(id) : null
+        if (!db || !requesterMemberId || !cancelCapabilityHash) return null
+        return this.withImmediateTransaction(db, () => {
+            const selected = db.prepare(
+                'SELECT * FROM gc_execution_queue WHERE id = ? AND roomId = ?',
+            ).get(queueId, roomId) as StoredGroupExecutionQueueItem | undefined
+            if (!selected) return null
+
+            const message = this.getMessage(selected.messageId)
+            const siblings = db.prepare(
+                'SELECT * FROM gc_execution_queue WHERE roomId = ? AND messageId = ? ORDER BY sequence ASC',
+            ).all(roomId, selected.messageId) as unknown as StoredGroupExecutionQueueItem[]
+            if (!message
+                || message.roomId !== roomId
+                || message.role !== 'user'
+                || message.senderId !== requesterMemberId
+                || siblings.length === 0
+                || siblings.some(item => (
+                    item.status !== 'queued'
+                    || item.requesterMemberId !== requesterMemberId
+                    || !executionQueueCapabilityMatches(item.cancelCapabilityHash, cancelCapabilityHash)
+                ))) {
+                return null
+            }
+
+            this.ensureCurrentRoomTokenAccounting(roomId)
+            const previousIds = this.contextWindowMessageIdsForTokenDelta(roomId)
+            const cancelledAt = Date.now()
+            const queueIds = siblings.map(item => item.id)
+            const placeholders = queueIds.map(() => '?').join(', ')
+            const cancelled = db.prepare(
+                `UPDATE gc_execution_queue
+                 SET status = 'cancelled', finishedAt = ?, lastError = NULL
+                 WHERE id IN (${placeholders}) AND status = 'queued'`,
+            ).run(cancelledAt, ...queueIds)
+            if (Number(cancelled.changes || 0) !== queueIds.length) {
+                throw new Error('Queued work changed during retraction')
+            }
+
+            const deleted = db.prepare(
+                `DELETE FROM gc_messages
+                 WHERE id = ? AND roomId = ? AND senderId = ? AND role = 'user'`,
+            ).run(selected.messageId, roomId, requesterMemberId)
+            if (Number(deleted.changes || 0) !== 1) {
+                throw new Error('Queued message changed during retraction')
+            }
+
+            const nextIds = this.contextWindowMessageIdsForTokenDelta(roomId)
+            const totalTokens = this.incrementalRoomTotalTokens(
+                roomId,
+                selected.messageId,
+                message,
+                message,
+                previousIds,
+                nextIds,
+            )
+            db.prepare(
+                `UPDATE gc_rooms
+                 SET totalTokens = ?, summaryGeneration = summaryGeneration + 1
+                 WHERE id = ?`,
+            ).run(totalTokens, roomId)
+            db.prepare('DELETE FROM gc_room_summaries WHERE roomId = ?').run(roomId)
+
+            return {
+                messageId: selected.messageId,
+                queueIds,
+                messageCount: this.getMessageCount(roomId),
+                totalTokens,
+                lastActiveAt: this.getRoomActivityAt(roomId),
+            }
+        })
     }
 
     // ─── Room Agents ──────────────────────────────────────────
@@ -4576,11 +4663,34 @@ export class GroupChatServer {
             ack?.({ error: 'Access denied' })
             return
         }
-        if (!this.agentClients.cancelQueuedMention(roomId, queueId, cancelCapabilityHash)) {
+        if (item.requesterMemberId !== joined.member.userId) {
+            ack?.({ error: 'Access denied' })
+            return
+        }
+        const retracted = this.agentClients.retractQueuedMention(
+            roomId,
+            queueId,
+            joined.member.userId,
+            cancelCapabilityHash,
+        )
+        if (!retracted) {
             ack?.({ error: 'Queue item is no longer cancellable', status: this.storage.getExecutionQueueItem(queueId)?.status })
             return
         }
-        ack?.({ ok: true, status: 'cancelled' })
+        this.nsp.to(roomId).emit('message_retracted', {
+            roomId,
+            messageId: retracted.messageId,
+            messageCount: retracted.messageCount,
+            totalTokens: retracted.totalTokens,
+            lastActiveAt: retracted.lastActiveAt,
+        })
+        this.broadcastExecutionQueue(roomId)
+        this.nsp.to(roomId).emit('room_updated', {
+            roomId,
+            totalTokens: retracted.totalTokens,
+            lastActiveAt: retracted.lastActiveAt,
+        })
+        ack?.({ ok: true, status: 'retracted', messageId: retracted.messageId })
     }
 
     private async handleRemoveAgent(

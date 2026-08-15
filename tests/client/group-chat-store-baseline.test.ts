@@ -199,9 +199,10 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('execution_queue_updated', expect.any(Function))
+    expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('message_retracted', expect.any(Function))
   })
 
-  it('restores authoritative queued work, converges on socket updates, and cancels through the server', async () => {
+  it('restores authoritative queued work and removes a retracted message from local history', async () => {
     localStorage.setItem('gc_execution_queue_capability:room-1', 'c'.repeat(64))
     const queued = {
       id: 'queue-1',
@@ -220,14 +221,14 @@ describe('group chat store baseline lifecycle', () => {
       roomId: 'room-1',
       members: [member],
       agents: [agent],
-      messages: [],
+      messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
       executionQueue: [queued],
       typingUsers: [],
       contextStatuses: [],
     })
     groupChatApiMock.getRoomDetail.mockResolvedValue({
       room,
-      messages: [],
+      messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
       agents: [agent],
       members: [member],
       total: 0,
@@ -238,12 +239,12 @@ describe('group chat store baseline lifecycle', () => {
         roomId: 'room-1',
         members: [member],
         agents: [agent],
-        messages: [],
+        messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
         executionQueue: [queued],
         typingUsers: [],
         contextStatuses: [],
       })
-      if (event === 'cancel_execution_queue_item' && ack) ack({ ok: true, status: 'cancelled' })
+      if (event === 'cancel_execution_queue_item' && ack) ack({ ok: true, status: 'retracted', messageId: 'msg-queued' })
       return groupChatApiMock.socket
     })
     const store = await loadStore()
@@ -252,7 +253,15 @@ describe('group chat store baseline lifecycle', () => {
     await (store as any).joinRoom('room-1')
 
     expect(store.executionQueue).toEqual([queued])
-    emitSocket('execution_queue_updated', { roomId: 'room-1', items: [] })
+    expect(store.messages).toEqual([expect.objectContaining({ id: 'msg-queued' })])
+    emitSocket('message_retracted', {
+      roomId: 'room-1',
+      messageId: 'msg-queued',
+      messageCount: 0,
+      totalTokens: 0,
+      lastActiveAt: 1,
+    })
+    expect(store.messages).toEqual([])
     expect(store.executionQueue).toEqual([])
 
     await store.cancelExecutionQueueItem('queue-1')

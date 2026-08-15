@@ -22,7 +22,7 @@ describe('group chat authoritative execution queue', () => {
     harness?.cleanup()
   })
 
-  it('publishes queued work with stable ordering, restores it on reconnect, and requires its private capability to cancel', async () => {
+  it('atomically retracts queued work and its message after commit for every connected client', async () => {
     let finishFirst!: () => void
     let started = 0
     const executor = {
@@ -78,7 +78,6 @@ describe('group chat authoritative execution queue', () => {
     expect(JSON.stringify(restored.executionQueue)).not.toContain(ownerCapability)
     expect(JSON.stringify(restored.executionQueue)).not.toContain('cancelCapability')
 
-    observer.disconnect()
     owner.disconnect()
     const impersonator = await connectGroupChatClient(harness.port, 'human-1', 'Owner', {
       inviteCode: 'ROOM1',
@@ -96,6 +95,12 @@ describe('group chat authoritative execution queue', () => {
       executionQueueCapability: attackerCapability,
     })
     expect(forged).toMatchObject({ error: 'Access denied' })
+    const otherMember = await emitAck<any>(observer, 'cancel_execution_queue_item', {
+      roomId: 'room-1',
+      queueId: queued.items[0].id,
+      executionQueueCapability: ownerCapability,
+    })
+    expect(otherMember).toMatchObject({ error: 'Access denied' })
 
     impersonator.disconnect()
     const reconnectedOwner = await connectGroupChatClient(harness.port, 'human-1', 'Owner', {
@@ -109,50 +114,108 @@ describe('group chat authoritative execution queue', () => {
     })
     expect(reconnected.executionQueue).toEqual(queued.items)
 
+    const ownerRetraction = once<any>(reconnectedOwner, 'message_retracted')
+    const observerRetraction = once<any>(observer, 'message_retracted')
+    const ownerQueueAfterRetraction = once<any>(reconnectedOwner, 'execution_queue_updated')
+    const observerQueueAfterRetraction = once<any>(observer, 'execution_queue_updated')
     const cancelled = await emitAck<any>(reconnectedOwner, 'cancel_execution_queue_item', {
       roomId: 'room-1',
       queueId: queued.items[0].id,
       executionQueueCapability: ownerCapability,
     })
-    expect(cancelled).toMatchObject({ ok: true, status: 'cancelled' })
-    expect(harness.groupServer.getStorage().getMessage('message-queued')).not.toBeNull()
+    expect(cancelled).toMatchObject({ ok: true, status: 'retracted', messageId: 'message-queued' })
+    expect(await ownerRetraction).toMatchObject({ roomId: 'room-1', messageId: 'message-queued' })
+    expect(await observerRetraction).toMatchObject({ roomId: 'room-1', messageId: 'message-queued' })
+    expect(await ownerQueueAfterRetraction).toMatchObject({ roomId: 'room-1', items: [] })
+    expect(await observerQueueAfterRetraction).toMatchObject({ roomId: 'room-1', items: [] })
+    expect(harness.groupServer.getStorage().getMessage('message-queued')).toBeNull()
+    expect(harness.groupServer.getStorage().listQueuedExecutionItems('room-1')).toEqual([])
+
+    const refreshed = await emitAck<any>(observer, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(refreshed.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'message-queued' }),
+    ]))
 
     finishFirst()
     await vi.waitFor(() => expect(executor.replyToMention).toHaveBeenCalledTimes(1))
   })
 
-  it('settles a cancel-versus-start race to exactly one authoritative state', () => {
+  it('retracts every target for one message all-or-nothing and rejects after any target starts', () => {
     const storage = harness.groupServer.getStorage() as any
-    const item = storage.enqueueExecutionQueueItem({
+    const capabilityHash = 'c'.repeat(64)
+    storage.saveMessageAndRefreshRoom({
+      id: 'multi-message',
+      roomId: 'room-1',
+      senderId: 'human-1',
+      senderName: 'Owner',
+      content: '@Worker @Reviewer queued',
+      timestamp: 1,
+      role: 'user',
+    })
+    const worker = storage.enqueueExecutionQueueItem({
+      roomId: 'room-1',
+      messageId: 'multi-message',
+      targetAgentId: 'agent-worker',
+      targetAgentName: 'Worker',
+      requesterMemberId: 'human-1',
+      cancelCapabilityHash: capabilityHash,
+      textSummary: 'multi',
+    })
+    storage.enqueueExecutionQueueItem({
+      roomId: 'room-1',
+      messageId: 'multi-message',
+      targetAgentId: 'agent-reviewer',
+      targetAgentName: 'Reviewer',
+      requesterMemberId: 'human-1',
+      cancelCapabilityHash: capabilityHash,
+      textSummary: 'multi',
+    })
+    expect(storage.retractQueuedMessage(
+      'room-1',
+      worker.id,
+      'human-1',
+      capabilityHash,
+    )).toMatchObject({ messageId: 'multi-message', queueIds: expect.any(Array) })
+    expect(storage.getMessage('multi-message')).toBeNull()
+    expect(storage.listQueuedExecutionItems('room-1')).toEqual([])
+
+    storage.saveMessageAndRefreshRoom({
+      id: 'race-message',
+      roomId: 'room-1',
+      senderId: 'human-1',
+      senderName: 'Owner',
+      content: '@Worker @Reviewer race',
+      timestamp: 2,
+      role: 'user',
+    })
+    const running = storage.enqueueExecutionQueueItem({
       roomId: 'room-1',
       messageId: 'race-message',
       targetAgentId: 'agent-worker',
       targetAgentName: 'Worker',
       requesterMemberId: 'human-1',
-      cancelCapabilityHash: 'owner-capability-hash',
+      cancelCapabilityHash: capabilityHash,
       textSummary: 'race',
     })
-
-    const started = storage.startExecutionQueueItem(item.id)
-    const cancelled = storage.cancelExecutionQueueItem('room-1', item.id, 'owner-capability-hash')
-
-    expect([started, cancelled].filter(Boolean)).toHaveLength(1)
-    expect(storage.getExecutionQueueItem(item.id).status).toBe(started ? 'running' : 'cancelled')
-
-    const reverse = storage.enqueueExecutionQueueItem({
+    storage.enqueueExecutionQueueItem({
       roomId: 'room-1',
-      messageId: 'reverse-race-message',
-      targetAgentId: 'agent-worker',
-      targetAgentName: 'Worker',
+      messageId: 'race-message',
+      targetAgentId: 'agent-reviewer',
+      targetAgentName: 'Reviewer',
       requesterMemberId: 'human-1',
-      cancelCapabilityHash: 'owner-capability-hash',
-      textSummary: 'reverse race',
+      cancelCapabilityHash: capabilityHash,
+      textSummary: 'race',
     })
-    const reverseCancelled = storage.cancelExecutionQueueItem('room-1', reverse.id, 'owner-capability-hash')
-    const reverseStarted = storage.startExecutionQueueItem(reverse.id)
+    expect(storage.startExecutionQueueItem(running.id)).toBe(true)
 
-    expect([reverseStarted, reverseCancelled].filter(Boolean)).toHaveLength(1)
-    expect(storage.getExecutionQueueItem(reverse.id).status).toBe('cancelled')
+    expect(storage.retractQueuedMessage(
+      'room-1',
+      running.id,
+      'human-1',
+      capabilityHash,
+    )).toBeNull()
+    expect(storage.getMessage('race-message')).not.toBeNull()
+    expect(storage.listQueuedExecutionItems('room-1')).toHaveLength(1)
   })
 
   it('serializes work per Agent while allowing different Agents to run in parallel', async () => {
