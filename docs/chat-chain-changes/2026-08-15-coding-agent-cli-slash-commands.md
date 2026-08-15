@@ -1,6 +1,6 @@
 ---
 date: 2026-08-15
-pr: 2475
+pr: 2566
 feature: CLI-style slash commands for Coding Agent sessions
 impact: Studio chat now accepts /context, /compact, /usage, and /status for Codex and Claude Code sessions, bridges native compaction, and passes context/auto-compact settings plus lazy MCP tool loading into Studio-launched CLIs.
 ---
