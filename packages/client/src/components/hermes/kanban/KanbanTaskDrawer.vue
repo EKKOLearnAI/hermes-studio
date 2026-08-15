@@ -496,13 +496,13 @@ function handleNavigateTask(taskId: string) {
           <!-- Body -->
           <div v-if="detail.task.body" class="detail-section">
             <div class="section-title">{{ t('kanban.form.body') }}</div>
-            <div class="detail-body">{{ detail.task.body }}</div>
+            <div class="detail-body" dir="auto">{{ detail.task.body }}</div>
           </div>
 
           <!-- Result / Summary -->
           <div v-if="completionSummary" class="detail-section">
             <div class="section-title">{{ t('kanban.detail.result') }}</div>
-            <div class="result-summary" @click="openResultDetail">{{ completionSummary }}</div>
+            <div class="result-summary" dir="auto" @click="openResultDetail">{{ completionSummary }}</div>
           </div>
 
           <!-- Actions for active tasks and the terminal done-to-archived transition -->
@@ -568,7 +568,7 @@ function handleNavigateTask(taskId: string) {
             </div>
             <div v-if="showSessions && sessionResults.length > 0" class="session-list">
               <div v-for="session in sessionResults" :key="session.id" class="session-item" @click="router.push({ name: 'hermes.chat', query: { session: session.id } })">
-                <div class="session-title">{{ session.title || session.id }}</div>
+                <div class="session-title" dir="auto">{{ session.title || session.id }}</div>
                 <div class="session-meta">
                   <span>{{ session.source }}</span>
                   <span>{{ session.model }}</span>
