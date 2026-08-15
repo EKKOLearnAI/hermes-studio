@@ -1030,7 +1030,7 @@ describe('Group Chat member/agent identity sync', () => {
     expect(server.storage.getRecentMessagesForUI).toHaveBeenCalledWith('room-1', 1, 1)
     expect(ack).toHaveBeenCalledWith({
       messages: [{ id: 'older-1' }],
-      total: 725,
+      total: 500,
       offset: 1,
       limit: 1,
       hasMore: true,

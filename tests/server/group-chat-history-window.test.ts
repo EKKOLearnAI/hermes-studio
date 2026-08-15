@@ -1412,11 +1412,9 @@ describe('group chat history windows', () => {
       seeded.slice(1).map(message => message.id),
     )
     expect(storage.getRecentMessagesForUI('room-1', 150, 450).map(message => message.id)).toEqual(
-      seeded.slice(0, 51).map(message => message.id),
+      seeded.slice(1, 51).map(message => message.id),
     )
-    expect(storage.getRecentMessagesForUI('room-1', 150, 500).map(message => message.id)).toEqual([
-      'msg-1',
-    ])
+    expect(storage.getRecentMessagesForUI('room-1', 150, 500)).toEqual([])
     expect(contextMessages).toHaveLength(500)
     expect(contextMessages.some(message => message.id === 'msg-1')).toBe(false)
     expect(context.summary).toBe('Earlier summary')
@@ -1445,18 +1443,18 @@ describe('group chat history windows', () => {
     for (const message of seeded) storage.saveMessageAndRefreshRoom(message as any)
 
     const pages: string[][] = []
-    let offset = 0
-    while (offset < seeded.length) {
-      const page = storage.getRecentMessagesForUI('room-1', 150, offset)
-      pages.unshift(page.map(message => message.id))
-      offset += page.length
-      if (page.length === 0) break
-    }
+    let beforeMessageId: string | undefined
+    do {
+      const page = storage.getHistoryPageForUI('room-1', 150, beforeMessageId)
+      pages.unshift(page.messages.map(message => message.id))
+      beforeMessageId = page.hasMore ? page.messages[0]?.id : undefined
+      if (!page.hasMore) break
+    } while (beforeMessageId)
 
     expect(pages.flat()).toEqual(seeded.map(message => message.id))
     expect(new Set(pages.flat())).toHaveLength(seeded.length)
-    expect(storage.getRecentMessagesForUI('room-1', 150, 600)).toHaveLength(125)
-    expect(storage.getRecentMessagesForUI('room-1', 150, 725)).toEqual([])
+    expect(storage.getRecentMessagesForUI('room-1', 150, 450)).toHaveLength(50)
+    expect(storage.getRecentMessagesForUI('room-1', 150, 500)).toEqual([])
     expect(storage.getMessagesForContext('room-1')).toHaveLength(500)
     expect(storage.getMessagesForContext('room-1')[0]?.id).toBe('history-0226')
   })

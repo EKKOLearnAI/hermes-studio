@@ -126,6 +126,35 @@ describe('group chat baseline behavior', () => {
     ]))
   })
 
+  it('honors the requested initial history page size when joining', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-history-limit', 'History Limit', 'HISTORY1')
+    for (let index = 1; index <= 200; index += 1) {
+      storage.saveMessageAndRefreshRoom({
+        id: `msg-${String(index).padStart(3, '0')}`,
+        roomId: 'room-history-limit',
+        senderId: 'user-a',
+        senderName: 'Alice',
+        content: `message ${index}`,
+        timestamp: index,
+        role: 'user',
+      } as any)
+    }
+
+    const alice = await connectGroupChatClient(port, 'user-a', 'Alice')
+    harness.sockets.push(alice)
+    const joined = await emitAck<any>(alice, 'join', {
+      roomId: 'room-history-limit',
+      inviteCode: 'HISTORY1',
+      historyLimit: 50,
+    })
+
+    expect(joined.messages).toHaveLength(50)
+    expect(joined.messages[0]?.id).toBe('msg-151')
+    expect(joined.messages.at(-1)?.id).toBe('msg-200')
+    expect(joined).toMatchObject({ total: 200, hasMore: true })
+  })
+
   it('broadcasts persisted human members as offline after their socket disconnects', async () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-presence', 'Presence Room', 'PRESENCE1')

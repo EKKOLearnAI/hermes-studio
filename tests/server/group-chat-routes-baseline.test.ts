@@ -47,6 +47,7 @@ describe('group chat REST route baseline', () => {
       getRoomsForAuthUser: vi.fn(() => []),
       getOwnedRoomsForAuthUser: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
+      getHistoryPageForUI: vi.fn(() => ({ messages: [], hasMore: false, cursorFound: true })),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
@@ -647,6 +648,47 @@ describe('group chat REST route baseline', () => {
       offset: 1,
       limit: 1,
       hasMore: false,
+    })
+  })
+
+  it('stops REST pagination at the 500-message UI window', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.getMessageCount.mockReturnValueOnce(580)
+    storage.getRecentMessagesForUI.mockReturnValueOnce([])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=100&offset=500`)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({
+      messages: [],
+      total: 500,
+      offset: 500,
+      limit: 100,
+      hasMore: false,
+    })
+  })
+
+  it('reports the full stored total only for complete-history cursor pages', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.getMessageCount.mockReturnValueOnce(580)
+    storage.getHistoryPageForUI.mockReturnValueOnce({
+      messages: [{ id: 'msg-431' }],
+      hasMore: true,
+      cursorFound: true,
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?history=1&limit=150`)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(storage.getHistoryPageForUI).toHaveBeenCalledWith('room-1', 150, undefined)
+    expect(body).toMatchObject({
+      messages: [{ id: 'msg-431' }],
+      total: 580,
+      offset: 0,
+      limit: 150,
+      hasMore: true,
     })
   })
 

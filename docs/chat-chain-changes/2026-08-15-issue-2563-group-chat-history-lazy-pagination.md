@@ -22,3 +22,6 @@ impact: Complete history opens at the newest page and loads one stable-ID page u
   reader to the newly inserted messages.
 - Existing room access checks, route identity, refresh/back navigation, shared
   archive entry, read-only rendering, and Agent run aggregation remain in place.
+- Integration with PR #2565 keeps ordinary room and realtime join pagination
+  bounded to the newest 500 messages. Only the explicit complete-history cursor
+  path reports and traverses the full retained transcript.
