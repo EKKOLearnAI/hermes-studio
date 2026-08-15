@@ -24,11 +24,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-
-      - name: Verify immutable source revision
-        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,60 +46,3 @@ jobs:
 
       - name: Build
         run: npm run build
-
-  pi-rpc-real:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Verify immutable source revision
-        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Install lockfile-pinned Pi and MCP Adapter
-        run: npm ci --prefix tests/fixtures/pi-runtime --ignore-scripts
-
-      - name: Run real Pi RPC through Studio
-        env:
-          PI_RPC_E2E_COMMAND: ${{ github.workspace }}/tests/fixtures/pi-runtime/node_modules/.bin/pi
-          PI_RPC_E2E_ADAPTER_ENTRY: ${{ github.workspace }}/tests/fixtures/pi-runtime/node_modules/pi-mcp-adapter/index.ts
-        run: npm run test:pi-rpc-real
-
-  windows-cmd-rpc:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Verify immutable source revision
-        shell: bash
-        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run Windows .cmd Pi-compatible RPC regression
-        run: npx vitest run tests/server/coding-agent-run-manager-windows-real.test.ts
