@@ -900,6 +900,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     loadedMessageCount.value += 1
                     totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
                 }
+                if (
+                    msg.finish_reason !== 'streaming' &&
+                    totalMessages.value > GROUP_CHAT_MAX_DISPLAY_MESSAGES
+                ) {
+                    historyTruncated.value = true
+                }
                 if (autoPlaySpeechEnabled.value && resolvedMsg.role === 'assistant' && resolvedMsg.content?.trim()) {
                     const messageAgent = agents.value.find(agent =>
                         agent.agentId === resolvedMsg.senderId || agent.name === resolvedMsg.senderName

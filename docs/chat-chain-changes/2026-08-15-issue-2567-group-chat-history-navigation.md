@@ -15,6 +15,7 @@ impact: Hermes History exposes authorized rooms under GROUP, while live rooms us
   raw IDs, and keeps Agent runs intact across page boundaries.
 - Live room responses expose `historyTruncated` from retained SQLite data. The
   complete-history entry appears only after the recent 500-message window has
-  been reached and retained history exceeds that window.
+  been reached and retained history exceeds that window, including immediately
+  when the 501st persisted realtime message crosses the boundary.
 - Existing room authorization is reused for both listing and direct history
   access; anonymous invite-only access is not added to account History.
