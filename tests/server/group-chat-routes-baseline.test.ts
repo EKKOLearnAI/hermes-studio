@@ -47,6 +47,19 @@ describe('group chat REST route baseline', () => {
       getRoomsForAuthUser: vi.fn(() => []),
       getOwnedRoomsForAuthUser: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
+      getHistoryPageForUI: vi.fn((roomId, limit = 150, beforeMessageId?: string) => {
+        const rows = storage.messages.get(roomId) || []
+        const beforeIndex = beforeMessageId ? rows.findIndex((message: any) => message.id === beforeMessageId) : rows.length
+        if (beforeMessageId && beforeIndex < 0) {
+          return { messages: [], hasMore: false, cursorFound: false }
+        }
+        const start = Math.max(0, beforeIndex - limit)
+        return {
+          messages: rows.slice(start, beforeIndex),
+          hasMore: start > 0,
+          cursorFound: true,
+        }
+      }),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
@@ -450,6 +463,66 @@ describe('group chat REST route baseline', () => {
         { id: 'room-new-created', lastActiveAt: 200 },
       ],
     })
+  })
+
+  it('paginates the authorized room list without changing activity order', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-3', name: 'Third', inviteCode: 'C', lastActiveAt: 100 },
+      { id: 'room-1', name: 'First', inviteCode: 'A', lastActiveAt: 300 },
+      { id: 'room-2', name: 'Second', inviteCode: 'B', lastActiveAt: 200 },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms?limit=1&offset=1`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      rooms: [{ id: 'room-2', lastActiveAt: 200 }],
+      total: 3,
+      offset: 1,
+      limit: 1,
+      hasMore: true,
+    })
+  })
+
+  it('reports authoritative truncation and serves complete history by stable message id', async () => {
+    storage.rooms.set('room-history', {
+      id: 'room-history',
+      name: 'History Room',
+      inviteCode: 'HISTORY',
+      lastActiveAt: 501,
+    })
+    storage.getRoomsForProfiles.mockReturnValue([storage.rooms.get('room-history')])
+    storage.messages.set('room-history', Array.from({ length: 501 }, (_, index) => ({
+      id: `message-${String(index + 1).padStart(4, '0')}`,
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: `Message ${index + 1}`,
+      timestamp: index + 1,
+      role: 'user',
+    })))
+
+    const recent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(recent.status).toBe(200)
+    await expect(recent.json()).resolves.toMatchObject({
+      total: 500,
+      historyTruncated: true,
+    })
+
+    const history = await fetch(
+      `${baseUrl}/api/hermes/group-chat/rooms/room-history?history=1&before=message-0352&limit=150`,
+      { headers: { 'x-test-user': 'member' } },
+    )
+    expect(history.status).toBe(200)
+    const historyBody = await history.json() as any
+    expect(historyBody.messages[0]?.id).toBe('message-0202')
+    expect(historyBody.messages.at(-1)?.id).toBe('message-0351')
+    expect(historyBody.total).toBe(501)
+    expect(historyBody.hasMore).toBe(true)
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {
