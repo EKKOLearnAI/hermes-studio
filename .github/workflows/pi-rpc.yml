@@ -26,6 +26,7 @@ jobs:
       - run: npm run test:pi-rpc-real
         env:
           PI_RPC_E2E_COMMAND: ${{ github.workspace }}/tests/fixtures/pi-runtime/node_modules/.bin/pi
+          PI_RPC_E2E_ADAPTER_ENTRY: ${{ github.workspace }}/tests/fixtures/pi-runtime/node_modules/pi-mcp-adapter/index.ts
 
   windows-cmd-rpc:
     runs-on: windows-latest
