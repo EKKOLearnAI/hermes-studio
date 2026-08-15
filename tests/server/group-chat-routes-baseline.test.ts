@@ -650,6 +650,24 @@ describe('group chat REST route baseline', () => {
     })
   })
 
+  it('stops REST pagination at the 500-message UI window', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.getMessageCount.mockReturnValueOnce(580)
+    storage.getRecentMessagesForUI.mockReturnValueOnce([])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=100&offset=500`)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({
+      messages: [],
+      total: 500,
+      offset: 500,
+      limit: 100,
+      hasMore: false,
+    })
+  })
+
   it('clones the room Agent handoff policy without copying stopped chains', async () => {
     storage.rooms.set('room-source', {
       id: 'room-source',

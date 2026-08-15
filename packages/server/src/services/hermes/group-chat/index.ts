@@ -551,7 +551,7 @@ function isExpiredInteractionError(value: unknown): boolean {
         || message.includes('clarification is not pending')
 }
 
-const GROUP_CHAT_MESSAGE_WINDOW = 500
+export const GROUP_CHAT_MESSAGE_WINDOW = 500
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_SUMMARY_SCAN_LIMIT = 10_000
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
@@ -3768,7 +3768,7 @@ export class GroupChatServer {
 
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
-        socket.on('join', (data: { roomId?: string; name?: string }, ack?: (response?: unknown) => void) => this.handleJoin(socket, data, ack))
+        socket.on('join', (data: { roomId?: string; name?: string; historyLimit?: number }, ack?: (response?: unknown) => void) => this.handleJoin(socket, data, ack))
         socket.on('load_pending_approvals', (_data: unknown, ack?: (response?: unknown) => void) => {
             ack?.({ pendingApprovals: this.pendingApprovalSnapshots(null, socket) })
         })
@@ -3967,7 +3967,7 @@ export class GroupChatServer {
         return joined.member
     }
 
-    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; avatar?: string; inviteCode?: string }, ack?: (res: any) => void): void {
+    private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string; avatar?: string; inviteCode?: string; historyLimit?: number }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
         const requestedSource = this.socketRequestedSourceMap.get(socketId) || 'human'
@@ -4086,7 +4086,8 @@ export class GroupChatServer {
         }
 
         // Load history from SQLite
-        const messages = this.storage.getRecentMessagesForUI(roomId)
+        const historyLimit = Math.min(150, Math.max(1, Number.isFinite(data.historyLimit) ? Math.floor(Number(data.historyLimit)) : 150))
+        const messages = this.storage.getRecentMessagesForUI(roomId, historyLimit, 0)
         const total = Math.min(
             GROUP_CHAT_MESSAGE_WINDOW,
             this.storage.getMessageCount?.(roomId) ?? messages.length,

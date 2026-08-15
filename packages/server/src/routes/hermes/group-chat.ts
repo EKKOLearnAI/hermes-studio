@@ -1,6 +1,7 @@
 import Router from '@koa/router'
 import { randomBytes } from 'node:crypto'
 import {
+    GROUP_CHAT_MESSAGE_WINDOW,
     ROOM_PARTICIPANT_NAME_CONFLICT,
     type GroupChatServer,
 } from '../../services/hermes/group-chat'
@@ -564,7 +565,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
     const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 150) : 150
     const messages = storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
-    const total = storage.getMessageCount(ctx.params.roomId)
+    const total = Math.min(GROUP_CHAT_MESSAGE_WINDOW, storage.getMessageCount(ctx.params.roomId))
     const agents = typeof chatServer.getRoomAgentViews === 'function'
         ? chatServer.getRoomAgentViews(ctx.params.roomId, canManage)
         : storage.getRoomAgents(ctx.params.roomId)
