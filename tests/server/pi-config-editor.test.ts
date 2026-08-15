@@ -19,23 +19,23 @@ function makeHome() {
 }
 
 describe('Pi config editor defaults', () => {
-  it('materializes minimal user configuration without runtime Studio servers', async () => {
+  it('returns minimal defaults without materializing user configuration on read', async () => {
     const home = makeHome()
 
     const settings = await readCodingAgentConfigFile('pi', 'settings', { profile: 'reviewer' })
     const mcp = await readCodingAgentConfigFile('pi', 'mcp', { profile: 'reviewer' })
 
-    expect(settings.exists).toBe(true)
+    expect(settings.exists).toBe(false)
     expect(settings.content).toContain('pi-mcp-adapter')
-    expect(mcp.exists).toBe(true)
+    expect(mcp.exists).toBe(false)
     expect(JSON.parse(mcp.content)).toEqual({
       mcpServers: {},
     })
-    expect(existsSync(join(home, '.pi', 'agent', 'settings.json'))).toBe(true)
-    expect(readFileSync(join(home, '.pi', 'agent', 'mcp.json'), 'utf-8')).toBe(mcp.content)
+    expect(existsSync(join(home, '.pi', 'agent', 'settings.json'))).toBe(false)
+    expect(existsSync(join(home, '.pi', 'agent', 'mcp.json'))).toBe(false)
   })
 
-  it('removes managed Studio servers while preserving user MCP entries', async () => {
+  it('returns existing user MCP configuration without normalizing or rewriting it', async () => {
     const home = makeHome()
     const mcpPath = join(home, '.pi', 'agent', 'mcp.json')
     mkdirSync(join(home, '.pi', 'agent'), { recursive: true })
@@ -54,17 +54,12 @@ describe('Pi config editor defaults', () => {
       },
     }, null, 2)}\n`)
 
+    const original = readFileSync(mcpPath, 'utf-8')
     const mcp = await readCodingAgentConfigFile('pi', 'mcp')
 
-    expect(JSON.parse(mcp.content)).toEqual({
-      settings: {
-        agentPluginPaths: ['./plugins'],
-      },
-      mcpServers: {
-        user_docs: { url: 'https://docs.example.com/mcp' },
-      },
-    })
-    expect(readFileSync(mcpPath, 'utf-8')).toBe(mcp.content)
+    expect(mcp.exists).toBe(true)
+    expect(mcp.content).toBe(original)
+    expect(readFileSync(mcpPath, 'utf-8')).toBe(original)
   })
 
   it('does not overwrite invalid user JSON while it is being corrected', async () => {

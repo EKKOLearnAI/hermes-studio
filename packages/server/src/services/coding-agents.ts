@@ -33,6 +33,8 @@ const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
 const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
 const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
+const PI_CODING_AGENT_VERSION = '0.84.1'
+const PI_CODING_AGENT_PACKAGE = `@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}`
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
 const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
@@ -1286,15 +1288,6 @@ function piUserMcpConfig(...existingContents: Array<string | null | undefined>):
   }, null, 2)}\n`
 }
 
-function isPiMcpConfigObject(content: string): boolean {
-  try {
-    const parsed = JSON.parse(content)
-    return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-  } catch {
-    return false
-  }
-}
-
 function piMcpConfig(profile: string, ...externalContents: Array<string | null | undefined>): string {
   const external = parsePiExternalMcpConfig(...externalContents)
   const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
@@ -2057,8 +2050,14 @@ export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateRes
     ;(err as any).status = 400
     throw err
   }
-  const env = await commandEnv()
   try {
+    if (tool.id === 'pi') {
+      const status = await getCodingAgentStatus(tool)
+      const latestVersion = PI_CODING_AGENT_VERSION
+      const updateAvailable = status.installed && !versionGte(status.version, latestVersion)
+      return { success: true, tool: status, latestVersion, updateAvailable }
+    }
+    const env = await commandEnv()
     const { stdout } = await runNpm(['view', tool.packageName, 'version'], { timeout: 15_000, env })
     const latestVersion = stdout.trim()
     const status = await getCodingAgentStatus(tool)
@@ -2086,7 +2085,7 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
   installingTools.add(tool.id)
   try {
     const env = await commandEnv()
-    await runNpm(['install', '-g', tool.packageName], {
+    await runNpm(['install', '-g', tool.id === 'pi' ? PI_CODING_AGENT_PACKAGE : tool.packageName], {
       timeout: 10 * 60 * 1000,
       env,
     })
@@ -2137,7 +2136,6 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
 
   deletingTools.add(tool.id)
   try {
-    codingAgentRunManager.stopMatching(launch => launch.agentId === tool.id, { reportClosed: false })
     const env = await commandEnv()
     const packagePrefixes = await getCommandPackagePrefixes(tool, env)
     const uninstallArgsList = packagePrefixes.length > 0
@@ -2155,6 +2153,7 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
         env,
       })
     }
+    codingAgentRunManager.stopMatching(launch => launch.agentId === tool.id, { reportClosed: true })
     cachedGlobalNpmBin = undefined
     const status = await getCodingAgentStatus(tool)
     const allStatus = await getCodingAgentsStatus()
@@ -2189,18 +2188,7 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
   const normalizedScope = normalizeConfigScope(scope)
 
   try {
-    let info
-    try {
-      info = await stat(definition.absolutePath)
-    } catch (err: any) {
-      const defaultContent = id === 'pi'
-        ? piLiveConfigDefault(key, normalizedScope.profile)
-        : null
-      if (err?.code !== 'ENOENT' || defaultContent == null) throw err
-      await mkdir(dirname(definition.absolutePath), { recursive: true })
-      await writeFile(definition.absolutePath, defaultContent, 'utf-8')
-      info = await stat(definition.absolutePath)
-    }
+    const info = await stat(definition.absolutePath)
     if (!info.isFile()) {
       const err = new Error('Config path is not a file')
       ;(err as any).status = 400
@@ -2211,15 +2199,7 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
       ;(err as any).status = 413
       throw err
     }
-    let content = await readFile(definition.absolutePath, 'utf-8')
-    if (id === 'pi' && key === 'mcp' && isPiMcpConfigObject(content)) {
-      const normalized = piUserMcpConfig(content)
-      if (normalized !== content) {
-        await writeFile(definition.absolutePath, normalized, 'utf-8')
-        content = normalized
-        info = await stat(definition.absolutePath)
-      }
-    }
+    const content = await readFile(definition.absolutePath, 'utf-8')
     return {
       ...definition,
       ...normalizedScope,
@@ -2230,13 +2210,16 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
     }
   } catch (err: any) {
     if (err?.code !== 'ENOENT') throw err
+    const defaultContent = id === 'pi'
+      ? piLiveConfigDefault(key, normalizedScope.profile) || ''
+      : ''
     return {
       ...definition,
       ...normalizedScope,
       rootDir: dirname(definition.absolutePath),
-      content: '',
+      content: defaultContent,
       exists: false,
-      size: 0,
+      size: Buffer.byteLength(defaultContent),
     }
   }
 }
@@ -2263,7 +2246,7 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     launch.agentId === id &&
     launch.profile === normalizedScope.profile &&
     normalizeScopeSegment(launch.provider, 'default', 'provider') === normalizedScope.provider
-  ), { reportClosed: false })
+  ), { reportClosed: true })
   return {
     ...definition,
     ...normalizedScope,
@@ -2509,8 +2492,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           apiMode,
           reasoningEffort,
           agentId: tool.id,
-        agentSessionId: isolatedInput.agentSessionId,
-        chatSessionId: isolatedInput.sessionId,
+          agentSessionId: isolatedInput.agentSessionId,
+          chatSessionId: isolatedInput.sessionId,
         })
       : null
     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -2536,16 +2519,16 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     if (proxyTarget) {
       const proxyTargetPath = join(rootDir, PI_PROXY_TARGET_FILE)
       await atomicWritePrivateFile(proxyTargetPath, await serializePiProxyTarget({
-          profile: scope.profile,
-          provider,
-          model,
-          baseUrl,
-          apiMode,
-          reasoningEffort,
-          agentId: tool.id,
-          agentSessionId: input.agentSessionId,
-          chatSessionId: input.sessionId,
-        }, apiKey, proxyTarget.token))
+        profile: scope.profile,
+        provider,
+        model,
+        baseUrl,
+        apiMode,
+        reasoningEffort,
+        agentId: tool.id,
+        agentSessionId: isolatedInput.agentSessionId,
+        chatSessionId: isolatedInput.sessionId,
+      }, apiKey, proxyTarget.token))
       files.push({ key: 'proxy_target', path: PI_PROXY_TARGET_FILE, absolutePath: proxyTargetPath })
     }
     await writeRuntimeFile('mcp', 'mcp.json', piMcpConfig(
@@ -2557,7 +2540,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     env = {
       PI_CODING_AGENT_DIR: rootDir,
       PI_CODING_AGENT_SESSION_DIR: sessionsDir,
-      PI_SKIP_VERSION_CHECK: '1',
       HERMES_PI_DYNAMIC_PROMPT_FILE: dynamicPromptPath,
     }
     args = [
@@ -2733,7 +2715,7 @@ export async function revokeCodingAgentProviderRuntime(profileInput: string, pro
   const provider = normalizeScopeSegment(providerIdentity, 'default', 'provider')
   const stoppedRuns = codingAgentRunManager.stopMatching(launch => (
     launch.profile === profile && launch.provider === providerIdentity
-  ), { reportClosed: false })
+  ), { reportClosed: true })
   const revokedTargets = revokeCodexProxyTargets(profile, providerIdentity)
   const piRoot = getScopedConfigRoot('pi', { profile, provider })
   await Promise.all([

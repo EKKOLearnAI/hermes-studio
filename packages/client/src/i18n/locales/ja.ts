@@ -2595,7 +2595,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: '接続を申請',
     agentLinkOrPairingCode: 'または手動ペアリングコードを使用',
-    agentLinkPairingCodePlaceholder: 'HGC1 ペアリングコードを貼り付け',
+    agentLinkPairingCodePlaceholder: 'HGC2 ペアリングコードを貼り付け',
     agentLinkConnect: 'Agent を接続',
     agentLinkSecurityHint: '心当たりのあるルームだけを承認してください。ペアリングチケットは一度しか使用できず、まもなく期限切れになります。',
     agentLinkLoadFailed: 'ローカル Agent を読み込めませんでした。',

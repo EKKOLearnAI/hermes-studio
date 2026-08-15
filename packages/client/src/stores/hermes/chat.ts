@@ -411,6 +411,8 @@ export interface PendingClarify {
   clarifyId: string
   question: string
   choices: string[] | null
+  initialResponse: string
+  responseMode: string
   timeoutMs: number
   requestedAt: number
 }
@@ -2961,6 +2963,8 @@ export const useChatStore = defineStore('chat', () => {
       clarifyId,
       question: String((evt as any).question || ''),
       choices: Array.isArray((evt as any).choices) ? (evt as any).choices : null,
+      initialResponse: String((evt as any).initial_response || ''),
+      responseMode: String((evt as any).response_mode || ''),
       timeoutMs: Number((evt as any).timeout_ms) || 300000,
       requestedAt: Date.now(),
     })
@@ -4029,6 +4033,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              clearPendingInteractions(sid)
               const failedMessages = getSessionMsgs(sid)
               const failedAssistant = activeAssistantMessageId
                 ? failedMessages.find(message => message.id === activeAssistantMessageId)
@@ -4734,6 +4739,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          clearPendingInteractions(sid)
           const failedMessages = getSessionMsgs(sid)
           const failedAssistant = activeAssistantMessageId
             ? failedMessages.find(message => message.id === activeAssistantMessageId)

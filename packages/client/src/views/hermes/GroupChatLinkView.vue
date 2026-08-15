@@ -435,14 +435,14 @@ function decodePairingCode(value: string): {
   agent: RemoteGroupAgentDescriptor
 } {
   const trimmed = value.trim()
-  if (!trimmed.startsWith('HGC1.') || trimmed.length > 2_100_000) {
+  if (!trimmed.startsWith('HGC2.') || trimmed.length > 2_100_000) {
     throw new Error(t('groupChat.agentLinkInvalidPairingCode'))
   }
   const encoded = trimmed.slice(5).replace(/-/g, '+').replace(/_/g, '/')
   const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')
   const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0))
   const parsed = JSON.parse(new TextDecoder().decode(bytes))
-  if (parsed?.protocolVersion !== 1 || !parsed?.cloudOrigin || !parsed?.pairingTicket || !parsed?.agent) {
+  if (parsed?.protocolVersion !== 2 || !parsed?.cloudOrigin || !parsed?.pairingTicket || !parsed?.agent) {
     throw new Error(t('groupChat.agentLinkInvalidPairingCode'))
   }
   return parsed

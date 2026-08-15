@@ -2892,7 +2892,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: 'Request connection',
     agentLinkOrPairingCode: 'or use a manual pairing code',
-    agentLinkPairingCodePlaceholder: 'Paste an HGC1 pairing code',
+    agentLinkPairingCodePlaceholder: 'Paste an HGC2 pairing code',
     agentLinkConnect: 'Connect Agent',
     agentLinkSecurityHint: 'Only approve a room you recognize. Pairing tickets are single-use and expire shortly.',
     agentLinkLoadFailed: 'Could not load local Agents.',

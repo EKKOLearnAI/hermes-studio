@@ -185,7 +185,7 @@ describe('coding agent Windows process launch', () => {
     expect(emitted).toHaveBeenCalledWith(
       'chat-session-pi-ui',
       'approval.requested',
-      expect.objectContaining({ approval_id: 'confirm-1', choices: ['once', 'session', 'deny'] }),
+      expect.objectContaining({ approval_id: 'confirm-1', choices: ['once', 'deny'] }),
     )
     expect(manager.resolveApproval('chat-session-pi-ui', 'confirm-1', 'once')).toEqual({
       handled: true,
@@ -195,6 +195,186 @@ describe('coding agent Windows process launch', () => {
     expect(stdin.write.mock.calls.map((call: any[]) => JSON.parse(call[0]))).toEqual([
       { type: 'extension_ui_response', id: 'confirm-1', confirmed: true },
     ])
+  })
+
+  it('maps Pi select/input/editor UI to clarifications and fails unknown methods closed', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    const stdin = new testState.TestEmitter() as any
+    stdin.write = vi.fn()
+    const run: any = {
+      id: 'agent-session-pi-clarify',
+      launch: {
+        agentSessionId: 'agent-session-pi-clarify',
+        agentId: 'pi',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'pi-test',
+        sessionId: 'chat-session-pi-clarify',
+        command: 'pi.cmd',
+        args: ['--mode', 'rpc'],
+        shellCommand: 'pi',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      currentChild: { stdin, exitCode: null, signalCode: null, killed: false },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'select-1',
+      method: 'select',
+      title: 'Choose one',
+      options: ['alpha', 'beta'],
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'input-1',
+      method: 'input',
+      placeholder: 'Type a value',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'editor-1',
+      method: 'editor',
+      title: 'Edit content',
+      prefill: 'existing content',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'set-editor-1',
+      method: 'set_editor_text',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'extension_ui_request',
+      id: 'unknown-1',
+      method: 'open_browser',
+    })
+
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-pi-clarify',
+      'clarify.requested',
+      expect.objectContaining({ clarify_id: 'select-1', choices: ['alpha', 'beta'] }),
+    )
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-pi-clarify',
+      'clarify.requested',
+      expect.objectContaining({ clarify_id: 'editor-1', initial_response: 'existing content' }),
+    )
+    expect(manager.resolveClarification('chat-session-pi-clarify', 'select-1', 'missing')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(manager.resolveClarification('chat-session-pi-clarify', 'select-1', 'beta')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    expect(manager.resolveClarification('chat-session-pi-clarify', 'input-1', 'typed')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    expect(manager.resolveClarification('chat-session-pi-clarify', 'editor-1', '')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    expect(stdin.write.mock.calls.map((call: any[]) => JSON.parse(call[0]))).toEqual([
+      { type: 'extension_ui_response', id: 'unknown-1', cancelled: true },
+      { type: 'extension_ui_response', id: 'select-1', value: 'beta' },
+      { type: 'extension_ui_response', id: 'input-1', value: 'typed' },
+      { type: 'extension_ui_response', id: 'editor-1', value: '' },
+    ])
+  })
+
+  it('expires Pi extension UI requests and removes them from pending state', async () => {
+    vi.useFakeTimers()
+    try {
+      const manager = new CodingAgentRunManager()
+      const emitted = vi.fn()
+      ;(manager as any).emitToChat = emitted
+      const stdin = new testState.TestEmitter() as any
+      stdin.write = vi.fn()
+      const run: any = {
+        id: 'agent-session-pi-timeout',
+        launch: {
+          agentSessionId: 'agent-session-pi-timeout',
+          agentId: 'pi',
+          profile: 'default',
+          provider: 'test-provider',
+          model: 'pi-test',
+          sessionId: 'chat-session-pi-timeout',
+          command: 'pi.cmd',
+          args: ['--mode', 'rpc'],
+          shellCommand: 'pi',
+          workspaceDir: process.cwd(),
+        },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+        lastActiveAt: Date.now(),
+        startedAt: Date.now(),
+        exited: false,
+        currentChild: { stdin, exitCode: null, signalCode: null, killed: false },
+      }
+      ;(manager as any).runs.set(run.id, run)
+      ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+      ;(manager as any).handlePiRpcEvent(run, {
+        type: 'extension_ui_request',
+        id: 'input-timeout',
+        method: 'input',
+        timeout: 25,
+      })
+      expect(run.piUiRequests.has('input-timeout')).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(run.piUiRequests.has('input-timeout')).toBe(false)
+      expect(manager.resolveClarification('chat-session-pi-timeout', 'input-timeout', 'late')).toEqual({
+        handled: false,
+        resolved: false,
+      })
+      expect(emitted).toHaveBeenCalledWith(
+        'chat-session-pi-timeout',
+        'clarify.resolved',
+        expect.objectContaining({ clarify_id: 'input-timeout', reason: 'Pi UI request expired' }),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a failed terminal event when runtime revocation stops an active Pi run', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => 1
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => emitted.push({ event, payload })
+    ;(manager as any).persistTerminalResponse = () => undefined
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-pi-revoked',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'pi-test',
+      sessionId: 'chat-session-pi-revoked',
+      command: 'pi.cmd',
+      args: ['--mode', 'rpc'],
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    manager.send('chat-session-pi-revoked', 'keep running')
+
+    expect(manager.stopMatching(launch => launch.provider === 'custom:test')).toBe(1)
+    expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(1)
+    expect(emitted.find(item => item.event === 'run.failed')?.payload.error).toBe('Coding agent session closed')
   })
 
   it('runs Pi RPC through a non-ASCII npm .cmd path and sends long UTF-8 prompts over stdin', () => {
@@ -300,6 +480,57 @@ describe('coding agent Windows process launch', () => {
     expect(deltas).toBe('final answer')
     expect(emitted.filter(item => item.event === 'run.completed')).toHaveLength(1)
     expect(emitted.filter(item => item.event === 'run.failed')).toHaveLength(0)
+  })
+
+  it('preserves text before and after Pi tool loops while streaming each segment once', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).persistTerminalResponse = () => undefined
+    ;(manager as any).refreshCodingAgentUsage = async () => {}
+    ;(manager as any).completeWorkspaceRunDiff = () => undefined
+    ;(manager as any).markChatRunCompleted = () => {}
+    ;(manager as any).startCodingAgentMemoryExport = () => {}
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => emitted.push({ event, payload })
+
+    manager.start({
+      agentSessionId: 'agent-session-pi-tool-text',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'pi-test',
+      sessionId: 'chat-session-pi-tool-text',
+      command: 'pi.cmd',
+      args: ['--mode', 'rpc'],
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+    manager.send('chat-session-pi-tool-text', 'use a tool')
+    const run = (manager as any).runs.get('agent-session-pi-tool-text')
+
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'Before tool. ' },
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_end',
+      message: { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'text', text: 'Before tool. ' }] },
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'After' },
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_end',
+      message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'After tool.' }] },
+    })
+    ;(manager as any).handlePiRpcEvent(run, { type: 'agent_settled' })
+
+    const deltas = emitted.filter(item => item.event === 'message.delta').map(item => item.payload.delta).join('')
+    expect(deltas).toBe('Before tool. After tool.')
+    expect(emitted.filter(item => item.event === 'run.completed')).toHaveLength(1)
   })
 
   it('does not idle-clean an active Pi retry but cleans the settled runner later', async () => {

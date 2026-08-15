@@ -388,7 +388,6 @@ export async function update(ctx: any) {
   const customApiMode = normalizeApiMode(api_mode)
   try {
     const profile = requestedProfile(ctx)
-    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
       const found = await updateConfigYamlForProfile(profile, (config) => {
@@ -414,6 +413,7 @@ export async function update(ctx: any) {
       }
       if (api_key !== undefined) { await saveEnvValueForProfile(profile, envMapping.api_key_env, api_key) }
     }
+    await revokeCodingAgentProviderRuntime(profile, poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
@@ -431,7 +431,6 @@ export async function remove(ctx: any) {
   const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
   try {
     const profile = requestedProfile(ctx)
-    await revokeCodingAgentProviderRuntime(profile, poolKey)
     const isCustom = poolKey.startsWith('custom:')
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
@@ -488,6 +487,7 @@ export async function remove(ctx: any) {
       }
     }
     await clearStoredAuthProvider(profile, poolKey)
+    await revokeCodingAgentProviderRuntime(profile, poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }

@@ -227,7 +227,7 @@ export interface GroupAgentExecutor {
     readonly connected: boolean
     reserveInvocation?(): void
     releaseInvocation?(): void
-    disconnect(): void
+    disconnect(): void | Promise<void>
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
     interrupt(roomId: string): Promise<boolean>
     getActiveSessionId(roomId: string): string | undefined
@@ -292,6 +292,8 @@ export interface GroupChatRunService {
     }>
     abortSession(sessionId: string, reason?: string): Promise<void>
     disposeSession?(sessionId: string): Promise<void>
+    respondCodingAgentApproval?(sessionId: string, approvalId: string, choice: string): boolean
+    respondCodingAgentClarification?(sessionId: string, clarifyId: string, response: string): boolean
 }
 
 // ─── Agent Client (single connection) ─────────────────────────
@@ -413,14 +415,15 @@ export class AgentClient implements GroupAgentExecutor {
         })
     }
 
-    disconnect(): void {
-        for (const sessionId of this.activeSessions.values()) {
+    async disconnect(): Promise<void> {
+        const sessions = [...this.activeSessions.values()]
+        for (const sessionId of sessions) {
             this.markSessionInterrupted(sessionId)
-            void this.chatRunService?.abortSession(sessionId, 'Coding agent removed, reconfigured, or disconnected')
+            await this.chatRunService?.abortSession(sessionId, 'Coding agent removed, reconfigured, or disconnected')
                 .catch((err: any) => {
                     logger.warn(`[AgentClients] failed to abort disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
                 })
-            void this.chatRunService?.disposeSession?.(sessionId).catch((err: any) => {
+            await this.chatRunService?.disposeSession?.(sessionId).catch((err: any) => {
                 logger.warn(`[AgentClients] failed to dispose disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
             })
         }
@@ -439,6 +442,22 @@ export class AgentClient implements GroupAgentExecutor {
         this.pendingToolExternalIds.clear()
         this.pendingToolCompletionEvents.clear()
         this.acknowledgedToolCallIds.clear()
+    }
+
+    respondApproval(approvalId: string, choice: string): Promise<boolean> {
+        if (!this.chatRunService?.respondCodingAgentApproval) return Promise.resolve(false)
+        for (const sessionId of this.activeSessions.values()) {
+            if (this.chatRunService.respondCodingAgentApproval(sessionId, approvalId, choice)) return Promise.resolve(true)
+        }
+        return Promise.resolve(false)
+    }
+
+    respondClarify(clarifyId: string, response: string): Promise<boolean> {
+        if (!this.chatRunService?.respondCodingAgentClarification) return Promise.resolve(false)
+        for (const sessionId of this.activeSessions.values()) {
+            if (this.chatRunService.respondCodingAgentClarification(sessionId, clarifyId, response)) return Promise.resolve(true)
+        }
+        return Promise.resolve(false)
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -1553,6 +1572,8 @@ export class AgentClient implements GroupAgentExecutor {
                     clarify_id: (ev as any).clarify_id,
                     question: (ev as any).question,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : null,
+                    initial_response: (ev as any).initial_response,
+                    response_mode: (ev as any).response_mode,
                     timeout_ms: (ev as any).timeout_ms,
                 })
             } else if (eventType === 'clarify.resolved') {
@@ -2041,7 +2062,7 @@ export class AgentClients {
         } catch (err) {
             room.delete(client.agentId)
             if (room.size === 0) this.rooms.delete(roomId)
-            client.disconnect()
+            await client.disconnect()
             throw err
         }
     }
@@ -2066,16 +2087,15 @@ export class AgentClients {
     /**
      * Remove an agent from a room and disconnect it.
      */
-    removeAgentFromRoom(roomId: string, agentId: string): void {
+    async removeAgentFromRoom(roomId: string, agentId: string): Promise<void> {
         const room = this.rooms.get(roomId)
         if (!room) return
 
         const client = room.get(agentId)
         if (client) {
-            client.disconnect()
             room.delete(agentId)
+            await client.disconnect()
             logger.info(`[AgentClients] ${client.name} left room: ${roomId}`)
-
         }
 
         if (room.size === 0) {
@@ -2267,12 +2287,12 @@ export class AgentClients {
     /**
      * Disconnect all agents in a room.
      */
-    disconnectRoom(roomId: string): void {
+    async disconnectRoom(roomId: string): Promise<void> {
         const room = this.rooms.get(roomId)
         if (!room) return
 
-        room.forEach((client) => client.disconnect())
         this.rooms.delete(roomId)
+        await Promise.allSettled([...room.values()].map(client => client.disconnect()))
         this.clearMentionQueuesForRoom(roomId)
         this._pausedRooms.delete(roomId)
         logger.info(`[AgentClients] All agents disconnected from room: ${roomId}`)
@@ -2288,11 +2308,10 @@ export class AgentClients {
     /**
      * Disconnect all agents in all rooms.
      */
-    disconnectAll(): void {
-        this.rooms.forEach((room) => {
-            room.forEach((client) => client.disconnect())
-        })
+    async disconnectAll(): Promise<void> {
+        const clients = [...this.rooms.values()].flatMap(room => [...room.values()])
         this.rooms.clear()
+        await Promise.allSettled(clients.map(client => client.disconnect()))
         logger.info('[AgentClients] All agents disconnected')
     }
 

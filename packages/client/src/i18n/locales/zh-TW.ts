@@ -2836,7 +2836,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: '申請接入',
     agentLinkOrPairingCode: '或者使用手動配對碼',
-    agentLinkPairingCodePlaceholder: '貼上 HGC1 配對碼',
+    agentLinkPairingCodePlaceholder: '貼上 HGC2 配對碼',
     agentLinkConnect: '連接 Agent',
     agentLinkSecurityHint: '只批准你認識的群聊。配對票據只能使用一次，並會很快過期。',
     agentLinkLoadFailed: '無法讀取本機 Agent。',

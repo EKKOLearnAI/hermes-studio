@@ -2595,7 +2595,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: '연결 요청',
     agentLinkOrPairingCode: '또는 수동 페어링 코드 사용',
-    agentLinkPairingCodePlaceholder: 'HGC1 페어링 코드 붙여 넣기',
+    agentLinkPairingCodePlaceholder: 'HGC2 페어링 코드 붙여 넣기',
     agentLinkConnect: 'Agent 연결',
     agentLinkSecurityHint: '알고 있는 방만 승인하세요. 페어링 티켓은 한 번만 사용할 수 있으며 곧 만료됩니다.',
     agentLinkLoadFailed: '로컬 Agent를 불러올 수 없습니다.',

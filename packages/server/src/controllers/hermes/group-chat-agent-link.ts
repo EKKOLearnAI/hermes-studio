@@ -798,7 +798,7 @@ export async function revokeConnector(ctx: Context): Promise<void> {
     return
   }
   revokeGroupAgentConnector(connectorId)
-  server.agentClients.removeAgentFromRoom(roomId, connector.agentId)
+  await server.agentClients.removeAgentFromRoom(roomId, connector.agentId)
   storage.removeRoomAgent(roomId, connector.roomAgentId)
   const agents = server.broadcastRoomAgents(roomId)
   ctx.body = { ok: true, agents }

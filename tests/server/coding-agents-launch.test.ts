@@ -336,6 +336,34 @@ describe('coding agent launch preparation', () => {
     await expect(restorePersistedPiProxyTargets()).resolves.toBe(0)
   })
 
+  it('persists generated isolated Pi session identities when callers omit IDs', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-isolated-secret',
+      apiMode: 'codex_responses',
+    })
+    const persisted = JSON.parse(readFileSync(join(result.rootDir, 'proxy-target.json'), 'utf8'))
+
+    expect(persisted.input.agentSessionId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(persisted.input.chatSessionId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(persisted.input.agentSessionId).not.toBe(persisted.input.chatSessionId)
+  })
+
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
 

@@ -2530,7 +2530,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: 'Запросить подключение',
     agentLinkOrPairingCode: 'или использовать код ручного сопряжения',
-    agentLinkPairingCodePlaceholder: 'Вставьте код сопряжения HGC1',
+    agentLinkPairingCodePlaceholder: 'Вставьте код сопряжения HGC2',
     agentLinkConnect: 'Подключить Agent',
     agentLinkSecurityHint: 'Одобряйте только знакомые комнаты. Токен сопряжения одноразовый и скоро истечёт.',
     agentLinkLoadFailed: 'Не удалось загрузить локальные Agents.',

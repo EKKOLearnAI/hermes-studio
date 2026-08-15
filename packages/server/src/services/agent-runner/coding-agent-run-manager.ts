@@ -125,6 +125,7 @@ interface ManagedCodingAgentRun {
   turnActive?: boolean
   piUiRequests?: Map<string, any>
   piTextBuffer?: string
+  piCurrentMessageText?: string
 }
 
 interface CodingAgentRunSendOptions {
@@ -709,7 +710,7 @@ export class CodingAgentRunManager {
     let stopped = 0
     for (const run of [...this.runs.values()]) {
       if (!predicate(run.launch)) continue
-      this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? false })
+      this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? true })
       stopped += 1
     }
     return stopped
@@ -720,28 +721,43 @@ export class CodingAgentRunManager {
     const request = run?.piUiRequests?.get(approvalId)
     if (!run || !request) return { handled: false, resolved: false }
     const normalizedChoice = String(choice || 'deny').trim().toLowerCase()
-    if (!['once', 'session', 'deny'].includes(normalizedChoice)) return { handled: true, resolved: false }
-    const response: Record<string, unknown> = { type: 'extension_ui_response', id: approvalId }
-    if (request.method === 'confirm') {
-      response.confirmed = normalizedChoice !== 'deny'
-    } else if (request.method === 'select') {
-      const options = Array.isArray(request.options) ? request.options.map((value: unknown) => String(value)) : []
-      const match = normalizedChoice === 'session'
-        ? options.find((value: string) => /session/i.test(value))
-        : normalizedChoice === 'once'
-          ? options.find((value: string) => /once|allow/i.test(value) && !/session/i.test(value))
-          : undefined
-      if (match) response.value = match
-      else response.cancelled = true
-    } else {
-      response.cancelled = true
+    if (!['once', 'deny'].includes(normalizedChoice) || request.method !== 'confirm') {
+      return { handled: true, resolved: false }
     }
+    const response: Record<string, unknown> = { type: 'extension_ui_response', id: approvalId }
+    response.confirmed = normalizedChoice === 'once'
     try {
       this.writePiRpcCommand(run, response)
     } catch {
       return { handled: true, resolved: false }
     }
+    if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
     run.piUiRequests?.delete(approvalId)
+    return { handled: true, resolved: true }
+  }
+
+  resolveClarification(sessionId: string, clarifyId: string, responseValue = ''): { handled: boolean; resolved: boolean } {
+    const run = this.getBySession(sessionId)
+    const request = run?.piUiRequests?.get(clarifyId)
+    if (!run || !request || !['select', 'input', 'editor'].includes(request.method)) {
+      return { handled: Boolean(run && request), resolved: false }
+    }
+    const value = String(responseValue ?? '').slice(0, 20_000)
+    if (request.method === 'select') {
+      const options = Array.isArray(request.options) ? request.options.map((item: unknown) => String(item)) : []
+      if (value && !options.includes(value)) return { handled: true, resolved: false }
+    }
+    try {
+      this.writePiRpcCommand(run, {
+        type: 'extension_ui_response',
+        id: clarifyId,
+        ...(request.method === 'select' && !value ? { cancelled: true } : { value }),
+      })
+    } catch {
+      return { handled: true, resolved: false }
+    }
+    if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
+    run.piUiRequests?.delete(clarifyId)
     return { handled: true, resolved: true }
   }
 
@@ -1035,14 +1051,15 @@ export class CodingAgentRunManager {
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
     run.piDetachJsonl?.()
     run.piDetachJsonl = undefined
-    for (const approvalId of run.piUiRequests?.keys() || []) {
-      this.emitToChat(run.launch.sessionId, 'approval.resolved', {
-        event: 'approval.resolved',
+    for (const [requestId, request] of run.piUiRequests || []) {
+      if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
+      const isConfirmation = request.method === 'confirm'
+      this.emitToChat(run.launch.sessionId, isConfirmation ? 'approval.resolved' : 'clarify.resolved', {
+        event: isConfirmation ? 'approval.resolved' : 'clarify.resolved',
         session_id: run.launch.sessionId,
-        approval_id: approvalId,
-        choice: 'deny',
-        resolved: false,
-        error: 'Coding agent session closed',
+        ...(isConfirmation ? { approval_id: requestId, choice: 'deny' } : { clarify_id: requestId }),
+        resolved: true,
+        reason: 'Coding agent session closed',
       })
     }
     run.piUiRequests?.clear()
@@ -1149,6 +1166,7 @@ export class CodingAgentRunManager {
     run.piFinalText = undefined
     run.piFinishReason = undefined
     run.piTextBuffer = ''
+    run.piCurrentMessageText = ''
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -1202,20 +1220,62 @@ export class CodingAgentRunManager {
     }
 
     if (event.type === 'extension_ui_request') {
-      if (event.method === 'notify' || event.method === 'setStatus' || event.method === 'setWidget' || event.method === 'setTitle') return
+      if (event.method === 'notify' || event.method === 'setStatus' || event.method === 'setWidget'
+        || event.method === 'setTitle' || event.method === 'set_editor_text') return
       const approvalId = String(event.id || '').trim()
       if (!approvalId) return
+      if (!['confirm', 'select', 'input', 'editor'].includes(event.method)) {
+        try {
+          this.writePiRpcCommand(run, { type: 'extension_ui_response', id: approvalId, cancelled: true })
+        } catch {}
+        return
+      }
       run.piUiRequests ??= new Map()
-      run.piUiRequests.set(approvalId, event)
-      this.emitToChat(run.launch.sessionId, 'approval.requested', {
-        event: 'approval.requested',
-        session_id: run.launch.sessionId,
-        approval_id: approvalId,
-        title: String(event.title || 'Pi approval required'),
-        description: String(event.message || event.prompt || ''),
-        choices: ['once', 'session', 'deny'],
-        source: 'pi',
-      })
+      const timeoutMs = Number(event.timeout)
+      const request = { ...event } as any
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        request.timeoutTimer = setTimeout(() => {
+          if (run.piUiRequests?.get(approvalId) !== request) return
+          run.piUiRequests?.delete(approvalId)
+          const isConfirmation = request.method === 'confirm'
+          this.emitToChat(run.launch.sessionId, isConfirmation ? 'approval.resolved' : 'clarify.resolved', {
+            event: isConfirmation ? 'approval.resolved' : 'clarify.resolved',
+            session_id: run.launch.sessionId,
+            ...(isConfirmation ? { approval_id: approvalId, choice: 'deny' } : { clarify_id: approvalId }),
+            resolved: true,
+            reason: 'Pi UI request expired',
+          })
+        }, timeoutMs)
+        request.timeoutTimer.unref?.()
+      }
+      run.piUiRequests.set(approvalId, request)
+      if (event.method === 'confirm') {
+        this.emitToChat(run.launch.sessionId, 'approval.requested', {
+          event: 'approval.requested',
+          session_id: run.launch.sessionId,
+          approval_id: approvalId,
+          title: String(event.title || 'Pi approval required'),
+          description: String(event.message || ''),
+          choices: ['once', 'deny'],
+          source: 'pi',
+          ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
+        })
+      } else {
+        const options = event.method === 'select' && Array.isArray(event.options)
+          ? event.options.map((value: unknown) => String(value))
+          : null
+        this.emitToChat(run.launch.sessionId, 'clarify.requested', {
+          event: 'clarify.requested',
+          session_id: run.launch.sessionId,
+          clarify_id: approvalId,
+          question: String(event.title || event.placeholder || 'Pi input required'),
+          choices: options,
+          initial_response: event.method === 'editor' ? String(event.prefill || '').slice(0, 20_000) : '',
+          response_mode: event.method,
+          ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
+          source: 'pi',
+        })
+      }
       return
     }
 
@@ -1237,7 +1297,27 @@ export class CodingAgentRunManager {
       const message = event.message || {}
       if (message.role === 'assistant') {
         const finalText = piAssistantMessageText(message)
-        if (finalText) run.piFinalText = finalText
+        if (finalText) {
+          const currentMessageText = run.piCurrentMessageText || ''
+          const missingDelta = appendedTextDelta(currentMessageText, finalText)
+          if (missingDelta) {
+            run.piTextBuffer = `${run.piTextBuffer || ''}${missingDelta}`
+            this.ensureClaudePrintText(run)
+            run.printText = `${run.printText || ''}${missingDelta}`
+            this.handleClaudePrintResponseEvent(run, {
+              type: 'response.output_text.delta',
+              data: {
+                type: 'response.output_text.delta',
+                item_id: run.printMessageId,
+                output_index: 0,
+                content_index: 0,
+                delta: missingDelta,
+              },
+            })
+          }
+          run.piFinalText = `${run.piFinalText || ''}${finalText}`
+          run.piCurrentMessageText = ''
+        }
         run.piFinishReason = String(message.stopReason || '')
         if (message.stopReason === 'error' || message.stopReason === 'aborted') {
           run.piPendingError = String(message.errorMessage || `Pi run ${message.stopReason}`)
@@ -1252,6 +1332,19 @@ export class CodingAgentRunManager {
       if (delta.type === 'text_delta' && delta.delta) {
         const text = String(delta.delta)
         run.piTextBuffer = `${run.piTextBuffer || ''}${text}`
+        run.piCurrentMessageText = `${run.piCurrentMessageText || ''}${text}`
+        this.ensureClaudePrintText(run)
+        run.printText = `${run.printText || ''}${text}`
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            item_id: run.printMessageId,
+            output_index: 0,
+            content_index: 0,
+            delta: text,
+          },
+        })
       } else if (delta.type === 'thinking_delta' && delta.delta) {
         this.handleClaudePrintResponseEvent(run, {
           type: 'response.reasoning.delta',
@@ -1321,7 +1414,7 @@ export class CodingAgentRunManager {
         this.failClaudePrintTurn(run, run.piPendingError)
         return
       }
-      const finalText = run.piFinalText || run.piTextBuffer || ''
+      const finalText = run.piTextBuffer || run.piFinalText || ''
       if (finalText) {
         const existing = run.printText || ''
         if (finalText !== existing) {

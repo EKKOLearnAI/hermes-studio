@@ -127,7 +127,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {
-        groupChatServer.agentClients.disconnectAll()
+        await groupChatServer.agentClients.disconnectAll()
         groupChatServer.getIO().close()
         logger.info('Socket.IO closed')
       }

@@ -678,6 +678,23 @@ export class ChatRunSocket {
         }
         return
       }
+      const codingAgentResult = codingAgentRunManager.resolveClarification(
+        data.session_id,
+        data.clarify_id,
+        data.response,
+      )
+      if (codingAgentResult.handled) {
+        this.emitToSession(socket, data.session_id, 'clarify.resolved', {
+          event: 'clarify.resolved',
+          clarify_id: data.clarify_id,
+          resolved: codingAgentResult.resolved,
+          ...(!codingAgentResult.resolved ? { error: 'Clarification could not be applied.' } : {}),
+        })
+        if (codingAgentResult.resolved) {
+          this.clearClarifyEventState(data.session_id, data.clarify_id)
+        }
+        return
+      }
       try {
         const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {
@@ -697,6 +714,14 @@ export class ChatRunSocket {
         })
       }
     })
+  }
+
+  respondCodingAgentApproval(sessionId: string, approvalId: string, choice: string): boolean {
+    return codingAgentRunManager.resolveApproval(sessionId, approvalId, choice).resolved
+  }
+
+  respondCodingAgentClarification(sessionId: string, clarifyId: string, response: string): boolean {
+    return codingAgentRunManager.resolveClarification(sessionId, clarifyId, response).resolved
   }
 
   // --- Run dispatcher ---

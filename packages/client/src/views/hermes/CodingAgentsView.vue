@@ -477,11 +477,13 @@ async function handleCheckUpdate(id: CodingAgentId) {
   }
 }
 
-onMounted(() => {
-  void loadStatus()
+onMounted(async () => {
+  await loadStatus()
   void loadConfigFile('claude-code', configFiles['claude-code'][0])
   void loadConfigFile('codex', configFiles.codex[1])
-  void loadConfigFile('pi', configFiles.pi[0])
+  if (statusFor('pi')?.installed) {
+    void loadConfigFile('pi', configFiles.pi[0])
+  }
 })
 </script>
 

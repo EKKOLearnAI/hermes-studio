@@ -78,7 +78,7 @@ describe('group chat baseline behavior', () => {
 
   it('accepts Relay mention depths governed by bounded or unlimited room policy', () => {
     const request = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       runId: '11111111-2222-4333-8444-555555555555',
       room: { id: 'room-1', name: 'Room 1' },
       members: [],
@@ -578,7 +578,7 @@ describe('group chat baseline behavior', () => {
       transports: ['websocket'],
       reconnection: false,
       auth: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         pairingTicket: created.pairingTicket,
         targetOrigin: 'http://127.0.0.1:8748',
       },
@@ -599,7 +599,7 @@ describe('group chat baseline behavior', () => {
       transports: ['websocket'],
       reconnection: false,
       auth: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         pairingTicket: created.pairingTicket,
         targetOrigin: 'http://127.0.0.1:8648',
       },
@@ -613,7 +613,7 @@ describe('group chat baseline behavior', () => {
     intendedTarget.connect()
     const readyPayload = await ready
     expect(readyPayload).toMatchObject({
-      protocolVersion: 1,
+      protocolVersion: 2,
       roomId: 'room-relay',
       roomName: 'Relay Room',
       inviteCode: 'RELAY1',
@@ -965,7 +965,7 @@ describe('group chat baseline behavior', () => {
       transports: ['websocket'],
       reconnection: false,
       auth: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         connectorId: readyPayload.connectorId,
         credential: readyPayload.credential,
         targetOrigin: 'http://127.0.0.1:8648',

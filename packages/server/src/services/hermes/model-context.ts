@@ -520,11 +520,15 @@ export function getModelRuntimeCapabilities(input: ModelContextLengthOptions): {
     }
   }
   const outputLimit = getPositiveNumber(entry?.limit?.output) || Math.min(32_000, contextWindow)
-  const imageInput = entry?.attachment === true || entry?.modalities?.input?.includes('image') === true
+  // Unknown custom models must remain usable. A missing models.dev entry is
+  // absence of metadata, not evidence that reasoning or image input is
+  // unsupported. Keep the runtime permissive and let the upstream provider
+  // return a capability error if it truly cannot accept the requested mode.
+  const imageInput = !entry || entry.attachment === true || entry.modalities?.input?.includes('image') === true
   return {
     contextWindow,
     outputLimit: Math.min(outputLimit, contextWindow),
-    reasoning: entry?.reasoning === true,
+    reasoning: entry ? entry.reasoning === true : true,
     input: imageInput ? ['text', 'image'] : ['text'],
   }
 }

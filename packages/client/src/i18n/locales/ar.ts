@@ -2874,7 +2874,7 @@ export default {
     agentLinkSelectAgent: 'Agent',
     agentLinkRequestConnection: 'طلب الاتصال',
     agentLinkOrPairingCode: 'أو استخدام رمز إقران يدوي',
-    agentLinkPairingCodePlaceholder: 'ألصق رمز إقران HGC1',
+    agentLinkPairingCodePlaceholder: 'ألصق رمز إقران HGC2',
     agentLinkConnect: 'توصيل Agent',
     agentLinkSecurityHint: 'لا توافق إلا على غرفة تعرفها. تذاكر الإقران للاستخدام مرة واحدة وتنتهي صلاحيتها قريبًا.',
     agentLinkLoadFailed: 'تعذر تحميل Agents المحليين.',

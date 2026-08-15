@@ -529,6 +529,10 @@ const visibleClarify = computed(() =>
         ? store.activePendingClarify
         : null,
 )
+watch(
+    () => visibleClarify.value?.clarifyId,
+    () => { clarifyResponse.value = visibleClarify.value?.initialResponse || '' },
+)
 const visibleAgentPairing = computed(() =>
     currentRoomCanManage.value ? pendingAgentPairings.value[0] || null : null,
 )
@@ -1688,14 +1692,24 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
 
 async function handleClarify(response?: string) {
     if (!currentRoomCanManage.value) return
-    const finalResponse = response !== undefined ? response : clarifyResponse.value.trim()
-    if (response === undefined && !finalResponse) return
+    const finalResponse = response !== undefined
+        ? response
+        : visibleClarify.value?.responseMode === 'editor'
+            ? clarifyResponse.value
+            : clarifyResponse.value.trim()
+    if (response === undefined && !finalResponse && visibleClarify.value?.responseMode !== 'editor') return
     try {
         await store.respondClarify(finalResponse)
         clarifyResponse.value = ''
     } catch (err: any) {
         message.error(err.message || t('common.saveFailed'))
     }
+}
+
+function handleClarifyKeydown(event: KeyboardEvent) {
+    if (visibleClarify.value?.responseMode === 'editor') return
+    event.preventDefault()
+    void handleClarify()
 }
 
 </script>
@@ -2161,8 +2175,8 @@ async function handleClarify(response?: string) {
                                     </NButton>
                                 </div>
                                 <div class="clarify-float-input-row">
-                                    <NInput v-model:value="clarifyResponse" size="small" :placeholder="t('chat.clarifyPlaceholder')" @keydown.enter.prevent="handleClarify()" />
-                                    <NButton size="small" type="primary" :disabled="!clarifyResponse.trim()" @click="handleClarify()">
+                                    <NInput v-model:value="clarifyResponse" size="small" :type="visibleClarify.responseMode === 'editor' ? 'textarea' : 'text'" :placeholder="t('chat.clarifyPlaceholder')" @keydown.enter="handleClarifyKeydown" />
+                                    <NButton size="small" type="primary" :disabled="visibleClarify.responseMode !== 'editor' && !clarifyResponse.trim()" @click="handleClarify()">
                                         {{ t('chat.clarifySubmit') }}
                                     </NButton>
                                 </div>

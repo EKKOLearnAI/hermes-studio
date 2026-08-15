@@ -109,6 +109,8 @@ interface PendingGroupClarifyRoute {
     clarifyId: string
     question: string
     choices: string[] | null
+    initialResponse: string
+    responseMode: string
     timeoutMs: number
     requestedAt: number
 }
@@ -2840,6 +2842,8 @@ export class GroupChatServer {
                 clarify_id: route.clarifyId,
                 question: route.question,
                 choices: route.choices,
+                initial_response: route.initialResponse,
+                response_mode: route.responseMode,
                 timeout_ms: route.timeoutMs,
                 requested_at: route.requestedAt,
             }))
@@ -3374,7 +3378,7 @@ export class GroupChatServer {
             releaseSessionFence()
             throw err
         }
-        this.agentClients.disconnectRoom(roomId)
+        await this.agentClients.disconnectRoom(roomId)
         this.rooms.delete(roomId)
         this.nsp.in(roomId).socketsLeave(roomId)
         this.fencedRoomAgentSessions?.delete(roomId)
@@ -3512,7 +3516,7 @@ export class GroupChatServer {
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
-        socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
+        socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
         socket.on('clarify.resolved', (data: { roomId?: string; agentName?: string; clarify_id?: string; resolved?: boolean; reason?: string; agentSessionId?: string }) => this.handleClarifyResolved(socket, data))
         socket.on('clarify.respond', (data: { roomId?: string; clarify_id?: string; response?: string }, ack?: (response?: unknown) => void) => this.handleClarifyRespond(socket, data, ack))
         socket.on('disconnect', () => this.handleDisconnect(socket))
@@ -4363,11 +4367,11 @@ export class GroupChatServer {
         }
     }
 
-    private handleRemoveAgent(
+    private async handleRemoveAgent(
         socket: Socket,
         data: { roomId?: string; agentId?: string },
         ack?: (response?: unknown) => void,
-    ): void {
+    ): Promise<void> {
         const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
         const agentId = typeof data?.agentId === 'string' ? data.agentId.trim() : ''
         if (!roomId || !agentId) {
@@ -4393,7 +4397,7 @@ export class GroupChatServer {
             revokeGroupAgentConnector(agent.connectorId)
         }
         this.storage.removeRoomAgent(roomId, agent.id)
-        this.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+        await this.agentClients.removeAgentFromRoom(roomId, agent.agentId)
         this.broadcastRoomAgents(roomId)
         ack?.({
             ok: true,
@@ -4547,7 +4551,7 @@ export class GroupChatServer {
         }
     }
 
-    private handleClarifyRequested(socket: Socket, data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; timeout_ms?: number; agentSessionId?: string }): void {
+    private handleClarifyRequested(socket: Socket, data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.clarify_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
@@ -4561,6 +4565,10 @@ export class GroupChatServer {
             clarifyId: data.clarify_id,
             question: data.question || '',
             choices: Array.isArray(data.choices) ? data.choices.map(String) : null,
+            initialResponse: String(data.initial_response || '').slice(0, 20_000),
+            responseMode: ['select', 'input', 'editor'].includes(String(data.response_mode || ''))
+                ? String(data.response_mode)
+                : '',
             timeoutMs,
             requestedAt: Date.now(),
         }
@@ -4573,6 +4581,8 @@ export class GroupChatServer {
             clarify_id: route.clarifyId,
             question: route.question,
             choices: route.choices,
+            initial_response: route.initialResponse,
+            response_mode: route.responseMode,
             timeout_ms: route.timeoutMs,
         })
     }

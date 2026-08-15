@@ -298,6 +298,10 @@ const canInsertQueuedMessages = computed(() => {
 const visibleApproval = computed(() => chatStore.activePendingApproval);
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
+watch(
+  () => visibleClarify.value?.clarifyId,
+  () => { clarifyResponse.value = visibleClarify.value?.initialResponse || ""; },
+);
 const hasFloatingPrompt = computed(() => !!visibleApproval.value || !!visibleClarify.value);
 const virtualListPadding = computed(() => {
   if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return "20px 20px 380px";
@@ -358,7 +362,11 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
 }
 
 function handleClarify(response?: string) {
-  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  const finalResponse = response !== undefined
+    ? response
+    : visibleClarify.value?.responseMode === "editor"
+      ? clarifyResponse.value
+      : clarifyResponse.value.trim();
   chatStore.respondToClarify(finalResponse);
   clarifyResponse.value = "";
 }
@@ -979,6 +987,7 @@ defineExpose({
             <NInput
               v-model:value="clarifyResponse"
               size="small"
+              :type="visibleClarify.responseMode === 'editor' ? 'textarea' : 'text'"
               :placeholder="t('chat.clarifyPlaceholder')"
             />
             <NButton size="small" type="primary" @click="handleClarify()">
