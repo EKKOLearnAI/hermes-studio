@@ -36,3 +36,18 @@ outline without a padded white background.
 On Windows, Pi keeps both long user input and long dynamic system instructions
 out of the `cmd.exe` command line: user input is sent over RPC stdin and dynamic
 instructions are read from the isolated per-run prompt file.
+
+Pi can now use Global mode in both the Coding Agents terminal and Studio single
+chat. Native launches use the user's existing `~/.pi/agent` configuration as-is;
+Studio chat adds only a per-session RPC extension and dynamic prompt file, while
+leaving provider, model, credentials, and native session storage under the
+global Pi configuration. Global Pi children inherit the user environment, while
+scoped Pi children continue to receive only the isolated runtime environment.
+
+Scoped Pi keeps using the shared local Responses proxy and the protocol selected
+in Studio for its upstream request. Chat Completions reasoning is now emitted as
+a standard Responses `reasoning` output item with summary deltas and a terminal
+item event. The normalizer accepts common `reasoning_content`, `reasoning`, and
+`reasoning_text` deltas as well as cumulative `reasoning_details` text used by
+some compatible providers. This keeps the existing upstream protocol routing
+unchanged while making the converted stream consumable by Pi as well as Codex.

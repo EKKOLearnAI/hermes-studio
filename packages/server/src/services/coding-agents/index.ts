@@ -2270,15 +2270,59 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   }
 
   const mode = input.mode === 'global' ? 'global' : 'scoped'
-  if (tool.id === 'pi' && mode === 'global') {
-    const err = new Error('Pi currently requires Provider and model mode so Hermes can generate its isolated RPC, model, and MCP configuration.')
-    ;(err as any).status = 400
-    throw err
-  }
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
     await mkdir(workspaceDir, { recursive: true })
+    if (tool.id === 'pi' && input.piOutputMode === 'rpc') {
+      const rootDir = getScopedRuntimeConfigRoot(tool.id, scope, input)
+      const dynamicPromptPath = join(rootDir, PI_DYNAMIC_PROMPT_FILE)
+      const studioExtensionPath = join(rootDir, PI_STUDIO_EXTENSION_FILE)
+      await mkdir(rootDir, { recursive: true })
+      await writeFile(studioExtensionPath, piStudioRuntimeExtension(), 'utf-8')
+      await writeFile(dynamicPromptPath, '', 'utf-8')
+      const files = [
+        { key: 'studio_extension', path: PI_STUDIO_EXTENSION_FILE, absolutePath: studioExtensionPath },
+        { key: 'dynamic_prompt', path: PI_DYNAMIC_PROMPT_FILE, absolutePath: dynamicPromptPath },
+      ]
+      const env = {
+        PI_CODING_AGENT_DIR: join(getGlobalConfigHome(), '.pi', 'agent'),
+        HERMES_PI_DYNAMIC_PROMPT_FILE: dynamicPromptPath,
+      }
+      const args = [
+        '--mode', 'rpc',
+        ...(input.agentNativeSessionId ? ['--session-id', input.agentNativeSessionId] : []),
+        '--extension', studioExtensionPath,
+        input.approveProjectConfig === true ? '--approve' : '--no-approve',
+      ]
+      const launcherPath = await writeLauncherScript({
+        rootDir,
+        workspaceDir,
+        env,
+        command: tool.command,
+        args,
+      })
+      files.push({
+        key: 'launcher',
+        path: process.platform === 'win32' ? WINDOWS_LAUNCHER_FILE : POSIX_LAUNCHER_FILE,
+        absolutePath: launcherPath,
+      })
+      return {
+        agentId: tool.id,
+        mode,
+        profile: scope.profile,
+        provider: scope.provider,
+        model: '',
+        rootDir,
+        workspaceDir,
+        command: tool.command,
+        args,
+        env,
+        shellCommand: buildLauncherShellCommand(workspaceDir, launcherPath),
+        files,
+        reasoningEffort: String(input.reasoningEffort || '').trim(),
+      }
+    }
     const files = await ensureGlobalCodingAgentPromptFile(tool.id)
     const promptFile = files.find(file => file.key === 'prompt')?.absolutePath || ''
     const args = tool.id === 'claude-code'

@@ -468,13 +468,69 @@ describe('coding agent launch preparation', () => {
     })
   })
 
-  it('rejects global mode for Pi before creating runtime files', async () => {
-    makeHome()
+  it('launches interactive Pi with its global config when requested', async () => {
+    const home = makeHome()
 
-    await expect(prepareCodingAgentLaunch('pi', {
+    const result = await prepareCodingAgentLaunch('pi', {
       mode: 'global',
       profile: 'default',
-    })).rejects.toThrow('Pi currently requires Provider and model mode')
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'pi',
+      mode: 'global',
+      profile: 'default',
+      provider: 'global',
+      model: '',
+      rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'pi',
+      args: [],
+      env: {},
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && pi`,
+      files: [],
+    })
+  })
+
+  it('runs Studio Pi chats over RPC while preserving the global Pi config', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      mode: 'global',
+      profile: 'default',
+      sessionId: 'global-pi-chat',
+      agentSessionId: 'global-pi-run',
+      agentNativeSessionId: 'global-pi-native',
+      piOutputMode: 'rpc',
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'pi',
+      mode: 'global',
+      profile: 'default',
+      provider: 'global',
+      model: '',
+      workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'pi',
+      env: {
+        PI_CODING_AGENT_DIR: join(home, 'global-home', '.pi', 'agent'),
+      },
+    })
+    expect(result.rootDir).toContain(join('model', 'default', 'global', 'pi', 'runs'))
+    expect(result.args).toEqual([
+      '--mode', 'rpc',
+      '--session-id', 'global-pi-native',
+      '--extension', join(result.rootDir, 'hermes-studio-runtime.ts'),
+      '--no-approve',
+    ])
+    expect(result.args).not.toContain('--provider')
+    expect(result.args).not.toContain('--model')
+    expect(result.args).not.toContain('--session-dir')
+    expect(result.env.HERMES_PI_DYNAMIC_PROMPT_FILE).toBe(join(result.rootDir, 'dynamic-system-prompt.md'))
+    expect(readFileSync(join(result.rootDir, 'hermes-studio-runtime.ts'), 'utf8'))
+      .toContain('before_agent_start')
+    expect(readFileSync(join(result.rootDir, 'dynamic-system-prompt.md'), 'utf8')).toBe('')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf8')).toContain('--mode rpc')
   })
 
   it('preserves existing global Claude Code prompt files while updating the Hermes block', async () => {
@@ -1602,7 +1658,60 @@ describe('coding agent launch preparation', () => {
     expect(sse).not.toContain('"usage"')
   })
 
-  it('streams Codex proxy Anthropic text as Responses message events', async () => {
+  it('keeps the selected Chat Completions protocol and emits Pi-compatible Responses reasoning events', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'glm',
+      model: 'glm-5-turbo',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      apiKey: 'sk-upstream',
+      apiMode: 'chat_completions',
+      agentId: 'pi',
+      agentSessionId: 'pi-reasoning-run',
+      chatSessionId: 'pi-reasoning-chat',
+    })
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"inspect"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"done"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      reasoning: { effort: 'medium', summary: 'auto' },
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'check' }] }],
+    })
+    await codexProxyResponses(ctx)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(requestBody).toMatchObject({
+      model: 'glm-5-turbo',
+      stream: true,
+    })
+    expect(requestBody).not.toHaveProperty('thinking')
+
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const sse = chunks.join('')
+    expect(sse).toContain('event: response.output_item.added')
+    expect(sse).toContain('"type":"reasoning"')
+    expect(sse).toContain('event: response.reasoning_summary_text.delta')
+    expect(sse).toContain('"delta":"inspect"')
+    expect(sse).toContain('event: response.output_item.done')
+    expect(sse).toContain('event: response.output_text.delta')
+    expect(sse).toContain('"delta":"done"')
+  })
+
+  it('streams Anthropic thinking and text as Pi-compatible Responses events', async () => {
     makeHome()
     const launch = await prepareCodingAgentLaunch('codex', {
       profile: 'default',
@@ -1619,9 +1728,11 @@ describe('coding agent launch preparation', () => {
     const fetchMock = vi.fn(async () => new Response(new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":3,"output_tokens":0}}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"he"}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"llo"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"inspect"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"he"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"llo"}}\n\n'))
         controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2}}\n\n'))
         controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'))
         controller.close()
@@ -1644,6 +1755,9 @@ describe('coding agent launch preparation', () => {
       headers: expect.objectContaining({ 'anthropic-version': '2023-06-01' }),
     }))
     expect(sse).toContain('event: response.output_item.added')
+    expect(sse).toContain('"type":"reasoning"')
+    expect(sse).toContain('event: response.reasoning_summary_text.delta')
+    expect(sse).toContain('"delta":"inspect"')
     expect(sse).toContain('"delta":"he"')
     expect(sse).toContain('"delta":"llo"')
     expect(sse).toContain('event: response.output_text.done')
@@ -1674,6 +1788,7 @@ describe('coding agent launch preparation', () => {
 
     const ctx = makeProxyContext(target.routeKey, target.token, {
       stream: true,
+      reasoning: { effort: 'high', summary: 'auto' },
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
     })
     await codexProxyResponses(ctx)
@@ -1685,6 +1800,9 @@ describe('coding agent launch preparation', () => {
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer sk-upstream' }),
     }))
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      reasoning: { effort: 'high', summary: 'auto' },
+    })
     expect(sse).toContain('"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}')
   })
 

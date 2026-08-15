@@ -206,7 +206,7 @@ const launchProtocolOptions = computed(() => [
 ])
 
 const launchModeOptions = computed(() => [
-  ...(launchAgentId.value === 'pi' ? [] : [{ label: t('codingAgents.launchModeGlobal'), value: 'global' }]),
+  { label: t('codingAgents.launchModeGlobal'), value: 'global' },
   { label: t('codingAgents.launchModeScoped'), value: 'scoped' },
 ])
 

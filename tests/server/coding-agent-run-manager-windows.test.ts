@@ -443,6 +443,47 @@ describe('coding agent Windows process launch', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
+  it('inherits user credentials when Studio runs Pi with its global config', () => {
+    const previousCredential = process.env.PI_GLOBAL_TEST_CREDENTIAL
+    process.env.PI_GLOBAL_TEST_CREDENTIAL = 'global-pi-test-key'
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).emitToChat = () => {}
+
+      manager.start({
+        agentSessionId: 'agent-session-global-pi',
+        agentId: 'pi',
+        mode: 'global',
+        profile: 'default',
+        provider: 'global',
+        model: '',
+        sessionId: 'chat-session-global-pi',
+        command: 'C:\\Users\\agent\\AppData\\Roaming\\npm\\pi.cmd',
+        args: ['--mode', 'rpc'],
+        env: {
+          PI_CODING_AGENT_DIR: 'C:\\Users\\agent\\.pi\\agent',
+        },
+        shellCommand: 'pi',
+        workspaceDir: 'C:\\Users\\agent\\project',
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      expect(testState.spawnCalls[0].options.env).toMatchObject({
+        PI_GLOBAL_TEST_CREDENTIAL: 'global-pi-test-key',
+        PI_CODING_AGENT_DIR: 'C:\\Users\\agent\\.pi\\agent',
+      })
+
+      const run = (manager as any).runs.get('agent-session-global-pi')
+      if (run?.idleTimer) clearTimeout(run.idleTimer)
+      ;(manager as any).runs.clear()
+      ;(manager as any).sessionIndex.clear()
+    } finally {
+      if (previousCredential === undefined) delete process.env.PI_GLOBAL_TEST_CREDENTIAL
+      else process.env.PI_GLOBAL_TEST_CREDENTIAL = previousCredential
+    }
+  })
+
   it('waits for Pi retry settlement and reconciles authoritative final text once', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []

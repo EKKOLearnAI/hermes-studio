@@ -1117,9 +1117,9 @@ export class CodingAgentRunManager {
   private startPiRpcProcess(run: ManagedCodingAgentRun) {
     const child = spawnCodingAgentChild(run.launch.command, run.launch.args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
-      env: {
-        ...isolatedCodingAgentChildEnv(run.launch.env),
-      },
+      env: run.launch.mode === 'global'
+        ? { ...process.env, ...(run.launch.env || {}) }
+        : isolatedCodingAgentChildEnv(run.launch.env),
       pipeStdin: true,
     })
     run.currentChild = child

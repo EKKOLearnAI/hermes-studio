@@ -843,9 +843,7 @@ const newChatApiModeOptions = computed(() => [
 ]);
 
 const newChatAgentModeOptions = computed(() => [
-  ...(newChatAgent.value === "pi"
-    ? []
-    : [{ label: t("codingAgents.launchModeGlobal"), value: "global" }]),
+  { label: t("codingAgents.launchModeGlobal"), value: "global" },
   { label: t("codingAgents.launchModeScoped"), value: "scoped" },
 ]);
 
@@ -853,7 +851,7 @@ function effectiveNewChatMode(
   agent: typeof newChatAgent.value,
   requestedMode: typeof newChatAgentMode.value,
 ) {
-  return agent === "ekko-agent" || agent === "pi" ? "scoped" : requestedMode;
+  return agent === "ekko-agent" ? "scoped" : requestedMode;
 }
 
 function getModelGroupsForProfile(profile: string) {
@@ -1048,9 +1046,6 @@ function ensureNewChatProviderSelection() {
 watch(
   () => [newChatAgent.value, newChatAgentMode.value, newChatProfile.value],
   () => {
-    if (newChatAgent.value === "pi" && newChatAgentMode.value !== "scoped") {
-      newChatAgentMode.value = "scoped";
-    }
     ensureNewChatProviderSelection();
     // Reload workspace data when profile changes
     if (newChatProfile.value) {
