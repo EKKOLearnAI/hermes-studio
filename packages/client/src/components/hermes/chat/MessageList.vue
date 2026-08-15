@@ -20,6 +20,7 @@ import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, typ
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
+import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -149,42 +150,16 @@ const liveReasoningDetail = computed<{
   return null;
 });
 
+const assistantAgent = computed(() => chatSessionAgentAvatar(chatStore.activeSession));
+
 const emptyState = computed(() => {
-  const session = chatStore.activeSession;
-  const codingAgentId = session?.codingAgentId
-    || (session?.agent === "codex" ? "codex" : session?.agent === "pi" ? "pi" : session?.agent === "claude" ? "claude-code" : session?.agent === "ekko-agent" ? "ekko-agent" : undefined);
-  if (codingAgentId === "codex") {
-    return {
-      logo: "/coding-agents/codex-openai.png",
-      alt: "Codex",
-      text: t("chat.emptyStateAgent", { agent: "Codex" }),
-    };
-  }
-  if (codingAgentId === "claude-code") {
-    return {
-      logo: "/coding-agents/claude-code.svg",
-      alt: "Claude Code",
-      text: t("chat.emptyStateAgent", { agent: "Claude Code" }),
-    };
-  }
-  if (codingAgentId === "pi") {
-    return {
-      logo: "/coding-agents/pi.svg",
-      alt: "Pi",
-      text: t("chat.emptyStateAgent", { agent: "Pi" }),
-    };
-  }
-  if (codingAgentId === "ekko-agent") {
-    return {
-      logo: "/coding-agents/ekko-agent.png",
-      alt: "Ekko",
-      text: t("chat.emptyStateAgent", { agent: "Ekko" }),
-    };
-  }
+  const agent = assistantAgent.value;
   return {
-    logo: "/coding-agents/hermes.png",
-    alt: "Hermes",
-    text: t("chat.emptyState"),
+    logo: agent.src,
+    alt: agent.label,
+    text: agent.label === "Hermes"
+      ? t("chat.emptyState")
+      : t("chat.emptyStateAgent", { agent: agent.label }),
   };
 });
 
@@ -667,6 +642,7 @@ defineExpose({
         <MessageItem
           v-else
           :message="msg"
+          :assistant-agent="assistantAgent"
           :highlight="chatStore.focusMessageId === msg.id"
           :show-fork-action="canForkActiveSession && msg.id === lastForkActionMessageId"
         />

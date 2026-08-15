@@ -14,9 +14,8 @@ import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
 import { useFilesStore } from "@/stores/hermes/files";
 import { useToolPanelStore } from "@/stores/hermes/tool-panel";
-import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSettingsStore } from "@/stores/hermes/settings";
-import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
+import { chatSessionAgentAvatar, type ChatAgentAvatar } from "@/utils/chat-agent-avatar";
 import ToolChangeCard from "./ToolChangeCard.vue";
 import {
   copyTextToClipboard,
@@ -43,7 +42,13 @@ const JSON_MAX_KEYS_PER_OBJECT = 50;
 const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
-const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string; showForkAction?: boolean }>();
+const props = defineProps<{
+  message: Message
+  highlight?: boolean
+  headingIdPrefix?: string
+  showForkAction?: boolean
+  assistantAgent?: ChatAgentAvatar
+}>();
 const { t } = useI18n();
 const toast = useMessage();
 
@@ -209,12 +214,10 @@ const selectedToolChangeFileId = ref<number | null>(null);
 const chatStore = useChatStore();
 const filesStore = useFilesStore();
 const toolPanelStore = useToolPanelStore();
-const profilesStore = useProfilesStore();
 const settingsStore = useSettingsStore();
 const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
-const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
-const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
+const assistantAgent = computed(() => props.assistantAgent || chatSessionAgentAvatar(chatStore.activeSession));
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -950,13 +953,13 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <ProfileAvatar
+        <img
           v-if="message.role === 'assistant'"
           class="msg-avatar"
-          :name="assistantProfileName"
-          :avatar="assistantProfileAvatar"
-          :size="40"
-        />
+          :src="assistantAgent.src"
+          :alt="assistantAgent.label"
+          draggable="false"
+        >
         <div class="msg-content" :class="message.role">
           <div
             class="message-bubble"
@@ -1262,6 +1265,10 @@ onBeforeUnmount(() => {
       height: 40px;
       flex-shrink: 0;
       margin-top: 2px;
+      box-sizing: border-box;
+      border: 1px solid #fff;
+      border-radius: 50%;
+      object-fit: cover;
     }
 
     .message-bubble {

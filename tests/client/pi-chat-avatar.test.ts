@@ -2,22 +2,25 @@ import { readFileSync } from 'fs'
 import { describe, expect, it } from 'vitest'
 
 describe('Pi chat identity', () => {
-  it('uses the active profile avatar for assistant messages', () => {
+  it('uses the active Agent avatar for assistant messages', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
 
     expect(source).toContain('v-if="message.role === \'assistant\'"')
-    expect(source).toContain(':name="assistantProfileName"')
-    expect(source).toContain(':avatar="assistantProfileAvatar"')
-    expect(source).not.toContain('assistantAgentLogo')
-    expect(source).not.toContain('msg-agent-avatar')
+    expect(source).toContain(':src="assistantAgent.src"')
+    expect(source).toContain(':alt="assistantAgent.label"')
+    expect(source).not.toContain('assistantProfileName')
+    expect(source).not.toContain('assistantProfileAvatar')
+    expect(source).toMatch(/\.msg-avatar\s*\{[^}]*object-fit: cover;/s)
+    expect(source).toMatch(/\.msg-avatar\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(source).not.toMatch(/\.msg-avatar\s*\{[^}]*padding:/s)
+    expect(source).not.toMatch(/\.msg-avatar\s*\{[^}]*background:/s)
   })
 
   it('uses the Pi logo in empty state and completion notifications', () => {
-    const messageList = readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8')
+    const avatarHelper = readFileSync('packages/client/src/utils/chat-agent-avatar.ts', 'utf8')
     const chatStore = readFileSync('packages/client/src/stores/hermes/chat.ts', 'utf8')
 
-    expect(messageList).toContain('session?.agent === "pi" ? "pi"')
-    expect(messageList).toContain('logo: "/coding-agents/pi.svg"')
+    expect(avatarHelper).toContain("pi: { label: 'Pi', src: '/coding-agents/pi.svg' }")
     expect(chatStore).toContain("if (codingAgentId === 'pi')")
     expect(chatStore).toContain("return { icon: '/coding-agents/pi.svg' }")
   })

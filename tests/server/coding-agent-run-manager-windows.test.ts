@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -378,6 +378,8 @@ describe('coding agent Windows process launch', () => {
   })
 
   it('runs Pi RPC through a non-ASCII npm .cmd path and sends long UTF-8 prompts over stdin', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'hermes-pi-windows-prompt-'))
+    const dynamicPromptPath = join(tempDir, '动态系统提示词.md')
     const manager = new CodingAgentRunManager()
     ;(manager as any).ensureDbSession = () => {}
     ;(manager as any).addUserMessage = () => {}
@@ -399,6 +401,7 @@ describe('coding agent Windows process launch', () => {
       env: {
         PI_CODING_AGENT_DIR: 'C:\\用户\\配置 目录',
         PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\会话 目录',
+        HERMES_PI_DYNAMIC_PROMPT_FILE: dynamicPromptPath,
       },
       shellCommand: 'pi',
       workspaceDir: 'C:\\用户\\项目 目录',
@@ -406,17 +409,20 @@ describe('coding agent Windows process launch', () => {
     })
 
     const prompt = `检查非 ASCII 路径。\n${'超长中文内容'.repeat(4000)}`
-    manager.send('chat-session-pi-1', prompt, { systemPrompt: '每轮动态工作流指令' })
+    const systemPrompt = `每轮动态工作流指令\n${'系统提示词'.repeat(4000)}`
+    manager.send('chat-session-pi-1', prompt, { systemPrompt })
 
     const call = testState.spawnCalls[0]
     expect(call.command).toBe('cmd.exe')
     expect(call.args[3]).toContain('C:\\用户\\管理员\\AppData\\Roaming\\npm\\pi.cmd')
     expect(call.args[3]).toContain('C:\\用户\\会话^ 目录')
     expect(call.args[3]).not.toContain('超长中文内容')
+    expect(call.args[3]).not.toContain('系统提示词')
     expect(call.args[3].length).toBeLessThan(8191)
     expect(call.options.env).toMatchObject({
       PI_CODING_AGENT_DIR: 'C:\\用户\\配置 目录',
       PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\会话 目录',
+      HERMES_PI_DYNAMIC_PROMPT_FILE: dynamicPromptPath,
     })
     expect(call.options.windowsVerbatimArguments).toBe(true)
     expect(call.child.stdin.write).toHaveBeenCalledTimes(2)
@@ -428,11 +434,13 @@ describe('coding agent Windows process launch', () => {
       type: 'prompt',
       message: prompt,
     })
+    expect(readFileSync(dynamicPromptPath, 'utf8')).toBe(systemPrompt)
 
     const run = (manager as any).runs.get('agent-session-pi-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()
+    rmSync(tempDir, { recursive: true, force: true })
   })
 
   it('waits for Pi retry settlement and reconciles authoritative final text once', () => {

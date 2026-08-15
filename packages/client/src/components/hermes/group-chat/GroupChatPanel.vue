@@ -189,7 +189,7 @@ type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
     { label: 'Hermes', value: 'hermes' },
     { label: 'Ekko', value: 'ekko' },
-    { label: 'Claude Code', value: 'claude' },
+    { label: 'Claude', value: 'claude' },
     { label: 'Codex', value: 'codex' },
     { label: 'Pi', value: 'pi' },
 ])
@@ -1995,7 +1995,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             <template #trigger>
                                 <button
                                     type="button"
-                                    class="agent-avatar-rail-item"
+                                    class="agent-avatar-rail-item agent-avatar-rail-agent"
                                     :class="{
                                         'agent-avatar-rail-active': !!agentContextStatus(agent),
                                         'agent-avatar-rail-offline': agent.connectionStatus === 'offline',
@@ -3559,6 +3559,11 @@ export default defineComponent({ components: { CreateRoomForm } })
         width: 32px;
         height: 32px;
     }
+}
+
+.agent-avatar-rail-agent .agent-avatar {
+    box-sizing: border-box;
+    border: 1px solid #fff;
 }
 
 .agent-owner-avatar-badge {

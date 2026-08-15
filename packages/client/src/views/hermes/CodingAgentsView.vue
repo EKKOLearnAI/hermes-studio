@@ -27,7 +27,7 @@ import { isAuthModelProvider } from '@/utils/codingAgentProviders'
 
 type CodingAgentBlock = {
   id: CodingAgentId
-  tool: 'Claude Code' | 'Codex' | 'Pi'
+  tool: 'Claude' | 'Codex' | 'Pi'
   provider: 'Anthropic' | 'OpenAI' | 'Pi'
 }
 
@@ -99,7 +99,7 @@ const terminalCommand = ref('')
 const terminalKey = ref(0)
 
 const agentLogos: Record<CodingAgentBlock['tool'], string> = {
-  'Claude Code': '/coding-agents/claude-code.svg',
+  'Claude': '/coding-agents/claude-code.svg',
   Codex: '/coding-agents/codex-openai.png',
   Pi: '/coding-agents/pi.svg',
 }
@@ -107,7 +107,7 @@ const agentLogos: Record<CodingAgentBlock['tool'], string> = {
 const agentBlocks: CodingAgentBlock[] = [
   {
     id: 'claude-code',
-    tool: 'Claude Code',
+    tool: 'Claude',
     provider: 'Anthropic',
   },
   {

@@ -202,7 +202,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(rail).toContain('v-for="member in railMembers"')
     expect(rail).toContain(':key="member.userId"')
     expect(rail).toContain('v-for="agent in store.agents"')
-    expect(rail).toContain('class="agent-avatar-rail-item"')
+    expect(rail).toContain('class="agent-avatar-rail-item agent-avatar-rail-agent"')
     expect(rail).toContain("'agent-avatar-rail-offline': agent.connectionStatus === 'offline'")
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
     expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
@@ -222,6 +222,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('.agent-avatar-rail-offline')
     expect(source).toContain('filter: grayscale(1)')
     expect(source).toContain('opacity: 0.42')
+    expect(source).toMatch(/\.agent-avatar-rail-agent \.agent-avatar\s*\{[^}]*border: 1px solid #fff;/s)
   })
 
   it('keeps invite-only chat free of settings and speech controls', () => {
@@ -366,6 +367,7 @@ describe('GroupChatPanel workspace save handling', () => {
   it('shows agent runtime details when hovering message avatars and can insert a mention into the group input', () => {
     const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const avatarSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentMessageAvatar.vue', 'utf8')
+    const listSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
     const itemSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
     const runCardSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
 
@@ -375,6 +377,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(avatarSource).toContain("t('profiles.model')")
     expect(avatarSource).toContain('class="message-agent-mention"')
     expect(avatarSource).toContain("@click.stop=\"emit('mention', agent)\"")
+    expect(avatarSource).toMatch(/\.message-agent-avatar > :deep\(\.profile-avatar-view\)\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(listSource).toMatch(/\.empty-agent-avatar\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(listSource).not.toMatch(/\.empty-agent-avatar\s*\{[^}]*background:/s)
     expect(itemSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).not.toContain('run-agent-description')
@@ -471,7 +476,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")
     expect(source).toContain('agent: selectedAgentType.value')
     expect(source).toContain("{ label: 'Hermes', value: 'hermes' }")
-    expect(source).toContain("{ label: 'Claude Code', value: 'claude' }")
+    expect(source).toContain("{ label: 'Claude', value: 'claude' }")
     expect(source).toContain("{ label: 'Codex', value: 'codex' }")
     expect(source).toContain("{ label: 'Ekko', value: 'ekko' }")
     expect(source).toContain('v-model:value="agentName"')

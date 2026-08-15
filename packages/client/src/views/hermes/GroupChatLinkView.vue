@@ -93,7 +93,7 @@ const hasServerHandoff = computed(() => (
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
   { label: 'Hermes', value: 'hermes' },
   { label: 'Ekko', value: 'ekko' },
-  { label: 'Claude Code', value: 'claude' },
+  { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   { label: 'Pi', value: 'pi' },
 ])

@@ -831,7 +831,7 @@ const hiddenDefaultWorkspaces = computed(() => {
 const newChatAgentOptions = computed(() => [
   { label: "Hermes", value: "hermes" },
   { label: "Ekko", value: "ekko-agent" },
-  { label: "Claude Code", value: "claude-code" },
+  { label: "Claude", value: "claude-code" },
   { label: "Codex", value: "codex" },
   { label: "Pi", value: "pi" },
 ]);
@@ -1115,7 +1115,7 @@ async function confirmNewChat() {
       const status = await fetchCodingAgentsStatus();
       const tool = status.tools.find((item) => item.id === agentId);
       if (!tool?.installed) {
-        const fallbackName = agentId === "codex" ? "Codex" : agentId === "pi" ? "Pi" : "Claude Code";
+        const fallbackName = agentId === "codex" ? "Codex" : agentId === "pi" ? "Pi" : "Claude";
         message.warning(t("codingAgents.installRequired", { agent: tool?.name || fallbackName }));
         showNewChatModal.value = false;
         await router.push({ name: "hermes.codingAgents" });

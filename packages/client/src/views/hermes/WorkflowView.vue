@@ -396,7 +396,7 @@ let workflowBudgetClock: number | null = null
 const agentOptions = computed<WorkflowSelectOption[]>(() => [
   { label: 'Hermes', value: 'hermes' },
   { label: 'Ekko', value: 'ekko-agent' },
-  { label: 'Claude Code', value: 'claude-code' },
+  { label: 'Claude', value: 'claude-code' },
   { label: 'Codex', value: 'codex' },
   { label: 'Pi', value: 'pi' },
 ])
