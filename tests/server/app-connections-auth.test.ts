@@ -86,6 +86,7 @@ describe('App connection authorization', () => {
           device_name: 'Alice iPhone',
           device_brand: 'Apple',
           device_model: 'iPhone 17,1',
+          cloud_user_id: 7001,
         },
       },
       get: vi.fn((name: string) => name.toLowerCase() === 'x-hermes-app-connection' ? 'cloud' : ''),
@@ -115,6 +116,7 @@ describe('App connection authorization', () => {
         device_model: 'iPhone 17,1',
         connection_type: 'cloud',
         user_id: admin.id,
+        cloud_user_id: 7001,
       }),
     ])
 
@@ -166,6 +168,7 @@ describe('App connection authorization', () => {
             device_name: deviceName,
             device_brand: 'Apple',
             device_model: 'iPhone 17,1',
+            cloud_user_id: connectionType === 'cloud' ? 7001 : undefined,
           },
         },
         get: vi.fn((name: string) => name.toLowerCase() === 'x-hermes-app-connection' ? connectionType : ''),
@@ -187,7 +190,12 @@ describe('App connection authorization', () => {
     expect(connections).toHaveLength(2)
     expect(connections).toEqual(expect.arrayContaining([
       expect.objectContaining({ device_code: 'phone-001', device_name: 'Alice iPhone 16', connection_type: 'lan' }),
-      expect.objectContaining({ device_code: 'phone-001', device_name: 'Alice iPhone 16', connection_type: 'cloud' }),
+      expect.objectContaining({
+        device_code: 'phone-001',
+        device_name: 'Alice iPhone 16',
+        connection_type: 'cloud',
+        cloud_user_id: 7001,
+      }),
     ]))
     expect(store.isAppConnectionTokenActive('phone-001', 'lan', firstLanToken, admin.id)).toBe(false)
     expect(store.isAppConnectionTokenActive('phone-001', 'lan', latestLanToken, admin.id)).toBe(true)

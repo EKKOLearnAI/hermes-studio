@@ -497,6 +497,7 @@ export const APP_CONNECTIONS_SCHEMA: Record<string, string> = {
   device_model: "TEXT NOT NULL DEFAULT ''",
   connection_type: "TEXT NOT NULL DEFAULT 'lan'",
   user_id: 'INTEGER NOT NULL',
+  cloud_user_id: 'INTEGER NOT NULL DEFAULT 0',
   token_hash: "TEXT NOT NULL DEFAULT ''",
   token_expires_at: 'INTEGER NOT NULL DEFAULT 0',
   last_connected_at: 'INTEGER NOT NULL DEFAULT 0',
@@ -507,8 +508,9 @@ export const APP_CONNECTIONS_SCHEMA: Record<string, string> = {
 }
 
 export const APP_CONNECTIONS_INDEXES = {
-  uniq_app_connections_device_type: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_app_connections_device_type ON app_connections(device_code, connection_type)',
+  uniq_app_connections_device_type_cloud_user: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_app_connections_device_type_cloud_user ON app_connections(device_code, connection_type, cloud_user_id)',
   idx_app_connections_user: 'CREATE INDEX IF NOT EXISTS idx_app_connections_user ON app_connections(user_id)',
+  idx_app_connections_cloud_user: 'CREATE INDEX IF NOT EXISTS idx_app_connections_cloud_user ON app_connections(cloud_user_id)',
   idx_app_connections_updated_at: 'CREATE INDEX IF NOT EXISTS idx_app_connections_updated_at ON app_connections(updated_at)',
 }
 
@@ -1453,6 +1455,13 @@ export function initAllHermesTables(): void {
     syncTable(APP_CONNECTIONS_TABLE, APP_CONNECTIONS_SCHEMA, {
       indexes: APP_CONNECTIONS_INDEXES,
     })
+    db.exec('DROP INDEX IF EXISTS uniq_app_connections_device_type')
+    createIndexes(db, APP_CONNECTIONS_INDEXES)
+    db.exec(`
+      UPDATE ${APP_CONNECTIONS_TABLE}
+      SET cloud_revocation_pending = 0
+      WHERE connection_type = 'cloud' AND cloud_user_id = 0 AND cloud_revocation_pending <> 0
+    `)
     syncTable(APP_AUTHORIZATION_CODES_TABLE, APP_AUTHORIZATION_CODES_SCHEMA, {
       indexes: APP_AUTHORIZATION_CODES_INDEXES,
     })

@@ -226,6 +226,87 @@ describe('AppRelayClient', () => {
     expect(client.getCachedPreconnection(7, 2600)).toBeNull()
   })
 
+  it('forwards the authenticated cloud account into Studio authorization', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      token: 'studio-token',
+      userId: 1,
+      profiles: ['default'],
+      appConnection: { token_expires_at: 4_000 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: fetchImpl as any,
+    })!
+    const remote = sockets[0]
+    remote.connected = true
+    remote.timeout.mockImplementation(() => ({
+      emit: (_event: string, _request: Record<string, unknown>, ack: (...args: any[]) => void) => {
+        ack(null, {
+          ok: true,
+          type: 'hermes-studio.app-connection',
+          version: 1,
+          connectionType: 'cloud',
+          machineId: 'hwui_machine_1234567890',
+          preconnectId: '70a0af7c-5977-4dd6-bca5-b8e641170658',
+          matchingCode: 'matching-code-with-enough-entropy',
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+          hardExpiresAt: Math.floor(Date.now() / 1000) + 900,
+          refreshRemaining: 3,
+        })
+      },
+    }))
+    const preconnection = await client.requestPreconnection('local-authorization-code', false, 8000, 1)
+    const authorizeAck = vi.fn()
+
+    remote.__handlers.get('connection.authorize')({
+      preconnectId: preconnection.preconnectId,
+      matchingCode: preconnection.matchingCode,
+      appUserId: 101,
+      deviceCode: 'shared-phone-code',
+      deviceName: 'Alice Phone',
+    }, authorizeAck)
+
+    await vi.waitFor(() => expect(authorizeAck).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      studioUserId: 1,
+    })))
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
+      device_code: 'shared-phone-code',
+      cloud_user_id: 101,
+    })
+  })
+
+  it('includes the cloud account when revoking a shared device code', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })!
+    const remote = sockets[0]
+    remote.connected = true
+    const emit = vi.fn((_event: string, _request: Record<string, unknown>, ack: (...args: any[]) => void) => {
+      ack(null, { ok: true })
+    })
+    remote.timeout.mockImplementation(() => ({ emit }))
+
+    await expect(client.revokeCloudConnection('shared-phone-code', 101)).resolves.toBe(true)
+    expect(emit).toHaveBeenCalledWith(
+      'connection.revoke',
+      { deviceCode: 'shared-phone-code', appUserId: 101 },
+      expect.any(Function),
+    )
+  })
+
   it('bridges the full-duplex /chat-run socket without using MCU events', async () => {
     const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
     startAppRelayClient({

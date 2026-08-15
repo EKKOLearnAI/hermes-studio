@@ -145,7 +145,7 @@ const columns = computed<DataTableColumns<AppConnection>>(() => [
 ])
 
 function connectionIdentity(connection: AppConnection): string {
-  return `${connection.device_code}:${connection.connection_type}`
+  return `${connection.device_code}:${connection.connection_type}:${connection.cloud_user_id}`
 }
 
 async function loadConnections(options: { silent?: boolean; detectScanConnection?: boolean } = {}) {

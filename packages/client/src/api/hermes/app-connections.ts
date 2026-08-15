@@ -10,6 +10,7 @@ export interface AppConnection {
   device_model: string
   connection_type: AppConnectionType
   user_id: number
+  cloud_user_id: number
   username: string
   token_expires_at: number
   last_connected_at: number

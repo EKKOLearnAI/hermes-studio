@@ -32,13 +32,17 @@ function connectionPayload(now = Math.floor(Date.now() / 1000)) {
     device_model: connection.device_model,
     connection_type: connection.connection_type,
     user_id: connection.user_id,
+    cloud_user_id: connection.cloud_user_id,
     username: findUserById(connection.user_id)?.username || '',
     token_expires_at: connection.token_expires_at,
     last_connected_at: connection.last_connected_at,
     active: connection.revoked_at == null && connection.token_expires_at > now,
     online: connection.connection_type === 'lan'
       ? isLocalAppConnectionOnline(connection.device_code, connection.connection_type)
-      : getAppRelayClient(APP_RELAY_CONNECTION_ID)?.isCloudDeviceOnline(connection.device_code) || false,
+      : getAppRelayClient(APP_RELAY_CONNECTION_ID)?.isCloudDeviceOnline(
+          connection.device_code,
+          connection.cloud_user_id,
+        ) || false,
     created_at: connection.created_at,
     updated_at: connection.updated_at,
   }))
@@ -62,8 +66,13 @@ export async function deleteAppConnectionController(ctx: Context) {
     notified = notifyLocalAppConnectionDeleted(connection.device_code, connection.connection_type)
   } else {
     const client = getAppRelayClient(APP_RELAY_CONNECTION_ID)
-    const revoked = await client?.revokeCloudConnection(connection.device_code) || false
-    if (revoked) markCloudAppConnectionRevocationSynced(connection.device_code)
+    const revoked = await client?.revokeCloudConnection(
+      connection.device_code,
+      connection.cloud_user_id,
+    ) || false
+    if (revoked) {
+      markCloudAppConnectionRevocationSynced(connection.device_code, connection.cloud_user_id)
+    }
     notified = revoked ? 1 : 0
   }
   ctx.body = { success: true, notified }
