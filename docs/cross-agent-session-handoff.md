@@ -74,23 +74,34 @@ Codex / Claude Code 消息不能原样交给 Hermes bridge，需要规范化：
 
 ## 7. 分阶段实施
 
-### 第一期：Studio 会话 -> Hermes
+### 第一期：Studio 会话 -> Hermes（当前 PR #2559）
 
 - 新增 `createHandoffSession()`，复用 `createBranchedSession()` 的 lineage 逻辑。
 - 新增“接续到 Hermes”API 和前端入口。
 - 覆盖 Codex/CC 消息规范化、权限、运行状态校验。
 - 补单元测试和必要的浏览器测试。
 
-### 第二期：外部 CLI JSONL 只读导入
+### 第二期：外部 CLI JSONL 单向导入（#1317）
 
 - 读取 Claude Code `~/.claude/projects/**/*.jsonl`。
 - 读取 Codex `$CODEX_HOME/sessions/**/*.jsonl`。
-- 归一化成 Studio session 后走第一期的接续链路。
+- 方向：原生 JSONL -> `hermes-web-ui.db`。
+- 目的：在 Studio 中统一查看和管理外部原生历史。
+- 本阶段只做读入，不写回原生格式。
 
-### 第三期：反向和其他 Agent
+### 第三期：最小原生 JSONL 转换器（跨 Agent 接续到 Codex/Claude）
 
-- Hermes -> Codex / Claude Code。
-- Ekko 等其它 Agent 之间的接续。
+- 方向：`hermes-web-ui.db` -> 最小原生 JSONL -> CLI `--resume`。
+- 只转换 `user` / `assistant` 文本，不转 tool calls、reasoning、加密内容。
+- 将 JSONL 写入 Studio 管理的 `CODEX_HOME` / Claude projects 目录，让 Codex/Claude 真正 resume。
+- 如果目标 CLI 版本不接受最小 JSONL，退回“首条消息 / system prompt 注入”。
+- 本阶段**不依赖第二期**：统一表里已有的 Studio 会话也可以直接走这条链路。
+
+### 第四期：完整字段与其他 Agent
+
+- 需要时再扩展 tool calls、reasoning 等字段。
+- Hermes / Codex / Claude / Ekko 之间的任意互接。
+- 视 JSONL schema 稳定性和实测结果决定是否投入。
 
 ## 8. 主要代码触点
 
@@ -146,8 +157,9 @@ Codex / Claude Code 消息不能原样交给 Hermes bridge，需要规范化：
 
 ## 13. 当前实现状态
 
-- 新增 `POST /api/hermes/sessions/:id/handoff`，从 Codex / Claude Code 会话创建 Hermes 接续会话。
-- 新增 `createHandoffSession()`，写入 `parent_session_id` 和 `fork_point_message_id`，不修改来源会话。
-- 消息转换只保留 `user` / `assistant` 文本，tool 和 command 行暂不复制。
-- ChatPanel 与 HistoryView 的会话右键菜单新增“接续到 Hermes”。
-- 已补服务层和 DB 层单元测试；`npm run harness:check` 与 `npm run build` 通过。
+- 第一期已实现并通过 PR #2559 提交：`POST /api/hermes/sessions/:id/handoff` 从 Studio 内 Codex / Claude Code 会话创建 Hermes 接续会话。
+- `createHandoffSession()` 写入 `parent_session_id` 和 `fork_point_message_id`，不修改来源会话。
+- 当前只复制 `user` / `assistant` 文本，tool 和 command 行暂不复制。
+- ChatPanel 与 HistoryView 的会话右键菜单已新增“接续到 Hermes”。
+- 已补服务层、DB 层、客户端 store、路由测试；`npm run harness:check` 与 `npm run build` 通过。
+- 第二期（#1317 单向导入）和第三期（最小原生 JSONL 转换器）尚未实现；第三期不依赖第二期。
