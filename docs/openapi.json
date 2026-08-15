@@ -5787,6 +5787,28 @@
             }
           },
           {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,

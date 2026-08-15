@@ -1542,6 +1542,8 @@ export function initAllHermesTables(): void {
     syncTable(GC_HANDOFF_DELIVERIES_TABLE, GC_HANDOFF_DELIVERIES_SCHEMA, { indexes: GC_HANDOFF_DELIVERIES_INDEXES })
     syncTable(GC_HANDOFF_INBOX_TABLE, GC_HANDOFF_INBOX_SCHEMA, { indexes: GC_HANDOFF_INBOX_INDEXES })
     const groupChatMessageIndexes = {
+      idx_gc_messages_history_page:
+        "CREATE INDEX IF NOT EXISTS idx_gc_messages_history_page ON gc_messages(roomId, timestamp DESC, id DESC)",
       idx_gc_messages_context_window:
         "CREATE INDEX IF NOT EXISTS idx_gc_messages_context_window ON gc_messages(roomId, timestamp DESC, id DESC) WHERE COALESCE(tool_name, '') <> 'workspace_diff'",
     }

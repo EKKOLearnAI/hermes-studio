@@ -552,6 +552,7 @@ function isExpiredInteractionError(value: unknown): boolean {
 }
 
 export const GROUP_CHAT_MESSAGE_WINDOW = 500
+const GROUP_CHAT_CONTEXT_MESSAGE_WINDOW = GROUP_CHAT_MESSAGE_WINDOW
 const GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW = 100
 const GROUP_CHAT_SUMMARY_SCAN_LIMIT = 10_000
 const GROUP_CHAT_TOKEN_ACCOUNTING_VERSION = 1
@@ -691,6 +692,7 @@ class ChatStorage {
             // Tables are now created centrally in initAllHermesTables()
             // Only create indexes here
             try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
+            try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_history_page ON gc_messages(roomId, timestamp DESC, id DESC)') } catch { /* ignore */ }
             try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
             try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
             try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_pending_session_deletes_profile ON gc_pending_session_deletes(profile_name, status, next_attempt_at, created_at)') } catch { /* ignore */ }
@@ -1716,7 +1718,7 @@ class ChatStorage {
         options: { excludeWorkspaceDiff?: boolean; throughMessageId?: string } = {},
     ): any[] {
         const db = this.db()
-        const boundedLimit = Math.min(GROUP_CHAT_MESSAGE_WINDOW, Math.max(0, Math.floor(limit)))
+        const boundedLimit = Math.max(0, Math.floor(limit))
         if (!db || boundedLimit === 0) return []
 
         const where = ['roomId = ?']
@@ -1765,8 +1767,46 @@ class ChatStorage {
         ).map(buildOutboundGroupMessage)
     }
 
+    getHistoryPageForUI(
+        roomId: string,
+        limit = 150,
+        beforeMessageId?: string,
+    ): { messages: ChatMessage[]; hasMore: boolean; cursorFound: boolean } {
+        const db = this.db()
+        const safeLimit = Math.min(150, Math.max(1, Math.floor(Number(limit) || 150)))
+        if (!db) return { messages: [], hasMore: false, cursorFound: !beforeMessageId }
+
+        const params: Array<string | number> = [roomId]
+        let cursorFound = true
+        let cursorPredicate = ''
+        if (beforeMessageId) {
+            const cursor = db.prepare(
+                'SELECT timestamp, id FROM gc_messages WHERE roomId = ? AND id = ?',
+            ).get(roomId, beforeMessageId) as { timestamp: number; id: string } | undefined
+            cursorFound = Boolean(cursor)
+            if (!cursor) return { messages: [], hasMore: false, cursorFound: false }
+            cursorPredicate = ' AND (timestamp < ? OR (timestamp = ? AND id < ?))'
+            params.push(cursor.timestamp, cursor.timestamp, cursor.id)
+        }
+
+        const rows = db.prepare(
+            `SELECT ${MESSAGE_SELECT_COLUMNS} FROM gc_messages
+             WHERE roomId = ?${cursorPredicate}
+             ORDER BY timestamp DESC, id DESC
+             LIMIT ?`,
+        ).all(...params, safeLimit + 1) as any[]
+        const hasMore = rows.length > safeLimit
+        const pageRows = rows.slice(0, safeLimit).reverse()
+        const agentCache = new Map<string, RoomAgent | null>()
+        const roomCache = new Map<string, RoomInfo | undefined>()
+        const messages = this.compactMessageAgentMetadata(
+            pageRows.map(row => this.mapStoredMessageRow(row, agentCache, roomCache)),
+        ).map(buildOutboundGroupMessage)
+        return { messages, hasMore, cursorFound }
+    }
+
     getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
-        const rows = this.getRecentMessageRows(roomId, GROUP_CHAT_MESSAGE_WINDOW, {
+        const rows = this.getRecentMessageRows(roomId, GROUP_CHAT_CONTEXT_MESSAGE_WINDOW, {
             excludeWorkspaceDiff: true,
             throughMessageId: cutoff?.throughMessageId,
         })
@@ -2037,7 +2077,7 @@ class ChatStorage {
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'
              ORDER BY timestamp DESC, id DESC
              LIMIT 1 OFFSET ?`,
-        ).get(roomId, GROUP_CHAT_MESSAGE_WINDOW - 1) as { timestamp: number } | undefined
+        ).get(roomId, GROUP_CHAT_CONTEXT_MESSAGE_WINDOW - 1) as { timestamp: number } | undefined
         const rows = db.prepare(
             `SELECT id FROM gc_messages
              WHERE roomId = ? AND COALESCE(tool_name, '') <> 'workspace_diff'${boundary ? ' AND timestamp >= ?' : ''}
@@ -2046,7 +2086,7 @@ class ChatStorage {
         ).all(
             roomId,
             ...(boundary ? [boundary.timestamp] : []),
-            GROUP_CHAT_MESSAGE_WINDOW + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
+            GROUP_CHAT_CONTEXT_MESSAGE_WINDOW + GROUP_CHAT_TIMESTAMP_BOUNDARY_OVERFLOW,
         ) as Array<{ id: string }>
         return rows.map(row => String(row.id))
     }
@@ -4136,10 +4176,7 @@ export class GroupChatServer {
         const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
         const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
         const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
-        const total = Math.min(
-            GROUP_CHAT_MESSAGE_WINDOW,
-            this.storage.getMessageCount?.(roomId) ?? messages.length,
-        )
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
         ack?.({
             messages,
             total,
