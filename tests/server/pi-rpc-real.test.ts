@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CodingAgentRunManager } from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+import { CodingAgentRunManager } from '../../packages/server/src/services/coding-agents/runtime/run-manager'
 
 const realE2eEnabled = process.env.PI_REAL_RPC_E2E === '1'
 const describeReal = realE2eEnabled ? describe : describe.skip
@@ -200,6 +200,8 @@ describeReal('real Pi RPC end-to-end', () => {
     })
     rpc.send({ id: 'initial-state', type: 'get_state' })
     await rpc.waitFor(event => event.type === 'response' && event.id === 'initial-state' && event.success === true)
+    rpc.send({ id: 'initial-thinking', type: 'set_thinking_level', level: 'high' })
+    await rpc.waitFor(event => event.type === 'response' && event.id === 'initial-thinking' && event.success === true)
   }, 30_000)
 
   afterAll(async () => {
@@ -230,6 +232,11 @@ describeReal('real Pi RPC end-to-end', () => {
       expect.objectContaining({ type: 'agent_end' }),
       expect.objectContaining({ type: 'agent_settled' }),
     ]))
+    expect(first.some(event => (
+      event.type === 'message_update'
+      && event.assistantMessageEvent?.type === 'thinking_delta'
+      && String(event.assistantMessageEvent.delta || '').length > 0
+    ))).toBe(true)
 
     const second = await promptAndSettle(rpc, 'prompt-multi', '第二轮 E2E_MULTI')
     const secondText = JSON.stringify(second)
@@ -299,6 +306,7 @@ describeReal('real Pi RPC end-to-end', () => {
       profile: 'default',
       provider: 'hermes-e2e',
       model: 'e2e-model',
+      reasoningEffort: 'high',
       sessionId,
       command: findPiCommand(),
       args: [
@@ -330,14 +338,23 @@ describeReal('real Pi RPC end-to-end', () => {
     })
     await waitForStudioEvent(firstStudio.emitted, event => event.event === 'run.completed', from)
     expect(firstStudio.manager.hasSession('studio-pi-chat-1')).toBe(false)
-    expect(firstStudio.emitted.slice(from)).toEqual(expect.arrayContaining([
+    const firstTurnEvents = firstStudio.emitted.slice(from)
+    const firstTurnTextDeltas = firstTurnEvents.filter(event => event.event === 'message.delta')
+    const firstTurnReasoningDeltas = firstTurnEvents.filter(event => event.event === 'reasoning.delta')
+    expect(firstTurnEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({ event: 'run.started' }),
-      expect.objectContaining({
-        event: 'message.delta',
-        payload: expect.objectContaining({ delta: expect.stringContaining('images=1') }),
-      }),
       expect.objectContaining({ event: 'run.completed' }),
     ]))
+    expect(firstTurnTextDeltas).toHaveLength(2)
+    expect(firstTurnReasoningDeltas).toHaveLength(2)
+    expect(firstTurnReasoningDeltas.map(event => String(event.payload?.delta || '')).join('')).toContain('reasoning:Studio E2E image')
+    expect(firstTurnTextDeltas.map(event => String(event.payload?.delta || '')).join('')).toContain('images=1')
+    expect(firstTurnEvents.findIndex(event => event.event === 'reasoning.delta')).toBeLessThan(
+      firstTurnEvents.findIndex(event => event.event === 'message.delta'),
+    )
+    expect(firstTurnEvents.findIndex(event => event.event === 'message.delta')).toBeLessThan(
+      firstTurnEvents.findIndex(event => event.event === 'run.completed'),
+    )
 
     from = firstStudio.emitted.length
     startFirstStudioTurn()

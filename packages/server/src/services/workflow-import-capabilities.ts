@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { isScopedCodingAgentAuthProvider } from './coding-agent-provider-policy'
+import { isScopedCodingAgentAuthProvider } from './coding-agents/shared/provider-policy'
 
 interface CapabilityGroup { provider: string; models: string[]; api_mode?: string }
 

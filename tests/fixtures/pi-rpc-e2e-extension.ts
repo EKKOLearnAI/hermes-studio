@@ -71,7 +71,7 @@ export default function (pi: ExtensionAPI) {
     models: [{
       id: 'e2e-model',
       name: 'E2E Model',
-      reasoning: false,
+      reasoning: true,
       input: ['text', 'image'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 32_000,
@@ -141,10 +141,24 @@ export default function (pi: ExtensionAPI) {
             const text = toolResultText
               ? `tool-result:${toolResultText}`
               : `reply:${prompt};messages=${messages.length};images=${imageCount(context)}`
+            if (options?.reasoning) {
+              const thinking = `reasoning:${prompt}`
+              output.content.push({ type: 'thinking', thinking })
+              stream.push({ type: 'thinking_start', contentIndex: 0, partial: output })
+              const splitThinkingAt = Math.max(1, Math.floor(thinking.length / 2))
+              for (const delta of [thinking.slice(0, splitThinkingAt), thinking.slice(splitThinkingAt)].filter(Boolean)) {
+                stream.push({ type: 'thinking_delta', contentIndex: 0, delta, partial: output })
+              }
+              stream.push({ type: 'thinking_end', contentIndex: 0, content: thinking, partial: output })
+            }
+            const textIndex = output.content.length
             output.content.push({ type: 'text', text })
-            stream.push({ type: 'text_start', contentIndex: 0, partial: output })
-            stream.push({ type: 'text_delta', contentIndex: 0, delta: text, partial: output })
-            stream.push({ type: 'text_end', contentIndex: 0, content: text, partial: output })
+            stream.push({ type: 'text_start', contentIndex: textIndex, partial: output })
+            const splitAt = Math.max(1, Math.floor(text.length / 2))
+            for (const delta of [text.slice(0, splitAt), text.slice(splitAt)].filter(Boolean)) {
+              stream.push({ type: 'text_delta', contentIndex: textIndex, delta, partial: output })
+            }
+            stream.push({ type: 'text_end', contentIndex: textIndex, content: text, partial: output })
             output.stopReason = 'stop'
           }
 

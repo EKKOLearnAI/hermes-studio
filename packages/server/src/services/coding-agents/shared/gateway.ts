@@ -1,3 +1,4 @@
+/** A provider request issued by a Coding Agent proxy. */
 export interface AgentGatewayRequest {
   url: string
   apiKey: string

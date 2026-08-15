@@ -5,25 +5,25 @@ import {
   anthropicMessagesUrl as resolveAnthropicMessagesUrl,
   chatCompletionsUrl as resolveChatCompletionsUrl,
   responsesUrl as resolveResponsesUrl,
-} from '../endpoint-resolver'
-import { sseEvent } from '../sse'
-import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../target-registry'
-import type { ApiMode } from '../types'
+} from '../shared/endpoint-resolver'
+import { sseEvent } from '../shared/sse'
+import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../shared/target-registry'
+import type { ApiMode } from '../shared/types'
 import {
   anthropicMessageToResponses,
   openAiChatToResponses,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
   truncateResponsesToolOutputs,
-} from '../adapters/responses'
+} from '../shared/adapters/responses'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../adapters/responses-stream'
-import { agentRunGateway } from '../gateway'
-import { codingAgentRunManager } from '../coding-agent-run-manager'
+} from '../shared/adapters/responses-stream'
+import { agentRunGateway } from '../shared/gateway'
+import { codingAgentRunManager } from '../runtime/run-manager'
 
 export interface CodexProxyTargetInput extends AgentTargetInput {
   profile: string

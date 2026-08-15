@@ -132,7 +132,7 @@ describe('workspace diff tracker', () => {
 
   it('persists the exact final assistant row id through the coding-agent completion path', async () => {
     const { startWorkspaceRunCheckpoint } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
-    const { CodingAgentRunManager } = await import('../../packages/server/src/services/agent-runner/coding-agent-run-manager')
+    const { CodingAgentRunManager } = await import('../../packages/server/src/services/coding-agents/runtime/run-manager')
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {

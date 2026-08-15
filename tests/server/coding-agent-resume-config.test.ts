@@ -26,7 +26,7 @@ vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getProfileDir: (profile: string) => `/tmp/hermes-profile/${profile}`,
 }))
 
-vi.doMock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.doMock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: {
     start: startRunMock,
   },

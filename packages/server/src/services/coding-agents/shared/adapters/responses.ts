@@ -1,3 +1,4 @@
+// Shared Responses payload translation for Coding Agent provider proxies.
 import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
 
 export interface ResponsesAdapterTarget {

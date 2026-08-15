@@ -1,3 +1,4 @@
+/** Split one provider stream into two independently consumed async iterables. */
 export function teeAsyncIterable<T>(source: AsyncIterable<T>): [AsyncIterable<T>, AsyncIterable<T>] {
   const iterator = source[Symbol.asyncIterator]()
   const buffers: [T[], T[]] = [[], []]

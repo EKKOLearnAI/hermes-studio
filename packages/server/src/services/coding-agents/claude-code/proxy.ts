@@ -5,33 +5,33 @@ import {
   anthropicMessagesUrl as resolveAnthropicMessagesUrl,
   chatCompletionsUrl as resolveChatCompletionsUrl,
   responsesUrl as resolveResponsesUrl,
-} from '../endpoint-resolver'
-import { parseSseFrame, readSseFrameTexts, sseEvent } from '../sse'
-import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../target-registry'
-import type { ApiMode } from '../types'
+} from '../shared/endpoint-resolver'
+import { parseSseFrame, readSseFrameTexts, sseEvent } from '../shared/sse'
+import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../shared/target-registry'
+import type { ApiMode } from '../shared/types'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../adapters/anthropic'
+} from '../shared/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../adapters/anthropic-stream'
+} from '../shared/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../adapters/responses-stream'
-import { agentRunGateway, ProviderApiError } from '../gateway'
-import { teeAsyncIterable } from '../stream-tee'
-import { codingAgentRunManager } from '../coding-agent-run-manager'
+} from '../shared/adapters/responses-stream'
+import { agentRunGateway, ProviderApiError } from '../shared/gateway'
+import { teeAsyncIterable } from '../shared/stream-tee'
+import { codingAgentRunManager } from '../runtime/run-manager'
 import { logger } from '../../logger'
 
-export type { ApiMode } from '../types'
+export type { ApiMode } from '../shared/types'
 
 export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
 

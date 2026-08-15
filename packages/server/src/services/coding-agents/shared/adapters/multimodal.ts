@@ -1,3 +1,4 @@
+/** Convert multimodal payloads between the supported provider wire formats. */
 export function anthropicImageSourceToUrl(source: any): string | null {
   if (source?.type === 'base64') {
     const mediaType = String(source.media_type || '').trim()

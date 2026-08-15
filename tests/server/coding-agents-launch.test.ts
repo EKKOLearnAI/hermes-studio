@@ -3,13 +3,17 @@ import { createCipheriv, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/claude-code-proxy'
-import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/codex-proxy'
+import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/coding-agents/claude-code/proxy'
+import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/coding-agents/codex/proxy'
 import {
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
   restorePersistedPiProxyTargets,
 } from '../../packages/server/src/services/coding-agents'
+import {
+  normalizePiThinkingLevel,
+  piModelSupportsThinking,
+} from '../../packages/server/src/services/coding-agents/pi/thinking'
 
 const homes: string[] = []
 
@@ -57,6 +61,17 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('translates Studio reasoning choices into Pi thinking levels', () => {
+    expect(normalizePiThinkingLevel('default')).toBeUndefined()
+    expect(normalizePiThinkingLevel('none')).toBe('off')
+    expect(normalizePiThinkingLevel('ultra')).toBe('max')
+    expect(normalizePiThinkingLevel('xhigh')).toBe('xhigh')
+    expect(normalizePiThinkingLevel('unsupported')).toBeUndefined()
+    expect(piModelSupportsThinking(false, 'high')).toBe(true)
+    expect(piModelSupportsThinking(false, 'none')).toBe(false)
+    expect(piModelSupportsThinking(true, 'none')).toBe(true)
+  })
+
   it('migrates persisted Pi MCP runtime configs from direct tools to proxy mode', async () => {
     const home = makeHome()
     const piHome = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
@@ -198,9 +213,15 @@ describe('coding agent launch preparation', () => {
       sessionId: 'session-2',
       agentSessionId: 'agent-session-2',
       piOutputMode: 'rpc',
+      reasoningEffort: 'high',
     })
     expect(rpcResult.args).toEqual(expect.arrayContaining(['--mode', 'rpc']))
     expect(readFileSync(join(rpcResult.rootDir, 'launch.sh'), 'utf-8')).toContain('--mode rpc')
+    const rpcModels = JSON.parse(readFileSync(join(rpcResult.rootDir, 'models.json'), 'utf-8'))
+    expect(rpcModels.providers['hermes-studio'].models[0]).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { xhigh: 'xhigh', max: 'max' },
+    })
   })
 
   it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
@@ -445,6 +466,15 @@ describe('coding agent launch preparation', () => {
       shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && codex`,
       files: [],
     })
+  })
+
+  it('rejects global mode for Pi before creating runtime files', async () => {
+    makeHome()
+
+    await expect(prepareCodingAgentLaunch('pi', {
+      mode: 'global',
+      profile: 'default',
+    })).rejects.toThrow('Pi currently requires Provider and model mode')
   })
 
   it('preserves existing global Claude Code prompt files while updating the Hermes block', async () => {

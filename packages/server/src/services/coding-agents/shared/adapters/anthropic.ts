@@ -1,3 +1,4 @@
+// Shared Anthropic payload translation for Coding Agent provider proxies.
 import { anthropicImageSourceToUrl } from './multimodal'
 
 export interface AnthropicAdapterTarget {

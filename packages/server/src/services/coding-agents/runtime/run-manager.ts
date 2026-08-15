@@ -2,19 +2,21 @@ import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
-import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
-import type { ApiMode, CodingAgentImageInput } from './types'
-import { logger } from '../logger'
-import { normalizeTokenUsage, recordSessionUsage } from '../usage-recorder'
-import { applyResponseStreamEvent, flushResponseRunToDb } from '../hermes/run-chat/response-stream'
-import { calcAndUpdateUsage, updateContextTokenUsage } from '../hermes/run-chat/usage'
-import { extractResponseText } from '../hermes/run-chat/response-utils'
-import type { SessionState } from '../hermes/run-chat/types'
-import type { CanonicalResponsesEvent } from './adapters/responses-stream'
-import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
-import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../hermes/run-chat/workspace-diff-tracker'
-import { attachPiJsonlReader } from './pi/pi-jsonl-parser'
+import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import type { ApiMode, CodingAgentImageInput } from '../shared/types'
+import { logger } from '../../logger'
+import { normalizeTokenUsage, recordSessionUsage } from '../../usage-recorder'
+import { applyResponseStreamEvent, flushResponseRunToDb } from '../../hermes/run-chat/response-stream'
+import { calcAndUpdateUsage, updateContextTokenUsage } from '../../hermes/run-chat/usage'
+import { extractResponseText } from '../../hermes/run-chat/response-utils'
+import type { SessionState } from '../../hermes/run-chat/types'
+import type { CanonicalResponsesEvent } from '../shared/adapters/responses-stream'
+import { mapCodingAgentResponseEvent } from './event-mapper'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../windows-command'
+import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../../hermes/run-chat/workspace-diff-tracker'
+import { attachPiJsonlReader } from '../pi/jsonl-parser'
+import { normalizePiThinkingLevel } from '../pi/thinking'
+import { getChatRunServer } from '../../hermes/run-chat/server-registry'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -1219,8 +1221,8 @@ export class CodingAgentRunManager {
       data: readFileSync(image.path).toString('base64'),
       mimeType: normalizedImageMediaType(image),
     }))
-    const thinkingLevel = String(run.launch.reasoningEffort || '').trim()
-    if (thinkingLevel && thinkingLevel !== 'default') {
+    const thinkingLevel = normalizePiThinkingLevel(run.launch.reasoningEffort)
+    if (thinkingLevel) {
       this.writePiRpcCommand(run, {
         id: `thinking_${responseId}`,
         type: 'set_thinking_level',
@@ -2727,9 +2729,6 @@ export class CodingAgentRunManager {
 
   private emitToChat(sessionId: string, event: string, payload: any) {
     try {
-      // Lazy require avoids coupling the service to bootstrap order.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getChatRunServer } = require('../../routes/hermes/chat-run')
       getChatRunServer()?.emitExternalEvent?.(sessionId, event, payload)
     } catch {}
   }
@@ -2772,8 +2771,6 @@ export class CodingAgentRunManager {
 
   private markChatRunCompleted(sessionId: string, event: string) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { getChatRunServer } = require('../../routes/hermes/chat-run')
       getChatRunServer()?.markExternalRunCompleted?.(sessionId, event)
     } catch {}
   }

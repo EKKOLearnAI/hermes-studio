@@ -1,7 +1,7 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
-import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from './coding-agents/runtime/run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'

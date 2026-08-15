@@ -12,7 +12,8 @@ impact: Hermes Studio can manage and run Pi in RPC mode with scoped provider rou
 - Generates per-run Pi `settings.json`, `models.json`, `mcp.json`, `APPEND_SYSTEM.md`, and session storage.
 - Exposes the four Hermes Studio MCP stdio servers lazily through the adapter proxy instead of registering every server tool in Pi's system prompt.
 - Uses the existing short-lived scoped provider proxy and model-run token flow.
-- Streams strict LF-framed Pi JSONL events into the existing canonical chat event pipeline and completes on `agent_settled`.
+- Streams strict LF-framed Pi JSONL text and thinking deltas into the existing
+  canonical chat event pipeline and completes on `agent_settled`.
 
 ## Runtime lifecycle
 
@@ -20,6 +21,32 @@ impact: Hermes Studio can manage and run Pi in RPC mode with scoped provider rou
 - Pi conversation state remains in its isolated session directory and the next turn restores the same native session id, while provider files and proxy routing are prepared again from current configuration.
 - Provider credential, base URL, and API-mode changes invalidate matching Coding Agent runtimes without interrupting active turns. Idle runtimes close immediately; active Claude/Codex runtimes close after their current terminal event, and Pi closes after every turn.
 - Failed provider updates do not invalidate runtimes, and successful API-key replace/clear operations use the provider editor's actual changed-field names.
+- Pi `text_delta` events publish `message.delta` immediately instead of waiting
+  for `agent_settled`; the final assistant message is used only to reconcile a
+  missing suffix before completion.
+- Pi `thinking_delta` events publish `reasoning.delta` immediately. Studio's
+  `none` reasoning effort is translated to Pi's `off`, and explicit non-off
+  choices opt custom models into Pi thinking when model metadata is unavailable.
+- Custom models without catalog metadata remain reasoning- and image-capable at
+  the Studio boundary; the upstream Provider remains authoritative if a mode is
+  actually unsupported.
+
+## Server service boundaries
+
+- Coding Agent server code lives under `services/coding-agents/`.
+- `index.ts` is the shared install/config/launch facade.
+- Managed lifecycle and canonical event mapping live under `runtime/`.
+- Provider transport and protocol adapters live under `shared/`.
+- Scoped Coding Agent Provider policy also lives under `shared/`; callers outside
+  the package import that boundary instead of defining a parallel allowlist.
+- Claude Code, Codex, and Pi implementation details live under
+  `claude-code/`, `codex/`, and `pi/` respectively.
+- Ordinary chat, group chat, and workflows continue to enter through the same
+  chat-run service. Group chat consumes live text/reasoning deltas; workflows
+  wait for the same terminal run event.
+- Coding Agent realtime events resolve the chat-run server through a stable
+  service registry, so moving agent internals cannot silently disconnect
+  `message.delta`, `reasoning.delta`, or terminal events from the Web UI.
 
 ## Product boundaries
 

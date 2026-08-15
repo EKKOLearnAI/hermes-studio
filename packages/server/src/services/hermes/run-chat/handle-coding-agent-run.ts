@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io'
-import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from '../../coding-agents/runtime/run-manager'
 import {
   sendCodingAgentRunInput,
   startCodingAgentRun,

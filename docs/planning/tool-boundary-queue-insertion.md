@@ -747,7 +747,7 @@ Likely implementation touchpoints:
 - `packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py`
 - `packages/ekko-agent/src/runtime/runtime.ts`
 - `packages/server/src/services/ekko-agent/manager.ts`
-- `packages/server/src/services/agent-runner/coding-agent-run-manager.ts`
+- `packages/server/src/services/coding-agents/runtime/run-manager.ts`
 - `packages/client/src/stores/hermes/chat.ts`
 - queue-related client components and every locale file
 - server, Ekko runtime, Bridge Python, client, and end-to-end tests

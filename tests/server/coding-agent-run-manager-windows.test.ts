@@ -60,7 +60,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', async (importOrigin
 import {
   CodingAgentRunManager,
   isolatedCodingAgentChildEnv,
-} from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
+} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -392,6 +392,7 @@ describe('coding agent Windows process launch', () => {
       profile: '默认',
       provider: 'test-provider',
       model: 'pi-test',
+      reasoningEffort: 'none',
       sessionId: 'chat-session-pi-1',
       command: 'C:\\用户\\管理员\\AppData\\Roaming\\npm\\pi.cmd',
       args: ['--mode', 'rpc', '--session-dir', 'C:\\用户\\会话 目录'],
@@ -418,8 +419,12 @@ describe('coding agent Windows process launch', () => {
       PI_CODING_AGENT_SESSION_DIR: 'C:\\用户\\会话 目录',
     })
     expect(call.options.windowsVerbatimArguments).toBe(true)
-    expect(call.child.stdin.write).toHaveBeenCalledOnce()
+    expect(call.child.stdin.write).toHaveBeenCalledTimes(2)
     expect(JSON.parse(call.child.stdin.write.mock.calls[0][0])).toMatchObject({
+      type: 'set_thinking_level',
+      level: 'off',
+    })
+    expect(JSON.parse(call.child.stdin.write.mock.calls[1][0])).toMatchObject({
       type: 'prompt',
       message: prompt,
     })
@@ -470,8 +475,15 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).handlePiRpcEvent(run, { type: 'auto_retry_end', success: true })
     ;(manager as any).handlePiRpcEvent(run, {
       type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_delta', delta: 'checking' },
+    })
+    expect(emitted.filter(item => item.event === 'reasoning.delta').map(item => item.payload.delta)).toEqual(['checking'])
+    ;(manager as any).handlePiRpcEvent(run, {
+      type: 'message_update',
       assistantMessageEvent: { type: 'text_delta', delta: 'final' },
     })
+    expect(emitted.filter(item => item.event === 'message.delta').map(item => item.payload.delta)).toEqual(['final'])
+    expect(emitted.some(item => item.event === 'run.completed')).toBe(false)
     ;(manager as any).handlePiRpcEvent(run, {
       type: 'message_end',
       message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'final answer' }] },

@@ -7,22 +7,23 @@ import {
   chatCompletionsUrl,
   providerEndpointUrl,
   responsesUrl,
-} from '../../packages/server/src/services/agent-runner/endpoint-resolver'
-import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/agent-runner/sse'
-import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/agent-runner/target-registry'
-import { teeAsyncIterable } from '../../packages/server/src/services/agent-runner/stream-tee'
+} from '../../packages/server/src/services/coding-agents/shared/endpoint-resolver'
+import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/coding-agents/shared/sse'
+import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/coding-agents/shared/target-registry'
+import { teeAsyncIterable } from '../../packages/server/src/services/coding-agents/shared/stream-tee'
 import {
   buildClaudeStreamJsonInput,
   codexImageArgs,
   CodingAgentRunManager,
   codingAgentGatewayErrorMessage,
   sanitizeCodingAgentTerminalOutput,
-} from '../../packages/server/src/services/agent-runner/coding-agent-run-manager'
-import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/agent-runner/coding-agent-event-mapper'
+} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/coding-agents/runtime/event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
 import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/db/hermes/usage-store'
+import { getChatRunServer, setChatRunServer } from '../../packages/server/src/services/hermes/run-chat/server-registry'
 
 describe('agent runner endpoint resolver', () => {
   it('adds v1 for provider hosts without an API root path', () => {
@@ -56,6 +57,27 @@ describe('agent runner endpoint resolver', () => {
 })
 
 describe('coding agent completion errors', () => {
+  it('publishes realtime and terminal events after the run manager directory move', () => {
+    const previous = getChatRunServer()
+    const emitExternalEvent = vi.fn()
+    const markExternalRunCompleted = vi.fn()
+    setChatRunServer({ emitExternalEvent, markExternalRunCompleted } as any)
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).emitToChat('chat-relocated-manager', 'reasoning.delta', { delta: 'thinking' })
+      ;(manager as any).markChatRunCompleted('chat-relocated-manager', 'run.completed')
+
+      expect(emitExternalEvent).toHaveBeenCalledWith(
+        'chat-relocated-manager',
+        'reasoning.delta',
+        { delta: 'thinking' },
+      )
+      expect(markExternalRunCompleted).toHaveBeenCalledWith('chat-relocated-manager', 'run.completed')
+    } finally {
+      setChatRunServer(previous)
+    }
+  })
+
   it('does not let a stalled usage refresh block the terminal chat event', async () => {
     vi.useFakeTimers()
     try {

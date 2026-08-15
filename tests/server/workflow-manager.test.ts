@@ -169,6 +169,7 @@ describe('workflow manager', () => {
     expect(normalizeWorkflowNode({ id: 'hermes', type: 'agent', data: { agent: 'hermes' } })?.data.agent).toBe('hermes')
     expect(normalizeWorkflowNode({ id: 'claude', type: 'agent', data: { agent: 'claude-code' } })?.data.agent).toBe('claude-code')
     expect(normalizeWorkflowNode({ id: 'codex', type: 'agent', data: { agent: 'codex' } })?.data.agent).toBe('codex')
+    expect(normalizeWorkflowNode({ id: 'pi', type: 'agent', data: { agent: 'pi' } })?.data.agent).toBe('pi')
   })
 
   it('normalizes workflow node join mode and rejects malformed explicit values', async () => {
@@ -322,25 +323,25 @@ describe('workflow manager', () => {
     } finally { await manager.delete(workflow.id) }
   })
 
-  it('continues forwarding api mode for coding-agent workflow nodes', async () => {
+  it.each(['codex', 'pi'] as const)('continues forwarding api mode for %s workflow nodes', async (agent) => {
     const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
     const { WorkflowManager } = await import('../../packages/server/src/services/workflow-manager')
     initAllStores()
     chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'done' })
     const manager = new WorkflowManager()
     const workflow = manager.create({
-      name: `Coding Agent api mode ${Date.now()}`,
+      name: `${agent} api mode ${Date.now()}`,
       profile: 'default',
       nodes: [{ id: 'agent', type: 'agent', data: {
-        title: 'Agent', agent: 'codex', provider: 'custom:test', model: 'model-a',
-        apiMode: 'chat_completions', input: 'work',
+        title: 'Agent', agent, provider: 'custom:test', model: 'model-a',
+        apiMode: 'chat_completions', reasoningEffort: 'high', input: 'work',
       } }],
       edges: [],
     })
     try {
       await manager.runNow(workflow.id)
       expect(chatRunMock.runAndWait).toHaveBeenCalledWith(expect.objectContaining({
-        coding_agent_id: 'codex', apiMode: 'chat_completions',
+        coding_agent_id: agent, apiMode: 'chat_completions', reasoning_effort: 'high',
       }), expect.any(Object))
       expect(chatRunMock.runAndWait.mock.calls[0]?.[0]).not.toHaveProperty('background_delegation_enabled')
     } finally { await manager.delete(workflow.id) }

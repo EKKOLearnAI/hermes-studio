@@ -5,21 +5,22 @@ import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'fs/pr
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
-import { getWebUiHome } from '../config'
-import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
-import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
-import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
-import { registerCodexProxyTarget, restoreCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
-import type { ApiMode, CodingAgentImageInput } from './agent-runner/types'
-import { PROVIDER_PRESETS } from '../shared/providers'
-import { getModelContextLength, getModelRuntimeCapabilities } from './hermes/model-context'
-import { getProfileDir } from './hermes/hermes-profile'
-import { getSystemPrompt } from '../lib/llm-prompt'
-import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
-import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
-import type { SessionState } from './hermes/run-chat/types'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from './windows-command'
-import { assertScopedCodingAgentProviderAllowed } from './coding-agent-provider-policy'
+import { getWebUiHome } from '../../config'
+import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from '../config-helpers'
+import { getCompatibleCustomProviders } from '../hermes/custom-providers-compat'
+import { registerClaudeCodeProxyTarget } from './claude-code/proxy'
+import { registerCodexProxyTarget, restoreCodexProxyTarget } from './codex/proxy'
+import type { ApiMode, CodingAgentImageInput } from './shared/types'
+import { PROVIDER_PRESETS } from '../../shared/providers'
+import { getModelContextLength, getModelRuntimeCapabilities } from '../hermes/model-context'
+import { getProfileDir } from '../hermes/hermes-profile'
+import { getSystemPrompt } from '../../lib/llm-prompt'
+import { codingAgentRunManager } from './runtime/run-manager'
+import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
+import { getSession, updateSession, type HermesSessionRow } from '../../db/hermes/session-store'
+import type { SessionState } from '../hermes/run-chat/types'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../windows-command'
+import { assertScopedCodingAgentProviderAllowed } from './shared/provider-policy'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -1507,8 +1508,10 @@ function piModelsConfig(input: {
   model: string
   profile: string
   provider: string
+  reasoningEffort?: string
 }): string {
   const capabilities = getModelRuntimeCapabilities(input)
+  const reasoning = piModelSupportsThinking(capabilities.reasoning, input.reasoningEffort)
   return `${JSON.stringify({
     providers: {
       [PI_PROVIDER_ID]: {
@@ -1520,7 +1523,8 @@ function piModelsConfig(input: {
         models: [{
           id: input.model,
           name: displayNameForModel(input.model),
-          reasoning: capabilities.reasoning,
+          reasoning,
+          ...(reasoning ? { thinkingLevelMap: PI_EXTENDED_THINKING_LEVEL_MAP } : {}),
           input: capabilities.input,
           contextWindow: capabilities.contextWindow,
           maxTokens: capabilities.outputLimit,
@@ -2515,6 +2519,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       model,
       profile: scope.profile,
       provider,
+      reasoningEffort,
     }))
     if (proxyTarget) {
       const proxyTargetPath = join(rootDir, PI_PROXY_TARGET_FILE)

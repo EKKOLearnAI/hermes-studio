@@ -1,3 +1,4 @@
+// Shared Responses stream translation for Coding Agent provider proxies.
 import { readSseFrameTexts } from '../sse'
 import { normalizeResponseFunctionCall, responseToolNamespaceForName } from './responses'
 
