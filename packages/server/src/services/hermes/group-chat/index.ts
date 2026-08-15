@@ -250,6 +250,17 @@ interface RoomAgent {
     remoteOrigin: string
 }
 
+interface GroupAgentActivity {
+    roomId: string
+    agentId: string
+    runId: string
+    agentName: string
+    agent: RoomAgent['agent']
+    avatar: string
+    status: 'compressing' | 'replying' | 'ready'
+    agentSessionId?: string
+}
+
 interface RoomAgentMetadata {
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     provider?: string
@@ -3106,6 +3117,8 @@ export class GroupChatServer {
         status: string
         agentSessionId?: string
     }>>()
+    /** Stable room + persisted Agent row + run activity visible across authorized rooms. */
+    private roomAgentActivityState = new Map<string, Map<string, GroupAgentActivity>>()
     /** room-scoped approval locator -> validated room and runtime session that requested it. */
     private pendingApprovalRoutes = new Map<string, PendingGroupApprovalRoute>()
     private pendingApprovalTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -3260,7 +3273,7 @@ export class GroupChatServer {
             this.agentClients.getAgent(roomId, agentId)?.connected === true
         )
         this.agentClients.setRoomSummaryService(this.roomSummaryService)
-        this.agentClients.setActivityBroadcaster((roomId, agentName, status) => {
+        this.agentClients.setActivityBroadcaster((roomId, agentName, status, runId) => {
             let roomStatuses = this.contextStatusState.get(roomId)
             if (status === 'ready') {
                 roomStatuses?.delete(agentName)
@@ -3273,6 +3286,7 @@ export class GroupChatServer {
                 roomStatuses.set(agentName, { agentName, status })
             }
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status })
+            if (runId) this.updateRoomAgentActivity(roomId, agentName, status, runId)
         })
         this.agentClients.setExecutionQueueBroadcaster((roomId) => {
             this.broadcastExecutionQueue(roomId)
@@ -3724,6 +3738,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearRoomAgentActivities(roomId)
         this.clearPendingApprovalRoutes(roomId)
         this.clearPendingClarifyRoutes(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
@@ -3745,6 +3760,7 @@ export class GroupChatServer {
             this.typingState.delete(roomId)
         }
         this.contextStatusState.delete(roomId)
+        this.clearRoomAgentActivities(roomId)
         this.clearPendingApprovalRoutes(roomId)
         this.clearPendingClarifyRoutes(roomId)
         const releaseSessionFence = this.fenceCurrentRoomAgentSessions(roomId)
@@ -3877,6 +3893,9 @@ export class GroupChatServer {
         socket.on('load_pending_approvals', (_data: unknown, ack?: (response?: unknown) => void) => {
             ack?.({ pendingApprovals: this.pendingApprovalSnapshots(null, socket) })
         })
+        socket.on('load_room_agent_activities', (_data: unknown, ack?: (response?: unknown) => void) => {
+            this.handleLoadRoomAgentActivities(socket, {}, ack)
+        })
         socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
         socket.on('update_member_profile', (data: { roomId?: string; name?: string; description?: string } | undefined, ack?: (response?: unknown) => void) => this.handleUpdateMemberProfile(socket, data, ack))
         socket.on('message', (data: IncomingGroupChatMessage, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
@@ -3886,7 +3905,7 @@ export class GroupChatServer {
         socket.on('message_stream_end', (data: { roomId?: string; id?: string }) => this.handleMessageStreamEnd(socket, data))
         socket.on('typing', (data: { roomId?: string }) => this.handleTyping(socket, data))
         socket.on('stop_typing', (data: { roomId?: string }) => this.handleStopTyping(socket, data))
-        socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string }) => this.handleContextStatus(socket, data))
+        socket.on('context_status', (data: { roomId?: string; agentName?: string; status?: string; runId?: string }) => this.handleContextStatus(socket, data))
         socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string; executionQueueCapability?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
@@ -3933,6 +3952,107 @@ export class GroupChatServer {
         if (typeof authUser.id === 'number' && Number(room.ownerAuthUserId || 0) === authUser.id) return true
         const profiles = authenticatedUserProfiles(authUser)
         return profiles.length > 0 && typeof this.storage.getRoomsForProfiles === 'function' && this.storage.getRoomsForProfiles(profiles).some(candidate => candidate.id === roomId)
+    }
+
+    private canSocketObserveRoom(socket: Socket, roomId: string): boolean {
+        if (this.socketRequestedSourceMap?.get(socket.id) === 'agent') return false
+        if (typeof socket.data?.inviteGuestRoomId === 'string') return false
+        const authUser = socket.data?.authUser as AuthenticatedUser | undefined
+        if (!authUser) return false
+        const userId = this.socketUserMap?.get(socket.id)
+            || (typeof authUser.id === 'number' ? authenticatedGroupUserId(authUser.id) : '')
+        const existingMember = userId && typeof this.storage.getMemberByUserId === 'function'
+            ? this.storage.getMemberByUserId(roomId, userId)
+            : null
+        const authMember = typeof authUser.id === 'number' && typeof this.storage.getMemberByAuthUserId === 'function'
+            ? this.storage.getMemberByAuthUserId(roomId, authUser.id)
+            : null
+        if (existingMember || authMember) return true
+        const room = typeof this.storage.getRoom === 'function' ? this.storage.getRoom(roomId) : undefined
+        if (!room) return false
+        return this.canSocketJoinRoom(socket, roomId, room, null)
+    }
+
+    private roomAgentActivityKey(agentId: string, runId: string): string {
+        return `${agentId}\u0000${runId}`
+    }
+
+    private publicRoomAgentActivity(activity: GroupAgentActivity): Omit<GroupAgentActivity, 'agentSessionId'> {
+        const { agentSessionId: _agentSessionId, ...visible } = activity
+        return visible
+    }
+
+    private emitRoomAgentActivity(activity: GroupAgentActivity): void {
+        const payload = this.publicRoomAgentActivity(activity)
+        const sockets = this.nsp.sockets?.values?.()
+        if (!sockets) return
+        for (const socket of sockets) {
+            if (this.canSocketObserveRoom(socket, activity.roomId)) {
+                socket.emit('room_agent_activity', payload)
+            }
+        }
+    }
+
+    private updateRoomAgentActivity(
+        roomId: string,
+        agentName: string,
+        status: 'compressing' | 'replying' | 'ready',
+        rawRunId: string,
+        agentSessionId = '',
+    ): void {
+        const runId = rawRunId.trim().slice(0, 500)
+        if (!runId) return
+        const roomAgent = this.storage.getRoomAgents(roomId)
+            .find(candidate => candidate.name === agentName)
+        if (!roomAgent) return
+        const key = this.roomAgentActivityKey(roomAgent.id, runId)
+        const activity: GroupAgentActivity = {
+            roomId,
+            agentId: roomAgent.id,
+            runId,
+            agentName: roomAgent.name,
+            agent: roomAgent.agent,
+            avatar: roomAgent.avatar,
+            status,
+            ...(agentSessionId ? { agentSessionId } : {}),
+        }
+        const activityState = this.roomAgentActivityState || (this.roomAgentActivityState = new Map())
+        const roomActivities = activityState.get(roomId)
+        if (status === 'ready') {
+            roomActivities?.delete(key)
+            if (roomActivities?.size === 0) activityState.delete(roomId)
+        } else {
+            const next = roomActivities || new Map<string, GroupAgentActivity>()
+            next.set(key, activity)
+            if (!roomActivities) activityState.set(roomId, next)
+        }
+        this.emitRoomAgentActivity(activity)
+    }
+
+    private clearRoomAgentActivities(roomId: string, agentId?: string): void {
+        const roomActivities = this.roomAgentActivityState?.get(roomId)
+        if (!roomActivities) return
+        for (const [key, activity] of roomActivities) {
+            if (agentId && activity.agentId !== agentId) continue
+            roomActivities.delete(key)
+            this.emitRoomAgentActivity({ ...activity, status: 'ready' })
+        }
+        if (roomActivities.size === 0) this.roomAgentActivityState.delete(roomId)
+    }
+
+    private handleLoadRoomAgentActivities(
+        socket: Socket,
+        _data: unknown,
+        ack?: (response?: unknown) => void,
+    ): void {
+        const activities: Array<Omit<GroupAgentActivity, 'agentSessionId'>> = []
+        for (const [roomId, roomActivities] of this.roomAgentActivityState || []) {
+            if (!this.canSocketObserveRoom(socket, roomId)) continue
+            for (const activity of roomActivities.values()) {
+                activities.push(this.publicRoomAgentActivity(activity))
+            }
+        }
+        ack?.({ activities })
     }
 
     private groupAgentOwnerMemberId(roomId: string, agentName: string): string {
@@ -4678,13 +4798,14 @@ export class GroupChatServer {
         })
     }
 
-    private handleContextStatus(socket: Socket, data: { roomId?: string; agentName?: string; status?: string; totalTokens?: number; agentSessionId?: string }): void {
+    private handleContextStatus(socket: Socket, data: { roomId?: string; agentName?: string; status?: string; totalTokens?: number; agentSessionId?: string; runId?: string }): void {
         const roomId = data.roomId || 'general'
         const agentName = data.agentName || ''
         const status = data.status || ''
         const agentSessionId = typeof data.agentSessionId === 'string' ? data.agentSessionId.trim() : ''
 
         if (!agentName) return
+        if (status !== 'compressing' && status !== 'replying' && status !== 'ready') return
 
         if (status === 'ready') {
             const joined = this.getOnlineRoomMember(socket, roomId)
@@ -4719,6 +4840,9 @@ export class GroupChatServer {
             agentName,
             status,
         })
+        if (typeof data.runId === 'string' && data.runId.trim()) {
+            this.updateRoomAgentActivity(roomId, agentName, status, data.runId, agentSessionId)
+        }
     }
 
     private async handleInterruptAgent(socket: Socket, data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void): Promise<void> {
@@ -4742,6 +4866,10 @@ export class GroupChatServer {
             const roomStatuses = this.contextStatusState.get(roomId)
             roomStatuses?.delete(agentName)
             if (roomStatuses?.size === 0) this.contextStatusState.delete(roomId)
+            const agent = this.storage && typeof this.storage.getRoomAgents === 'function'
+                ? this.storage.getRoomAgents(roomId).find(candidate => candidate.name === agentName)
+                : null
+            if (agent) this.clearRoomAgentActivities(roomId, agent.id)
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status: 'ready' })
             ack?.({ ok: true })
         } catch (err: any) {
@@ -4835,6 +4963,7 @@ export class GroupChatServer {
             revokeGroupAgentConnector(agent.connectorId)
         }
         this.storage.removeRoomAgent(roomId, agent.id)
+        this.clearRoomAgentActivities(roomId, agent.id)
         await this.agentClients.removeAgentFromRoom(roomId, agent.agentId)
         this.broadcastRoomAgents(roomId)
         ack?.({
@@ -5205,6 +5334,23 @@ export class GroupChatServer {
                 this.nsp.to(roomId).emit('stop_typing', {
                     roomId,
                     userId: userId || socketId,
+                })
+            }
+        }
+
+        if (this.socketRequestedSourceMap.get(socketId) === 'agent') {
+            for (const [roomId, room] of this.rooms) {
+                const member = room.getOnlineMemberBySocketId(socketId)
+                if (member?.source !== 'agent') continue
+                const roomAgent = this.storage.getRoomAgentByAgentId(roomId, member.userId)
+                if (roomAgent) this.clearRoomAgentActivities(roomId, roomAgent.id)
+                const roomStatuses = this.contextStatusState.get(roomId)
+                roomStatuses?.delete(member.name)
+                if (roomStatuses?.size === 0) this.contextStatusState.delete(roomId)
+                this.nsp.to(roomId).emit('context_status', {
+                    roomId,
+                    agentName: member.name,
+                    status: 'ready',
                 })
             }
         }

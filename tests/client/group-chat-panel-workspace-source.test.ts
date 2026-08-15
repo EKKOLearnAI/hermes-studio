@@ -364,6 +364,19 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
   })
 
+  it('renders exact active-run avatars on transcript cards and room-list overflow', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const runCard = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
+
+    expect(panel).toContain('activeAgentRunsForRoom(room.id).slice(0, 3)')
+    expect(panel).toContain("activeAgentRunsForRoom(room.id).length - 3")
+    expect(list).toContain(':active="store.isAgentRunActive(')
+    expect(runCard).toContain("'run-avatar-active': active")
+    expect(runCard).toContain(':aria-busy="active"')
+    expect(runCard).toContain('@media (prefers-reduced-motion: reduce)')
+  })
+
   it('shows agent runtime details when hovering message avatars and can insert a mention into the group input', () => {
     const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const avatarSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentMessageAvatar.vue', 'utf8')

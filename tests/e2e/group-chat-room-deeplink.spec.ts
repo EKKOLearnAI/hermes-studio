@@ -337,6 +337,9 @@ function makeSocket(url, options) {
         const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
         setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: (roomMessages[roomId] || []).filter(message => !retracted.has(message.id)), agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
       }
+      if (event === 'load_room_agent_activities' && typeof ack === 'function') {
+        setTimeout(() => ack({ activities: [] }), 0)
+      }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
       }
@@ -545,6 +548,55 @@ test.describe('group chat room deep links', () => {
     const toolNames = await panel.locator('.tool-name').allTextContents()
     expect(toolNames[0]).toBe('live_tool_12')
     expect(toolNames.at(-1)).toBe('live_tool_1')
+  })
+
+  test('shows exact active-run animation and keeps cross-room avatar overflow visible', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const activity = (overrides: Record<string, unknown> = {}) => ({
+      roomId: 'room-alpha',
+      agentId: 'agent-row-1',
+      runId: 'run-live-tools',
+      agentName: 'Worker',
+      agent: 'hermes',
+      avatar: '',
+      status: 'replying',
+      ...overrides,
+    })
+    await triggerGroupSocket(page, 'room_agent_activity', activity())
+
+    await expect(page.locator('.group-agent-run[data-run-id="run-live-tools"] .run-avatar')).toHaveClass(/run-avatar-active/)
+    await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-avatar')).not.toHaveClass(/run-avatar-active/)
+
+    for (let index = 2; index <= 4; index += 1) {
+      await triggerGroupSocket(page, 'room_agent_activity', activity({
+        agentId: `agent-row-${index}`,
+        runId: `run-${index}`,
+        agentName: `Worker ${index}`,
+      }))
+    }
+    await triggerGroupSocket(page, 'room_agent_activity', activity({
+      roomId: 'room-beta',
+      agentId: 'agent-row-runtime',
+      runId: 'run-beta',
+      agentName: 'Runtime Worker',
+    }))
+
+    const alphaRoom = page.locator('.room-item', { hasText: 'Alpha Room' })
+    const betaRoom = page.locator('.room-item', { hasText: 'Beta Room' })
+    await expect(alphaRoom.locator('.room-active-agent-avatar')).toHaveCount(3)
+    await expect(alphaRoom.locator('.room-active-agent-overflow')).toHaveText('+1')
+    await expect(betaRoom.locator('.room-active-agent-avatar')).toHaveCount(1)
+
+    await betaRoom.click()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(alphaRoom.locator('.room-active-agent-overflow')).toHaveText('+1')
+    await expect(betaRoom.locator('.room-active-agent-avatar')).toHaveCount(1)
+
+    await triggerGroupSocket(page, 'room_agent_activity', activity({ status: 'ready' }))
+    await expect(alphaRoom.locator('.room-active-agent-overflow')).toHaveCount(0)
+    await expect(alphaRoom.locator('.room-active-agent-avatar')).toHaveCount(3)
+    await expect(betaRoom.locator('.room-active-agent-avatar')).toHaveCount(1)
   })
 
   test('loads older group messages from an upward gesture at the top and anchors the visible transcript', async ({ page }) => {

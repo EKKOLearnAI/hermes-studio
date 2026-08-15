@@ -25,7 +25,7 @@ import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type { GroupAgentActivity, GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -410,6 +410,18 @@ function handleAgentProviderChange(provider: string) {
 
 function agentAvatarName(agent: RoomAgent): string {
     return agent.agent || 'hermes'
+}
+
+function activeAgentRunsForRoom(roomId: string): GroupAgentActivity[] {
+    return store.activeAgentRunsForRoom(roomId)
+}
+
+function roomActivityLabel(activity: GroupAgentActivity): string {
+    return `${activity.agentName} ${
+        activity.status === 'compressing'
+            ? t('groupChat.agentCompressing')
+            : t('groupChat.agentReplying')
+    }`
 }
 
 function agentContextStatus(agent: RoomAgent): { agentName: string; status: string } | undefined {
@@ -1765,6 +1777,34 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                 <span class="room-name">{{ room.name || room.id }}</span>
                                 <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                                 <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
+                            </div>
+                            <div
+                                v-if="activeAgentRunsForRoom(room.id).length"
+                                class="room-active-agents"
+                                role="status"
+                                :aria-label="activeAgentRunsForRoom(room.id).map(roomActivityLabel).join(', ')"
+                            >
+                                <span
+                                    v-for="activity in activeAgentRunsForRoom(room.id).slice(0, 3)"
+                                    :key="`${activity.agentId}:${activity.runId}`"
+                                    class="room-active-agent-avatar"
+                                    :title="roomActivityLabel(activity)"
+                                    :aria-label="roomActivityLabel(activity)"
+                                    aria-busy="true"
+                                >
+                                    <ProfileAvatar
+                                        :name="activity.agent || activity.agentName"
+                                        :avatar="parseStoredAvatar(activity.avatar)"
+                                        :size="22"
+                                    />
+                                </span>
+                                <span
+                                    v-if="activeAgentRunsForRoom(room.id).length > 3"
+                                    class="room-active-agent-overflow"
+                                    :aria-label="`+${activeAgentRunsForRoom(room.id).length - 3}`"
+                                >
+                                    +{{ activeAgentRunsForRoom(room.id).length - 3 }}
+                                </span>
                             </div>
                             <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
                                 <template #trigger>
@@ -3408,6 +3448,52 @@ export default defineComponent({ components: { CreateRoomForm } })
 
     &:hover .room-action-btn {
         opacity: 1;
+    }
+}
+
+.room-active-agents {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    padding-inline-start: 4px;
+}
+
+.room-active-agent-avatar {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    overflow: hidden;
+    margin-inline-start: -5px;
+    border: 2px solid $bg-sidebar;
+    border-radius: 50%;
+    animation: agent-avatar-rainbow-glow 4s linear infinite;
+
+    &:first-child {
+        margin-inline-start: 0;
+    }
+}
+
+.room-active-agent-overflow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    margin-inline-start: -4px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border: 2px solid $bg-sidebar;
+    border-radius: 11px;
+    background: $bg-main-surface;
+    color: $text-secondary;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .room-active-agent-avatar {
+        animation: none;
+        box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.75);
     }
 }
 

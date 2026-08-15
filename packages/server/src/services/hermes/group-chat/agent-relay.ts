@@ -817,7 +817,9 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         this.proxy.emitContextStatus(
           pending.roomId,
           data.status === 'compressing' || data.status === 'ready' ? data.status : 'replying',
-          undefined,
+          typeof data.runId === 'string' && data.runId.trim()
+            ? { runId: data.runId.slice(0, 500) }
+            : undefined,
           sessionId || undefined,
         )
         break

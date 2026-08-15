@@ -790,6 +790,135 @@ describe('Group Chat member/agent identity sync', () => {
     }))
   })
 
+  it('broadcasts stable run activity only to authorized human room observers', () => {
+    const joinedRoomEmit = vi.fn()
+    const memberEmit = vi.fn()
+    const outsiderEmit = vi.fn()
+    const agentEmit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map([['room-1', {
+      getOnlineMemberBySocketId: vi.fn((socketId: string) => socketId === 'agent-socket'
+        ? {
+            id: 'agent-member',
+            userId: 'runtime-agent-id',
+            name: 'Worker',
+            source: 'agent',
+          }
+        : null),
+    }]])
+    server.contextStatusState = new Map()
+    server.socketRequestedSourceMap = new Map([
+      ['agent-socket', 'agent'],
+      ['member-socket', 'human'],
+      ['outsider-socket', 'human'],
+    ])
+    server.socketUserMap = new Map([
+      ['member-socket', 'auth:7'],
+      ['outsider-socket', 'auth:8'],
+    ])
+    server.storage = {
+      getRoom: vi.fn(() => ({ id: 'room-1', sessionSeed: 'seed-1' })),
+      getRoomAgentByAgentId: vi.fn(() => ({
+        id: 'agent-row-1',
+        roomId: 'room-1',
+        agentId: 'runtime-agent-id',
+        agent: 'codex',
+        profile: 'default',
+        name: 'Worker',
+        avatar: 'worker.png',
+      })),
+      getRoomAgents: vi.fn(() => [{
+        id: 'agent-row-1',
+        roomId: 'room-1',
+        agentId: 'runtime-agent-id',
+        agent: 'codex',
+        profile: 'default',
+        name: 'Worker',
+        avatar: 'worker.png',
+      }]),
+      getMemberByUserId: vi.fn((_roomId: string, userId: string) => (
+        userId === 'auth:7' ? { userId, source: 'human' } : null
+      )),
+    }
+    server.agentClients = { agentSessionIsCurrent: vi.fn(() => true) }
+    server.nsp = {
+      sockets: new Map([
+        ['agent-socket', { id: 'agent-socket', data: {}, emit: agentEmit }],
+        ['member-socket', { id: 'member-socket', data: { authUser: { id: 7 } }, emit: memberEmit }],
+        ['outsider-socket', { id: 'outsider-socket', data: { authUser: { id: 8 } }, emit: outsiderEmit }],
+      ]),
+      to: vi.fn(() => ({ emit: joinedRoomEmit })),
+    }
+    const socket = {
+      id: 'agent-socket',
+      to: vi.fn(() => ({ emit: joinedRoomEmit })),
+    }
+
+    server.handleContextStatus(socket, {
+      roomId: 'room-1',
+      agentName: 'Worker',
+      status: 'replying',
+      runId: 'run-1',
+      agentSessionId: 'session-1',
+    })
+
+    expect(memberEmit).toHaveBeenCalledWith('room_agent_activity', {
+      roomId: 'room-1',
+      agentId: 'agent-row-1',
+      runId: 'run-1',
+      agentName: 'Worker',
+      agent: 'codex',
+      avatar: 'worker.png',
+      status: 'replying',
+    })
+    expect(outsiderEmit).not.toHaveBeenCalledWith('room_agent_activity', expect.anything())
+    expect(agentEmit).not.toHaveBeenCalledWith('room_agent_activity', expect.anything())
+  })
+
+  it('returns all active runs for rooms the human socket may observe', () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.roomAgentActivityState = new Map([
+      ['room-1', new Map([
+        ['agent-row-1\u0000run-1', {
+          roomId: 'room-1',
+          agentId: 'agent-row-1',
+          runId: 'run-1',
+          agentName: 'Worker',
+          agent: 'codex',
+          avatar: '',
+          status: 'replying',
+          agentSessionId: 'session-1',
+        }],
+      ])],
+      ['room-2', new Map([
+        ['agent-row-2\u0000run-2', {
+          roomId: 'room-2',
+          agentId: 'agent-row-2',
+          runId: 'run-2',
+          agentName: 'Secret',
+          agent: 'claude',
+          avatar: '',
+          status: 'replying',
+          agentSessionId: 'session-2',
+        }],
+      ])],
+    ])
+    server.socketRequestedSourceMap = new Map([['member-socket', 'human']])
+    server.socketUserMap = new Map([['member-socket', 'auth:7']])
+    server.storage = {
+      getMemberByUserId: vi.fn((roomId: string, userId: string) => (
+        roomId === 'room-1' && userId === 'auth:7' ? { userId, source: 'human' } : null
+      )),
+    }
+    const ack = vi.fn()
+
+    server.handleLoadRoomAgentActivities({ id: 'member-socket', data: { authUser: { id: 7 } } }, {}, ack)
+
+    expect(ack).toHaveBeenCalledWith({
+      activities: [expect.objectContaining({ roomId: 'room-1', runId: 'run-1' })],
+    })
+  })
+
   it('accepts side-channel events for the persisted non-Hermes runtime session', () => {
     const broadcastEmit = vi.fn()
     const agentMember = {

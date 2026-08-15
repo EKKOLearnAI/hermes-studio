@@ -15,8 +15,10 @@ const props = withDefaults(defineProps<{
     members?: MemberInfo[]
     currentUserId?: string
     allowSpeech?: boolean
+    active?: boolean
 }>(), {
     allowSpeech: true,
+    active: false,
 })
 
 const emit = defineEmits<{
@@ -77,7 +79,11 @@ function handleToolListWheel(event: WheelEvent): void {
 
 <template>
     <div class="group-agent-run" :data-run-id="message.run_id || undefined">
-        <div class="run-avatar">
+        <div
+            class="run-avatar"
+            :class="{ 'run-avatar-active': active }"
+            :aria-busy="active"
+        >
             <GroupAgentMessageAvatar
                 v-if="agentInfo"
                 :agent="agentInfo"
@@ -168,6 +174,31 @@ function handleToolListWheel(event: WheelEvent): void {
     margin-top: 2px;
     overflow: visible;
     border-radius: 8px;
+}
+
+.run-avatar-active {
+    animation: run-avatar-active-glow 4s linear infinite;
+}
+
+@keyframes run-avatar-active-glow {
+    0% {
+        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+    }
+
+    50% {
+        box-shadow: 0 0 0 2px rgba(185, 100, 255, 0.85), 0 0 12px rgba(185, 100, 255, 0.4);
+    }
+
+    100% {
+        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .run-avatar-active {
+        animation: none;
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.75);
+    }
 }
 
 .run-column {

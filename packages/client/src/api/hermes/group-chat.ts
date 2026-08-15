@@ -103,6 +103,18 @@ export interface RoomAgent {
     historical?: boolean
 }
 
+export interface GroupAgentActivity {
+    roomId: string
+    /** Stable gc_room_agents row identity. */
+    agentId: string
+    /** Stable response/run identity shared by every message in one Agent run. */
+    runId: string
+    agentName: string
+    agent: RoomAgent['agent']
+    avatar: string
+    status: 'compressing' | 'replying' | 'ready'
+}
+
 export interface RoomAgentInput {
     agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string

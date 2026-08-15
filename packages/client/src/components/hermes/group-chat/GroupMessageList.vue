@@ -87,6 +87,12 @@ function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMes
     )
 }
 
+function stableMessageAgentId(message: import('@/api/hermes/group-chat').ChatMessage): string {
+    if (message.senderAgentRecordId) return message.senderAgentRecordId
+    return store.messageAgents.find(agent => agent.agentId === message.senderId)?.id
+        || message.senderId
+}
+
 function updateScrollBottomButton(): void {
     showScrollBottomButton.value = displayMessages.value.length > 0 && !(listRef.value?.isNearBottom(1000) ?? true)
 }
@@ -212,6 +218,11 @@ defineExpose({ scrollToBottom })
                         :members="store.members"
                         :current-user-id="store.userId"
                         :allow-speech="props.allowSpeech"
+                        :active="store.isAgentRunActive(
+                            msg.roomId,
+                            stableMessageAgentId(msg),
+                            msg.run_id,
+                        )"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <GroupMessageItem
