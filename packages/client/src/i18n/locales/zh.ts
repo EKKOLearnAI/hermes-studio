@@ -381,7 +381,7 @@ export default {
       viewList: '列表',
       viewDownload: '下载',
       downloadTitle: '在手机上使用 HStudio',
-      downloadDescription: '选择你的手机系统下载安装。安装完成后，打开 App 的设备页，扫描连接二维码即可连接。',
+      downloadDescription: '我们正在内测阶段，需要注册码才有办法注册，我们会在社交媒体放出一部分注册码。',
       downloadScan: '手机扫码下载',
       downloadScanHint: '当前提供 Android 安装包',
       available: '可下载',

@@ -393,7 +393,7 @@ export default {
       viewList: 'Liste',
       viewDownload: 'Download',
       downloadTitle: 'HStudio auf deinem Smartphone',
-      downloadDescription: 'Wähle dein mobiles System und installiere HStudio. Öffne danach in der App „Geräte“ und scanne den Verbindungs-QR-Code.',
+      downloadDescription: 'Wir befinden uns derzeit in einer geschlossenen Beta. Für die Registrierung ist ein Registrierungscode erforderlich; einige Codes werden wir über unsere Social-Media-Kanäle veröffentlichen.',
       downloadScan: 'Mit dem Smartphone scannen',
       downloadScanHint: 'Android-Download ist verfügbar',
       available: 'Verfügbar',

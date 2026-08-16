@@ -393,7 +393,7 @@ export default {
       viewList: '목록',
       viewDownload: '다운로드',
       downloadTitle: '휴대폰에서 HStudio 사용하기',
-      downloadDescription: '모바일 플랫폼을 선택해 HStudio를 설치하세요. 설치 후 App의 기기 화면에서 연결 QR 코드를 스캔하세요.',
+      downloadDescription: '현재 비공개 베타 테스트 중이며 가입하려면 등록 코드가 필요합니다. 일부 등록 코드는 소셜 미디어를 통해 공개할 예정입니다.',
       downloadScan: '휴대폰으로 스캔',
       downloadScanHint: 'Android 다운로드 가능',
       available: '다운로드 가능',

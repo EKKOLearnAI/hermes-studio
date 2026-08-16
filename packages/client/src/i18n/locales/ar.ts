@@ -381,7 +381,7 @@ export default {
       viewList: 'القائمة',
       viewDownload: 'تنزيل',
       downloadTitle: 'HStudio على هاتفك',
-      downloadDescription: 'اختر منصة هاتفك وثبّت HStudio. بعد التثبيت، افتح الأجهزة في التطبيق وامسح رمز QR للاتصال.',
+      downloadDescription: 'نحن حاليًا في مرحلة اختبار تجريبي مغلق. يلزم رمز تسجيل لإنشاء حساب، وسننشر عددًا محدودًا من الرموز عبر حساباتنا على وسائل التواصل الاجتماعي.',
       downloadScan: 'امسح بهاتفك',
       downloadScanHint: 'تنزيل Android متاح الآن',
       available: 'متاح',

@@ -393,7 +393,7 @@ export default {
       viewList: 'Lista',
       viewDownload: 'Download',
       downloadTitle: 'HStudio no seu celular',
-      downloadDescription: 'Escolha sua plataforma móvel e instale o HStudio. Depois, abra Dispositivos no App e escaneie o QR code de conexão.',
+      downloadDescription: 'Estamos em fase beta fechada. É necessário um código de registro para criar uma conta, e divulgaremos alguns códigos em nossas redes sociais.',
       downloadScan: 'Escaneie com o celular',
       downloadScanHint: 'Download para Android disponível',
       available: 'Disponível',

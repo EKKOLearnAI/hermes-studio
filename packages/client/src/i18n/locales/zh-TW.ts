@@ -381,7 +381,7 @@ export default {
       viewList: '列表',
       viewDownload: '下載',
       downloadTitle: '在手機上使用 HStudio',
-      downloadDescription: '選擇你的手機系統並安裝 HStudio。安裝後，開啟 App 的裝置頁並掃描連線 QR Code。',
+      downloadDescription: '我們目前正處於封閉測試階段，必須使用註冊碼才能註冊；我們會在社群媒體上釋出部分註冊碼。',
       downloadScan: '用手機掃碼下載',
       downloadScanHint: '目前提供 Android 安裝包',
       available: '可下載',
