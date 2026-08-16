@@ -1012,8 +1012,8 @@ function handleBatchDeleteConfirm() {
           tabindex="0"
           :aria-expanded="!isGroupRoomsCollapsed"
           @click="toggleGroupRooms"
-          @keydown.enter.prevent="toggleGroupRooms"
-          @keydown.space.prevent="toggleGroupRooms"
+          @keydown.enter.self.prevent="toggleGroupRooms"
+          @keydown.space.self.prevent="toggleGroupRooms"
         >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="group-chevron" :class="{ collapsed: isGroupRoomsCollapsed }"><polyline points="9 18 15 12 9 6"/></svg>
           <span class="session-group-label">GROUP</span>
