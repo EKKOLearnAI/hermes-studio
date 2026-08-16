@@ -80,10 +80,6 @@ function persistCollapsedGroups() {
 }
 
 function toggleGroupRooms() {
-  if (routeGroupRoomId.value) {
-    ensureGroupRoomsExpanded()
-    return
-  }
   const next = new Set(collapsedGroups.value)
   if (next.has(HISTORY_GROUP_COLLAPSE_KEY)) next.delete(HISTORY_GROUP_COLLAPSE_KEY)
   else next.add(HISTORY_GROUP_COLLAPSE_KEY)
@@ -457,7 +453,6 @@ function openPageSidebar() {
 }
 
 onMounted(async () => {
-  if (routeGroupRoomId.value) ensureGroupRoomsExpanded()
   appStore.loadModels()
   await profilesStore.fetchProfiles()
   await Promise.all([loadHermesSessions(), loadGroupRooms()])
@@ -474,24 +469,27 @@ onUnmounted(() => {
   window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
 })
 
-watch([routeSessionId, routeProfile, routeGroupRoomId], async ([sessionId, _profile, groupRoomId]) => {
-  if (groupRoomId) {
-    ensureGroupRoomsExpanded()
-    historySessionId.value = null
-    historySession.value = null
-    return
-  }
-  if (!sessionId) {
-    historySessionId.value = null
-    historySession.value = null
-    return
-  }
-  if (!hermesSessionsLoaded.value) return
-  if (routeProfile.value && !hermesSessions.value.some(s => s.profile === routeProfile.value)) {
-    await loadHermesSessions()
-  }
-  await syncRouteSession()
-})
+watch(
+  [routeSessionId, routeProfile, routeGroupRoomId],
+  async ([sessionId, _profile, groupRoomId], [_previousSessionId, _previousProfile, previousGroupRoomId]) => {
+    if (groupRoomId) {
+      if (!previousGroupRoomId) ensureGroupRoomsExpanded()
+      historySessionId.value = null
+      historySession.value = null
+      return
+    }
+    if (!sessionId) {
+      historySessionId.value = null
+      historySession.value = null
+      return
+    }
+    if (!hermesSessionsLoaded.value) return
+    if (routeProfile.value && !hermesSessions.value.some(s => s.profile === routeProfile.value)) {
+      await loadHermesSessions()
+    }
+    await syncRouteSession()
+  },
+)
 
 watch(() => profilesStore.activeProfileName, async () => {
   if (!hermesSessionsLoaded.value) return

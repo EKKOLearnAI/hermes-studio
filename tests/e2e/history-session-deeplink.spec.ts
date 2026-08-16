@@ -278,7 +278,7 @@ test.describe('history session deep links', () => {
     await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
     await groupHeader.click()
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.getByText('Newest Group Room').first()).toBeHidden()
+    await expect(page.locator('.group-room-history-item')).toHaveCount(0)
     await expect(page.getByText('History for Newest Group Room')).toBeVisible()
     await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
       .toContain('group-chat')
