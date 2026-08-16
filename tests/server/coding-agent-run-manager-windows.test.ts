@@ -443,6 +443,105 @@ describe('coding agent Windows process launch', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
+  it('routes Pi compact, context stats, and status through correlated native RPC commands', async () => {
+    const manager = new CodingAgentRunManager()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-pi-commands',
+      agentNativeSessionId: 'pi-native-session-commands',
+      agentId: 'pi',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'pi-test',
+      sessionId: 'chat-session-pi-commands',
+      command: 'pi.cmd',
+      args: ['--mode', 'rpc'],
+      shellCommand: 'pi',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    const run = (manager as any).runs.get('agent-session-pi-commands')
+    const stdin = testState.spawnCalls[0].child.stdin
+
+    const compactPromise = manager.compact('chat-session-pi-commands', 'focus on code changes') as Promise<any>
+    const compactCommand = JSON.parse(stdin.write.mock.calls.at(-1)[0])
+    expect(compactCommand).toMatchObject({
+      type: 'compact',
+      customInstructions: 'focus on code changes',
+    })
+    ;(manager as any).handlePiRpcEvent(run, {
+      id: compactCommand.id,
+      type: 'response',
+      command: 'compact',
+      success: true,
+      data: { summary: 'summary', firstKeptEntryId: 'entry-1', tokensBefore: 50_000 },
+    })
+    await expect(compactPromise).resolves.toEqual({ compacted: true, beforeTokens: 50_000 })
+
+    const statsPromise = manager.getPiSessionStats('chat-session-pi-commands')
+    const statsCommand = JSON.parse(stdin.write.mock.calls.at(-1)[0])
+    expect(statsCommand.type).toBe('get_session_stats')
+    const stats = {
+      sessionId: 'pi-native-session-commands',
+      userMessages: 2,
+      assistantMessages: 2,
+      toolCalls: 1,
+      toolResults: 1,
+      totalMessages: 6,
+      tokens: { input: 100, output: 20, cacheRead: 30, cacheWrite: 5, total: 155 },
+      cost: 0.25,
+      contextUsage: { tokens: 40_000, contextWindow: 200_000, percent: 20 },
+    }
+    ;(manager as any).handlePiRpcEvent(run, {
+      id: statsCommand.id,
+      type: 'response',
+      command: 'get_session_stats',
+      success: true,
+      data: stats,
+    })
+    await expect(statsPromise).resolves.toEqual(stats)
+
+    const statePromise = manager.getPiSessionState('chat-session-pi-commands')
+    const stateCommand = JSON.parse(stdin.write.mock.calls.at(-1)[0])
+    expect(stateCommand.type).toBe('get_state')
+    const nativeState = {
+      model: { id: 'pi-test', provider: 'test-provider' },
+      thinkingLevel: 'high',
+      isStreaming: false,
+      isCompacting: false,
+      sessionId: 'pi-native-session-commands',
+      autoCompactionEnabled: true,
+      messageCount: 6,
+      pendingMessageCount: 0,
+    }
+    ;(manager as any).handlePiRpcEvent(run, {
+      id: stateCommand.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: nativeState,
+    })
+    await expect(statePromise).resolves.toEqual(nativeState)
+
+    const failedCompact = manager.compact('chat-session-pi-commands') as Promise<any>
+    const failedCommand = JSON.parse(stdin.write.mock.calls.at(-1)[0])
+    ;(manager as any).handlePiRpcEvent(run, {
+      id: failedCommand.id,
+      type: 'response',
+      command: 'compact',
+      success: false,
+      error: 'native compact failed',
+    })
+    await expect(failedCompact).rejects.toThrow('native compact failed')
+
+    expect(manager.getRunInfo('chat-session-pi-commands')?.running).toBe(false)
+    manager.stop('chat-session-pi-commands', { reportClosed: false })
+  })
+
   it('inherits user credentials when Studio runs Pi with its global config', () => {
     const previousCredential = process.env.PI_GLOBAL_TEST_CREDENTIAL
     process.env.PI_GLOBAL_TEST_CREDENTIAL = 'global-pi-test-key'

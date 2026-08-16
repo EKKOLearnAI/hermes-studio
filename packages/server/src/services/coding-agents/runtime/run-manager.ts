@@ -17,6 +17,7 @@ import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { getChatRunServer } from '../../hermes/run-chat/server-registry'
+import { compactCodexThread } from './codex-compact'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -27,6 +28,8 @@ const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
 const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
 const HERMES_MCP_SERVER_NAME = 'hermes-studio'
+const PI_RPC_REQUEST_TIMEOUT_MS = 30_000
+const PI_RPC_COMPACT_TIMEOUT_MS = 5 * 60 * 1000
 
 let pty: any = null
 
@@ -82,6 +85,58 @@ export interface CodingAgentRunLaunch {
   approvalRequired?: boolean
 }
 
+export interface CodingAgentRunInfo {
+  exists: boolean
+  running: boolean
+  agentId: string
+  model: string
+  provider: string
+  workspaceDir: string
+  nativeSessionId: string
+  messageCount: number
+}
+
+export interface PiNativeSessionStats {
+  sessionId: string
+  userMessages: number
+  assistantMessages: number
+  toolCalls: number
+  toolResults: number
+  totalMessages: number
+  tokens: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    total: number
+  }
+  cost: number
+  contextUsage?: {
+    tokens: number | null
+    contextWindow: number
+    percent: number | null
+  }
+}
+
+export interface PiNativeSessionState {
+  model?: { id?: string; name?: string; provider?: string }
+  thinkingLevel: string
+  isStreaming: boolean
+  isCompacting: boolean
+  sessionId: string
+  sessionName?: string
+  autoCompactionEnabled: boolean
+  messageCount: number
+  pendingMessageCount: number
+}
+
+interface PiRpcPendingRequest {
+  command: string
+  resolve: (data: any) => void
+  reject: (error: Error) => void
+  timeoutTimer: ReturnType<typeof setTimeout>
+}
+
 interface ManagedCodingAgentRun {
   id: string
   launch: CodingAgentRunLaunch
@@ -129,6 +184,7 @@ interface ManagedCodingAgentRun {
   piUiRequests?: Map<string, any>
   piTextBuffer?: string
   piCurrentMessageText?: string
+  piRpcRequests?: Map<string, PiRpcPendingRequest>
 }
 
 interface CodingAgentRunSendOptions {
@@ -164,6 +220,11 @@ function responseErrorMessage(error: unknown): string {
     if (typeof message === 'string') return message
   }
   return String(error)
+}
+
+function compactTokenNumber(value: unknown): number | null {
+  const num = Number(value)
+  return Number.isFinite(num) && num >= 0 ? Math.floor(num) : null
 }
 
 function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
@@ -516,7 +577,10 @@ export class CodingAgentRunManager {
 
   isSessionProcessing(sessionId: string): boolean {
     const run = this.getBySession(sessionId)
-    return childIsRunning(run?.currentChild)
+    if (!run) return false
+    return run.launch.agentId === 'pi'
+      ? run.turnActive === true
+      : childIsRunning(run.currentChild)
   }
 
   runIdForSession(sessionId: string): string | undefined {
@@ -696,6 +760,75 @@ export class CodingAgentRunManager {
     if (!run.pty) throw new Error('Coding agent terminal is not available')
     run.pty.write(`${text}\r`)
     return { runId: run.id, messageId }
+  }
+
+  getRunInfo(sessionId: string): CodingAgentRunInfo | null {
+    const run = this.getBySession(sessionId)
+    if (!run) return null
+    return {
+      exists: true,
+      running: run.launch.agentId === 'pi'
+        ? run.turnActive === true
+        : childIsRunning(run.currentChild) || run.turnActive === true,
+      agentId: run.launch.agentId,
+      model: run.launch.model,
+      provider: run.launch.provider,
+      workspaceDir: run.launch.workspaceDir,
+      nativeSessionId: String(run.launch.agentNativeSessionId || '').trim(),
+      messageCount: run.state.messages.length,
+    }
+  }
+
+  compact(sessionId: string, args = ''): { started: boolean } | Promise<{
+    compacted: boolean
+    beforeTokens?: number | null
+    afterTokens?: number | null
+  }> {
+    const run = this.getBySession(sessionId)
+    if (!run) throw new Error('Coding agent session not found')
+    if (run.launch.agentId === 'pi') {
+      if (run.turnActive) throw new Error('Pi is still processing the previous input')
+      if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
+      return this.requestPiRpc<any>(run, {
+        type: 'compact',
+        ...(args ? { customInstructions: args } : {}),
+      }, PI_RPC_COMPACT_TIMEOUT_MS).then(result => ({
+        compacted: true,
+        beforeTokens: compactTokenNumber(result?.tokensBefore),
+      }))
+    }
+    if (childIsRunning(run.currentChild)) throw new Error('Coding agent is still processing the previous input')
+    const nativeSessionId = String(run.launch.agentNativeSessionId || '').trim()
+    if (run.launch.agentId === 'claude-code') {
+      if (!nativeSessionId) throw new Error('Claude Code session has no native session to compact')
+      this.startClaudePrintTurn(run, `/compact${args ? ` ${args}` : ''}`, '', [])
+      return { started: true }
+    }
+    if (run.launch.agentId === 'codex') {
+      if (String(args || '').trim()) {
+        throw new Error('Codex native compaction does not accept arguments')
+      }
+      if (!nativeSessionId) throw new Error('Codex session has no native thread to compact')
+      return compactCodexThread({
+        command: run.launch.command,
+        env: {
+          ...process.env,
+          ...(run.launch.env || {}),
+        },
+        workspaceDir: run.launch.workspaceDir,
+      }, nativeSessionId)
+    }
+    throw new Error(`Native /compact is not supported for ${run.launch.agentId}`)
+  }
+
+  getPiSessionStats(sessionId: string): Promise<PiNativeSessionStats> {
+    const run = this.requirePiRpcRun(sessionId)
+    return this.requestPiRpc<PiNativeSessionStats>(run, { type: 'get_session_stats' })
+  }
+
+  getPiSessionState(sessionId: string): Promise<PiNativeSessionState> {
+    const run = this.requirePiRpcRun(sessionId)
+    return this.requestPiRpc<PiNativeSessionState>(run, { type: 'get_state' })
   }
 
   stop(sessionId: string, options: { reportClosed?: boolean } = {}): boolean {
@@ -1074,6 +1207,11 @@ export class CodingAgentRunManager {
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
     run.piDetachJsonl?.()
     run.piDetachJsonl = undefined
+    for (const request of run.piRpcRequests?.values() || []) {
+      clearTimeout(request.timeoutTimer)
+      request.reject(new Error('Pi RPC process closed before the command completed'))
+    }
+    run.piRpcRequests?.clear()
     for (const [requestId, request] of run.piUiRequests || []) {
       if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
       const isConfirmation = request.method === 'confirm'
@@ -1126,6 +1264,7 @@ export class CodingAgentRunManager {
     run.currentChildStderr = ''
     run.piToolBlocks = new Map()
     run.piUiRequests = new Map()
+    run.piRpcRequests = new Map()
     run.piDetachJsonl = child.stdout
       ? attachPiJsonlReader(
           child.stdout,
@@ -1179,6 +1318,43 @@ export class CodingAgentRunManager {
     const stdin = run.currentChild?.stdin
     if (!stdin || !childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
     stdin.write(`${JSON.stringify(command)}\n`)
+  }
+
+  private requirePiRpcRun(sessionId: string): ManagedCodingAgentRun {
+    const run = this.getBySession(sessionId)
+    if (!run) throw new Error('Coding agent session not found')
+    if (run.launch.agentId !== 'pi') throw new Error(`Pi RPC command is not supported for ${run.launch.agentId}`)
+    if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
+    return run
+  }
+
+  private requestPiRpc<T>(
+    run: ManagedCodingAgentRun,
+    command: Record<string, unknown> & { type: string },
+    timeoutMs = PI_RPC_REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
+    const requestId = `pi_rpc_${makeId()}`
+    return new Promise<T>((resolve, reject) => {
+      const timeoutTimer = setTimeout(() => {
+        run.piRpcRequests?.delete(requestId)
+        reject(new Error(`Pi RPC ${command.type} timed out after ${Math.round(timeoutMs / 1000)} seconds`))
+      }, timeoutMs)
+      timeoutTimer.unref?.()
+      run.piRpcRequests ??= new Map()
+      run.piRpcRequests.set(requestId, {
+        command: command.type,
+        resolve,
+        reject,
+        timeoutTimer,
+      })
+      try {
+        this.writePiRpcCommand(run, { ...command, id: requestId })
+      } catch (err) {
+        clearTimeout(timeoutTimer)
+        run.piRpcRequests.delete(requestId)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+    })
   }
 
   private startPiRpcTurn(
@@ -1245,6 +1421,18 @@ export class CodingAgentRunManager {
     if (!event || typeof event !== 'object') return
 
     if (event.type === 'response') {
+      const requestId = String(event.id || '').trim()
+      const request = requestId ? run.piRpcRequests?.get(requestId) : undefined
+      if (request) {
+        clearTimeout(request.timeoutTimer)
+        run.piRpcRequests?.delete(requestId)
+        if (event.success === false) {
+          request.reject(new Error(String(event.error || `Pi RPC ${request.command} failed`)))
+        } else {
+          request.resolve(event.data)
+        }
+        return
+      }
       if (event.success === false && event.command === 'prompt' && !run.printCompleted) {
         this.failClaudePrintTurn(run, String(event.error || 'Pi rejected the prompt'))
       }
@@ -1669,6 +1857,33 @@ export class CodingAgentRunManager {
 
     if ((event.type === 'assistant' || event.type === 'user') && event.message) {
       this.handleClaudeTopLevelMessage(run, event.message)
+      return
+    }
+
+    if (event.type === 'system' && event.subtype === 'compact_boundary') {
+      const metadata = event.compact_metadata || event.compactMetadata || {}
+      const preTokens = compactTokenNumber(metadata.pre_tokens)
+      const postTokens = compactTokenNumber(metadata.post_tokens)
+      const trigger = String(metadata.trigger || 'manual')
+      const summary = [
+        `Compaction completed (${trigger}).`,
+        preTokens != null ? `Before: ${preTokens} tokens.` : '',
+        postTokens != null ? `After: ${postTokens} tokens.` : '',
+      ].filter(Boolean).join(' ')
+      if (summary) {
+        this.ensureClaudePrintText(run)
+        run.printText = `${run.printText || ''}${summary}`
+        this.handleClaudePrintResponseEvent(run, {
+          type: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            item_id: run.printMessageId,
+            output_index: 0,
+            content_index: 0,
+            delta: summary,
+          },
+        })
+      }
       return
     }
 

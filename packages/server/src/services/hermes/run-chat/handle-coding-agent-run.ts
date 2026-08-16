@@ -5,6 +5,10 @@ import {
   startCodingAgentRun,
   type CodingAgentId as ExternalCodingAgentId,
 } from '../../coding-agents'
+import {
+  handleCodingAgentSessionCommand,
+  parseCodingAgentSessionCommand,
+} from '../../coding-agents/session-command'
 import { getOrCreateSession } from './compression'
 import { contentBlocksToString, convertContentBlocksForCodingAgent } from './content-blocks'
 import type { ContentBlock, SessionState } from './types'
@@ -69,6 +73,14 @@ export async function handleCodingAgentRun(
     : data.session_source === 'workflow' || data.source === 'workflow'
       ? 'workflow'
       : 'coding_agent'
+
+  if (typeof data.input === 'string') {
+    const command = parseCodingAgentSessionCommand(data.input)
+    if (command) {
+      await handleCodingAgentSessionCommand(nsp, socket, data, command, profile, sessionMap)
+      return
+    }
+  }
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'
