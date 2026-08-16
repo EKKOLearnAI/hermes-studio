@@ -2582,6 +2582,9 @@ export default {
 
   // 更新履歴
   groupChat: {
+    roomAgentAvatarEmpty: '{room}。ルーム Agent はいません。実行中の Agent はいません。',
+    roomAgentAvatarIdle: '{room}。ルーム Agent：{agents}。実行中の Agent はいません。',
+    roomAgentAvatarRunning: '{room}。ルーム Agent：{agents}。実行中の Agent：{running}。',
     executionQueueTitle: '実行キュー',
     executionQueueCancel: '{agent} の待機中タスクをキャンセル',
     executionQueueCancelFailed: '待機中タスクをキャンセルできませんでした。',

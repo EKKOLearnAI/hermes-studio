@@ -2583,6 +2583,9 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. No hay agentes en la sala. No hay agentes en ejecución.',
+    roomAgentAvatarIdle: '{room}. Agentes de la sala: {agents}. No hay agentes en ejecución.',
+    roomAgentAvatarRunning: '{room}. Agentes de la sala: {agents}. Agentes en ejecución: {running}.',
     executionQueueTitle: 'Cola de ejecución',
     executionQueueCancel: 'Cancelar trabajo en cola para {agent}',
     executionQueueCancelFailed: 'No se pudo cancelar el trabajo en cola.',

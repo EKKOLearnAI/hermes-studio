@@ -2861,6 +2861,9 @@ export default {
 
   // Group Chat
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. لا يوجد وكلاء في الغرفة. لا يوجد وكلاء قيد التشغيل.',
+    roomAgentAvatarIdle: '{room}. وكلاء الغرفة: {agents}. لا يوجد وكلاء قيد التشغيل.',
+    roomAgentAvatarRunning: '{room}. وكلاء الغرفة: {agents}. الوكلاء قيد التشغيل: {running}.',
     executionQueueTitle: 'قائمة انتظار التنفيذ',
     executionQueueCancel: 'إلغاء العمل المنتظر لـ {agent}',
     executionQueueCancelFailed: 'تعذر إلغاء العمل المنتظر.',

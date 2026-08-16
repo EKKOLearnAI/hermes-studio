@@ -2517,6 +2517,9 @@ export default {
 
 
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. В комнате нет агентов. Нет запущенных агентов.',
+    roomAgentAvatarIdle: '{room}. Агенты комнаты: {agents}. Нет запущенных агентов.',
+    roomAgentAvatarRunning: '{room}. Агенты комнаты: {agents}. Запущенные агенты: {running}.',
     executionQueueTitle: 'Очередь выполнения',
     executionQueueCancel: 'Отменить задачу в очереди для {agent}',
     executionQueueCancelFailed: 'Не удалось отменить задачу в очереди.',

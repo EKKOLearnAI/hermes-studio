@@ -2582,6 +2582,9 @@ export default {
 
   // 변경 이력
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. 룸 Agent가 없습니다. 실행 중인 Agent가 없습니다.',
+    roomAgentAvatarIdle: '{room}. 룸 Agent: {agents}. 실행 중인 Agent가 없습니다.',
+    roomAgentAvatarRunning: '{room}. 룸 Agent: {agents}. 실행 중인 Agent: {running}.',
     executionQueueTitle: '실행 대기열',
     executionQueueCancel: '{agent}의 대기 작업 취소',
     executionQueueCancelFailed: '대기 작업을 취소하지 못했습니다.',

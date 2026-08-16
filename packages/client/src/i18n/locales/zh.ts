@@ -2941,6 +2941,9 @@ export default {
 
   // 群聊
   groupChat: {
+    roomAgentAvatarEmpty: '{room}。没有群聊 Agent。当前没有 Agent 正在运行。',
+    roomAgentAvatarIdle: '{room}。群聊 Agent：{agents}。当前没有 Agent 正在运行。',
+    roomAgentAvatarRunning: '{room}。群聊 Agent：{agents}。正在运行的 Agent：{running}。',
     executionQueueTitle: '执行队列',
     executionQueueCancel: '取消 {agent} 的排队任务',
     executionQueueCancelFailed: '无法取消排队任务。',

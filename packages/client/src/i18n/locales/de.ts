@@ -2583,6 +2583,9 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. Keine Raum-Agents. Keine Agents werden ausgeführt.',
+    roomAgentAvatarIdle: '{room}. Raum-Agents: {agents}. Keine Agents werden ausgeführt.',
+    roomAgentAvatarRunning: '{room}. Raum-Agents: {agents}. Laufende Agents: {running}.',
     executionQueueTitle: 'Ausführungswarteschlange',
     executionQueueCancel: 'Wartenden Auftrag für {agent} abbrechen',
     executionQueueCancelFailed: 'Der wartende Auftrag konnte nicht abgebrochen werden.',

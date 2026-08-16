@@ -2583,6 +2583,9 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. Aucun Agent dans la salle. Aucun Agent en cours d’exécution.',
+    roomAgentAvatarIdle: '{room}. Agents de la salle : {agents}. Aucun Agent en cours d’exécution.',
+    roomAgentAvatarRunning: '{room}. Agents de la salle : {agents}. Agents en cours d’exécution : {running}.',
     executionQueueTitle: 'File d’exécution',
     executionQueueCancel: 'Annuler la tâche en attente pour {agent}',
     executionQueueCancelFailed: 'Impossible d’annuler la tâche en attente.',

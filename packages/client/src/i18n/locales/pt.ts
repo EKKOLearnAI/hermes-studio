@@ -2583,6 +2583,9 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. Nenhum Agent na sala. Nenhum Agent em execução.',
+    roomAgentAvatarIdle: '{room}. Agents da sala: {agents}. Nenhum Agent em execução.',
+    roomAgentAvatarRunning: '{room}. Agents da sala: {agents}. Agents em execução: {running}.',
     executionQueueTitle: 'Fila de execução',
     executionQueueCancel: 'Cancelar trabalho na fila para {agent}',
     executionQueueCancelFailed: 'Não foi possível cancelar o trabalho na fila.',

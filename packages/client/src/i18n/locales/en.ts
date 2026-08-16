@@ -2899,6 +2899,9 @@ export default {
 
   // Group Chat
   groupChat: {
+    roomAgentAvatarEmpty: '{room}. No Room Agents. No Agents are running.',
+    roomAgentAvatarIdle: '{room}. Room Agents: {agents}. No Agents are running.',
+    roomAgentAvatarRunning: '{room}. Room Agents: {agents}. Running Agents: {running}.',
     executionQueueTitle: 'Execution queue',
     executionQueueCancel: 'Cancel queued work for {agent}',
     executionQueueCancelFailed: 'Could not cancel queued work.',

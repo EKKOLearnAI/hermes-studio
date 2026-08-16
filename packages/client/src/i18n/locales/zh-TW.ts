@@ -2823,6 +2823,9 @@ export default {
 
   // 群聊
   groupChat: {
+    roomAgentAvatarEmpty: '{room}。沒有群聊 Agent。目前沒有 Agent 正在執行。',
+    roomAgentAvatarIdle: '{room}。群聊 Agent：{agents}。目前沒有 Agent 正在執行。',
+    roomAgentAvatarRunning: '{room}。群聊 Agent：{agents}。正在執行的 Agent：{running}。',
     executionQueueTitle: '執行佇列',
     executionQueueCancel: '取消 {agent} 的排隊工作',
     executionQueueCancelFailed: '無法取消排隊工作。',

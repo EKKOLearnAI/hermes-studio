@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { RoomAgentSummary } from '@/api/hermes/group-chat'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { groupAgentAvatar } from '@/utils/group-agent-avatar'
 
+const { t } = useI18n()
 const props = defineProps<{
     agents: RoomAgentSummary[]
     activeAgentIds: string[]
@@ -28,6 +30,29 @@ const avatarSize = computed(() => {
 const overflowActive = computed(() => (
     hiddenAgents.value.some(agent => activeAgentIds.value.has(agent.id))
 ))
+const rosterNames = computed(() => props.agents.map(agent => agent.name).join(', '))
+const runningNames = computed(() => (
+    props.agents
+        .filter(agent => activeAgentIds.value.has(agent.id))
+        .map(agent => agent.name)
+        .join(', ')
+))
+const accessibleSummary = computed(() => {
+    if (!props.agents.length) {
+        return t('groupChat.roomAgentAvatarEmpty', { room: props.label })
+    }
+    if (!runningNames.value) {
+        return t('groupChat.roomAgentAvatarIdle', {
+            room: props.label,
+            agents: rosterNames.value,
+        })
+    }
+    return t('groupChat.roomAgentAvatarRunning', {
+        room: props.label,
+        agents: rosterNames.value,
+        running: runningNames.value,
+    })
+})
 </script>
 
 <template>
@@ -35,7 +60,8 @@ const overflowActive = computed(() => (
         class="room-agent-grid"
         :data-agent-count="visibleCount"
         role="img"
-        :aria-label="label"
+        :aria-label="accessibleSummary"
+        :title="accessibleSummary"
     >
         <span
             v-if="agents.length === 0"
