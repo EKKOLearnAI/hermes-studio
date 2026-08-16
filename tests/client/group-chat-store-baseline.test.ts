@@ -268,6 +268,7 @@ describe('group chat store baseline lifecycle', () => {
       expect.objectContaining({ runId: 'run-old' }),
     ]))
     expect(store.activeAgentRunsForRoom('room-1')).toHaveLength(1)
+    expect(store.activeAgentIdsForRoom('room-1')).toEqual(['agent-row-1'])
     expect(store.isAgentRunActive('room-1', 'agent-row-1', 'run-new')).toBe(true)
     expect(store.isAgentRunActive('room-1', 'agent-row-1', 'run-old')).toBe(false)
   })
@@ -763,6 +764,7 @@ describe('group chat store baseline lifecycle', () => {
     const updatedAgent = { ...agent, name: 'Realtime Agent' }
 
     await store.connect()
+    store.rooms = [{ ...room, agents: [] }]
     store.currentRoomId = 'room-1'
     store.agents = [agent]
 
@@ -771,9 +773,13 @@ describe('group chat store baseline lifecycle', () => {
 
     emitSocket('agents_updated', { roomId: 'room-1', agents: [updatedAgent] })
     expect(store.agents).toEqual([updatedAgent])
+    expect(store.roomAgentsForRoom('room-1')).toEqual([
+      expect.objectContaining({ id: agent.id, name: 'Realtime Agent' }),
+    ])
 
     emitSocket('agents_updated', { roomId: 'room-1', agents: [] })
     expect(store.agents).toEqual([])
+    expect(store.roomAgentsForRoom('room-1')).toEqual([])
   })
 
   it('snapshots Agent display metadata before a realtime removal changes historical messages', async () => {

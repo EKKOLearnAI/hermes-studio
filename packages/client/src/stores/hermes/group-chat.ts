@@ -13,6 +13,7 @@ import {
     getStoredUserName,
     type RoomInfo,
     type RoomAgent,
+    type RoomAgentSummary,
     type GroupAgentActivity,
     type RoomAgentHandoffChain,
     type RoomAgentInput,
@@ -440,6 +441,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         return [...activeAgentRuns.value.values()].filter(activity => activity.roomId === roomId)
     }
 
+    function activeAgentIdsForRoom(roomId: string): string[] {
+        return [...new Set(activeAgentRunsForRoom(roomId).map(activity => activity.agentId))]
+    }
+
     function isAgentRunActive(roomId: string, agentId: string, runId: string | null | undefined): boolean {
         if (!roomId || !agentId || !runId) return false
         return activeAgentRuns.value.has(activeAgentRunKey(roomId, agentId, runId))
@@ -540,6 +545,29 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         else rooms.value.push(room)
     }
 
+    function summarizeRoomAgents(roomAgents: RoomAgent[]): RoomAgentSummary[] {
+        return roomAgents.map(({ id, roomId, agentId, agent, name, avatar }) => ({
+            id,
+            roomId,
+            agentId,
+            agent,
+            name,
+            avatar,
+        }))
+    }
+
+    function projectRoomAgents(roomId: string, roomAgents: RoomAgent[]) {
+        const room = rooms.value.find(candidate => candidate.id === roomId)
+        if (!room) return
+        room.agents = summarizeRoomAgents(roomAgents)
+        rooms.value = [...rooms.value]
+    }
+
+    function roomAgentsForRoom(roomId: string): RoomAgentSummary[] {
+        if (roomId === currentRoomId.value) return summarizeRoomAgents(agents.value)
+        return rooms.value.find(room => room.id === roomId)?.agents || []
+    }
+
     function clearRemoteTypingState() {
         for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
         typingUsers.value = new Map()
@@ -636,6 +664,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         if (res.agents) {
             snapshotCurrentMessageAgents(agents.value)
             agents.value = mergeRoomAgentRoster(res.agents)
+            if (res.roomId) projectRoomAgents(res.roomId, agents.value)
         }
         if (res.roomName) roomName.value = res.roomName
         if (typeof res.agentLinkToken === 'string') agentLinkToken.value = res.agentLinkToken
@@ -1078,6 +1107,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 agents.value = Array.isArray(data.agents)
                     ? mergeRoomAgentRoster(data.agents)
                     : []
+                projectRoomAgents(data.roomId, agents.value)
             }
         })
 
@@ -1345,7 +1375,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const previousRoomId = currentRoomId.value
             if (previousRoomId && previousRoomId !== res.room.id) emitStopTyping(previousRoomId)
             clearPendingStreamDeltas()
-            upsertRoom(res.room)
+            upsertRoom({ ...res.room, agents: summarizeRoomAgents(res.agents || []) })
             currentRoomId.value = res.room.id
             realtimeJoinedRoomId.value = null
             realtimeJoinedSocketId.value = null
@@ -1357,6 +1387,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             handoffChains.value = new Map((res.handoffChains || []).map(chain => [chain.chainId, chain]))
             applyMessagePaging(res)
             agents.value = res.agents
+            projectRoomAgents(res.room.id, agents.value)
             members.value = res.members || []
             await joinRealtimeRoom(res.room.id)
         } catch (err: any) {
@@ -1507,7 +1538,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 },
                 workspace: workspace || undefined,
             })
-            upsertRoom(res.room)
+            upsertRoom({ ...res.room, agents: summarizeRoomAgents(res.agents || []) })
             return res
         } catch (err: any) {
             error.value = err.message
@@ -1572,7 +1603,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }) {
         try {
             const res = await cloneRoomApi(roomId, data)
-            upsertRoom(res.room)
+            upsertRoom({ ...res.room, agents: summarizeRoomAgents(res.agents || []) })
             return res
         } catch (err: any) {
             error.value = err.message
@@ -1641,6 +1672,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const res = await listAgents(roomId)
             snapshotCurrentMessageAgents(agents.value)
             agents.value = mergeRoomAgentRoster(res.agents)
+            projectRoomAgents(roomId, agents.value)
         } catch { /* ignore */ }
     }
 
@@ -1657,6 +1689,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             } else {
                 agents.value = [...agents.value, res.agent]
             }
+            projectRoomAgents(roomId, agents.value)
             return res.agent
         } catch (err: any) {
             error.value = err.message
@@ -1670,6 +1703,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             agents.value = mergeRoomAgentRoster(res.agents ?? agents.value.map(agent => (
                 agent.id === agentId || agent.agentId === agentId ? res.agent : agent
             )))
+            projectRoomAgents(roomId, agents.value)
             if (res.members) members.value = res.members
             return res.agent
         } catch (err: any) {
@@ -1690,6 +1724,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             agents.value = mergeRoomAgentRoster(
                 res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId),
             )
+            projectRoomAgents(roomId, agents.value)
             if (target) clearActiveAgentRunsForRoom(roomId, target.id)
             if (res.members) members.value = res.members
         } catch (err: any) {
@@ -1719,6 +1754,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             agents.value = mergeRoomAgentRoster(
                 res.agents ?? agents.value.filter(agent => agent.ownerMemberId !== memberUserId),
             )
+            projectRoomAgents(roomId, agents.value)
         } catch (err: any) {
             error.value = err.message
             throw err
@@ -1914,6 +1950,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         // Computed
         sortedMessages,
         activeAgentRunsForRoom,
+        activeAgentIdsForRoom,
+        roomAgentsForRoom,
         isAgentRunActive,
         memberNames,
         typingNames,

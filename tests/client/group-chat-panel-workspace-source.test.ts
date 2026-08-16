@@ -364,21 +364,27 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
   })
 
-  it('renders exact active-run avatars in a stable leading room-list slot', () => {
+  it('renders the persistent room Agent grid in the stable leading room-list slot', () => {
     const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const roomAvatar = readFileSync('packages/client/src/components/hermes/group-chat/GroupRoomAgentAvatar.vue', 'utf8')
     const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
     const runCard = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
     const localRooms = panel.slice(
       panel.indexOf('v-for="room in store.rooms"'),
       panel.indexOf('<section v-if="remoteRooms.length"'),
     )
+    const remoteRooms = panel.slice(panel.indexOf('<section v-if="remoteRooms.length"'))
 
-    expect(localRooms).toContain('class="room-active-agent-slot"')
-    expect(localRooms.indexOf('class="room-active-agent-slot"')).toBeLessThan(localRooms.indexOf('class="room-info"'))
+    expect(localRooms).toContain('<GroupRoomAgentAvatar')
+    expect(localRooms.indexOf('<GroupRoomAgentAvatar')).toBeLessThan(localRooms.indexOf('class="room-info"'))
     expect(localRooms).not.toContain('class="room-icon"')
-    expect(panel).toContain('activeAgentRunsForRoom(room.id).slice(0, 3)')
-    expect(panel).toContain("activeAgentRunsForRoom(room.id).length - 3")
-    expect(panel).toMatch(/\.room-active-agent-slot\s*\{[^}]*flex: 0 0 74px;[^}]*width: 74px;/s)
+    expect(remoteRooms).toContain('class="room-icon"')
+    expect(remoteRooms).not.toContain('<GroupRoomAgentAvatar')
+    expect(panel).toContain(':agents="store.roomAgentsForRoom(room.id)"')
+    expect(panel).toContain(':active-agent-ids="store.activeAgentIdsForRoom(room.id)"')
+    expect(roomAvatar).toContain('data-agent-count')
+    expect(roomAvatar).toContain('room-agent-grid-neutral')
+    expect(roomAvatar).toContain('@media (prefers-reduced-motion: reduce)')
     expect(list).toContain(':active="store.isAgentRunActive(')
     expect(runCard).toContain("'run-avatar-active': active")
     expect(runCard).toContain(':aria-busy="active"')

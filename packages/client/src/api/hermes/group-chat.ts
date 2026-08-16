@@ -27,6 +27,7 @@ export interface RoomInfo {
     agentHandoffUnlimited?: number
     createdAt?: number
     lastActiveAt?: number
+    agents?: RoomAgentSummary[]
 }
 
 export interface RoomAgentHandoffChain {
@@ -102,6 +103,11 @@ export interface RoomAgent {
     connectorId?: string
     historical?: boolean
 }
+
+export type RoomAgentSummary = Pick<
+    RoomAgent,
+    'id' | 'roomId' | 'agentId' | 'agent' | 'name' | 'avatar'
+>
 
 export interface GroupAgentActivity {
     roomId: string

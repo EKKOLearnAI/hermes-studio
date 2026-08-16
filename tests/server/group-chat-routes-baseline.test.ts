@@ -465,6 +465,45 @@ describe('group chat REST route baseline', () => {
     })
   })
 
+  it('projects each visible room persistent Agent roster without runtime-only connection fields', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-agents', name: 'Agent room', inviteCode: 'AGENTS', lastActiveAt: 300 },
+    ])
+    storage.agents.set('room-agents', [{
+      id: 'row-agent',
+      roomId: 'room-agents',
+      agentId: 'agent-1',
+      agent: 'codex',
+      profile: 'private-profile',
+      provider: 'private-provider',
+      model: 'private-model',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Builder',
+      description: 'Private description',
+      avatar: '{"type":"generated","seed":"builder"}',
+      invited: 0,
+      connectorId: 'secret-connector',
+      remoteOrigin: 'private-origin',
+      ownerMemberId: 'auth:7',
+    }])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.rooms[0].agents).toEqual([{
+      id: 'row-agent',
+      roomId: 'room-agents',
+      agentId: 'agent-1',
+      agent: 'codex',
+      name: 'Builder',
+      avatar: '{"type":"generated","seed":"builder"}',
+    }])
+  })
+
   it('paginates the authorized room list without changing activity order', async () => {
     storage.getRoomsForProfiles.mockReturnValue([
       { id: 'room-3', name: 'Third', inviteCode: 'C', lastActiveAt: 100 },

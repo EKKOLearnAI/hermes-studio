@@ -291,6 +291,20 @@ function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>,
         ))
 }
 
+function roomAgentSummaries(storage: ReturnType<GroupChatServer['getStorage']>, roomId: string) {
+    const agents = typeof storage.getRoomAgents === 'function'
+        ? storage.getRoomAgents(roomId)
+        : []
+    return agents.map((agent: any) => ({
+        id: agent.id,
+        roomId: agent.roomId,
+        agentId: agent.agentId,
+        agent: agent.agent,
+        name: agent.name,
+        avatar: agent.avatar || '',
+    }))
+}
+
 async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: string, input: AgentInput, agentId = generateId()) {
     const agent = String(input.agent || 'hermes').trim() as AgentInput['agent']
     if (!GROUP_AGENT_TYPES.has(agent || '')) {
@@ -616,7 +630,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const user = ctx.state?.user
     const storage = chatServer.getStorage()
-    const visibleRooms = visibleRoomsForUser(storage, user)
+    const visibleRooms = visibleRoomsForUser(storage, user).map(room => ({
+        ...room,
+        agents: roomAgentSummaries(storage, room.id),
+    }))
     const paginated = ctx.query?.offset !== undefined || ctx.query?.limit !== undefined
     const offset = paginated && ctx.query?.offset
         ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0)
