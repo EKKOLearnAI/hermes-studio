@@ -20,6 +20,7 @@ describe('App connections scan modal', () => {
     expect(source).toContain(':href="androidDownloadUrl"')
     expect(source).toContain('aria-label="GitHub / Cloudflare"')
     expect(source).toContain("t('connections.app.downloadApk')")
+    expect(source).toContain('data-platform-icon="google-play"')
     expect(source).toContain('<h4>Android</h4>')
     expect(source).toContain('<h4>iOS</h4>')
     expect(source).toContain('<h4>HarmonyOS</h4>')
