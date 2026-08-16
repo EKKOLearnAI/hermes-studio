@@ -12,8 +12,8 @@ describe('History GROUP collapse contract', () => {
 
   it('exposes the GROUP header as an accessible keyboard toggle', () => {
     expect(historyView).toContain(':aria-expanded="!isGroupRoomsCollapsed"')
-    expect(historyView).toContain('@keydown.enter.prevent="toggleGroupRooms"')
-    expect(historyView).toContain('@keydown.space.prevent="toggleGroupRooms"')
+    expect(historyView).toContain('@keydown.enter.self.prevent="toggleGroupRooms"')
+    expect(historyView).toContain('@keydown.space.self.prevent="toggleGroupRooms"')
   })
 
   it('hides the room list and pagination control without clearing room data', () => {

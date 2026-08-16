@@ -367,6 +367,34 @@ test.describe('history GROUP pagination', () => {
     await expect(loadMore).toHaveCount(0)
     await expect(page.locator('.group-room-history-item')).toHaveCount(53)
   })
+
+  test('keyboard activation of GROUP pagination loads the next page without collapsing', async ({ page }) => {
+    const roomPageRequests: string[] = []
+    page.on('request', (request) => {
+      const url = new URL(request.url())
+      if (url.pathname === '/api/hermes/group-chat/rooms') {
+        roomPageRequests.push(url.search)
+      }
+    })
+
+    await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    const loadMore = groupHeader.locator('.session-group-load-more')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.group-room-history-item')).toHaveCount(50)
+
+    await loadMore.focus()
+    await loadMore.press('Enter')
+
+    await expect.poll(() => roomPageRequests).toContain('?offset=50&limit=50')
+    await expect(page.locator('.group-room-history-item')).toHaveCount(53)
+    await expect(page.locator('.group-room-history-item')).toHaveText(
+      pagedGroupRooms.map(room => new RegExp(room.name)),
+    )
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(loadMore).toHaveCount(0)
+  })
 })
 
 test.describe('history source pagination', () => {
