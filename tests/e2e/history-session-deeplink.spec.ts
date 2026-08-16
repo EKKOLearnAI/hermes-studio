@@ -270,28 +270,55 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('Newest Group Room')).toBeVisible()
   })
 
-  test('active GROUP routes override persisted collapse on direct and history navigation', async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('hermes_collapsed_groups', JSON.stringify(['group-chat']))
-    })
+  test('active GROUP routes support mouse and keyboard collapse while preserving the transcript and highlight', async ({ page }) => {
     await page.goto('/#/hermes/history/group-chat/room-new')
 
     const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
-    await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
-      .not.toContain('group-chat')
     await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('Newest Group Room').first()).toBeHidden()
+    await expect(page.getByText('History for Newest Group Room')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
+      .toContain('group-chat')
+
+    await page.reload()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('History for Newest Group Room')).toBeVisible()
+
+    await groupHeader.focus()
+    await groupHeader.press('Enter')
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
 
+    await groupHeader.focus()
+    await groupHeader.press('Space')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('History for Newest Group Room')).toBeVisible()
+  })
+
+  test('entering a Group Room expands once and then respects manual collapse', async ({ page }) => {
     await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
     await groupHeader.click()
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
-    await page.goBack()
+    await page.evaluate(() => {
+      window.location.hash = '#/hermes/history/group-chat/room-new'
+    })
     await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-new$/)
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
+
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await page.evaluate(() => {
+      window.location.hash = '#/hermes/history/group-chat/room-old'
+    })
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
   })
 
   test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
@@ -311,6 +338,11 @@ test.describe('history session deep links', () => {
     await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
     await expect(page.getByText('History for Older Group Room')).toBeVisible()
     await expect(page.locator('[data-group-history-scroller]')).toBeVisible()
+
+    await page.locator('.hamburger-btn').click()
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
   })
 
   test('clicking another history session updates URL and reload preserves it', async ({ page }) => {
@@ -394,6 +426,35 @@ test.describe('history GROUP pagination', () => {
     )
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(loadMore).toHaveCount(0)
+  })
+
+  test('active-room collapse preserves loaded pagination state', async ({ page }) => {
+    const roomPageRequests: string[] = []
+    page.on('request', (request) => {
+      const url = new URL(request.url())
+      if (url.pathname === '/api/hermes/group-chat/rooms') {
+        roomPageRequests.push(url.search)
+      }
+    })
+
+    await page.goto('/#/hermes/history/group-chat/room-1')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    const loadMore = groupHeader.locator('.session-group-load-more')
+    await loadMore.click()
+    await expect(page.locator('.group-room-history-item')).toHaveCount(53)
+    await expect(page.getByText('History for Paged Group Room 1')).toBeVisible()
+
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.group-room-history-item')).toHaveCount(0)
+    await expect(page.getByText('History for Paged Group Room 1')).toBeVisible()
+
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.group-room-history-item')).toHaveCount(53)
+    await expect(page.locator('.group-room-history-item.active')).toContainText('Paged Group Room 1')
+    await expect(roomPageRequests).toEqual(['?offset=0&limit=50', '?offset=50&limit=50'])
   })
 })
 

@@ -22,9 +22,10 @@ describe('History GROUP collapse contract', () => {
     expect(historyView).not.toContain('groupRooms.value = []')
   })
 
-  it('expands GROUP whenever a room route becomes active', () => {
+  it('allows active rooms to stay collapsed after the initial route transition', () => {
     expect(historyView).toContain('function ensureGroupRoomsExpanded()')
-    expect(historyView).toContain('if (groupRoomId) {')
-    expect(historyView).toContain('ensureGroupRoomsExpanded()')
+    expect(historyView).not.toContain('if (routeGroupRoomId.value) {')
+    expect(historyView).not.toContain('if (routeGroupRoomId.value) ensureGroupRoomsExpanded()')
+    expect(historyView).toContain('if (!previousGroupRoomId) ensureGroupRoomsExpanded()')
   })
 })
