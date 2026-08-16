@@ -112,11 +112,12 @@ function detailFor(id: string, sessions = historySessions) {
   }
 }
 
-async function mockHistoryApi(page: Page, sessions = historySessions) {
-  const groupRooms = [
+const defaultGroupRooms = [
     { id: 'room-new', name: 'Newest Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_001_000 },
     { id: 'room-old', name: 'Older Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_000_000 },
-  ]
+]
+
+async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms = defaultGroupRooms) {
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -231,6 +232,9 @@ test.describe('history session deep links', () => {
 
     const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
     await expect(groupHeader).toBeVisible()
+    await expect(groupHeader).toHaveAttribute('role', 'button')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(groupHeader.locator('.session-group-load-more')).toHaveCount(0)
     await expect(page.getByText('Newest Group Room').first()).toBeVisible()
     await expect(page.getByText('Older Group Room').first()).toBeVisible()
     await expect(page.getByText('History for Newest Group Room')).toBeVisible()
@@ -245,12 +249,60 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('History for Older Group Room')).toBeVisible()
   })
 
+  test('GROUP collapse persists on non-group History routes and supports keyboard toggles', async ({ page }) => {
+    await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    await groupHeader.focus()
+    await groupHeader.press('Enter')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('Newest Group Room')).toBeHidden()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
+      .toContain('group-chat')
+
+    await page.reload()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('Newest Group Room')).toBeHidden()
+
+    await groupHeader.focus()
+    await groupHeader.press('Space')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByText('Newest Group Room')).toBeVisible()
+  })
+
+  test('active GROUP routes override persisted collapse on direct and history navigation', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('hermes_collapsed_groups', JSON.stringify(['group-chat']))
+    })
+    await page.goto('/#/hermes/history/group-chat/room-new')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
+      .not.toContain('group-chat')
+
+    await page.goto('/#/hermes/history/session/hist-alpha')
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await page.goBack()
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-new$/)
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
+  })
+
   test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/#/hermes/history/group-chat/room-new')
 
     await page.locator('.hamburger-btn').click()
-    await expect(page.locator('.session-group-header', { hasText: 'GROUP' })).toBeVisible()
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    await expect(groupHeader).toBeVisible()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'false')
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await page.getByText('Older Group Room').first().click()
 
     await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
@@ -276,6 +328,41 @@ test.describe('history session deep links', () => {
 
     await expect(page).toHaveURL(/#\/hermes\/history$/)
     await expect(page.getByText('API Server History Session').first()).toBeVisible()
+  })
+})
+
+test.describe('history GROUP pagination', () => {
+  const pagedGroupRooms = Array.from({ length: 53 }, (_, index) => ({
+    id: `room-${index + 1}`,
+    name: `Paged Group Room ${index + 1}`,
+    inviteCode: null,
+    canManage: false,
+    lastActiveAt: 1_790_100_000 - index,
+  }))
+
+  test.beforeEach(async ({ page }) => {
+    await authenticate(page)
+    await mockHistoryApi(page, historySessions, pagedGroupRooms)
+  })
+
+  test('shows pagination only when needed and loads one deduplicated page at a time', async ({ page }) => {
+    await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    const loadMore = groupHeader.locator('.session-group-load-more')
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(loadMore).toBeVisible()
+    await expect(page.getByText('Paged Group Room 51')).toBeHidden()
+
+    await groupHeader.click()
+    await expect(loadMore).toBeHidden()
+    await groupHeader.click()
+    await expect(loadMore).toBeVisible()
+    await loadMore.click()
+
+    await expect(page.getByText('Paged Group Room 51')).toBeVisible()
+    await expect(loadMore).toHaveCount(0)
+    await expect(page.locator('.group-room-history-item')).toHaveCount(53)
   })
 })
 
