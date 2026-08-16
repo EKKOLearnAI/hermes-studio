@@ -4,11 +4,13 @@ const addMessageMock = vi.hoisted(() => vi.fn(() => 1))
 const getSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
 const getOrCreateSessionMock = vi.hoisted(() => vi.fn(() => ({ messages: [], isWorking: false })))
-const forceCompressBridgeHistoryMock = vi.hoisted(() => vi.fn())
 const calcAndUpdateUsageMock = vi.hoisted(() => vi.fn())
 const getModelContextLengthMock = vi.hoisted(() => vi.fn(() => 256_000))
 const compactMock = vi.hoisted(() => vi.fn())
 const getRunInfoMock = vi.hoisted(() => vi.fn())
+const getPiSessionStatsMock = vi.hoisted(() => vi.fn())
+const getPiSessionStateMock = vi.hoisted(() => vi.fn())
+const stopMock = vi.hoisted(() => vi.fn(() => true))
 const startCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => ({ agentSessionId: 'agent-session-1' })))
 const compactStoredCodingAgentSessionMock = vi.hoisted(() => vi.fn())
 
@@ -20,7 +22,6 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
   getOrCreateSession: getOrCreateSessionMock,
-  forceCompressBridgeHistory: forceCompressBridgeHistoryMock,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
@@ -35,6 +36,9 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
   codingAgentRunManager: {
     compact: compactMock,
     getRunInfo: getRunInfoMock,
+    getPiSessionStats: getPiSessionStatsMock,
+    getPiSessionState: getPiSessionStateMock,
+    stop: stopMock,
   },
 }))
 
@@ -97,6 +101,52 @@ describe('coding agent session commands', () => {
     expect(command.contextPercent).toBe(0)
   })
 
+  it('uses native Pi RPC stats for context and usage', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', agent: 'pi', model: 'pi-model', provider: 'pi-provider' })
+    getRunInfoMock.mockReturnValue({ exists: true, agentId: 'pi' })
+    getPiSessionStatsMock.mockResolvedValue({
+      sessionId: 'pi-session-1',
+      userMessages: 3,
+      assistantMessages: 3,
+      toolCalls: 2,
+      toolResults: 2,
+      totalMessages: 8,
+      tokens: { input: 100, output: 20, cacheRead: 30, cacheWrite: 5, total: 155 },
+      cost: 0.25,
+      contextUsage: { tokens: 40_000, contextWindow: 200_000, percent: 20 },
+    })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+
+    const contextSocket = makeSocket()
+    await handleCodingAgentSessionCommand(contextSocket.nsp, contextSocket.socket as any, {
+      session_id: 'session-1',
+    }, { name: 'context', rawName: 'context', args: '' }, 'default', new Map())
+    const context = contextSocket.emitted.find(item => item.event === 'session.command')?.payload
+    expect(context).toMatchObject({
+      action: 'context',
+      contextTokens: 40_000,
+      contextWindow: 200_000,
+      contextPercent: 20,
+      source: 'pi',
+    })
+
+    const usageSocket = makeSocket()
+    await handleCodingAgentSessionCommand(usageSocket.nsp, usageSocket.socket as any, {
+      session_id: 'session-1',
+    }, { name: 'usage', rawName: 'usage', args: '' }, 'default', new Map())
+    const usage = usageSocket.emitted.find(item => item.event === 'session.command')?.payload
+    expect(usage).toMatchObject({
+      action: 'usage',
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 5,
+      totalTokens: 155,
+      source: 'pi',
+    })
+    expect(calcAndUpdateUsageMock).not.toHaveBeenCalled()
+  })
+
   it('emits native compact completion for Codex', async () => {
     compactMock.mockResolvedValue({ compacted: true, beforeTokens: 500, afterTokens: 200 })
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
@@ -115,15 +165,9 @@ describe('coding agent session commands', () => {
     expect(command.message).toContain('After: 200 tokens')
   })
 
-  it('falls back to Studio ChatContextCompressor when native compact fails', async () => {
+  it('reports native compact failure without compressing Studio transcript', async () => {
     compactMock.mockRejectedValue(new Error('native compact unsupported'))
-    forceCompressBridgeHistoryMock.mockResolvedValue({
-      beforeMessages: 20,
-      resultMessages: 4,
-      beforeTokens: 50_000,
-      afterTokens: 3_000,
-      compressed: true,
-    })
+    getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
     const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
@@ -133,9 +177,38 @@ describe('coding agent session commands', () => {
     const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
     const command = commands.at(-1)
     expect(command.action).toBe('compact')
-    expect(command.compacted).toBe(true)
-    expect(command.message).toContain('Studio compressed its transcript')
-    expect(forceCompressBridgeHistoryMock).toHaveBeenCalledWith('session-1', 'default', [])
+    expect(command.ok).toBe(false)
+    expect(command.compacted).toBe(false)
+    expect(command.message).toBe('Compaction failed: native compact unsupported')
+  })
+
+  it('compacts Pi through its native RPC session and labels it correctly', async () => {
+    compactMock.mockResolvedValue({ compacted: true, beforeTokens: 500 })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      agent: 'pi',
+      agent_mode: 'global',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'pi-session-1',
+      workspace: '/tmp/work',
+    })
+    getRunInfoMock.mockReturnValue(null)
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, {
+      session_id: 'session-1',
+    }, { name: 'compact', rawName: 'compact', args: 'focus on code changes' }, 'default', new Map())
+
+    expect(startCodingAgentRunMock).toHaveBeenCalledWith('pi', expect.objectContaining({
+      sessionId: 'session-1',
+      mode: 'global',
+      agentNativeSessionId: 'pi-session-1',
+    }), expect.any(Object))
+    expect(compactMock).toHaveBeenCalledWith('session-1', 'focus on code changes')
+    expect(stopMock).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    expect(commands[0].message).toContain('Native /compact sent to Pi.')
+    expect(commands.at(-1)).toMatchObject({ action: 'compact', compacted: true })
   })
 
   it('compacts a finished Codex session without rebuilding a run', async () => {
@@ -190,5 +263,35 @@ describe('coding agent session commands', () => {
     expect(command.action).toBe('status')
     expect(command.nativeSessionId).toBe('thread-1')
     expect(command.message).toContain('agent: codex')
+  })
+
+  it('uses native Pi RPC state for status', async () => {
+    getSessionMock.mockReturnValue({ agent: 'pi', model: 'pi-model', provider: 'pi-provider' })
+    getRunInfoMock.mockReturnValue({ exists: true, agentId: 'pi', model: 'pi-model', provider: 'pi-provider' })
+    getPiSessionStateMock.mockResolvedValue({
+      model: { id: 'pi-model', provider: 'pi-provider' },
+      thinkingLevel: 'high',
+      isStreaming: false,
+      isCompacting: false,
+      sessionId: 'pi-session-1',
+      autoCompactionEnabled: true,
+      messageCount: 12,
+      pendingMessageCount: 0,
+    })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, {
+      session_id: 'session-1',
+    }, { name: 'status', rawName: 'status', args: '' }, 'default', new Map())
+
+    const command = emitted.find(item => item.event === 'session.command')?.payload
+    expect(command).toMatchObject({
+      action: 'status',
+      agent: 'pi',
+      nativeSessionId: 'pi-session-1',
+      autoCompactionEnabled: true,
+      source: 'pi',
+    })
+    expect(command.message).toContain('auto compact: on')
   })
 })

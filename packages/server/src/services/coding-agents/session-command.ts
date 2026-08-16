@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io'
 import { addMessage, getSession, updateSessionStats } from '../../db/hermes/session-store'
 import { getModelContextLength } from '../hermes/model-context'
-import { forceCompressBridgeHistory, getOrCreateSession } from '../hermes/run-chat/compression'
+import { getOrCreateSession } from '../hermes/run-chat/compression'
 import { calcAndUpdateUsage } from '../hermes/run-chat/usage'
 import type { SessionState } from '../hermes/run-chat/types'
 import { codingAgentRunManager } from './runtime/run-manager'
@@ -13,6 +13,12 @@ export interface ParsedCodingAgentCommand {
   name: CodingAgentCommandName
   rawName: string
   args: string
+}
+
+type CodingAgentCompactResult = { started: boolean } | {
+  compacted: boolean
+  beforeTokens?: number | null
+  afterTokens?: number | null
 }
 
 const CODING_AGENT_COMMAND_ALIASES: Record<string, CodingAgentCommandName> = {
@@ -75,10 +81,51 @@ export async function handleCodingAgentSessionCommand(
 
   if (command.name === 'context' || command.name === 'usage') {
     try {
+      const row = getSession(sessionId)
+      const runInfo = codingAgentRunManager.getRunInfo(sessionId)
+      if (row?.agent === 'pi' || runInfo?.agentId === 'pi') {
+        const stats = await withPiRpcSession(sessionId, profile, state, () => (
+          codingAgentRunManager.getPiSessionStats(sessionId)
+        ))
+        if (command.name === 'context') {
+          const contextTokens = stats.contextUsage?.tokens ?? null
+          const contextWindow = stats.contextUsage?.contextWindow || getModelContextLength({
+            profile,
+            model: data.model || row?.model || undefined,
+            provider: data.provider || row?.provider || undefined,
+          })
+          const percent = stats.contextUsage?.percent
+            ?? (contextTokens != null && contextWindow > 0
+              ? Math.round((contextTokens / contextWindow) * 1000) / 10
+              : null)
+          emitCommand({
+            action: 'context',
+            terminal: !state.isWorking,
+            message: `Context: ${contextTokens ?? 'unknown'} / ${contextWindow} tokens (${percent ?? 'unknown'}%).`,
+            contextTokens,
+            contextWindow,
+            contextPercent: percent,
+            source: 'pi',
+          })
+        } else {
+          emitCommand({
+            action: 'usage',
+            terminal: !state.isWorking,
+            message: `Usage: input ${stats.tokens.input}, output ${stats.tokens.output}, cache read ${stats.tokens.cacheRead}, cache write ${stats.tokens.cacheWrite}, total ${stats.tokens.total} tokens.`,
+            inputTokens: stats.tokens.input,
+            outputTokens: stats.tokens.output,
+            cacheReadTokens: stats.tokens.cacheRead,
+            cacheWriteTokens: stats.tokens.cacheWrite,
+            totalTokens: stats.tokens.total,
+            cost: stats.cost,
+            source: 'pi',
+          })
+        }
+        return
+      }
       const usage = await calcAndUpdateUsage(sessionId, state, (event, payload) => {
         emit(event, payload)
       }, { nativeSource: 'coding_agent' })
-      const row = getSession(sessionId)
       const contextWindow = getModelContextLength({
         profile,
         model: data.model || row?.model || undefined,
@@ -112,6 +159,48 @@ export async function handleCodingAgentSessionCommand(
   if (command.name === 'status') {
     const row = getSession(sessionId)
     const info = codingAgentRunManager.getRunInfo(sessionId)
+    if (row?.agent === 'pi' || info?.agentId === 'pi') {
+      try {
+        const piState = await withPiRpcSession(sessionId, profile, state, () => (
+          codingAgentRunManager.getPiSessionState(sessionId)
+        ))
+        const running = piState.isStreaming || piState.isCompacting
+        const model = piState.model?.id || row?.model || info?.model || data.model || '-'
+        const provider = piState.model?.provider || row?.provider || info?.provider || data.provider || '-'
+        emitCommand({
+          action: 'status',
+          terminal: !running,
+          message: [
+            `Status: ${running ? 'running' : 'idle'}`,
+            'agent: pi',
+            `provider: ${provider}`,
+            `model: ${model}`,
+            `native session: ${piState.sessionId || row?.agent_native_session_id || '-'}`,
+            `compacting: ${piState.isCompacting ? 'yes' : 'no'}`,
+            `auto compact: ${piState.autoCompactionEnabled ? 'on' : 'off'}`,
+          ].join(', '),
+          isWorking: running,
+          agent: 'pi',
+          model,
+          provider,
+          nativeSessionId: piState.sessionId || row?.agent_native_session_id || null,
+          nativeMessageCount: piState.messageCount,
+          pendingMessageCount: piState.pendingMessageCount,
+          thinkingLevel: piState.thinkingLevel,
+          isCompacting: piState.isCompacting,
+          autoCompactionEnabled: piState.autoCompactionEnabled,
+          source: 'pi',
+        })
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: 'status',
+          terminal: !state.isWorking,
+          message: `Status lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+      return
+    }
     const running = Boolean(info?.running)
     const agent = row?.agent || info?.agentId || '-'
     const model = row?.model || info?.model || data.model || '-'
@@ -137,7 +226,13 @@ export async function handleCodingAgentSessionCommand(
 
   if (command.name === 'compact') {
     const compactRow = getSession(sessionId)
-    const compactAgentName = compactRow?.agent === 'codex' ? 'Codex' : 'Claude Code'
+    const compactInfo = codingAgentRunManager.getRunInfo(sessionId)
+    const compactAgentId = compactRow?.agent || compactInfo?.agentId || ''
+    const compactAgentName = compactAgentId === 'codex'
+      ? 'Codex'
+      : compactAgentId === 'pi'
+        ? 'Pi'
+        : 'Claude Code'
     emitCommand({
       action: 'compact',
       terminal: false,
@@ -145,16 +240,19 @@ export async function handleCodingAgentSessionCommand(
       message: `Native /compact sent to ${compactAgentName}.`,
     })
     try {
-      let result: { started: boolean } | {
-        compacted: boolean
-        beforeTokens?: number | null
-        afterTokens?: number | null
-      }
+      let result: CodingAgentCompactResult
       try {
-        result = await codingAgentRunManager.compact(sessionId, command.args)
+        if (compactAgentId === 'pi') {
+          result = await withPiRpcSession<CodingAgentCompactResult>(sessionId, profile, state, () => (
+            codingAgentRunManager.compact(sessionId, command.args)
+          ))
+        } else {
+          result = await codingAgentRunManager.compact(sessionId, command.args)
+        }
       } catch (err) {
+        if (compactAgentId === 'pi') throw err
         if (!(err instanceof Error) || !err.message.includes('Coding agent session not found')) throw err
-        result = await restartCodingAgentRunForCompact(sessionId, profile, state)
+        result = await restartCodingAgentRunForCompact(sessionId, profile, state, command.args)
       }
       if ('started' in result) {
         return
@@ -166,27 +264,13 @@ export async function handleCodingAgentSessionCommand(
         compacted: result.compacted,
       })
     } catch (err) {
-      try {
-        const fallback = await compressStudioTranscript(sessionId, profile)
-        emitCommand({
-          action: 'compact',
-          terminal: true,
-          message: `Native compact unavailable (${err instanceof Error ? err.message : String(err)}); Studio compressed its transcript: ${fallback.beforeMessages} -> ${fallback.resultMessages} messages, ${fallback.beforeTokens} -> ${fallback.afterTokens} tokens.`,
-          compacted: fallback.compressed,
-          nativeCompactError: err instanceof Error ? err.message : String(err),
-          beforeMessages: fallback.beforeMessages,
-          resultMessages: fallback.resultMessages,
-          beforeTokens: fallback.beforeTokens,
-          afterTokens: fallback.afterTokens,
-        })
-      } catch (fallbackErr) {
-        emitCommand({
-          ok: false,
-          action: 'compact',
-          terminal: true,
-          message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}; Studio fallback also failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
-        })
-      }
+      emitCommand({
+        ok: false,
+        action: 'compact',
+        terminal: true,
+        message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+        compacted: false,
+      })
     }
     return
   }
@@ -196,6 +280,7 @@ async function restartCodingAgentRunForCompact(
   sessionId: string,
   profile: string,
   state: SessionState,
+  args = '',
 ): Promise<{ started: boolean } | {
   compacted: boolean
   beforeTokens?: number | null
@@ -217,11 +302,48 @@ async function restartCodingAgentRunForCompact(
     agentNativeSessionId: row.agent_native_session_id || undefined,
     agentSessionId: row.agent_session_id || undefined,
   }, state)
-  const result = await codingAgentRunManager.compact(sessionId, '')
+  const result = await codingAgentRunManager.compact(sessionId, args)
   if (!('started' in result) && !('compacted' in result)) {
     throw new Error('Coding agent compact returned an unexpected result')
   }
   return result
+}
+
+async function withPiRpcSession<T>(
+  sessionId: string,
+  profile: string,
+  state: SessionState,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  const existing = codingAgentRunManager.getRunInfo(sessionId)
+  if (existing && existing.agentId !== 'pi') {
+    throw new Error(`Session is running ${existing.agentId}, not Pi`)
+  }
+  let started = false
+  if (!existing) {
+    const row = getSession(sessionId)
+    if (!row || row.agent !== 'pi') throw new Error('Pi coding agent session not found')
+    await startCodingAgentRun('pi', {
+      sessionId,
+      profile,
+      mode: row.agent_mode === 'global' ? 'global' : 'scoped',
+      workspace: row.workspace || undefined,
+      agentNativeSessionId: row.agent_native_session_id || undefined,
+      agentSessionId: row.agent_session_id || undefined,
+    }, state)
+    started = true
+  }
+  try {
+    return await operation()
+  } finally {
+    if (started) {
+      codingAgentRunManager.stop(sessionId, { reportClosed: false })
+      state.isWorking = false
+      state.runId = undefined
+      state.abortController = undefined
+      state.activeRunMarker = undefined
+    }
+  }
 }
 
 function compactionCompletionMessage(result: {
@@ -234,26 +356,6 @@ function compactionCompletionMessage(result: {
   if (result.beforeTokens != null) parts.push(`Before: ${result.beforeTokens} tokens.`)
   if (result.afterTokens != null) parts.push(`After: ${result.afterTokens} tokens.`)
   return parts.join(' ')
-}
-
-async function compressStudioTranscript(
-  sessionId: string,
-  profile: string,
-): Promise<{
-  beforeMessages: number
-  resultMessages: number
-  beforeTokens: number
-  afterTokens: number
-  compressed: boolean
-}> {
-  const result = await forceCompressBridgeHistory(sessionId, profile, [])
-  return {
-    beforeMessages: result.beforeMessages,
-    resultMessages: result.resultMessages,
-    beforeTokens: result.beforeTokens,
-    afterTokens: result.afterTokens,
-    compressed: result.compressed,
-  }
 }
 
 function persistCommandMessage(sessionId: string, state: SessionState, content: string) {
