@@ -53,6 +53,7 @@ import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./se
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
+import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
@@ -1614,7 +1615,10 @@ const showSessionModelModeModal = ref(false);
 const sessionModelSessionId = ref<string | null>(null);
 const sessionModelSearch = ref("");
 const sessionModelKind = ref<"model" | "moa">("model");
-const sessionModelCollapsedGroups = ref<Record<string, boolean>>({});
+const {
+  isGroupCollapsed: isSessionModelGroupCollapsed,
+  toggleGroup: toggleSessionModelCollapsedGroup,
+} = useCollapsedProviderGroups();
 const sessionModelValue = ref("");
 const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
@@ -1741,7 +1745,6 @@ async function openSessionModelModal(sessionId: string) {
   sessionModelCustomProvider.value = usesMoa ? defaults.provider : sessionModelProvider.value;
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
-  sessionModelCollapsedGroups.value = {};
   showSessionModelModal.value = true;
 }
 
@@ -1760,13 +1763,9 @@ function handleHeaderModelClick() {
   openSessionModelModal(sessionId);
 }
 
-function isSessionModelGroupCollapsed(provider: string) {
-  return !!sessionModelCollapsedGroups.value[provider];
-}
-
 function toggleSessionModelGroup(provider: string) {
   if (sessionModelSwitching.value) return;
-  sessionModelCollapsedGroups.value[provider] = !sessionModelCollapsedGroups.value[provider];
+  toggleSessionModelCollapsedGroup(provider);
 }
 
 function isCustomSessionModel(model: string, provider: string) {

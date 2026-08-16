@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { NInput, NModal } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/hermes/app'
+import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 import type { AvailableModelGroup, ProviderApiMode } from '@/api/hermes/system'
 
 const props = defineProps<{
@@ -20,7 +21,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const showModal = ref(false)
 const searchQuery = ref('')
-const collapsedGroups = ref<Record<string, boolean>>({})
+const { isGroupCollapsed, toggleGroup } = useCollapsedProviderGroups()
 
 const groupsWithCustom = computed(() =>
   props.groups.map(group => ({
@@ -59,17 +60,8 @@ const filteredGroups = computed(() => {
 
 function openModal() {
   if (props.disabled) return
-  collapsedGroups.value = {}
   searchQuery.value = ''
   showModal.value = true
-}
-
-function toggleGroup(provider: string) {
-  collapsedGroups.value[provider] = !collapsedGroups.value[provider]
-}
-
-function isGroupCollapsed(provider: string) {
-  return !!collapsedGroups.value[provider]
 }
 
 function isCustomModel(model: string, provider: string) {
