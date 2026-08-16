@@ -31,6 +31,23 @@ describe('workflow import capabilities', () => {
     ], groups)).not.toThrow()
   })
 
+  it('accepts Ekko protocol overrides and server-managed auth providers', () => {
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'ekko-agent', provider: 'openai-codex', model: 'model-a', apiMode: 'chat_completions' }),
+    ], [{ provider: 'openai-codex', models: ['model-a'], api_mode: 'codex_responses' }])).not.toThrow()
+  })
+
+  it('keeps Ekko targets fail closed for missing models and unsupported protocols', () => {
+    const groups = [{ provider: 'openai-codex', models: ['model-a'], api_mode: 'codex_responses' }]
+
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'ekko-agent', provider: 'openai-codex', model: 'model-b', apiMode: 'codex_responses' }),
+    ], groups)).toThrow('unavailable')
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'ekko-agent', provider: 'openai-codex', model: 'model-a', apiMode: 'bedrock_converse' }),
+    ], groups)).toThrow('unavailable')
+  })
+
   it('keeps scoped Coding Agent targets fail closed for missing models and unsupported protocols', () => {
     const groups = [{ provider: 'custom:test', models: ['model-a'], api_mode: 'chat_completions' }]
 

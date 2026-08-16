@@ -184,6 +184,18 @@ const router = createRouter({
       component: () => import('@/views/hermes/GroupChatView.vue'),
     },
     {
+      path: '/hermes/history/group-chat/:roomId',
+      name: 'hermes.groupChatHistory',
+      component: () => import('@/views/hermes/HistoryView.vue'),
+    },
+    {
+      path: '/hermes/group-chat/history/:roomId',
+      redirect: to => ({
+        name: 'hermes.groupChatHistory',
+        params: { roomId: to.params.roomId },
+      }),
+    },
+    {
       path: '/hermes/files',
       name: 'hermes.files',
       component: () => import('@/views/hermes/FilesView.vue'),

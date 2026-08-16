@@ -149,7 +149,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 

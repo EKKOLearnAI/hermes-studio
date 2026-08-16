@@ -99,6 +99,9 @@ const agentsByRoom: Record<string, unknown[]> = {
 async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const rooms = baseRooms.map(room => ({ ...room }))
   let roomMessages = structuredClone(messagesByRoom)
+  const roomDetailRequests: Array<{ roomId: string, offset: number, limit: number, before: string, history: boolean }> = []
+  const roomDetailFailures = new Map<string, number>()
+  const roomDetailDelays = new Map<string, number>()
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
   const roomConfigUpdates: Array<{ roomId: string, body: any }> = []
@@ -237,14 +240,46 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     if (detailMatch) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+      const limit = Math.min(150, Math.max(1, Number(url.searchParams.get('limit')) || 150))
+      const before = url.searchParams.get('before') || ''
+      const history = url.searchParams.get('history') === '1'
+      roomDetailRequests.push({ roomId, offset, limit, before, history })
+      const failureKey = `${roomId}:${before || offset}`
+      const delay = roomDetailDelays.get(failureKey) || 0
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+      const remainingFailures = roomDetailFailures.get(failureKey) || 0
+      if (remainingFailures > 0) {
+        roomDetailFailures.set(failureKey, remainingFailures - 1)
+        return json({ error: 'Temporary history failure' }, 500)
+      }
       const agents = (agentsByRoom[roomId] || []).map(agent => (
         offlinePresence ? { ...(agent as object), connectionStatus: 'offline' } : agent
       ))
       const members = offlinePresence
         ? [{ id: 'member-offline', userId: 'user-offline', name: 'Offline Member', description: '', joinedAt: 1_790_000_000, connectionStatus: 'offline' }]
         : [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }]
+      const allMessages = roomMessages[roomId] || []
+      const cursorIndex = before
+        ? allMessages.findIndex(message => (message as { id?: string }).id === before)
+        : allMessages.length
+      const end = Math.max(0, before ? cursorIndex : allMessages.length - offset)
+      const start = Math.max(0, end - limit)
+      const messages = allMessages.slice(start, end)
+      const total = history ? allMessages.length : Math.min(500, allMessages.length)
       return room
-        ? json({ room, messages: roomMessages[roomId] || [], agents, members, handoffChains: handoffChains.filter(item => item.roomId === roomId) })
+        ? json({
+            room,
+            messages,
+            agents,
+            members,
+            handoffChains: handoffChains.filter(item => item.roomId === roomId),
+            total,
+            offset,
+            limit,
+            hasMore: history ? start > 0 : offset + messages.length < total,
+            historyTruncated: allMessages.length > 500,
+          })
         : json({ error: 'Room not found' }, 404)
     }
 
@@ -255,6 +290,16 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     inviteCodeUpdates,
     guestAgentPolicyUpdates,
     roomConfigUpdates,
+    roomDetailRequests,
+    failRoomDetail(roomId: string, offset: number, times = 1) {
+      roomDetailFailures.set(`${roomId}:${offset}`, times)
+    },
+    failRoomHistoryBefore(roomId: string, before: string, times = 1) {
+      roomDetailFailures.set(`${roomId}:${before}`, times)
+    },
+    delayRoomHistoryBefore(roomId: string, before: string, delayMs: number) {
+      roomDetailDelays.set(`${roomId}:${before}`, delayMs)
+    },
     setRoomMessages(messages: Record<string, unknown[]>) {
       roomMessages = structuredClone(messages)
     },
@@ -268,8 +313,11 @@ async function mockGroupChatSocket(page: Page) {
       contentType: 'application/javascript',
       body: `
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
-const roomMessages = ${JSON.stringify(messagesByRoom)}
+state.executionQueues = state.executionQueues || {}
+state.nextSocketId = state.nextSocketId || 1
+const roomMessages = structuredClone(${JSON.stringify(messagesByRoom)})
 const roomAgents = ${JSON.stringify(agentsByRoom)}
+const roomNames = ${JSON.stringify(Object.fromEntries(baseRooms.map(room => [room.id, room.name])))}
 function makeSocket(url, options) {
   const listeners = new Map()
   const socket = {
@@ -286,10 +334,32 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: (roomMessages[roomId] || []).filter(message => !retracted.has(message.id)), agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
+      }
+      if (event === 'cancel_execution_queue_item' && typeof ack === 'function') {
+        const roomId = payload && payload.roomId
+        const queueId = payload && payload.queueId
+        const items = state.executionQueues[roomId] || []
+        const selected = items.find(item => item.id === queueId)
+        const siblings = selected ? items.filter(item => item.messageId === selected.messageId) : []
+        if (!selected || siblings.some(item => item.status !== 'queued')) {
+          setTimeout(() => ack({ error: 'Queue item is no longer cancellable' }), 0)
+        } else {
+          state.executionQueues[roomId] = items
+            .filter(item => item.messageId !== selected.messageId)
+            .map((item, index) => ({ ...item, position: index + 1 }))
+          roomMessages[roomId] = (roomMessages[roomId] || []).filter(message => message.id !== selected.messageId)
+          const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+          retracted.add(selected.messageId)
+          window.localStorage.setItem('__pw_group_retracted__', JSON.stringify([...retracted]))
+          for (const peer of state.sockets) peer.__trigger('message_retracted', { roomId, messageId: selected.messageId, totalTokens: 0 })
+          for (const peer of state.sockets) peer.__trigger('execution_queue_updated', { roomId, items: state.executionQueues[roomId] })
+          setTimeout(() => ack({ ok: true, status: 'retracted', messageId: selected.messageId }), 0)
+        }
       }
       return this
     },
@@ -331,6 +401,53 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
   }, platform)
 }
 
+async function installMockVoiceCapture(page: Page) {
+  await page.addInitScript(() => {
+    const state = { recorderState: 'inactive' }
+    ;(window as any).__PW_FAKE_GROUP_VOICE_CAPTURE__ = state
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true }
+      state = 'inactive'
+      mimeType: string
+      ondataavailable: ((event: { data: Blob }) => void) | null = null
+      onstop: (() => void) | null = null
+      constructor(_stream: unknown, options: { mimeType?: string } = {}) {
+        this.mimeType = options.mimeType || 'audio/webm'
+      }
+      start() {
+        this.state = 'recording'
+        state.recorderState = 'recording'
+      }
+      stop() {
+        this.state = 'inactive'
+        state.recorderState = 'inactive'
+        setTimeout(() => {
+          this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) })
+          this.onstop?.()
+        }, 0)
+      }
+    }
+    const track = { stop() {} }
+    const stream = { getTracks: () => [track], getAudioTracks: () => [track], getVideoTracks: () => [] }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(globalThis, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    })
+    window.localStorage.setItem('hermes-stt-settings-v1', JSON.stringify({
+      provider: 'openai',
+      openaiModel: 'gpt-4o-transcribe',
+      openaiLanguage: '',
+      openaiPrompt: '',
+      customBaseUrl: '',
+      customModel: 'gpt-4o-transcribe',
+      customLanguage: '',
+      customPrompt: '',
+    }))
+  })
+}
+
 async function setup(page: Page, path: string, platform?: DesktopPlatform, offlinePresence = false) {
   if (platform) await installDesktopBridge(page, platform)
   await page.addInitScript(() => {
@@ -344,11 +461,25 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform, offli
 }
 
 async function triggerGroupSocket(page: Page, event: string, payload: unknown) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
   await page.evaluate(({ event, payload }) => {
-    const socket = (window as any).__PW_GROUP_SOCKET__?.latest
-    if (!socket) throw new Error('Group chat socket is not connected')
-    socket.__trigger(event, payload)
+    const sockets = (window as any).__PW_GROUP_SOCKET__?.sockets || []
+    if (sockets.length === 0) throw new Error('Group chat socket is not connected')
+    for (const socket of sockets) socket.__trigger(event, payload)
   }, { event, payload })
+}
+
+async function connectGroupSocket(page: Page) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
+  await page.evaluate(() => {
+    const state = (window as any).__PW_GROUP_SOCKET__
+    for (const socket of state.sockets) {
+      if (String(socket.url).endsWith('/group-chat') && !socket.id) {
+        socket.id = `pw-group-socket-${state.nextSocketId++}`
+      }
+    }
+  })
+  await triggerGroupSocket(page, 'connect', undefined)
 }
 
 test.describe('group chat room deep links', () => {
@@ -414,6 +545,283 @@ test.describe('group chat room deep links', () => {
     const toolNames = await panel.locator('.tool-name').allTextContents()
     expect(toolNames[0]).toBe('live_tool_12')
     expect(toolNames.at(-1)).toBe('live_tool_1')
+  })
+
+  test('loads older group messages from an upward gesture at the top and anchors the visible transcript', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': Array.from({ length: 700 }, (_, index) => ({
+        id: `history-${index + 1}`,
+        roomId: 'room-alpha',
+        senderId: 'user-1',
+        senderName: 'Alice',
+        content: `History message ${index + 1}`,
+        timestamp: 1_790_000_000 + index,
+        role: 'user',
+      })),
+    })
+    await page.reload()
+
+    const transcript = page.locator('.group-message-list .virtual-message-list')
+    await expect(page.getByText('History message 700')).toBeVisible()
+    await transcript.evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+    const anchorOffset = () => transcript.evaluate((scroller, messageId) => {
+      const anchor = scroller.querySelector(`[data-group-message-id="${messageId}"]`)
+      if (!anchor) return Number.POSITIVE_INFINITY
+      return anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    }, 'history-551')
+    const anchorBefore = await anchorOffset()
+    await expect.poll(() => api.roomDetailRequests.some(request => request.offset === 150)).toBe(true)
+    await expect(page.getByText('History message 401')).toBeVisible()
+    await expect.poll(async () => {
+      const anchorAfter = await anchorOffset()
+      return Math.abs(anchorAfter - anchorBefore)
+    }).toBeLessThanOrEqual(2)
+  })
+
+  test('shows a retry action after older group history fails and links to the complete read-only history at the cap', async ({ page }) => {
+    test.setTimeout(45_000)
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': Array.from({ length: 700 }, (_, index) => ({
+        id: `archive-${index + 1}`,
+        roomId: 'room-alpha',
+        senderId: 'user-1',
+        senderName: 'Alice',
+        content: `Archive message ${index + 1}`,
+        timestamp: 1_790_100_000 + index,
+        role: 'user',
+      })),
+    })
+    api.failRoomDetail('room-alpha', 150)
+    await page.reload()
+
+    const transcript = page.locator('.group-message-list .virtual-message-list')
+    await transcript.evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+
+    const retry = page.getByRole('button', { name: 'Retry loading earlier messages' })
+    await expect(retry).toBeVisible()
+    await retry.click()
+    await expect(page.getByText('Archive message 401')).toBeVisible()
+
+    for (const expectedOffset of [300, 450]) {
+      await transcript.evaluate(element => {
+        element.scrollTop = 0
+        element.dispatchEvent(new Event('scroll'))
+      })
+      await expect.poll(() => api.roomDetailRequests.some(request => request.offset === expectedOffset)).toBe(true)
+    }
+
+    const historyLink = page.getByRole('link', { name: 'View complete group chat history' })
+    await expect(historyLink).toBeVisible()
+    await expect(historyLink).toHaveClass(/history-archive-link/)
+    await expect(historyLink).toHaveAttribute('href', '#/hermes/history/group-chat/room-alpha')
+    await historyLink.click()
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-alpha$/)
+    await expect(page.locator('.history-panel')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Alpha Room' })).toBeVisible()
+    await expect(page.getByText('Archive message 700', { exact: true })).toBeVisible()
+    const completeHistoryScroller = page.locator('[data-group-history-scroller]')
+    await expect(completeHistoryScroller).toBeVisible()
+    await expect.poll(() => completeHistoryScroller.evaluate(element =>
+      Math.round(element.scrollTop + element.clientHeight - element.scrollHeight),
+    )).toBeGreaterThanOrEqual(-1)
+    let historyRequests = api.roomDetailRequests.filter(request => request.roomId === 'room-alpha' && request.history)
+    expect(historyRequests).toHaveLength(1)
+    expect(historyRequests[0]).toMatchObject({ offset: 0, limit: 150, before: '' })
+    await expect(page.getByText('Archive message 551', { exact: true })).toBeVisible()
+    await expect(page.getByText('Archive message 550', { exact: true })).toHaveCount(0)
+    api.failRoomHistoryBefore('room-alpha', 'archive-551')
+    api.delayRoomHistoryBefore('room-alpha', 'archive-551', 150)
+    const dimensions = await completeHistoryScroller.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight)
+    const anchorBefore = await completeHistoryScroller.evaluate(element => {
+      element.scrollTop = 0
+      const item = element.querySelector('[data-group-message-id="archive-551"]')
+      const offset = item ? item.getBoundingClientRect().top - element.getBoundingClientRect().top : Number.NaN
+      element.dispatchEvent(new Event('scroll'))
+      return offset
+    })
+    await expect(page.getByRole('status')).toContainText('Loading earlier messages')
+    const historyRetry = page.getByRole('button', { name: 'Retry loading earlier messages' })
+    await expect(historyRetry).toBeVisible()
+    historyRequests = api.roomDetailRequests.filter(request => request.roomId === 'room-alpha' && request.history)
+    expect(historyRequests).toHaveLength(2)
+    expect(historyRequests[1]).toMatchObject({ offset: 0, limit: 150, before: 'archive-551' })
+    await historyRetry.click()
+    await expect(page.getByText('Archive message 401', { exact: true })).toBeVisible()
+    historyRequests = api.roomDetailRequests.filter(request => request.roomId === 'room-alpha' && request.history)
+    expect(historyRequests).toHaveLength(3)
+    expect(historyRequests[2]).toMatchObject({ offset: 0, limit: 150, before: 'archive-551' })
+    await expect.poll(() => completeHistoryScroller.evaluate((element, expectedOffset) => {
+      const item = element.querySelector('[data-group-message-id="archive-551"]')
+      const currentOffset = item
+        ? item.getBoundingClientRect().top - element.getBoundingClientRect().top
+        : Number.NaN
+      return Math.abs(currentOffset - expectedOffset)
+    }, anchorBefore)).toBeLessThanOrEqual(2)
+    await completeHistoryScroller.evaluate(element => {
+      element.scrollTop = 100
+      element.dispatchEvent(new Event('scroll'))
+      element.dispatchEvent(new Event('scroll'))
+    })
+    await page.waitForTimeout(100)
+    expect(api.roomDetailRequests.filter(request => request.roomId === 'room-alpha' && request.history)).toHaveLength(3)
+    await expect(page.locator('textarea')).toHaveCount(0)
+
+    await page.reload()
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-alpha$/)
+    await expect(page.getByRole('heading', { name: 'Alpha Room' })).toBeVisible()
+    await page.getByRole('link', { name: 'Back to room' }).click()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-alpha$/)
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+  })
+
+  test('fails closed when complete group history is missing', async ({ page }) => {
+    await setup(page, '/#/hermes/history/group-chat/missing-room')
+
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/missing-room$/)
+    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.locator('[data-group-history-scroller]')).toHaveCount(0)
+    await expect(page.locator('textarea')).toHaveCount(0)
+  })
+
+  test('marks the earliest complete-history page after one upward page load', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/history/group-chat/room-alpha')
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': Array.from({ length: 160 }, (_, index) => ({
+        id: `short-archive-${index + 1}`,
+        roomId: 'room-alpha',
+        senderId: 'user-1',
+        senderName: 'Alice',
+        content: `Short archive message ${index + 1}`,
+        timestamp: 1_790_200_000 + index,
+        role: 'user',
+      })),
+    })
+    await page.reload()
+
+    const scroller = page.locator('[data-group-history-scroller]')
+    await expect(page.getByText('Short archive message 160', { exact: true })).toBeVisible()
+    await expect(page.getByText('Short archive message 10', { exact: true })).toHaveCount(0)
+    await scroller.evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+
+    await expect(page.getByText('Short archive message 1', { exact: true })).toBeVisible()
+    await expect(page.getByText('You have reached the earliest message.')).toBeVisible()
+    const historyRequests = api.roomDetailRequests.filter(request => request.roomId === 'room-alpha' && request.history)
+    expect(historyRequests).toHaveLength(2)
+    expect(historyRequests[1]).toMatchObject({ before: 'short-archive-11', limit: 150 })
+  })
+
+  test('anchors complete history to the rendered Agent run when the page starts inside that run', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/history/group-chat/room-alpha')
+    const boundaryRun = [
+      {
+        id: 'boundary-run-assistant',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: 'Boundary run started.',
+        timestamp: 1_790_300_003,
+        role: 'assistant',
+        run_id: 'history-boundary-run',
+      },
+      {
+        id: 'boundary-run-tool',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: '{"result":"boundary"}',
+        timestamp: 1_790_300_004,
+        role: 'tool',
+        run_id: 'history-boundary-run',
+        tool_name: 'boundary_tool',
+        tool_call_id: 'boundary-call',
+      },
+      {
+        id: 'boundary-run-answer',
+        roomId: 'room-alpha',
+        senderId: 'agent-1',
+        senderName: 'Worker',
+        content: 'Boundary run finished.',
+        timestamp: 1_790_300_005,
+        role: 'assistant',
+        run_id: 'history-boundary-run',
+      },
+    ]
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': [
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `before-boundary-${index + 1}`,
+          roomId: 'room-alpha',
+          senderId: 'user-1',
+          senderName: 'Alice',
+          content: `Before boundary ${index + 1}`,
+          timestamp: 1_790_300_000 + index,
+          role: 'user',
+        })),
+        ...boundaryRun,
+        ...Array.from({ length: 147 }, (_, index) => ({
+          id: `after-boundary-${index + 1}`,
+          roomId: 'room-alpha',
+          senderId: 'user-1',
+          senderName: 'Alice',
+          content: `After boundary ${index + 1}`,
+          timestamp: 1_790_300_006 + index,
+          role: 'user',
+        })),
+      ],
+    })
+    await page.reload()
+
+    const scroller = page.locator('[data-group-history-scroller]')
+    const runCard = page.locator('.group-agent-run[data-run-id="history-boundary-run"]')
+    await expect(runCard).toHaveCount(1)
+    await expect(runCard).toContainText('Boundary run finished.')
+    const anchorBefore = await scroller.evaluate(element => {
+      element.scrollTop = 0
+      const anchor = element.querySelector(
+        '[data-group-message-id="group-agent-run:agent-1:history-boundary-run"]',
+      )
+      const offset = anchor
+        ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
+        : Number.NaN
+      element.dispatchEvent(new Event('scroll'))
+      return offset
+    })
+
+    await expect(page.getByText('Before boundary 1', { exact: true })).toBeVisible()
+    await expect(runCard).toHaveCount(1)
+    await expect.poll(() => scroller.evaluate((element, expectedOffset) => {
+      const anchor = element.querySelector(
+        '[data-group-message-id="group-agent-run:agent-1:history-boundary-run"]',
+      )
+      const currentOffset = anchor
+        ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top
+        : Number.NaN
+      return Math.abs(currentOffset - expectedOffset)
+    }, anchorBefore)).toBeLessThanOrEqual(2)
+    const historyRequests = api.roomDetailRequests.filter(request =>
+      request.roomId === 'room-alpha' && request.history,
+    )
+    expect(historyRequests).toHaveLength(2)
+    expect(historyRequests[1]).toMatchObject({ before: 'boundary-run-assistant', limit: 150 })
   })
 
   test('keeps runtime Tools bounded, newest-first, and stable after completion and refresh', async ({ page }) => {
@@ -854,6 +1262,95 @@ test.describe('group chat room deep links', () => {
     await expect(first.getByText('Beta room message')).toHaveCount(0)
     await expect(second.getByText('Beta room message')).toBeVisible()
     await expect(second.getByText('Alpha room message')).toHaveCount(0)
+  })
+
+  test('atomically retracts one queued message across the live view and a reload', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('gc_user_id', 'user-1')
+      window.localStorage.setItem('gc_user_name', 'User One')
+    })
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+    const items = [
+        {
+          id: 'queue-1', roomId: 'room-alpha', messageId: 'alpha-msg',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'user-1', textSummary: '@Worker first queued task',
+          sequence: 10, position: 1, status: 'queued', createdAt: 10,
+        },
+        {
+          id: 'queue-2', roomId: 'room-alpha', messageId: 'alpha-file',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'someone-else', textSummary: '@Worker observer task',
+          sequence: 11, position: 2, status: 'queued', createdAt: 11,
+        },
+      ]
+    await page.evaluate((queuedItems) => {
+      const state = (window as any).__PW_GROUP_SOCKET__
+      state.executionQueues['room-alpha'] = queuedItems
+    }, items)
+    await triggerGroupSocket(page, 'execution_queue_updated', { roomId: 'room-alpha', items })
+
+    const queue = page.getByTestId('group-execution-queue')
+    await expect(queue.locator('.queue-index')).toHaveText(['1', '2'])
+    await expect(queue.locator('.queue-agent')).toHaveText(['Worker', 'Worker'])
+    await expect(queue.locator('.queue-text')).toHaveText([
+      '@Worker first queued task',
+      '@Worker observer task',
+    ])
+    await expect(queue.locator('.queue-remove')).toHaveCount(2)
+
+    await queue.locator('.queue-remove').first().click()
+    await expect(queue.locator('[data-queue-id="queue-1"]')).toHaveCount(0)
+    await expect(queue.locator('[data-queue-id="queue-2"]')).toBeVisible()
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
+
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': messagesByRoom['room-alpha'].filter(message => message.id !== 'alpha-msg'),
+    })
+    await page.reload()
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
+  })
+
+  test('records and transcribes into the editable group composer without sending automatically', async ({ page }) => {
+    await installMockVoiceCapture(page)
+    let transcriptions = 0
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.route('**/api/hermes/stt/transcribe', async (route) => {
+      transcriptions += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ text: 'voice group draft', provider: 'openai' }),
+      })
+    })
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+
+    const toggle = page.getByTestId('voice-record-toggle')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await toggle.click()
+
+    const textarea = page.locator('.chat-input-area textarea')
+    await expect(textarea).toHaveValue('voice group draft')
+    expect(transcriptions).toBe(1)
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
+
+    await textarea.fill('edited voice group draft')
+    await expect(textarea).toHaveValue('edited voice group draft')
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
   })
 
   test('unknown route room id falls back to the first available room', async ({ page }) => {

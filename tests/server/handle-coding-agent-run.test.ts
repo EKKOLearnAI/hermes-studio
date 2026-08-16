@@ -13,7 +13,7 @@ const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
 }))
 
@@ -174,7 +174,10 @@ describe('handleCodingAgentRun', () => {
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'hello codex', 'system prompt')
   })
 
-  it('passes the Hermes system prompt on every scoped Claude Code run', async () => {
+  it.each([
+    ['claude-code', 'claude'],
+    ['pi', 'pi'],
+  ] as const)('passes the Hermes system prompt on every scoped %s run', async (codingAgentId, inputName) => {
     managerMock.runIdForSession.mockReturnValue(undefined)
     managerMock.isSessionLaunchCompatible.mockReturnValue(true)
     startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
@@ -196,11 +199,11 @@ describe('handleCodingAgentRun', () => {
 
     await handleCodingAgentRun({} as any, socket as any, {
       session_id: 'session-1',
-      input: 'hello claude',
-      coding_agent_id: 'claude-code',
+      input: `hello ${inputName}`,
+      coding_agent_id: codingAgentId,
     }, 'default', sessionMap as any)
 
-    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'hello claude', 'system prompt')
+    expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', `hello ${inputName}`, 'system prompt')
   })
 
   it('uses the group-chat system prompt for a group coding-agent run only', async () => {

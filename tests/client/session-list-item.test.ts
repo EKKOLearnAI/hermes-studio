@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
+import { readFileSync } from 'fs'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 
 vi.mock('@/stores/hermes/app', () => ({
@@ -50,6 +51,14 @@ const session = {
 }
 
 describe('SessionListItem', () => {
+  it('uses a one-pixel white outline without internal avatar padding', () => {
+    const source = readFileSync('packages/client/src/components/hermes/chat/SessionListItem.vue', 'utf8')
+
+    expect(source).toMatch(/\.session-item-agent-logo\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(source).not.toMatch(/\.session-item-agent-logo\s*\{[^}]*padding:/s)
+    expect(source).not.toMatch(/\.session-item-agent-logo\s*\{[^}]*background:/s)
+  })
+
   it('renders normal mode as a link to the session route', () => {
     const wrapper = mount(SessionListItem, {
       props: {
@@ -222,7 +231,7 @@ describe('SessionListItem', () => {
 
     const logo = wrapper.get('.session-item-agent-logo')
     expect(logo.attributes('src')).toBe('/coding-agents/ekko-agent.png')
-    expect(logo.attributes('alt')).toBe('Ekko Agent')
+    expect(logo.attributes('alt')).toBe('Ekko')
   })
 
   it('defaults old sessions without agent metadata to the Hermes logo', () => {
@@ -246,7 +255,7 @@ describe('SessionListItem', () => {
     expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
   })
 
-  it('renders the Claude Code logo for Claude coding agent sessions', () => {
+  it('renders the Claude logo for Claude coding agent sessions', () => {
     const wrapper = mount(SessionListItem, {
       props: {
         session: { ...session, source: 'coding_agent', agent: 'claude', codingAgentId: 'claude-code' },
@@ -263,7 +272,7 @@ describe('SessionListItem', () => {
 
     const logo = wrapper.get('.session-item-agent-logo')
     expect(logo.attributes('src')).toBe('/coding-agents/claude-code.svg')
-    expect(logo.attributes('alt')).toBe('Claude Code')
+    expect(logo.attributes('alt')).toBe('Claude')
     expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
   })
 

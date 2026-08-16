@@ -40,7 +40,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 

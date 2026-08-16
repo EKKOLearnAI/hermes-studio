@@ -198,6 +198,82 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('approval.requested', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_cleared', expect.any(Function))
     expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('room_summary_updated', expect.any(Function))
+    expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('execution_queue_updated', expect.any(Function))
+    expect(groupChatApiMock.socket.on).toHaveBeenCalledWith('message_retracted', expect.any(Function))
+  })
+
+  it('restores authoritative queued work and removes a retracted message from local history', async () => {
+    localStorage.setItem('gc_execution_queue_capability:room-1', 'c'.repeat(64))
+    const queued = {
+      id: 'queue-1',
+      roomId: 'room-1',
+      messageId: 'msg-queued',
+      targetAgentId: 'agent-1',
+      targetAgentName: 'Agent',
+      requesterMemberId: 'user-1',
+      textSummary: '@Agent do this',
+      sequence: 2,
+      position: 1,
+      status: 'queued',
+      createdAt: 2,
+    }
+    groupChatApiMock.setJoinAck({
+      roomId: 'room-1',
+      members: [member],
+      agents: [agent],
+      messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
+      executionQueue: [queued],
+      typingUsers: [],
+      contextStatuses: [],
+    })
+    groupChatApiMock.getRoomDetail.mockResolvedValue({
+      room,
+      messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
+      agents: [agent],
+      members: [member],
+      total: 0,
+      hasMore: false,
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) ack(groupChatApiMock.setJoinAck && {
+        roomId: 'room-1',
+        members: [member],
+        agents: [agent],
+        messages: [{ id: 'msg-queued', roomId: 'room-1', role: 'user', content: '@Agent do this', timestamp: 2 }],
+        executionQueue: [queued],
+        typingUsers: [],
+        contextStatuses: [],
+      })
+      if (event === 'cancel_execution_queue_item' && ack) ack({ ok: true, status: 'retracted', messageId: 'msg-queued' })
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+    await store.connect()
+    store.currentRoomId = 'room-1'
+    await (store as any).joinRoom('room-1')
+
+    expect(store.executionQueue).toEqual([queued])
+    expect(store.messages).toEqual([expect.objectContaining({ id: 'msg-queued' })])
+    emitSocket('message_retracted', {
+      roomId: 'room-1',
+      messageId: 'msg-queued',
+      messageCount: 0,
+      totalTokens: 0,
+      lastActiveAt: 1,
+    })
+    expect(store.messages).toEqual([])
+    expect(store.executionQueue).toEqual([])
+
+    await store.cancelExecutionQueueItem('queue-1')
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
+      'cancel_execution_queue_item',
+      {
+        roomId: 'room-1',
+        queueId: 'queue-1',
+        executionQueueCapability: 'c'.repeat(64),
+      },
+      expect.any(Function),
+    )
   })
 
   it('invalidates cached handoff stops when another client changes the Room policy', async () => {
@@ -721,6 +797,7 @@ describe('group chat store baseline lifecycle', () => {
     expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith('message', expect.objectContaining({
       roomId: 'room-1',
       content: 'hello room',
+      executionQueueCapability: expect.stringMatching(/^[a-f0-9]{64}$/),
     }), expect.any(Function))
     expect(store.error).toBeNull()
   })

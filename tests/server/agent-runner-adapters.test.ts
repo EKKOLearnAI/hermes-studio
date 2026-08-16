@@ -7,24 +7,24 @@ import {
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
   truncateResponsesToolOutputs,
-} from '../../packages/server/src/services/agent-runner/adapters/responses'
+} from '../../packages/server/src/services/coding-agents/shared/adapters/responses'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../../packages/server/src/services/agent-runner/adapters/anthropic'
+} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../../packages/server/src/services/agent-runner/adapters/anthropic-stream'
+} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../../packages/server/src/services/agent-runner/adapters/responses-stream'
+} from '../../packages/server/src/services/coding-agents/shared/adapters/responses-stream'
 
 const target = { model: 'test-model' }
 const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }
@@ -497,6 +497,24 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('converts OpenAI-compatible reasoning_details responses to Responses output', () => {
+    expect(openAiChatToResponses({
+      id: 'chatcmpl_details',
+      choices: [{
+        message: {
+          reasoning_details: [
+            { type: 'reasoning.text', text: 'inspect ' },
+            { type: 'reasoning.text', text: 'the repository' },
+          ],
+          content: 'done',
+        },
+      }],
+    }, target).output[0]).toMatchObject({
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'inspect the repository' }],
+    })
+  })
+
   it('marks expanded Hermes MCP Chat tool calls with their Responses namespace', () => {
     expect(openAiChatToResponses({
       id: 'chatcmpl_1',
@@ -637,7 +655,8 @@ describe('agent runner Responses stream adapters', () => {
 
 	    expect(events.map(event => event.type)).toEqual([
 	      'response.created',
-	      'response.reasoning.delta',
+	      'response.output_item.added',
+	      'response.reasoning_summary_text.delta',
 	      'response.output_item.added',
 	      'response.content_part.added',
       'response.output_text.delta',
@@ -645,19 +664,29 @@ describe('agent runner Responses stream adapters', () => {
       'response.output_item.added',
       'response.function_call_arguments.delta',
       'response.function_call_arguments.delta',
+      'response.output_item.done',
       'response.output_text.done',
       'response.content_part.done',
       'response.output_item.done',
       'response.output_item.done',
 	      'response.completed',
 	    ])
-	    expect(events[1].data).toMatchObject({ delta: 'think' })
-	    expect(events[4].data).toMatchObject({ delta: 'he' })
-	    expect(events[5].data).toMatchObject({ delta: 'llo' })
-	    expect(events[6].data).toMatchObject({
+	    expect(events[1].data).toMatchObject({
+	      output_index: 0,
+	      item: { type: 'reasoning', id: expect.stringMatching(/^rs_/), summary: [] },
+	    })
+	    expect(events[2].data).toMatchObject({ delta: 'think', output_index: 0, summary_index: 0 })
+	    expect(events[5].data).toMatchObject({ delta: 'he', output_index: 1 })
+	    expect(events[6].data).toMatchObject({ delta: 'llo', output_index: 1 })
+	    expect(events[7].data).toMatchObject({
+	      output_index: 2,
 	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
 	    })
-	    expect(events[13].data).toMatchObject({
+	    expect(events[10].data).toMatchObject({
+	      output_index: 0,
+	      item: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
+	    })
+	    expect(events[15].data).toMatchObject({
 	      response: {
 	        model: 'test-model',
 	        status: 'completed',
@@ -675,7 +704,37 @@ describe('agent runner Responses stream adapters', () => {
         ],
       },
     })
-    expect((events[13].data as any).response.id).toBe((events[0].data as any).response.id)
+    expect((events[15].data as any).response.id).toBe((events[0].data as any).response.id)
+  })
+
+  it('accepts alternate OpenAI-compatible streaming reasoning fields', async () => {
+    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
+      'data: {"choices":[{"delta":{"reasoning":"first"}}]}\n\n',
+      'data: {"choices":[{"delta":{"reasoning_text":" second"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]), codexTarget))
+
+    expect(events.filter(event => event.type === 'response.reasoning_summary_text.delta').map(event => event.data.delta))
+      .toEqual(['first', ' second'])
+    expect((events.at(-1)?.data as any).response.output[0]).toMatchObject({
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'first second' }],
+    })
+  })
+
+  it('deduplicates cumulative OpenAI-compatible reasoning_details chunks', async () => {
+    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
+      'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"first"}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"first second"}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]), codexTarget))
+
+    expect(events.filter(event => event.type === 'response.reasoning_summary_text.delta').map(event => event.data.delta))
+      .toEqual(['first', ' second'])
+    expect((events.at(-1)?.data as any).response.output[0]).toMatchObject({
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'first second' }],
+    })
   })
 
   it('marks expanded Hermes MCP Chat SSE tool calls with their Responses namespace', async () => {
@@ -699,7 +758,7 @@ describe('agent runner Responses stream adapters', () => {
     ]))
   })
 
-  it('normalizes Anthropic Messages SSE text and tool calls to Responses events', async () => {
+  it('normalizes Anthropic Messages SSE thinking, text, and tool calls to Pi-compatible Responses events', async () => {
 	    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
 	      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":80,"cache_read_input_tokens":20}}}\n\n',
 	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}\n\n',
@@ -711,24 +770,35 @@ describe('agent runner Responses stream adapters', () => {
 
 	    expect(events.map(event => event.type)).toEqual([
 	      'response.created',
-	      'response.reasoning.delta',
+	      'response.output_item.added',
+	      'response.reasoning_summary_text.delta',
 	      'response.output_item.added',
 	      'response.content_part.added',
       'response.output_text.delta',
       'response.output_item.added',
       'response.function_call_arguments.delta',
+      'response.output_item.done',
       'response.output_text.done',
       'response.content_part.done',
       'response.output_item.done',
       'response.output_item.done',
 	      'response.completed',
 	    ])
-	    expect(events[1].data).toMatchObject({ delta: 'think' })
-	    expect(events[2].data).toMatchObject({ item: { id: 'msg_msg_1' } })
-	    expect(events[5].data).toMatchObject({
+	    expect(events[1].data).toMatchObject({
+	      output_index: 0,
+	      item: { type: 'reasoning', id: 'rs_msg_1', summary: [] },
+	    })
+	    expect(events[2].data).toMatchObject({ delta: 'think', output_index: 0, summary_index: 0 })
+	    expect(events[3].data).toMatchObject({ output_index: 1, item: { id: 'msg_msg_1' } })
+	    expect(events[6].data).toMatchObject({
+	      output_index: 2,
 	      item: { type: 'function_call', call_id: 'toolu_1', name: 'lookup' },
 	    })
-	    expect(events[11].data).toMatchObject({
+	    expect(events[8].data).toMatchObject({
+	      output_index: 0,
+	      item: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
+	    })
+	    expect(events[13].data).toMatchObject({
 	      response: {
 	        id: 'msg_1',
 	        usage: { input_tokens: 80, cache_read_input_tokens: 20, output_tokens: 9 },

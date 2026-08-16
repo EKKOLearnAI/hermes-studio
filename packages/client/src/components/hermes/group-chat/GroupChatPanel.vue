@@ -19,6 +19,7 @@ import {
 } from '@/api/hermes/group-chat-agent-link'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import MessageQueueFloatPanel from '@/components/hermes/chat/MessageQueueFloatPanel.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
@@ -184,13 +185,14 @@ const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
 
-type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude'
+type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
 
 const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
     { label: 'Hermes', value: 'hermes' },
-    { label: 'Claude Code', value: 'claude' },
+    { label: 'Ekko', value: 'ekko' },
+    { label: 'Claude', value: 'claude' },
     { label: 'Codex', value: 'codex' },
-    { label: 'Ekko Agent', value: 'ekko' },
+    { label: 'Pi', value: 'pi' },
 ])
 
 function getAgentModelGroups(profile: string) {
@@ -202,7 +204,9 @@ function getAgentModelGroups(profile: string) {
                 ? 'ekko-agent'
                 : selectedAgentType.value === 'claude'
                     ? 'claude-code'
-                    : 'codex'
+                    : selectedAgentType.value === 'pi'
+                        ? 'pi'
+                        : 'codex'
             return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
         })
 }
@@ -525,6 +529,10 @@ const visibleClarify = computed(() =>
     currentRoomCanManage.value && pendingAgentPairings.value.length === 0
         ? store.activePendingClarify
         : null,
+)
+watch(
+    () => visibleClarify.value?.clarifyId,
+    () => { clarifyResponse.value = visibleClarify.value?.initialResponse || '' },
 )
 const visibleAgentPairing = computed(() =>
     currentRoomCanManage.value ? pendingAgentPairings.value[0] || null : null,
@@ -1090,6 +1098,14 @@ async function handleSendMessage(content: string, attachments?: Attachment[], me
         await store.sendMessage(content, attachments, mentions)
     } catch (err: any) {
         message.error(err.message)
+    }
+}
+
+async function handleCancelQueuedExecution(queueId: string) {
+    try {
+        await store.cancelExecutionQueueItem(queueId)
+    } catch (err: any) {
+        message.error(err?.message || t('groupChat.executionQueueCancelFailed'))
     }
 }
 
@@ -1685,14 +1701,24 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
 
 async function handleClarify(response?: string) {
     if (!currentRoomCanManage.value) return
-    const finalResponse = response !== undefined ? response : clarifyResponse.value.trim()
-    if (response === undefined && !finalResponse) return
+    const finalResponse = response !== undefined
+        ? response
+        : visibleClarify.value?.responseMode === 'editor'
+            ? clarifyResponse.value
+            : clarifyResponse.value.trim()
+    if (response === undefined && !finalResponse && visibleClarify.value?.responseMode !== 'editor') return
     try {
         await store.respondClarify(finalResponse)
         clarifyResponse.value = ''
     } catch (err: any) {
         message.error(err.message || t('common.saveFailed'))
     }
+}
+
+function handleClarifyKeydown(event: KeyboardEvent) {
+    if (visibleClarify.value?.responseMode === 'editor') return
+    event.preventDefault()
+    void handleClarify()
 }
 
 </script>
@@ -1978,7 +2004,7 @@ async function handleClarify(response?: string) {
                             <template #trigger>
                                 <button
                                     type="button"
-                                    class="agent-avatar-rail-item"
+                                    class="agent-avatar-rail-item agent-avatar-rail-agent"
                                     :class="{
                                         'agent-avatar-rail-active': !!agentContextStatus(agent),
                                         'agent-avatar-rail-offline': agent.connectionStatus === 'offline',
@@ -2158,8 +2184,8 @@ async function handleClarify(response?: string) {
                                     </NButton>
                                 </div>
                                 <div class="clarify-float-input-row">
-                                    <NInput v-model:value="clarifyResponse" size="small" :placeholder="t('chat.clarifyPlaceholder')" @keydown.enter.prevent="handleClarify()" />
-                                    <NButton size="small" type="primary" :disabled="!clarifyResponse.trim()" @click="handleClarify()">
+                                    <NInput v-model:value="clarifyResponse" size="small" :type="visibleClarify.responseMode === 'editor' ? 'textarea' : 'text'" :placeholder="t('chat.clarifyPlaceholder')" @keydown.enter="handleClarifyKeydown" />
+                                    <NButton size="small" type="primary" :disabled="visibleClarify.responseMode !== 'editor' && !clarifyResponse.trim()" @click="handleClarify()">
                                         {{ t('chat.clarifySubmit') }}
                                     </NButton>
                                 </div>
@@ -2215,6 +2241,19 @@ async function handleClarify(response?: string) {
                             </span>
                         </div>
                     </Transition>
+                    <div v-if="store.executionQueue.length > 0" class="group-execution-queue-float-stack">
+                        <MessageQueueFloatPanel
+                            :items="store.executionQueue.map(item => ({
+                                id: item.id,
+                                text: item.textSummary,
+                                secondary: item.targetAgentName,
+                                position: item.position,
+                            }))"
+                            test-id="group-execution-queue"
+                            :remove-title="item => t('groupChat.executionQueueCancel', { agent: item.secondary || '' })"
+                            @remove="handleCancelQueuedExecution"
+                        />
+                    </div>
                     <GroupChatInput
                         ref="groupChatInputRef"
                         :send-blocked="currentRoomNeedsSummaryConfiguration"
@@ -2956,6 +2995,15 @@ export default defineComponent({ components: { CreateRoomForm } })
     background-color: $bg-card;
 }
 
+.group-execution-queue-float-stack {
+    position: absolute;
+    right: 16px;
+    bottom: 82px;
+    z-index: 8;
+    width: min(380px, calc(100% - 32px));
+    pointer-events: none;
+}
+
 .sidebar-backdrop {
     display: none;
 }
@@ -3542,6 +3590,11 @@ export default defineComponent({ components: { CreateRoomForm } })
         width: 32px;
         height: 32px;
     }
+}
+
+.agent-avatar-rail-agent .agent-avatar {
+    box-sizing: border-box;
+    border: 1px solid #fff;
 }
 
 .agent-owner-avatar-badge {

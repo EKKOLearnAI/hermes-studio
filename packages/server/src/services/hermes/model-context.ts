@@ -27,6 +27,12 @@ interface ModelEntry {
   id?: string
   name?: string
   limit?: ModelLimit
+  reasoning?: boolean
+  attachment?: boolean
+  modalities?: {
+    input?: string[]
+    output?: string[]
+  }
 }
 
 interface ProviderEntry {
@@ -474,4 +480,55 @@ export function getModelContextLength(input?: string | ModelContextLengthOptions
 
   // 5. Fallback
   return DEFAULT_CONTEXT_LENGTH
+}
+
+export function getModelRuntimeCapabilities(input: ModelContextLengthOptions): {
+  contextWindow: number
+  outputLimit: number
+  reasoning: boolean
+  input: Array<'text' | 'image'>
+} {
+  const contextWindow = getModelContextLength(input)
+  const model = String(input.model || '').trim()
+  const provider = String(input.provider || '').trim()
+  const data = loadModelsDevCache()
+  let entry: ModelEntry | undefined
+  if (data && model) {
+    if (provider === 'custom' || provider.startsWith('custom:')) {
+      const profileDir = getProfileDir(input.profile)
+      const config = loadConfig(profileDir)
+      const inferredProvider = resolveCustomCacheProvider(config, model, provider)
+      if (inferredProvider) entry = findModelEntry(getProviderEntry(data, inferredProvider)?.models || {}, model)
+      else if (provider === 'custom') {
+        for (const candidate of Object.values(data)) {
+          const found = findModelEntry(candidate.models || {}, model)
+          if (!found) continue
+          if (entry) {
+            entry = undefined
+            break
+          }
+          entry = found
+        }
+      }
+    } else if (provider) {
+      entry = findModelEntry(getProviderEntry(data, provider)?.models || {}, model)
+    } else {
+      for (const candidate of Object.values(data)) {
+        entry = findModelEntry(candidate.models || {}, model)
+        if (entry) break
+      }
+    }
+  }
+  const outputLimit = getPositiveNumber(entry?.limit?.output) || Math.min(32_000, contextWindow)
+  // Unknown custom models must remain usable. A missing models.dev entry is
+  // absence of metadata, not evidence that reasoning or image input is
+  // unsupported. Keep the runtime permissive and let the upstream provider
+  // return a capability error if it truly cannot accept the requested mode.
+  const imageInput = !entry || entry.attachment === true || entry.modalities?.input?.includes('image') === true
+  return {
+    contextWindow,
+    outputLimit: Math.min(outputLimit, contextWindow),
+    reasoning: entry ? entry.reasoning === true : true,
+    input: imageInput ? ['text', 'image'] : ['text'],
+  }
 }

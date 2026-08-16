@@ -11,7 +11,14 @@ import {
   type DeviceInboundStatus,
   type DeviceOutboundStatus,
 } from '../db/hermes/devices-store'
-import { getLanDiscoveryCache, getLanEndpointKind, isPrivateOrLoopbackIPv4, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
+import {
+  getLanBackendUrlForRequest,
+  getLanDiscoveryCache,
+  getLanEndpointKind,
+  isPrivateOrLoopbackIPv4,
+  scanLanDevices,
+  type LanDeviceInfo,
+} from '../services/lan-discovery'
 import { getLanPeerSocketManager } from '../services/lan-peer-socket'
 import { getLanPeerToolsService } from '../services/lan-peer-tools'
 import { getDevicePairingCode, verifyDevicePairingCode } from '../services/device-pairing-code'
@@ -20,7 +27,6 @@ import { describeLanJsonPostError, getLanJson, postLanJson } from '../services/l
 import { checkPairing, recordPairingFailure } from '../services/login-limiter'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
-import { networkInterfaces } from 'os'
 
 const REQUEST_TTL_MS = 5 * 60 * 1000
 const seenRequestNonces = new Map<string, number>()
@@ -206,21 +212,6 @@ function manualPairingCode(input: unknown): string {
   }
 }
 
-function normalizeHostName(host: string): string {
-  const value = host.trim()
-  if (!value) return ''
-  if (value.startsWith('[')) return value.slice(1, value.indexOf(']') > 0 ? value.indexOf(']') : undefined)
-  return value.split(':')[0] || ''
-}
-
-function isPublicHost(host: string): boolean {
-  const hostname = normalizeHostName(host).toLowerCase()
-  if (!hostname) return false
-  if (hostname === 'localhost' || hostname === '::1') return false
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return !isPrivateOrLoopbackIPv4(hostname)
-  return !hostname.endsWith('.localhost')
-}
-
 function requestProtocol(ctx: any): string {
   const forwardedProto = typeof ctx.get === 'function' ? ctx.get('x-forwarded-proto') : ''
   const proto = String(forwardedProto || ctx.protocol || 'http').split(',')[0]?.trim().toLowerCase()
@@ -231,30 +222,11 @@ function requestHost(ctx: any): string {
   return String(ctx.host || (typeof ctx.get === 'function' ? ctx.get('host') : '') || '').trim()
 }
 
-function firstLanIPv4(): string {
-  try {
-    for (const iface of Object.values(networkInterfaces()).flat()) {
-      if (!iface || iface.family !== 'IPv4' || iface.internal || !iface.address) continue
-      if (isPrivateOrLoopbackIPv4(iface.address) && !iface.address.startsWith('127.')) return iface.address
-    }
-    for (const iface of Object.values(networkInterfaces()).flat()) {
-      if (!iface || iface.family !== 'IPv4' || iface.internal || !iface.address) continue
-      return iface.address
-    }
-  } catch {
-    // Fall back to localhost below when network interfaces are unavailable.
-  }
-  return ''
-}
-
 function devicePairingOrigin(ctx: any): string {
   const host = requestHost(ctx)
-  if (isPublicHost(host)) return `${requestProtocol(ctx)}://${host}`
-
-  const lanIp = firstLanIPv4()
-  if (lanIp) return `http://${lanIp}:${config.port}`
-
-  return `http://localhost:${config.port}`
+  const requestOrigin = host ? `${requestProtocol(ctx)}://${host}` : ''
+  const remoteAddress = String(ctx.req?.socket?.remoteAddress || ctx.ip || ctx.request?.ip || '')
+  return getLanBackendUrlForRequest(remoteAddress, requestOrigin, config.port)
 }
 
 function responseMs(startedAt: number): number {

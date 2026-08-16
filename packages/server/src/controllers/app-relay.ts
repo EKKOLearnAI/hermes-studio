@@ -26,7 +26,6 @@ export async function getAppRelayStatusController(ctx: Context) {
 export async function connectAppRelayController(ctx: Context) {
   const client = await ensureAppRelayHostClient()
   if (!client || !await client.waitForConnected(8000)) {
-    stopAppRelayHostClient()
     ctx.status = 502
     ctx.body = { error: 'Failed to connect App relay' }
     return

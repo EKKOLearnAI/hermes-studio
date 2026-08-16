@@ -113,6 +113,10 @@ function detailFor(id: string, sessions = historySessions) {
 }
 
 async function mockHistoryApi(page: Page, sessions = historySessions) {
+  const groupRooms = [
+    { id: 'room-new', name: 'Newest Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_001_000 },
+    { id: 'room-old', name: 'Older Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_000_000 },
+  ]
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -129,6 +133,33 @@ async function mockHistoryApi(page: Page, sessions = historySessions) {
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
     if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
+    if (pathname === '/api/hermes/group-chat/rooms') {
+      const offset = Number(url.searchParams.get('offset') || 0)
+      const limit = Number(url.searchParams.get('limit') || 50)
+      return json({
+        rooms: groupRooms.slice(offset, offset + limit),
+        total: groupRooms.length,
+        offset,
+        limit,
+        hasMore: offset + limit < groupRooms.length,
+      })
+    }
+    const groupRoomMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)$/)
+    if (groupRoomMatch) {
+      const roomId = decodeURIComponent(groupRoomMatch[1])
+      const room = groupRooms.find(item => item.id === roomId)
+      if (!room) return json({ error: 'Room not found' }, 404)
+      return json({
+        room,
+        messages: [
+          { id: `${roomId}-message`, roomId, senderId: 'user-1', senderName: 'User', content: `History for ${room.name}`, timestamp: room.lastActiveAt, role: 'user' },
+        ],
+        agents: [],
+        members: [],
+        total: 1,
+        hasMore: false,
+      })
+    }
     if (pathname === '/api/hermes/sessions/hermes/groups') {
       const limit = Number(url.searchParams.get('limit') || 20)
       const includedIds = new Set(url.searchParams.getAll('include'))
@@ -193,6 +224,38 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('API Server History Session').first()).toBeVisible()
     await expect(page.getByText('Answer from API Server History Session')).toBeVisible()
     await expect(page.getByText('API Server', { exact: true }).first()).toBeVisible()
+  })
+
+  test('GROUP rooms share the History shell and preserve direct navigation', async ({ page }) => {
+    await page.goto('/#/hermes/history/group-chat/room-new')
+
+    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
+    await expect(groupHeader).toBeVisible()
+    await expect(page.getByText('Newest Group Room').first()).toBeVisible()
+    await expect(page.getByText('Older Group Room').first()).toBeVisible()
+    await expect(page.getByText('History for Newest Group Room')).toBeVisible()
+    await expect(page.locator('textarea')).toHaveCount(0)
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-new$/)
+
+    await page.getByText('Older Group Room').first().click()
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
+
+    await page.reload()
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
+  })
+
+  test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/#/hermes/history/group-chat/room-new')
+
+    await page.locator('.hamburger-btn').click()
+    await expect(page.locator('.session-group-header', { hasText: 'GROUP' })).toBeVisible()
+    await page.getByText('Older Group Room').first().click()
+
+    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
+    await expect(page.getByText('History for Older Group Room')).toBeVisible()
+    await expect(page.locator('[data-group-history-scroller]')).toBeVisible()
   })
 
   test('clicking another history session updates URL and reload preserves it', async ({ page }) => {

@@ -7,7 +7,7 @@ import {
 } from '../db/hermes/app-connections-store'
 import { findUserById } from '../db/hermes/users-store'
 import { config } from '../config'
-import { getLanBackendUrl } from '../services/lan-discovery'
+import { getLanBackendUrlForRequest } from '../services/lan-discovery'
 import { getAppRelayClient } from '../services/app-relay/client'
 import {
   APP_RELAY_CONNECTION_ID,
@@ -16,6 +16,7 @@ import {
 } from '../services/app-relay/connection'
 import {
   isLocalAppConnectionOnline,
+  getLatestLocalAppEntitlementFailure,
   notifyLocalAppConnectionDeleted,
 } from '../services/app-relay/server'
 import { getDeviceId } from '../services/system-info'
@@ -49,7 +50,27 @@ function connectionPayload(now = Math.floor(Date.now() / 1000)) {
 }
 
 export async function listAppConnectionsController(ctx: Context) {
-  ctx.body = { connections: connectionPayload() }
+  const connections = connectionPayload()
+  const accessFailure = getLatestLocalAppEntitlementFailure()
+  const failedConnection = accessFailure
+    ? connections.find(connection => (
+        connection.connection_type === 'lan'
+        && connection.device_code === accessFailure.deviceCode
+        && (!accessFailure.cloudUserId || connection.cloud_user_id === accessFailure.cloudUserId)
+      )) || connections.find(connection => (
+        connection.device_code === accessFailure.deviceCode
+        && (!accessFailure.cloudUserId || connection.cloud_user_id === accessFailure.cloudUserId)
+      ))
+    : null
+  ctx.body = {
+    connections,
+    access_failure: accessFailure
+      ? {
+          ...accessFailure,
+          deviceName: failedConnection?.device_name || '',
+        }
+      : null,
+  }
 }
 
 export async function deleteAppConnectionController(ctx: Context) {
@@ -88,7 +109,6 @@ export async function createCloudAppAuthorizationCodeController(ctx: Context) {
 
   let client = await ensureAppRelayHostClient()
   if (!client || !await client.waitForConnected(8000)) {
-    stopAppRelayHostClient()
     ctx.status = 502
     ctx.body = { error: 'app_relay_unavailable' }
     return
@@ -156,11 +176,15 @@ export async function createAppAuthorizationCodeController(ctx: Context) {
   }
   const { authorizationCode, record } = createAppAuthorizationCode(userId)
   const remoteAddress = String(ctx.req?.socket?.remoteAddress || ctx.ip || '')
+  const forwardedProto = String(typeof ctx.get === 'function' ? ctx.get('x-forwarded-proto') : '').split(',')[0]?.trim().toLowerCase()
+  const protocol = forwardedProto === 'https' || ctx.protocol === 'https' ? 'https' : 'http'
+  const requestHost = String(ctx.host || (typeof ctx.get === 'function' ? ctx.get('host') : '') || '').trim()
+  const requestOrigin = requestHost ? `${protocol}://${requestHost}` : ''
   const connection = {
     type: APP_CONNECTION_QR_TYPE,
     version: APP_CONNECTION_QR_VERSION,
     connection_type: 'lan' as const,
-    backend_url: getLanBackendUrl(remoteAddress, config.port),
+    backend_url: getLanBackendUrlForRequest(remoteAddress, requestOrigin, config.port),
     machine_id: await getDeviceId(),
     authorization_code: authorizationCode,
     expires_at: record.expires_at,

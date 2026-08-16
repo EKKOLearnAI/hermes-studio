@@ -47,6 +47,19 @@ describe('group chat REST route baseline', () => {
       getRoomsForAuthUser: vi.fn(() => []),
       getOwnedRoomsForAuthUser: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
+      getHistoryPageForUI: vi.fn((roomId, limit = 150, beforeMessageId?: string) => {
+        const rows = storage.messages.get(roomId) || []
+        const beforeIndex = beforeMessageId ? rows.findIndex((message: any) => message.id === beforeMessageId) : rows.length
+        if (beforeMessageId && beforeIndex < 0) {
+          return { messages: [], hasMore: false, cursorFound: false }
+        }
+        const start = Math.max(0, beforeIndex - limit)
+        return {
+          messages: rows.slice(start, beforeIndex),
+          hasMore: start > 0,
+          cursorFound: true,
+        }
+      }),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
@@ -452,6 +465,86 @@ describe('group chat REST route baseline', () => {
     })
   })
 
+  it('paginates the authorized room list without changing activity order', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-3', name: 'Third', inviteCode: 'C', lastActiveAt: 100 },
+      { id: 'room-1', name: 'First', inviteCode: 'A', lastActiveAt: 300 },
+      { id: 'room-2', name: 'Second', inviteCode: 'B', lastActiveAt: 200 },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms?limit=1&offset=1`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      rooms: [{ id: 'room-2', lastActiveAt: 200 }],
+      total: 3,
+      offset: 1,
+      limit: 1,
+      hasMore: true,
+    })
+  })
+
+  it('reports authoritative truncation and serves complete history by stable message id', async () => {
+    storage.rooms.set('room-history', {
+      id: 'room-history',
+      name: 'History Room',
+      inviteCode: 'HISTORY',
+      lastActiveAt: 501,
+    })
+    storage.getRoomsForProfiles.mockReturnValue([storage.rooms.get('room-history')])
+    const retainedMessages = Array.from({ length: 500 }, (_, index) => ({
+      id: `message-${String(index + 1).padStart(4, '0')}`,
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: `Message ${index + 1}`,
+      timestamp: index + 1,
+      role: 'user',
+    }))
+    storage.messages.set('room-history', retainedMessages)
+
+    const exactWindow = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(exactWindow.status).toBe(200)
+    await expect(exactWindow.json()).resolves.toMatchObject({
+      total: 500,
+      historyTruncated: false,
+    })
+
+    retainedMessages.push({
+      id: 'message-0501',
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: 'Message 501',
+      timestamp: 501,
+      role: 'user',
+    })
+
+    const recent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(recent.status).toBe(200)
+    await expect(recent.json()).resolves.toMatchObject({
+      total: 500,
+      historyTruncated: true,
+    })
+
+    const history = await fetch(
+      `${baseUrl}/api/hermes/group-chat/rooms/room-history?history=1&before=message-0352&limit=150`,
+      { headers: { 'x-test-user': 'member' } },
+    )
+    expect(history.status).toBe(200)
+    const historyBody = await history.json() as any
+    expect(historyBody.messages[0]?.id).toBe('message-0202')
+    expect(historyBody.messages.at(-1)?.id).toBe('message-0351')
+    expect(historyBody.total).toBe(501)
+    expect(historyBody.hasMore).toBe(true)
+  })
+
   it('rejects reserved @all agent names when creating a room', async () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
       method: 'POST',
@@ -650,6 +743,24 @@ describe('group chat REST route baseline', () => {
     })
   })
 
+  it('stops REST pagination at the 500-message UI window', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.getMessageCount.mockReturnValueOnce(580)
+    storage.getRecentMessagesForUI.mockReturnValueOnce([])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=100&offset=500`)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({
+      messages: [],
+      total: 500,
+      offset: 500,
+      limit: 100,
+      hasMore: false,
+    })
+  })
+
   it('clones the room Agent handoff policy without copying stopped chains', async () => {
     storage.rooms.set('room-source', {
       id: 'room-source',
@@ -804,6 +915,77 @@ describe('group chat REST route baseline', () => {
       avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
     })
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
+  })
+
+  it('creates, adds, and updates Pi room agents through the local API', async () => {
+    const createRoom = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Pi Room',
+        inviteCode: 'PIROOM',
+        agents: [{
+          agent: 'pi',
+          profile: 'default',
+          provider: 'openai',
+          model: 'pi-create-model',
+          apiMode: 'codex_responses',
+          name: 'Pi Creator',
+        }],
+      }),
+    })
+    expect(createRoom.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'pi',
+      model: 'pi-create-model',
+      apiMode: 'codex_responses',
+    }))
+
+    storage.rooms.set('room-pi', { id: 'room-pi', name: 'Pi Room', inviteCode: 'PIROOM2' })
+    const addAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-add-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'medium',
+        name: 'Pi Worker',
+      }),
+    })
+    expect(addAgent.status).toBe(200)
+    const added = await addAgent.json()
+    expect(added.agent).toMatchObject({
+      agent: 'pi',
+      profile: 'research',
+      model: 'pi-add-model',
+      apiMode: 'codex_responses',
+    })
+
+    const updateAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents/${added.agent.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        name: 'Pi Reviewer',
+      }),
+    })
+    expect(updateAgent.status).toBe(200)
+    await expect(updateAgent.json()).resolves.toMatchObject({
+      agent: expect.objectContaining({
+        agent: 'pi',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+      }),
+    })
   })
 
   it('rejects incomplete or invalid room agent runtime configuration', async () => {

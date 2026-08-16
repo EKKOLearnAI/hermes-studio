@@ -52,7 +52,7 @@ import {
   workflowLoopBodyNodeIds,
 } from '@/utils/workflow-edge-authoring'
 import WorkflowAgentNode from '@/components/hermes/workflow/WorkflowAgentNode.vue'
-import { isAuthModelProvider } from '@/utils/codingAgentProviders'
+import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import WorkflowFieldHelp from '@/components/hermes/workflow/WorkflowFieldHelp.vue'
 import WorkflowConditionEdge from '@/components/hermes/workflow/WorkflowConditionEdge.vue'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
@@ -102,7 +102,7 @@ import {
 } from '@/api/hermes/workflow-socket'
 import { fetchSkills } from '@/api/hermes/skills'
 import { fetchSession } from '@/api/hermes/sessions'
-import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
+import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { buildWorkflowSkillOptions, workflowAgentToSkillTarget } from '@/utils/hermes/workflow-skills'
 import type {
   WorkflowAgentNodeData,
@@ -395,8 +395,10 @@ let workflowBudgetClock: number | null = null
 
 const agentOptions = computed<WorkflowSelectOption[]>(() => [
   { label: 'Hermes', value: 'hermes' },
-  { label: 'Claude Code', value: 'claude-code' },
+  { label: 'Ekko', value: 'ekko-agent' },
+  { label: 'Claude', value: 'claude-code' },
   { label: 'Codex', value: 'codex' },
+  { label: 'Pi', value: 'pi' },
 ])
 const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(option => ({
   value: option.value,
@@ -971,7 +973,10 @@ function defaultApiMode(provider: string) {
 function normalizeNodeModel(data: WorkflowAgentNodeData): Pick<WorkflowAgentNodeData, 'provider' | 'model' | 'apiMode'> {
   const availableGroups = data.agent === 'hermes'
     ? modelGroups.value
-    : modelGroups.value.filter(group => !isAuthModelProvider(group.provider))
+    : modelGroups.value.filter(group => canScopedCodingAgentUseProvider(
+        data.agent as ChatCodingAgentId,
+        group.provider,
+      ))
   const currentGroup = availableGroups.find(group => group.provider === data.provider)
   if (currentGroup?.models.includes(data.model)) {
     return { provider: data.provider, model: data.model, apiMode: data.apiMode || defaultApiMode(data.provider) }

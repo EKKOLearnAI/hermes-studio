@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatTimestampMs } from '@/shared/session-display'
+import { chatSessionAgentAvatar } from '@/utils/chat-agent-avatar'
 
 const props = withDefaults(defineProps<{
   session: Session
@@ -45,24 +46,7 @@ const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
 const isGlobalAgentSession = computed(() => props.session.source === 'global_agent')
-const sessionAgentLogo = computed(() => {
-  if (isGlobalAgentSession.value) {
-    if (props.session.codingAgentId === 'ekko-agent' || props.session.agent === 'ekko-agent') {
-      return { label: 'Ekko Agent', src: '/coding-agents/ekko-agent.png' }
-    }
-    return { label: 'Hermes', src: '/coding-agents/hermes.png' }
-  }
-  if (props.session.source === 'coding_agent') {
-    if (props.session.codingAgentId === 'codex' || props.session.agent === 'codex') {
-      return { label: 'Codex', src: '/coding-agents/codex-openai.png' }
-    }
-    if (props.session.codingAgentId === 'ekko-agent' || props.session.agent === 'ekko-agent') {
-      return { label: 'Ekko Agent', src: '/coding-agents/ekko-agent.png' }
-    }
-    return { label: 'Claude Code', src: '/coding-agents/claude-code.svg' }
-  }
-  return { label: 'Hermes', src: '/coding-agents/hermes.png' }
-})
+const sessionAgentLogo = computed(() => chatSessionAgentAvatar(props.session))
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -427,10 +411,10 @@ onUnmounted(() => {
   z-index: 1;
   width: 18px;
   height: 18px;
-  padding: 2px;
+  box-sizing: border-box;
+  border: 1px solid #fff;
   border-radius: inherit;
-  object-fit: contain;
-  background: #fff;
+  object-fit: cover;
 }
 
 @keyframes rainbow-glow {

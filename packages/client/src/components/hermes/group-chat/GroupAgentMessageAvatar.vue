@@ -105,6 +105,11 @@ function runtimeValue(value: string): string {
     cursor: pointer;
 }
 
+.message-agent-avatar > :deep(.profile-avatar-view) {
+    box-sizing: border-box;
+    border: 1px solid #fff;
+}
+
 .message-agent-owner-badge {
     position: absolute;
     z-index: 2;
