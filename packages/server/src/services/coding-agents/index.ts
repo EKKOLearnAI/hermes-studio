@@ -47,6 +47,10 @@ const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
 const PI_STUDIO_EXTENSION_FILE = 'hermes-studio-runtime.ts'
 const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
 const PI_PROXY_TARGET_LEGACY_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
+// Codex ToolSearch became stable in 0.128; always-defer was removed in 0.142.
+const CODEX_TOOL_SEARCH_MIN_VERSION = '0.128.0'
+const CODEX_TOOL_SEARCH_ALWAYS_DEFER_REMOVED_VERSION = '0.142.0'
+const CODEX_VERSION_CACHE_TTL_MS = 5 * 60 * 1000
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
   { name: 'hermes-studio-browser', toolset: 'browser' },
@@ -64,6 +68,8 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const HERMES_PROMPT_BLOCK_BEGIN = '<!-- BEGIN HERMES WEB UI PROMPT -->'
 const HERMES_PROMPT_BLOCK_END = '<!-- END HERMES WEB UI PROMPT -->'
+
+let cachedCodexVersion: { version: string; checkedAt: number } | null = null
 
 interface EncryptedPiProxyApiKey {
   v: 1 | 2
@@ -2052,6 +2058,30 @@ function versionGte(a: string, b: string): boolean {
   return true
 }
 
+export function codexToolSearchConfig(version: string): { toolSearch: boolean; alwaysDefer: boolean } {
+  if (!String(version || '').trim()) {
+    // Keep the pre-gating behavior when the CLI version cannot be resolved.
+    return { toolSearch: true, alwaysDefer: true }
+  }
+  const toolSearch = versionGte(version, CODEX_TOOL_SEARCH_MIN_VERSION)
+  return {
+    toolSearch,
+    alwaysDefer: toolSearch && !versionGte(version, CODEX_TOOL_SEARCH_ALWAYS_DEFER_REMOVED_VERSION),
+  }
+}
+
+async function resolveCodexToolSearchConfig(): Promise<{ toolSearch: boolean; alwaysDefer: boolean }> {
+  if (process.env.VITEST) return { toolSearch: true, alwaysDefer: true }
+  if (cachedCodexVersion && Date.now() - cachedCodexVersion.checkedAt < CODEX_VERSION_CACHE_TTL_MS) {
+    return codexToolSearchConfig(cachedCodexVersion.version)
+  }
+  const definition = getCodingAgentDefinition('codex')
+  if (!definition) return { toolSearch: true, alwaysDefer: true }
+  const status = await getCodingAgentStatus(definition)
+  cachedCodexVersion = { version: status.version, checkedAt: Date.now() }
+  return codexToolSearchConfig(status.version)
+}
+
 export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateResult> {
   const tool = getCodingAgentDefinition(id)
   if (!tool) {
@@ -2491,6 +2521,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const codexApiKey = proxyTarget?.token || apiKey
     const providerId = 'custom'
     const catalogPath = join(rootDir, CODEX_MODEL_CATALOG_FILE)
+    const toolSearchFeatures = await resolveCodexToolSearchConfig()
+    const featureConfig = toolSearchFeatures.toolSearch || toolSearchFeatures.alwaysDefer
+      ? [
+          '',
+          '[features]',
+          ...(toolSearchFeatures.toolSearch ? ['tool_search = true'] : []),
+          ...(toolSearchFeatures.alwaysDefer ? ['tool_search_always_defer_mcp_tools = true'] : []),
+        ]
+      : []
     const configToml = [
       `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
@@ -2512,10 +2551,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
         await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
       ),
-      '',
-      '[features]',
-      'tool_search = true',
-      'tool_search_always_defer_mcp_tools = true',
+      ...featureConfig,
     ].join('\n')
     const catalog = buildCodexModelCatalog({
       profile: scope.profile,
@@ -2765,6 +2801,10 @@ export async function compactStoredCodingAgentSession(
   if (session.agent !== 'codex') {
     throw new Error('Claude Code compact requires an active session run')
   }
+  const nativeSessionId = String(session.agent_native_session_id || '').trim()
+  if (!nativeSessionId) {
+    throw new Error('Codex session has no native thread to compact')
+  }
   const resolved = await resolveStoredProviderLaunchInput({
     sessionId,
     profile,
@@ -2790,7 +2830,7 @@ export async function compactStoredCodingAgentSession(
     command,
     env: launchEnv,
     workspaceDir: launch.workspaceDir,
-  }, String(session.agent_native_session_id || '').trim())
+  }, nativeSessionId)
 }
 
 export function sendCodingAgentRunInput(

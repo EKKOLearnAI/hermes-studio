@@ -68,7 +68,7 @@ function makeSocket() {
 
 describe('coding agent session commands', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     addMessageMock.mockReturnValue(1)
     getOrCreateSessionMock.mockReturnValue({ messages: [], isWorking: false })
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 10, outputTokens: 20 })
@@ -211,6 +211,20 @@ describe('coding agent session commands', () => {
     expect(commands.at(-1)).toMatchObject({ action: 'compact', compacted: true })
   })
 
+  it('rejects busy coding-agent compaction without running the Studio fallback', async () => {
+    compactMock.mockRejectedValue(new Error('Coding agent is still processing the previous input'))
+    getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, {
+      session_id: 'session-1',
+    }, { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
+
+    const command = emitted.filter(item => item.event === 'session.command').at(-1)?.payload
+    expect(command.ok).toBe(false)
+    expect(command.message).toContain('still processing')
+  })
+
   it('compacts a finished Codex session without rebuilding a run', async () => {
     compactMock
       .mockRejectedValueOnce(new Error('Coding agent session not found'))
@@ -239,6 +253,56 @@ describe('coding agent session commands', () => {
     expect(command.compacted).toBe(true)
     expect(command.message).toContain('Before: 100 tokens')
     expect(command.message).toContain('After: 50 tokens')
+  })
+
+  it('restarts a finished Claude Code session and forwards compact arguments', async () => {
+    compactMock
+      .mockRejectedValueOnce(new Error('Coding agent session not found'))
+      .mockResolvedValueOnce({ started: true })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      agent: 'claude',
+      agent_mode: 'scoped',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'native-1',
+      workspace: '/tmp/work',
+    })
+    startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, {
+      session_id: 'session-1',
+    }, { name: 'compact', rawName: 'compact', args: 'focus on auth' }, 'default', new Map())
+
+    expect(startCodingAgentRunMock).toHaveBeenCalledWith('claude-code', expect.objectContaining({
+      sessionId: 'session-1',
+      agentNativeSessionId: 'native-1',
+    }), expect.anything())
+    expect(compactMock).toHaveBeenLastCalledWith('session-1', 'focus on auth')
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    expect(commands[0].message).toContain('Native /compact sent to Claude Code.')
+  })
+
+  it('rejects compact arguments for a finished Codex session', async () => {
+    compactMock.mockRejectedValue(new Error('Coding agent session not found'))
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      agent: 'codex',
+      agent_mode: 'scoped',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'thread-1',
+      workspace: '/tmp/work',
+    })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, {
+      session_id: 'session-1',
+    }, { name: 'compact', rawName: 'compact', args: 'focus on auth' }, 'default', new Map())
+
+    expect(compactStoredCodingAgentSessionMock).not.toHaveBeenCalled()
+    const command = emitted.filter(item => item.event === 'session.command').at(-1)?.payload
+    expect(command.ok).toBe(false)
+    expect(command.message).toContain('does not accept arguments')
   })
 
   it('emits coding agent status from the run manager', async () => {

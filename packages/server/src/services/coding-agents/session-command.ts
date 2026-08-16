@@ -291,6 +291,9 @@ async function restartCodingAgentRunForCompact(
     throw new Error('Coding agent session not found or is not a Codex/Claude Code session')
   }
   if (row.agent === 'codex') {
+    if (String(args || '').trim()) {
+      throw new Error('Codex native compaction does not accept arguments')
+    }
     return compactStoredCodingAgentSession(sessionId, profile)
   }
   const agentId = 'claude-code'

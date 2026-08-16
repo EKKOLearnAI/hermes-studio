@@ -51,6 +51,34 @@ describe('compactCodexThread', () => {
     expect(writes[3]).toContain('"threadId":"thread-1"')
   })
 
+  it('ignores turn/completed before compaction is accepted', async () => {
+    const child = makeChild()
+    spawnMock.mockReturnValue(child)
+
+    const { compactCodexThread } = await import('../../packages/server/src/services/coding-agents/runtime/codex-compact')
+    const promise = compactCodexThread({
+      command: 'codex',
+      env: { CODEX_HOME: '/tmp/codex' },
+    }, 'thread-1')
+    let settled = false
+    promise
+      .then(() => { settled = true })
+      .catch(() => { settled = true })
+
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":0,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":1,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1"}}\n'))
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    expect(settled).toBe(false)
+    expect(child.kill).not.toHaveBeenCalled()
+
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","id":2,"result":{}}\n'))
+    child.stdout.emit('data', Buffer.from('{"jsonrpc":"2.0","method":"thread/compacted","params":{"threadId":"thread-1"}}\n'))
+
+    await expect(promise).resolves.toEqual({ compacted: true, beforeTokens: null, afterTokens: null })
+  })
+
   it('rejects when the app-server returns a JSON-RPC error', async () => {
     const child = makeChild()
     spawnMock.mockReturnValue(child)

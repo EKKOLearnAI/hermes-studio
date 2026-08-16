@@ -805,6 +805,9 @@ export class CodingAgentRunManager {
       return { started: true }
     }
     if (run.launch.agentId === 'codex') {
+      if (String(args || '').trim()) {
+        throw new Error('Codex native compaction does not accept arguments')
+      }
       if (!nativeSessionId) throw new Error('Codex session has no native thread to compact')
       return compactCodexThread({
         command: run.launch.command,

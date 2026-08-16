@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/coding-agents/claude-code/proxy'
 import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/coding-agents/codex/proxy'
 import {
+  codexToolSearchConfig,
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
   restorePersistedPiProxyTargets,
@@ -62,6 +63,14 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('gates Codex tool_search feature flags by CLI version', () => {
+    expect(codexToolSearchConfig('0.127.0')).toEqual({ toolSearch: false, alwaysDefer: false })
+    expect(codexToolSearchConfig('0.128.0')).toEqual({ toolSearch: true, alwaysDefer: true })
+    expect(codexToolSearchConfig('0.141.0')).toEqual({ toolSearch: true, alwaysDefer: true })
+    expect(codexToolSearchConfig('0.142.0')).toEqual({ toolSearch: true, alwaysDefer: false })
+    expect(codexToolSearchConfig('')).toEqual({ toolSearch: true, alwaysDefer: true })
+  })
+
   it('translates Studio reasoning choices into Pi thinking levels', () => {
     expect(normalizePiThinkingLevel('default')).toBeUndefined()
     expect(normalizePiThinkingLevel('none')).toBe('off')
@@ -1151,7 +1160,6 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toContain('[features]')
     expect(config).toContain('tool_search = true')
-    expect(config).toContain('tool_search_always_defer_mcp_tools = true')
     expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')

@@ -56,6 +56,7 @@ export async function compactCodexThread(
     let compactTimer: ReturnType<typeof setTimeout> | null = null
     let beforeTokens: number | null = null
     let afterTokens: number | null = null
+    let latestTokens: number | null = null
 
     const settle = (fn: () => void) => {
       if (settled) return
@@ -63,7 +64,7 @@ export async function compactCodexThread(
       if (readyTimer) clearTimeout(readyTimer)
       if (compactTimer) clearTimeout(compactTimer)
       try {
-        if (!child.killed) child.kill()
+        terminateCodexChild(child)
       } catch {}
       fn()
     }
@@ -84,7 +85,11 @@ export async function compactCodexThread(
         return
       }
 
-      if (message.method === 'turn/completed' && String(message.params?.threadId || '') === threadId) {
+      if (
+        message.method === 'turn/completed' &&
+        compactAccepted &&
+        String(message.params?.threadId || '') === threadId
+      ) {
         compactCompleted = true
         settle(() => resolve({ compacted: true, beforeTokens, afterTokens }))
         return
@@ -96,8 +101,11 @@ export async function compactCodexThread(
           ? Math.floor(last.totalTokens)
           : null
         if (totalTokens != null) {
-          if (beforeTokens == null) beforeTokens = totalTokens
-          afterTokens = totalTokens
+          latestTokens = totalTokens
+          if (compactAccepted) {
+            if (beforeTokens == null) beforeTokens = totalTokens
+            afterTokens = totalTokens
+          }
         }
         return
       }
@@ -136,6 +144,7 @@ export async function compactCodexThread(
           settle(() => reject(new Error(compactError || 'Codex compaction failed')))
           return
         }
+        if (beforeTokens == null && latestTokens != null) beforeTokens = latestTokens
         if (readyTimer) clearTimeout(readyTimer)
         readyTimer = null
         compactTimer = setTimeout(() => {
@@ -184,7 +193,21 @@ export async function compactCodexThread(
     }) + '\n')
 
     readyTimer = setTimeout(() => {
-      settle(() => reject(new Error('Codex app-server did not initialize in time')))
+      settle(() => reject(new Error('Codex app-server did not become ready in time')))
     }, APP_SERVER_READY_TIMEOUT_MS)
   })
+}
+
+function terminateCodexChild(child: ChildProcess) {
+  if (!child || child.killed || !child.pid) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      .on('error', () => {
+        try { child.kill() } catch {}
+      })
+    return
+  }
+  try {
+    child.kill()
+  } catch {}
 }
