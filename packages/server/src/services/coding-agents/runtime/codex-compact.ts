@@ -174,7 +174,7 @@ export async function compactCodexThread(
     const clientInfo = {
       name: 'hermes_studio',
       title: 'Hermes Studio',
-      version: '0.6.42',
+      version: '0.6.43',
     }
     child.stdin?.write(JSON.stringify({
       jsonrpc: '2.0',
