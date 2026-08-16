@@ -364,13 +364,21 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
   })
 
-  it('renders exact active-run avatars on transcript cards and room-list overflow', () => {
+  it('renders exact active-run avatars in a stable leading room-list slot', () => {
     const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
     const runCard = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
+    const localRooms = panel.slice(
+      panel.indexOf('v-for="room in store.rooms"'),
+      panel.indexOf('<section v-if="remoteRooms.length"'),
+    )
 
+    expect(localRooms).toContain('class="room-active-agent-slot"')
+    expect(localRooms.indexOf('class="room-active-agent-slot"')).toBeLessThan(localRooms.indexOf('class="room-info"'))
+    expect(localRooms).not.toContain('class="room-icon"')
     expect(panel).toContain('activeAgentRunsForRoom(room.id).slice(0, 3)')
     expect(panel).toContain("activeAgentRunsForRoom(room.id).length - 3")
+    expect(panel).toMatch(/\.room-active-agent-slot\s*\{[^}]*flex: 0 0 74px;[^}]*width: 74px;/s)
     expect(list).toContain(':active="store.isAgentRunActive(')
     expect(runCard).toContain("'run-avatar-active': active")
     expect(runCard).toContain(':aria-busy="active"')

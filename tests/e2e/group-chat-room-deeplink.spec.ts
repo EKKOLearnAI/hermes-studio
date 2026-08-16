@@ -575,6 +575,9 @@ test.describe('group chat room deep links', () => {
         agentName: `Worker ${index}`,
       }))
     }
+    const alphaRoom = page.locator('.room-item', { hasText: 'Alpha Room' })
+    const betaRoom = page.locator('.room-item', { hasText: 'Beta Room' })
+    const idleRoomInfoX = await betaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)
     await triggerGroupSocket(page, 'room_agent_activity', activity({
       roomId: 'room-beta',
       agentId: 'agent-row-runtime',
@@ -582,11 +585,13 @@ test.describe('group chat room deep links', () => {
       agentName: 'Runtime Worker',
     }))
 
-    const alphaRoom = page.locator('.room-item', { hasText: 'Alpha Room' })
-    const betaRoom = page.locator('.room-item', { hasText: 'Beta Room' })
+    await expect(alphaRoom.locator(':scope > .room-active-agent-slot')).toHaveCount(1)
+    await expect(alphaRoom.locator(':scope > .room-icon')).toHaveCount(0)
+    await expect(alphaRoom.locator(':scope > .room-active-agent-slot + .room-info')).toHaveCount(1)
     await expect(alphaRoom.locator('.room-active-agent-avatar')).toHaveCount(3)
     await expect(alphaRoom.locator('.room-active-agent-overflow')).toHaveText('+1')
     await expect(betaRoom.locator('.room-active-agent-avatar')).toHaveCount(1)
+    await expect.poll(() => betaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(idleRoomInfoX)
 
     await betaRoom.click()
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)

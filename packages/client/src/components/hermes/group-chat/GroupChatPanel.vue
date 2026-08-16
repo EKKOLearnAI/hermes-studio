@@ -1770,41 +1770,40 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             @click="handleSelectRoom(room.id)"
                             @contextmenu="handleRoomContextMenu($event, room.id)"
                         >
-                            <svg class="room-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                            </svg>
+                            <div class="room-active-agent-slot">
+                                <div
+                                    v-if="activeAgentRunsForRoom(room.id).length"
+                                    class="room-active-agents"
+                                    role="status"
+                                    :aria-label="activeAgentRunsForRoom(room.id).map(roomActivityLabel).join(', ')"
+                                >
+                                    <span
+                                        v-for="activity in activeAgentRunsForRoom(room.id).slice(0, 3)"
+                                        :key="`${activity.agentId}:${activity.runId}`"
+                                        class="room-active-agent-avatar"
+                                        :title="roomActivityLabel(activity)"
+                                        :aria-label="roomActivityLabel(activity)"
+                                        aria-busy="true"
+                                    >
+                                        <ProfileAvatar
+                                            :name="activity.agent || activity.agentName"
+                                            :avatar="parseStoredAvatar(activity.avatar)"
+                                            :size="22"
+                                        />
+                                    </span>
+                                    <span
+                                        v-if="activeAgentRunsForRoom(room.id).length > 3"
+                                        class="room-active-agent-overflow"
+                                        :aria-label="`+${activeAgentRunsForRoom(room.id).length - 3}`"
+                                    >
+                                        +{{ activeAgentRunsForRoom(room.id).length - 3 }}
+                                    </span>
+                                </div>
+                            </div>
                             <div class="room-info">
                                 <span class="room-name">{{ room.name || room.id }}</span>
                                 <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                                 <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
-                            </div>
-                            <div
-                                v-if="activeAgentRunsForRoom(room.id).length"
-                                class="room-active-agents"
-                                role="status"
-                                :aria-label="activeAgentRunsForRoom(room.id).map(roomActivityLabel).join(', ')"
-                            >
-                                <span
-                                    v-for="activity in activeAgentRunsForRoom(room.id).slice(0, 3)"
-                                    :key="`${activity.agentId}:${activity.runId}`"
-                                    class="room-active-agent-avatar"
-                                    :title="roomActivityLabel(activity)"
-                                    :aria-label="roomActivityLabel(activity)"
-                                    aria-busy="true"
-                                >
-                                    <ProfileAvatar
-                                        :name="activity.agent || activity.agentName"
-                                        :avatar="parseStoredAvatar(activity.avatar)"
-                                        :size="22"
-                                    />
-                                </span>
-                                <span
-                                    v-if="activeAgentRunsForRoom(room.id).length > 3"
-                                    class="room-active-agent-overflow"
-                                    :aria-label="`+${activeAgentRunsForRoom(room.id).length - 3}`"
-                                >
-                                    +{{ activeAgentRunsForRoom(room.id).length - 3 }}
-                                </span>
                             </div>
                             <NPopconfirm v-if="canManageRoom(room)" @positive-click="handleDeleteRoom(room.id)">
                                 <template #trigger>
@@ -3451,11 +3450,16 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
+.room-active-agent-slot {
+    display: flex;
+    flex: 0 0 74px;
+    align-items: center;
+    width: 74px;
+}
+
 .room-active-agents {
     display: flex;
-    flex: 0 0 auto;
     align-items: center;
-    padding-inline-start: 4px;
 }
 
 .room-active-agent-avatar {
