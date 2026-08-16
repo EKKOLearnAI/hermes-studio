@@ -68,9 +68,36 @@ const groupRoomsOffset = ref(0)
 
 const HISTORY_PAGE_SIZE = 150
 const HISTORY_GROUP_PAGE_SIZE = 50
+const HISTORY_GROUP_COLLAPSE_KEY = 'group-chat'
+const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
+const isGroupRoomsCollapsed = computed(() => collapsedGroups.value.has(HISTORY_GROUP_COLLAPSE_KEY))
 const sourceHasMore = ref<Record<string, boolean>>({})
 const sourceLoading = ref<Record<string, boolean>>({})
 const sourceOffsets = ref<Record<string, number>>({})
+
+function persistCollapsedGroups() {
+  localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
+}
+
+function toggleGroupRooms() {
+  if (routeGroupRoomId.value) {
+    ensureGroupRoomsExpanded()
+    return
+  }
+  const next = new Set(collapsedGroups.value)
+  if (next.has(HISTORY_GROUP_COLLAPSE_KEY)) next.delete(HISTORY_GROUP_COLLAPSE_KEY)
+  else next.add(HISTORY_GROUP_COLLAPSE_KEY)
+  collapsedGroups.value = next
+  persistCollapsedGroups()
+}
+
+function ensureGroupRoomsExpanded() {
+  if (!collapsedGroups.value.has(HISTORY_GROUP_COLLAPSE_KEY)) return
+  collapsedGroups.value = new Set(
+    [...collapsedGroups.value].filter(source => source !== HISTORY_GROUP_COLLAPSE_KEY),
+  )
+  persistCollapsedGroups()
+}
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
   historyMessageListRef.value?.scrollToAnchor(target.messageId, target.anchorId)
@@ -430,6 +457,7 @@ function openPageSidebar() {
 }
 
 onMounted(async () => {
+  if (routeGroupRoomId.value) ensureGroupRoomsExpanded()
   appStore.loadModels()
   await profilesStore.fetchProfiles()
   await Promise.all([loadHermesSessions(), loadGroupRooms()])
@@ -448,6 +476,7 @@ onUnmounted(() => {
 
 watch([routeSessionId, routeProfile, routeGroupRoomId], async ([sessionId, _profile, groupRoomId]) => {
   if (groupRoomId) {
+    ensureGroupRoomsExpanded()
     historySessionId.value = null
     historySession.value = null
     return
@@ -472,8 +501,6 @@ watch(() => profilesStore.activeProfileName, async () => {
   await loadHermesSessions()
   await openDefaultHistorySession(true)
 })
-
-const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
 
 // Convert SessionSummary to Session format
 function sessionSummaryToSession(summary: SessionSummary): Session {
@@ -979,32 +1006,42 @@ function handleBatchDeleteConfirm() {
           />
         </template>
 
-        <div class="session-group-header session-group-header--static">
-            <span class="session-group-label">GROUP</span>
-            <span class="session-group-count">{{ groupRooms.length }}{{ groupRoomsHasMore ? '+' : '' }}</span>
-            <NTooltip v-if="groupRoomsHasMore" trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="session-group-load-more"
-                  quaternary
-                  circle
-                  size="tiny"
-                  :loading="groupRoomsLoading"
-                  :disabled="groupRoomsLoading"
-                  :aria-label="groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions')"
-                  @click.stop="loadGroupRooms(false)"
-                >
-                  <template #icon>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                      <path d="M20 11a8 8 0 1 0-2.34 5.66" />
-                      <polyline points="20 4 20 11 13 11" />
-                    </svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions') }}
-            </NTooltip>
-          </div>
+        <div
+          class="session-group-header"
+          role="button"
+          tabindex="0"
+          :aria-expanded="!isGroupRoomsCollapsed"
+          @click="toggleGroupRooms"
+          @keydown.enter.prevent="toggleGroupRooms"
+          @keydown.space.prevent="toggleGroupRooms"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="group-chevron" :class="{ collapsed: isGroupRoomsCollapsed }"><polyline points="9 18 15 12 9 6"/></svg>
+          <span class="session-group-label">GROUP</span>
+          <span class="session-group-count">{{ groupRooms.length }}{{ groupRoomsHasMore ? '+' : '' }}</span>
+          <NTooltip v-if="groupRoomsHasMore && !isGroupRoomsCollapsed" trigger="hover">
+            <template #trigger>
+              <NButton
+                class="session-group-load-more"
+                quaternary
+                circle
+                size="tiny"
+                :loading="groupRoomsLoading"
+                :disabled="groupRoomsLoading"
+                :aria-label="groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions')"
+                @click.stop="loadGroupRooms(false)"
+              >
+                <template #icon>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M20 11a8 8 0 1 0-2.34 5.66" />
+                    <polyline points="20 4 20 11 13 11" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions') }}
+          </NTooltip>
+        </div>
+        <template v-if="!isGroupRoomsCollapsed">
           <button
             v-for="room in groupRooms"
             :key="`group-${room.id}`"
@@ -1026,6 +1063,7 @@ function handleBatchDeleteConfirm() {
               <span class="group-room-history-time">{{ new Date(Number(room.lastActiveAt || room.createdAt || 0)).toLocaleString() }}</span>
             </span>
           </button>
+        </template>
 
         <template v-for="group in groupedSessions" :key="group.source">
           <div class="session-group-header" @click="toggleGroup(group.source)">
@@ -1301,6 +1339,11 @@ function handleBatchDeleteConfirm() {
   padding: 6px 10px 4px;
   cursor: pointer;
   user-select: none;
+
+  &[role='button']:focus-visible {
+    outline: 2px solid rgba($accent-primary, 0.55);
+    outline-offset: -2px;
+  }
 }
 
 .session-group-header--static {
