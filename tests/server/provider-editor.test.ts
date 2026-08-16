@@ -393,6 +393,50 @@ describe('provider editor service', () => {
       })
   })
 
+  it('reports a missing model catalog as its own outcome rather than a failed connection', async () => {
+    const credential = ['catalog', 'credential'].join('-')
+    writeProfile('research', [
+      'model:',
+      '  provider: custom:nocatalog',
+      '  default: glm-5.2',
+      'custom_providers:',
+      '  - name: nocatalog',
+      '    base_url: https://plan.example/v3',
+      `    api_key: ${credential}`,
+      '    model: glm-5.2',
+      '',
+    ].join('\n'))
+
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { testProviderEditorDraft, ProviderEditorError } = await loadEditor()
+
+    // Token-plan endpoints answer the catalog probe with 404 or 405 while the
+    // chat path they exist for works fine.
+    for (const status of [404, 405]) {
+      fetchMock.mockResolvedValueOnce(new Response('not found', { status }))
+      await expect(testProviderEditorDraft('research', 'custom:nocatalog', {}))
+        .resolves.toEqual({ models: [], model_count: 0, catalog_unavailable: true })
+    }
+
+    // Anything else is still a failure, so a broken provider cannot pass.
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }))
+    await expect(testProviderEditorDraft('research', 'custom:nocatalog', {}))
+      .rejects.toMatchObject<Partial<InstanceType<typeof ProviderEditorError>>>({
+        status: 422,
+        code: 'PROVIDER_TEST_FAILED',
+      })
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    await expect(testProviderEditorDraft('research', 'custom:nocatalog', {}))
+      .rejects.toMatchObject<Partial<InstanceType<typeof ProviderEditorError>>>({
+        code: 'PROVIDER_EMPTY_CATALOG',
+      })
+  })
+
   it('marks unsupported API modes as unavailable for draft connection tests', async () => {
     const credential = ['bedrock', 'credential'].join('-')
     writeProfile('research', [

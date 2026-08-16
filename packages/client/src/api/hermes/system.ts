@@ -347,7 +347,7 @@ export async function patchProviderEditor(
 export async function testProviderEditor(
   poolKey: string,
   data: ProviderEditorPatch,
-): Promise<{ success: boolean; models?: string[]; model_count?: number; error?: string; code?: string }> {
+): Promise<{ success: boolean; models?: string[]; model_count?: number; catalog_unavailable?: boolean; error?: string; code?: string }> {
   return request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}/editor/test`, {
     method: 'POST',
     body: JSON.stringify(data),

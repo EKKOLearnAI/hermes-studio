@@ -1666,6 +1666,7 @@ export default {
     providerReconnectHint: 'Changes apply to new runs. Existing chat or coding-agent sessions must reconnect.',
     testConnection: 'Test connection',
     providerTestSuccess: 'Connection succeeded; {count} models found',
+    providerTestNoCatalog: 'Reachable, but this endpoint does not list models. Enter the model ID yourself, and check the base URL if you expected a list.',
     providerTestFailed: 'Provider connection test failed',
     providerTestFailedTitle: 'Connection test failed',
     providerSaveAnywayHint: 'You can still save these settings explicitly, but the provider may be unavailable.',

@@ -1706,6 +1706,7 @@ export default {
     providerReconnectHint: '修改只对新运行生效；现有聊天或 Coding Agent 会话需要重新连接。',
     testConnection: '测试连接',
     providerTestSuccess: '连接成功，共发现 {count} 个模型',
+    providerTestNoCatalog: '连接正常，但该端点不提供模型列表。请手动填写模型 ID；如果本应有列表，请检查 Base URL。',
     providerTestFailed: 'Provider 连接测试失败',
     providerTestFailedTitle: '连接测试失败',
     providerSaveAnywayHint: '你仍可明确选择保存，但该 Provider 可能暂时不可用。',

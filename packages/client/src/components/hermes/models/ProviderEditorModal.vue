@@ -203,7 +203,10 @@ async function testDraft(showSuccess = true): Promise<{ success: boolean; error?
   try {
     const result = await systemApi.testProviderEditor(props.provider.provider, buildPatch())
     if (result.success) {
-      if (showSuccess) message.success(t('models.providerTestSuccess', { count: result.model_count || 0 }))
+      // Reachable without a catalog is a warning, not a success: the provider
+      // works, but nothing was listed and the model ID has to be typed in.
+      if (showSuccess && result.catalog_unavailable) message.warning(t('models.providerTestNoCatalog'))
+      else if (showSuccess) message.success(t('models.providerTestSuccess', { count: result.model_count || 0 }))
     } else if (showSuccess) {
       message.error(result.error || t('models.providerTestFailed'))
     }

@@ -474,7 +474,13 @@ export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: strin
         continue
       }
       const text = await readLimitedResponse(response)
-      if (!response.ok) throw new ProviderEditorError(`Provider models endpoint returned HTTP ${response.status}`, 422, 'PROVIDER_TEST_FAILED')
+      if (!response.ok) {
+        // A provider that simply never implements a model catalog answers this
+        // probe with 404 or 405. The chat path it is actually used for can be
+        // perfectly healthy, so the caller gets to decide what that means.
+        const code = response.status === 404 || response.status === 405 ? 'PROVIDER_CATALOG_UNAVAILABLE' : 'PROVIDER_TEST_FAILED'
+        throw new ProviderEditorError(`Provider models endpoint returned HTTP ${response.status}`, 422, code)
+      }
       let body: any
       try { body = JSON.parse(text) } catch { throw new ProviderEditorError('Provider returned invalid JSON', 422, 'PROVIDER_TEST_FAILED') }
       const rawModels = endpoint.protocol === 'gemini' ? body?.models : body?.data
@@ -498,7 +504,7 @@ export async function testProviderEditorDraft(
   profile: string,
   providerId: string,
   patch: ProviderEditorPatch,
-): Promise<{ models: string[]; model_count: number }> {
+): Promise<{ models: string[]; model_count: number; catalog_unavailable?: boolean }> {
   const paths = profilePaths(profile)
   const [rawConfig, rawEnv, rawApp] = await Promise.all([
     safeFileStore.readText(paths.config).catch(() => ''),
@@ -518,8 +524,17 @@ export async function testProviderEditorDraft(
   if (!capability.supported) {
     throw new ProviderEditorError(capability.reason || 'Provider connection testing is not supported', 422, 'PROVIDER_TEST_UNSUPPORTED')
   }
-  const models = await fetchProviderCatalogForTest(baseUrl, apiKey, apiMode)
-  return { models: models.slice(0, 100), model_count: models.length }
+  try {
+    const models = await fetchProviderCatalogForTest(baseUrl, apiKey, apiMode)
+    return { models: models.slice(0, 100), model_count: models.length }
+  } catch (error) {
+    // No catalog is not a failed connection. Report it as its own outcome so
+    // the editor can warn and move on instead of blocking a working provider.
+    if (error instanceof ProviderEditorError && error.code === 'PROVIDER_CATALOG_UNAVAILABLE') {
+      return { models: [], model_count: 0, catalog_unavailable: true }
+    }
+    throw error
+  }
 }
 
 function setNestedProfileValue(
