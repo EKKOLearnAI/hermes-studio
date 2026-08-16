@@ -1407,7 +1407,8 @@ const contextMenuOptions = computed(() => {
     options.push({ label: t("chat.setModel"), key: "model" })
   }
 
-  if (contextSession.value?.agent === "codex" || contextSession.value?.agent === "claude") {
+  if (contextSession.value?.source === "coding_agent"
+    && (contextSession.value?.agent === "codex" || contextSession.value?.agent === "claude")) {
     options.push({ label: t("chat.continueInHermes"), key: "handoff-hermes" })
   }
 

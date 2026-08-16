@@ -5,6 +5,7 @@ import {
   type HermesMessageRow,
   type HermesSessionRow,
 } from '../../db/hermes/session-store'
+import { codingAgentRunManager } from '../coding-agents/runtime/run-manager'
 
 export interface HandoffMessageInput {
   role: string
@@ -24,7 +25,7 @@ export type HandoffResult =
   | { ok: false; status: number; error: string }
 
 export function isHandoffSourceSession(session: HermesSessionRow | null | undefined): boolean {
-  return session?.agent === 'codex' || session?.agent === 'claude'
+  return (session?.agent === 'codex' || session?.agent === 'claude') && session.source === 'coding_agent'
 }
 
 export function normalizeHandoffMessages(messages: HermesMessageRow[]): HandoffMessageInput[] {
@@ -66,7 +67,7 @@ export function createHermesHandoffSession(
   if (!source || !isHandoffSourceSession(source)) {
     return { ok: false, status: 404, error: 'Source session not found or is not a Codex/Claude Code session' }
   }
-  if (source.ended_at == null && Number(source.message_count || 0) > 0) {
+  if (source.ended_at == null && Number(source.message_count || 0) > 0 && codingAgentRunManager.isSessionProcessing(sourceSessionId)) {
     return { ok: false, status: 409, error: 'Cannot hand off a session that is still running' }
   }
 

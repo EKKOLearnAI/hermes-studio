@@ -177,7 +177,8 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       key: 'import-webui',
       disabled: Boolean(contextSessionSummary.value?.webui_imported),
     },
-    ...(contextSessionSummary.value?.agent === 'codex' || contextSessionSummary.value?.agent === 'claude'
+    ...(contextSessionSummary.value?.source === 'coding_agent'
+      && (contextSessionSummary.value?.agent === 'codex' || contextSessionSummary.value?.agent === 'claude')
       ? [{ label: t('chat.continueInHermes'), key: 'handoff-hermes' }]
       : []),
     { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },

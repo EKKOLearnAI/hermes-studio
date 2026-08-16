@@ -4,13 +4,20 @@ const mocks = vi.hoisted(() => {
   const getSession = vi.fn()
   const getSessionDetail = vi.fn()
   const createHandoffSession = vi.fn()
-  return { getSession, getSessionDetail, createHandoffSession }
+  const isSessionProcessing = vi.fn()
+  return { getSession, getSessionDetail, createHandoffSession, isSessionProcessing }
 })
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: mocks.getSession,
   getSessionDetail: mocks.getSessionDetail,
   createHandoffSession: mocks.createHandoffSession,
+}))
+
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+  codingAgentRunManager: {
+    isSessionProcessing: mocks.isSessionProcessing,
+  },
 }))
 
 import {
@@ -25,9 +32,10 @@ describe('session handoff service', () => {
   })
 
   it('recognizes Codex and Claude Code sessions as handoff sources', () => {
-    expect(isHandoffSourceSession({ agent: 'codex' } as any)).toBe(true)
-    expect(isHandoffSourceSession({ agent: 'claude' } as any)).toBe(true)
-    expect(isHandoffSourceSession({ agent: 'hermes' } as any)).toBe(false)
+    expect(isHandoffSourceSession({ agent: 'codex', source: 'coding_agent' } as any)).toBe(true)
+    expect(isHandoffSourceSession({ agent: 'claude', source: 'coding_agent' } as any)).toBe(true)
+    expect(isHandoffSourceSession({ agent: 'codex', source: 'workflow' } as any)).toBe(false)
+    expect(isHandoffSourceSession({ agent: 'hermes', source: 'coding_agent' } as any)).toBe(false)
     expect(isHandoffSourceSession(null)).toBe(false)
   })
 
@@ -59,21 +67,73 @@ describe('session handoff service', () => {
     expect(createHermesHandoffSession('hermes-session')).toMatchObject({ ok: false, status: 404 })
   })
 
+  it('rejects workflow and group chat sources even when the agent is Codex', () => {
+    mocks.getSession.mockReturnValueOnce({
+      id: 'workflow-codex',
+      agent: 'codex',
+      source: 'workflow',
+      ended_at: 123,
+    } as any)
+    mocks.getSession.mockReturnValueOnce({
+      id: 'group-codex',
+      agent: 'codex',
+      source: 'group_chat',
+      ended_at: 123,
+    } as any)
+
+    expect(createHermesHandoffSession('workflow-codex')).toMatchObject({ ok: false, status: 404 })
+    expect(createHermesHandoffSession('group-codex')).toMatchObject({ ok: false, status: 404 })
+  })
+
   it('rejects a source session that is still running', () => {
     mocks.getSession.mockReturnValueOnce({
       id: 'running',
       agent: 'codex',
+      source: 'coding_agent',
       ended_at: null,
       message_count: 4,
     } as any)
+    mocks.isSessionProcessing.mockReturnValueOnce(true)
 
     expect(createHermesHandoffSession('running')).toMatchObject({ ok: false, status: 409 })
+  })
+
+  it('allows a stale coding-agent source with a missing end marker when no run is active', () => {
+    mocks.getSession.mockReturnValueOnce({
+      id: 'stale-codex',
+      agent: 'codex',
+      source: 'coding_agent',
+      ended_at: null,
+      message_count: 4,
+      title: 'Stale work',
+      preview: '',
+      profile: 'default',
+      workspace: '/repo',
+      category_id: null,
+    } as any)
+    mocks.isSessionProcessing.mockReturnValueOnce(false)
+    mocks.getSessionDetail.mockReturnValueOnce({
+      messages: [
+        { id: 1, session_id: 'stale-codex', role: 'user', content: 'plan it', timestamp: 100 },
+        { id: 2, session_id: 'stale-codex', role: 'assistant', content: 'done', timestamp: 101 },
+      ],
+    } as any)
+    mocks.createHandoffSession.mockReturnValueOnce({ id: 'handoff-stale' } as any)
+
+    const result = createHermesHandoffSession('stale-codex')
+
+    expect(result.ok).toBe(true)
+    expect(mocks.createHandoffSession).toHaveBeenCalledWith(expect.objectContaining({
+      parent_session_id: 'stale-codex',
+      title: 'handoff: Stale work',
+    }))
   })
 
   it('creates a Hermes handoff session with lineage and normalized messages', () => {
     mocks.getSession.mockReturnValueOnce({
       id: 'src-codex',
       agent: 'codex',
+      source: 'coding_agent',
       ended_at: 200,
       message_count: 3,
       title: 'Build feature',
