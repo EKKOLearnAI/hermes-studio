@@ -281,6 +281,9 @@ test.describe('history session deep links', () => {
     await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
     await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_collapsed_groups')))
       .not.toContain('group-chat')
+    await groupHeader.click()
+    await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.group-room-history-item.active')).toContainText('Newest Group Room')
 
     await page.goto('/#/hermes/history/session/hist-alpha')
     await groupHeader.click()
@@ -293,7 +296,7 @@ test.describe('history session deep links', () => {
 
   test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto('/#/hermes/history/group-chat/room-new')
+    await page.goto('/#/hermes/history/session/hist-alpha')
 
     await page.locator('.hamburger-btn').click()
     const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
@@ -352,7 +355,7 @@ test.describe('history GROUP pagination', () => {
     const loadMore = groupHeader.locator('.session-group-load-more')
     await expect(groupHeader).toHaveAttribute('aria-expanded', 'true')
     await expect(loadMore).toBeVisible()
-    await expect(page.getByText('Paged Group Room 51')).toBeHidden()
+    await expect(page.getByText('Paged Group Room 51', { exact: true })).toBeHidden()
 
     await groupHeader.click()
     await expect(loadMore).toBeHidden()
@@ -360,7 +363,7 @@ test.describe('history GROUP pagination', () => {
     await expect(loadMore).toBeVisible()
     await loadMore.click()
 
-    await expect(page.getByText('Paged Group Room 51')).toBeVisible()
+    await expect(page.getByText('Paged Group Room 51', { exact: true })).toBeVisible()
     await expect(loadMore).toHaveCount(0)
     await expect(page.locator('.group-room-history-item')).toHaveCount(53)
   })
