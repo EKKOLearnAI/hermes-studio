@@ -16,10 +16,15 @@ import {
 } from '@/api/hermes/app-connections'
 
 const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
+const HSTUDIO_GITHUB_ANDROID_DOWNLOAD_URL = 'https://github.com/EKKOLearnAI/hermes-studio/releases/download/v1.0.0/HStudio.apk'
+const HSTUDIO_CLOUDFLARE_ANDROID_DOWNLOAD_URL = 'https://download.ekkolearnai.com/v1.0.0/HStudio.apk'
+const HSTUDIO_APP_VERSION = 'v1.0.0'
 
 const { t } = useI18n()
 const message = useMessage()
 const loading = ref(false)
+const panelView = ref<'list' | 'download'>('list')
+const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')
 const connections = ref<AppConnection[]>([])
 const accessFailure = ref<AppConnectionAccessFailure | null>(null)
 const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
@@ -30,6 +35,7 @@ const deletingConnectionId = ref<number | null>(null)
 const lanAuthorization = ref<LanAppAuthorizationResponse | null>(null)
 const cloudAuthorization = ref<CloudAppAuthorizationResponse | null>(null)
 const qrCodeDataUrls = ref<Record<'lan' | 'cloud', string>>({ lan: '', cloud: '' })
+const downloadQrCodeDataUrl = ref('')
 const currentTimestamp = ref(Math.floor(Date.now() / 1000))
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let connectionPollTimer: ReturnType<typeof setInterval> | null = null
@@ -38,6 +44,9 @@ let connectionsRequestInFlight = false
 
 const CONNECTION_POLL_INTERVAL_MS = 3_000
 
+const androidDownloadUrl = computed(() => downloadSource.value === 'cloudflare'
+  ? HSTUDIO_CLOUDFLARE_ANDROID_DOWNLOAD_URL
+  : HSTUDIO_GITHUB_ANDROID_DOWNLOAD_URL)
 const activeAuthorization = computed(() => connectionTab.value === 'lan'
   ? lanAuthorization.value
   : cloudAuthorization.value)
@@ -266,6 +275,21 @@ async function generateAuthorization(type: 'lan' | 'cloud', refresh = false) {
   }
 }
 
+async function generateDownloadQrCode() {
+  const requestedUrl = androidDownloadUrl.value
+  try {
+    const dataUrl = await QRCode.toDataURL(requestedUrl, {
+      width: 240,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#111111', light: '#ffffff' },
+    })
+    if (requestedUrl === androidDownloadUrl.value) downloadQrCodeDataUrl.value = dataUrl
+  } catch {
+    if (requestedUrl === androidDownloadUrl.value) downloadQrCodeDataUrl.value = ''
+  }
+}
+
 async function deleteConnection(connection: AppConnection) {
   if (deletingConnectionId.value != null) return
   deletingConnectionId.value = connection.id
@@ -300,8 +324,13 @@ watch(connectionTab, (type) => {
   }
 })
 
+watch(androidDownloadUrl, () => {
+  void generateDownloadQrCode()
+})
+
 onMounted(() => {
   void loadConnections()
+  void generateDownloadQrCode()
   countdownTimer = setInterval(() => {
     currentTimestamp.value = Math.floor(Date.now() / 1000)
   }, 1000)
@@ -324,46 +353,219 @@ onUnmounted(() => {
         <h2>{{ t('connections.tabs.app') }}</h2>
         <p>{{ t('connections.app.subtitle') }}</p>
       </div>
-      <NButton size="small" type="primary" @click="openScanModal">
-        {{ t('connections.app.scanToAdd') }}
-      </NButton>
+      <div class="panel-actions">
+        <div class="view-switch" role="tablist">
+          <button
+            type="button"
+            class="view-switch-button"
+            :class="{ 'view-switch-button--active': panelView === 'list' }"
+            :aria-selected="panelView === 'list'"
+            @click="panelView = 'list'"
+          >
+            {{ t('connections.app.viewList') }}
+          </button>
+          <button
+            type="button"
+            class="view-switch-button"
+            :class="{ 'view-switch-button--active': panelView === 'download' }"
+            :aria-selected="panelView === 'download'"
+            @click="panelView = 'download'"
+          >
+            {{ t('connections.app.viewDownload') }}
+          </button>
+        </div>
+        <NButton size="small" type="primary" @click="openScanModal">
+          {{ t('connections.app.scanToAdd') }}
+        </NButton>
+      </div>
     </header>
 
-    <NAlert
-      v-if="accessFailure"
-      class="app-access-failure"
-      type="error"
-      :title="t('connections.app.accessFailureTitle')"
-      :bordered="false"
-      closable
-      @close="dismissAccessFailure"
-    >
-      <div class="app-access-failure__reason">{{ accessFailureReason }}</div>
-      <div class="app-access-failure__meta">
-        <span>{{ t('connections.app.accessFailureMode', { mode: accessFailureMode }) }}</span>
-        <span v-if="accessFailure.deviceName">
-          {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
-        </span>
-        <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
-      </div>
-    </NAlert>
-
-    <div class="app-connections-table">
-      <NDataTable
-        size="small"
-        :columns="columns"
-        :data="connections"
-        :loading="loading"
-        bordered
-        :single-line="false"
-        :row-key="(row: AppConnection) => row.id"
-        :scroll-x="1370"
-        flex-height
+    <template v-if="panelView === 'list'">
+      <NAlert
+        v-if="accessFailure"
+        class="app-access-failure"
+        type="error"
+        :title="t('connections.app.accessFailureTitle')"
+        :bordered="false"
+        closable
+        @close="dismissAccessFailure"
       >
-        <template #empty>
-          <NEmpty size="small" :description="t('connections.app.empty')" />
-        </template>
-      </NDataTable>
+        <div class="app-access-failure__reason">{{ accessFailureReason }}</div>
+        <div class="app-access-failure__meta">
+          <span>{{ t('connections.app.accessFailureMode', { mode: accessFailureMode }) }}</span>
+          <span v-if="accessFailure.deviceName">
+            {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
+          </span>
+          <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
+        </div>
+      </NAlert>
+
+      <div class="app-connections-table">
+        <NDataTable
+          size="small"
+          :columns="columns"
+          :data="connections"
+          :loading="loading"
+          bordered
+          :single-line="false"
+          :row-key="(row: AppConnection) => row.id"
+          :scroll-x="1370"
+          flex-height
+        >
+          <template #empty>
+            <NEmpty size="small" :description="t('connections.app.empty')" />
+          </template>
+        </NDataTable>
+      </div>
+    </template>
+
+    <div v-else class="app-downloads">
+      <div class="app-download-layout">
+        <section class="app-download-hero">
+          <div class="app-download-intro">
+            <div class="app-download-brand">
+              <div class="app-download-logo">
+                <img src="/logo.png" alt="">
+              </div>
+              <div>
+                <span>HStudio Mobile</span>
+                <h3>{{ t('connections.app.downloadTitle') }}</h3>
+              </div>
+            </div>
+            <p>{{ t('connections.app.downloadDescription') }}</p>
+            <div class="app-download-meta">
+              <span>{{ HSTUDIO_APP_VERSION }}</span>
+              <span>Android · iOS · HarmonyOS</span>
+            </div>
+          </div>
+
+          <div class="app-download-qr-panel">
+            <div class="app-download-qr">
+              <img
+                v-if="downloadQrCodeDataUrl"
+                :src="downloadQrCodeDataUrl"
+                :alt="t('connections.app.downloadScan')"
+              >
+              <NSpin v-else size="small" />
+            </div>
+            <strong>{{ t('connections.app.downloadScan') }}</strong>
+            <span>{{ t('connections.app.downloadScanHint') }}</span>
+            <div class="view-switch download-source-switch" role="tablist" aria-label="GitHub / Cloudflare">
+              <button
+                type="button"
+                role="tab"
+                class="view-switch-button"
+                :class="{ 'view-switch-button--active': downloadSource === 'github' }"
+                :aria-selected="downloadSource === 'github'"
+                @click="downloadSource = 'github'"
+              >
+                GitHub
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="view-switch-button"
+                :class="{ 'view-switch-button--active': downloadSource === 'cloudflare' }"
+                :aria-selected="downloadSource === 'cloudflare'"
+                @click="downloadSource = 'cloudflare'"
+              >
+                Cloudflare
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div class="app-platform-grid">
+          <article class="app-platform-card app-platform-card--available">
+            <div class="app-platform-card-header">
+              <div class="app-platform-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z" />
+                </svg>
+              </div>
+              <NTag size="small" type="success" :bordered="false">{{ t('connections.app.available') }}</NTag>
+            </div>
+            <div class="app-platform-copy">
+              <h4>Android</h4>
+              <p>{{ t('connections.app.downloadRequirements') }}</p>
+            </div>
+            <div class="app-platform-download-controls">
+              <div class="view-switch download-source-switch" role="tablist" aria-label="GitHub / Cloudflare">
+                <button
+                  type="button"
+                  role="tab"
+                  class="view-switch-button"
+                  :class="{ 'view-switch-button--active': downloadSource === 'github' }"
+                  :aria-selected="downloadSource === 'github'"
+                  @click="downloadSource = 'github'"
+                >
+                  GitHub
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="view-switch-button"
+                  :class="{ 'view-switch-button--active': downloadSource === 'cloudflare' }"
+                  :aria-selected="downloadSource === 'cloudflare'"
+                  @click="downloadSource = 'cloudflare'"
+                >
+                  Cloudflare
+                </button>
+              </div>
+              <NButton
+                class="app-platform-action"
+                tag="a"
+                type="primary"
+                :href="androidDownloadUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <template #icon>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
+                  </svg>
+                </template>
+                {{ t('connections.app.downloadApk') }}
+              </NButton>
+            </div>
+          </article>
+
+          <article class="app-platform-card app-platform-card--pending">
+            <div class="app-platform-card-header">
+              <div class="app-platform-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16.8 12.7c0-2.4 2-3.6 2.1-3.7a4.5 4.5 0 0 0-3.5-1.9c-1.5-.2-2.9.9-3.6.9-.7 0-1.8-.9-3-.9A4.8 4.8 0 0 0 4.7 9.6c-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.1 2.4 1.2 0 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.2 3-2.4a10.7 10.7 0 0 0 1.4-2.9 4.2 4.2 0 0 1-3-3.8ZM14.4 5.5A4.2 4.2 0 0 0 15.5 2a4.3 4.3 0 0 0-3 1.7 4 4 0 0 0-1.1 3.4 3.6 3.6 0 0 0 3-1.6Z" />
+                </svg>
+              </div>
+              <NTag size="small" :bordered="false">{{ t('connections.app.comingSoon') }}</NTag>
+            </div>
+            <div class="app-platform-copy">
+              <h4>iOS</h4>
+              <p>{{ t('connections.app.iosPending') }}</p>
+            </div>
+            <NButton class="app-platform-action" disabled>{{ t('connections.app.comingSoon') }}</NButton>
+          </article>
+
+          <article class="app-platform-card app-platform-card--pending">
+            <div class="app-platform-card-header">
+              <div class="app-platform-icon" aria-hidden="true">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55">
+                  <circle cx="12" cy="12" r="8.5" />
+                  <path d="M7.5 14.5c1.4-3.8 7.6-3.8 9 0M9.2 9.5h.01M14.8 9.5h.01" />
+                </svg>
+              </div>
+              <NTag size="small" :bordered="false">{{ t('connections.app.comingSoon') }}</NTag>
+            </div>
+            <div class="app-platform-copy">
+              <h4>HarmonyOS</h4>
+              <p>{{ t('connections.app.harmonyPending') }}</p>
+            </div>
+            <NButton class="app-platform-action" disabled>{{ t('connections.app.comingSoon') }}</NButton>
+          </article>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -498,6 +700,49 @@ onUnmounted(() => {
   }
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.view-switch {
+  display: flex;
+  padding: 3px;
+  flex: 0 0 auto;
+  gap: 2px;
+  background: $bg-secondary;
+  border: 1px solid $border-light;
+  border-radius: 10px;
+}
+
+.view-switch-button {
+  min-width: 56px;
+  height: 26px;
+  padding: 0 11px;
+  color: $text-muted;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 26px;
+  transition: color $transition-fast, background-color $transition-fast, box-shadow $transition-fast;
+
+  &:hover {
+    color: $text-primary;
+  }
+
+  &--active {
+    color: $text-primary;
+    background: $bg-card;
+    box-shadow: 0 1px 4px rgba(var(--text-primary-rgb), 0.1);
+    font-weight: 600;
+  }
+}
+
 .app-connections-table {
   flex: 1 1 auto;
   height: 0;
@@ -517,6 +762,279 @@ onUnmounted(() => {
   :deep(.n-data-table-base-table),
   :deep(.n-data-table-base-table-body) {
     height: 100%;
+  }
+}
+
+.app-downloads {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px;
+  overflow: auto;
+  background: linear-gradient(180deg, rgba(var(--accent-primary-rgb), 0.025), transparent 52%);
+}
+
+.app-download-layout {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.app-download-hero {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 230px;
+  padding: 28px 30px;
+  overflow: hidden;
+  border: 1px solid $border-color;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(var(--accent-primary-rgb), 0.09), transparent 32%),
+    linear-gradient(135deg, rgba(var(--bg-card-rgb), 0.98), rgba(var(--bg-primary-rgb), 0.92));
+
+  &::after {
+    position: absolute;
+    z-index: -1;
+    right: -72px;
+    bottom: -118px;
+    width: 280px;
+    height: 280px;
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.08);
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 34px rgba(var(--accent-primary-rgb), 0.025),
+      0 0 0 72px rgba(var(--accent-primary-rgb), 0.018);
+    content: '';
+  }
+}
+
+.app-download-intro {
+  position: relative;
+  z-index: 1;
+  max-width: 600px;
+
+  > p {
+    max-width: 560px;
+    margin: 18px 0 0;
+    color: $text-secondary;
+    font-size: 14px;
+    line-height: 22px;
+  }
+}
+
+.app-download-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  span {
+    display: block;
+    margin-bottom: 2px;
+    color: $text-muted;
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    line-height: 16px;
+    text-transform: uppercase;
+  }
+
+  h3 {
+    margin: 0;
+    color: $text-primary;
+    font-size: clamp(21px, 2.5vw, 28px);
+    font-weight: 650;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+  }
+}
+
+.app-download-logo {
+  width: 54px;
+  height: 54px;
+  padding: 6px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: $bg-card;
+  border: 1px solid $border-light;
+  border-radius: 15px;
+  box-shadow: 0 8px 24px rgba(var(--text-primary-rgb), 0.08);
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+
+.app-download-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  gap: 7px;
+
+  span {
+    padding: 5px 9px;
+    color: $text-secondary;
+    background: $bg-secondary;
+    border: 1px solid $border-light;
+    border-radius: 999px;
+    font-size: 10px;
+    line-height: 14px;
+  }
+}
+
+.app-download-qr-panel {
+  position: relative;
+  z-index: 1;
+  width: 168px;
+  padding: 13px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  flex-direction: column;
+  background: rgba(var(--bg-card-rgb), 0.9);
+  border: 1px solid $border-light;
+  border-radius: 14px;
+  box-shadow: 0 14px 38px rgba(var(--text-primary-rgb), 0.09);
+  text-align: center;
+
+  strong {
+    margin-top: 9px;
+    color: $text-primary;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 18px;
+  }
+
+  > span {
+    color: $text-muted;
+    font-size: 10px;
+    line-height: 15px;
+  }
+}
+
+.app-download-qr {
+  width: 140px;
+  height: 140px;
+  padding: 6px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: 9px;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.download-source-switch {
+  width: 100%;
+  margin-top: 10px;
+  box-sizing: border-box;
+
+  .view-switch-button {
+    min-width: 0;
+    padding: 0 4px;
+    flex: 1 1 0;
+    font-size: 10px;
+  }
+}
+
+.app-platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.app-platform-card {
+  min-height: 188px;
+  padding: 18px;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  background: $bg-card;
+  border: 1px solid $border-color;
+  border-radius: 14px;
+  transition: border-color $transition-fast, box-shadow $transition-fast, transform $transition-fast;
+
+  &--available:hover {
+    border-color: rgba(var(--accent-primary-rgb), 0.25);
+    box-shadow: 0 10px 28px rgba(var(--text-primary-rgb), 0.065);
+    transform: translateY(-1px);
+  }
+
+  &--pending {
+    background: rgba(var(--bg-card-rgb), 0.64);
+  }
+}
+
+.app-platform-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-platform-icon {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-primary;
+  background: $bg-secondary;
+  border-radius: 12px;
+}
+
+.app-platform-copy {
+  margin: 14px 0 16px;
+
+  h4 {
+    margin: 0;
+    color: $text-primary;
+    font-size: 16px;
+    font-weight: 650;
+    line-height: 22px;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: $text-muted;
+    font-size: 11px;
+    line-height: 17px;
+  }
+}
+
+.app-platform-action {
+  width: 100%;
+  margin-top: auto;
+}
+
+.app-platform-download-controls {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .download-source-switch {
+    margin-top: 0;
+  }
+
+  .app-platform-action {
+    margin-top: 0;
   }
 }
 
@@ -611,8 +1129,35 @@ onUnmounted(() => {
     padding: 12px;
   }
 
+  .panel-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .app-connections-table {
     padding: 12px;
+  }
+
+  .app-downloads {
+    padding: 12px;
+  }
+
+  .app-download-hero {
+    grid-template-columns: 1fr;
+    padding: 20px;
+    gap: 22px;
+  }
+
+  .app-download-qr-panel {
+    width: 100%;
+  }
+
+  .app-platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-platform-card {
+    min-height: 174px;
   }
 
   .app-access-failure {

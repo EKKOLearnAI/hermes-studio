@@ -7,6 +7,25 @@ const source = readFileSync(
 )
 
 describe('App connections scan modal', () => {
+  it('switches between the connection list and the mobile download hub', () => {
+    expect(source).toContain("const panelView = ref<'list' | 'download'>('list')")
+    expect(source).toContain("t('connections.app.viewList')")
+    expect(source).toContain("t('connections.app.viewDownload')")
+    expect(source).toContain("panelView === 'list'")
+    expect(source).toContain('HStudio Mobile')
+    expect(source).toContain("const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')")
+    expect(source).toContain('QRCode.toDataURL(requestedUrl')
+    expect(source).toContain('releases/download/v1.0.0/HStudio.apk')
+    expect(source).toContain('https://download.ekkolearnai.com/v1.0.0/HStudio.apk')
+    expect(source).toContain(':href="androidDownloadUrl"')
+    expect(source).toContain('aria-label="GitHub / Cloudflare"')
+    expect(source).toContain("t('connections.app.downloadApk')")
+    expect(source).toContain('<h4>Android</h4>')
+    expect(source).toContain('<h4>iOS</h4>')
+    expect(source).toContain('<h4>HarmonyOS</h4>')
+    expect(source).toContain("t('connections.app.comingSoon')")
+  })
+
   it('offers LAN and cloud QR modes with manual refresh and an expired overlay', () => {
     expect(source).toContain('@click="openScanModal"')
     expect(source).toContain('<NTabPane name="lan"')
