@@ -30,7 +30,7 @@ const accessFailure = ref<AppConnectionAccessFailure | null>(null)
 const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
 const showScanModal = ref(false)
 const connectionTab = ref<'lan' | 'cloud'>('lan')
-const authorizationLoading = ref(false)
+const authorizationLoading = ref<Record<'lan' | 'cloud', boolean>>({ lan: false, cloud: false })
 const deletingConnectionId = ref<number | null>(null)
 const lanAuthorization = ref<LanAppAuthorizationResponse | null>(null)
 const cloudAuthorization = ref<CloudAppAuthorizationResponse | null>(null)
@@ -252,8 +252,8 @@ function authorizationErrorMessage(error: any): string {
 }
 
 async function generateAuthorization(type: 'lan' | 'cloud', refresh = false) {
-  if (authorizationLoading.value) return
-  authorizationLoading.value = true
+  if (authorizationLoading.value[type]) return
+  authorizationLoading.value = { ...authorizationLoading.value, [type]: true }
   try {
     const response = type === 'lan'
       ? await createLanAppAuthorization()
@@ -271,7 +271,22 @@ async function generateAuthorization(type: 'lan' | 'cloud', refresh = false) {
   } catch (error: any) {
     message.error(authorizationErrorMessage(error))
   } finally {
-    authorizationLoading.value = false
+    authorizationLoading.value = { ...authorizationLoading.value, [type]: false }
+  }
+}
+
+function ensureCurrentAuthorization(type: 'lan' | 'cloud', verifyRelaySession = false): void {
+  const authorization = type === 'lan' ? lanAuthorization.value : cloudAuthorization.value
+  const now = Math.floor(Date.now() / 1000)
+  currentTimestamp.value = now
+  if (type === 'cloud' && verifyRelaySession) {
+    cloudAuthorization.value = null
+    qrCodeDataUrls.value = { ...qrCodeDataUrls.value, cloud: '' }
+    void generateAuthorization('cloud')
+    return
+  }
+  if (!authorization || authorization.expires_at <= now) {
+    void generateAuthorization(type)
   }
 }
 
@@ -305,23 +320,16 @@ async function deleteConnection(connection: AppConnection) {
 }
 
 function openScanModal() {
-  currentTimestamp.value = Math.floor(Date.now() / 1000)
   connectionTab.value = 'lan'
   scanConnectionVersions = new Map(
     connections.value.map(connection => [connectionIdentity(connection), connection.updated_at]),
   )
   showScanModal.value = true
-  if (!lanAuthorization.value) {
-    void generateAuthorization('lan')
-  }
+  ensureCurrentAuthorization('lan')
 }
 
 watch(connectionTab, (type) => {
-  currentTimestamp.value = Math.floor(Date.now() / 1000)
-  const authorization = type === 'lan' ? lanAuthorization.value : cloudAuthorization.value
-  if (!authorization) {
-    void generateAuthorization(type)
-  }
+  ensureCurrentAuthorization(type, type === 'cloud')
 })
 
 watch(androidDownloadUrl, () => {
@@ -579,7 +587,7 @@ onUnmounted(() => {
     <NTabs v-model:value="connectionTab" type="line" animated>
       <NTabPane name="lan" :tab="t('connections.app.lanConnection')">
         <div class="connection-pane">
-          <NSpin v-if="authorizationLoading && !lanAuthorization" size="small" />
+          <NSpin v-if="authorizationLoading.lan && !lanAuthorization" size="small" />
 
           <template v-else-if="lanAuthorization">
             <div class="connection-qr" :class="{ 'connection-qr--expired': authorizationExpired }">
@@ -599,7 +607,7 @@ onUnmounted(() => {
                 class="refresh-qr-button"
                 size="small"
                 quaternary
-                :loading="authorizationLoading"
+                :loading="authorizationLoading.lan"
                 @click="generateAuthorization('lan')"
               >
                 <template #icon>
@@ -619,7 +627,7 @@ onUnmounted(() => {
 
       <NTabPane name="cloud" :tab="t('connections.app.cloudConnection')">
         <div class="connection-pane">
-          <NSpin v-if="authorizationLoading && !cloudAuthorization" size="small" />
+          <NSpin v-if="authorizationLoading.cloud && !cloudAuthorization" size="small" />
 
           <template v-else-if="cloudAuthorization">
             <div class="connection-qr" :class="{ 'connection-qr--expired': authorizationExpired }">
@@ -639,7 +647,7 @@ onUnmounted(() => {
                 class="refresh-qr-button"
                 size="small"
                 quaternary
-                :loading="authorizationLoading"
+                :loading="authorizationLoading.cloud"
                 @click="generateAuthorization('cloud', true)"
               >
                 <template #icon>

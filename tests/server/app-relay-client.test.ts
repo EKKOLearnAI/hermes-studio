@@ -242,7 +242,49 @@ describe('AppRelayClient', () => {
     expect(preconnection).not.toHaveProperty('relayUrl')
     expect(client.getCachedPreconnection(7, 1000)).toEqual(preconnection)
     expect(client.getCachedPreconnection(8, 1000)).toBeNull()
+    expect(client.getCachedPreconnection(7, 2000)).toBeNull()
     expect(client.getCachedPreconnection(7, 2600)).toBeNull()
+  })
+
+  it('drops cached preconnections whenever the relay host session changes', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })!
+    const remote = sockets[0]
+    remote.connected = true
+    remote.__handlers.get('connect')?.()
+    remote.timeout.mockImplementation(() => ({
+      emit: (_event: string, _request: Record<string, unknown>, ack: (...args: any[]) => void) => {
+        ack(null, {
+          ok: true,
+          type: 'hermes-studio.app-connection',
+          version: 1,
+          connectionType: 'cloud',
+          machineId: 'hwui_machine_1234567890',
+          preconnectId: '70a0af7c-5977-4dd6-bca5-b8e641170658',
+          matchingCode: 'matching-code-with-enough-entropy',
+          expiresAt: 2_000,
+          hardExpiresAt: 2_600,
+          refreshRemaining: 3,
+        })
+      },
+    }))
+
+    const preconnection = await client.requestPreconnection('local-authorization-code', false, 8000, 7)
+    expect(client.getCachedPreconnection(7, 1_000)).toEqual(preconnection)
+
+    remote.connected = false
+    remote.__handlers.get('disconnect')?.('transport close')
+    expect(client.getCachedPreconnection(7, 1_000)).toBeNull()
+
+    remote.connected = true
+    remote.__handlers.get('connect')?.()
+    expect(client.getCachedPreconnection(7, 1_000)).toBeNull()
   })
 
   it('forwards the authenticated cloud account into Studio authorization', async () => {
