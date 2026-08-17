@@ -169,6 +169,14 @@ const AUXILIARY_TASKS = [
 
 const AUX_STRING_FIELDS = new Set(['provider', 'model', 'base_url', 'api_key'])
 const AUX_NUMBER_FIELDS = new Set(['timeout', 'download_timeout'])
+const DELEGATION_REASONING_EFFORTS = new Set([
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
+])
+const DELEGATION_MODEL_FIELDS = ['provider', 'model', 'reasoning_effort'] as const
+const DELEGATION_ROUTE_FIELDS = [
+  ...DELEGATION_MODEL_FIELDS,
+  'base_url', 'api_key', 'api_mode',
+] as const
 
 const DEFAULT_MOA_PRESET_NAME = 'default'
 const DEFAULT_MOA_REFERENCE_MODELS = [
@@ -222,6 +230,33 @@ function normalizeAuxiliaryConfig(value: unknown, options: { resetAuto?: boolean
   }
 
   return normalized
+}
+
+function normalizeDelegationModelConfig(value: unknown): Record<string, string> {
+  if (!isPlainRecord(value)) return {}
+  const normalized: Record<string, string> = {}
+
+  for (const field of DELEGATION_MODEL_FIELDS) {
+    const rawValue = value[field]
+    if (typeof rawValue !== 'string') continue
+    const trimmed = rawValue.trim()
+    if (!trimmed) continue
+    if (field === 'reasoning_effort' && !DELEGATION_REASONING_EFFORTS.has(trimmed)) continue
+    normalized[field] = trimmed
+  }
+
+  return normalized
+}
+
+function hasInvalidDelegationModelConfig(value: Record<string, any>): boolean {
+  for (const field of DELEGATION_MODEL_FIELDS) {
+    if (!(field in value) || value[field] === undefined || value[field] === null) continue
+    if (typeof value[field] !== 'string') return true
+  }
+  const reasoningEffort = typeof value.reasoning_effort === 'string'
+    ? value.reasoning_effort.trim()
+    : ''
+  return !!reasoningEffort && !DELEGATION_REASONING_EFFORTS.has(reasoningEffort)
 }
 
 function cleanMoaSlot(value: unknown): { provider: string; model: string; reasoning_effort?: string } | null {
@@ -553,6 +588,55 @@ export async function updateAuxiliaryModels(ctx: any) {
       },
     })
     ctx.body = { success: true, auxiliary }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function getDelegationModel(ctx: any) {
+  try {
+    const profile = requestedProfile(ctx)
+    const config = await readConfig(profile)
+    ctx.body = {
+      delegation: normalizeDelegationModelConfig(config.delegation),
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function updateDelegationModel(ctx: any) {
+  const body = ctx.request.body as { delegation?: unknown }
+  if (!body || !isPlainRecord(body.delegation)) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing delegation config' }
+    return
+  }
+  if (hasInvalidDelegationModelConfig(body.delegation)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid delegation model config' }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const delegation = normalizeDelegationModelConfig(body.delegation)
+    await safeFileStore.updateYaml(configPath(profile), (config) => {
+      const current = isPlainRecord(config.delegation) ? { ...config.delegation } : {}
+      for (const field of DELEGATION_ROUTE_FIELDS) delete current[field]
+      Object.assign(current, delegation)
+      if (Object.keys(current).length > 0) config.delegation = current
+      else delete config.delegation
+      return config
+    }, {
+      backup: true,
+      dumpOptions: {
+        forceQuotes: true,
+      },
+    })
+    ctx.body = { success: true, delegation }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

@@ -1,7 +1,7 @@
 import { request } from './client'
 import type { ProviderApiMode } from './hermes/system'
 
-export type CodingAgentId = 'claude-code' | 'codex'
+export type CodingAgentId = 'claude-code' | 'codex' | 'pi'
 export type ChatCodingAgentId = CodingAgentId | 'ekko-agent'
 export const CODING_AGENT_API_MODES = [
   'chat_completions',
@@ -72,6 +72,14 @@ export interface CodingAgentMutationResult extends CodingAgentsStatus {
   code?: string
 }
 
+export interface CodingAgentUpdateResult {
+  success: boolean
+  tool: CodingAgentToolStatus
+  latestVersion: string
+  updateAvailable: boolean
+  message?: string
+}
+
 export interface CodingAgentConfigFileContent {
   key: string
   path: string
@@ -133,6 +141,10 @@ export async function fetchCodingAgentsStatus(): Promise<CodingAgentsStatus> {
 
 export async function installCodingAgent(id: CodingAgentId): Promise<CodingAgentMutationResult> {
   return request<CodingAgentMutationResult>(`/api/coding-agents/${id}/install`, { method: 'POST' })
+}
+
+export async function checkCodingAgentUpdate(id: CodingAgentId): Promise<CodingAgentUpdateResult> {
+  return request<CodingAgentUpdateResult>(`/api/coding-agents/${id}/check-update`, { method: 'POST' })
 }
 
 export async function deleteCodingAgent(id: CodingAgentId): Promise<CodingAgentMutationResult> {

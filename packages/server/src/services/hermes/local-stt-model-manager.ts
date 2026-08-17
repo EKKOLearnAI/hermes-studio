@@ -8,6 +8,7 @@ import { basename, dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import * as tar from 'tar'
 import { config } from '../../config'
+import { transcodeToPcmS16le } from './stt-providers/audio-convert'
 import { SttNoSpeechDetectedError, type SttTranscribeInput, type SttTranscribeResult } from './stt-providers/types'
 
 const DEFAULT_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
@@ -788,11 +789,24 @@ export function prepareLocalSttWav(audio: Buffer, mimeType: string): Buffer {
   return Buffer.concat([header, audio])
 }
 
+async function prepareLocalSttUploadWav(audio: Buffer, mimeType: string): Promise<Buffer> {
+  try {
+    return prepareLocalSttWav(audio, mimeType)
+  } catch (error) {
+    const normalized = String(mimeType || '').split(';')[0].trim().toLowerCase()
+    const looksLikeMp3 = (audio.length >= 3 && audio.subarray(0, 3).toString('ascii') === 'ID3')
+      || (audio.length >= 2 && audio[0] === 0xff && (audio[1] & 0xe0) === 0xe0)
+    if (normalized !== 'audio/mpeg' && normalized !== 'audio/mp3' && !looksLikeMp3) throw error
+    const decoded = await transcodeToPcmS16le(audio, 'audio/mpeg', { sampleRate: LOCAL_STT_SAMPLE_RATE })
+    return prepareLocalSttWav(decoded.audio, decoded.mimeType)
+  }
+}
+
 export async function transcribeWithLocalStt(input: SttTranscribeInput): Promise<SttTranscribeResult> {
   if (!isLocalSttModelUsable()) throw new Error('Local STT model is not installed or failed validation')
   if (input.signal?.aborted) throw Object.assign(new Error('STT request aborted'), { name: 'AbortError' })
 
-  const audio = prepareLocalSttWav(input.audio, input.mimeType)
+  const audio = await prepareLocalSttUploadWav(input.audio, input.mimeType)
 
   const tempRoot = join(config.appHome, 'runtime', 'local-stt-audio')
   await mkdir(tempRoot, { recursive: true })

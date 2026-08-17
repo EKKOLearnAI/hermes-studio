@@ -63,7 +63,7 @@ describe('session category groups', () => {
     expect(sessions.map(session => session.categoryId)).toEqual([1, null, 2])
   })
 
-  it('excludes recent sessions from every other sidebar category', () => {
+  it('keeps recent sessions in their sidebar categories', () => {
     const sessions = [
       { id: 'older-pinned', categoryId: 1, updatedAt: 100 },
       { id: 'newest-categorized', categoryId: 1, updatedAt: 300 },
@@ -83,6 +83,8 @@ describe('session category groups', () => {
     ])
     expect(otherGroups.flatMap(group => group.sessions.map(session => session.id))).toEqual([
       'older-pinned',
+      'newest-categorized',
+      'middle-uncategorized',
     ])
   })
 })

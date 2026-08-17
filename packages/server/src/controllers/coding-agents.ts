@@ -1,5 +1,6 @@
 import type { Context } from 'koa'
 import {
+  checkUpdateAgent,
   deleteCodingAgent,
   getCodingAgentsStatus,
   installCodingAgent,
@@ -37,6 +38,15 @@ export async function install(ctx: Context) {
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to install coding agent' }
+  }
+}
+
+export async function checkUpdate(ctx: Context) {
+  try {
+    ctx.body = await checkUpdateAgent(ctx.params.id)
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to check coding agent update' }
   }
 }
 

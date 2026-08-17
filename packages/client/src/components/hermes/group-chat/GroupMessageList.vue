@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { groupAgentRunMessages, useGroupChatStore } from '@/stores/hermes/group-chat'
+import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
+import { handoffErrorTranslationKey, isPresentableHandoffChain } from './handoff-presentation'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
@@ -10,11 +12,15 @@ import VirtualMessageList from '../chat/VirtualMessageList.vue'
 const store = useGroupChatStore()
 const props = withDefaults(defineProps<{
     allowSpeech?: boolean
+    canManageHandoff?: boolean
 }>(), {
     allowSpeech: true,
+    canManageHandoff: false,
 })
 const emit = defineEmits<{
     mentionAgent: [agent: import('@/api/hermes/group-chat').RoomAgent]
+    continueHandoff: [chainId: string]
+    adjustHandoffSettings: []
 }>()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
@@ -56,12 +62,34 @@ function containsSummaryAnchor(message: import('@/api/hermes/group-chat').ChatMe
     return !!anchorId && (message.runItems || [message]).some(item => item.id === anchorId)
 }
 
+function handoffChainFor(message: import('@/api/hermes/group-chat').ChatMessage): RoomAgentHandoffChain | null {
+    const messageIds = new Set((message.runItems || [message]).map(item => item.id))
+    return [...store.handoffChains.values()].find(chain =>
+        isPresentableHandoffChain(chain) && messageIds.has(chain.sourceMessageId)
+    ) || null
+}
+
+function targetAgentName(chain: RoomAgentHandoffChain): string {
+    return store.messageAgents.find(agent => agent.agentId === chain.targetAgentId)?.name || chain.targetAgentId || '—'
+}
+
+function handoffErrorText(error: string | null | undefined): string {
+    const key = handoffErrorTranslationKey(error)
+    return key ? t(key) : ''
+}
+
 function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMessage): boolean {
     if (!store.userId || message.senderId === store.userId) return false
     return store.members.some(member =>
         member.userId === message.senderId ||
         member.name === message.senderName
     )
+}
+
+function stableMessageAgentId(message: import('@/api/hermes/group-chat').ChatMessage): string {
+    if (message.senderAgentRecordId) return message.senderAgentRecordId
+    return store.messageAgents.find(agent => agent.agentId === message.senderId)?.id
+        || message.senderId
 }
 
 function updateScrollBottomButton(): void {
@@ -77,13 +105,17 @@ function handleScrollBottomClick(): void {
 }
 
 async function handleTopReach(): Promise<void> {
-    if (!store.hasMoreBefore || store.isLoadingOlderMessages || store.hasReachedMessageDisplayLimit) return
-    const snapshot = listRef.value?.captureScrollPosition() ?? null
+    if (!store.hasMoreBefore || store.isLoadingOlderMessages) return
+    const snapshot = listRef.value?.captureViewportPosition() ?? null
     const loaded = await store.loadOlderMessages()
     if (!loaded) return
     await nextTick()
-    listRef.value?.restoreScrollPosition(snapshot)
+    listRef.value?.restoreViewportPosition(snapshot, 30)
     updateScrollBottomButton()
+}
+
+function retryOlderMessages(): void {
+    void handleTopReach()
 }
 
 watch(() => store.currentRoomId, (roomId) => {
@@ -151,10 +183,14 @@ defineExpose({ scrollToBottom })
             </template>
             <template #before>
                 <div
-                    v-if="store.hasReachedMessageDisplayLimit"
-                    class="history-limit-notice"
+                    v-if="store.olderMessagesError"
+                    class="history-load-error"
+                    role="alert"
                 >
-                    {{ t('groupChat.messageDisplayLimit') }}
+                    <span>{{ t('groupChat.olderMessagesLoadFailed') }}</span>
+                    <button type="button" @click="retryOlderMessages">
+                        {{ t('groupChat.retryOlderMessages') }}
+                    </button>
                 </div>
                 <div
                     v-else-if="store.hasMoreBefore || store.isLoadingOlderMessages"
@@ -172,6 +208,11 @@ defineExpose({ scrollToBottom })
                         :members="store.members"
                         :current-user-id="store.userId"
                         :allow-speech="props.allowSpeech"
+                        :active="store.isAgentRunActive(
+                            msg.roomId,
+                            stableMessageAgentId(msg),
+                            msg.run_id,
+                        )"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <GroupMessageItem
@@ -183,6 +224,27 @@ defineExpose({ scrollToBottom })
                         :allow-speech="props.allowSpeech"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
+                    <div
+                        v-if="handoffChainFor(msg)"
+                        class="handoff-stop-card"
+                        role="status"
+                        :data-handoff-chain-id="handoffChainFor(msg)!.chainId"
+                    >
+                        <strong>{{ t(handoffChainFor(msg)!.status === 'outcome_unknown' ? 'groupChat.agentHandoffOutcomeUnknownTitle' : 'groupChat.agentHandoffStopped') }}</strong>
+                        <span>{{ t('groupChat.agentHandoffDepthState', { current: handoffChainFor(msg)!.currentDepth, max: handoffChainFor(msg)!.unlimited ? '∞' : handoffChainFor(msg)!.maxDepth }) }}</span>
+                        <span>{{ t('groupChat.agentHandoffTarget', { target: targetAgentName(handoffChainFor(msg)!) }) }}</span>
+                        <span v-if="handoffChainFor(msg)!.status === 'outcome_unknown'">{{ t('groupChat.agentHandoffOutcomeUnknownDescription') }}</span>
+                        <span v-else-if="handoffChainFor(msg)!.lastError">{{ handoffErrorText(handoffChainFor(msg)!.lastError) }}</span>
+                        <div v-if="props.canManageHandoff && handoffChainFor(msg)!.status === 'stopped' && !handoffChainFor(msg)!.continueUsed" class="handoff-stop-actions">
+                            <button type="button" @click="emit('continueHandoff', handoffChainFor(msg)!.chainId)">
+                                {{ t('groupChat.agentHandoffContinue') }}
+                            </button>
+                            <button type="button" @click="emit('adjustHandoffSettings')">
+                                {{ t('groupChat.agentHandoffAdjustSettings') }}
+                            </button>
+                        </div>
+                        <span v-else-if="handoffChainFor(msg)!.status !== 'stopped' || handoffChainFor(msg)!.continueUsed">{{ t('groupChat.agentHandoffContinueState', { state: handoffChainFor(msg)!.status, updated: new Date(handoffChainFor(msg)!.updatedAt).toLocaleString() }) }}</span>
+                    </div>
                     <div
                         v-if="containsSummaryAnchor(msg)"
                         class="summary-anchor-divider"
@@ -246,6 +308,33 @@ defineExpose({ scrollToBottom })
     max-width: 100%;
 }
 
+.handoff-stop-card {
+    display: grid;
+    gap: 4px;
+    margin: 6px 0 0 46px;
+    padding: 10px 12px;
+    max-width: min(85%, 720px);
+    border: 1px solid rgba(var(--warning-rgb), 0.3);
+    border-radius: 10px;
+    background: rgba(var(--warning-rgb), 0.08);
+    color: var(--text-color);
+    font-size: 12px;
+}
+
+.handoff-stop-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 4px;
+
+    button {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--primary-color);
+        cursor: pointer;
+    }
+}
+
 .scroll-bottom-button {
     position: absolute;
     right: 18px;
@@ -305,9 +394,9 @@ defineExpose({ scrollToBottom })
     height: 44px;
     margin-inline-start: -8px;
     overflow: hidden;
-    border: 2px solid $bg-primary;
+    box-sizing: border-box;
+    border: 1px solid #fff;
     border-radius: 50%;
-    background: $bg-secondary;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
 
     img {
@@ -394,18 +483,38 @@ defineExpose({ scrollToBottom })
     }
 }
 
-.history-limit-notice {
-    width: fit-content;
-    max-width: min(100%, 420px);
-    margin: 0 auto 8px;
-    padding: 6px 10px;
+.history-load-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+.history-load-error button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 5px 10px;
     border: 1px solid rgba(var(--accent-info-rgb), 0.22);
     border-radius: 999px;
     background: rgba(var(--accent-info-rgb), 0.08);
+    color: var(--accent-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+    text-align: center;
+}
+
+.history-load-error {
     color: $text-secondary;
     font-size: 12px;
-    line-height: 1.3;
-    text-align: center;
+}
+
+.history-load-error button {
+    cursor: pointer;
 }
 
 @keyframes spin {

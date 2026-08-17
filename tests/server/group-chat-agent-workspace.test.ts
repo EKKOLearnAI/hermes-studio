@@ -681,6 +681,7 @@ describe('group chat agent workspace bridge runs', () => {
   it.each([
     ['ekko', 'ekko-agent'],
     ['claude', 'claude-code'],
+    ['pi', 'pi'],
   ] as const)('passes the dynamic group system prompt to the %s runtime', async (agent, codingAgentId) => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const runAndWait = vi.fn(async (_data: any, options: any) => {
@@ -698,11 +699,12 @@ describe('group chat agent workspace bridge runs', () => {
       runAndWait,
       abortSession: vi.fn(async () => {}),
     })
+    const displayName = agent === 'ekko' ? 'Ekko' : agent === 'claude' ? 'Claude' : 'Pi'
     const client = await clients.createAgent({
       agentId: `agent-${agent}`,
       agent,
       profile: 'default',
-      name: agent === 'ekko' ? 'Ekko' : 'Claude',
+      name: displayName,
       description: `${agent} room role`,
       invited: 0,
       backgroundDelegationEnabled: false,
@@ -716,7 +718,7 @@ describe('group chat agent workspace bridge runs', () => {
         {
           id: `room-agent-${agent}`,
           agentId: `agent-${agent}`,
-          name: agent === 'ekko' ? 'Ekko' : 'Claude',
+          name: displayName,
           description: `${agent} room role`,
         },
       ]),
@@ -724,7 +726,7 @@ describe('group chat agent workspace bridge runs', () => {
 
     await client.replyToMention('room-runtime', {
       messageId: `msg-${agent}`,
-      content: `@${agent === 'ekko' ? 'Ekko' : 'Claude'} reply`,
+      content: `@${displayName} reply`,
       senderName: 'Human',
       senderId: 'human-1',
       timestamp: 1,
@@ -734,7 +736,7 @@ describe('group chat agent workspace bridge runs', () => {
     const runData = runAndWait.mock.calls[0][0]
     expect(runAndWait.mock.calls[0][1]).not.toHaveProperty('timeoutMs')
     expect(runData.coding_agent_id).toBe(codingAgentId)
-    expect(runData.instructions).toContain(`You are "${agent === 'ekko' ? 'Ekko' : 'Claude'}", an AI assistant in the group chat room "Runtime Room"`)
+    expect(runData.instructions).toContain(`You are "${displayName}", an AI assistant in the group chat room "Runtime Room"`)
     expect(runData.instructions).toContain('- [Human member] Human: Room owner')
     expect(runData.group_system_prompt).toBe(runData.instructions)
     expect(runData.group_room_id).toBe('room-runtime')

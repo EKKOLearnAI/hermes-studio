@@ -82,6 +82,7 @@ const tagMappings = {
   'routes/update.ts': { name: 'Update', description: 'Self-update management' },
   'routes/upload.ts': { name: 'Upload', description: 'File upload' },
   'routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
+  'routes/app-connections.ts': { name: 'App Connections', description: 'Mobile App authorization and connection management' },
   'routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
   'routes/coding-agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
   'routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },

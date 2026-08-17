@@ -54,6 +54,42 @@ describe('devices controller', () => {
     vi.resetModules()
   })
 
+  it('allows cross-origin reads of public device link info', async () => {
+    vi.doMock('../../packages/server/src/services/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
+        '../../packages/server/src/services/system-info',
+      )
+      return {
+        ...actual,
+        getPublicSystemInfo: async () => ({
+          device_id: 'hwui_local',
+          device_public_key: keyPair.publicKey,
+          computer_name: 'local',
+          os: { type: 'TestOS', platform: 'linux', release: '1', arch: 'x64' },
+          hermes_agent_version: 'v1',
+          hermes_web_ui_version: '1',
+        }),
+      }
+    })
+
+    const set = vi.fn()
+    const ctx: any = { set }
+    const { deviceLinkInfoController } = await import('../../packages/server/src/controllers/devices')
+
+    await deviceLinkInfoController(ctx)
+
+    expect(set).toHaveBeenCalledWith('Access-Control-Allow-Origin', '*')
+    expect(ctx.body).toEqual(expect.objectContaining({
+      device_id: 'hwui_local',
+      http_port: expect.any(Number),
+      app_relay: {
+        protocol: 'socket.io',
+        namespace: '/app-relay',
+        direct: true,
+      },
+    }))
+  })
+
   it('returns the inbound pairing status for a signed device status request', async () => {
     const { requestInboundDeviceLink, updateInboundStatus } = await import('../../packages/server/src/db/hermes/devices-store')
     requestInboundDeviceLink(device)
@@ -262,8 +298,8 @@ describe('devices controller', () => {
       return {
         ...actual,
         networkInterfaces: () => ({
-          lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
-          en0: [{ family: 'IPv4', internal: false, address: '192.168.1.88' }],
+          lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1', netmask: '255.0.0.0' }],
+          en0: [{ family: 'IPv4', internal: false, address: '192.168.1.88', netmask: '255.255.255.0' }],
         }),
       }
     })
@@ -284,6 +320,29 @@ describe('devices controller', () => {
     expect(ctx.body).toEqual({
       code: 'pair-secret',
       link: 'http://192.168.1.88:8648/#/hermes/devices?pairing_code=pair-secret',
+    })
+  })
+
+  it('uses a private request host instead of a Docker container interface for pairing links', async () => {
+    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+      getDevicePairingCode: () => 'pair-secret',
+      verifyDevicePairingCode: () => false,
+    }))
+
+    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      protocol: 'http',
+      host: '192.168.10.102:6060',
+      ip: '172.19.0.1',
+      req: { socket: { remoteAddress: '172.19.0.1' } },
+      get: () => '',
+    }
+
+    await getDevicePairingLink(ctx)
+
+    expect(ctx.body).toEqual({
+      code: 'pair-secret',
+      link: 'http://192.168.10.102:6060/#/hermes/devices?pairing_code=pair-secret',
     })
   })
 

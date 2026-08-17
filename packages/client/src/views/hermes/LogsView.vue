@@ -14,8 +14,12 @@ const lineCount = ref(100)
 const levelFilter = ref<string>('')
 const searchQuery = ref('')
 
+function displayLogName(name: string): string {
+  return name.replace(/^ekko-agent(?=\/|$)/, 'Ekko')
+}
+
 const logOptions = computed(() =>
-  logFiles.value.map(f => ({ label: `${f.name} (${f.size})`, value: f.name })),
+  logFiles.value.map(f => ({ label: `${displayLogName(f.name)} (${f.size})`, value: f.name })),
 )
 
 const levelOptions = computed(() => [
@@ -135,7 +139,7 @@ onMounted(async () => {
           >
             <span class="log-time">{{ formatTime(entry.timestamp) }}</span>
             <span class="log-level" :class="levelClass(entry.level)">{{ entry.level }}</span>
-            <span class="log-logger">{{ entry.logger }}</span>
+            <span class="log-logger">{{ displayLogName(entry.logger) }}</span>
             <template v-if="parseAccessLog(entry.message)">
               <span class="access-method">{{ parseAccessLog(entry.message)!.method }}</span>
               <span class="access-path">{{ parseAccessLog(entry.message)!.path }}</span>

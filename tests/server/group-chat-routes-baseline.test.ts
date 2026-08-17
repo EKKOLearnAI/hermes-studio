@@ -47,6 +47,19 @@ describe('group chat REST route baseline', () => {
       getRoomsForAuthUser: vi.fn(() => []),
       getOwnedRoomsForAuthUser: vi.fn(() => []),
       getRecentMessagesForUI: vi.fn((roomId, limit = 150, offset = 0) => (storage.messages.get(roomId) || []).slice(offset, offset + limit)),
+      getHistoryPageForUI: vi.fn((roomId, limit = 150, beforeMessageId?: string) => {
+        const rows = storage.messages.get(roomId) || []
+        const beforeIndex = beforeMessageId ? rows.findIndex((message: any) => message.id === beforeMessageId) : rows.length
+        if (beforeMessageId && beforeIndex < 0) {
+          return { messages: [], hasMore: false, cursorFound: false }
+        }
+        const start = Math.max(0, beforeIndex - limit)
+        return {
+          messages: rows.slice(start, beforeIndex),
+          hasMore: start > 0,
+          cursorFound: true,
+        }
+      }),
       getMessageCount: vi.fn((roomId) => (storage.messages.get(roomId) || []).length),
       getMessage: vi.fn((messageId) => [...storage.messages.values()].flat().find((message: any) => message.id === messageId) || null),
       getRoomAgents: vi.fn((roomId) => storage.agents.get(roomId) || []),
@@ -95,6 +108,7 @@ describe('group chat REST route baseline', () => {
         return room || null
       }),
       deleteRoom: vi.fn((roomId) => storage.rooms.delete(roomId)),
+      getStoppedHandoffChains: vi.fn(() => []),
     }
     agentClients = {
       createAgent: vi.fn(async (cfg: any) => {
@@ -148,6 +162,7 @@ describe('group chat REST route baseline', () => {
       getRoomSummaryService: () => roomSummaryService,
       agentClients,
       clearRoomRuntimeState,
+      deleteRoomRuntimeState: vi.fn(async () => {}),
       updateRoomName,
       broadcastRoomMetadata,
       broadcastRoomAgents,
@@ -450,6 +465,125 @@ describe('group chat REST route baseline', () => {
     })
   })
 
+  it('projects each visible room persistent Agent roster without runtime-only connection fields', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-agents', name: 'Agent room', inviteCode: 'AGENTS', lastActiveAt: 300 },
+    ])
+    storage.agents.set('room-agents', [{
+      id: 'row-agent',
+      roomId: 'room-agents',
+      agentId: 'agent-1',
+      agent: 'codex',
+      profile: 'private-profile',
+      provider: 'private-provider',
+      model: 'private-model',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Builder',
+      description: 'Private description',
+      avatar: '{"type":"generated","seed":"builder"}',
+      invited: 0,
+      connectorId: 'secret-connector',
+      remoteOrigin: 'private-origin',
+      ownerMemberId: 'auth:7',
+    }])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as any
+    expect(body.rooms[0].agents).toEqual([{
+      id: 'row-agent',
+      roomId: 'room-agents',
+      agentId: 'agent-1',
+      agent: 'codex',
+      name: 'Builder',
+      avatar: '{"type":"generated","seed":"builder"}',
+    }])
+  })
+
+  it('paginates the authorized room list without changing activity order', async () => {
+    storage.getRoomsForProfiles.mockReturnValue([
+      { id: 'room-3', name: 'Third', inviteCode: 'C', lastActiveAt: 100 },
+      { id: 'room-1', name: 'First', inviteCode: 'A', lastActiveAt: 300 },
+      { id: 'room-2', name: 'Second', inviteCode: 'B', lastActiveAt: 200 },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms?limit=1&offset=1`, {
+      headers: { 'x-test-user': 'member' },
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      rooms: [{ id: 'room-2', lastActiveAt: 200 }],
+      total: 3,
+      offset: 1,
+      limit: 1,
+      hasMore: true,
+    })
+  })
+
+  it('reports authoritative truncation and serves complete history by stable message id', async () => {
+    storage.rooms.set('room-history', {
+      id: 'room-history',
+      name: 'History Room',
+      inviteCode: 'HISTORY',
+      lastActiveAt: 501,
+    })
+    storage.getRoomsForProfiles.mockReturnValue([storage.rooms.get('room-history')])
+    const retainedMessages = Array.from({ length: 500 }, (_, index) => ({
+      id: `message-${String(index + 1).padStart(4, '0')}`,
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: `Message ${index + 1}`,
+      timestamp: index + 1,
+      role: 'user',
+    }))
+    storage.messages.set('room-history', retainedMessages)
+
+    const exactWindow = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(exactWindow.status).toBe(200)
+    await expect(exactWindow.json()).resolves.toMatchObject({
+      total: 500,
+      historyTruncated: false,
+    })
+
+    retainedMessages.push({
+      id: 'message-0501',
+      roomId: 'room-history',
+      senderId: 'member',
+      senderName: 'Member',
+      content: 'Message 501',
+      timestamp: 501,
+      role: 'user',
+    })
+
+    const recent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+      headers: { 'x-test-user': 'member' },
+    })
+    expect(recent.status).toBe(200)
+    await expect(recent.json()).resolves.toMatchObject({
+      total: 501,
+      historyTruncated: true,
+    })
+
+    const history = await fetch(
+      `${baseUrl}/api/hermes/group-chat/rooms/room-history?history=1&before=message-0352&limit=150`,
+      { headers: { 'x-test-user': 'member' } },
+    )
+    expect(history.status).toBe(200)
+    const historyBody = await history.json() as any
+    expect(historyBody.messages[0]?.id).toBe('message-0202')
+    expect(historyBody.messages.at(-1)?.id).toBe('message-0351')
+    expect(historyBody.total).toBe(501)
+    expect(historyBody.hasMore).toBe(true)
+  })
+
   it('rejects reserved @all agent names when creating a room', async () => {
     const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
       method: 'POST',
@@ -640,11 +774,66 @@ describe('group chat REST route baseline', () => {
       messages: [{ id: 'msg-2' }],
       agents: [{ agentId: 'agent-1' }],
       members: [{ userId: 'user-1' }],
+      handoffChains: [],
       total: 2,
       offset: 1,
       limit: 1,
       hasMore: false,
     })
+  })
+
+  it('continues REST pagination beyond the Agent context window', async () => {
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+    storage.getMessageCount.mockReturnValueOnce(580)
+    storage.getRecentMessagesForUI.mockReturnValueOnce([])
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=100&offset=500`)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({
+      messages: [],
+      total: 580,
+      offset: 500,
+      limit: 100,
+      hasMore: true,
+      historyTruncated: true,
+    })
+  })
+
+  it('clones the room Agent handoff policy without copying stopped chains', async () => {
+    storage.rooms.set('room-source', {
+      id: 'room-source',
+      name: 'Source',
+      inviteCode: 'SOURCE',
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'summary-model',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+      workspace: '',
+      agentHandoffEnabled: 0,
+      agentHandoffMaxDepth: 6,
+      agentHandoffUnlimited: 0,
+    })
+
+    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Clone' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(storage.saveRoom).toHaveBeenCalledWith(
+      expect.any(String),
+      'Clone',
+      expect.any(String),
+      expect.objectContaining({
+        agentHandoffEnabled: false,
+        agentHandoffMaxDepth: 6,
+        agentHandoffUnlimited: false,
+      }),
+    )
   })
 
   it('allows multiple room agents backed by the same profile', async () => {
@@ -766,6 +955,77 @@ describe('group chat REST route baseline', () => {
       avatar: JSON.stringify({ type: 'generated', seed: 'researcher-avatar' }),
     })
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
+  })
+
+  it('creates, adds, and updates Pi room agents through the local API', async () => {
+    const createRoom = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Pi Room',
+        inviteCode: 'PIROOM',
+        agents: [{
+          agent: 'pi',
+          profile: 'default',
+          provider: 'openai',
+          model: 'pi-create-model',
+          apiMode: 'codex_responses',
+          name: 'Pi Creator',
+        }],
+      }),
+    })
+    expect(createRoom.status).toBe(200)
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'pi',
+      model: 'pi-create-model',
+      apiMode: 'codex_responses',
+    }))
+
+    storage.rooms.set('room-pi', { id: 'room-pi', name: 'Pi Room', inviteCode: 'PIROOM2' })
+    const addAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-add-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'medium',
+        name: 'Pi Worker',
+      }),
+    })
+    expect(addAgent.status).toBe(200)
+    const added = await addAgent.json()
+    expect(added.agent).toMatchObject({
+      agent: 'pi',
+      profile: 'research',
+      model: 'pi-add-model',
+      apiMode: 'codex_responses',
+    })
+
+    const updateAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents/${added.agent.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'pi',
+        profile: 'research',
+        provider: 'openai',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+        name: 'Pi Reviewer',
+      }),
+    })
+    expect(updateAgent.status).toBe(200)
+    await expect(updateAgent.json()).resolves.toMatchObject({
+      agent: expect.objectContaining({
+        agent: 'pi',
+        model: 'pi-updated-model',
+        apiMode: 'codex_responses',
+        reasoningEffort: 'high',
+      }),
+    })
   })
 
   it('rejects incomplete or invalid room agent runtime configuration', async () => {
@@ -933,6 +1193,68 @@ describe('group chat REST route baseline', () => {
       name: 'Reviewer',
     })
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
+  })
+
+  it('rejects a concurrent update for the same room agent before runtime and persistence can interleave', async () => {
+    storage.rooms.set('room-lock', { id: 'room-lock', name: 'Room', inviteCode: 'LOCK' })
+    storage.agents.set('room-lock', [{
+      id: 'row-lock', roomId: 'room-lock', agentId: 'agent-lock', agent: 'hermes', profile: 'default',
+      provider: 'openai', model: 'old', apiMode: '', reasoningEffort: '', name: 'Worker', description: '', invited: 0,
+    }])
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    agentClients.createAgent.mockImplementationOnce(async (cfg: any) => {
+      await blocked
+      return { ...cfg, joinRoom: vi.fn(async () => ({})), disconnect: vi.fn() }
+    })
+    const request = (model: string) => fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock/agents/row-lock`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model, name: 'Worker' }),
+    })
+
+    const first = request('first')
+    await vi.waitFor(() => expect(agentClients.createAgent).toHaveBeenCalled())
+    const second = await request('second')
+    expect(second.status).toBe(409)
+    expect(await second.json()).toEqual({ error: 'Agent configuration update is already in progress' })
+    const removed = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock/agents/row-lock`, { method: 'DELETE' })
+    expect(removed.status).toBe(409)
+    expect(await removed.json()).toEqual({ error: 'Agent configuration update is already in progress' })
+    expect(storage.removeRoomAgent).not.toHaveBeenCalledWith('room-lock', 'row-lock')
+    const roomRemoved = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock`, { method: 'DELETE' })
+    expect(roomRemoved.status).toBe(409)
+    expect(await roomRemoved.json()).toEqual({ error: 'Agent configuration update is already in progress' })
+    release()
+    expect((await first).status).toBe(200)
+  })
+
+  it('rejects agent updates and removals while room deletion is already in progress', async () => {
+    storage.rooms.set('room-delete-lock', { id: 'room-delete-lock', name: 'Room', inviteCode: 'DELETE' })
+    storage.agents.set('room-delete-lock', [{
+      id: 'row-delete-lock', roomId: 'room-delete-lock', agentId: 'agent-delete-lock', agent: 'hermes',
+      profile: 'default', provider: 'openai', model: 'old', apiMode: '', reasoningEffort: '',
+      name: 'Worker', description: '', invited: 0,
+    }])
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    roomSummaryService.runExclusive.mockImplementationOnce(async (_roomId: string, task: () => unknown) => {
+      await blocked
+      return task()
+    })
+
+    const deleting = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock`, { method: 'DELETE' })
+    await vi.waitFor(() => expect(roomSummaryService.runExclusive).toHaveBeenCalled())
+    const update = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model: 'new', name: 'Worker' }),
+    })
+    expect(update.status).toBe(409)
+    expect(await update.json()).toEqual({ error: 'Room deletion is already in progress' })
+    const remove = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, { method: 'DELETE' })
+    expect(remove.status).toBe(409)
+    expect(await remove.json()).toEqual({ error: 'Room deletion is already in progress' })
+    release()
+    expect((await deleting).status).toBe(200)
   })
 
   it('removes an agent by row id and disconnects runtime by persisted agent id', async () => {

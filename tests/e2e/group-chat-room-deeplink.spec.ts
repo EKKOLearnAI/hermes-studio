@@ -4,7 +4,7 @@ import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 type DesktopPlatform = 'darwin' | 'win32'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, agentHandoffEnabled: 1, agentHandoffMaxDepth: 4, agentHandoffUnlimited: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
   { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_100 },
   { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0, createdAt: 1_789_999_999, lastActiveAt: 1_789_999_999 },
 ]
@@ -37,6 +37,22 @@ const messagesByRoom: Record<string, unknown[]> = {
     { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
     { id: 'alpha-reasoning', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Reasoning is available on demand.', reasoning: 'Inspecting several possible approaches.', isStreaming: true, timestamp: 1_790_000_003, role: 'assistant' },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      id: `alpha-live-tool-${index + 1}`,
+      roomId: 'room-alpha',
+      senderId: 'agent-1',
+      senderName: 'Worker',
+      content: JSON.stringify({ result: `live-${index + 1}` }),
+      timestamp: 1_790_000_010 + index,
+      role: 'tool',
+      run_id: 'run-live-tools',
+      tool_name: `live_tool_${index + 1}`,
+      tool_call_id: `live-call-${index + 1}`,
+      ...(index === 11 ? { isStreaming: true } : {}),
+    })),
+    { id: 'alpha-live-answer', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Live run remains in progress.', timestamp: 1_790_000_030, role: 'assistant', run_id: 'run-live-tools', isStreaming: true },
+    { id: 'alpha-history-tool', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '{"result":"history"}', timestamp: 1_790_000_040, role: 'tool', run_id: 'run-history-tools', tool_name: 'historical_tool', tool_call_id: 'history-call' },
+    { id: 'alpha-history-answer', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Historical run finished.', timestamp: 1_790_000_041, role: 'assistant', run_id: 'run-history-tools' },
   ],
   'room-beta': [
     { id: 'beta-msg', roomId: 'room-beta', senderId: 'user-1', senderName: 'Bob', content: 'Beta room message', timestamp: 1_790_000_100, role: 'user' },
@@ -61,12 +77,48 @@ const agentsByRoom: Record<string, unknown[]> = {
       invited: 1,
     },
   ],
+  'room-beta': [
+    {
+      id: 'agent-row-runtime',
+      roomId: 'room-beta',
+      agentId: 'agent-runtime',
+      agent: 'hermes',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'test-model',
+      apiMode: '',
+      reasoningEffort: '',
+      name: 'Runtime Worker',
+      description: 'Runtime group agent',
+      avatar: '',
+      invited: 1,
+    },
+  ],
 }
 
 async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const rooms = baseRooms.map(room => ({ ...room }))
+  let roomMessages = structuredClone(messagesByRoom)
+  const roomDetailRequests: Array<{ roomId: string, offset: number, limit: number, before: string, history: boolean }> = []
+  const roomDetailFailures = new Map<string, number>()
+  const roomDetailDelays = new Map<string, number>()
   const inviteCodeUpdates: Array<{ roomId: string, body: unknown }> = []
   const guestAgentPolicyUpdates: Array<{ roomId: string, body: any }> = []
+  const roomConfigUpdates: Array<{ roomId: string, body: any }> = []
+  const handoffChains = [{
+    chainId: 'handoff:alpha-msg',
+    roomId: 'room-alpha',
+    sourceMessageId: 'alpha-msg',
+    currentDepth: 4,
+    maxDepth: 4,
+    unlimited: 0,
+    targetAgentId: 'agent-1',
+    status: 'stopped',
+    stopReason: 'max_depth',
+    continueUsed: 0,
+    createdAt: 1_790_000_002,
+    updatedAt: 1_790_000_002,
+  }]
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -74,7 +126,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     const { pathname } = url
 
     if (!(pathname === '/health' || pathname.startsWith('/api/'))) {
-      await route.continue()
+      await route.fallback()
       return
     }
 
@@ -93,7 +145,63 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
         model_visibility: {},
       })
     }
-    if (pathname === '/api/hermes/group-chat/rooms') return json({ rooms })
+    if (pathname === '/api/hermes/group-chat/rooms') {
+      return json({
+        rooms: rooms.map(room => ({
+          ...room,
+          agents: (agentsByRoom[room.id] || []).map((agent: any) => ({
+            id: agent.id,
+            roomId: agent.roomId,
+            agentId: agent.agentId,
+            agent: agent.agent,
+            name: agent.name,
+            avatar: agent.avatar,
+          })),
+        })),
+      })
+    }
+
+    const handoffContinueMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs\/([^/]+)\/continue$/)
+    if (handoffContinueMatch && request.method() === 'POST') {
+      const chain = handoffChains.find(item => item.roomId === decodeURIComponent(handoffContinueMatch[1])
+        && item.chainId === decodeURIComponent(handoffContinueMatch[2]))
+      if (!chain) return json({ error: 'Handoff chain not found' }, 404)
+      Object.assign(chain, {
+        status: 'claimed',
+        attemptId: 'attempt-1',
+        updatedAt: chain.updatedAt + 1,
+      })
+      return json({ success: true, attemptId: chain.attemptId, status: 'continuing', chain }, 202)
+    }
+
+    const handoffListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs$/)
+    if (handoffListMatch && request.method() === 'GET') {
+      const roomId = decodeURIComponent(handoffListMatch[1])
+      const room = rooms.find(item => item.id === roomId)
+      return json({
+        chains: handoffChains.filter(item => item.roomId === roomId
+          && item.status === 'stopped'
+          && !item.continueUsed
+          && Number(room?.agentHandoffEnabled ?? 1) === 1
+          && Number(room?.agentHandoffUnlimited ?? 0) === 0
+          && item.maxDepth === Number(room?.agentHandoffMaxDepth ?? 4)),
+      })
+    }
+
+    const configMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/config$/)
+    if (configMatch && request.method() === 'PUT') {
+      const roomId = decodeURIComponent(configMatch[1])
+      const body = JSON.parse(request.postData() || '{}')
+      const room = rooms.find(r => r.id === roomId)
+      if (!room || !room.canManage) return json({ error: 'Forbidden' }, 403)
+      roomConfigUpdates.push({ roomId, body })
+      Object.assign(room, {
+        ...(typeof body.agentHandoffEnabled === 'boolean' ? { agentHandoffEnabled: body.agentHandoffEnabled ? 1 : 0 } : {}),
+        ...(body.agentHandoffMaxDepth !== undefined ? { agentHandoffMaxDepth: body.agentHandoffMaxDepth } : {}),
+        ...(typeof body.agentHandoffUnlimited === 'boolean' ? { agentHandoffUnlimited: body.agentHandoffUnlimited ? 1 : 0 } : {}),
+      })
+      return json({ room })
+    }
 
     const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
     if (inviteCodeMatch && request.method() === 'PUT') {
@@ -146,21 +254,70 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     if (detailMatch) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0)
+      const limit = Math.min(150, Math.max(1, Number(url.searchParams.get('limit')) || 150))
+      const before = url.searchParams.get('before') || ''
+      const history = url.searchParams.get('history') === '1'
+      roomDetailRequests.push({ roomId, offset, limit, before, history })
+      const failureKey = `${roomId}:${before || offset}`
+      const delay = roomDetailDelays.get(failureKey) || 0
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+      const remainingFailures = roomDetailFailures.get(failureKey) || 0
+      if (remainingFailures > 0) {
+        roomDetailFailures.set(failureKey, remainingFailures - 1)
+        return json({ error: 'Temporary history failure' }, 500)
+      }
       const agents = (agentsByRoom[roomId] || []).map(agent => (
         offlinePresence ? { ...(agent as object), connectionStatus: 'offline' } : agent
       ))
       const members = offlinePresence
         ? [{ id: 'member-offline', userId: 'user-offline', name: 'Offline Member', description: '', joinedAt: 1_790_000_000, connectionStatus: 'offline' }]
         : [{ id: 'member-1', userId: 'user-1', name: 'User One', description: '', joinedAt: 1_790_000_000 }]
+      const allMessages = roomMessages[roomId] || []
+      const cursorIndex = before
+        ? allMessages.findIndex(message => (message as { id?: string }).id === before)
+        : allMessages.length
+      const end = Math.max(0, before ? cursorIndex : allMessages.length - offset)
+      const start = Math.max(0, end - limit)
+      const messages = allMessages.slice(start, end)
+      const total = allMessages.length
       return room
-        ? json({ room, messages: messagesByRoom[roomId] || [], agents, members })
+        ? json({
+            room,
+            messages,
+            agents,
+            members,
+            handoffChains: handoffChains.filter(item => item.roomId === roomId),
+            total,
+            offset,
+            limit,
+            hasMore: history ? start > 0 : offset + messages.length < total,
+            historyTruncated: allMessages.length > 500,
+          })
         : json({ error: 'Room not found' }, 404)
     }
 
     return json({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404)
   })
 
-  return { inviteCodeUpdates, guestAgentPolicyUpdates }
+  return {
+    inviteCodeUpdates,
+    guestAgentPolicyUpdates,
+    roomConfigUpdates,
+    roomDetailRequests,
+    failRoomDetail(roomId: string, offset: number, times = 1) {
+      roomDetailFailures.set(`${roomId}:${offset}`, times)
+    },
+    failRoomHistoryBefore(roomId: string, before: string, times = 1) {
+      roomDetailFailures.set(`${roomId}:${before}`, times)
+    },
+    delayRoomHistoryBefore(roomId: string, before: string, delayMs: number) {
+      roomDetailDelays.set(`${roomId}:${before}`, delayMs)
+    },
+    setRoomMessages(messages: Record<string, unknown[]>) {
+      roomMessages = structuredClone(messages)
+    },
+  }
 }
 
 async function mockGroupChatSocket(page: Page) {
@@ -170,8 +327,11 @@ async function mockGroupChatSocket(page: Page) {
       contentType: 'application/javascript',
       body: `
 const state = window.__PW_GROUP_SOCKET__ || (window.__PW_GROUP_SOCKET__ = { sockets: [], emitted: [] })
-const roomMessages = ${JSON.stringify(messagesByRoom)}
+state.executionQueues = state.executionQueues || {}
+state.nextSocketId = state.nextSocketId || 1
+const roomMessages = structuredClone(${JSON.stringify(messagesByRoom)})
 const roomAgents = ${JSON.stringify(agentsByRoom)}
+const roomNames = ${JSON.stringify(Object.fromEntries(baseRooms.map(room => [room.id, room.name])))}
 function makeSocket(url, options) {
   const listeners = new Map()
   const socket = {
@@ -188,10 +348,35 @@ function makeSocket(url, options) {
       state.emitted.push({ event, payload })
       if (event === 'join' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
-        setTimeout(() => ack({ roomId, roomName: roomId, members: [], messages: roomMessages[roomId] || [], agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [] }), 0)
+        const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+        setTimeout(() => ack({ roomId, roomName: roomNames[roomId] || roomId, members: [], messages: (roomMessages[roomId] || []).filter(message => !retracted.has(message.id)), agents: roomAgents[roomId] || [], rooms: [], typingUsers: [], contextStatuses: [], executionQueue: state.executionQueues[roomId] || [] }), 0)
+      }
+      if (event === 'load_room_agent_activities' && typeof ack === 'function') {
+        setTimeout(() => ack({ activities: [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
         setTimeout(() => ack({ id: payload && payload.id }), 0)
+      }
+      if (event === 'cancel_execution_queue_item' && typeof ack === 'function') {
+        const roomId = payload && payload.roomId
+        const queueId = payload && payload.queueId
+        const items = state.executionQueues[roomId] || []
+        const selected = items.find(item => item.id === queueId)
+        const siblings = selected ? items.filter(item => item.messageId === selected.messageId) : []
+        if (!selected || siblings.some(item => item.status !== 'queued')) {
+          setTimeout(() => ack({ error: 'Queue item is no longer cancellable' }), 0)
+        } else {
+          state.executionQueues[roomId] = items
+            .filter(item => item.messageId !== selected.messageId)
+            .map((item, index) => ({ ...item, position: index + 1 }))
+          roomMessages[roomId] = (roomMessages[roomId] || []).filter(message => message.id !== selected.messageId)
+          const retracted = new Set(JSON.parse(window.localStorage.getItem('__pw_group_retracted__') || '[]'))
+          retracted.add(selected.messageId)
+          window.localStorage.setItem('__pw_group_retracted__', JSON.stringify([...retracted]))
+          for (const peer of state.sockets) peer.__trigger('message_retracted', { roomId, messageId: selected.messageId, totalTokens: 0 })
+          for (const peer of state.sockets) peer.__trigger('execution_queue_updated', { roomId, items: state.executionQueues[roomId] })
+          setTimeout(() => ack({ ok: true, status: 'retracted', messageId: selected.messageId }), 0)
+        }
       }
       return this
     },
@@ -200,7 +385,6 @@ function makeSocket(url, options) {
       return this
     },
     disconnect() {
-      this.connected = false
       return this
     },
     __trigger(event, payload) {
@@ -208,7 +392,7 @@ function makeSocket(url, options) {
     },
   }
   state.sockets.push(socket)
-  state.latest = socket
+  if (String(url).endsWith('/group-chat')) state.latest = socket
   return socket
 }
 export function io(url, options) {
@@ -234,6 +418,53 @@ async function installDesktopBridge(page: Page, platform: DesktopPlatform) {
   }, platform)
 }
 
+async function installMockVoiceCapture(page: Page) {
+  await page.addInitScript(() => {
+    const state = { recorderState: 'inactive' }
+    ;(window as any).__PW_FAKE_GROUP_VOICE_CAPTURE__ = state
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true }
+      state = 'inactive'
+      mimeType: string
+      ondataavailable: ((event: { data: Blob }) => void) | null = null
+      onstop: (() => void) | null = null
+      constructor(_stream: unknown, options: { mimeType?: string } = {}) {
+        this.mimeType = options.mimeType || 'audio/webm'
+      }
+      start() {
+        this.state = 'recording'
+        state.recorderState = 'recording'
+      }
+      stop() {
+        this.state = 'inactive'
+        state.recorderState = 'inactive'
+        setTimeout(() => {
+          this.ondataavailable?.({ data: new Blob(['voice'], { type: this.mimeType }) })
+          this.onstop?.()
+        }, 0)
+      }
+    }
+    const track = { stop() {} }
+    const stream = { getTracks: () => [track], getAudioTracks: () => [track], getVideoTracks: () => [] }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(globalThis, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    })
+    window.localStorage.setItem('hermes-stt-settings-v1', JSON.stringify({
+      provider: 'openai',
+      openaiModel: 'gpt-4o-transcribe',
+      openaiLanguage: '',
+      openaiPrompt: '',
+      customBaseUrl: '',
+      customModel: 'gpt-4o-transcribe',
+      customLanguage: '',
+      customPrompt: '',
+    }))
+  })
+}
+
 async function setup(page: Page, path: string, platform?: DesktopPlatform, offlinePresence = false) {
   if (platform) await installDesktopBridge(page, platform)
   await page.addInitScript(() => {
@@ -244,6 +475,28 @@ async function setup(page: Page, path: string, platform?: DesktopPlatform, offli
   const api = await mockGroupChatApi(page, offlinePresence)
   await page.goto(path)
   return api
+}
+
+async function triggerGroupSocket(page: Page, event: string, payload: unknown) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
+  await page.evaluate(({ event, payload }) => {
+    const sockets = (window as any).__PW_GROUP_SOCKET__?.sockets || []
+    if (sockets.length === 0) throw new Error('Group chat socket is not connected')
+    for (const socket of sockets) socket.__trigger(event, payload)
+  }, { event, payload })
+}
+
+async function connectGroupSocket(page: Page) {
+  await page.waitForFunction(() => Boolean((window as any).__PW_GROUP_SOCKET__?.sockets?.length))
+  await page.evaluate(() => {
+    const state = (window as any).__PW_GROUP_SOCKET__
+    for (const socket of state.sockets) {
+      if (String(socket.url).endsWith('/group-chat') && !socket.id) {
+        socket.id = `pw-group-socket-${state.nextSocketId++}`
+      }
+    }
+  })
+  await triggerGroupSocket(page, 'connect', undefined)
 }
 
 test.describe('group chat room deep links', () => {
@@ -268,6 +521,342 @@ test.describe('group chat room deep links', () => {
     await expect(message.locator('.thinking-body')).toHaveCount(0)
     await message.locator('.thinking-header').click()
     await expect(message.locator('.thinking-body')).toContainText('Inspecting several possible approaches.')
+  })
+
+  test('keeps the active Agent run tool list bounded and independently scrollable', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const panel = page.locator('.run-tool-list[data-agent-id="agent-1"][data-run-id="run-live-tools"]')
+    const outer = page.locator('.group-message-list .virtual-message-list')
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-message')).toHaveCount(12)
+    const historicalPanel = page.locator('.run-tool-list[data-run-id="run-history-tools"]')
+    await expect(historicalPanel).toBeVisible()
+    await expect(historicalPanel.locator('.tool-name')).toHaveText('historical_tool')
+    await expect.poll(() => page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-card').evaluate(
+      element => Array.from(element.children, child => child.className),
+    )).toEqual(['run-tool-list', 'run-transcript'])
+
+    const dimensions = await panel.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }))
+    expect(dimensions.clientHeight).toBeLessThan(dimensions.scrollHeight)
+    expect(dimensions.clientHeight).toBeGreaterThan(180)
+    expect(dimensions.clientHeight).toBeLessThanOrEqual(360)
+
+    await panel.hover()
+    await expect.poll(async () => {
+      const first = await outer.evaluate(element => element.scrollTop)
+      await page.waitForTimeout(100)
+      const second = await outer.evaluate(element => element.scrollTop)
+      return second - first
+    }).toBe(0)
+    const outerBefore = await outer.evaluate(element => element.scrollTop)
+    await page.mouse.wheel(0, 120)
+    await expect.poll(() => panel.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect(await outer.evaluate(element => element.scrollTop)).toBe(outerBefore)
+
+    await panel.focus()
+    await expect(panel).toBeFocused()
+
+    const toolNames = await panel.locator('.tool-name').allTextContents()
+    expect(toolNames[0]).toBe('live_tool_12')
+    expect(toolNames.at(-1)).toBe('live_tool_1')
+  })
+
+  test('keeps persistent room Agent grids stable while exact runs activate only matching cells', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const activity = (overrides: Record<string, unknown> = {}) => ({
+      roomId: 'room-alpha',
+      agentId: 'agent-row-1',
+      runId: 'run-live-tools',
+      agentName: 'Worker',
+      agent: 'hermes',
+      avatar: '',
+      status: 'replying',
+      ...overrides,
+    })
+    const alphaRoom = page.locator('.room-item', { hasText: 'Alpha Room' })
+    const betaRoom = page.locator('.room-item', { hasText: 'Beta Room' })
+    const emptyRoom = page.locator('.room-item', { hasText: 'Read Only Room' })
+    const alphaGrid = alphaRoom.locator('.room-agent-grid')
+    const betaGrid = betaRoom.locator('.room-agent-grid')
+    const emptyGrid = emptyRoom.locator('.room-agent-grid')
+    const alphaInfoX = await alphaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)
+    const betaInfoX = await betaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)
+
+    await expect(alphaGrid).toHaveAttribute('data-agent-count', '1')
+    await expect(betaGrid).toHaveAttribute('data-agent-count', '1')
+    await expect(emptyGrid).toHaveAttribute('data-agent-count', '0')
+    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(0)
+    await expect(emptyGrid.locator('.room-agent-grid-neutral')).toHaveCount(1)
+    await expect(alphaGrid).toHaveCSS('width', '36px')
+    await expect(betaGrid).toHaveCSS('width', '36px')
+    await expect(emptyGrid).toHaveCSS('width', '36px')
+
+    await triggerGroupSocket(page, 'room_agent_activity', activity())
+    await triggerGroupSocket(page, 'room_agent_activity', activity({ runId: 'run-live-tools-2' }))
+    await expect(alphaGrid.locator('[data-agent-id="agent-row-1"]')).toHaveClass(/is-active/)
+    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(1)
+    await expect(page.locator('.group-agent-run[data-run-id="run-live-tools"] .run-avatar')).toHaveClass(/run-avatar-active/)
+    await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-avatar')).not.toHaveClass(/run-avatar-active/)
+
+    await triggerGroupSocket(page, 'room_agent_activity', activity({
+      roomId: 'room-beta',
+      agentId: 'agent-row-runtime',
+      runId: 'run-beta',
+      agentName: 'Runtime Worker',
+    }))
+
+    await expect(alphaRoom.locator(':scope > .room-icon')).toHaveCount(0)
+    await expect(alphaRoom.locator(':scope > .room-agent-grid + .room-info')).toHaveCount(1)
+    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).toHaveClass(/is-active/)
+    await expect.poll(() => alphaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(alphaInfoX)
+    await expect.poll(() => betaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(betaInfoX)
+
+    await triggerGroupSocket(page, 'room_agent_activity', activity({ status: 'ready' }))
+    await expect(alphaGrid.locator('[data-agent-id="agent-row-1"]')).toHaveClass(/is-active/)
+    await triggerGroupSocket(page, 'room_agent_activity', activity({ runId: 'run-live-tools-2', status: 'ready' }))
+    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(0)
+
+    await triggerGroupSocket(page, 'agents_updated', {
+      roomId: 'room-alpha',
+      agents: [
+        ...(agentsByRoom['room-alpha'] as any[]),
+        {
+          id: 'agent-row-2',
+          roomId: 'room-alpha',
+          agentId: 'agent-2',
+          agent: 'codex',
+          profile: 'default',
+          provider: 'test-provider',
+          model: 'test-model',
+          apiMode: 'codex_responses',
+          reasoningEffort: '',
+          name: 'Second Worker',
+          description: '',
+          avatar: '',
+          invited: 1,
+        },
+      ],
+    })
+    await expect(alphaGrid).toHaveAttribute('data-agent-count', '2')
+    await expect(alphaGrid.locator('[data-agent-id="agent-row-2"]')).toHaveCount(1)
+    await expect.poll(() => alphaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(alphaInfoX)
+
+    await betaRoom.click()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(alphaGrid).toHaveAttribute('data-agent-count', '2')
+    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).toHaveClass(/is-active/)
+  })
+
+  test('loads all group history by stable cursor beyond 600 messages with retry, de-duplication, and anchor preservation', async ({ page }) => {
+    test.setTimeout(45_000)
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': Array.from({ length: 725 }, (_, index) => ({
+        id: `history-${index + 1}`,
+        roomId: 'room-alpha',
+        senderId: 'user-1',
+        senderName: 'Alice',
+        content: `History message ${index + 1}`,
+        timestamp: 1_790_000_000 + index,
+        role: 'user',
+      })),
+    })
+    await page.reload()
+
+    const transcript = page.locator('.group-message-list .virtual-message-list')
+    await expect(page.getByText('History message 725', { exact: true })).toBeVisible()
+    await expect(page.getByText('History message 576', { exact: true })).toBeVisible()
+    await expect(page.getByText('History message 575', { exact: true })).toHaveCount(0)
+
+    api.failRoomHistoryBefore('room-alpha', 'history-576')
+    api.delayRoomHistoryBefore('room-alpha', 'history-576', 150)
+    await transcript.evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+      element.dispatchEvent(new Event('scroll'))
+    })
+
+    const retry = page.getByRole('button', { name: 'Retry loading earlier messages' })
+    await expect(retry).toBeVisible()
+    expect(api.roomDetailRequests.filter(request => request.before === 'history-576')).toHaveLength(1)
+    const retryAnchorBefore = await transcript.evaluate(element => {
+      const anchor = element.querySelector('[data-group-message-id="history-576"]')
+      return anchor ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top : Number.NaN
+    })
+    await retry.click()
+    await expect(page.getByText('History message 426', { exact: true })).toBeVisible()
+    await expect.poll(() => transcript.evaluate((element, expectedOffset) => {
+      const anchor = element.querySelector('[data-group-message-id="history-576"]')
+      const currentOffset = anchor ? anchor.getBoundingClientRect().top - element.getBoundingClientRect().top : Number.NaN
+      return Math.abs(currentOffset - expectedOffset)
+    }, retryAnchorBefore)).toBeLessThanOrEqual(2)
+
+    for (const [before, oldestLoaded] of [
+      ['history-426', 'History message 276'],
+      ['history-276', 'History message 126'],
+      ['history-126', 'History message 1'],
+    ] as const) {
+      await transcript.evaluate(element => {
+        element.scrollTop = 0
+        element.dispatchEvent(new Event('scroll'))
+      })
+      await expect.poll(() => api.roomDetailRequests.some(request => request.before === before && request.history)).toBe(true)
+      await expect(page.getByText(oldestLoaded, { exact: true })).toHaveCount(1)
+    }
+
+    await expect(page.getByRole('link', { name: 'View complete group chat history' })).toHaveCount(0)
+    const messageIds = await page.locator('[data-group-message-id]').evaluateAll(elements => elements.map(element => element.getAttribute('data-group-message-id')))
+    expect(messageIds).toHaveLength(725)
+    expect(new Set(messageIds).size).toBe(725)
+
+    const requestCount = api.roomDetailRequests.length
+    await transcript.evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+    await page.waitForTimeout(100)
+    expect(api.roomDetailRequests).toHaveLength(requestCount)
+  })
+
+  test('redirects legacy Group Chat history URLs to the live room', async ({ page }) => {
+    await setup(page, '/#/hermes/history/group-chat/room-alpha')
+
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-alpha$/)
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await expect(page.locator('[data-group-history-scroller]')).toHaveCount(0)
+
+    await page.goto('/#/hermes/group-chat/history/room-beta')
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
+  })
+
+  test('keeps runtime Tools bounded, newest-first, and stable after completion and refresh', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-beta')
+    await expect(page.getByText('Beta room message')).toBeVisible()
+
+    const runtimeMessage = (overrides: Record<string, unknown>) => ({
+      id: 'run-runtime-tools_part_0',
+      roomId: 'room-beta',
+      senderId: 'agent-runtime',
+      senderAgentRecordId: 'agent-row-runtime',
+      senderName: 'Runtime Worker',
+      content: '',
+      timestamp: 1_790_000_200,
+      role: 'assistant',
+      run_id: 'run-runtime-tools',
+      ...overrides,
+    })
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'replying',
+    })
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      senderId: 'transport-socket-id',
+      finish_reason: 'streaming',
+    }))
+    await triggerGroupSocket(page, 'message_stream_end', {
+      roomId: 'room-beta',
+      id: 'run-runtime-tools_part_0',
+    })
+    for (const [index, toolName] of ['read_file', 'terminal'].entries()) {
+      const callId = `runtime-call-${index + 1}`
+      await triggerGroupSocket(page, 'message', runtimeMessage({
+        id: `run-runtime-tools_part_0_toolcall_${callId}`,
+        timestamp: 1_790_000_201 + index * 2,
+        tool_calls: [{
+          id: callId,
+          type: 'function',
+          function: { name: toolName, arguments: JSON.stringify({ index }) },
+        }],
+        finish_reason: 'tool_calls',
+      }))
+      await triggerGroupSocket(page, 'message', runtimeMessage({
+        id: `run-runtime-tools_part_0_toolresult_${callId}`,
+        timestamp: 1_790_000_202 + index * 2,
+        role: 'tool',
+        tool_call_id: callId,
+        tool_name: toolName,
+        content: `result-${index + 1}`,
+      }))
+    }
+    await triggerGroupSocket(page, 'message_stream_start', runtimeMessage({
+      id: 'run-runtime-tools_part_1',
+      timestamp: 1_790_000_206,
+      finish_reason: 'streaming',
+    }))
+    await triggerGroupSocket(page, 'message_reasoning_delta', {
+      roomId: 'room-beta',
+      id: 'run-runtime-tools_part_1',
+      delta: 'Checking the Tool results.',
+    })
+
+    const runCard = page.locator('.group-agent-run[data-run-id="run-runtime-tools"]')
+    const panel = page.locator('.run-tool-list[data-agent-id="agent-row-runtime"][data-run-id="run-runtime-tools"]')
+    await expect(runCard).toHaveCount(1)
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(panel.locator('.tool-message')).toHaveCount(2)
+
+    await triggerGroupSocket(page, 'context_status', {
+      roomId: 'room-beta',
+      agentName: 'Runtime Worker',
+      status: 'ready',
+    })
+
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(runCard.locator('.tool-message')).toHaveCount(2)
+    await expect.poll(() => runCard.locator('.run-card').evaluate(
+      element => Array.from(element.children, child => child.className),
+    )).toEqual(['run-tool-list', 'run-transcript'])
+
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-beta': [
+        ...messagesByRoom['room-beta'],
+        runtimeMessage({
+          id: 'run-runtime-tools_part_0_toolresult_runtime-call-1',
+          timestamp: 1_790_000_202,
+          role: 'tool',
+          tool_call_id: 'runtime-call-1',
+          tool_name: 'read_file',
+          content: 'result-1',
+        }),
+        runtimeMessage({
+          id: 'run-runtime-tools_part_0_toolresult_runtime-call-2',
+          timestamp: 1_790_000_204,
+          role: 'tool',
+          tool_call_id: 'runtime-call-2',
+          tool_name: 'terminal',
+          content: 'result-2',
+        }),
+        runtimeMessage({
+          id: 'run-runtime-tools_part_2',
+          timestamp: 1_790_000_207,
+          content: 'Finished.',
+        }),
+      ],
+    })
+    await page.reload()
+
+    const refreshedRunCard = page.locator('.group-agent-run[data-run-id="run-runtime-tools"]')
+    const refreshedPanel = page.locator('.run-tool-list[data-agent-id="agent-row-runtime"][data-run-id="run-runtime-tools"]')
+    await expect(refreshedRunCard).toHaveCount(1)
+    await expect(refreshedPanel).toBeVisible()
+    await expect(refreshedPanel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
+    await expect(refreshedRunCard.locator('.tool-message')).toHaveCount(2)
+    await expect(page.locator('.group-message-list > .tool-message')).toHaveCount(0)
+    await expect.poll(() => refreshedRunCard.locator('.run-card').evaluate(
+      element => Array.from(element.children, child => child.className),
+    )).toEqual(['run-tool-list', 'run-transcript'])
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
@@ -493,6 +1082,49 @@ test.describe('group chat room deep links', () => {
     })
   })
 
+  test('removes stale stopped chains after changing room handoff settings', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    const stopCard = page.locator('[data-handoff-chain-id="handoff:alpha-msg"]')
+    await expect(stopCard).toContainText('Depth: 4 / 4')
+    await expect(stopCard).toContainText('Target Agent: Worker')
+
+    await page.locator('.chat-header .header-info .compression-settings-button').click()
+    const drawer = page.locator('.n-drawer').filter({ has: page.locator('.room-settings-drawer') })
+    const section = drawer.locator('.settings-section').filter({ hasText: 'Agent handoff' })
+    await expect(section).toContainText('Recommended depth: 4')
+    await section.locator('.n-input-number input').fill('6')
+    const configResponse = page.waitForResponse(response =>
+      response.request().method() === 'PUT'
+      && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/config'))
+    await section.getByRole('button', { name: 'Save' }).click()
+    await expect((await configResponse).status()).toBe(200)
+    expect(api.roomConfigUpdates.at(-1)).toMatchObject({
+      roomId: 'room-alpha',
+      body: {
+        agentHandoffEnabled: true,
+        agentHandoffMaxDepth: 6,
+        agentHandoffUnlimited: false,
+      },
+    })
+
+    await expect(stopCard).toHaveCount(0)
+  })
+
+  test('continues one stopped chain without changing room handoff settings', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    const stopCard = page.locator('[data-handoff-chain-id="handoff:alpha-msg"]')
+    await expect(stopCard).toContainText('Depth: 4 / 4')
+
+    const continueResponse = page.waitForResponse(response =>
+      response.request().method() === 'POST'
+      && response.url().includes('/handoffs/handoff%3Aalpha-msg/continue'))
+    await stopCard.getByRole('button', { name: 'Continue this handoff once' }).click()
+    await expect((await continueResponse).status()).toBe(202)
+    await expect(stopCard).toHaveCount(0)
+    expect(api.roomConfigUpdates).toHaveLength(0)
+  })
+
   test('read-only room members cannot open room settings', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-readonly')
 
@@ -542,6 +1174,95 @@ test.describe('group chat room deep links', () => {
     await expect(first.getByText('Beta room message')).toHaveCount(0)
     await expect(second.getByText('Beta room message')).toBeVisible()
     await expect(second.getByText('Alpha room message')).toHaveCount(0)
+  })
+
+  test('atomically retracts one queued message across the live view and a reload', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('gc_user_id', 'user-1')
+      window.localStorage.setItem('gc_user_name', 'User One')
+    })
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+    const items = [
+        {
+          id: 'queue-1', roomId: 'room-alpha', messageId: 'alpha-msg',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'user-1', textSummary: '@Worker first queued task',
+          sequence: 10, position: 1, status: 'queued', createdAt: 10,
+        },
+        {
+          id: 'queue-2', roomId: 'room-alpha', messageId: 'alpha-file',
+          targetAgentId: 'agent-1', targetAgentName: 'Worker',
+          requesterMemberId: 'someone-else', textSummary: '@Worker observer task',
+          sequence: 11, position: 2, status: 'queued', createdAt: 11,
+        },
+      ]
+    await page.evaluate((queuedItems) => {
+      const state = (window as any).__PW_GROUP_SOCKET__
+      state.executionQueues['room-alpha'] = queuedItems
+    }, items)
+    await triggerGroupSocket(page, 'execution_queue_updated', { roomId: 'room-alpha', items })
+
+    const queue = page.getByTestId('group-execution-queue')
+    await expect(queue.locator('.queue-index')).toHaveText(['1', '2'])
+    await expect(queue.locator('.queue-agent')).toHaveText(['Worker', 'Worker'])
+    await expect(queue.locator('.queue-text')).toHaveText([
+      '@Worker first queued task',
+      '@Worker observer task',
+    ])
+    await expect(queue.locator('.queue-remove')).toHaveCount(2)
+
+    await queue.locator('.queue-remove').first().click()
+    await expect(queue.locator('[data-queue-id="queue-1"]')).toHaveCount(0)
+    await expect(queue.locator('[data-queue-id="queue-2"]')).toBeVisible()
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
+
+    api.setRoomMessages({
+      ...messagesByRoom,
+      'room-alpha': messagesByRoom['room-alpha'].filter(message => message.id !== 'alpha-msg'),
+    })
+    await page.reload()
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await expect(page.getByText('Alpha room message')).toHaveCount(0)
+  })
+
+  test('records and transcribes into the editable group composer without sending automatically', async ({ page }) => {
+    await installMockVoiceCapture(page)
+    let transcriptions = 0
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.route('**/api/hermes/stt/transcribe', async (route) => {
+      transcriptions += 1
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ text: 'voice group draft', provider: 'openai' }),
+      })
+    })
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+
+    const toggle = page.getByTestId('voice-record-toggle')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await toggle.click()
+
+    const textarea = page.locator('.chat-input-area textarea')
+    await expect(textarea).toHaveValue('voice group draft')
+    expect(transcriptions).toBe(1)
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
+
+    await textarea.fill('edited voice group draft')
+    await expect(textarea).toHaveValue('edited voice group draft')
+    expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(0)
   })
 
   test('unknown route room id falls back to the first available room', async ({ page }) => {

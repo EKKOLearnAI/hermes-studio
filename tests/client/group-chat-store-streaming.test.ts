@@ -173,6 +173,56 @@ describe('group chat store streaming merge', () => {
     )
   })
 
+  it('keeps persisted Tools inside the live Agent run when transport sender ids differ', async () => {
+    const store = await createJoinedStore()
+    const { groupAgentRunMessages } = await import('@/stores/hermes/group-chat')
+
+    emitSocket('message_stream_start', assistantMessage({
+      id: 'run-owned_part_0',
+      senderId: 'transport-socket-id',
+      senderAgentRecordId: 'agent-record-1',
+      run_id: 'run-owned',
+      finish_reason: 'streaming',
+    }))
+    emitSocket('message_reasoning_delta', {
+      roomId: 'room-1',
+      id: 'run-owned_part_0',
+      delta: 'Inspecting.',
+    })
+    emitSocket('message', assistantMessage({
+      id: 'run-owned_part_0_toolresult_call-owned',
+      senderId: 'agent-stable-id',
+      senderAgentRecordId: 'agent-record-1',
+      timestamp: 2,
+      run_id: 'run-owned',
+      role: 'tool',
+      tool_call_id: 'call-owned',
+      tool_name: 'read_file',
+      content: 'result',
+    }))
+    emitSocket('message', assistantMessage({
+      id: 'run-owned_part_1',
+      senderId: 'agent-stable-id',
+      senderAgentRecordId: 'agent-record-1',
+      timestamp: 3,
+      run_id: 'run-owned',
+      content: 'Finished.',
+    }))
+
+    const grouped = groupAgentRunMessages(store.sortedMessages)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0]).toMatchObject({
+      role: 'agent_run',
+      run_id: 'run-owned',
+      senderAgentRecordId: 'agent-record-1',
+    })
+    expect(grouped[0].runItems).toEqual([
+      expect.objectContaining({ id: 'run-owned_part_0', reasoning: 'Inspecting.' }),
+      expect.objectContaining({ role: 'tool', toolCallId: 'call-owned' }),
+      expect.objectContaining({ id: 'run-owned_part_1', content: 'Finished.' }),
+    ])
+  })
+
   it('does not revive an older orphaned Tool call when the same agent starts a newer run', async () => {
     const store = await createJoinedStore([
       assistantMessage({
@@ -748,32 +798,103 @@ describe('group chat store streaming merge', () => {
     expect(store.contextStatus).toEqual(expect.objectContaining({ agentName: 'Worker', status: 'replying' }))
   })
 
-  it('loads group history in 150-message pages and stops at the 600-message display cap', async () => {
-    const store = await createJoinedStore()
-    store.loadedMessageCount = 450
-    store.totalMessages = 700
+  it('loads stable-cursor history beyond 600 messages without duplicates', async () => {
+    const newest = Array.from({ length: 150 }, (_, index) =>
+      assistantMessage({ id: `message-${651 + index}`, timestamp: 651 + index, content: `message ${651 + index}` }),
+    )
+    const store = await createJoinedStore(newest)
+    store.loadedMessageCount = 150
+    store.totalMessages = 800
     store.hasMoreBefore = true
-    const olderMessages = Array.from({ length: 150 }, (_, index) =>
-      assistantMessage({ id: `older-${index}`, timestamp: index + 1, content: `older ${index}` }),
+    const page = Array.from({ length: 151 }, (_, index) =>
+      assistantMessage({ id: `message-${501 + index}`, timestamp: 501 + index, content: `message ${501 + index}` }),
     )
     groupChatApiMock.getRoomDetail.mockResolvedValueOnce({
       room,
-      messages: olderMessages,
+      messages: page,
       agents: [],
       members: [],
-      total: 700,
-      offset: 450,
+      total: 800,
       limit: 150,
       hasMore: true,
     })
 
     await expect(store.loadOlderMessages()).resolves.toBe(true)
 
-    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1', { offset: 450, limit: 150 })
-    expect(store.loadedMessageCount).toBe(600)
+    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledWith('room-1', {
+      before: 'message-651',
+      limit: 150,
+      history: true,
+    })
+    expect(store.messages).toHaveLength(300)
+    expect(new Set(store.messages.map(message => message.id)).size).toBe(300)
+    expect(store.messages[0]?.id).toBe('message-501')
+    expect(store.messages.at(-1)?.id).toBe('message-800')
+    expect(store.loadedMessageCount).toBe(300)
+    expect(store.totalMessages).toBe(800)
     expect(store.hasMoreBefore).toBe(true)
-    expect(store.hasReachedMessageDisplayLimit).toBe(true)
+  })
 
+  it('prevents concurrent older-page requests and supports retry after failure', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({ id: 'message-651', timestamp: 651, content: 'message 651' }),
+    ])
+    store.loadedMessageCount = 150
+    store.totalMessages = 800
+    store.hasMoreBefore = true
+    let resolvePage!: (value: any) => void
+    groupChatApiMock.getRoomDetail.mockImplementationOnce(() => new Promise(resolve => {
+      resolvePage = resolve
+    }))
+
+    const first = store.loadOlderMessages()
+    await expect(store.loadOlderMessages()).resolves.toBe(false)
+    expect(groupChatApiMock.getRoomDetail).toHaveBeenCalledTimes(1)
+    resolvePage({
+      room,
+      messages: [],
+      agents: [],
+      members: [],
+      total: 800,
+      hasMore: true,
+    })
+    await expect(first).resolves.toBe(false)
+
+    groupChatApiMock.getRoomDetail.mockRejectedValueOnce(new Error('temporary failure'))
+    await expect(store.loadOlderMessages()).resolves.toBe(false)
+    expect(store.olderMessagesError).toBe('temporary failure')
+
+    groupChatApiMock.getRoomDetail.mockResolvedValueOnce({
+      room,
+      messages: [assistantMessage({ id: 'message-650', timestamp: 650, content: 'message 650' })],
+      agents: [],
+      members: [],
+      total: 800,
+      hasMore: true,
+    })
+    await expect(store.loadOlderMessages()).resolves.toBe(true)
+    expect(store.olderMessagesError).toBeNull()
+    expect(store.messages.map(message => message.id)).toEqual(['message-650', 'message-651'])
+  })
+
+  it('stops requesting after the server confirms the earliest message', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({ id: 'message-2', timestamp: 2, content: 'message 2' }),
+    ])
+    store.loadedMessageCount = 799
+    store.totalMessages = 800
+    store.hasMoreBefore = true
+    groupChatApiMock.getRoomDetail.mockResolvedValueOnce({
+      room,
+      messages: [assistantMessage({ id: 'message-1', timestamp: 1, content: 'message 1' })],
+      agents: [],
+      members: [],
+      total: 800,
+      hasMore: false,
+    })
+
+    await expect(store.loadOlderMessages()).resolves.toBe(true)
+    expect(store.hasMoreBefore).toBe(false)
     groupChatApiMock.getRoomDetail.mockClear()
     await expect(store.loadOlderMessages()).resolves.toBe(false)
     expect(groupChatApiMock.getRoomDetail).not.toHaveBeenCalled()

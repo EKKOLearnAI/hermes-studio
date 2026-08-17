@@ -3,7 +3,6 @@ import type { Context } from 'koa'
 import cors from '@koa/cors'
 import serve from 'koa-static'
 import send from 'koa-send'
-import os from 'os'
 import { relative, resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
@@ -28,9 +27,15 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
-import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
+import { scanLanDevices, selectLanIPv4Address, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
+import { startLocalAppRelayServer } from './services/app-relay/server'
+import {
+  hasPendingCloudAppConnectionRevocations,
+  listAppConnections,
+} from './db/hermes/app-connections-store'
+import { ensureAppRelayHostClient } from './services/app-relay/connection'
 import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
@@ -41,6 +46,10 @@ import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
 import type { ShutdownHandler } from './services/shutdown'
 import { createRequestBodyParser } from './middleware/request-body-parser'
+import {
+  migratePersistedPiRuntimeMcpConfigs,
+  restorePersistedPiProxyTargets,
+} from './services/coding-agents'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -95,18 +104,6 @@ function getLoopbackBaseUrl(httpServer: any): string {
   const address = httpServer?.address?.()
   const port = typeof address === 'object' && address?.port ? address.port : config.port
   return `http://127.0.0.1:${port}`
-}
-
-/**
- * 安全获取网络接口信息（兼容 Termux/proot 环境）
- * 在 proot 环境中 os.networkInterfaces() 会抛出权限错误（errno 13）
- */
-function safeNetworkInterfaces() {
-  try {
-    return os.networkInterfaces()
-  } catch {
-    return {}
-  }
 }
 
 function isDesktopRuntime(): boolean {
@@ -286,6 +283,24 @@ export async function bootstrap() {
     console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
   }
 
+  try {
+    const migratedPiMcpConfigs = await migratePersistedPiRuntimeMcpConfigs()
+    if (migratedPiMcpConfigs > 0) {
+      console.log(`[bootstrap] migrated ${migratedPiMcpConfigs} persisted Pi MCP runtime config(s) to proxy mode`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to migrate persisted Pi MCP runtime configs')
+  }
+
+  try {
+    const restoredPiProxyTargets = await restorePersistedPiProxyTargets()
+    if (restoredPiProxyTargets > 0) {
+      console.log(`[bootstrap] restored ${restoredPiProxyTargets} persisted Pi proxy target(s)`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to restore persisted Pi proxy targets')
+  }
+
   setupGlobalEkkoAgent()
   console.log('[bootstrap] ekko-agent setup complete')
 
@@ -344,6 +359,8 @@ export async function bootstrap() {
   getLanPeerSocketManager().setupServer(servers)
   console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
 
+  const loopbackBaseUrl = getLoopbackBaseUrl(server)
+
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
@@ -354,6 +371,14 @@ export async function bootstrap() {
   setChatRunServer(chatRunServer)
   groupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
+  startLocalAppRelayServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
+  console.log('[bootstrap] local App relay server ready')
+  if (
+    listAppConnections().some(connection => connection.connection_type === 'cloud')
+    || hasPendingCloudAppConnectionRevocations()
+  ) {
+    void ensureAppRelayHostClient().catch(err => logger.warn(err, '[app-relay] cloud host restore failed'))
+  }
   void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.
@@ -373,7 +398,6 @@ export async function bootstrap() {
   petStateSocketServer = new PetStateSocketServer(groupChatServer.getIO())
   petStateSocketServer.init()
 
-  const loopbackBaseUrl = getLoopbackBaseUrl(server)
   startGlobalAgentServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
   console.log('[bootstrap] global agent server ready')
 
@@ -397,8 +421,8 @@ export async function bootstrap() {
     })
   })
 
-  const interfaces = safeNetworkInterfaces()
-  const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
+  const selectedLanAddress = selectLanIPv4Address('')
+  const localIp = selectedLanAddress === '127.0.0.1' ? 'localhost' : selectedLanAddress
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)

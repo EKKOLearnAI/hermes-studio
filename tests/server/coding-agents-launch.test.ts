@@ -1,10 +1,21 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createCipheriv, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/claude-code-proxy'
-import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/codex-proxy'
-import { prepareCodingAgentLaunch } from '../../packages/server/src/services/coding-agents'
+import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/coding-agents/claude-code/proxy'
+import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/coding-agents/codex/proxy'
+import {
+  codexToolSearchConfig,
+  migratePersistedPiRuntimeMcpConfigs,
+  prepareCodingAgentLaunch,
+  restorePersistedPiProxyTargets,
+} from '../../packages/server/src/services/coding-agents'
+import { getModelContextLength } from '../../packages/server/src/services/hermes/model-context'
+import {
+  normalizePiThinkingLevel,
+  piModelSupportsThinking,
+} from '../../packages/server/src/services/coding-agents/pi/thinking'
 
 const homes: string[] = []
 
@@ -52,6 +63,338 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('gates Codex tool_search feature flags by CLI version', () => {
+    expect(codexToolSearchConfig('0.127.0')).toEqual({ toolSearch: false, alwaysDefer: false })
+    expect(codexToolSearchConfig('0.128.0')).toEqual({ toolSearch: true, alwaysDefer: true })
+    expect(codexToolSearchConfig('0.141.0')).toEqual({ toolSearch: true, alwaysDefer: true })
+    expect(codexToolSearchConfig('0.142.0')).toEqual({ toolSearch: true, alwaysDefer: false })
+    expect(codexToolSearchConfig('')).toEqual({ toolSearch: true, alwaysDefer: true })
+  })
+
+  it('translates Studio reasoning choices into Pi thinking levels', () => {
+    expect(normalizePiThinkingLevel('default')).toBeUndefined()
+    expect(normalizePiThinkingLevel('none')).toBe('off')
+    expect(normalizePiThinkingLevel('ultra')).toBe('max')
+    expect(normalizePiThinkingLevel('xhigh')).toBe('xhigh')
+    expect(normalizePiThinkingLevel('unsupported')).toBeUndefined()
+    expect(piModelSupportsThinking(false, 'high')).toBe(true)
+    expect(piModelSupportsThinking(false, 'none')).toBe(false)
+    expect(piModelSupportsThinking(true, 'none')).toBe(true)
+  })
+
+  it('migrates persisted Pi MCP runtime configs from direct tools to proxy mode', async () => {
+    const home = makeHome()
+    const piHome = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    const runtimeMcpPath = join(piHome, 'runs', 'old-run', 'mcp.json')
+    const userMcpPath = join(home, 'coding-agent', 'model', 'default', 'user_only', 'pi', 'mcp.json')
+    mkdirSync(dirname(runtimeMcpPath), { recursive: true })
+    mkdirSync(dirname(userMcpPath), { recursive: true })
+    writeFileSync(runtimeMcpPath, `${JSON.stringify({
+      settings: {
+        directTools: true,
+        freezeDirectTools: true,
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp', directTools: true },
+        'hermes-studio-api': {
+          command: 'node',
+          env: { HERMES_WEB_UI_MANAGED_MCP: '1' },
+          directTools: true,
+        },
+      },
+    }, null, 2)}\n`)
+    const userContent = `${JSON.stringify({
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+      },
+    }, null, 2)}\n`
+    writeFileSync(userMcpPath, userContent)
+
+    await expect(migratePersistedPiRuntimeMcpConfigs()).resolves.toBe(1)
+
+    const migrated = JSON.parse(readFileSync(runtimeMcpPath, 'utf-8'))
+    expect(migrated.settings.directTools).toBe(false)
+    expect(migrated.settings.agentPluginPaths).toEqual(['./plugins'])
+    expect(migrated.settings).not.toHaveProperty('freezeDirectTools')
+    expect(migrated.mcpServers.user_docs.directTools).toBe(true)
+    expect(migrated.mcpServers['hermes-studio-api']).toMatchObject({
+      directTools: false,
+      lifecycle: 'lazy',
+    })
+    expect(readFileSync(userMcpPath, 'utf-8')).toBe(userContent)
+    await expect(migratePersistedPiRuntimeMcpConfigs()).resolves.toBe(0)
+  })
+
+  it('keeps stable credential-free Pi config files beside isolated run directories', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+    const userMcpPath = join(home, 'global-home', '.pi', 'agent', 'mcp.json')
+    mkdirSync(dirname(userMcpPath), { recursive: true })
+    writeFileSync(userMcpPath, `${JSON.stringify({
+      settings: {
+        hostConfigDiscovery: 'off',
+        agentPluginPaths: ['./plugins'],
+      },
+      mcpServers: {
+        user_docs: { url: 'https://docs.example.com/mcp' },
+      },
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-1',
+      agentSessionId: 'agent-session-1',
+    })
+
+    const piHome = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    expect(result.rootDir).toMatch(new RegExp(`${piHome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[/\\\\]runs[/\\\\]`))
+    expect(existsSync(join(piHome, 'settings.json'))).toBe(true)
+    expect(existsSync(join(piHome, 'mcp.json'))).toBe(true)
+    expect(existsSync(join(piHome, 'auth.json'))).toBe(false)
+    expect(existsSync(join(piHome, 'AGENTS.md'))).toBe(false)
+    expect(existsSync(join(piHome, 'models.json'))).toBe(false)
+    expect(existsSync(join(piHome, 'APPEND_SYSTEM.md'))).toBe(false)
+    expect(existsSync(join(result.rootDir, 'settings.json'))).toBe(true)
+    expect(existsSync(join(result.rootDir, 'mcp.json'))).toBe(true)
+    expect(existsSync(join(result.rootDir, 'APPEND_SYSTEM.md'))).toBe(true)
+    const stableMcp = JSON.parse(readFileSync(join(piHome, 'mcp.json'), 'utf-8'))
+    expect(stableMcp.mcpServers).toEqual({})
+    const runtimeMcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    expect(runtimeMcp.settings.agentPluginPaths).toEqual(['./plugins'])
+    expect(runtimeMcp.settings.directTools).toBe(false)
+    expect(runtimeMcp.settings).not.toHaveProperty('freezeDirectTools')
+    expect(runtimeMcp.mcpServers.user_docs).toEqual({ url: 'https://docs.example.com/mcp' })
+    expect(runtimeMcp.mcpServers['hermes-studio-api']).toMatchObject({ directTools: false, lifecycle: 'lazy' })
+    expect(runtimeMcp.mcpServers['hermes-studio-browser']).toMatchObject({ directTools: false, lifecycle: 'lazy' })
+    expect(runtimeMcp.mcpServers['hermes-studio-devices']).toMatchObject({ directTools: false, lifecycle: 'lazy' })
+    expect(runtimeMcp.mcpServers['hermes-studio-use']).toMatchObject({ directTools: false, lifecycle: 'lazy' })
+    const runtimeModels = JSON.parse(readFileSync(join(result.rootDir, 'models.json'), 'utf-8'))
+    expect(runtimeModels.providers['hermes-studio'].apiKey).toMatch(/^hwui_/)
+    expect(runtimeModels.providers['hermes-studio'].apiKey).not.toBe('sk-runtime-secret')
+    const persistedProxyTargetPath = join(result.rootDir, 'proxy-target.json')
+    const persistedProxyTargetContent = readFileSync(persistedProxyTargetPath, 'utf-8')
+    const persistedProxyTarget = JSON.parse(persistedProxyTargetContent)
+    expect(persistedProxyTarget.input).toMatchObject({
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiMode: 'codex_responses',
+    })
+    expect(persistedProxyTarget.input).not.toHaveProperty('apiKey')
+    expect(persistedProxyTarget.apiKeyEncrypted).toMatchObject({
+      v: 2,
+      algorithm: 'aes-256-gcm',
+    })
+    expect(persistedProxyTargetContent).not.toContain('sk-runtime-secret')
+    const encryptionKeyPath = join(home, 'coding-agent', '.pi-proxy-target.key')
+    expect(existsSync(encryptionKeyPath)).toBe(true)
+    if (process.platform !== 'win32') {
+      expect(statSync(encryptionKeyPath).mode & 0o777).toBe(0o600)
+      expect(statSync(persistedProxyTargetPath).mode & 0o777).toBe(0o600)
+    }
+    expect(persistedProxyTarget.token).toBe(runtimeModels.providers['hermes-studio'].apiKey)
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+    expect(result.args).not.toContain('rpc')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')).not.toContain('--mode rpc')
+
+    const rpcResult = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-2',
+      agentSessionId: 'agent-session-2',
+      piOutputMode: 'rpc',
+      reasoningEffort: 'high',
+    })
+    expect(rpcResult.args).toEqual(expect.arrayContaining(['--mode', 'rpc']))
+    expect(readFileSync(join(rpcResult.rootDir, 'launch.sh'), 'utf-8')).toContain('--mode rpc')
+    const rpcModels = JSON.parse(readFileSync(join(rpcResult.rootDir, 'models.json'), 'utf-8'))
+    expect(rpcModels.providers['hermes-studio'].models[0]).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { xhigh: 'xhigh', max: 'max' },
+    })
+  })
+
+  it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
+    const home = makeHome()
+    const targetPath = join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_test',
+      'pi',
+      'runs',
+      'legacy-run',
+      'proxy-target.json',
+    )
+    mkdirSync(dirname(targetPath), { recursive: true })
+    writeFileSync(targetPath, `${JSON.stringify({
+      input: {
+        profile: 'default',
+        provider: 'custom:test',
+        model: 'legacy-model',
+        baseUrl: 'https://legacy.example.com/v1',
+        apiKey: 'sk-legacy-plaintext',
+        apiMode: 'codex_responses',
+        agentId: 'pi',
+        agentSessionId: 'legacy-agent-session',
+        chatSessionId: 'legacy-chat-session',
+      },
+      token: 'hwui_legacy_token',
+    }, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+
+    const migratedContent = readFileSync(targetPath, 'utf8')
+    const migrated = JSON.parse(migratedContent)
+    expect(migrated.input).not.toHaveProperty('apiKey')
+    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 2, algorithm: 'aes-256-gcm' })
+    expect(migratedContent).not.toContain('sk-legacy-plaintext')
+    if (process.platform !== 'win32') {
+      chmodSync(targetPath, 0o644)
+      await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+      expect(statSync(targetPath).mode & 0o777).toBe(0o600)
+    }
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+  })
+
+  it('restores legacy v1 encrypted Pi proxy targets and rewrites them with authenticated v2 metadata', async () => {
+    const home = makeHome()
+    const keyPath = join(home, 'coding-agent', '.pi-proxy-target.key')
+    const targetPath = join(
+      home,
+      'coding-agent',
+      'model',
+      'default',
+      'custom_test',
+      'pi',
+      'runs',
+      'legacy-v1-run',
+      'proxy-target.json',
+    )
+    mkdirSync(dirname(keyPath), { recursive: true })
+    mkdirSync(dirname(targetPath), { recursive: true })
+    const key = randomBytes(32)
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    cipher.setAAD(Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8'))
+    const ciphertext = Buffer.concat([cipher.update('sk-legacy-v1-secret', 'utf8'), cipher.final()])
+    writeFileSync(keyPath, key, { mode: 0o600 })
+    writeFileSync(targetPath, `${JSON.stringify({
+      input: {
+        profile: 'default',
+        provider: 'custom:test',
+        model: 'legacy-v1-model',
+        baseUrl: 'https://legacy-v1.example.com/v1',
+        apiMode: 'codex_responses',
+        agentId: 'pi',
+        agentSessionId: 'legacy-v1-agent-session',
+        chatSessionId: 'legacy-v1-chat-session',
+      },
+      token: 'hwui_legacy_v1_token',
+      apiKeyEncrypted: {
+        v: 1,
+        algorithm: 'aes-256-gcm',
+        iv: iv.toString('base64'),
+        tag: cipher.getAuthTag().toString('base64'),
+        ciphertext: ciphertext.toString('base64'),
+      },
+    }, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+
+    const migratedContent = readFileSync(targetPath, 'utf8')
+    const migrated = JSON.parse(migratedContent)
+    expect(migrated.apiKeyEncrypted).toMatchObject({ v: 2, algorithm: 'aes-256-gcm' })
+    expect(migratedContent).not.toContain('sk-legacy-v1-secret')
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(1)
+  })
+
+  it('rejects encrypted Pi proxy credentials when authenticated target metadata is tampered', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-authenticated-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'tamper-session',
+      agentSessionId: 'tamper-agent-session',
+    })
+    const targetPath = join(result.rootDir, 'proxy-target.json')
+    const persisted = JSON.parse(readFileSync(targetPath, 'utf8'))
+    const tamperedBaseUrl = structuredClone(persisted)
+    tamperedBaseUrl.input.baseUrl = 'https://attacker.example.com/v1'
+    writeFileSync(targetPath, `${JSON.stringify(tamperedBaseUrl, null, 2)}\n`)
+
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(0)
+
+    const tamperedToken = structuredClone(persisted)
+    tamperedToken.token = 'hwui_attacker_token'
+    writeFileSync(targetPath, `${JSON.stringify(tamperedToken, null, 2)}\n`)
+    await expect(restorePersistedPiProxyTargets()).resolves.toBe(0)
+  })
+
+  it('persists generated isolated Pi session identities when callers omit IDs', async () => {
+    const home = makeHome()
+    const adapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-isolated-secret',
+      apiMode: 'codex_responses',
+    })
+    const persisted = JSON.parse(readFileSync(join(result.rootDir, 'proxy-target.json'), 'utf8'))
+
+    expect(persisted.input.agentSessionId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(persisted.input.chatSessionId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(persisted.input.agentSessionId).not.toBe(persisted.input.chatSessionId)
+  })
+
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
 
@@ -135,6 +478,71 @@ describe('coding agent launch preparation', () => {
     })
   })
 
+  it('launches interactive Pi with its global config when requested', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      mode: 'global',
+      profile: 'default',
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'pi',
+      mode: 'global',
+      profile: 'default',
+      provider: 'global',
+      model: '',
+      rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'pi',
+      args: [],
+      env: {},
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && pi`,
+      files: [],
+    })
+  })
+
+  it('runs Studio Pi chats over RPC while preserving the global Pi config', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      mode: 'global',
+      profile: 'default',
+      sessionId: 'global-pi-chat',
+      agentSessionId: 'global-pi-run',
+      agentNativeSessionId: 'global-pi-native',
+      piOutputMode: 'rpc',
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'pi',
+      mode: 'global',
+      profile: 'default',
+      provider: 'global',
+      model: '',
+      workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'pi',
+      env: {
+        PI_CODING_AGENT_DIR: join(home, 'global-home', '.pi', 'agent'),
+      },
+    })
+    expect(result.rootDir).toContain(join('model', 'default', 'global', 'pi', 'runs'))
+    expect(result.args).toEqual([
+      '--mode', 'rpc',
+      '--session-id', 'global-pi-native',
+      '--extension', join(result.rootDir, 'hermes-studio-runtime.ts'),
+      '--no-approve',
+    ])
+    expect(result.args).not.toContain('--provider')
+    expect(result.args).not.toContain('--model')
+    expect(result.args).not.toContain('--session-dir')
+    expect(result.env.HERMES_PI_DYNAMIC_PROMPT_FILE).toBe(join(result.rootDir, 'dynamic-system-prompt.md'))
+    expect(readFileSync(join(result.rootDir, 'hermes-studio-runtime.ts'), 'utf8'))
+      .toContain('before_agent_start')
+    expect(readFileSync(join(result.rootDir, 'dynamic-system-prompt.md'), 'utf8')).toBe('')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf8')).toContain('--mode rpc')
+  })
+
   it('preserves existing global Claude Code prompt files while updating the Hermes block', async () => {
     const home = makeHome()
     const claudePromptPath = join(home, 'global-home', '.claude', 'hermes-rules.md')
@@ -204,6 +612,13 @@ describe('coding agent launch preparation', () => {
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
     expect(settings.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
+    expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(getModelContextLength({
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+    })))
+    expect(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('50')
+    expect(settings.env.ENABLE_TOOL_SEARCH).toBe('true')
     expect(settings.env).toMatchObject({
       ANTHROPIC_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
       ANTHROPIC_CUSTOM_MODEL_OPTION: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
@@ -216,6 +631,9 @@ describe('coding agent launch preparation', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
     })
     expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toBe('claude-sonnet-4-6')
+    expect(result.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW)
+    expect(result.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('50')
+    expect(result.env.ENABLE_TOOL_SEARCH).toBe('true')
 
     const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
     expect(mcp.mcpServers['hermes-studio-api']).toMatchObject({
@@ -740,6 +1158,8 @@ describe('coding agent launch preparation', () => {
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     expect(config).toContain('requires_openai_auth = false')
+    expect(config).toContain('[features]')
+    expect(config).toContain('tool_search = true')
     expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')
@@ -1260,7 +1680,60 @@ describe('coding agent launch preparation', () => {
     expect(sse).not.toContain('"usage"')
   })
 
-  it('streams Codex proxy Anthropic text as Responses message events', async () => {
+  it('keeps the selected Chat Completions protocol and emits Pi-compatible Responses reasoning events', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'glm',
+      model: 'glm-5-turbo',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      apiKey: 'sk-upstream',
+      apiMode: 'chat_completions',
+      agentId: 'pi',
+      agentSessionId: 'pi-reasoning-run',
+      chatSessionId: 'pi-reasoning-chat',
+    })
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"inspect"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"done"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      reasoning: { effort: 'medium', summary: 'auto' },
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'check' }] }],
+    })
+    await codexProxyResponses(ctx)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(requestBody).toMatchObject({
+      model: 'glm-5-turbo',
+      stream: true,
+    })
+    expect(requestBody).not.toHaveProperty('thinking')
+
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const sse = chunks.join('')
+    expect(sse).toContain('event: response.output_item.added')
+    expect(sse).toContain('"type":"reasoning"')
+    expect(sse).toContain('event: response.reasoning_summary_text.delta')
+    expect(sse).toContain('"delta":"inspect"')
+    expect(sse).toContain('event: response.output_item.done')
+    expect(sse).toContain('event: response.output_text.delta')
+    expect(sse).toContain('"delta":"done"')
+  })
+
+  it('streams Anthropic thinking and text as Pi-compatible Responses events', async () => {
     makeHome()
     const launch = await prepareCodingAgentLaunch('codex', {
       profile: 'default',
@@ -1277,9 +1750,11 @@ describe('coding agent launch preparation', () => {
     const fetchMock = vi.fn(async () => new Response(new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":3,"output_tokens":0}}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"he"}}\n\n'))
-        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"llo"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"inspect"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"he"}}\n\n'))
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"llo"}}\n\n'))
         controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2}}\n\n'))
         controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'))
         controller.close()
@@ -1302,6 +1777,9 @@ describe('coding agent launch preparation', () => {
       headers: expect.objectContaining({ 'anthropic-version': '2023-06-01' }),
     }))
     expect(sse).toContain('event: response.output_item.added')
+    expect(sse).toContain('"type":"reasoning"')
+    expect(sse).toContain('event: response.reasoning_summary_text.delta')
+    expect(sse).toContain('"delta":"inspect"')
     expect(sse).toContain('"delta":"he"')
     expect(sse).toContain('"delta":"llo"')
     expect(sse).toContain('event: response.output_text.done')
@@ -1332,6 +1810,7 @@ describe('coding agent launch preparation', () => {
 
     const ctx = makeProxyContext(target.routeKey, target.token, {
       stream: true,
+      reasoning: { effort: 'high', summary: 'auto' },
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
     })
     await codexProxyResponses(ctx)
@@ -1343,6 +1822,9 @@ describe('coding agent launch preparation', () => {
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer sk-upstream' }),
     }))
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      reasoning: { effort: 'high', summary: 'auto' },
+    })
     expect(sse).toContain('"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}')
   })
 

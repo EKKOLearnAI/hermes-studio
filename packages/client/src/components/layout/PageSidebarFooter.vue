@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import SettingsCircuitBadge from '@/components/layout/SettingsCircuitBadge.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -20,7 +19,6 @@ function openSettingsPage() {
       </svg>
       <span>{{ t('sidebar.settings') }}</span>
     </button>
-    <SettingsCircuitBadge />
   </div>
 </template>
 

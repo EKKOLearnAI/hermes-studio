@@ -709,6 +709,83 @@ describe('config controller locked file updates', () => {
     })
   })
 
+  it('updates only delegation model routing fields and returns the normalized profile state', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    await mkdir(researchDir, { recursive: true })
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'delegation:',
+      '  provider: root-provider',
+      '  model: root-model',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(researchDir, 'config.yaml'), [
+      'delegation:',
+      '  provider: old-provider',
+      '  model: old-model',
+      '  reasoning_effort: low',
+      '  base_url: https://old-delegation.example/v1',
+      '  api_key: old-delegation-key',
+      '  api_mode: chat_completions',
+      '  max_iterations: 42',
+      '  max_concurrent_children: 5',
+      '',
+    ].join('\n'), 'utf-8')
+
+    const { getDelegationModel, updateDelegationModel } = await loadController()
+    const readCtx = makeCtx({}, 'research')
+    await getDelegationModel(readCtx)
+    expect(readCtx.body).toEqual({
+      delegation: {
+        provider: 'old-provider',
+        model: 'old-model',
+        reasoning_effort: 'low',
+      },
+    })
+
+    const writeCtx = makeCtx({
+      delegation: {
+        provider: ' openrouter ',
+        model: ' google/gemini-3-flash-preview ',
+        reasoning_effort: ' high ',
+        max_iterations: 999,
+      },
+    }, 'research')
+    await updateDelegationModel(writeCtx)
+    expect(writeCtx.body).toEqual({
+      success: true,
+      delegation: {
+        provider: 'openrouter',
+        model: 'google/gemini-3-flash-preview',
+        reasoning_effort: 'high',
+      },
+    })
+
+    const updatedConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(updatedConfig.delegation).toEqual({
+      provider: 'openrouter',
+      model: 'google/gemini-3-flash-preview',
+      reasoning_effort: 'high',
+      max_iterations: 42,
+      max_concurrent_children: 5,
+    })
+    const rootConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(rootConfig.delegation).toEqual({ provider: 'root-provider', model: 'root-model' })
+
+    const invalidCtx = makeCtx({ delegation: { reasoning_effort: 'extreme' } }, 'research')
+    await updateDelegationModel(invalidCtx)
+    expect(invalidCtx.status).toBe(400)
+    expect(invalidCtx.body).toEqual({ error: 'Invalid delegation model config' })
+
+    const resetCtx = makeCtx({ delegation: {} }, 'research')
+    await updateDelegationModel(resetCtx)
+    expect(resetCtx.body).toEqual({ success: true, delegation: {} })
+    const resetConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(resetConfig.delegation).toEqual({
+      max_iterations: 42,
+      max_concurrent_children: 5,
+    })
+  })
+
   it('clears only allowlisted channel credentials and keeps access controls and endpoints', async () => {
     await writeFile(join(hermesHome, 'config.yaml'), [
       'platforms:',

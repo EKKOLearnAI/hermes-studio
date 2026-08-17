@@ -107,6 +107,40 @@ function makeServerHarness() {
 }
 
 describe('ChatRunSocket global pending interactions', () => {
+  it('publishes a running snapshot and lightweight completion activity for the profile', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('session-running', {
+      messages: [],
+      events: [],
+      queue: [],
+      isWorking: true,
+      profile: 'default',
+    })
+
+    ;(server as any).onConnection(socket)
+
+    expect(socket.emit).toHaveBeenCalledWith('session.activity.snapshot', expect.objectContaining({
+      event: 'session.activity.snapshot',
+      profile: 'default',
+      sessions: [{ session_id: 'session-running', status: 'running' }],
+    }))
+
+    ;(server as any).emitSessionActivity('default', 'run.completed', {
+      session_id: 'session-running',
+      queue_remaining: 0,
+    })
+    expect(emitted).toContainEqual({
+      room: 'pending-interactions:default',
+      event: 'session.activity',
+      payload: expect.objectContaining({
+        session_id: 'session-running',
+        status: 'completed',
+      }),
+    })
+  })
+
   it('publishes approval and clarify lifecycle events to the authenticated profile audience', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { emitted, io, socket } = makeServerHarness()
@@ -415,6 +449,7 @@ describe('ChatRunSocket bridge readiness gating', () => {
   })
 
   it('routes global coding-agent runs through the coding-agent path while preserving session source', async () => {
+    handleCodingAgentRunMock.mockResolvedValueOnce({ runId: 'coding-run-1', messageId: 42 })
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { handlers, io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
@@ -426,6 +461,7 @@ describe('ChatRunSocket bridge readiness gating', () => {
       source: 'coding_agent',
       session_source: 'global_agent',
       coding_agent_id: 'codex',
+      queue_id: 'phone-message-1',
     })
 
     expect(ensureReadyMock).not.toHaveBeenCalled()
@@ -440,6 +476,18 @@ describe('ChatRunSocket bridge readiness gating', () => {
       'default',
       expect.any(Map),
     )
+    expect(socket.to).toHaveBeenCalledWith('session:session-1')
+    expect(socket.to.mock.results[0].value.emit).toHaveBeenCalledWith('run.peer_user_message', {
+      event: 'run.peer_user_message',
+      session_id: 'session-1',
+      message: {
+        id: 'phone-message-1',
+        role: 'user',
+        content: 'hello',
+        timestamp: expect.any(Number),
+        queued: false,
+      },
+    })
     expect(handleBridgeRunMock).not.toHaveBeenCalled()
   })
 

@@ -4,6 +4,7 @@ import { requireSuperAdmin } from '../../middleware/user-auth'
 
 export const profileRoutes = new Router()
 
+profileRoutes.get('/api/app/profiles', ctrl.listForApp)
 profileRoutes.get('/api/hermes/profiles', ctrl.list)
 profileRoutes.post('/api/hermes/profiles', ctrl.create)
 profileRoutes.get('/api/hermes/profiles/runtime-statuses', ctrl.runtimeStatuses)

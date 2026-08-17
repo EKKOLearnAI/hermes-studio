@@ -78,4 +78,19 @@ describe('app relay controller', () => {
     expect(stopAppRelayClient).toHaveBeenCalledWith('app-relay')
     expect(ctx.body.relay).toMatchObject({ connected: false, machineId: 'hwui_machine_1234567890' })
   })
+
+  it('leaves the App relay retry loop running after the initial wait times out', async () => {
+    const client = {
+      waitForConnected: vi.fn(async () => false),
+      isPreconnectionExpired: vi.fn(() => false),
+    }
+    getAppRelayClient.mockReturnValue(client)
+    const { connectAppRelayController } = await import('../../packages/server/src/controllers/app-relay')
+    const ctx: any = { status: 200 }
+
+    await connectAppRelayController(ctx)
+
+    expect(ctx.status).toBe(502)
+    expect(stopAppRelayClient).not.toHaveBeenCalled()
+  })
 })

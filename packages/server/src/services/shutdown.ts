@@ -1,7 +1,7 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
-import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from './coding-agents/runtime/run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
@@ -127,7 +127,7 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {
-        groupChatServer.agentClients.disconnectAll()
+        await groupChatServer.agentClients.disconnectAll()
         groupChatServer.getIO().close()
         logger.info('Socket.IO closed')
       }

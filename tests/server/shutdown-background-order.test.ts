@@ -18,7 +18,7 @@ vi.mock('../../packages/server/src/services/hermes/local-stt-model-manager', () 
 vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({
   stopOutboundRelayClient: stopOutboundRelayClientMock,
 }))
-vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: { shutdown: codingAgentShutdownMock },
 }))
 vi.mock('../../packages/server/src/services/logger', () => ({

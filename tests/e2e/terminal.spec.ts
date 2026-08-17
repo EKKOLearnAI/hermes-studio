@@ -13,9 +13,16 @@ test('opens terminal websocket session and forwards user input', async ({ page }
 
   const terminalState = await page.waitForFunction(() => {
     const state = (window as any).__PW_TERMINAL_WS__
-    return state?.sockets?.length
+    const terminalSocket = state?.sockets?.find((socket: { url?: string | URL }) => {
+      try {
+        return new URL(String(socket.url || ''), window.location.href).pathname === '/api/hermes/terminal'
+      } catch {
+        return false
+      }
+    })
+    return terminalSocket
       ? {
-          url: state.latest.url,
+          url: terminalSocket.url,
           sent: state.sent,
         }
       : null

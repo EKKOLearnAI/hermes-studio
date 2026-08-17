@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, nextTick } from 'vue'
-import type { ChatMessage } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgentHandoffChain } from '@/api/hermes/group-chat'
 
 const mockScrollToBottom = vi.hoisted(() => vi.fn())
 const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
 const mockRestoreScrollPosition = vi.hoisted(() => vi.fn())
+const mockCaptureViewportPosition = vi.hoisted(() => vi.fn())
+const mockRestoreViewportPosition = vi.hoisted(() => vi.fn())
 const mockIsNearBottom = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('vue-i18n', () => ({
@@ -67,6 +69,8 @@ vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
         scrollToBottom: mockScrollToBottom,
         captureScrollPosition: mockCaptureScrollPosition,
         restoreScrollPosition: mockRestoreScrollPosition,
+        captureViewportPosition: mockCaptureViewportPosition,
+        restoreViewportPosition: mockRestoreViewportPosition,
       })
     },
     template: `
@@ -89,6 +93,7 @@ vi.mock('@/components/hermes/group-chat/GroupMessageItem.vue', () => ({
 
 import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { getRoomDetail } from '@/api/hermes/group-chat'
 
 function makeMessage(id: string): ChatMessage {
   return {
@@ -164,6 +169,76 @@ describe('GroupMessageList scroll behavior', () => {
     expect(wrapper.get('[data-group-message-id="message-2"]').find('.summary-anchor-divider').exists()).toBe(false)
   })
 
+  it('renders handoff controls only for Room managers and emits both actions', async () => {
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [makeMessage('message-1')]
+    store.handoffChains.set('chain-1', {
+      chainId: 'chain-1', roomId: 'room-1', sourceMessageId: 'message-1',
+      currentDepth: 4, maxDepth: 4, unlimited: false, targetAgentId: 'agent-2',
+      status: 'stopped', stopReason: 'max_depth', continueUsed: false,
+      createdAt: 1, updatedAt: 1, lastError: null,
+    } as RoomAgentHandoffChain)
+
+    const reader = mount(GroupMessageList, { props: { canManageHandoff: false } })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(true)
+    expect(reader.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(reader.text()).not.toContain('groupChat.agentHandoffContinueState')
+
+    const onContinue = vi.fn()
+    const onSettings = vi.fn()
+    const manager = mount(GroupMessageList, {
+      props: {
+        canManageHandoff: true,
+        onContinueHandoff: onContinue,
+        onAdjustHandoffSettings: onSettings,
+      },
+    })
+    await flushListUpdates()
+    const actions = manager.get('.handoff-stop-actions').findAll('button')
+    expect(actions).toHaveLength(2)
+    await actions[0].trigger('click')
+    await actions[1].trigger('click')
+    expect(onContinue).toHaveBeenCalledWith('chain-1')
+    expect(onSettings).toHaveBeenCalledTimes(1)
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      stopReason: 'continue_failed',
+      attemptId: 'failed-attempt-1',
+      lastError: 'Continuation target admission was rejected',
+    })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(true)
+    expect(reader.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(manager.get('.handoff-stop-actions').findAll('button')).toHaveLength(2)
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffErrorAdmissionRejected')
+    expect(manager.get('.handoff-stop-card').text()).not.toContain('Continuation target admission was rejected')
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      lastError: ' \t ',
+    })
+    await flushListUpdates()
+    expect(reader.find('.handoff-stop-card').exists()).toBe(false)
+    expect(manager.find('.handoff-stop-card').exists()).toBe(false)
+
+    store.handoffChains.set('chain-1', {
+      ...store.handoffChains.get('chain-1')!,
+      status: 'outcome_unknown',
+      stopReason: 'outcome_unknown',
+      continueUsed: true,
+      attemptId: 'unknown-attempt-1',
+      lastError: 'Remote target invocation outcome is unknown after restart',
+    })
+    await flushListUpdates()
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffOutcomeUnknownTitle')
+    expect(manager.get('.handoff-stop-card').text()).toContain('groupChat.agentHandoffOutcomeUnknownDescription')
+    expect(manager.find('.handoff-stop-actions').exists()).toBe(false)
+    expect(manager.get('.handoff-stop-card').text()).not.toContain('Remote target invocation outcome is unknown after restart')
+  })
+
   it('shows a bottom jump button when the group transcript is far from the bottom', async () => {
     const store = useGroupChatStore()
     store.currentRoomId = 'room-1'
@@ -181,5 +256,51 @@ describe('GroupMessageList scroll behavior', () => {
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({ frames: 4, keepAliveMs: 600 })
     expect(wrapper.find('.scroll-bottom-button').exists()).toBe(false)
+  })
+
+  it('coalesces repeated top events and restores the viewport after prepending one page', async () => {
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [makeMessage('message-151')]
+    store.loadedMessageCount = 150
+    store.totalMessages = 300
+    store.hasMoreBefore = true
+    const viewport = { anchorId: 'message-151', offset: 24 }
+    mockCaptureViewportPosition.mockReturnValue(viewport)
+    let resolvePage!: (value: any) => void
+    vi.mocked(getRoomDetail).mockImplementationOnce(() => new Promise(resolve => {
+      resolvePage = resolve
+    }))
+
+    const wrapper = mount(GroupMessageList)
+    await flushListUpdates()
+    vi.clearAllMocks()
+    mockCaptureViewportPosition.mockReturnValue(viewport)
+
+    const list = wrapper.getComponent({ name: 'VirtualMessageList' })
+    list.vm.$emit('top-reach')
+    list.vm.$emit('top-reach')
+    await nextTick()
+
+    expect(getRoomDetail).toHaveBeenCalledTimes(1)
+    expect(getRoomDetail).toHaveBeenCalledWith('room-1', {
+      before: 'message-151',
+      limit: 150,
+      history: true,
+    })
+
+    resolvePage({
+      room: { id: 'room-1', name: 'Room 1' },
+      messages: [makeMessage('message-150')],
+      agents: [],
+      members: [],
+      total: 300,
+      hasMore: true,
+    })
+    await vi.waitFor(() => {
+      expect(mockRestoreViewportPosition).toHaveBeenCalledWith(viewport, 30)
+    })
+
+    expect(store.messages.map(message => message.id)).toEqual(['message-150', 'message-151'])
   })
 })

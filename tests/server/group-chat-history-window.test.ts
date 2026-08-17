@@ -43,7 +43,7 @@ import { healthRoutes } from '../../packages/server/src/routes/health'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
-import { GroupRoomSummaryService } from '../../packages/server/src/services/hermes/group-chat/room-summary'
+import { GroupRoomSummaryService, type GroupSummaryRunner } from '../../packages/server/src/services/hermes/group-chat/room-summary'
 
 function makeDb(): DatabaseSync {
   return new DatabaseSync(':memory:')
@@ -120,6 +120,48 @@ describe('group chat history windows', () => {
     )
   })
 
+  it('bounds tool results only in the outbound UI page and retains full group history', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const completeResult = 'tool-result-'.repeat(400)
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'tool-result-1',
+      role: 'tool',
+      tool_name: 'read_file',
+      tool_call_id: 'call-1',
+      content: completeResult,
+    }) as any)
+
+    const [outbound] = storage.getRecentMessagesForUI('room-1') as Array<Record<string, any>>
+
+    expect(outbound.content).toHaveLength(1_000)
+    expect(outbound.content_truncated).toBe(true)
+    expect(outbound.content_original_length).toBe(completeResult.length)
+    expect(storage.getMessage('tool-result-1')?.content).toBe(completeResult)
+    expect(storage.getMessagesForContext('room-1')[0]?.content).toBe(completeResult)
+  })
+
+  it('keeps workspace diff payloads complete in the outbound UI page', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const completeDiff = JSON.stringify({
+      kind: 'workspace_diff',
+      files: [{ path: 'large.ts', patch: '+'.repeat(4_000) }],
+    })
+    storage.saveMessageAndRefreshRoom(makeMessage({
+      id: 'workspace-diff-1',
+      role: 'tool',
+      tool_name: 'workspace_diff',
+      tool_call_id: 'workspace_diff:run-1',
+      content: completeDiff,
+    }) as any)
+
+    const [outbound] = storage.getRecentMessagesForUI('room-1') as Array<Record<string, any>>
+
+    expect(outbound.content).toBe(completeDiff)
+    expect(outbound.content_truncated).toBeUndefined()
+  })
+
   it('does not split same-timestamp multipart assistant/tool runs across UI page boundaries', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -144,6 +186,54 @@ describe('group chat history windows', () => {
       'run-1_part_0_toolcall_t',
       'run-1_part_0_toolresult_t',
     ])
+  })
+
+  it('expands complete-history pages instead of splitting an Agent run at the nominal boundary', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+
+    const runMessages = [
+      makeMessage({
+        id: 'boundary-run_part_0',
+        role: 'assistant',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: 'starting',
+        timestamp: 100,
+      }),
+      makeMessage({
+        id: 'boundary-run_part_0_toolcall_t',
+        role: 'assistant',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: '',
+        timestamp: 101,
+      }),
+      makeMessage({
+        id: 'boundary-run_part_0_toolresult_t',
+        role: 'tool',
+        senderId: 'agent-1',
+        senderName: 'Agent',
+        content: 'tool result',
+        timestamp: 102,
+      }),
+    ]
+    const newerMessages = Array.from({ length: 149 }, (_value, index) => makeMessage({
+      id: `newer-${String(index + 1).padStart(3, '0')}`,
+      content: `newer ${index + 1}`,
+      timestamp: 1_000 + index,
+    }))
+    for (const message of [...runMessages, ...newerMessages]) {
+      storage.saveMessageAndRefreshRoom(message as any)
+    }
+
+    const page = storage.getHistoryPageForUI('room-1', 150)
+
+    expect(page.messages).toHaveLength(152)
+    expect(page.messages.slice(0, 3).map(message => message.id)).toEqual(
+      runMessages.map(message => message.id),
+    )
+    expect(page.hasMore).toBe(false)
   })
 
   it('bounds same-timestamp overflow while retaining the newest context messages', () => {
@@ -710,6 +800,583 @@ describe('group chat history windows', () => {
     expect(storage.getRoom('room-1')?.totalTokens).toBe(expected)
   })
 
+  it('summarizes the oldest pending public utterances despite a tool-heavy tail', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'test',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 4,
+    })
+    storage.addMessage(makeMessage({ id: 'anchor', content: 'already summarized', timestamp: 1 }) as any)
+    storage.saveRoomSummary({
+      roomId: 'room-1',
+      summary: 'earlier summary',
+      summaryThroughMessageId: 'anchor',
+      summaryThroughMessageTimestamp: 1,
+      summarizedTurnCount: 1,
+      status: 'success',
+      version: 1,
+      updatedAt: 1,
+      lastError: null,
+    })
+    storage.addMessage(makeMessage({ id: 'user-1', content: 'first pending', timestamp: 2 }) as any)
+    storage.addMessage(makeMessage({ id: 'agent-1', role: 'assistant', senderId: 'agent', senderName: 'Agent', content: 'public reply', timestamp: 3 }) as any)
+    storage.addMessage(makeMessage({ id: 'user-2', content: 'second pending', timestamp: 4 }) as any)
+    storage.addMessage(makeMessage({ id: 'agent-2', role: 'assistant', senderId: 'agent', senderName: 'Agent', content: 'public handoff', timestamp: 5 }) as any)
+    for (let index = 0; index < 600; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `tool-${String(index).padStart(3, '0')}`,
+        role: 'tool',
+        senderId: 'agent',
+        senderName: 'Agent',
+        tool_call_id: `call-${index}`,
+        tool_name: 'terminal',
+        content: `tool output ${index}`,
+        timestamp: 100 + index,
+      }) as any)
+    }
+
+    const runner = vi.fn<GroupSummaryRunner>(async () => 'updated summary')
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'agent-2')
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(runner.mock.calls[0][0].messages.map(item => item.id)).toEqual([
+      'user-1', 'agent-1', 'user-2', 'agent-2',
+    ])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summary: 'updated summary',
+      summaryThroughMessageId: 'agent-2',
+      summarizedTurnCount: 5,
+      status: 'success',
+    })
+  })
+
+  it('continues oldest-first across multiple bounded summary batches', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'test',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+    })
+    for (let index = 0; index < 520; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `public-${String(index).padStart(3, '0')}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Agent',
+        content: `public utterance ${index}`,
+        timestamp: index + 1,
+      }) as any)
+    }
+
+    const runner = vi.fn<GroupSummaryRunner>(async input => `summary-${input.messages.at(-1)?.id}`)
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'public-519')
+
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(runner.mock.calls[0][0].messages[0]?.id).toBe('public-000')
+    expect(runner.mock.calls[0][0].messages.at(-1)?.id).toBe('public-499')
+    expect(runner.mock.calls[1][0].messages[0]?.id).toBe('public-500')
+    expect(runner.mock.calls[1][0].messages.at(-1)?.id).toBe('public-519')
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'public-519',
+      summarizedTurnCount: 520,
+      version: 2,
+      status: 'success',
+    })
+  })
+
+  it('continues an eligible backlog beyond three batches without a later message', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'test',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 20,
+    })
+    for (let index = 0; index < 1_600; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `backlog-${String(index).padStart(4, '0')}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Agent',
+        content: `backlog utterance ${index}`,
+        timestamp: index + 1,
+      }) as any)
+    }
+
+    const runner = vi.fn<GroupSummaryRunner>(async input => `summary-${input.messages.at(-1)?.id}`)
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'backlog-1599')
+
+    expect(runner).toHaveBeenCalledTimes(4)
+    expect(runner.mock.calls.flatMap(call => call[0].messages.map(message => message.id))).toEqual(
+      Array.from({ length: 1_600 }, (_value, index) => `backlog-${String(index).padStart(4, '0')}`),
+    )
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'backlog-1599',
+      summarizedTurnCount: 1_600,
+      version: 4,
+      status: 'success',
+    })
+  })
+
+  it('retains frozen-cutoff drain authority after a later batch fails', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    const onePerBatch = 'bounded token '.repeat(10_000)
+    storage.addMessage(makeMessage({ id: 'u1', content: `${onePerBatch} one`, timestamp: 1 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a1', role: 'assistant', senderId: 'agent', senderName: 'Agent',
+      content: `${onePerBatch} two`, timestamp: 2,
+    }) as any)
+
+    let attempt = 0
+    const runner = vi.fn<GroupSummaryRunner>(async (input: Parameters<GroupSummaryRunner>[0]) => {
+      attempt += 1
+      if (attempt === 2) throw new Error('second batch failed')
+      return `summary-${input.messages.at(-1)?.id}`
+    })
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+
+    await service.checkAfterMessage('room-1', 'a1')
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'u1', summarizedTurnCount: 1, version: 1,
+      status: 'failed', lastError: 'second batch failed',
+    })
+    expect(storage.getRoomSummaryDrainThroughMessageId('room-1')).toBe('a1')
+
+    await service.checkAfterMessage('room-1', 'a1')
+
+    expect(runner).toHaveBeenCalledTimes(3)
+    expect(runner.mock.calls[2][0].messages.map(message => message.id)).toEqual(['a1'])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'a1', summarizedTurnCount: 2, version: 2,
+      status: 'success', lastError: null,
+    })
+    expect(storage.getRoomSummaryDrainThroughMessageId('room-1')).toBe('')
+  })
+
+  it('persists frozen-cutoff drain authority across an owner handoff after a partial commit', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    const onePerBatch = 'bounded token '.repeat(10_000)
+    storage.addMessage(makeMessage({ id: 'u1', content: `${onePerBatch} one`, timestamp: 1 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a1', role: 'assistant', senderId: 'agent', senderName: 'Agent',
+      content: `${onePerBatch} two`, timestamp: 2,
+    }) as any)
+
+    const originalCommit = storage.commitRoomSummaryRun.bind(storage)
+    let simulateOwnerLoss = true
+    vi.spyOn(storage, 'commitRoomSummaryRun').mockImplementation((...args) => {
+      const committed = originalCommit(...args)
+      if (committed && simulateOwnerLoss) {
+        simulateOwnerLoss = false
+        return false
+      }
+      return committed
+    })
+    const runner = vi.fn<GroupSummaryRunner>(async input => `summary-${input.messages.at(-1)?.id}`)
+    const firstService = new GroupRoomSummaryService(storage, undefined, runner)
+    const secondService = new GroupRoomSummaryService(storage, undefined, runner)
+
+    await firstService.checkAfterMessage('room-1', 'a1')
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'u1', summarizedTurnCount: 1, version: 1,
+    })
+
+    storage.addMessage(makeMessage({ id: 'u2', content: 'newer below-threshold message', timestamp: 3 }) as any)
+    await secondService.checkAfterMessage('room-1', 'u2')
+
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(runner.mock.calls[1][0].messages.map(message => message.id)).toEqual(['a1'])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'a1', summarizedTurnCount: 2, version: 2,
+    })
+  })
+
+  it('does not inherit draining for a later cutoff below the threshold', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    storage.addMessage(makeMessage({ id: 'u1', content: 'one', timestamp: 1 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a1', role: 'assistant', senderId: 'agent', senderName: 'Agent', content: 'two', timestamp: 2,
+    }) as any)
+
+    let release!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    const runner = vi.fn<GroupSummaryRunner>(async input => {
+      if (input.messages.some(message => message.id === 'a1')) await waiting
+      return `summary-${input.messages.at(-1)?.id}`
+    })
+    const firstService = new GroupRoomSummaryService(storage, undefined, runner)
+    const secondService = new GroupRoomSummaryService(storage, undefined, runner)
+    const first = firstService.checkAfterMessage('room-1', 'a1')
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1))
+
+    storage.addMessage(makeMessage({ id: 'u2', content: 'three', timestamp: 3 }) as any)
+    const second = secondService.checkAfterMessage('room-1', 'u2')
+    await new Promise<void>(resolve => setTimeout(resolve, 150))
+    expect(runner).toHaveBeenCalledTimes(1)
+
+    release()
+    await Promise.all([first, second])
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'a1', summarizedTurnCount: 2, version: 1,
+    })
+  })
+
+  it('rechecks a later cutoff from another service after the active claim commits', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    storage.addMessage(makeMessage({ id: 'u1', content: 'one', timestamp: 1 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a1', role: 'assistant', senderId: 'agent', senderName: 'Agent', content: 'two', timestamp: 2,
+    }) as any)
+
+    let release!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    const runner = vi.fn<GroupSummaryRunner>(async input => {
+      if (input.messages.some(message => message.id === 'a1')) await waiting
+      return `summary-${input.messages.at(-1)?.id}`
+    })
+    const firstService = new GroupRoomSummaryService(storage, undefined, runner)
+    const secondService = new GroupRoomSummaryService(storage, undefined, runner)
+    const first = firstService.checkAfterMessage('room-1', 'a1')
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1))
+
+    storage.addMessage(makeMessage({ id: 'u2', content: 'three', timestamp: 3 }) as any)
+    storage.addMessage(makeMessage({
+      id: 'a2', role: 'assistant', senderId: 'agent', senderName: 'Agent', content: 'four', timestamp: 4,
+    }) as any)
+    const second = secondService.checkAfterMessage('room-1', 'a2')
+    await new Promise<void>(resolve => setTimeout(resolve, 150))
+    expect(runner).toHaveBeenCalledTimes(1)
+
+    release()
+    await Promise.all([first, second])
+
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(runner.mock.calls[1][0].messages.map(message => message.id)).toEqual(['u2', 'a2'])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'a2', summarizedTurnCount: 4, version: 2,
+    })
+  })
+
+  it('continues across a same-timestamp batch boundary without replay or loss', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 20,
+    })
+    for (let index = 0; index < 700; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `same-${String(index).padStart(3, '0')}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Agent',
+        content: `same timestamp ${index}`,
+        timestamp: 42,
+      }) as any)
+    }
+    const runner = vi.fn<GroupSummaryRunner>(async input => `summary-${input.messages.at(-1)?.id}`)
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'same-699')
+
+    expect(runner).toHaveBeenCalledTimes(2)
+    expect(runner.mock.calls.flatMap(call => call[0].messages.map(message => message.id))).toEqual(
+      Array.from({ length: 700 }, (_value, index) => `same-${String(index).padStart(3, '0')}`),
+    )
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'same-699', summarizedTurnCount: 700, version: 2,
+    })
+  })
+
+  it('continues across a real multipart same-timestamp batch boundary', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 20,
+    })
+    for (let index = 1; index <= 1_200; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `run_part_${index}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Agent',
+        content: `multipart ${index}`,
+        timestamp: 42,
+      }) as any)
+    }
+    const runner = vi.fn<GroupSummaryRunner>(async input => `summary-${input.messages.at(-1)?.id}`)
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'run_part_1200')
+
+    expect(runner).toHaveBeenCalledTimes(3)
+    expect(runner.mock.calls.flatMap(call => call[0].messages.map(message => message.id))).toEqual(
+      Array.from({ length: 1_200 }, (_value, index) => `run_part_${index + 1}`),
+    )
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'run_part_1200', summarizedTurnCount: 1_200, version: 3,
+    })
+  })
+
+  it('supports the configured maximum effective-utterance threshold', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', 'INVITE1', {
+      summaryProfile: 'default',
+      summaryProvider: 'openai',
+      summaryModel: 'test',
+      summaryApiMode: 'chat_completions',
+      summaryEveryTurns: 1_000,
+    })
+    for (let index = 0; index < 1_000; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `max-${String(index).padStart(4, '0')}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Agent',
+        content: `utterance ${index}`,
+        timestamp: index + 1,
+      }) as any)
+    }
+
+    const runner = vi.fn<GroupSummaryRunner>(async () => 'summary')
+    const service = new GroupRoomSummaryService(storage, undefined, runner)
+    await service.checkAfterMessage('room-1', 'max-0999')
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(runner.mock.calls[0][0].messages).toHaveLength(1_000)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'max-0999',
+      summarizedTurnCount: 1_000,
+    })
+  })
+
+  it('does not let serialized Tool traces consume the eligible summary scan limit', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', undefined, {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    for (let index = 0; index < 10_001; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `trace-${String(index).padStart(5, '0')}`,
+        role: 'assistant', senderId: 'agent', senderName: 'Worker',
+        content: '\u00a0[Worker]:\t[Calling tool: terminal with arguments: {}]',
+        timestamp: index + 1,
+      }) as any)
+    }
+    storage.addMessage(makeMessage({
+      id: 'valid-user', role: 'user', content: 'public request', timestamp: 20_000,
+    }) as any)
+    storage.addMessage(makeMessage({
+      id: 'valid-agent', role: 'assistant', senderId: 'agent', senderName: 'Worker',
+      content: 'public final answer', timestamp: 20_001,
+    }) as any)
+
+    const runner = vi.fn<GroupSummaryRunner>(async () => 'summary')
+    await new GroupRoomSummaryService(storage, undefined, runner)
+      .checkAfterMessage('room-1', 'valid-agent')
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(runner.mock.calls[0][0].messages.map(message => message.id)).toEqual([
+      'valid-user', 'valid-agent',
+    ])
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summaryThroughMessageId: 'valid-agent', summarizedTurnCount: 2,
+    })
+  })
+
+  it('keeps trace-like public words eligible when the marker has no word boundary', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', undefined, {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    storage.addMessage(makeMessage({
+      id: 'toolbar-user', role: 'user', content: '[Calling toolbar is useful]', timestamp: 1,
+    }) as any)
+    storage.addMessage(makeMessage({
+      id: 'resultant-agent', role: 'assistant', senderId: 'agent', senderName: 'Worker',
+      content: '[Tool resultant behavior is documented]', timestamp: 2,
+    }) as any)
+
+    const runner = vi.fn<GroupSummaryRunner>(async () => 'summary')
+    await new GroupRoomSummaryService(storage, undefined, runner)
+      .checkAfterMessage('room-1', 'resultant-agent')
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(runner.mock.calls[0][0].messages.map(message => message.id)).toEqual([
+      'toolbar-user', 'resultant-agent',
+    ])
+  })
+
+  it('does not let Unicode-whitespace-only rows consume the eligible summary scan limit', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', undefined, {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'test',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 2,
+    })
+    for (let index = 0; index < 10_001; index += 1) {
+      storage.addMessage(makeMessage({
+        id: `blank-${String(index).padStart(5, '0')}`,
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        senderId: index % 2 === 0 ? 'human' : 'agent',
+        senderName: index % 2 === 0 ? 'Human' : 'Worker',
+        content: '\u00a0',
+        timestamp: index + 1,
+      }) as any)
+    }
+    storage.addMessage(makeMessage({
+      id: 'valid-user-after-blanks', role: 'user', content: 'public request', timestamp: 20_000,
+    }) as any)
+    storage.addMessage(makeMessage({
+      id: 'valid-agent-after-blanks', role: 'assistant', senderId: 'agent', senderName: 'Worker',
+      content: 'public final answer', timestamp: 20_001,
+    }) as any)
+
+    const runner = vi.fn<GroupSummaryRunner>(async () => 'summary')
+    await new GroupRoomSummaryService(storage, undefined, runner)
+      .checkAfterMessage('room-1', 'valid-agent-after-blanks')
+
+    expect(runner).toHaveBeenCalledTimes(1)
+    expect(runner.mock.calls[0][0].messages.map(message => message.id)).toEqual([
+      'valid-user-after-blanks', 'valid-agent-after-blanks',
+    ])
+  })
+
+  it('enforces persisted summary claims and rejects stale run tokens', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const initial = {
+      roomId: 'room-1', summary: '', summaryThroughMessageId: '', summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0, status: 'idle' as const, version: 0, updatedAt: 0, lastError: null,
+    }
+    storage.saveRoomSummary(initial)
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-a', Date.now() + 60_000)).toBe(true)
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-b', Date.now() + 60_000)).toBe(false)
+
+    storage.saveRoomSummary({ ...initial, summary: 'manual', status: 'success', version: 1 })
+    expect(storage.commitRoomSummaryRun('room-1', 'run-a', {
+      ...initial, summary: 'stale', status: 'success', version: 1,
+    })).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({ summary: 'manual', version: 1 })
+  })
+
+  it('rejects a persisted summary result after another instance changes summary config', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1', undefined, {
+      summaryProfile: 'default', summaryProvider: 'openai', summaryModel: 'old-model',
+      summaryApiMode: 'chat_completions', summaryEveryTurns: 20,
+    })
+    const initial = {
+      roomId: 'room-1', summary: '', summaryThroughMessageId: '', summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0, status: 'idle' as const, version: 0, updatedAt: 0, lastError: null,
+    }
+    storage.saveRoomSummary(initial)
+    const generation = storage.getRoom('room-1')!.summaryGeneration
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-old-config', Date.now() + 60_000, generation)).toBe(true)
+
+    storage.updateRoomConfig('room-1', { summaryModel: 'new-model' })
+    expect(storage.commitRoomSummaryRun('room-1', 'run-old-config', {
+      ...initial, summary: 'stale model result', status: 'success', version: 1,
+    })).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      summary: '', status: 'summarizing', version: 0,
+    })
+  })
+
+  it('cannot recreate a deleted Room summary from a stale claim or result', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const initial = {
+      roomId: 'room-1', summary: '', summaryThroughMessageId: '', summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0, status: 'idle' as const, version: 0, updatedAt: 0, lastError: null,
+    }
+    storage.saveRoomSummary(initial)
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-before-delete', Date.now() + 60_000)).toBe(true)
+    storage.deleteRoom('room-1')
+
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-after-delete', Date.now() + 60_000)).toBe(false)
+    expect(storage.commitRoomSummaryRun('room-1', 'run-before-delete', {
+      ...initial, summary: 'must not return', status: 'success', version: 1,
+    })).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toBeNull()
+  })
+
+  it('rejects a stale manual summary write after Room clear or deletion', () => {
+    const storage = groupServer.getStorage()
+    const initial = {
+      roomId: 'room-1', summary: 'before', summaryThroughMessageId: 'anchor',
+      summaryThroughMessageTimestamp: 1, summarizedTurnCount: 1,
+      status: 'success' as const, version: 1, updatedAt: 1, lastError: null,
+    }
+
+    storage.saveRoom('room-1', 'Room 1')
+    storage.saveRoomSummary(initial)
+    const clearGeneration = storage.getRoom('room-1')!.summaryGeneration
+    storage.clearRoomContext('room-1')
+    expect(storage.saveRoomSummaryIfCurrent(
+      { ...initial, summary: 'stale after clear', version: 2 },
+      clearGeneration,
+      initial.version,
+      initial.summaryThroughMessageId,
+    )).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toBeNull()
+
+    storage.saveRoomSummary({ ...initial, summary: 'after clear' })
+    const deleteGeneration = storage.getRoom('room-1')!.summaryGeneration
+    storage.deleteRoom('room-1')
+    expect(storage.saveRoomSummaryIfCurrent(
+      { ...initial, summary: 'stale after delete', version: 2 },
+      deleteGeneration,
+      initial.version,
+      initial.summaryThroughMessageId,
+    )).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toBeNull()
+  })
+
+  it('recovers only expired persisted summary leases', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const initial = {
+      roomId: 'room-1', summary: '', summaryThroughMessageId: '', summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0, status: 'idle' as const, version: 0, updatedAt: 0, lastError: null,
+    }
+    storage.saveRoomSummary(initial)
+    expect(storage.claimRoomSummaryRun('room-1', initial, 'run-a', 10_000)).toBe(true)
+    expect(storage.recoverExpiredRoomSummaryRun('room-1', 9_999)).toBe(false)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({ status: 'summarizing' })
+    expect(storage.recoverExpiredRoomSummaryRun('room-1', 10_000)).toBe(true)
+    expect(storage.getRoomSummary('room-1')).toMatchObject({
+      status: 'failed', lastError: 'Summary run was interrupted', version: 0,
+    })
+  })
+
   it('retains older messages while limiting shared context to the latest 500', () => {
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -745,9 +1412,11 @@ describe('group chat history windows', () => {
       seeded.slice(1).map(message => message.id),
     )
     expect(storage.getRecentMessagesForUI('room-1', 150, 450).map(message => message.id)).toEqual(
-      seeded.slice(1, 51).map(message => message.id),
+      seeded.slice(0, 51).map(message => message.id),
     )
-    expect(storage.getRecentMessagesForUI('room-1', 150, 500)).toEqual([])
+    expect(storage.getRecentMessagesForUI('room-1', 150, 500).map(message => message.id)).toEqual([
+      'msg-1',
+    ])
     expect(contextMessages).toHaveLength(500)
     expect(contextMessages.some(message => message.id === 'msg-1')).toBe(false)
     expect(context.summary).toBe('Earlier summary')
@@ -763,6 +1432,93 @@ describe('group chat history windows', () => {
     expect(storage.getMessageCount('room-1')).toBe(0)
     expect(storage.getMessage('msg-1')).toBeNull()
     expect(storage.getMessagesForContext('room-1')).toEqual([])
+  })
+
+  it('paginates the complete UI history beyond the 500-message Agent context window', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const seeded = Array.from({ length: 725 }, (_value, index) => makeMessage({
+      id: `history-${String(index + 1).padStart(4, '0')}`,
+      content: `history ${index + 1}`,
+      timestamp: index + 1,
+    }))
+    for (const message of seeded) storage.saveMessageAndRefreshRoom(message as any)
+
+    const pages: string[][] = []
+    let offset = 0
+    while (offset < seeded.length) {
+      const page = storage.getRecentMessagesForUI('room-1', 150, offset)
+      pages.unshift(page.map(message => message.id))
+      offset += page.length
+      if (page.length === 0) break
+    }
+
+    expect(pages.flat()).toEqual(seeded.map(message => message.id))
+    expect(new Set(pages.flat())).toHaveLength(seeded.length)
+    expect(storage.getRecentMessagesForUI('room-1', 150, 600)).toHaveLength(125)
+    expect(storage.getRecentMessagesForUI('room-1', 150, 725)).toEqual([])
+    expect(storage.getMessagesForContext('room-1')).toHaveLength(500)
+    expect(storage.getMessagesForContext('room-1')[0]?.id).toBe('history-0226')
+  })
+
+  it('keyset-paginates 13,000+ archived messages with stable ids and equal timestamps', () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-1', 'Room 1')
+    const boundaryRunIndexes = new Set([12_923, 12_924, 12_925])
+    const seeded = Array.from({ length: 13_075 }, (_value, index) => makeMessage({
+      id: `archive-${String(index + 1).padStart(5, '0')}`,
+      content: `archive ${index + 1}`,
+      timestamp: 1_900_000_000 + Math.floor(index / 225),
+      ...(boundaryRunIndexes.has(index)
+        ? {
+            role: index === 12_924 ? 'tool' : 'assistant',
+            run_id: 'archive-boundary-run',
+            senderId: 'agent-1',
+            senderName: 'Agent',
+          }
+        : {}),
+    }))
+    const insert = dbMock.current!.prepare(
+      `INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    dbMock.current!.exec('BEGIN')
+    try {
+      for (const message of seeded) {
+        insert.run(
+          message.id,
+          message.roomId,
+          message.senderId,
+          message.senderName,
+          message.content,
+          message.timestamp,
+          message.role,
+          message.run_id || null,
+        )
+      }
+      dbMock.current!.exec('COMMIT')
+    } catch (error) {
+      dbMock.current!.exec('ROLLBACK')
+      throw error
+    }
+
+    const pages: string[][] = []
+    let beforeMessageId: string | undefined
+    do {
+      const page = storage.getHistoryPageForUI('room-1', 150, beforeMessageId)
+      pages.unshift(page.messages.map(message => message.id))
+      beforeMessageId = page.hasMore ? page.messages[0]?.id : undefined
+      if (!page.hasMore) break
+    } while (beforeMessageId)
+
+    const loaded = pages.flat()
+    expect(loaded).toEqual(seeded.map(message => message.id))
+    expect(new Set(loaded)).toHaveLength(seeded.length)
+    expect(pages).toHaveLength(Math.ceil(seeded.length / 150))
+    const boundaryRunIds = [...boundaryRunIndexes].map(index => seeded[index].id)
+    expect(pages.filter(page => boundaryRunIds.some(id => page.includes(id)))).toEqual([
+      expect.arrayContaining(boundaryRunIds),
+    ])
   })
 
   it('builds Agent context from the full retained transcript rather than the UI page', () => {

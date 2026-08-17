@@ -7,6 +7,7 @@ const {
   mockPatchContexts,
   mockTestDraft,
   mockAppendAudit,
+  mockInvalidateProviderRuntime,
 } = vi.hoisted(() => {
   class ProviderEditorError extends Error {
     constructor(
@@ -25,6 +26,7 @@ const {
     mockPatchContexts: vi.fn(),
     mockTestDraft: vi.fn(),
     mockAppendAudit: vi.fn(),
+    mockInvalidateProviderRuntime: vi.fn(),
   }
 })
 
@@ -38,6 +40,10 @@ vi.mock('../../packages/server/src/services/hermes/provider-editor', () => ({
 
 vi.mock('../../packages/server/src/db/hermes/provider-audit-store', () => ({
   appendProviderAuditEvent: mockAppendAudit,
+}))
+
+vi.mock('../../packages/server/src/services/coding-agents', () => ({
+  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
@@ -127,6 +133,37 @@ describe('provider editor controllers', () => {
       details: { credential_configured: true },
     }))
     expect(JSON.stringify(mockAppendAudit.mock.calls)).not.toContain('api_key')
+    expect(mockInvalidateProviderRuntime).not.toHaveBeenCalled()
+  })
+
+  it.each(['base_url', 'api_mode', 'api_key_replaced', 'api_key_cleared'])(
+    'invalidates matching Coding Agent runtimes after a successful %s change',
+    async (changedField) => {
+      mockPatchEditor.mockResolvedValueOnce({
+        before: { ...detail, revision: 'revision-1' },
+        detail,
+        changed: [changedField],
+      })
+      const ctx = makeCtx({ base_url: 'https://next.example/v1' }, '"revision-1"')
+
+      await patchEditor(ctx)
+
+      expect(mockInvalidateProviderRuntime).toHaveBeenCalledWith('research', 'custom:test-provider')
+    },
+  )
+
+  it('does not invalidate a runtime when the provider update fails', async () => {
+    mockPatchEditor.mockRejectedValueOnce(new MockProviderEditorError(
+      'Provider configuration changed; reload before saving',
+      412,
+      'REVISION_CONFLICT',
+      detail,
+    ))
+    const ctx = makeCtx({ base_url: 'https://next.example/v1' }, '"revision-1"')
+
+    await patchEditor(ctx)
+
+    expect(mockInvalidateProviderRuntime).not.toHaveBeenCalled()
   })
 
   it('returns HTTP 412 with current redacted state and audits the conflict', async () => {

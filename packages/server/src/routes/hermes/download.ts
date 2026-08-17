@@ -8,6 +8,7 @@ import {
   resolveHermesPath,
 } from '../../services/hermes/file-provider'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
+import { createAppImagePreview } from '../../services/hermes/app-image-preview'
 
 export const downloadRoutes = new Router()
 
@@ -70,6 +71,7 @@ function requestedProfile(ctx: any): string {
 downloadRoutes.get('/api/hermes/download', async (ctx) => {
   const filePath = ctx.query.path as string | undefined
   const fileName = ctx.query.name as string | undefined
+  const variant = ctx.query.variant as string | undefined
 
   if (!filePath) {
     ctx.status = 400
@@ -94,15 +96,23 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
 
     // Determine filename and MIME type
     const name = fileName || basename(validPath)
-    const mime = getMimeType(name)
+    let mime = getMimeType(name)
+    let responseData = data
+    if (variant === 'app-image') {
+      const preview = await createAppImagePreview(data, mime)
+      responseData = preview.data
+      mime = preview.mime
+      ctx.set('X-Hermes-Image-Variant', preview.optimized ? 'compressed' : 'original')
+      ctx.set('X-Hermes-Original-Bytes', String(preview.originalBytes))
+    }
 
     // Set response headers
     ctx.set('Content-Type', mime)
     ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(name)}"; filename*=UTF-8''${encodeURIComponent(name)}`)
-    ctx.set('Content-Length', String(data.length))
+    ctx.set('Content-Length', String(responseData.length))
     ctx.set('Cache-Control', 'no-cache')
     ctx.set('X-Content-Type-Options', 'nosniff')
-    ctx.body = data
+    ctx.body = responseData
   } catch (err: any) {
     const code = err.code || 'unknown'
     const statusMap: Record<string, number> = {

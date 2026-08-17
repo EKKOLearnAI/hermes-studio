@@ -57,6 +57,12 @@ type ScanOptions = {
   includeSelf?: boolean
 }
 
+export type LanIPv4Interface = {
+  name: string
+  address: string
+  netmask: string
+}
+
 let responderSockets: DiscoverySocket[] = []
 let cache: LanDiscoveryState = {
   scanning: false,
@@ -138,12 +144,13 @@ export function isPrivateOrLoopbackIPv4(ip: string): boolean {
   return false
 }
 
-function getIpv4Interfaces() {
+function getIpv4Interfaces(): LanIPv4Interface[] {
   try {
-    return Object.values(networkInterfaces())
-      .flat()
-      .filter(item => item && item.family === 'IPv4' && !item.internal && item.address && item.netmask)
-      .map(item => ({ address: item!.address, netmask: item!.netmask }))
+    return Object.entries(networkInterfaces()).flatMap(([name, addresses]) => (
+      (addresses || [])
+        .filter(item => item.family === 'IPv4' && !item.internal && item.address && item.netmask)
+        .map(item => ({ name, address: item.address, netmask: item.netmask }))
+    ))
   } catch {
     return []
   }
@@ -163,9 +170,40 @@ function broadcastAddress(address: string, netmask: string): string | null {
   return intToIpv4((ip | (~mask >>> 0)) >>> 0)
 }
 
-function selectLocalAddress(remoteAddress: string): string {
-  const remote = ipv4ToInt(remoteAddress)
-  const interfaces = getIpv4Interfaces()
+function isLikelyVirtualInterface(name: string): boolean {
+  const normalized = String(name || '').trim().toLowerCase()
+  return /^(?:utun|tun(?:\d|$)|tap(?:\d|$)|ppp(?:\d|$)|ipsec|wg(?:\d|$)|gif\d|stf\d|awdl\d|llw\d|bridge\d|docker\d|veth|virbr|vmnet|vboxnet|br-)/.test(normalized)
+    || /(?:vpn|openvpn|wireguard|wintun|tailscale|zerotier|zero tier|hamachi|clash|mihomo|sing[ -]?box|surge|cloudflare warp|tunnel|virtual|hyper-v|wsl|隧道|虚拟)/.test(normalized)
+}
+
+function isLikelyPhysicalInterface(name: string): boolean {
+  const normalized = String(name || '').trim().toLowerCase()
+  return /^(?:en\d+|eth\d+|enp\w+|eno\w+|ens\w+|wlan\d+|wl\w+)$/.test(normalized)
+    || /(?:wi-?fi|wireless|wlan|ethernet|以太网|无线)/.test(normalized)
+}
+
+function isRfc1918IPv4(ip: string): boolean {
+  const value = ipv4ToInt(ip)
+  if (value === null) return false
+  const first = (value >>> 24) & 255
+  const second = (value >>> 16) & 255
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
+}
+
+function interfacePreference(iface: LanIPv4Interface): number {
+  let score = 0
+  if (isLikelyPhysicalInterface(iface.name)) score += 100
+  if (isRfc1918IPv4(iface.address)) score += 50
+  if (iface.address.startsWith('169.254.')) score -= 50
+  if (iface.netmask === '255.255.255.255') score -= 20
+  return score
+}
+
+export function selectLanIPv4Address(
+  remoteAddress: string,
+  interfaces: LanIPv4Interface[] = getIpv4Interfaces(),
+): string {
+  const remote = ipv4ToInt(normalizeRemoteAddress(remoteAddress))
   if (remote !== null) {
     for (const iface of interfaces) {
       const ip = ipv4ToInt(iface.address)
@@ -173,7 +211,71 @@ function selectLocalAddress(remoteAddress: string): string {
       if (ip !== null && mask !== null && (ip & mask) === (remote & mask)) return iface.address
     }
   }
-  return interfaces[0]?.address || '127.0.0.1'
+
+  const nonVirtualInterfaces = interfaces.filter(iface => !isLikelyVirtualInterface(iface.name))
+  const candidates = nonVirtualInterfaces.length ? nonVirtualInterfaces : interfaces
+  return candidates
+    .map((iface, index) => ({ iface, index, score: interfacePreference(iface) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.iface.address || '127.0.0.1'
+}
+
+function normalizeRemoteAddress(value: string): string {
+  const address = String(value || '').trim()
+  return address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address
+}
+
+export function getLanBackendUrl(
+  remoteAddress = '',
+  httpPort = config.port,
+  interfaces: LanIPv4Interface[] = getIpv4Interfaces(),
+): string {
+  const advertised = normalizeAdvertisedOrigin(config.lanAdvertiseUrl)
+  if (advertised) return advertised
+  const address = selectLanIPv4Address(remoteAddress, interfaces)
+  return `http://${address}:${httpPort}`
+}
+
+export function getLanBackendUrlForRequest(
+  remoteAddress = '',
+  requestOrigin = '',
+  httpPort = config.port,
+  advertisedUrl = config.lanAdvertiseUrl,
+  interfaces: LanIPv4Interface[] = getIpv4Interfaces(),
+): string {
+  const advertised = normalizeAdvertisedOrigin(advertisedUrl)
+  if (advertised) return advertised
+  const requested = normalizeAdvertisedOrigin(requestOrigin, true)
+  if (requested) {
+    const requestedHostname = new URL(requested).hostname
+    const requestedInterface = interfaces.find(iface => iface.address === requestedHostname)
+    const hasNonVirtualInterface = interfaces.some(iface => !isLikelyVirtualInterface(iface.name))
+    if (!requestedInterface || !isLikelyVirtualInterface(requestedInterface.name) || !hasNonVirtualInterface) {
+      return requested
+    }
+  }
+  const address = selectLanIPv4Address(remoteAddress, interfaces)
+  return `http://${address}:${httpPort}`
+}
+
+function normalizeAdvertisedOrigin(value: string, rejectLoopback = false): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw.includes('://') ? raw : `http://${raw}`)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    if (!url.hostname || url.username || url.password) return ''
+    const hostname = url.hostname.toLowerCase()
+    if (rejectLoopback && (
+      hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || hostname === '::1'
+      || hostname === '0.0.0.0'
+      || hostname.startsWith('127.')
+    )) return ''
+    return url.origin
+  } catch {
+    return ''
+  }
 }
 
 export function getDiscoveryTargetAddresses(): string[] {
@@ -208,7 +310,7 @@ async function buildAnnouncement(
   getSystemInfo: () => Promise<PublicSystemInfo>,
 ): Promise<DiscoveryAnnouncement> {
   const info = await getCachedLocalInfo(getSystemInfo)
-  const localAddress = selectLocalAddress(remoteAddress)
+  const localAddress = selectLanIPv4Address(remoteAddress)
   return {
     type: 'hermes.announce',
     version: DISCOVERY_VERSION,

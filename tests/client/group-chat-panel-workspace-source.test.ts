@@ -2,6 +2,16 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('GroupChatPanel workspace save handling', () => {
+  it('offers Pi in ordinary and paired group chat and filters it as the Pi provider target', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const linkView = readFileSync('packages/client/src/views/hermes/GroupChatLinkView.vue', 'utf8')
+
+    for (const source of [panel, linkView]) {
+      expect(source).toContain("{ label: 'Pi', value: 'pi' }")
+      expect(source).toMatch(/selectedAgentType\.value === 'pi'[\s\S]*?\\? 'pi'/)
+    }
+  })
+
   it('keeps free-text input available alongside clarification choices in single and group chat', () => {
     const sources = [
       readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8'),
@@ -192,7 +202,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(rail).toContain('v-for="member in railMembers"')
     expect(rail).toContain(':key="member.userId"')
     expect(rail).toContain('v-for="agent in store.agents"')
-    expect(rail).toContain('class="agent-avatar-rail-item"')
+    expect(rail).toContain('class="agent-avatar-rail-item agent-avatar-rail-agent"')
     expect(rail).toContain("'agent-avatar-rail-offline': agent.connectionStatus === 'offline'")
     expect(rail).toContain(':avatar="memberAvatarFor(member)"')
     expect(rail).toContain("'agent-avatar-rail-typing': member.userId !== store.userId && store.isUserTyping(member.userId)")
@@ -212,6 +222,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('.agent-avatar-rail-offline')
     expect(source).toContain('filter: grayscale(1)')
     expect(source).toContain('opacity: 0.42')
+    expect(source).toMatch(/\.agent-avatar-rail-agent \.agent-avatar\s*\{[^}]*border: 1px solid #fff;/s)
   })
 
   it('keeps invite-only chat free of settings and speech controls', () => {
@@ -353,9 +364,37 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain(':title="`${agent.name}\\n${agentRuntimeLabel(agent)}`"')
   })
 
+  it('renders the persistent room Agent grid in the stable leading room-list slot', () => {
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const roomAvatar = readFileSync('packages/client/src/components/hermes/group-chat/GroupRoomAgentAvatar.vue', 'utf8')
+    const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const runCard = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
+    const localRooms = panel.slice(
+      panel.indexOf('v-for="room in store.rooms"'),
+      panel.indexOf('<section v-if="remoteRooms.length"'),
+    )
+    const remoteRooms = panel.slice(panel.indexOf('<section v-if="remoteRooms.length"'))
+
+    expect(localRooms).toContain('<GroupRoomAgentAvatar')
+    expect(localRooms.indexOf('<GroupRoomAgentAvatar')).toBeLessThan(localRooms.indexOf('class="room-info"'))
+    expect(localRooms).not.toContain('class="room-icon"')
+    expect(remoteRooms).toContain('class="room-icon"')
+    expect(remoteRooms).not.toContain('<GroupRoomAgentAvatar')
+    expect(panel).toContain(':agents="store.roomAgentsForRoom(room.id)"')
+    expect(panel).toContain(':active-agent-ids="store.activeAgentIdsForRoom(room.id)"')
+    expect(roomAvatar).toContain('data-agent-count')
+    expect(roomAvatar).toContain('room-agent-grid-neutral')
+    expect(roomAvatar).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(list).toContain(':active="store.isAgentRunActive(')
+    expect(runCard).toContain("'run-avatar-active': active")
+    expect(runCard).toContain(':aria-busy="active"')
+    expect(runCard).toContain('@media (prefers-reduced-motion: reduce)')
+  })
+
   it('shows agent runtime details when hovering message avatars and can insert a mention into the group input', () => {
     const panelSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const avatarSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentMessageAvatar.vue', 'utf8')
+    const listSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
     const itemSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
     const runCardSource = readFileSync('packages/client/src/components/hermes/group-chat/GroupAgentRunCard.vue', 'utf8')
 
@@ -365,6 +404,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(avatarSource).toContain("t('profiles.model')")
     expect(avatarSource).toContain('class="message-agent-mention"')
     expect(avatarSource).toContain("@click.stop=\"emit('mention', agent)\"")
+    expect(avatarSource).toMatch(/\.message-agent-avatar > :deep\(\.profile-avatar-view\)\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(listSource).toMatch(/\.empty-agent-avatar\s*\{[^}]*border: 1px solid #fff;/s)
+    expect(listSource).not.toMatch(/\.empty-agent-avatar\s*\{[^}]*background:/s)
     expect(itemSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).toContain('<GroupAgentMessageAvatar')
     expect(runCardSource).not.toContain('run-agent-description')
@@ -431,6 +473,20 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain(":title=\"t('groupChat.roomSettings')\"")
   })
 
+  it('renders durable handoff stops under their source message with continue and settings actions', () => {
+    const list = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+
+    expect(list).toContain('handoffChainFor(msg)')
+    expect(list).toContain('data-handoff-chain-id')
+    expect(list).toContain("emit('continueHandoff'")
+    expect(list).toContain("emit('adjustHandoffSettings')")
+    expect(list).toContain('props.canManageHandoff && handoffChainFor(msg)!.status')
+    expect(panel).toContain(':can-manage-handoff="currentRoomCanManage"')
+    expect(panel).toContain('@continue-handoff="handleContinueHandoff"')
+    expect(panel).toContain('@adjust-handoff-settings="handleOpenRoomSettings"')
+  })
+
   it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
@@ -447,9 +503,9 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")
     expect(source).toContain('agent: selectedAgentType.value')
     expect(source).toContain("{ label: 'Hermes', value: 'hermes' }")
-    expect(source).toContain("{ label: 'Claude Code', value: 'claude' }")
+    expect(source).toContain("{ label: 'Claude', value: 'claude' }")
     expect(source).toContain("{ label: 'Codex', value: 'codex' }")
-    expect(source).toContain("{ label: 'Ekko Agent', value: 'ekko' }")
+    expect(source).toContain("{ label: 'Ekko', value: 'ekko' }")
     expect(source).toContain('v-model:value="agentName"')
     expect(source).toContain('v-model:value="agentDescription"')
     expect(source).toContain('avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value)')

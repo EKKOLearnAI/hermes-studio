@@ -15,24 +15,9 @@ import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import VoiceDialogueControls from './VoiceDialogueControls.vue'
 import BundleCreateModal from './BundleCreateModal.vue'
-import { useMicRecorder } from '@/composables/useMicRecorder'
-import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'
-import { useGlobalSpeech } from '@/composables/useSpeech'
-import { useVoiceDialogue } from '@/composables/useVoiceDialogue'
-import {
-  cancelLocalSttStream,
-  finishLocalSttStream,
-  pushLocalSttStreamChunk,
-  startLocalSttStream,
-  transcribeSpeech,
-} from '@/api/hermes/stt'
-import type { StoredSttProvider } from '@/api/hermes/stt-settings'
-import { useSttSettings } from '@/composables/useSttSettings'
-import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
 import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-session-commands'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
-import { isDesktopShell } from '@/utils/desktop-bridge'
-import { isMobileDevice } from '@/utils/device'
+import { normalizeComposerVoiceTranscript, useComposerVoiceInput } from '@/composables/useComposerVoiceInput'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -132,44 +117,6 @@ const messageReferencePreview = computed(() =>
 )
 const isMobileViewport = ref(typeof window !== 'undefined' ? isMobileChatInputViewport(window.innerWidth) : false)
 const manualTextareaResize = ref(false)
-const speech = useGlobalSpeech()
-const micRecorder = useMicRecorder({
-  messages: {
-    unsupported: t('chat.voiceInput.microphoneUnsupported'),
-    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
-  },
-})
-const pcmRecorder = usePcmStreamRecorder({
-  voiceActivityThreshold: 0.02,
-  messages: {
-    unsupported: t('chat.voiceInput.microphoneUnsupported'),
-    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
-  },
-})
-const localPcmRecorder = usePcmStreamRecorder({
-  continuous: true,
-  maxSegmentDurationMs: 1_000,
-  onChunk: queueLocalStreamChunk,
-  messages: {
-    unsupported: t('chat.voiceInput.microphoneUnsupported'),
-    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
-  },
-})
-const sttSettings = useSttSettings()
-const browserRecognition = useBrowserSpeechRecognition({
-  messages: {
-    unsupported: t('chat.voiceInput.browserSpeechUnsupported'),
-    failed: t('chat.voiceInput.browserSpeechFailed'),
-    failedWithReason: (reason) => t('chat.voiceInput.browserSpeechFailedWithReason', { error: reason }),
-  },
-})
-const activeVoiceCaptureMode = ref<'browser' | 'backend' | 'pcm' | 'local' | null>(null)
-const localStreamTranscript = ref('')
-const localStreamError = ref<Error | null>(null)
-let localStreamSessionId: string | null = null
-let localStreamGeneration = 0
-let localStreamQueue: Promise<void> = Promise.resolve()
-let localStreamFailure: unknown = null
 const configuredTextareaHeight = computed(() =>
   isMobileViewport.value ? null : clampChatInputHeight(settingsStore.display.chat_input_height),
 )
@@ -185,48 +132,8 @@ type SlashCommandOption = {
   opensBundleCreator?: boolean
 }
 
-function normalizeVoiceTranscript(text: string) {
-  return text.replace(/\s+/g, ' ').trim()
-}
-
-function backendTranscribeOptions(): {
-  provider: StoredSttProvider
-  language?: string
-  prompt?: string
-} {
-  if (sttSettings.provider.value === 'custom') {
-    return {
-      provider: 'custom',
-      language: sttSettings.customLanguage.value.trim() || undefined,
-      prompt: sttSettings.customPrompt.value.trim() || undefined,
-    }
-  }
-
-  if (sttSettings.provider.value === 'doubao') {
-    return {
-      provider: 'doubao',
-    }
-  }
-
-  if (sttSettings.provider.value !== 'browser') {
-    return {
-      provider: sttSettings.provider.value,
-    }
-  }
-
-  return {
-    provider: 'openai',
-    language: sttSettings.openaiLanguage.value.trim() || undefined,
-    prompt: sttSettings.openaiPrompt.value.trim() || undefined,
-  }
-}
-
-function browserCaptureLanguage() {
-  return sttSettings.openaiLanguage.value.trim() || sttSettings.customLanguage.value.trim() || ''
-}
-
 function insertVoiceTranscriptIntoInput(text: string) {
-  const normalizedTranscript = normalizeVoiceTranscript(text)
+  const normalizedTranscript = normalizeComposerVoiceTranscript(text)
   if (!normalizedTranscript) return
 
   const el = textareaRef.value
@@ -267,41 +174,11 @@ watch(
   },
 )
 
-const voiceDialogue = useVoiceDialogue({
-  transcribe: async (audio) => {
-    const { provider, language, prompt } = backendTranscribeOptions()
-    return transcribeSpeech({ audio, provider, language, prompt })
-  },
-  sendMessage: async (text) => {
-    insertVoiceTranscriptIntoInput(text)
-  },
-  stopOutputAudio: () => speech.stop(true),
+const voiceInput = useComposerVoiceInput({
+  insertTranscript: insertVoiceTranscriptIntoInput,
 })
-const voiceDialogueTranscript = computed(() => {
-  if (activeVoiceCaptureMode.value === 'local' && voiceDialogue.status.value === 'capturing') {
-    return localStreamTranscript.value
-  }
-  if (activeVoiceCaptureMode.value !== 'browser' || voiceDialogue.status.value !== 'capturing') {
-    return voiceDialogue.transcript.value
-  }
 
-  return normalizeVoiceTranscript([
-    browserRecognition.transcript.value,
-    browserRecognition.partialTranscript.value,
-  ].filter(Boolean).join(' '))
-})
-const shouldShowBrowserRecognitionError = computed(() =>
-  sttSettings.provider.value === 'browser' || activeVoiceCaptureMode.value === 'browser',
-)
-const voiceDialogueError = computed(() =>
-  voiceDialogue.error.value?.message
-  ?? localStreamError.value?.message
-  ?? (shouldShowBrowserRecognitionError.value ? browserRecognition.error.value?.message : null)
-  ?? localPcmRecorder.error.value?.message
-  ?? pcmRecorder.error.value?.message
-  ?? micRecorder.state.value.error?.message
-  ?? null,
-)
+const CODING_AGENT_SLASH_COMMANDS = ['context', 'compact', 'usage', 'status']
 
 const bridgeCommands = computed<SlashCommandOption[]>(() =>
   BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
@@ -339,6 +216,17 @@ const isBridgeSession = computed(() => {
   if (!session) return chatStore.runtimeMode !== 'global_agent'
   return session.source === 'cli'
 })
+const isCodingAgentSession = computed(() => {
+  const session = chatStore.activeSession
+  return !!session && (
+    session.source === 'coding_agent'
+    || !!session.codingAgentId
+    || session.agent === 'claude'
+    || session.agent === 'codex'
+    || session.agent === 'claude-code'
+    || session.agent === 'pi'
+  )
+})
 const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
 const skillPickerItems = computed(() => {
   const byName = new Map<string, SkillInfo>()
@@ -362,9 +250,11 @@ const filteredBridgeCommands = computed(() => {
   const query = slashQuery.value.trim().toLowerCase()
   const commands = isBridgeSession.value
     ? bridgeCommands.value
-    : isForkCommandSession.value
-      ? bridgeCommands.value.filter(command => command.name === 'fork')
-      : []
+    : isCodingAgentSession.value
+      ? bridgeCommands.value.filter(command => CODING_AGENT_SLASH_COMMANDS.includes(command.name))
+      : isForkCommandSession.value
+        ? bridgeCommands.value.filter(command => command.name === 'fork')
+        : []
   if (!query) return commands
   return commands.filter((command) => {
     const name = command.name.toLowerCase()
@@ -662,7 +552,7 @@ function scrollCommandIntoView() {
 }
 
 function updateSlashState() {
-  if (!isBridgeSession.value && !isForkCommandSession.value) {
+  if (!isBridgeSession.value && !isCodingAgentSession.value && !isForkCommandSession.value) {
     slashActive.value = false
     return
   }
@@ -1030,220 +920,6 @@ function handleSend() {
   }
 }
 
-function resetLocalStreamCapture() {
-  localStreamGeneration += 1
-  localStreamQueue = Promise.resolve()
-  localStreamFailure = null
-  localStreamTranscript.value = ''
-  localStreamError.value = null
-}
-
-async function cancelActiveLocalStreamCapture() {
-  const sessionId = localStreamSessionId
-  localStreamSessionId = null
-  if (!sessionId) return
-  await cancelLocalSttStream(sessionId).catch(() => undefined)
-}
-
-function failLocalStreamCapture(cause: unknown, generation: number) {
-  if (generation !== localStreamGeneration) return
-  localStreamFailure = cause
-  localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
-  localPcmRecorder.cancel()
-  activeVoiceCaptureMode.value = null
-  const captureId = voiceDialogue.activeCaptureId.value
-  localStreamGeneration += 1
-  void cancelActiveLocalStreamCapture()
-  voiceDialogue.cancelCapture(captureId)
-}
-
-function queueLocalStreamChunk(audio: Blob) {
-  const generation = localStreamGeneration
-  const sessionId = localStreamSessionId
-  if (!sessionId || audio.size <= 44) return localStreamQueue
-
-  localStreamQueue = localStreamQueue.then(async () => {
-    if (generation !== localStreamGeneration) return
-    const result = await pushLocalSttStreamChunk(sessionId, audio)
-    if (generation !== localStreamGeneration) return
-    localStreamTranscript.value = normalizeVoiceTranscript(result.text)
-  }).catch(cause => failLocalStreamCapture(cause, generation))
-
-  return localStreamQueue
-}
-
-async function startVoiceCapture() {
-  browserRecognition.clearError()
-  localStreamError.value = null
-  const { captureId } = await voiceDialogue.beginCapture()
-  const useBrowserProvider = sttSettings.provider.value === 'browser'
-  const useLocalProvider = sttSettings.provider.value === 'local'
-  const usePcmCapture = !useBrowserProvider && !useLocalProvider && (isDesktopShell() || isMobileDevice())
-
-  activeVoiceCaptureMode.value = useBrowserProvider
-    ? 'browser'
-    : useLocalProvider ? 'local' : usePcmCapture ? 'pcm' : 'backend'
-
-  try {
-    if (useBrowserProvider) {
-      await browserRecognition.start({ language: browserCaptureLanguage() })
-      return
-    }
-
-    if (useLocalProvider) {
-      resetLocalStreamCapture()
-      const generation = localStreamGeneration
-      const session = await startLocalSttStream()
-      if (
-        generation !== localStreamGeneration
-        || activeVoiceCaptureMode.value !== 'local'
-        || voiceDialogue.activeCaptureId.value !== captureId
-      ) {
-        await cancelLocalSttStream(session.sessionId).catch(() => undefined)
-        return
-      }
-      localStreamSessionId = session.sessionId
-      await localPcmRecorder.start()
-      return
-    }
-
-    if (usePcmCapture) {
-      await pcmRecorder.start()
-    } else {
-      await micRecorder.start()
-    }
-  } catch (cause) {
-    if (useLocalProvider) {
-      localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
-      localStreamGeneration += 1
-      localPcmRecorder.cancel()
-      await cancelActiveLocalStreamCapture()
-    }
-    activeVoiceCaptureMode.value = null
-    voiceDialogue.cancelCapture(captureId)
-  }
-}
-
-async function stopVoiceCapture() {
-  const captureId = voiceDialogue.activeCaptureId.value
-  if (!captureId) return
-
-  if (activeVoiceCaptureMode.value === 'browser') {
-    let transcript = ''
-
-    try {
-      transcript = await browserRecognition.stop()
-    } catch {
-      activeVoiceCaptureMode.value = null
-      voiceDialogue.cancelCapture(captureId)
-      return
-    }
-
-    activeVoiceCaptureMode.value = null
-
-    try {
-      await voiceDialogue.commitTranscript(captureId, transcript)
-    } catch {
-      // Voice dialogue state already tracks send errors.
-    }
-    return
-  }
-
-  if (activeVoiceCaptureMode.value === 'local') {
-    const generation = localStreamGeneration
-    const sessionId = localStreamSessionId
-    if (!sessionId || localPcmRecorder.status.value === 'requesting') {
-      localStreamGeneration += 1
-      localPcmRecorder.cancel()
-      activeVoiceCaptureMode.value = null
-      await cancelActiveLocalStreamCapture()
-      voiceDialogue.cancelCapture(captureId)
-      return
-    }
-
-    try {
-      const finalChunk = await localPcmRecorder.stop()
-      if (finalChunk) queueLocalStreamChunk(finalChunk)
-      await localStreamQueue
-      if (generation !== localStreamGeneration) return
-      if (localStreamFailure) throw localStreamFailure
-
-      localStreamSessionId = null
-      const result = await finishLocalSttStream(sessionId)
-      if (generation !== localStreamGeneration) return
-      localStreamTranscript.value = normalizeVoiceTranscript(result.text) || localStreamTranscript.value
-      activeVoiceCaptureMode.value = null
-      await voiceDialogue.commitTranscript(captureId, localStreamTranscript.value)
-      localStreamTranscript.value = ''
-    } catch (cause) {
-      if (generation !== localStreamGeneration) return
-      localStreamError.value = cause instanceof Error ? cause : new Error(String(cause))
-      localStreamGeneration += 1
-      localPcmRecorder.cancel()
-      activeVoiceCaptureMode.value = null
-      await cancelActiveLocalStreamCapture()
-      voiceDialogue.cancelCapture(captureId)
-    }
-    return
-  }
-
-  const usePcmCapture = activeVoiceCaptureMode.value === 'pcm'
-  const captureStatus = usePcmCapture
-    ? pcmRecorder.status.value
-    : micRecorder.state.value.status
-  if (captureStatus === 'requesting') {
-    if (usePcmCapture) pcmRecorder.cancel()
-    else micRecorder.cancel()
-    activeVoiceCaptureMode.value = null
-    voiceDialogue.cancelCapture(captureId)
-    return
-  }
-
-  let audio: Blob | null
-
-  try {
-    audio = usePcmCapture
-      ? await pcmRecorder.stop()
-      : await micRecorder.stop()
-  } catch {
-    activeVoiceCaptureMode.value = null
-    voiceDialogue.cancelCapture(captureId)
-    return
-  }
-
-  activeVoiceCaptureMode.value = null
-
-  if (!audio || audio.size <= 0) {
-    voiceDialogue.cancelCapture(captureId)
-    return
-  }
-
-  try {
-    await voiceDialogue.transcribeAndSend(captureId, audio)
-  } catch {
-    // Voice dialogue state already tracks transcription/send errors.
-  }
-}
-
-function cancelVoiceCapture() {
-  if (activeVoiceCaptureMode.value === 'browser') {
-    browserRecognition.cancel()
-  } else if (activeVoiceCaptureMode.value === 'local') {
-    localStreamGeneration += 1
-    localPcmRecorder.cancel()
-    void cancelActiveLocalStreamCapture()
-    localStreamTranscript.value = ''
-    localStreamError.value = null
-  } else if (activeVoiceCaptureMode.value === 'pcm') {
-    pcmRecorder.cancel()
-  } else {
-    micRecorder.cancel()
-  }
-
-  activeVoiceCaptureMode.value = null
-  voiceDialogue.cancelCapture()
-}
-
 function handleCompositionStart() {
   isComposing.value = true
 }
@@ -1319,11 +995,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocumentMousedown)
   window.removeEventListener('resize', syncViewport)
-  if (activeVoiceCaptureMode.value === 'local') {
-    localStreamGeneration += 1
-    localPcmRecorder.cancel()
-    void cancelActiveLocalStreamCapture()
-  }
 })
 
 function removeAttachment(id: string) {
@@ -1588,13 +1259,13 @@ function isImage(type: string): boolean {
         </div>
         <div class="input-actions">
           <VoiceDialogueControls
-            :status="voiceDialogue.status.value"
-            :transcript="voiceDialogueTranscript"
-            :error="voiceDialogueError"
-            :events="voiceDialogue.events.value"
-            :on-start="startVoiceCapture"
-            :on-stop="stopVoiceCapture"
-            :on-cancel="cancelVoiceCapture"
+            :status="voiceInput.dialogue.status.value"
+            :transcript="voiceInput.transcript.value"
+            :error="voiceInput.error.value"
+            :events="voiceInput.dialogue.events.value"
+            :on-start="voiceInput.start"
+            :on-stop="voiceInput.stop"
+            :on-cancel="voiceInput.cancel"
           />
           <NButton
             size="medium"

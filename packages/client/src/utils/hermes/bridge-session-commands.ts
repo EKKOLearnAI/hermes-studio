@@ -1,5 +1,6 @@
 export type BridgeSessionCommandName =
   | 'usage'
+  | 'context'
   | 'status'
   | 'yolo'
   | 'abort'
@@ -14,6 +15,7 @@ export type BridgeSessionCommandName =
   | 'clear'
   | 'title'
   | 'compress'
+  | 'compact'
   | 'fork'
   | 'steer'
   | 'destroy'
@@ -34,6 +36,7 @@ export interface BridgeSessionCommandDefinition {
 
 export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[] = [
   { key: 'command:usage', name: 'usage', args: '', descriptionKey: 'chat.slashCommands.usage' },
+  { key: 'command:context', name: 'context', args: '', descriptionKey: 'chat.slashCommands.context' },
   { key: 'command:status', name: 'status', args: '', descriptionKey: 'chat.slashCommands.status' },
   { key: 'command:yolo', name: 'yolo', args: '', descriptionKey: 'chat.slashCommands.yolo' },
   { key: 'command:abort', name: 'abort', args: '', descriptionKey: 'chat.slashCommands.abort' },
@@ -55,6 +58,7 @@ export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[
   { key: 'command:clear-history', name: 'clear', args: '--history', insertText: 'clear --history', descriptionKey: 'chat.slashCommands.clearHistory' },
   { key: 'command:title', name: 'title', argsKey: 'chat.slashCommandArgs.title', descriptionKey: 'chat.slashCommands.title' },
   { key: 'command:compress', name: 'compress', args: '', descriptionKey: 'chat.slashCommands.compress' },
+  { key: 'command:compact', name: 'compact', args: '', descriptionKey: 'chat.slashCommands.compact' },
   { key: 'command:fork', name: 'fork', argsKey: 'chat.slashCommandArgs.title', descriptionKey: 'chat.slashCommands.fork' },
   { key: 'command:steer', name: 'steer', argsKey: 'chat.slashCommandArgs.text', descriptionKey: 'chat.slashCommands.steer' },
   { key: 'command:destroy', name: 'destroy', args: '', descriptionKey: 'chat.slashCommands.destroy' },

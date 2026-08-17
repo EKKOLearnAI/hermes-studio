@@ -447,6 +447,43 @@ describe('chat store session.command fanout', () => {
     ])
   })
 
+  it('adds an explicitly non-queued peer user message after another window starts the run', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'codex'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    chatApi.sessionCommandHandlers.forEach(handler => handler({
+      event: 'session.command',
+      session_id: 'session-1',
+      action: 'resume',
+      started: true,
+      terminal: false,
+    }))
+    chatApi.peerUserMessageHandlers.forEach(handler => handler({
+      event: 'run.peer_user_message',
+      session_id: 'session-1',
+      message: {
+        id: 'phone-message-1',
+        role: 'user',
+        content: 'Message from phone',
+        timestamp: 2,
+        queued: false,
+      },
+    }))
+
+    expect(store.queuedUserMessages.get('session-1')).toBeUndefined()
+    expect(store.messages).toContainEqual(expect.objectContaining({
+      id: 'phone-message-1',
+      role: 'user',
+      content: 'Message from phone',
+      queued: false,
+    }))
+  })
+
   it('moves an existing peer command queue entry into the transcript when the command starts', () => {
     const store = useChatStore()
     const session = makeSession()

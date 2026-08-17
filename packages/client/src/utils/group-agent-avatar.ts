@@ -6,6 +6,7 @@ const DEFAULT_AGENT_ICONS: Record<RoomAgent['agent'], string> = {
     ekko: '/coding-agents/ekko-agent.png',
     codex: '/coding-agents/codex-openai.png',
     claude: '/coding-agents/claude-code.svg',
+    pi: '/coding-agents/pi.svg',
 }
 
 export function parseStoredAvatar(raw: unknown): ProfileAvatar | null {

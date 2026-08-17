@@ -28,7 +28,7 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 export interface AgentConfig {
     agentId?: string
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -60,7 +60,12 @@ export type MentionMessage = {
     role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
+    handoffChainId?: string
     mentions?: StructuredMention[]
+    /** SHA-256 proof binding queued work to the originating browser; never broadcast. */
+    executionQueueCapabilityHash?: string
+    /** Server-issued durable continuation identity; never accepted from an Agent socket. */
+    continuationAttemptId?: string
     /** Trusted, target-specific ownership context added by AgentClients. */
     targetOwnerMemberId?: string
 }
@@ -89,7 +94,7 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
 export type GroupAgentSessionConfig = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     provider?: string
     model?: string
     apiMode?: string
@@ -101,7 +106,9 @@ type AgentActivityBroadcaster = (
     roomId: string,
     agentName: string,
     status: 'compressing' | 'replying' | 'ready',
+    runId?: string,
 ) => void
+type ExecutionQueueBroadcaster = (roomId: string) => void
 
 function isUnknownBridgeSessionError(err: unknown): boolean {
     const message = String((err as any)?.message || err || '').toLowerCase()
@@ -213,7 +220,7 @@ export interface GroupAgentEventSink {
 
 export interface GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     readonly profile: string
     readonly provider: string
     readonly model: string
@@ -222,7 +229,9 @@ export interface GroupAgentExecutor {
     readonly name: string
     readonly description: string
     readonly connected: boolean
-    disconnect(): void
+    reserveInvocation?(): void
+    releaseInvocation?(): void
+    disconnect(): void | Promise<void>
     sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>, agentSessionId?: string): Promise<string>
     interrupt(roomId: string): Promise<boolean>
     getActiveSessionId(roomId: string): string | undefined
@@ -240,6 +249,18 @@ export interface GroupAgentExecutor {
     setChatRunService(service: GroupChatRunService | null): void
 }
 
+export interface MentionDeliveryResult {
+    targetCount: number
+    deliveredCount: number
+    errors: string[]
+    outcomeUnknown?: boolean
+}
+
+type MentionQueueError = {
+    message: string
+    outcomeUnknown: boolean
+}
+
 export interface GroupChatRunService {
     runAndWait(
         data: {
@@ -255,7 +276,7 @@ export interface GroupChatRunService {
             workspace?: string | null
             source?: string
             session_source?: 'group_chat'
-            coding_agent_id?: 'claude-code' | 'codex' | 'ekko-agent'
+            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'ekko-agent'
             mode?: 'scoped'
             profile?: string
             reasoning_effort?: string
@@ -275,13 +296,15 @@ export interface GroupChatRunService {
     }>
     abortSession(sessionId: string, reason?: string): Promise<void>
     disposeSession?(sessionId: string): Promise<void>
+    respondCodingAgentApproval?(sessionId: string, approvalId: string, choice: string): boolean
+    respondCodingAgentClarification?(sessionId: string, clarifyId: string, response: string): boolean
 }
 
 // ─── Agent Client (single connection) ─────────────────────────
 
 export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     readonly profile: string
     readonly provider: string
     readonly model: string
@@ -396,7 +419,19 @@ export class AgentClient implements GroupAgentExecutor {
         })
     }
 
-    disconnect(): void {
+    async disconnect(): Promise<void> {
+        const sessions = [...this.activeSessions.values()]
+        for (const sessionId of sessions) {
+            this.markSessionInterrupted(sessionId)
+            await this.chatRunService?.abortSession(sessionId, 'Coding agent removed, reconfigured, or disconnected')
+                .catch((err: any) => {
+                    logger.warn(`[AgentClients] failed to abort disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
+                })
+            await this.chatRunService?.disposeSession?.(sessionId).catch((err: any) => {
+                logger.warn(`[AgentClients] failed to dispose disconnected coding-agent session ${sessionId}: ${err?.message || err}`)
+            })
+        }
+        this.activeSessions.clear()
         this.eventSink?.disconnect?.()
         if (this.socket) {
             this.socket.disconnect()
@@ -411,6 +446,22 @@ export class AgentClient implements GroupAgentExecutor {
         this.pendingToolExternalIds.clear()
         this.pendingToolCompletionEvents.clear()
         this.acknowledgedToolCallIds.clear()
+    }
+
+    respondApproval(approvalId: string, choice: string): Promise<boolean> {
+        if (!this.chatRunService?.respondCodingAgentApproval) return Promise.resolve(false)
+        for (const sessionId of this.activeSessions.values()) {
+            if (this.chatRunService.respondCodingAgentApproval(sessionId, approvalId, choice)) return Promise.resolve(true)
+        }
+        return Promise.resolve(false)
+    }
+
+    respondClarify(clarifyId: string, response: string): Promise<boolean> {
+        if (!this.chatRunService?.respondCodingAgentClarification) return Promise.resolve(false)
+        for (const sessionId of this.activeSessions.values()) {
+            if (this.chatRunService.respondCodingAgentClarification(sessionId, clarifyId, response)) return Promise.resolve(true)
+        }
+        return Promise.resolve(false)
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -438,6 +489,15 @@ export class AgentClient implements GroupAgentExecutor {
             ? generatedMentions
             : (canCarryMentions ? this.structuredMentionsForAgentReply(roomId, content) : [])
         const messageExtra = canCarryMentions ? { ...extra, mentions } : extra
+        if (role === 'assistant' && messageId) {
+            this.storage?.registerTrustedAgentMessageMetadata?.(
+                roomId,
+                messageId,
+                extra?.mentionDepth,
+                extra?.handoffChainId,
+                extra?.continuationAttemptId,
+            )
+        }
         if (this.eventSink) {
             return this.eventSink.sendMessage(roomId, content, messageId, messageExtra, agentSessionId)
         }
@@ -996,7 +1056,7 @@ export class AgentClient implements GroupAgentExecutor {
         this.activeSessions.set(roomId, sessionId)
         const interruptVersion = this.interruptVersion(sessionId)
         const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
-            onStatus?.(status, { agentSessionId: sessionId })
+            onStatus?.(status, { agentSessionId: sessionId, runId: responseRunId })
         }
         let streamStarted = false
         let streamEnded = false
@@ -1036,7 +1096,9 @@ export class AgentClient implements GroupAgentExecutor {
                 ? 'ekko-agent'
                 : this.agent === 'claude'
                     ? 'claude-code'
-                    : 'codex'
+                    : this.agent === 'pi'
+                        ? 'pi'
+                        : 'codex'
             const groupSystemPrompt = this.groupSystemPrompt(roomId, msg)
             const result = await this.chatRunService.runAndWait({
                 input: this.groupRuntimeInput(msg, runtimeContext),
@@ -1117,6 +1179,8 @@ export class AgentClient implements GroupAgentExecutor {
                     role: 'assistant',
                     run_id: responseRunId,
                     mentionDepth: nextMentionDepth(msg),
+                    handoffChainId: msg.handoffChainId || msg.messageId || '',
+                    continuationAttemptId: msg.continuationAttemptId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1184,7 +1248,7 @@ export class AgentClient implements GroupAgentExecutor {
             this.activeSessions.set(roomId, sessionId)
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-                onStatus?.(status, { ...extra, agentSessionId: sessionId })
+                onStatus?.(status, { ...extra, agentSessionId: sessionId, runId: runMessageId })
             }
             activeSessionId = sessionId
             activeReplyInterruptVersion = replyInterruptVersion
@@ -1317,6 +1381,8 @@ export class AgentClient implements GroupAgentExecutor {
                                 role: 'assistant',
                                 run_id: runMessageId,
                                 mentionDepth: nextMentionDepth(msg),
+                                handoffChainId: msg.handoffChainId || msg.messageId || '',
+                                continuationAttemptId: msg.continuationAttemptId || '',
                                 reasoning: toolReasoning || null,
                                 reasoning_content: toolReasoning || null,
                             }, sessionId)
@@ -1378,6 +1444,8 @@ export class AgentClient implements GroupAgentExecutor {
                     role: 'assistant',
                     run_id: runMessageId,
                     mentionDepth: nextMentionDepth(msg),
+                    handoffChainId: msg.handoffChainId || msg.messageId || '',
+                    continuationAttemptId: msg.continuationAttemptId || '',
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 }, sessionId)
@@ -1417,9 +1485,9 @@ export class AgentClient implements GroupAgentExecutor {
             }
             this.stopTyping(roomId)
             if (activeSessionId) {
-                onStatus?.('ready', { agentSessionId: activeSessionId })
+                onStatus?.('ready', { agentSessionId: activeSessionId, runId: runMessageId })
             } else {
-                onStatus?.('ready')
+                onStatus?.('ready', { runId: runMessageId })
             }
         } finally {
             if (activeSessionId) {
@@ -1448,6 +1516,8 @@ export class AgentClient implements GroupAgentExecutor {
             role: 'assistant',
             ...(responseRunId ? { run_id: responseRunId } : {}),
             mentionDepth: nextMentionDepth(sourceMsg),
+            handoffChainId: sourceMsg.handoffChainId || sourceMsg.messageId || '',
+            continuationAttemptId: sourceMsg.continuationAttemptId || '',
             finish_reason: 'error',
             reasoning: reasoningContent || null,
             reasoning_content: reasoningContent || null,
@@ -1506,6 +1576,8 @@ export class AgentClient implements GroupAgentExecutor {
                     clarify_id: (ev as any).clarify_id,
                     question: (ev as any).question,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : null,
+                    initial_response: (ev as any).initial_response,
+                    response_mode: (ev as any).response_mode,
                     timeout_ms: (ev as any).timeout_ms,
                 })
             } else if (eventType === 'clarify.resolved') {
@@ -1944,12 +2016,26 @@ export class AgentClients {
     private _chatRunService: GroupChatRunService | null = null
     private _roomSummaryService: GroupRoomSummaryService | null = null
     private _activityBroadcaster: AgentActivityBroadcaster | null = null
+    private _executionQueueBroadcaster: ExecutionQueueBroadcaster | null = null
 
-    // Per-room processing lock + mention queue
-    private _processingRooms = new Set<string>()
-    private _mentionQueue = new Map<string, Array<{ agents: GroupAgentExecutor[]; msg: MentionMessage }>>()
+    // Each Agent owns an independent FIFO inside a room. Summary-only work uses
+    // a separate room-scoped queue so one busy Agent cannot block another.
+    private _processingMentionQueues = new Set<string>()
+    private _mentionQueues = new Map<string, Array<{
+        target: { agent: GroupAgentExecutor; queueId: string | null } | null
+        msg: MentionMessage
+        resolve: (error: MentionQueueError | null) => void
+    }>>()
     private _pausedRooms = new Set<string>()
     private _scheduledAgentCounts = new Map<string, Map<string, number>>()
+
+    private mentionQueueKey(roomId: string, agentId?: string): string {
+        return `${roomId}\u0000${agentId || '__summary__'}`
+    }
+
+    private mentionQueueRoomId(key: string): string {
+        return key.split('\u0000', 1)[0]
+    }
 
     /**
      * Create an agent client and connect it to the server.
@@ -1990,7 +2076,7 @@ export class AgentClients {
         } catch (err) {
             room.delete(client.agentId)
             if (room.size === 0) this.rooms.delete(roomId)
-            client.disconnect()
+            await client.disconnect()
             throw err
         }
     }
@@ -2015,16 +2101,15 @@ export class AgentClients {
     /**
      * Remove an agent from a room and disconnect it.
      */
-    removeAgentFromRoom(roomId: string, agentId: string): void {
+    async removeAgentFromRoom(roomId: string, agentId: string): Promise<void> {
         const room = this.rooms.get(roomId)
         if (!room) return
 
         const client = room.get(agentId)
         if (client) {
-            client.disconnect()
             room.delete(agentId)
+            await client.disconnect()
             logger.info(`[AgentClients] ${client.name} left room: ${roomId}`)
-
         }
 
         if (room.size === 0) {
@@ -2109,8 +2194,9 @@ export class AgentClients {
         roomId: string,
         agentName: string,
         status: 'compressing' | 'replying' | 'ready',
+        runId?: string,
     ): void {
-        this._activityBroadcaster?.(roomId, agentName, status)
+        this._activityBroadcaster?.(roomId, agentName, status, runId)
         logger.debug(`[AgentClients] room ${roomId} agent ${agentName} status: ${status}`)
     }
 
@@ -2142,17 +2228,37 @@ export class AgentClients {
         const hadScheduledWork = (roomCounts?.get(agentName) || 0) > 0
         roomCounts?.delete(agentName)
         if (roomCounts?.size === 0) this._scheduledAgentCounts.delete(roomId)
-        const queue = this._mentionQueue.get(roomId)
-        if (queue) {
-            for (const entry of queue) {
-                entry.agents = entry.agents.filter(agent => agent.name !== agentName)
+        for (const [key, queue] of this._mentionQueues) {
+            if (this.mentionQueueRoomId(key) !== roomId) continue
+            for (let index = queue.length - 1; index >= 0; index -= 1) {
+                const entry = queue[index]
+                if (entry.target?.agent.name !== agentName) continue
+                entry.target.agent.releaseInvocation?.()
+                if (entry.target.queueId) this._storage?.failExecutionQueueItem?.(entry.target.queueId, 'Agent was removed')
+                queue.splice(index, 1)
+                entry.resolve({ message: `Agent "${agentName}" is not connected`, outcomeUnknown: false })
             }
+            if (queue.length === 0) this._mentionQueues.delete(key)
         }
+        this._executionQueueBroadcaster?.(roomId)
         if (hadScheduledWork) this.reportAgentActivity(roomId, agentName, 'ready')
     }
 
     private clearMentionQueuesForRoom(roomId: string): void {
-        this._mentionQueue.delete(roomId)
+        for (const [key, queue] of this._mentionQueues) {
+            if (this.mentionQueueRoomId(key) !== roomId) continue
+            this._mentionQueues.delete(key)
+            for (const entry of queue) {
+                if (entry.target) {
+                    entry.target.agent.releaseInvocation?.()
+                    if (entry.target.queueId) {
+                        this._storage?.failExecutionQueueItem?.(entry.target.queueId, 'Room execution queue was cleared')
+                    }
+                }
+                entry.resolve({ message: 'Continuation target Agent is not connected', outcomeUnknown: false })
+            }
+        }
+        this._executionQueueBroadcaster?.(roomId)
         const roomCounts = this._scheduledAgentCounts.get(roomId)
         this._scheduledAgentCounts.delete(roomId)
         for (const agentName of roomCounts?.keys() || []) {
@@ -2160,14 +2266,76 @@ export class AgentClients {
         }
     }
 
-    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): void {
-        let queue = this._mentionQueue.get(roomId)
-        if (!queue) {
-            queue = []
-            this._mentionQueue.set(roomId, queue)
+    private queueMention(roomId: string, agents: GroupAgentExecutor[], msg: MentionMessage): Promise<MentionQueueError | null> {
+        const targets = agents.map(agent => {
+            const queued = msg.role === 'user' && msg.messageId
+                ? this._storage?.enqueueExecutionQueueItem?.({
+                    roomId,
+                    messageId: msg.messageId,
+                    targetAgentId: agent.agentId,
+                    targetAgentName: agent.name,
+                    requesterMemberId: msg.senderId,
+                    cancelCapabilityHash: msg.executionQueueCapabilityHash || '',
+                    textSummary: msg.content,
+                })
+                : null
+            return { agent, queueId: queued?.id || null }
+        })
+
+        const pendingTargets: Array<{ target: { agent: GroupAgentExecutor; queueId: string | null } | null; key: string }> =
+            targets.length > 0
+                ? targets.map(target => ({ target, key: this.mentionQueueKey(roomId, target.agent.agentId) }))
+                : [{ target: null, key: this.mentionQueueKey(roomId) }]
+        const completions = pendingTargets.map(({ target, key }) => {
+            let queue = this._mentionQueues.get(key)
+            if (!queue) {
+                queue = []
+                this._mentionQueues.set(key, queue)
+            }
+            let resolve!: (error: MentionQueueError | null) => void
+            const completed = new Promise<MentionQueueError | null>(done => { resolve = done })
+            queue.push({ target, msg, resolve })
+            if (target) {
+                target.agent.reserveInvocation?.()
+                this.scheduleAgentActivity(roomId, target.agent.name)
+            }
+            return completed
+        })
+        if (targets.some(target => target.queueId)) {
+            this._executionQueueBroadcaster?.(roomId)
         }
-        queue.push({ agents, msg })
-        for (const agent of agents) this.scheduleAgentActivity(roomId, agent.name)
+        return Promise.all(completions).then(errors => errors.find(Boolean) || null)
+    }
+
+    retractQueuedMention(
+        roomId: string,
+        queueId: string,
+        requesterMemberId: string,
+        cancelCapabilityHash: string,
+        allowAuthenticatedAccountOwnership = false,
+    ): { messageId: string; queueIds: string[]; messageCount: number; totalTokens: number; lastActiveAt: number } | null {
+        const retracted = this._storage?.retractQueuedMessage?.(
+            roomId,
+            queueId,
+            requesterMemberId,
+            cancelCapabilityHash,
+            allowAuthenticatedAccountOwnership,
+        )
+        if (!retracted) return null
+        const queueIds = new Set<string>(retracted.queueIds)
+        for (const [key, queue] of this._mentionQueues) {
+            if (this.mentionQueueRoomId(key) !== roomId) continue
+            for (let index = queue.length - 1; index >= 0; index -= 1) {
+                const entry = queue[index]
+                if (!entry.target?.queueId || !queueIds.has(entry.target.queueId)) continue
+                entry.target.agent.releaseInvocation?.()
+                this.finishAgentActivity(roomId, entry.target.agent.name)
+                queue.splice(index, 1)
+                entry.resolve(null)
+            }
+            if (queue.length === 0) this._mentionQueues.delete(key)
+        }
+        return retracted
     }
 
     async interruptAgent(roomId: string, agentName: string): Promise<void> {
@@ -2202,12 +2370,12 @@ export class AgentClients {
     /**
      * Disconnect all agents in a room.
      */
-    disconnectRoom(roomId: string): void {
+    async disconnectRoom(roomId: string): Promise<void> {
         const room = this.rooms.get(roomId)
         if (!room) return
 
-        room.forEach((client) => client.disconnect())
         this.rooms.delete(roomId)
+        await Promise.allSettled([...room.values()].map(client => client.disconnect()))
         this.clearMentionQueuesForRoom(roomId)
         this._pausedRooms.delete(roomId)
         logger.info(`[AgentClients] All agents disconnected from room: ${roomId}`)
@@ -2217,17 +2385,22 @@ export class AgentClients {
     resetRoomContext(roomId: string): void {
         this.clearMentionQueuesForRoom(roomId)
         this._pausedRooms.delete(roomId)
-        this._processingRooms.delete(roomId)
+        for (const key of this._processingMentionQueues) {
+            if (this.mentionQueueRoomId(key) === roomId) this._processingMentionQueues.delete(key)
+        }
     }
 
     /**
      * Disconnect all agents in all rooms.
      */
-    disconnectAll(): void {
-        this.rooms.forEach((room) => {
-            room.forEach((client) => client.disconnect())
-        })
+    async disconnectAll(): Promise<void> {
+        const roomIds = new Set(Array.from(this._mentionQueues.keys(), key => this.mentionQueueRoomId(key)))
+        for (const roomId of roomIds) {
+            this.clearMentionQueuesForRoom(roomId)
+        }
+        const clients = [...this.rooms.values()].flatMap(room => [...room.values()])
         this.rooms.clear()
+        await Promise.allSettled(clients.map(client => client.disconnect()))
         logger.info('[AgentClients] All agents disconnected')
     }
 
@@ -2263,26 +2436,107 @@ export class AgentClients {
         this._activityBroadcaster = broadcaster
     }
 
+    setExecutionQueueBroadcaster(broadcaster: ExecutionQueueBroadcaster | null): void {
+        this._executionQueueBroadcaster = broadcaster
+    }
+
+
+    private handoffRuntimeSnapshot(roomId: string, agent: GroupAgentExecutor): Record<string, string> {
+        const persisted = this._storage?.getHandoffTargetSnapshot?.(roomId, agent.agentId)
+        if (!persisted || typeof persisted !== 'object') return {}
+        return {
+            ...persisted,
+            agentId: String(agent.agentId || ''),
+            agent: String(agent.agent || ''),
+            profile: String(agent.profile || ''),
+            provider: String(agent.provider || ''),
+            model: String(agent.model || ''),
+            apiMode: String(agent.apiMode || ''),
+            reasoningEffort: String(agent.reasoningEffort || ''),
+            name: String(agent.name || ''),
+            description: String(agent.description || ''),
+        }
+    }
 
     /**
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
      */
-    async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
+    async processMentions(roomId: string, msg: MentionMessage): Promise<MentionDeliveryResult> {
         const agents = this.getConnectedAgents(roomId)
         const mentioned = msg.mentions
             ? this.resolveStructuredMentionTargets(agents, msg.mentions, msg.senderId)
             : resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0 && msg.role !== 'user') return
+        if (mentioned.length === 0 && msg.role !== 'user') {
+            return { targetCount: 0, deliveredCount: 0, errors: [] }
+        }
 
         if (mentioned.length > 0) {
             logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
         }
 
-        this.queueMention(roomId, mentioned, msg)
-        if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
-            await this._drainRoomQueue(roomId)
+        if (msg.continuationAttemptId) {
+            if (mentioned.length !== 1) {
+                return {
+                    targetCount: mentioned.length,
+                    deliveredCount: 0,
+                    errors: ['Continuation target Agent is not connected'],
+                }
+            }
+            const admission = this._storage?.admitHandoffTarget?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+                msg as unknown as Record<string, unknown>,
+                this.handoffRuntimeSnapshot(roomId, mentioned[0]),
+            )
+            if (!admission) {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation target admission was rejected'] }
+            }
+            const receipt = this._storage?.claimHandoffDelivery?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+            )
+            if (receipt === 'already') {
+                return { targetCount: 1, deliveredCount: 1, errors: [] }
+            }
+            if (receipt !== 'accepted') {
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation delivery receipt could not be created'] }
+            }
+            const accepted = this._storage?.acceptHandoffAttempt?.(
+                msg.continuationAttemptId,
+                mentioned[0].agentId,
+            )
+            if (accepted !== 'accepted' && accepted !== 'already') {
+                this._storage?.releaseHandoffDelivery?.(msg.continuationAttemptId)
+                return { targetCount: 1, deliveredCount: 0, errors: ['Continuation attempt is no longer dispatchable'] }
+            }
         }
+        const completed = this.queueMention(roomId, mentioned, msg)
+        await this._drainRoomQueues(roomId)
+        if (msg.continuationAttemptId && mentioned.length === 1) {
+            const queueError = await completed
+            if (queueError) {
+                return {
+                    targetCount: 1,
+                    deliveredCount: 0,
+                    errors: [queueError.message],
+                    outcomeUnknown: queueError.outcomeUnknown,
+                }
+            }
+            const status = this._storage?.getHandoffTargetStatus?.(msg.continuationAttemptId)
+            if (status?.status !== 'completed') {
+                this._storage?.failHandoffTarget?.(
+                    msg.continuationAttemptId,
+                    'Target invocation completed without a durable Agent message',
+                )
+                return {
+                    targetCount: 1,
+                    deliveredCount: 0,
+                    errors: ['Continuation target did not publish a durable Agent message'],
+                }
+            }
+        }
+        return { targetCount: mentioned.length, deliveredCount: mentioned.length, errors: [] }
     }
 
     private resolveStructuredMentionTargets(
@@ -2323,51 +2577,102 @@ export class AgentClients {
             timestamp: Date.now(),
             role: 'user',
         })
-        if (!this._processingRooms.has(roomId) && !this._pausedRooms.has(roomId)) {
-            await this._drainRoomQueue(roomId)
-        }
+        await this._drainRoomQueues(roomId)
     }
 
+    private async _drainRoomQueues(roomId: string): Promise<void> {
+        if (this._pausedRooms.has(roomId)) return
+        const keys = Array.from(this._mentionQueues.keys()).filter(key => this.mentionQueueRoomId(key) === roomId)
+        await Promise.all(keys.map(key => this._drainMentionQueue(roomId, key)))
+    }
+
+    // Kept as the room-level test/runtime seam while dispatch is internally
+    // partitioned into independent per-Agent queues.
     private async _drainRoomQueue(roomId: string): Promise<void> {
-        if (this._processingRooms.has(roomId) || this._pausedRooms.has(roomId)) return
-        this._processingRooms.add(roomId)
+        await this._drainRoomQueues(roomId)
+    }
+
+    private async _drainMentionQueue(roomId: string, key: string): Promise<void> {
+        if (this._processingMentionQueues.has(key) || this._pausedRooms.has(roomId)) return
+        this._processingMentionQueues.add(key)
         try {
             while (!this._pausedRooms.has(roomId)) {
-                const queue = this._mentionQueue.get(roomId)
+                const queue = this._mentionQueues.get(key)
                 const next = queue?.shift()
                 if (!next) break
-                if (queue?.length === 0) this._mentionQueue.delete(roomId)
+                if (queue?.length === 0) this._mentionQueues.delete(key)
 
-                const runtimeContext = this._roomSummaryService
-                    ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
-                    : { summary: '', history: [] }
-                const results = await Promise.allSettled(next.agents.map(async (agent) => {
-                    const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-                        if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
-                    }
-                    try {
+                let queueError: MentionQueueError | null = null
+                try {
+                    const runtimeContext = this._roomSummaryService
+                        ? await this._roomSummaryService.prepareForMessage(roomId, next.msg.messageId)
+                        : { summary: '', history: [] }
+                    const runnableTarget = next.target && (
+                        !next.target.queueId || this._storage?.startExecutionQueueItem?.(next.target.queueId) !== false
+                    ) ? next.target : null
+                    if (runnableTarget?.queueId) this._executionQueueBroadcaster?.(roomId)
+                    const results = runnableTarget ? await Promise.allSettled([Promise.resolve().then(async () => {
+                        const { agent } = runnableTarget
+                        const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
+                            const runId = typeof extra?.runId === 'string' ? extra.runId : undefined
+                            this.reportAgentActivity(roomId, agent.name, status, runId)
+                        }
+                        if (next.msg.continuationAttemptId) {
+                            if (!agent.connected) {
+                                throw new Error('Continuation target Agent is not connected')
+                            }
+                            const attemptId = next.msg.continuationAttemptId
+                            const running = this._storage?.markHandoffTargetRunning?.(
+                                attemptId,
+                                `handoff:${attemptId}`,
+                                Date.now() + 60_000,
+                            )
+                            const current = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!running && current?.status !== 'running') {
+                                throw new Error('Continuation target could not claim the invocation')
+                            }
+                            const started = this._storage?.markHandoffTargetInvocationStarted?.(attemptId)
+                            const startedState = this._storage?.getHandoffTargetStatus?.(attemptId)
+                            if (!started && !startedState?.invocationStartedAt) {
+                                throw new Error('Continuation invocation marker could not be persisted')
+                            }
+                        }
                         const targetOwnerMemberId = this.targetAgentOwnerMemberId(roomId, agent)
                         const targetMessage = targetOwnerMemberId
                             ? { ...next.msg, targetOwnerMemberId }
                             : next.msg
                         await agent.replyToMention(roomId, targetMessage, runtimeContext, onStatus)
-                    } finally {
-                        this.finishAgentActivity(roomId, agent.name)
+                    })]) : []
+                    for (let index = 0; index < results.length; index += 1) {
+                        const result = results[index]
+                        const target = runnableTarget
+                        if (result.status === 'rejected') {
+                            const message = result.reason?.message || String(result.reason)
+                            queueError ||= {
+                                message,
+                                outcomeUnknown: result.reason?.outcomeUnknown === true,
+                            }
+                            if (target?.queueId) this._storage?.finishExecutionQueueItem?.(target.queueId, 'failed', message)
+                            logger.error(`[AgentClients] error processing mention for ${target?.agent.name}: ${message}`)
+                        } else if (target?.queueId) {
+                            this._storage?.finishExecutionQueueItem?.(target.queueId, 'completed')
+                        }
                     }
-                }))
-                for (let index = 0; index < results.length; index += 1) {
-                    const result = results[index]
-                    if (result.status === 'rejected') {
-                        logger.error(`[AgentClients] error processing mention for ${next.agents[index]?.name}: ${result.reason?.message || result.reason}`)
+                } finally {
+                    if (next.target) {
+                        next.target.agent.releaseInvocation?.()
+                        this.finishAgentActivity(roomId, next.target.agent.name)
                     }
+                    this._executionQueueBroadcaster?.(roomId)
+                    next.resolve(queueError)
                 }
             }
         } finally {
-            this._processingRooms.delete(roomId)
+            this._processingMentionQueues.delete(key)
         }
     }
 }
 
 function nextMentionDepth(msg: MentionMessage): number {
-    return Math.max(0, msg.mentionDepth || 0) + 1
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, msg.mentionDepth || 0) + 1)
 }

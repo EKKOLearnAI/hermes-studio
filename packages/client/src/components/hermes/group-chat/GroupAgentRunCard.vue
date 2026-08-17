@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
@@ -14,16 +15,30 @@ const props = withDefaults(defineProps<{
     members?: MemberInfo[]
     currentUserId?: string
     allowSpeech?: boolean
+    active?: boolean
 }>(), {
     allowSpeech: true,
+    active: false,
 })
 
 const emit = defineEmits<{
     mentionAgent: [agent: RoomAgent]
 }>()
 
+const { t } = useI18n()
 const items = computed(() =>
     props.message.runItems?.length ? props.message.runItems : [props.message]
+)
+const runToolItems = computed(() =>
+    items.value.filter(item => item.role === 'tool').reverse()
+)
+const transcriptItems = computed(() =>
+    runToolItems.value.length > 0
+        ? items.value.filter(item => item.role !== 'tool')
+        : items.value
+)
+const stableAgentId = computed(() =>
+    props.message.senderAgentRecordId || props.message.senderId
 )
 const activeAgentInfo = computed(() => props.agents.find(agent =>
     !agent.historical && (
@@ -48,11 +63,27 @@ const agentOwnerInfo = computed(() => {
 const senderAvatar = computed(() => parseStoredAvatar(memberInfo.value?.avatar))
 const lastTimestamp = computed(() => items.value.at(-1)?.timestamp || props.message.timestamp)
 const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
+
+function handleToolListWheel(event: WheelEvent): void {
+    const element = event.currentTarget as HTMLElement | null
+    if (!element || event.deltaY === 0) return
+    const canScrollUp = event.deltaY < 0 && element.scrollTop > 0
+    const canScrollDown = event.deltaY > 0 &&
+        element.scrollTop + element.clientHeight < element.scrollHeight
+    if (!canScrollUp && !canScrollDown) return
+    event.preventDefault()
+    event.stopPropagation()
+    element.scrollTop += event.deltaY
+}
 </script>
 
 <template>
     <div class="group-agent-run" :data-run-id="message.run_id || undefined">
-        <div class="run-avatar">
+        <div
+            class="run-avatar"
+            :class="{ 'run-avatar-active': active }"
+            :aria-busy="active"
+        >
             <GroupAgentMessageAvatar
                 v-if="agentInfo"
                 :agent="agentInfo"
@@ -74,16 +105,49 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
-                <GroupMessageItem
-                    v-for="item in items"
-                    :key="item.id"
-                    :message="item"
-                    :agents="agents"
-                    :members="members"
-                    :current-user-id="currentUserId"
-                    :allow-speech="props.allowSpeech"
-                    embedded
-                />
+                <div
+                    v-if="runToolItems.length"
+                    class="run-tool-list"
+                    tabindex="0"
+                    role="region"
+                    :aria-label="t('chat.showToolCalls')"
+                    :data-agent-id="stableAgentId"
+                    :data-run-id="message.run_id || undefined"
+                    @wheel="handleToolListWheel"
+                >
+                    <div
+                        v-for="item in runToolItems"
+                        :key="item.id"
+                        class="run-tool-item"
+                        :data-message-id="item.id"
+                    >
+                        <GroupMessageItem
+                            :message="item"
+                            :agents="agents"
+                            :members="members"
+                            :current-user-id="currentUserId"
+                            :allow-speech="props.allowSpeech"
+                            embedded
+                        />
+                    </div>
+                </div>
+                <div v-if="transcriptItems.length" class="run-transcript">
+                    <div
+                        v-for="item in transcriptItems"
+                        :key="item.id"
+                        class="run-transcript-item"
+                        :data-message-id="item.id"
+                    >
+                        <GroupMessageItem
+                            :message="item"
+                            :agents="agents"
+                            :members="members"
+                            :current-user-id="currentUserId"
+                            :allow-speech="props.allowSpeech"
+                            embedded
+                        />
+                    </div>
+                </div>
             </div>
             <span class="run-time">{{ timeText }}</span>
         </div>
@@ -110,6 +174,31 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     margin-top: 2px;
     overflow: visible;
     border-radius: 8px;
+}
+
+.run-avatar-active {
+    animation: run-avatar-active-glow 4s linear infinite;
+}
+
+@keyframes run-avatar-active-glow {
+    0% {
+        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+    }
+
+    50% {
+        box-shadow: 0 0 0 2px rgba(185, 100, 255, 0.85), 0 0 12px rgba(185, 100, 255, 0.4);
+    }
+
+    100% {
+        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .run-avatar-active {
+        animation: none;
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.75);
+    }
 }
 
 .run-column {
@@ -149,9 +238,40 @@ const timeText = computed(() => formatChatTimestamp(lastTimestamp.value))
     background: rgba(var(--accent-primary-rgb), 0.055);
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.035);
 
-    > :deep(.group-message + .group-message) {
+    > :deep(.group-message + .group-message),
+    .run-transcript-item + .run-transcript-item {
         border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
     }
+}
+
+.run-tool-list {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    max-height: 360px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    &:focus-visible {
+        outline: 2px solid rgba(var(--accent-primary-rgb), 0.45);
+        outline-offset: -2px;
+        border-radius: 10px;
+    }
+
+    .run-tool-item + .run-tool-item {
+        border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
+    }
+}
+
+.run-transcript,
+.run-tool-item,
+.run-transcript-item {
+    min-width: 0;
+}
+
+.run-tool-list + .run-transcript {
+    border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
 }
 
 .run-time {

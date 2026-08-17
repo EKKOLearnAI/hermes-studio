@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.41"
+    "version": "0.6.43"
   },
   "servers": [
     {
@@ -153,6 +153,10 @@
       "description": "Authentication management"
     },
     {
+      "name": "App Connections",
+      "description": "Mobile App authorization and connection management"
+    },
+    {
       "name": "Devices",
       "description": "Device pairing and LAN peer operations"
     },
@@ -174,6 +178,196 @@
     }
   ],
   "paths": {
+    "/api/app-connections": {
+      "get": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Get app-connections",
+        "description": "GET /api/app-connections",
+        "operationId": "listAppConnectionsController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/app-connections/authorization-codes/cloud": {
+      "post": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Create cloud",
+        "description": "POST /api/app-connections/authorization-codes/cloud",
+        "operationId": "createCloudAppAuthorizationCodeController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-connections/authorization-codes/lan": {
+      "post": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Create lan",
+        "description": "POST /api/app-connections/authorization-codes/lan",
+        "operationId": "createAppAuthorizationCodeController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-connections/{id}": {
+      "delete": {
+        "tags": [
+          "App Connections"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/app-connections/:id",
+        "operationId": "deleteAppConnectionController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/app/profiles": {
+      "get": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Get profiles",
+        "description": "GET /api/app/profiles",
+        "operationId": "listForApp",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/auth/app-login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Create app-login",
+        "description": "POST /api/auth/app-login",
+        "operationId": "appLogin",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/avatar": {
       "get": {
         "tags": [
@@ -1143,6 +1337,42 @@
         "responses": {
           "200": {
             "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/coding-agents/{id}/check-update": {
+      "post": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Create check-update",
+        "description": "POST /api/coding-agents/:id/check-update",
+        "operationId": "checkUpdate",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3468,6 +3698,72 @@
         ]
       }
     },
+    "/api/hermes/config/delegation-model": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get delegation-model",
+        "description": "GET /api/hermes/config/delegation-model",
+        "operationId": "getDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update delegation-model",
+        "description": "PUT /api/hermes/config/delegation-model",
+        "operationId": "updateDelegationModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "delegation": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/config/moa": {
       "get": {
         "tags": [
@@ -4171,6 +4467,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "app-image"
+              ]
             }
           }
         ]
@@ -5433,7 +5740,25 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/group-chat/rooms/join/{code}": {
@@ -5503,6 +5828,25 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "enum": [
+                "1"
+              ]
             }
           },
           {
@@ -6142,6 +6486,16 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "agentHandoffEnabled": {
+                    "type": "boolean"
+                  },
+                  "agentHandoffMaxDepth": {
+                    "nullable": true,
+                    "type": "number"
+                  },
+                  "agentHandoffUnlimited": {
+                    "type": "boolean"
+                  },
                   "name": {
                     "type": "string"
                   },
@@ -6213,6 +6567,86 @@
             }
           }
         }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/handoffs": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get handoffs",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/handoffs",
+        "operationId": "getHandoffs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/handoffs/{chainId}/continue": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create continue",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/continue",
+        "operationId": "createContinue",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chainId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/hermes/group-chat/rooms/{roomId}/invite-code": {
@@ -9179,6 +9613,89 @@
                 "required": [
                   "prompt"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/media/minimax-image-to-video": {
+      "post": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Create minimax-image-to-video",
+        "description": "POST /api/hermes/media/minimax-image-to-video",
+        "operationId": "miniMaxImageToVideo",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "aigc_watermark": {
+                    "type": "boolean"
+                  },
+                  "callback_url": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "number"
+                  },
+                  "fast_pretreatment": {
+                    "type": "boolean"
+                  },
+                  "image_base64": {
+                    "type": "string"
+                  },
+                  "image_path": {
+                    "type": "string"
+                  },
+                  "image_url": {
+                    "type": "string"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "output_path": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "prompt_optimizer": {
+                    "type": "boolean"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "resolution": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "type": "number"
+                  }
+                }
               }
             }
           }

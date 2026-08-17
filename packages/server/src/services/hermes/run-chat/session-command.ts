@@ -8,6 +8,7 @@ import { buildDbSnapshotAwareHistory, forceCompressBridgeHistory, getOrCreateSes
 import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, estimateUsageTokensFromMessages, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
+import { getModelContextLength } from '../model-context'
 import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './types'
 
 type CommandName =
@@ -26,6 +27,7 @@ type CommandName =
   | 'clear'
   | 'title'
   | 'compress'
+  | 'context'
   | 'branch'
   | 'steer'
   | 'destroy'
@@ -93,6 +95,8 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   clear: 'clear',
   title: 'title',
   compress: 'compress',
+  compact: 'compress',
+  context: 'context',
   fork: 'branch',
   steer: 'steer',
   destroy: 'destroy',
@@ -395,6 +399,31 @@ export async function handleSessionCommand(
         message: `Usage: input ${usage.inputTokens}, output ${usage.outputTokens}, total ${usage.inputTokens + usage.outputTokens} tokens.`,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+      })
+      return
+    }
+
+    case 'context': {
+      const usage = await calcAndUpdateUsage(sessionId, state, (event, payload) => {
+        emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
+      })
+      const row = getSession(sessionId)
+      const contextWindow = getModelContextLength({
+        profile: ctx.profile,
+        model: ctx.model || row?.model || undefined,
+        provider: ctx.provider || row?.provider || undefined,
+      })
+      const totalTokens = usage.inputTokens + usage.outputTokens
+      const percent = contextWindow > 0 ? Math.round((totalTokens / contextWindow) * 1000) / 10 : 0
+      emitCommand({
+        action: 'context',
+        terminal: !state.isWorking,
+        message: `Context: input ${usage.inputTokens}, output ${usage.outputTokens}, total ${totalTokens} / ${contextWindow} tokens (${percent}%).`,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens,
+        contextWindow,
+        contextPercent: percent,
       })
       return
     }
@@ -1228,7 +1257,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
 
 
 function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
-  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'ekko-agent'
+  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'pi' || session?.agent === 'ekko-agent'
 }
 
 function generateBranchSessionId(): string {

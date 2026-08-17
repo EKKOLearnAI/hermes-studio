@@ -44,7 +44,7 @@ const isLoginPage = computed(() => route.name === 'login')
 const isStandaloneChatPage = computed(() => route.meta?.standaloneChat === true)
 const isInviteOnlyPage = computed(() => route.meta?.inviteOnly === true)
 const usesPageSidebar = computed(() =>
-  ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
+  ['hermes.chat', 'hermes.session', 'hermes.connections', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
 )
 const showAppSidebar = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && !usesPageSidebar.value)
 const showMobileMenuButton = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && (showAppSidebar.value || usesPageSidebar.value))

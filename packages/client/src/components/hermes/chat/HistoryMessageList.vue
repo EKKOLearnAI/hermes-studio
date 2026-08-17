@@ -13,6 +13,7 @@ import { useChatStore } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import type { Session } from "@/stores/hermes/chat";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
+import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
 
 const props = withDefaults(defineProps<{
   session?: Session | null; // Optional: use this session instead of chatStore.activeSession
@@ -29,6 +30,7 @@ const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
 const pendingInitialScrollKey = ref<string | null>(null);
 const showScrollBottomButton = ref(false);
 const activeSession = computed(() => props.session || null);
+const assistantAgent = computed(() => chatSessionAgentAvatar(activeSession.value));
 const activeSessionScrollKey = computed(() =>
   messageScrollPositionKey(props.scrollScope, activeSession.value),
 );
@@ -194,7 +196,7 @@ defineExpose({
     >
       <template #empty>
         <div class="empty-state">
-          <img :src="'/coding-agents/hermes.png'" alt="Hermes" class="empty-logo" />
+          <img :src="assistantAgent.src" :alt="assistantAgent.label" class="empty-logo" />
           <p>{{ t("chat.emptyState") }}</p>
         </div>
       </template>
@@ -209,6 +211,7 @@ defineExpose({
       <template #item="{ message: msg }">
         <MessageItem
           :message="msg"
+          :assistant-agent="assistantAgent"
           :highlight="chatStore.focusMessageId === msg.id"
         />
       </template>

@@ -12,7 +12,7 @@ const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefin
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
 }))
 vi.mock('../../packages/server/src/services/coding-agents', () => ({

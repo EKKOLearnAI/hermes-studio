@@ -9,10 +9,38 @@ import { getCompatibleCustomProviders } from '../../services/hermes/custom-provi
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
 const XAI_VIDEO_MODEL = 'grok-imagine-video'
+const MINIMAX_VIDEO_DEFAULT_MODEL = 'MiniMax-Hailuo-2.3'
+const MINIMAX_VIDEO_MODELS = new Set([
+  'MiniMax-Hailuo-2.3',
+  'MiniMax-Hailuo-2.3-Fast',
+  'MiniMax-Hailuo-02',
+  'I2V-01-Director',
+  'I2V-01-live',
+  'I2V-01',
+])
+const MINIMAX_HAILUO_VIDEO_MODELS = new Set([
+  'MiniMax-Hailuo-2.3',
+  'MiniMax-Hailuo-2.3-Fast',
+  'MiniMax-Hailuo-02',
+])
+const MINIMAX_VIDEO_REGIONS = {
+  global_en: {
+    generateUrl: 'https://api.minimax.io/v1/video_generation',
+    queryUrl: 'https://api.minimax.io/v1/query/video_generation',
+    downloadUrl: 'https://api.minimax.io/v1/files/retrieve',
+  },
+  cn_zh: {
+    generateUrl: 'https://api.minimaxi.com/v1/video_generation',
+    queryUrl: 'https://api.minimaxi.com/v1/query/video_generation',
+    downloadUrl: 'https://api.minimaxi.com/v1/files/retrieve',
+  },
+} as const
+type MiniMaxVideoRegion = keyof typeof MINIMAX_VIDEO_REGIONS
 const APIKEY_IMAGE_PROVIDER = 'fun-codex'
 const APIKEY_IMAGE_MODEL = 'gpt-image-2'
 const APIKEY_IMAGE_TO_IMAGE_MODEL = 'gpt-5.4-mini'
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024
+const MINIMAX_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -131,6 +159,65 @@ function resolveXaiToken(profile: string): { token: string; source: string } | n
   return null
 }
 
+function parseEnvValue(envContent: string, key: string): string {
+  for (const line of envContent.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const separator = trimmed.indexOf('=')
+    if (separator < 0 || trimmed.slice(0, separator).trim() !== key) continue
+    const raw = trimmed.slice(separator + 1).trim()
+    if (
+      (raw.startsWith('"') && raw.endsWith('"')) ||
+      (raw.startsWith("'") && raw.endsWith("'"))
+    ) {
+      return raw.slice(1, -1)
+    }
+    return raw
+  }
+  return ''
+}
+
+function profileEnvValue(profile: string, key: string): string {
+  try {
+    return parseEnvValue(readFileSync(join(getProfileDir(profile), '.env'), 'utf8'), key)
+  } catch {
+    return ''
+  }
+}
+
+function normalizeMiniMaxRegion(value: unknown): MiniMaxVideoRegion | undefined {
+  const requested = typeof value === 'string' ? value.trim() : ''
+  if (!requested) return undefined
+  if (requested === 'global_en' || requested === 'cn_zh') return requested
+  const err: any = new Error('region must be global_en or cn_zh')
+  err.status = 400
+  throw err
+}
+
+async function resolveMiniMaxToken(
+  profile: string,
+  requestedRegion: unknown,
+): Promise<{ token: string; source: string; region: MiniMaxVideoRegion; envName: string }> {
+  let configuredProvider = ''
+  try {
+    const profileConfig = await readConfigYamlForProfile(profile)
+    configuredProvider = String(profileConfig?.model?.provider || '').trim().toLowerCase()
+  } catch {}
+
+  const region = normalizeMiniMaxRegion(requestedRegion) || (configuredProvider === 'minimax-cn' ? 'cn_zh' : 'global_en')
+  const envName = region === 'cn_zh' ? 'MINIMAX_CN_API_KEY' : 'MINIMAX_API_KEY'
+  const profileToken = profileEnvValue(profile, envName)
+  if (profileToken) return { token: profileToken, source: `profile:${envName}`, region, envName }
+
+  const processToken = String(process.env[envName] || '').trim()
+  return {
+    token: processToken,
+    source: processToken ? envName : '',
+    region,
+    envName,
+  }
+}
+
 function mimeFromPath(path: string): string | null {
   const ext = extname(path).toLowerCase()
   if (ext === '.png') return 'image/png'
@@ -146,11 +233,18 @@ function mimeFromMagic(buffer: Buffer): string | null {
   return null
 }
 
-function imagePathToDataUri(imagePath: string): string {
+function assertImageSize(encodedImage: string, maxBytes: number): void {
+  if (Buffer.from(encodedImage, 'base64').length <= maxBytes) return
+  const err: any = new Error(`image is too large (max ${maxBytes} bytes)`)
+  err.status = 413
+  throw err
+}
+
+function imagePathToDataUri(imagePath: string, maxBytes = MAX_IMAGE_BYTES): string {
   const resolvedPath = isAbsolute(imagePath) ? imagePath : resolve(process.cwd(), imagePath)
   const image = readFileSync(resolvedPath)
-  if (image.length > MAX_IMAGE_BYTES) {
-    const err: any = new Error(`image is too large (max ${MAX_IMAGE_BYTES} bytes)`)
+  if (image.length > maxBytes) {
+    const err: any = new Error(`image is too large (max ${maxBytes} bytes)`)
     err.status = 413
     throw err
   }
@@ -163,19 +257,29 @@ function imagePathToDataUri(imagePath: string): string {
   return `data:${mime};base64,${image.toString('base64')}`
 }
 
-function normalizeImageInput(body: any): string {
+function normalizeImageInput(body: any, maxBytes = MAX_IMAGE_BYTES): string {
   const imageUrl = typeof body.image_url === 'string' ? body.image_url.trim() : ''
-  if (imageUrl) return imageUrl
+  if (imageUrl) {
+    if (imageUrl.startsWith('data:image/')) {
+      assertImageSize(imageUrl.slice(imageUrl.indexOf(',') + 1), maxBytes)
+    }
+    return imageUrl
+  }
 
   const imageBase64 = typeof body.image_base64 === 'string' ? body.image_base64.trim() : ''
   if (imageBase64) {
-    if (imageBase64.startsWith('data:image/')) return imageBase64
+    if (imageBase64.startsWith('data:image/')) {
+      const encodedImage = imageBase64.slice(imageBase64.indexOf(',') + 1)
+      assertImageSize(encodedImage, maxBytes)
+      return imageBase64
+    }
     const mime = typeof body.mime_type === 'string' ? body.mime_type.trim() : ''
     if (!mime.startsWith('image/')) {
       const err: any = new Error('mime_type is required when image_base64 is not a data URI')
       err.status = 400
       throw err
     }
+    assertImageSize(imageBase64, maxBytes)
     return `data:${mime};base64,${imageBase64}`
   }
 
@@ -190,7 +294,7 @@ function normalizeImageInput(body: any): string {
     err.status = 404
     throw err
   }
-  return imagePathToDataUri(imagePath)
+  return imagePathToDataUri(imagePath, maxBytes)
 }
 
 function imageDataUriToBytes(dataUri: string): { buffer: Buffer; mime: string; name: string } {
@@ -549,6 +653,228 @@ async function downloadVideo(url: string, outputPath: string): Promise<void> {
   const buffer = Buffer.from(arrayBuffer)
   mkdirSync(dirname(outputPath), { recursive: true })
   writeFileSync(outputPath, buffer)
+}
+
+async function requestMiniMaxJson(url: string, token: string, init: RequestInit = {}): Promise<any> {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(init.headers || {}),
+    },
+  })
+  const text = await res.text()
+  let data: any = null
+  try { data = text ? JSON.parse(text) : null } catch {}
+  const baseCode = data?.base_resp?.status_code
+  if (!res.ok || (baseCode !== undefined && baseCode !== null && String(baseCode) !== '0')) {
+    const detail = data?.base_resp?.status_msg || data?.error?.message || data?.error || text || res.statusText
+    const err: any = new Error(`MiniMax request failed: ${res.status} ${detail}`)
+    err.status = 502
+    throw err
+  }
+  return data
+}
+
+function miniMaxVideoUrls(region: MiniMaxVideoRegion) {
+  return MINIMAX_VIDEO_REGIONS[region]
+}
+
+function miniMaxV1ImageRequest(
+  body: any,
+  prompt: string,
+  image: string,
+  model: string,
+  region: MiniMaxVideoRegion,
+): Record<string, unknown> {
+  if (!MINIMAX_VIDEO_MODELS.has(model)) {
+    const err: any = new Error(`unsupported MiniMax image-to-video model: ${model}`)
+    err.status = 400
+    throw err
+  }
+  if (prompt.length > 2000) {
+    const err: any = new Error('prompt must be 2000 characters or fewer')
+    err.status = 400
+    throw err
+  }
+
+  const isHailuoModel = MINIMAX_HAILUO_VIDEO_MODELS.has(model)
+  const duration = body.duration === undefined || body.duration === null || body.duration === ''
+    ? 6
+    : Number(body.duration)
+  const resolution = typeof body.resolution === 'string' && body.resolution.trim()
+    ? body.resolution.trim()
+    : isHailuoModel ? '768P' : '720P'
+
+  if (!Number.isInteger(duration) || (duration !== 6 && duration !== 10)) {
+    const err: any = new Error('duration must be 6 or 10 seconds')
+    err.status = 400
+    throw err
+  }
+  if (isHailuoModel) {
+    const supportedResolutions = model === 'MiniMax-Hailuo-02'
+      ? new Set(['512P', '768P', '1080P'])
+      : new Set(['768P', '1080P'])
+    if (!supportedResolutions.has(resolution) || (duration === 10 && resolution === '1080P')) {
+      const err: any = new Error(`${model} does not support ${resolution} at ${duration} seconds`)
+      err.status = 400
+      throw err
+    }
+  } else if (duration !== 6 || (resolution !== '720P' && resolution !== '1080P')) {
+    const err: any = new Error(`${model} supports 6-second video at 720P or 1080P`)
+    err.status = 400
+    throw err
+  }
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    first_frame_image: image,
+    duration,
+    resolution,
+  }
+  if (prompt) requestBody.prompt = prompt
+  for (const field of ['prompt_optimizer', 'fast_pretreatment'] as const) {
+    const value = body[field]
+    if (value === undefined || value === null || value === '') continue
+    if (typeof value !== 'boolean') {
+      const err: any = new Error(`${field} must be a boolean`)
+      err.status = 400
+      throw err
+    }
+    requestBody[field] = value
+  }
+  if (typeof body.callback_url === 'string' && body.callback_url.trim()) {
+    requestBody.callback_url = body.callback_url.trim()
+  }
+  if (region === 'cn_zh' && body.aigc_watermark !== undefined && body.aigc_watermark !== null) {
+    if (typeof body.aigc_watermark !== 'boolean') {
+      const err: any = new Error('aigc_watermark must be a boolean')
+      err.status = 400
+      throw err
+    }
+    requestBody.aigc_watermark = body.aigc_watermark
+  }
+  return requestBody
+}
+
+export async function miniMaxImageToVideo(ctx: Context) {
+  let profile: string
+  try {
+    profile = resolveMediaProfile(ctx)
+  } catch (err: any) {
+    ctx.status = err.status || 400
+    ctx.body = { error: err.message || String(err), code: err.code || 'invalid_profile' }
+    return
+  }
+
+  try {
+    const input = ctx.request.body as {
+      model?: string
+      prompt?: string
+      image_url?: string
+      image_base64?: string
+      mime_type?: string
+      image_path?: string
+      duration?: number
+      resolution?: string
+      prompt_optimizer?: boolean
+      fast_pretreatment?: boolean
+      callback_url?: string
+      aigc_watermark?: boolean
+      region?: string
+      output_path?: string
+      timeout_ms?: number
+    } | undefined
+    const body = input || {}
+    const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : MINIMAX_VIDEO_DEFAULT_MODEL
+    const tokenInfo = await resolveMiniMaxToken(profile, body.region)
+    if (!tokenInfo.token) {
+      ctx.status = 401
+      ctx.body = {
+        error: `Missing MiniMax API key for profile "${profile}". Configure ${tokenInfo.envName} for that profile or server process.`,
+        code: 'missing_minimax_token',
+      }
+      return
+    }
+
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+    const image = normalizeImageInput(body, MINIMAX_MAX_IMAGE_BYTES)
+    if (image.startsWith('data:') && !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(image)) {
+      const err: any = new Error('MiniMax image must be png, jpeg, or webp')
+      err.status = 400
+      throw err
+    }
+    const region = tokenInfo.region
+    const urls = miniMaxVideoUrls(region)
+    const rawTimeoutMs = Number(body.timeout_ms || DEFAULT_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(rawTimeoutMs)
+      ? Math.max(10000, Math.min(rawTimeoutMs, 30 * 60 * 1000))
+      : DEFAULT_TIMEOUT_MS
+    const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
+    const requestBody = miniMaxV1ImageRequest(body, prompt, image, model, region)
+
+    const started = await requestMiniMaxJson(urls.generateUrl, tokenInfo.token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    })
+    const taskId = String(started?.task_id || '').trim()
+    if (!taskId) throw new Error('MiniMax response missing task_id')
+
+    const deadline = Date.now() + timeoutMs
+    let latest: any = null
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS))
+      latest = await requestMiniMaxJson(
+        `${urls.queryUrl}?task_id=${encodeURIComponent(taskId)}`,
+        tokenInfo.token,
+      )
+      const task = latest
+      const status = String(task?.status || '').toLowerCase()
+      if (status === 'succeeded' || status === 'succeed' || status === 'success' || status === 'done') {
+        const fileId = String(task?.file_id || '').trim()
+        if (!fileId) throw new Error('MiniMax response missing generated file_id')
+        const fileData = await requestMiniMaxJson(`${urls.downloadUrl}?file_id=${encodeURIComponent(fileId)}`, tokenInfo.token)
+        const videoUrl = String(fileData?.file?.download_url || fileData?.download_url || '').trim()
+        if (!videoUrl) throw new Error('MiniMax response missing generated video URL')
+        const outputPath = requestedOutputPath || defaultMediaOutputPath(taskId)
+        await downloadVideo(videoUrl, outputPath)
+        ctx.body = {
+          task_id: taskId,
+          status: task?.status,
+          file_id: fileId,
+          video_url: videoUrl,
+          output_path: outputPath,
+          model,
+          api_version: 'v1',
+          region,
+          token_source: tokenInfo.source,
+          profile,
+        }
+        return
+      }
+      if (status === 'fail' || status === 'failed' || status === 'error' || status === 'cancelled') {
+        ctx.status = 502
+        ctx.body = {
+          task_id: taskId,
+          status: task?.status,
+          error: task?.error?.message || task?.error || latest?.base_resp?.status_msg || 'MiniMax video generation failed',
+        }
+        return
+      }
+    }
+
+    ctx.status = 504
+    ctx.body = {
+      task_id: taskId,
+      status: latest?.status || 'pending',
+      error: 'Timed out waiting for MiniMax video generation',
+    }
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || String(err) }
+  }
 }
 
 export async function grokImageToVideo(ctx: Context) {

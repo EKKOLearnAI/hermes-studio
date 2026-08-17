@@ -16,6 +16,11 @@ const { t } = useI18n()
 const message = useMessage()
 const kanbanStore = useKanbanStore()
 
+// Task text is written by people in whatever language they think in, while the
+// UI language is a separate choice. `dir="auto"` lets each field follow its own
+// first strong character, the same way the chat composer already does.
+const autoDirectionInputProps = { dir: 'auto' } as const
+
 const title = ref('')
 const body = ref('')
 const assignee = ref<string | null>(null)
@@ -130,10 +135,10 @@ async function handleSubmit() {
   <NModal :show="true" preset="dialog" :title="t('kanban.createTask')" style="width: 480px;" @close="emit('close')">
     <NForm label-placement="top">
       <NFormItem :label="t('kanban.form.title')">
-        <NInput v-model:value="title" :placeholder="t('kanban.form.titlePlaceholder')" />
+        <NInput v-model:value="title" :input-props="autoDirectionInputProps" :placeholder="t('kanban.form.titlePlaceholder')" />
       </NFormItem>
       <NFormItem :label="t('kanban.form.body')">
-        <NInput v-model:value="body" type="textarea" :rows="3" :placeholder="t('kanban.form.bodyPlaceholder')" />
+        <NInput v-model:value="body" type="textarea" :rows="3" :input-props="autoDirectionInputProps" :placeholder="t('kanban.form.bodyPlaceholder')" />
       </NFormItem>
       <NFormItem :label="t('kanban.form.assignee')">
         <NSelect v-model:value="assignee" :options="assigneeOptions" :placeholder="t('kanban.form.selectAssignee')" clearable />

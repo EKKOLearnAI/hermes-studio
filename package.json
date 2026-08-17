@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.6.41",
+  "version": "0.6.43",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -41,11 +41,13 @@
     "dev:server": "nodemon",
     "build": "npm run openapi:generate && vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "harness:check": "node scripts/harness-check.mjs",
+    "verify:sharp-runtime": "node scripts/verify-sharp-runtime.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:pi-rpc-real": "cross-env PI_REAL_RPC_E2E=1 vitest run tests/server/pi-rpc-real.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "dev:website": "vite --config vite.config.website.ts",
@@ -86,6 +88,7 @@
     "katex": "^0.17.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
+    "sharp": "^0.35.3",
     "sherpa-onnx-node": "1.13.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"

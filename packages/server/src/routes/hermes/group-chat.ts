@@ -1,6 +1,7 @@
 import Router from '@koa/router'
 import { randomBytes } from 'node:crypto'
 import {
+    GROUP_CHAT_MESSAGE_WINDOW,
     ROOM_PARTICIPANT_NAME_CONFLICT,
     type GroupChatServer,
 } from '../../services/hermes/group-chat'
@@ -24,6 +25,8 @@ export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
+const roomAgentUpdates = new Set<string>()
+const roomDeletions = new Set<string>()
 
 export function setGroupChatServer(server: GroupChatServer | null) {
     chatServer = server
@@ -119,7 +122,7 @@ function contentPreview(content: unknown): string {
 }
 
 type AgentInput = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
     model?: string
@@ -140,7 +143,7 @@ type RoomSummaryInput = {
 }
 
 const GROUP_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-const GROUP_AGENT_TYPES = new Set(['hermes', 'ekko', 'codex', 'claude'])
+const GROUP_AGENT_TYPES = new Set(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const GROUP_AGENT_API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
 const GROUP_AGENT_AVATAR_MAX_LENGTH = 1_500_000
 
@@ -211,9 +214,16 @@ async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: st
     })
 }
 
-function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = false) {
+export function serializeRoom(room: any, includeManageFields: boolean, canMentionAll = false) {
     if (!room) return room
-    const { ownerAuthUserId: _ownerAuthUserId, ...rest } = room
+    const {
+        ownerAuthUserId: _ownerAuthUserId,
+        summaryGeneration: _summaryGeneration,
+        summaryRunToken: _summaryRunToken,
+        summaryLeaseExpiresAt: _summaryLeaseExpiresAt,
+        summaryRunGeneration: _summaryRunGeneration,
+        ...rest
+    } = room
     const ownerAuthUserId = Number(room.ownerAuthUserId || 0)
     const serialized = {
         ...rest,
@@ -281,6 +291,20 @@ function visibleRoomsForUser(storage: ReturnType<GroupChatServer['getStorage']>,
         ))
 }
 
+function roomAgentSummaries(storage: ReturnType<GroupChatServer['getStorage']>, roomId: string) {
+    const agents = typeof storage.getRoomAgents === 'function'
+        ? storage.getRoomAgents(roomId)
+        : []
+    return agents.map((agent: any) => ({
+        id: agent.id,
+        roomId: agent.roomId,
+        agentId: agent.agentId,
+        agent: agent.agent,
+        name: agent.name,
+        avatar: agent.avatar || '',
+    }))
+}
+
 async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: string, input: AgentInput, agentId = generateId()) {
     const agent = String(input.agent || 'hermes').trim() as AgentInput['agent']
     if (!GROUP_AGENT_TYPES.has(agent || '')) {
@@ -313,8 +337,8 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
         return persisted
     } catch (err) {
         if (persisted) storage.removeRoomAgent(roomId, persisted.id || agentId)
-        else client.disconnect?.()
-        server.agentClients.removeAgentFromRoom(roomId, client.agentId)
+        else await client.disconnect?.()
+        await server.agentClients.removeAgentFromRoom(roomId, client.agentId)
         throw err
     }
 }
@@ -331,7 +355,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         name?: string
         inviteCode?: string
         agents?: {
-            agent?: 'hermes' | 'ekko' | 'codex' | 'claude'
+            agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
             profile: string
             provider?: string
             model?: string
@@ -491,6 +515,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         summaryApiMode: sourceRoom.summaryApiMode,
         summaryEveryTurns: sourceRoom.summaryEveryTurns,
         workspace: sourceRoom.workspace || '',
+        agentHandoffEnabled: Number(sourceRoom.agentHandoffEnabled ?? 1) === 1,
+        agentHandoffMaxDepth: sourceRoom.agentHandoffMaxDepth ?? null,
+        agentHandoffUnlimited: Number(sourceRoom.agentHandoffUnlimited || 0) === 1,
     })
     persistRoomCreator(storage, roomId, ctx.state?.user)
 
@@ -549,10 +576,23 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         return
     }
 
-    const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
-    const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 150) : 150
-    const messages = storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
-    const total = storage.getMessageCount(ctx.params.roomId)
+    const offset = ctx.query?.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
+    const limit = ctx.query?.limit
+        ? Math.min(150, Math.max(1, parseInt(ctx.query.limit as string, 10) || 150))
+        : 150
+    const beforeMessageId = String(ctx.query?.before || '').trim()
+    const historyPage = beforeMessageId || ctx.query?.history === '1'
+        ? storage.getHistoryPageForUI(ctx.params.roomId, limit, beforeMessageId || undefined)
+        : null
+    if (historyPage && !historyPage.cursorFound) {
+        ctx.status = 400
+        ctx.body = { error: 'History cursor not found' }
+        return
+    }
+    const messages = historyPage?.messages
+        ?? storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
+    const storedTotal = storage.getMessageCount(ctx.params.roomId)
+    const total = storedTotal
     const agents = typeof chatServer.getRoomAgentViews === 'function'
         ? chatServer.getRoomAgentViews(ctx.params.roomId, canManage)
         : storage.getRoomAgents(ctx.params.roomId)
@@ -562,10 +602,12 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         messages,
         agents,
         members,
+        handoffChains: storage.getStoppedHandoffChains?.(ctx.params.roomId) || [],
         total,
         offset,
         limit,
-        hasMore: offset + messages.length < total,
+        hasMore: historyPage?.hasMore ?? offset + messages.length < total,
+        historyTruncated: storedTotal > GROUP_CHAT_MESSAGE_WINDOW,
     }
 })
 
@@ -588,8 +630,25 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const user = ctx.state?.user
     const storage = chatServer.getStorage()
-    const rooms = visibleRoomsForUser(storage, user)
-    ctx.body = { rooms }
+    const visibleRooms = visibleRoomsForUser(storage, user).map(room => ({
+        ...room,
+        agents: roomAgentSummaries(storage, room.id),
+    }))
+    const paginated = ctx.query?.offset !== undefined || ctx.query?.limit !== undefined
+    const offset = paginated && ctx.query?.offset
+        ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0)
+        : 0
+    const limit = paginated && ctx.query?.limit
+        ? Math.min(50, Math.max(1, parseInt(ctx.query.limit as string, 10) || 50))
+        : visibleRooms.length
+    const rooms = visibleRooms.slice(offset, offset + limit)
+    ctx.body = paginated ? {
+        rooms,
+        total: visibleRooms.length,
+        offset,
+        limit,
+        hasMore: offset + rooms.length < visibleRooms.length,
+    } : { rooms }
 })
 
 // Update room invite code
@@ -814,6 +873,11 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
     if (previous.executorType === 'remote') {
         ctx.status = 409
         ctx.body = { error: 'Remote Agents must be changed from their connected Hermes service or re-paired' }
@@ -842,12 +906,19 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         ctx.body = { error: 'Failed to validate participant name' }
         return
     }
+    const updateKey = `${roomId}:${previous.agentId}`
+    if (roomAgentUpdates.has(updateKey)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
+    roomAgentUpdates.add(updateKey)
     let replacement: Awaited<ReturnType<typeof createRoomAgentRuntimeClient>> | null = null
     let runtimeSwapped = false
     try {
         // Establish the new gateway connection before interrupting the current room client.
         replacement = await createRoomAgentRuntimeClient(chatServer, previous.agentId, nextInput)
-        chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
+        await chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
         runtimeSwapped = true
         await chatServer.agentClients.addAgentToRoom(roomId, replacement)
         const updated = storage.updateRoomAgent(
@@ -874,7 +945,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
         }
     } catch (err: any) {
         if (runtimeSwapped) {
-            chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
+            await chatServer.agentClients.removeAgentFromRoom(roomId, previous.agentId)
             try {
                 const restored = await createRoomAgentRuntimeClient(chatServer, previous.agentId, previous)
                 await chatServer.agentClients.addAgentToRoom(roomId, restored)
@@ -882,12 +953,14 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
                 console.error(`[GroupChat] Failed to restore agent ${previous.profile} in room ${roomId}: ${sanitizeAgentConnectReason(restoreErr.message)}`)
             }
         } else {
-            replacement?.disconnect?.()
+            await replacement?.disconnect?.()
         }
         if (applyParticipantNameConflict(ctx, err)) return
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
+    } finally {
+        roomAgentUpdates.delete(updateKey)
     }
 })
 
@@ -964,7 +1037,7 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/members/:userId', a
         if (agent.connectorId) revokeGroupAgentConnector(agent.connectorId)
         storage.removeRoomMembersForAgent(roomId, agent)
         storage.removeRoomAgent(roomId, agent.id)
-        chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+        await chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     }
 
     const members = chatServer.removeRoomMember(roomId, userId)
@@ -1001,13 +1074,23 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         ctx.body = { error: 'Agent not found' }
         return
     }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
+    if (roomAgentUpdates.has(`${roomId}:${agent.agentId}`)) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
 
     if (agent.executorType === 'remote' && agent.connectorId) {
         revokeGroupAgentConnector(agent.connectorId)
     }
     storage.removeRoomMembersForAgent(roomId, agent)
     storage.removeRoomAgent(roomId, requestedAgentId)
-    chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+    await chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
     const agents = chatServer.broadcastRoomAgents(roomId)
     ctx.body = {
         success: true,
@@ -1036,6 +1119,17 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.body = { error: 'Access denied' }
         return
     }
+    if ([...roomAgentUpdates].some(key => key.startsWith(`${roomId}:`))) {
+        ctx.status = 409
+        ctx.body = { error: 'Agent configuration update is already in progress' }
+        return
+    }
+    if (roomDeletions.has(roomId)) {
+        ctx.status = 409
+        ctx.body = { error: 'Room deletion is already in progress' }
+        return
+    }
+    roomDeletions.add(roomId)
     // Interrupt active bridge runs, then evict sockets and disconnect agents before deleting persisted data.
     try {
         await chatServer.getRoomSummaryService().runExclusive(roomId, async () => {
@@ -1047,6 +1141,8 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         ctx.status = Number(err?.status || 409)
         ctx.body = { error: err?.message || 'Room interrupt did not complete' }
         return
+    } finally {
+        roomDeletions.delete(roomId)
     }
     ctx.body = { success: true }
 })
@@ -1101,13 +1197,16 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     }
 
     const roomId = ctx.params.roomId
-    const { name, summaryProfile, summaryProvider, summaryModel, summaryApiMode, summaryEveryTurns } = ctx.request.body as {
+    const { name, summaryProfile, summaryProvider, summaryModel, summaryApiMode, summaryEveryTurns, agentHandoffEnabled, agentHandoffMaxDepth, agentHandoffUnlimited } = ctx.request.body as {
         name?: string
         summaryProfile?: string
         summaryProvider?: string
         summaryModel?: string
         summaryApiMode?: string
         summaryEveryTurns?: number
+        agentHandoffEnabled?: boolean
+        agentHandoffMaxDepth?: number | null
+        agentHandoffUnlimited?: boolean
     }
 
     const storage = chatServer.getStorage()
@@ -1131,7 +1230,8 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
         summaryApiMode,
         summaryEveryTurns,
     ].some(value => value !== undefined)
-    if (!hasNameUpdate && !hasSummaryUpdate) {
+    const hasHandoffUpdate = [agentHandoffEnabled, agentHandoffMaxDepth, agentHandoffUnlimited].some(value => value !== undefined)
+    if (!hasNameUpdate && !hasSummaryUpdate && !hasHandoffUpdate) {
         ctx.status = 400
         ctx.body = { error: 'No room config changes supplied' }
         return
@@ -1166,21 +1266,33 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
             return
         }
     }
+    if (agentHandoffMaxDepth !== undefined && agentHandoffMaxDepth !== null
+        && (!Number.isInteger(Number(agentHandoffMaxDepth)) || Number(agentHandoffMaxDepth) < 1 || Number(agentHandoffMaxDepth) > 100)) {
+        ctx.status = 400
+        ctx.body = { error: 'agentHandoffMaxDepth must be between 1 and 100 or null' }
+        return
+    }
 
     await chatServer.getRoomSummaryService().runExclusive(roomId, () => {
         if (hasNameUpdate && normalizedName !== room.name) {
             chatServer!.updateRoomName(roomId, normalizedName)
         }
-        if (hasSummaryUpdate) {
+        if (hasSummaryUpdate || hasHandoffUpdate) {
             storage.updateRoomConfig(roomId, {
-                summaryProfile: profile,
-                summaryProvider: provider,
-                summaryModel: model,
-                summaryApiMode: apiMode,
-                summaryEveryTurns: everyTurns,
+                ...(hasSummaryUpdate ? {
+                    summaryProfile: profile,
+                    summaryProvider: provider,
+                    summaryModel: model,
+                    summaryApiMode: apiMode,
+                    summaryEveryTurns: everyTurns,
+                } : {}),
+                agentHandoffEnabled,
+                agentHandoffMaxDepth,
+                agentHandoffUnlimited,
             })
         }
     })
+    chatServer.broadcastRoomMetadata(roomId)
     ctx.body = {
         room: serializeRoom(
             storage.getRoom(roomId),
@@ -1188,6 +1300,97 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
             isGroupChatRoomOwner(storage, roomId, ctx.state?.user),
         ),
     }
+})
+
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/continue', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const storage = chatServer.getStorage()
+    const { roomId, chainId } = ctx.params
+    if (!storage.getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canManageRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    const existing = storage.getHandoffChain(roomId, chainId)
+    if (!existing) {
+        ctx.status = 404
+        ctx.body = { error: 'Handoff chain not found' }
+        return
+    }
+    if (existing.status === 'resumed' && Number(existing.continueUsed) === 1) {
+        ctx.body = { success: true, replay: true, chain: existing }
+        return
+    }
+    if (existing.status === 'outcome_unknown') {
+        ctx.status = 409
+        ctx.body = {
+            code: 'HANDOFF_OUTCOME_UNKNOWN',
+            error: 'Remote handoff outcome is unknown; automatic retry is disabled',
+            chain: existing,
+        }
+        return
+    }
+    const chain = storage.claimHandoffContinuation(roomId, chainId)
+    if (!chain || !chain.attemptId) {
+        if (existing.status === 'claimed' && existing.attemptId) {
+            ctx.status = 202
+            ctx.body = {
+                success: true,
+                attemptId: existing.attemptId,
+                status: existing.status,
+                chain: existing,
+            }
+            return
+        }
+        ctx.status = 409
+        ctx.body = { error: 'Handoff chain is already being continued or is no longer available', chain: existing }
+        return
+    }
+    const source = storage.getMessage(String(chain.sourceMessageId))
+    if (!source) {
+        const failed = storage.failHandoffContinuation(roomId, chainId, 'Handoff source message is no longer available')
+        ctx.status = 409
+        ctx.body = { error: 'Handoff source message is no longer available', chain: failed || storage.getHandoffChain(roomId, chainId) }
+        return
+    }
+    ctx.status = 202
+    chatServer.broadcastHandoffUpdate(roomId, storage.getHandoffChain(roomId, chainId))
+    ctx.body = {
+        success: true,
+        attemptId: chain.attemptId,
+        status: 'continuing',
+        chain: storage.getHandoffChain(roomId, chainId),
+    }
+})
+
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+    const { roomId } = ctx.params
+    const storage = chatServer.getStorage()
+    if (!storage.getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canReadRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    ctx.body = { chains: storage.getStoppedHandoffChains(roomId) }
 })
 
 // Update room workspace

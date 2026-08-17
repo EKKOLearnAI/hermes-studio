@@ -5,7 +5,7 @@
 import type { Server, Socket } from 'socket.io'
 import { updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
-import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
+import { codingAgentRunManager } from '../../coding-agents/runtime/run-manager'
 import {
   abortGlobalEkkoBackgroundTasks,
   hasGlobalEkkoBackgroundTasks,
