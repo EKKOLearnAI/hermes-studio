@@ -17,6 +17,7 @@ const { t } = useI18n()
       <div class="footer-right">
         <p class="footer-meta">{{ t('footer.madeWith') }}</p>
         <p class="footer-meta">{{ t('footer.license') }}</p>
+        <a class="footer-legal" href="/privacy/">{{ t('footer.privacy') }}</a>
         <div class="footer-links">
           <a
             class="footer-social"
@@ -149,6 +150,19 @@ const { t } = useI18n()
 .footer-meta {
   color: rgba(42, 50, 64, 0.58);
   font-size: 13px;
+}
+
+.footer-legal {
+  color: rgba(30, 50, 90, 0.72);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: rgba(30, 50, 90, 0.24);
+  text-underline-offset: 4px;
+
+  &:hover {
+    color: rgba(30, 50, 90, 0.96);
+    text-decoration-color: currentColor;
+  }
 }
 
 .footer-links {

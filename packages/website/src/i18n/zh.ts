@@ -197,6 +197,100 @@ export default {
     x: '打开 X',
     douyin: '打开抖音',
     xiaohongshu: '打开小红书',
+    privacy: '隐私政策',
+  },
+  privacy: {
+    browserTitle: '隐私政策 - Hermes Studio',
+    homeLabel: '返回 Hermes Studio 官网首页',
+    documentTag: '法律 / 隐私',
+    eyebrow: 'HERMES STUDIO / 隐私与数据',
+    title: '隐私政策',
+    lede: '本政策说明 Hermes Studio 与 EKKOLearnAI 如何处理与你相关的信息（包括 Google 用户数据），以及你可以作出的选择。',
+    effectiveDateLabel: '生效日期',
+    effectiveDate: '2026 年 8 月 11 日',
+    productLabel: '适用产品',
+    product: 'Hermes Studio 应用与服务',
+    developerLabel: '开发者',
+    developer: 'EKKOLearnAI',
+    contactLabel: '隐私联系邮箱',
+    contactEmail: "hermes.studio.ai{'@'}gmail.com",
+    contents: '目录',
+    noticeTitle: '本地优先的数据处理',
+    noticeBody: 'Hermes Studio 可运行在你的设备或由你控制的环境中。EKKOLearnAI 不会自动接收自托管安装中的对话、文件或凭据。实际的数据处理位置和参与方取决于你选择的功能与第三方服务。',
+    googlePolicyLink: 'Google API 服务用户数据政策',
+    googlePermissionsLink: '管理 Google 账号授权',
+    contactAction: '发送隐私请求',
+    copyright: '版权所有 2026 Hermes Studio / EKKOLearnAI',
+    backToTop: '返回顶部',
+    sections: {
+      information: {
+        title: '我们处理的信息',
+        paragraphs: [
+          '根据你的部署方式和功能选择，Hermes Studio 可能处理账号信息（如邮箱和显示名称）、设备与网络连接信息、应用配置、运行日志与错误诊断数据，以及你主动提供的对话、文件、指令、反馈或其他内容。',
+          '当你连接模型提供商、设备、编程智能体或其他服务时，Hermes Studio 还可能处理运行该连接所必需的授权状态、服务标识、凭据和请求结果。除非你选择的功能明确需要，我们不会主动索取与该功能无关的敏感信息。',
+        ],
+      },
+      use: {
+        title: '信息的使用目的',
+        paragraphs: [
+          '相关信息仅用于提供和维护你请求的功能、验证连接、运行对话与工作流、管理配置和设备、保障服务安全、排查故障、提供支持、改进面向用户的功能，以及履行适用的法律义务。',
+        ],
+      },
+      google: {
+        title: 'Google API 服务与 Google 用户数据',
+        paragraphs: [
+          '当你主动连接 Google 账号或 Google 服务时，Hermes Studio 可能访问你授权的 Google 账号邮箱和基础个人资料、OAuth 访问令牌与刷新令牌、相关云项目或服务标识，以及完成你发起的操作所必需的请求或响应内容。',
+          'Google 用户数据仅用于验证你的身份、维持授权连接、显示连接状态，以及调用你选择的 Google 功能或服务。Hermes Studio 不会出售 Google 用户数据，不会将其用于广告，也不会使用这些数据训练通用人工智能或机器学习模型。',
+          '除非你为获得支持而明确同意、需要调查滥用或安全事件，或法律要求，否则不允许人员读取 Google 用户数据。Hermes Studio 对从 Google API 获得的信息的使用和传输遵守 Google API 服务用户数据政策，包括其“有限使用”要求。',
+        ],
+      },
+      processing: {
+        title: '本地处理与第三方处理',
+        paragraphs: [
+          '应用数据可以保存在你的设备或自托管环境中。当你主动选择第三方模型、云服务、消息平台或设备集成时，完成请求所必需的信息会发送给该提供商，并同时受该提供商的条款与隐私政策约束。',
+          '在提交密码、私钥、身份证件、医疗记录或其他高度敏感的信息前，请先了解目标服务的数据政策。',
+        ],
+      },
+      sharing: {
+        title: '信息共享与披露',
+        paragraphs: [
+          '我们不会出售个人信息。仅在提供你选择的功能、按照你的指示或授权、向代表我们处理数据的服务提供商披露、支持组织管理的部署、保护用户与系统，或履行适用法律义务时披露相关信息。由你选择和配置的第三方提供商只会收到完成你所发送请求所需的数据。',
+        ],
+      },
+      retention: {
+        title: '数据存储、保留与删除',
+        paragraphs: [
+          '本地或自托管安装中的数据由你或管理员控制，并会保留至从该安装中删除为止。OAuth 凭据会保存在本地，直至连接或凭据被移除、配置数据被删除，或你在服务提供商处撤销授权。支持邮件仅在回复请求以及满足安全或法律义务所需的期间内保留。',
+          '卸载应用不一定会删除自托管服务器、备份、组织管理环境或第三方服务中的数据，请分别在相关位置执行删除。你可以在 Google 账号授权页面撤销 Google 访问权限，并从 Hermes Studio 中移除本地保存的连接凭据。如需访问或删除由 EKKOLearnAI 控制的个人信息，请联系我们。',
+        ],
+      },
+      security: {
+        title: '安全措施',
+        paragraphs: [
+          '我们采取与产品相适应的合理技术和组织措施，包括访问控制、凭据隔离、受限的本地文件权限，以及在适用情况下提供传输保护。但任何系统都无法保证绝对安全，请妥善保护账号、设备、访问令牌、部署环境和备份。',
+        ],
+      },
+      rights: {
+        title: '你的选择与权利',
+        paragraphs: [
+          '根据适用法律，你可能有权访问、更正、导出或删除个人信息，撤回同意，撤销已连接的服务，或限制特定处理。请先使用 Hermes Studio 与所连接服务提供商的控制功能；对于由 EKKOLearnAI 控制的信息，也可以联系我们。为保护数据安全，我们可能需要先验证你的请求。',
+        ],
+      },
+      children: {
+        title: '未成年人及跨境处理',
+        paragraphs: [
+          'Hermes Studio 不面向未达到所在司法辖区最低数字同意年龄的儿童。若你认为儿童在未经适当同意的情况下提供了个人信息，请联系我们。',
+          '当你选择位于其他国家或地区的提供商或部署环境时，信息可能在相应司法辖区处理。我们会在适用法律要求的范围内采取适当的保护措施。',
+        ],
+      },
+      updates: {
+        title: '政策更新与联系',
+        paragraphs: [
+          '我们可能根据产品、技术或法律要求的变化更新本政策。届时会修改上方生效日期，并通过应用、网站或其他合理方式通知重大变更。',
+          '如对隐私保护有疑问，或希望就 EKKOLearnAI 控制的信息提出数据权利或删除请求，请发送邮件至本页面所列的隐私联系邮箱。',
+        ],
+      },
+    },
   },
   docs: {
     placeholder: '从侧边栏选择一个章节开始阅读。',

@@ -197,6 +197,100 @@ export default {
     x: 'Open X',
     douyin: 'Open Douyin',
     xiaohongshu: 'Open Xiaohongshu',
+    privacy: 'Privacy Policy',
+  },
+  privacy: {
+    browserTitle: 'Privacy Policy - Hermes Studio',
+    homeLabel: 'Back to the Hermes Studio homepage',
+    documentTag: 'LEGAL / PRIVACY',
+    eyebrow: 'HERMES STUDIO / PRIVACY & DATA',
+    title: 'Privacy Policy',
+    lede: 'This policy explains how Hermes Studio and EKKOLearnAI handle information associated with you, including Google user data, and the choices available to you.',
+    effectiveDateLabel: 'Effective date',
+    effectiveDate: 'August 11, 2026',
+    productLabel: 'Covered product',
+    product: 'Hermes Studio applications and services',
+    developerLabel: 'Developer',
+    developer: 'EKKOLearnAI',
+    contactLabel: 'Privacy contact',
+    contactEmail: "hermes.studio.ai{'@'}gmail.com",
+    contents: 'Contents',
+    noticeTitle: 'Local-first data processing',
+    noticeBody: 'Hermes Studio can run on your device or in an environment you control. EKKOLearnAI does not automatically receive conversations, files, or credentials from a self-hosted installation. The processing location and parties involved depend on the features and third-party services you choose.',
+    googlePolicyLink: 'Google API Services User Data Policy',
+    googlePermissionsLink: 'Manage Google Account permissions',
+    contactAction: 'Send a privacy request',
+    copyright: 'Copyright 2026 Hermes Studio / EKKOLearnAI',
+    backToTop: 'Back to top',
+    sections: {
+      information: {
+        title: 'Information we process',
+        paragraphs: [
+          'Depending on how you deploy and use Hermes Studio, the application may process account information such as an email address and display name; device, network, and connection information; application configuration; operational logs and error diagnostics; and conversations, files, instructions, feedback, or other content you choose to provide.',
+          'When you connect a model provider, device, coding agent, or other service, Hermes Studio may also process the authorization state, service identifiers, credentials, and request results needed to operate that connection. We do not intentionally request sensitive information that is unrelated to a feature you choose to use.',
+        ],
+      },
+      use: {
+        title: 'How information is used',
+        paragraphs: [
+          'Information is used to provide and maintain the features you request, authenticate connections, run conversations and workflows, manage profiles and devices, protect the service, diagnose faults, provide support, improve user-facing functionality, and comply with applicable legal obligations.',
+        ],
+      },
+      google: {
+        title: 'Google API Services and Google user data',
+        paragraphs: [
+          'If you choose to connect a Google account or Google service, Hermes Studio may access the Google account email address and basic profile information you authorize, OAuth access and refresh tokens, relevant cloud project or service identifiers, and the request or response content needed to perform an action you initiate.',
+          'Google user data is used only to authenticate you, maintain the authorized connection, show its status, and invoke the Google feature or service you selected. Hermes Studio does not sell Google user data, use it for advertising, or use it to train generalized artificial intelligence or machine-learning models.',
+          'Human access to Google user data is not permitted except with your explicit consent for support, when necessary to investigate abuse or a security incident, or when required by law. Hermes Studio use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including its Limited Use requirements.',
+        ],
+      },
+      processing: {
+        title: 'Local and third-party processing',
+        paragraphs: [
+          'Application data can be stored on your device or self-hosted environment. When you intentionally select a third-party model, cloud service, messaging platform, or device integration, the information required to complete your request is sent to that provider and is also governed by the provider\'s terms and privacy policy.',
+          'Review the destination service before sending passwords, private keys, identity documents, medical records, or other highly sensitive information.',
+        ],
+      },
+      sharing: {
+        title: 'Sharing and disclosure',
+        paragraphs: [
+          'We do not sell personal information. Information is disclosed only as needed to provide a feature you selected, with your direction or consent, to service providers acting on our behalf, to an administrator of an organization-managed deployment, to protect users and systems, or when required by applicable law. Third-party providers selected and configured by you receive only the data needed for the requests you send to them.',
+        ],
+      },
+      retention: {
+        title: 'Storage, retention, and deletion',
+        paragraphs: [
+          'Data stored by a local or self-hosted installation remains under the control of you or your administrator and is retained until it is deleted from that installation. OAuth credentials remain locally until the connection or credentials are removed, the profile data is deleted, or access is revoked with the provider. Support correspondence is retained only as needed to respond and meet security or legal obligations.',
+          'Uninstalling the application may not remove data from a self-hosted server, backup, organization-managed environment, or third-party service. Delete data from each relevant location. You can revoke Google access from your Google Account permissions page and remove locally stored connection credentials from Hermes Studio. Contact us to request access to or deletion of personal information controlled by EKKOLearnAI.',
+        ],
+      },
+      security: {
+        title: 'Security measures',
+        paragraphs: [
+          'We use reasonable technical and organizational safeguards appropriate to the product, including access controls, credential isolation, restricted local file permissions, and transport protections where applicable. No system can guarantee absolute security, so protect your account, device, access tokens, deployment, and backups.',
+        ],
+      },
+      rights: {
+        title: 'Your choices and rights',
+        paragraphs: [
+          'Depending on applicable law, you may have rights to access, correct, export, or delete personal information, withdraw consent, revoke a connected service, or restrict certain processing. Use the controls in Hermes Studio and the connected provider first, or contact us for information controlled by EKKOLearnAI. We may need to verify your request before acting on it.',
+        ],
+      },
+      children: {
+        title: 'Children and international processing',
+        paragraphs: [
+          'Hermes Studio is not directed to children below the minimum digital-consent age in their jurisdiction. Contact us if you believe a child provided personal information without appropriate consent.',
+          'When you select a provider or deployment in another country or region, information may be processed in that jurisdiction. Appropriate safeguards will be used where required by applicable law.',
+        ],
+      },
+      updates: {
+        title: 'Policy updates and contact',
+        paragraphs: [
+          'We may update this policy when the product, technology, or legal requirements change. The effective date above will be revised, and material changes will be communicated through the application, website, or another reasonable channel.',
+          'For privacy questions, data-rights requests, or deletion requests concerning information controlled by EKKOLearnAI, email the privacy contact shown on this page.',
+        ],
+      },
+    },
   },
   docs: {
     placeholder: 'Select a section from the sidebar to get started.',

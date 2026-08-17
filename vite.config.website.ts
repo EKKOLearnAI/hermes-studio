@@ -33,6 +33,10 @@ export default defineConfig({
     target: 'es2020',
     cssCodeSplit: true,
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'packages/website/index.html'),
+        privacy: resolve(__dirname, 'packages/website/privacy/index.html'),
+      },
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
