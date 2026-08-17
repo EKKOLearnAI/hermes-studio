@@ -194,6 +194,31 @@ beforeEach(() => {
 })
 
 describe('models controller — model visibility', () => {
+  it('does not expose stored provider API keys in available-models responses', async () => {
+    mockReadFile.mockResolvedValue('DEEPSEEK_API_KEY=stored-built-in-secret\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'custom-model', provider: 'custom:private-proxy' },
+      custom_providers: [{
+        name: 'private-proxy',
+        base_url: 'https://proxy.example.test/v1',
+        model: 'custom-model',
+        api_key: 'stored-custom-secret',
+      }],
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(JSON.stringify(ctx.body)).not.toContain('stored-built-in-secret')
+    expect(JSON.stringify(ctx.body)).not.toContain('stored-custom-secret')
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'deepseek', api_key: '' }),
+      expect.objectContaining({ provider: 'custom:private-proxy', api_key: '' }),
+    ]))
+  })
+
   it('filters available models per provider without changing canonical IDs', async () => {
     mockReadAppConfig.mockResolvedValue({
       modelVisibility: {
