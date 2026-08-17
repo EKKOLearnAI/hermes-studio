@@ -185,13 +185,15 @@ const router = createRouter({
     },
     {
       path: '/hermes/history/group-chat/:roomId',
-      name: 'hermes.groupChatHistory',
-      component: () => import('@/views/hermes/HistoryView.vue'),
+      redirect: to => ({
+        name: 'hermes.groupChatRoom',
+        params: { roomId: to.params.roomId },
+      }),
     },
     {
       path: '/hermes/group-chat/history/:roomId',
       redirect: to => ({
-        name: 'hermes.groupChatHistory',
+        name: 'hermes.groupChatRoom',
         params: { roomId: to.params.roomId },
       }),
     },

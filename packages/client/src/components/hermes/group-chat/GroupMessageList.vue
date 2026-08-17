@@ -8,7 +8,6 @@ import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
-import HistoryArchiveLink from '../chat/HistoryArchiveLink.vue'
 
 const store = useGroupChatStore()
 const props = withDefaults(defineProps<{
@@ -106,22 +105,18 @@ function handleScrollBottomClick(): void {
 }
 
 async function handleTopReach(): Promise<void> {
-    if (!store.hasMoreBefore || store.isLoadingOlderMessages || store.hasReachedMessageDisplayLimit) return
+    if (!store.hasMoreBefore || store.isLoadingOlderMessages) return
     const snapshot = listRef.value?.captureViewportPosition() ?? null
     const loaded = await store.loadOlderMessages()
     if (!loaded) return
     await nextTick()
-    listRef.value?.restoreViewportPosition(snapshot)
+    listRef.value?.restoreViewportPosition(snapshot, 30)
     updateScrollBottomButton()
 }
 
 function retryOlderMessages(): void {
     void handleTopReach()
 }
-
-const completeHistoryHref = computed(() => store.currentRoomId
-    ? `#/hermes/history/group-chat/${encodeURIComponent(store.currentRoomId)}`
-    : '#/hermes/group-chat')
 
 watch(() => store.currentRoomId, (roomId) => {
     pendingInitialBottomRoomId = roomId
@@ -187,13 +182,8 @@ defineExpose({ scrollToBottom })
                 </div>
             </template>
             <template #before>
-                <HistoryArchiveLink
-                    v-if="store.hasReachedMessageDisplayLimit"
-                    :href="completeHistoryHref"
-                    :label="t('groupChat.viewCompleteHistory')"
-                />
                 <div
-                    v-else-if="store.olderMessagesError"
+                    v-if="store.olderMessagesError"
                     class="history-load-error"
                     role="alert"
                 >

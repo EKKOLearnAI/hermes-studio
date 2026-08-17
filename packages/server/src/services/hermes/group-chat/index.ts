@@ -3896,7 +3896,7 @@ export class GroupChatServer {
         socket.on('load_room_agent_activities', (_data: unknown, ack?: (response?: unknown) => void) => {
             this.handleLoadRoomAgentActivities(socket, {}, ack)
         })
-        socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
+        socket.on('load_messages', (data: { roomId?: string; offset?: number; limit?: number; before?: string; history?: boolean }, ack?: (response?: unknown) => void) => this.handleLoadMessages(socket, data, ack))
         socket.on('update_member_profile', (data: { roomId?: string; name?: string; description?: string } | undefined, ack?: (response?: unknown) => void) => this.handleUpdateMemberProfile(socket, data, ack))
         socket.on('message', (data: IncomingGroupChatMessage, ack?: (response?: unknown) => void) => this.handleMessage(socket, data, ack))
         socket.on('message_stream_start', (data: { roomId?: string; id?: string; senderId?: string; senderName?: string; timestamp?: number; run_id?: string; agentSessionId?: string }) => this.handleMessageStreamStart(socket, data))
@@ -4313,11 +4313,8 @@ export class GroupChatServer {
         // Load history from SQLite
         const historyLimit = Math.min(150, Math.max(1, Number.isFinite(data.historyLimit) ? Math.floor(Number(data.historyLimit)) : 150))
         const messages = this.storage.getRecentMessagesForUI(roomId, historyLimit, 0)
-        const total = Math.min(
-            GROUP_CHAT_MESSAGE_WINDOW,
-            this.storage.getMessageCount?.(roomId) ?? messages.length,
-        )
-        const historyTruncated = (this.storage.getMessageCount?.(roomId) ?? messages.length) > GROUP_CHAT_MESSAGE_WINDOW
+        const total = this.storage.getMessageCount?.(roomId) ?? messages.length
+        const historyTruncated = total > GROUP_CHAT_MESSAGE_WINDOW
         const agents = this.getRoomAgentViews(
             roomId,
             this.canSocketManageRoom(socket, roomId),
@@ -4351,7 +4348,7 @@ export class GroupChatServer {
 
     private handleLoadMessages(
         socket: Socket,
-        data: { roomId?: string; offset?: number; limit?: number } | undefined,
+        data: { roomId?: string; offset?: number; limit?: number; before?: string; history?: boolean } | undefined,
         ack?: (res: any) => void,
     ): void {
         const roomId = typeof data?.roomId === 'string' ? data.roomId.trim() : ''
@@ -4362,15 +4359,23 @@ export class GroupChatServer {
 
         const offset = Math.max(0, Number.isFinite(data?.offset) ? Math.floor(Number(data?.offset)) : 0)
         const limit = Math.min(150, Math.max(1, Number.isFinite(data?.limit) ? Math.floor(Number(data?.limit)) : 150))
-        const messages = this.storage.getRecentMessagesForUI(roomId, limit, offset)
+        const beforeMessageId = typeof data?.before === 'string' ? data.before.trim() : ''
+        const historyPage = beforeMessageId || data?.history
+            ? this.storage.getHistoryPageForUI(roomId, limit, beforeMessageId || undefined)
+            : null
+        if (historyPage && !historyPage.cursorFound) {
+            ack?.({ error: 'History cursor not found' })
+            return
+        }
+        const messages = historyPage?.messages
+            ?? this.storage.getRecentMessagesForUI(roomId, limit, offset)
         const storedTotal = this.storage.getMessageCount?.(roomId) ?? messages.length
-        const total = Math.min(GROUP_CHAT_MESSAGE_WINDOW, storedTotal)
         ack?.({
             messages,
-            total,
+            total: storedTotal,
             offset,
             limit,
-            hasMore: offset + messages.length < total,
+            hasMore: historyPage?.hasMore ?? offset + messages.length < storedTotal,
             historyTruncated: storedTotal > GROUP_CHAT_MESSAGE_WINDOW,
         })
     }

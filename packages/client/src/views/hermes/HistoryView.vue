@@ -14,9 +14,7 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
-import GroupChatHistoryPane from '@/components/hermes/group-chat/GroupChatHistoryPane.vue'
 import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
-import { listRooms, type RoomInfo } from '@/api/hermes/group-chat'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -28,11 +26,6 @@ const router = useRouter()
 
 const routeSessionId = computed(() => {
   const value = route.params.sessionId
-  return typeof value === 'string' && value.trim() ? value : null
-})
-
-const routeGroupRoomId = computed(() => {
-  const value = route.params.roomId
   return typeof value === 'string' && value.trim() ? value : null
 })
 
@@ -61,39 +54,12 @@ const showContextMenu = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 let hermesSessionsRequestId = 0
-const groupRooms = ref<RoomInfo[]>([])
-const groupRoomsLoading = ref(false)
-const groupRoomsHasMore = ref(false)
-const groupRoomsOffset = ref(0)
-
 const HISTORY_PAGE_SIZE = 150
 const HISTORY_GROUP_PAGE_SIZE = 50
-const HISTORY_GROUP_COLLAPSE_KEY = 'group-chat'
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
-const isGroupRoomsCollapsed = computed(() => collapsedGroups.value.has(HISTORY_GROUP_COLLAPSE_KEY))
 const sourceHasMore = ref<Record<string, boolean>>({})
 const sourceLoading = ref<Record<string, boolean>>({})
 const sourceOffsets = ref<Record<string, number>>({})
-
-function persistCollapsedGroups() {
-  localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
-}
-
-function toggleGroupRooms() {
-  const next = new Set(collapsedGroups.value)
-  if (next.has(HISTORY_GROUP_COLLAPSE_KEY)) next.delete(HISTORY_GROUP_COLLAPSE_KEY)
-  else next.add(HISTORY_GROUP_COLLAPSE_KEY)
-  collapsedGroups.value = next
-  persistCollapsedGroups()
-}
-
-function ensureGroupRoomsExpanded() {
-  if (!collapsedGroups.value.has(HISTORY_GROUP_COLLAPSE_KEY)) return
-  collapsedGroups.value = new Set(
-    [...collapsedGroups.value].filter(source => source !== HISTORY_GROUP_COLLAPSE_KEY),
-  )
-  persistCollapsedGroups()
-}
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
   historyMessageListRef.value?.scrollToAnchor(target.messageId, target.anchorId)
@@ -131,40 +97,6 @@ async function loadHermesSessions() {
       hermesSessionsLoading.value = false
     }
   }
-}
-
-async function loadGroupRooms(reset = true) {
-  if (groupRoomsLoading.value) return
-  groupRoomsLoading.value = true
-  try {
-    const offset = reset ? 0 : groupRoomsOffset.value
-    const result = await listRooms({ offset, limit: HISTORY_GROUP_PAGE_SIZE })
-    const byId = new Map((reset ? [] : groupRooms.value).map(room => [room.id, room]))
-    for (const room of result.rooms) byId.set(room.id, room)
-    groupRooms.value = [...byId.values()].sort((a, b) =>
-      Number(b.lastActiveAt || b.createdAt || 0) - Number(a.lastActiveAt || a.createdAt || 0)
-      || a.id.localeCompare(b.id),
-    )
-    groupRoomsOffset.value = offset + result.rooms.length
-    groupRoomsHasMore.value = Boolean(result.hasMore)
-  } catch (err) {
-    console.error('Failed to load group chat rooms for History:', err)
-  } finally {
-    groupRoomsLoading.value = false
-  }
-}
-
-function handleGroupRoomClick(roomId: string) {
-  void router.push({ name: 'hermes.groupChatHistory', params: { roomId } })
-  if (isMobile.value) showSessions.value = false
-}
-
-function handleGroupRoomLoaded(room: RoomInfo | null) {
-  if (!room || groupRooms.value.some(item => item.id === room.id)) return
-  groupRooms.value = [room, ...groupRooms.value].sort((a, b) =>
-    Number(b.lastActiveAt || b.createdAt || 0) - Number(a.lastActiveAt || a.createdAt || 0)
-    || a.id.localeCompare(b.id),
-  )
 }
 
 // Initialize synchronously from the media query so first paint is correct.
@@ -455,7 +387,7 @@ function openPageSidebar() {
 onMounted(async () => {
   appStore.loadModels()
   await profilesStore.fetchProfiles()
-  await Promise.all([loadHermesSessions(), loadGroupRooms()])
+  await loadHermesSessions()
   await syncRouteSession()
 
   mobileQuery = window.matchMedia('(max-width: 768px)')
@@ -470,14 +402,8 @@ onUnmounted(() => {
 })
 
 watch(
-  [routeSessionId, routeProfile, routeGroupRoomId],
-  async ([sessionId, _profile, groupRoomId], [_previousSessionId, _previousProfile, previousGroupRoomId]) => {
-    if (groupRoomId) {
-      if (!previousGroupRoomId) ensureGroupRoomsExpanded()
-      historySessionId.value = null
-      historySession.value = null
-      return
-    }
+  [routeSessionId, routeProfile],
+  async ([sessionId]) => {
     if (!sessionId) {
       historySessionId.value = null
       historySession.value = null
@@ -711,7 +637,7 @@ watch(groupedSessions, groups => {
 
 // Auto-load the first CLI session when Hermes sessions are loaded.
 watch(hermesSessionsLoaded, (loaded) => {
-  if (loaded && hermesSessions.value.length > 0 && !routeSessionId.value && !routeGroupRoomId.value) {
+  if (loaded && hermesSessions.value.length > 0 && !routeSessionId.value) {
     void openDefaultHistorySession(false)
   }
 }, { once: true })
@@ -978,8 +904,8 @@ function handleBatchDeleteConfirm() {
         </div>
       </div>
       <div v-if="showSessions" class="session-items">
-        <div v-if="(hermesSessionsLoading || groupRoomsLoading) && hermesSessions.length === 0 && groupRooms.length === 0" class="session-loading">{{ t('common.loading') }}</div>
-        <div v-else-if="hermesSessions.length === 0 && groupRooms.length === 0" class="session-empty">{{ t('chat.noSessions') }}</div>
+        <div v-if="hermesSessionsLoading && hermesSessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
+        <div v-else-if="hermesSessions.length === 0" class="session-empty">{{ t('chat.noSessions') }}</div>
 
         <template v-if="pinnedSessions.length > 0">
           <div class="session-group-header session-group-header--static">
@@ -1002,65 +928,6 @@ function handleBatchDeleteConfirm() {
             @delete="handleDeleteSession(s.id, s.profile)"
             @toggle-select="toggleSessionSelection(s)"
           />
-        </template>
-
-        <div
-          class="session-group-header"
-          role="button"
-          tabindex="0"
-          :aria-expanded="!isGroupRoomsCollapsed"
-          @click="toggleGroupRooms"
-          @keydown.enter.self.prevent="toggleGroupRooms"
-          @keydown.space.self.prevent="toggleGroupRooms"
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="group-chevron" :class="{ collapsed: isGroupRoomsCollapsed }"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="session-group-label">GROUP</span>
-          <span class="session-group-count">{{ groupRooms.length }}{{ groupRoomsHasMore ? '+' : '' }}</span>
-          <NTooltip v-if="groupRoomsHasMore && !isGroupRoomsCollapsed" trigger="hover">
-            <template #trigger>
-              <NButton
-                class="session-group-load-more"
-                quaternary
-                circle
-                size="tiny"
-                :loading="groupRoomsLoading"
-                :disabled="groupRoomsLoading"
-                :aria-label="groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions')"
-                @click.stop="loadGroupRooms(false)"
-              >
-                <template #icon>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <path d="M20 11a8 8 0 1 0-2.34 5.66" />
-                    <polyline points="20 4 20 11 13 11" />
-                  </svg>
-                </template>
-              </NButton>
-            </template>
-            {{ groupRoomsLoading ? t('common.loading') : t('chat.loadMoreSessions') }}
-          </NTooltip>
-        </div>
-        <template v-if="!isGroupRoomsCollapsed">
-          <button
-            v-for="room in groupRooms"
-            :key="`group-${room.id}`"
-            type="button"
-            class="group-room-history-item"
-            :class="{ active: room.id === routeGroupRoomId }"
-            @click="handleGroupRoomClick(room.id)"
-          >
-            <span class="group-room-history-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            </span>
-            <span class="group-room-history-copy">
-              <span class="group-room-history-name">{{ room.name }}</span>
-              <span class="group-room-history-time">{{ new Date(Number(room.lastActiveAt || room.createdAt || 0)).toLocaleString() }}</span>
-            </span>
-          </button>
         </template>
 
         <template v-for="group in groupedSessions" :key="group.source">
@@ -1129,12 +996,6 @@ function handleBatchDeleteConfirm() {
       class="chat-main"
       :class="{ 'chat-main--sidebar-collapsed': !showSessions }"
     >
-      <GroupChatHistoryPane
-        v-if="routeGroupRoomId"
-        :room-id="routeGroupRoomId"
-        @loaded="handleGroupRoomLoaded"
-      />
-      <template v-else>
       <header class="chat-header">
         <div class="header-left">
           <NButton class="history-sidebar-toggle" quaternary size="small" @click="showSessions = !showSessions" circle>
@@ -1186,7 +1047,6 @@ function handleBatchDeleteConfirm() {
           @navigate="handleOutlineNavigate"
         />
       </div>
-      </template>
     </div>
   </div>
 </template>
@@ -1381,58 +1241,6 @@ function handleBatchDeleteConfirm() {
   }
 }
 
-.group-room-history-item {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: $text-primary;
-  cursor: pointer;
-  text-align: start;
-
-  &:hover,
-  &.active {
-    background: rgba($accent-primary, 0.08);
-  }
-
-  &.active {
-    color: $accent-primary;
-  }
-}
-
-.group-room-history-icon {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.group-room-history-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.group-room-history-name,
-.group-room-history-time {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.group-room-history-name {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.group-room-history-time {
-  color: $text-muted;
-  font-size: 10px;
-}
 
 .session-items {
   flex: 1;

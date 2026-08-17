@@ -1138,29 +1138,33 @@ describe('Group Chat member/agent identity sync', () => {
     expect(server.canSocketManageRoom(socket, 'room-1')).toBe(false)
   })
 
-  it('loads paged history only for a socket already joined to the room', () => {
+  it('loads stable-cursor history only for a socket already joined to the room', () => {
     const member = { source: 'human' }
     const server = Object.create(GroupChatServer.prototype) as any
     server.rooms = new Map([['room-1', {
       getOnlineMemberBySocketId: vi.fn(() => member),
     }]])
     server.storage = {
-      getRecentMessagesForUI: vi.fn(() => [{ id: 'older-1' }]),
+      getHistoryPageForUI: vi.fn(() => ({
+        messages: [{ id: 'older-1' }],
+        hasMore: true,
+        cursorFound: true,
+      })),
       getMessageCount: vi.fn(() => 725),
     }
     const ack = vi.fn()
 
     server.handleLoadMessages(
       { id: 'guest-socket' },
-      { roomId: 'room-1', offset: 1, limit: 1 },
+      { roomId: 'room-1', before: 'message-651', limit: 1, history: true },
       ack,
     )
 
-    expect(server.storage.getRecentMessagesForUI).toHaveBeenCalledWith('room-1', 1, 1)
+    expect(server.storage.getHistoryPageForUI).toHaveBeenCalledWith('room-1', 1, 'message-651')
     expect(ack).toHaveBeenCalledWith({
       messages: [{ id: 'older-1' }],
-      total: 500,
-      offset: 1,
+      total: 725,
+      offset: 0,
       limit: 1,
       hasMore: true,
       historyTruncated: true,

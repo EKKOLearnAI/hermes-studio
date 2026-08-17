@@ -568,7 +568,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(recent.status).toBe(200)
     await expect(recent.json()).resolves.toMatchObject({
-      total: 500,
+      total: 501,
       historyTruncated: true,
     })
 
@@ -782,7 +782,7 @@ describe('group chat REST route baseline', () => {
     })
   })
 
-  it('stops REST pagination at the 500-message UI window', async () => {
+  it('continues REST pagination beyond the Agent context window', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.getMessageCount.mockReturnValueOnce(580)
     storage.getRecentMessagesForUI.mockReturnValueOnce([])
@@ -793,10 +793,11 @@ describe('group chat REST route baseline', () => {
     expect(res.status).toBe(200)
     expect(body).toMatchObject({
       messages: [],
-      total: 500,
+      total: 580,
       offset: 500,
       limit: 100,
-      hasMore: false,
+      hasMore: true,
+      historyTruncated: true,
     })
   })
 

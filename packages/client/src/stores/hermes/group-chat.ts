@@ -88,7 +88,6 @@ function uid(): string {
 const STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS = 300
 export const GROUP_CHAT_STREAM_FLUSH_INTERVAL_MS = 50
 export const GROUP_CHAT_MESSAGE_PAGE_SIZE = 150
-export const GROUP_CHAT_MAX_DISPLAY_MESSAGES = 500
 const GROUP_CHAT_JOIN_TIMEOUT_MS = 30000
 const GROUP_CHAT_TYPING_HEARTBEAT_MS = 2500
 const GROUP_CHAT_TYPING_IDLE_MS = 4000
@@ -214,12 +213,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const totalMessages = ref(0)
     const loadedMessageCount = ref(0)
     const hasMoreBefore = ref(false)
-    const historyTruncated = ref(false)
     const isLoadingOlderMessages = ref(false)
     const olderMessagesError = ref<string | null>(null)
-    const hasReachedMessageDisplayLimit = computed(() =>
-        historyTruncated.value && loadedMessageCount.value >= GROUP_CHAT_MAX_DISPLAY_MESSAGES,
-    )
     const currentUserAvatar = ref('')
     const inviteGuest = ref(false)
     const activeInviteCode = ref('')
@@ -238,7 +233,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         totalMessages.value = 0
         loadedMessageCount.value = 0
         hasMoreBefore.value = false
-        historyTruncated.value = false
         isLoadingOlderMessages.value = false
         olderMessagesError.value = null
     }
@@ -304,11 +298,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         scheduleStreamDeltaFlush()
     }
 
-    function applyMessagePaging(res: { messages: ChatMessage[]; total?: number; hasMore?: boolean; historyTruncated?: boolean }) {
+    function applyMessagePaging(res: { messages: ChatMessage[]; total?: number; hasMore?: boolean }) {
         loadedMessageCount.value = res.messages.length
         totalMessages.value = res.total ?? res.messages.length
         hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
-        historyTruncated.value = Boolean(res.historyTruncated)
     }
 
     function setAutoPlaySpeech(enabled: boolean) {
@@ -987,12 +980,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     loadedMessageCount.value += 1
                     totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
                 }
-                if (
-                    msg.finish_reason !== 'streaming' &&
-                    totalMessages.value > GROUP_CHAT_MAX_DISPLAY_MESSAGES
-                ) {
-                    historyTruncated.value = true
-                }
                 if (autoPlaySpeechEnabled.value && resolvedMsg.role === 'assistant' && resolvedMsg.content?.trim()) {
                     const messageAgent = agents.value.find(agent =>
                         agent.agentId === resolvedMsg.senderId || agent.name === resolvedMsg.senderName
@@ -1401,12 +1388,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function loadOlderMessages(): Promise<boolean> {
         const roomId = currentRoomId.value
         if (!roomId || isLoadingOlderMessages.value || !hasMoreBefore.value) return false
-        const offset = loadedMessageCount.value
-        if (offset >= GROUP_CHAT_MAX_DISPLAY_MESSAGES) return false
+        const before = messages.value[0]?.id
+        if (!before) return false
         isLoadingOlderMessages.value = true
         olderMessagesError.value = null
         try {
-            const limit = Math.min(GROUP_CHAT_MESSAGE_PAGE_SIZE, GROUP_CHAT_MAX_DISPLAY_MESSAGES - offset)
+            const limit = GROUP_CHAT_MESSAGE_PAGE_SIZE
             const res = inviteGuest.value
                 ? await new Promise<{
                     messages: ChatMessage[]
@@ -1418,18 +1405,18 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                         reject(new Error('Group chat socket not connected'))
                         return
                     }
-                    socket.emit('load_messages', { roomId, offset, limit }, (response: any) => {
+                    socket.emit('load_messages', { roomId, before, limit, history: true }, (response: any) => {
                         if (response?.error) reject(new Error(response.error))
                         else resolve(response)
                     })
                 })
-                : await getRoomDetail(roomId, { offset, limit })
+                : await getRoomDetail(roomId, { before, limit, history: true })
             if (currentRoomId.value !== roomId) return false
             const existingIds = new Set(messages.value.map(message => message.id))
             captureHistoricalMessageAgents(res.messages)
             const olderMessages = res.messages.filter(message => !existingIds.has(message.id))
             messages.value = [...olderMessages, ...messages.value]
-            loadedMessageCount.value = offset + res.messages.length
+            loadedMessageCount.value = messages.value.length
             totalMessages.value = res.total ?? totalMessages.value
             hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
             return olderMessages.length > 0
@@ -1936,10 +1923,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         totalMessages,
         loadedMessageCount,
         hasMoreBefore,
-        historyTruncated,
         isLoadingOlderMessages,
         olderMessagesError,
-        hasReachedMessageDisplayLimit,
         userId,
         userName,
         currentUserAvatar,

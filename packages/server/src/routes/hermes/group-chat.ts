@@ -592,7 +592,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     const messages = historyPage?.messages
         ?? storage.getRecentMessagesForUI(ctx.params.roomId, limit, offset)
     const storedTotal = storage.getMessageCount(ctx.params.roomId)
-    const total = historyPage ? storedTotal : Math.min(GROUP_CHAT_MESSAGE_WINDOW, storedTotal)
+    const total = storedTotal
     const agents = typeof chatServer.getRoomAgentViews === 'function'
         ? chatServer.getRoomAgentViews(ctx.params.roomId, canManage)
         : storage.getRoomAgents(ctx.params.roomId)
