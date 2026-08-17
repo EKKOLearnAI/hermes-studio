@@ -301,6 +301,32 @@
         ]
       }
     },
+    "/api/app/profiles": {
+      "get": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Get profiles",
+        "description": "GET /api/app/profiles",
+        "operationId": "listForApp",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/auth/app-login": {
       "post": {
         "tags": [

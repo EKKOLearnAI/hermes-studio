@@ -21,6 +21,21 @@ describe('createAppImagePreview', () => {
     expect(result.originalBytes).toBe(source.length)
   })
 
+  it('supports a small avatar-specific preview preset', async () => {
+    const source = solidPng(640, 480, [53, 88, 212, 255])
+    const result = await createAppImagePreview(source, 'image/png', {
+      maxEdge: 128,
+      quality: 65,
+      preserveAnimation: false,
+    })
+
+    expect(result.optimized).toBe(true)
+    expect(result.mime).toBe('image/webp')
+    expect(result.width).toBe(128)
+    expect(result.height).toBe(96)
+    expect(result.data.length).toBeLessThan(source.length)
+  })
+
   it('does not alter non-image downloads', async () => {
     const source = Buffer.from('hello')
     const result = await createAppImagePreview(source, 'text/plain')
