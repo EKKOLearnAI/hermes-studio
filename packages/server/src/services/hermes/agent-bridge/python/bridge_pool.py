@@ -28,6 +28,7 @@ from bridge_runtime import (
     _jsonable,
     _load_cfg,
     _load_enabled_toolsets,
+    _load_fallback_model,
     _load_reasoning_config,
     _load_service_tier,
     _mcp_tool_names_from_names,
@@ -456,6 +457,7 @@ class AgentPool:
 
                 agent = AIAgent(
                     model=resolved_model,
+                    fallback_model=_load_fallback_model(cfg),
                     max_iterations=_cfg_max_turns(cfg, 90),
                     provider=runtime.get("provider"),
                     base_url=runtime.get("base_url"),
