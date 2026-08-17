@@ -311,7 +311,7 @@ describe('models controller — model visibility', () => {
         provider: 'moa',
         label: 'Mixture of Agents',
         base_url: 'moa://local',
-        api_key: 'moa-virtual-provider',
+        api_key: '',
         api_mode: 'chat_completions',
         models: ['coding', 'research'],
       }),
