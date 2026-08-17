@@ -1,6 +1,6 @@
 ---
 date: 2026-08-17
-pr: pending
+pr: 2594
 feature: Group Chat history in the live room
 impact: The live Group Chat loads older messages by stable cursor until the first retained message, while legacy history URLs redirect to the room and the duplicate History surface is removed.
 ---
