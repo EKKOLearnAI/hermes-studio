@@ -51,6 +51,7 @@ import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
 import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
+import LanguageSwitch from "@/components/layout/LanguageSwitch.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
@@ -2119,6 +2120,7 @@ async function handleSessionModelCustomSubmit() {
           </svg>
           <span>{{ t("sidebar.settings") }}</span>
         </button>
+        <LanguageSwitch />
       </div>
     </aside>
 
@@ -3436,6 +3438,11 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   align-items: center;
   gap: 8px;
+
+  .language-switch {
+    flex: 0 0 auto;
+    width: 96px;
+  }
 }
 
 .page-sidebar-menu-btn {
