@@ -724,6 +724,7 @@ export default {
     attachFiles: '添加附件',
     reasoningEffort: {
       tooltip: '推理强度',
+      dragHint: '拖动选择 · 共 {count} 档',
       defaultLabel: '默认',
       options: {
         default: '默认 (config.yaml)',

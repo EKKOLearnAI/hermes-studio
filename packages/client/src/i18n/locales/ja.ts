@@ -685,6 +685,7 @@ export default {
     attachFiles: 'ファイルを添付',
     reasoningEffort: {
       tooltip: '推論の労力',
+      dragHint: 'ドラッグして選択 · 全 {count} 段階',
       defaultLabel: '既定',
       options: {
         default: '既定 (config.yaml)',

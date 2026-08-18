@@ -592,6 +592,7 @@ export default {
     attachFiles: 'Прикрепить файлы',
     reasoningEffort: {
       tooltip: 'Глубина рассуждений',
+      dragHint: 'Перетащите, чтобы выбрать · {count} уровней',
       defaultLabel: 'По умолчанию',
       options: {
         default: 'По умолчанию (config.yaml)',

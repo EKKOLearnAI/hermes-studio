@@ -685,6 +685,7 @@ export default {
     attachFiles: '파일 첨부',
     reasoningEffort: {
       tooltip: '추론 노력',
+      dragHint: '드래그하여 선택 · {count}단계',
       defaultLabel: '기본값',
       options: {
         default: '기본값 (config.yaml)',

@@ -704,6 +704,7 @@ export default {
     attachFiles: 'إرفاق ملفات',
     reasoningEffort: {
       tooltip: 'جهد التفكير',
+      dragHint: 'اسحب للاختيار · {count} درجات',
       defaultLabel: 'افتراضي',
       options: {
         default: 'افتراضي (config.yaml)',

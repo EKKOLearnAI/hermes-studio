@@ -1186,6 +1186,9 @@ function isImage(type: string): boolean {
                 <span>{{ reasoningEffortOptions[0].label }}</span>
                 <span>{{ reasoningEffortOptions[reasoningEffortOptions.length - 1].label }}</span>
               </div>
+              <div class="reasoning-effort-slider-hint">
+                {{ t('chat.reasoningEffort.dragHint', { count: reasoningEffortOptions.length }) }}
+              </div>
             </div>
           </NPopover>
 
@@ -1635,6 +1638,13 @@ function isImage(type: string): boolean {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.reasoning-effort-slider-hint {
+  margin-top: 6px;
+  color: $text-muted;
+  font-size: 11px;
+  text-align: center;
 }
 
 .reasoning-effort-slider-heading {

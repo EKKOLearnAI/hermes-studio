@@ -685,6 +685,7 @@ export default {
     attachFiles: 'Dateien anhangen',
     reasoningEffort: {
       tooltip: 'Denkaufwand',
+      dragHint: 'Zum Auswählen ziehen · {count} Stufen',
       defaultLabel: 'Standard',
       options: {
         default: 'Standard (config.yaml)',

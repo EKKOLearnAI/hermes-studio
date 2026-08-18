@@ -702,6 +702,7 @@ export default {
     attachFiles: '新增附件',
     reasoningEffort: {
       tooltip: '推理強度',
+      dragHint: '拖曳選擇 · 共 {count} 檔',
       defaultLabel: '預設',
       options: {
         default: '預設 (config.yaml)',

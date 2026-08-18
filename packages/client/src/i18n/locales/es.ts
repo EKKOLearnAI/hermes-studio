@@ -685,6 +685,7 @@ export default {
     attachFiles: 'Adjuntar archivos',
     reasoningEffort: {
       tooltip: 'Esfuerzo de razonamiento',
+      dragHint: 'Arrastra para elegir · {count} niveles',
       defaultLabel: 'Predeterminado',
       options: {
         default: 'Predeterminado (config.yaml)',

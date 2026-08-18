@@ -724,6 +724,7 @@ export default {
     attachFiles: 'Attach files',
     reasoningEffort: {
       tooltip: 'Reasoning effort',
+      dragHint: 'Drag to choose · {count} levels',
       defaultLabel: 'Default',
       options: {
         default: 'Default (config.yaml)',
