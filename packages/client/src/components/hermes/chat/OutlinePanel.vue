@@ -133,7 +133,7 @@ function scrollToTarget(item: OutlineItem) {
           >
             <div class="user-question">
               <span class="q-label">Q:</span>
-              <span class="q-text">{{ item.content }}</span>
+              <span class="q-text" dir="auto">{{ item.content }}</span>
             </div>
           </div>
           <div
@@ -143,7 +143,7 @@ function scrollToTarget(item: OutlineItem) {
             @click="scrollToTarget(item)"
           >
             <div class="heading-item">
-              <span class="heading-text">{{ item.content }}</span>
+              <span class="heading-text" dir="auto">{{ item.content }}</span>
             </div>
           </div>
         </template>

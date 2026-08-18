@@ -2629,7 +2629,7 @@ async function handleSessionModelCustomSubmit() {
               </svg>
             </template>
           </NButton>
-          <span class="header-session-title">{{ headerTitle }}</span>
+          <span class="header-session-title" dir="auto">{{ headerTitle }}</span>
           <button
             v-if="chatStore.activeSession?.workspace"
             class="workspace-badge"
