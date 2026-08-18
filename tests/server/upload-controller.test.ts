@@ -92,6 +92,42 @@ describe('upload controller', () => {
     expect(ctx.body.files[0]).toMatchObject({ name: 'daily report.txt', path: savedPath })
   })
 
+  it('answers 413 and finishes reading the body when an upload is too large', async () => {
+    const boundary = 'test-boundary'
+    const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+    // Three chunks: the limit is crossed on the second, and the third is what a
+    // still-writing client would send after the server has made up its mind.
+    const chunk = Buffer.alloc(30 * 1024 * 1024, 0x61)
+    const sent: number[] = []
+    const req = new Readable({
+      read() {
+        if (sent.length >= 3) {
+          this.push(null)
+          return
+        }
+        sent.push(chunk.length)
+        this.push(chunk)
+      },
+    })
+    const ctx: any = {
+      get: vi.fn((header: string) => header === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
+      req,
+      state: { profile: { name: 'research' } },
+      body: undefined,
+      status: 200,
+    }
+
+    await handleUpload(ctx)
+
+    expect(ctx.status).toBe(413)
+    expect(ctx.body).toEqual({ error: 'File too large (max 50MB)' })
+    expect(writeFileMock).not.toHaveBeenCalled()
+    // The whole body was read, so the client is not cut off mid-write and can
+    // still read the reason it was refused.
+    expect(sent.length).toBe(3)
+    expect(req.readableEnded).toBe(true)
+  })
+
   it('returns 400 for malformed RFC 5987 filenames', async () => {
     const boundary = 'test-boundary'
     const { handleUpload } = await import('../../packages/server/src/controllers/upload')

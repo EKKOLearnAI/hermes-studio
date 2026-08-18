@@ -6,6 +6,38 @@ import { getProfileUploadDir } from '../services/hermes/upload-paths'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+// How long to keep reading a rejected upload before giving up on a clean reply.
+const OVERSIZE_DRAIN_TIMEOUT_MS = 10_000
+
+/**
+ * Read and discard whatever is left of a request body.
+ *
+ * Answering while the client is still writing gets the connection reset before
+ * it can read the response, so the browser reports a generic network failure
+ * instead of the reason it was given. Draining first lets the reply arrive.
+ */
+function drainRequest(req: any): Promise<void> {
+  if (!req || typeof req.resume !== 'function' || req.readableEnded || req.destroyed) return Promise.resolve()
+  return new Promise<void>(resolve => {
+    const finish = () => {
+      clearTimeout(timer)
+      req.off?.('end', finish)
+      req.off?.('close', finish)
+      req.off?.('error', finish)
+      resolve()
+    }
+    // A client that keeps sending forever must not hold the handler open.
+    const timer = setTimeout(() => {
+      req.destroy?.()
+      finish()
+    }, OVERSIZE_DRAIN_TIMEOUT_MS)
+    timer.unref?.()
+    req.on('end', finish)
+    req.on('close', finish)
+    req.on('error', finish)
+    req.resume()
+  })
+}
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -20,14 +52,28 @@ export async function handleUpload(ctx: any) {
   if (!boundaryBuf) {
     ctx.status = 400; ctx.body = { error: 'Missing boundary' }; return
   }
-  const chunks: Buffer[] = []
+  let chunks: Buffer[] = []
   let totalSize = 0
-  for await (const chunk of ctx.req) {
+  let oversize = false
+  // Leave the stream alive when the loop ends early; the iterator would
+  // otherwise destroy it and take the unsent response down with it.
+  const body = typeof ctx.req.iterator === 'function'
+    ? ctx.req.iterator({ destroyOnReturn: false })
+    : ctx.req
+  for await (const chunk of body) {
     totalSize += chunk.length
     if (totalSize > MAX_UPLOAD_SIZE) {
-      ctx.status = 413; ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }; return
+      oversize = true
+      break
     }
     chunks.push(chunk)
+  }
+  if (oversize) {
+    chunks = []
+    await drainRequest(ctx.req)
+    ctx.status = 413
+    ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }
+    return
   }
   const raw = Buffer.concat(chunks)
   const parts = splitMultipart(raw, boundaryBuf)
