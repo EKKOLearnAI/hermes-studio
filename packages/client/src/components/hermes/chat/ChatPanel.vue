@@ -90,6 +90,7 @@ const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
   addFiles?: (files: File[]) => void;
   addBrowserAttachment?: (file: File, context: string) => void;
+  focusComposer?: () => void;
 }) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
 const chatMainContentRef = ref<HTMLElement | null>(null);
@@ -441,6 +442,11 @@ watch(
     }
 
     await nextTick();
+    // A session you just opened should be ready to type in. Without this the
+    // composer keeps whatever focus the sidebar click left behind, so the first
+    // keystroke goes nowhere.
+    chatInputRef.value?.focusComposer?.();
+
     const surface = chatMainContentRef.value;
     if (!surface || typeof surface.animate !== "function") return;
 

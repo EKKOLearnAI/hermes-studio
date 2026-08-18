@@ -889,7 +889,17 @@ function handleDrop(e: DragEvent) {
   addFiles(files)
 }
 
-defineExpose({ addFiles, addBrowserAttachment })
+/**
+ * Put the caret in the composer so the next keystroke lands in the message box.
+ * Refused on a phone, where taking focus raises the on-screen keyboard over the
+ * conversation the user just opened.
+ */
+function focusComposer() {
+  if (isMobileViewport.value) return
+  nextTick(() => textareaRef.value?.focus())
+}
+
+defineExpose({ addFiles, addBrowserAttachment, focusComposer })
 
 // --- Send ---
 
