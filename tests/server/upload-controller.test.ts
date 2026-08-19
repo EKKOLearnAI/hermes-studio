@@ -128,6 +128,46 @@ describe('upload controller', () => {
     expect(req.readableEnded).toBe(true)
   })
 
+  it('allows two minutes for a rejected upload body to drain', async () => {
+    vi.useFakeTimers()
+    try {
+      const boundary = 'test-boundary'
+      const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+      const chunk = Buffer.alloc(30 * 1024 * 1024, 0x61)
+      let reads = 0
+      const req = new Readable({
+        read() {
+          reads += 1
+          if (reads <= 2) this.push(chunk)
+          // Leave the request open after crossing the limit to exercise the
+          // drain timeout without waiting in real time.
+        },
+      })
+      const ctx: any = {
+        get: vi.fn((header: string) => header === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
+        req,
+        state: { profile: { name: 'research' } },
+        body: undefined,
+        status: 200,
+      }
+
+      const upload = handleUpload(ctx)
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      expect(req.destroyed).toBe(false)
+      expect(ctx.status).toBe(200)
+
+      await vi.advanceTimersByTimeAsync(110_000)
+      await upload
+
+      expect(req.destroyed).toBe(true)
+      expect(ctx.status).toBe(413)
+      expect(ctx.body).toEqual({ error: 'File too large (max 50MB)' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('returns 400 for malformed RFC 5987 filenames', async () => {
     const boundary = 'test-boundary'
     const { handleUpload } = await import('../../packages/server/src/controllers/upload')

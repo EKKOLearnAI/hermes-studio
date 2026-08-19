@@ -7,6 +7,7 @@ import {
     parseMultipartFilename,
     splitMultipart,
 } from '../../lib/multipart'
+import { drainRejectedRequest, nonDestroyingRequestBody } from '../../lib/request-body'
 import { publicGroupChatInviteRoom } from '../../services/hermes/group-chat/access'
 import {
     findPublishedGroupChatAttachmentPath,
@@ -155,17 +156,21 @@ export async function uploadRoomAttachment(ctx: any, room: { id: string }): Prom
         return
     }
 
+    let oversize = false
     await withGroupChatAttachmentWriteLock(room.id, async () => {
-        const chunks: Buffer[] = []
+        let chunks: Buffer[] = []
         let totalSize = 0
-        for await (const chunk of ctx.req) {
+        for await (const chunk of nonDestroyingRequestBody(ctx.req)) {
             totalSize += chunk.length
             if (totalSize > MAX_GROUP_CHAT_ATTACHMENT_SIZE) {
-                ctx.status = 413
-                ctx.body = { error: 'Group chat attachment is too large (max 20MB)' }
-                return
+                oversize = true
+                break
             }
             chunks.push(chunk)
+        }
+        if (oversize) {
+            chunks = []
+            return
         }
 
         const pendingFiles: Array<{ name: string; storedName: string; data: Buffer }> = []
@@ -218,6 +223,12 @@ export async function uploadRoomAttachment(ctx: any, room: { id: string }): Prom
         }
         ctx.body = { files }
     })
+
+    if (oversize) {
+        await drainRejectedRequest(ctx.req)
+        ctx.status = 413
+        ctx.body = { error: 'Group chat attachment is too large (max 20MB)' }
+    }
 }
 
 export async function readInviteAttachment(ctx: any): Promise<void> {

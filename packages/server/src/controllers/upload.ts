@@ -4,40 +4,9 @@ import { join } from 'path'
 import { getActiveProfileName } from '../services/hermes/hermes-profile'
 import { getProfileUploadDir } from '../services/hermes/upload-paths'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
+import { drainRejectedRequest, nonDestroyingRequestBody } from '../lib/request-body'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
-// How long to keep reading a rejected upload before giving up on a clean reply.
-const OVERSIZE_DRAIN_TIMEOUT_MS = 10_000
-
-/**
- * Read and discard whatever is left of a request body.
- *
- * Answering while the client is still writing gets the connection reset before
- * it can read the response, so the browser reports a generic network failure
- * instead of the reason it was given. Draining first lets the reply arrive.
- */
-function drainRequest(req: any): Promise<void> {
-  if (!req || typeof req.resume !== 'function' || req.readableEnded || req.destroyed) return Promise.resolve()
-  return new Promise<void>(resolve => {
-    const finish = () => {
-      clearTimeout(timer)
-      req.off?.('end', finish)
-      req.off?.('close', finish)
-      req.off?.('error', finish)
-      resolve()
-    }
-    // A client that keeps sending forever must not hold the handler open.
-    const timer = setTimeout(() => {
-      req.destroy?.()
-      finish()
-    }, OVERSIZE_DRAIN_TIMEOUT_MS)
-    timer.unref?.()
-    req.on('end', finish)
-    req.on('close', finish)
-    req.on('error', finish)
-    req.resume()
-  })
-}
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -57,9 +26,7 @@ export async function handleUpload(ctx: any) {
   let oversize = false
   // Leave the stream alive when the loop ends early; the iterator would
   // otherwise destroy it and take the unsent response down with it.
-  const body = typeof ctx.req.iterator === 'function'
-    ? ctx.req.iterator({ destroyOnReturn: false })
-    : ctx.req
+  const body = nonDestroyingRequestBody(ctx.req)
   for await (const chunk of body) {
     totalSize += chunk.length
     if (totalSize > MAX_UPLOAD_SIZE) {
@@ -70,7 +37,7 @@ export async function handleUpload(ctx: any) {
   }
   if (oversize) {
     chunks = []
-    await drainRequest(ctx.req)
+    await drainRejectedRequest(ctx.req)
     ctx.status = 413
     ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }
     return
