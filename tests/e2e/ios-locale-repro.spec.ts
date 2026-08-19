@@ -37,6 +37,7 @@ test.describe('mobile locale switching on page-sidebar screens', () => {
     await expect
       .poll(async () => (await visibleChineseText(page)).length, { timeout: 10_000 })
       .toBe(0)
+  })
 
   test('shared group chat invite gate exposes a working language switch', async ({ page }) => {
     // Guest landing on a share link sees the invite card; the language switch
