@@ -39,6 +39,20 @@ describe('session browser prefs store', () => {
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1'])
   })
 
+  it('persists whether the recent group is collapsed', () => {
+    const store = useSessionBrowserPrefsStore()
+
+    expect(store.recentCollapsed).toBe(false)
+
+    store.setRecentCollapsed(true)
+
+    expect(store.recentCollapsed).toBe(true)
+    expect(window.localStorage.getItem('hermes_recent_sessions_collapsed_v1')).toBe('true')
+
+    setActivePinia(createPinia())
+    expect(useSessionBrowserPrefsStore().recentCollapsed).toBe(true)
+  })
+
   it('reloads pin and human-only preferences automatically when the active profile changes', async () => {
     const profilesStore = useProfilesStore()
     profilesStore.activeProfileName = 'default'
