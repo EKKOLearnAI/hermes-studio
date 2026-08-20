@@ -20,6 +20,7 @@ import * as inviteCtrl from '../../controllers/hermes/group-chat-invite'
 import * as workspaceCtrl from '../../controllers/hermes/group-chat-workspace'
 import * as agentLinkCtrl from '../../controllers/hermes/group-chat-agent-link'
 import * as remoteWorkspaceCtrl from '../../controllers/hermes/group-chat-remote-workspace'
+import * as agentPresetCtrl from '../../controllers/hermes/group-agent-presets'
 
 export const groupChatPublicRoutes = new Router()
 export const groupChatRoutes = new Router()
@@ -74,6 +75,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agent-link-requests', 
 groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agent-link-requests/:requestId/decision', agentLinkCtrl.decidePairing)
 groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/guest-agent-policy', agentLinkCtrl.updateGuestAgentPolicy)
 groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agent-connectors/:connectorId', agentLinkCtrl.revokeConnector)
+groupChatRoutes.get('/api/hermes/group-chat/agent-presets', agentPresetCtrl.list)
+groupChatRoutes.post('/api/hermes/group-chat/agent-presets', agentPresetCtrl.create)
+groupChatRoutes.put('/api/hermes/group-chat/agent-presets/:presetId', agentPresetCtrl.update)
+groupChatRoutes.delete('/api/hermes/group-chat/agent-presets/:presetId', agentPresetCtrl.remove)
 
 async function authorizedAttachmentRoom(ctx: any): Promise<any | null> {
     if (!chatServer) {
@@ -122,6 +127,7 @@ function contentPreview(content: unknown): string {
 }
 
 type AgentInput = {
+    presetId?: string
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
@@ -132,6 +138,12 @@ type AgentInput = {
     description?: string
     avatar?: string
     invited?: boolean | number
+}
+
+async function resolvePresetInput(user: any, input: AgentInput): Promise<AgentInput> {
+    const presetId = typeof input.presetId === 'string' ? input.presetId.trim() : ''
+    if (!presetId) return input
+    return agentPresetCtrl.resolveGroupAgentPresetForApplication(user, presetId)
 }
 
 type RoomSummaryInput = {
@@ -355,6 +367,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         name?: string
         inviteCode?: string
         agents?: {
+            presetId?: string
             agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
             profile: string
             provider?: string
@@ -411,7 +424,15 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         ctx.body = { error: 'Member profile is too long' }
         return
     }
-    const reservedAgent = (agents || []).find(a => isReservedMentionName(a.name || a.profile))
+    let resolvedAgents: AgentInput[]
+    try {
+        resolvedAgents = await Promise.all((agents || []).map(agent => resolvePresetInput(ctx.state?.user, agent)))
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { code: err?.code, error: err?.message || 'Agent preset is unavailable' }
+        return
+    }
+    const reservedAgent = resolvedAgents.find(a => isReservedMentionName(a.name || a.profile))
     if (reservedAgent) {
         ctx.status = 400
         ctx.body = { error: '`all` is reserved for @all mentions' }
@@ -454,7 +475,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
     const addedAgents = []
     const agentResults = []
-    for (const a of agents || []) {
+    for (const a of resolvedAgents) {
         try {
             const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
                 agent: a.agent,
@@ -692,7 +713,15 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         return
     }
 
-    const { agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited } = ctx.request.body as {
+    let body: AgentInput
+    try {
+        body = await resolvePresetInput(ctx.state?.user, ctx.request.body as AgentInput)
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 409)
+        ctx.body = { code: err?.code, error: err?.message || 'Agent preset is unavailable' }
+        return
+    }
+    const { agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited } = body as {
         agent?: string
         profile?: string
         provider?: string

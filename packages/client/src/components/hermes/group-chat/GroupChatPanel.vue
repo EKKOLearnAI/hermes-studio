@@ -6,7 +6,18 @@ import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { getRoomSummary, listStoppedRoomAgentHandoffs, continueRoomAgentHandoff, updateRoomConfig, updateRoomSummary } from '@/api/hermes/group-chat'
+import {
+    createGroupAgentPreset,
+    deleteGroupAgentPreset,
+    getRoomSummary,
+    groupAgentPresetToRoomAgentInput,
+    listGroupAgentPresets,
+    listStoppedRoomAgentHandoffs,
+    continueRoomAgentHandoff,
+    updateGroupAgentPreset,
+    updateRoomConfig,
+    updateRoomSummary,
+} from '@/api/hermes/group-chat'
 import {
     decideGroupAgentPairing,
     leaveLocalGroupAgentRoom,
@@ -26,7 +37,18 @@ import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
-import type { GroupChatMention, MemberInfo, RoomAgent, RoomInfo, RoomSummaryAnchor, RoomSummaryConfig, RoomSummaryState } from '@/api/hermes/group-chat'
+import type {
+    GroupAgentPreset,
+    GroupAgentPresetInput,
+    GroupChatMention,
+    MemberInfo,
+    RoomAgent,
+    RoomAgentInput,
+    RoomInfo,
+    RoomSummaryAnchor,
+    RoomSummaryConfig,
+    RoomSummaryState,
+} from '@/api/hermes/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
@@ -141,6 +163,9 @@ const agentName = ref('')
 const agentDescription = ref('')
 const agentAvatar = ref<ProfileAvatarData | null>(null)
 const agentAvatarFileInput = ref<HTMLInputElement | null>(null)
+const agentPresets = ref<GroupAgentPreset[]>([])
+const selectedAgentPresetId = ref<string | null>(null)
+const isSavingAgentPreset = ref(false)
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
@@ -258,6 +283,13 @@ const agentApiModeOptions = computed(() => [
     { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
     { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
 ])
+const agentPresetOptions = computed(() => agentPresets.value.map(preset => ({
+    label: preset.available
+        ? `${preset.name} · ${preset.profile} · ${preset.provider}/${preset.model}`
+        : `${preset.name} · ${t('groupChat.agentPresetUnavailable')}`,
+    value: preset.id,
+    disabled: !preset.available,
+})))
 
 const agentReasoningEffortOptions = computed(() => [
     { label: t('chat.reasoningEffort.options.default'), value: '' },
@@ -865,13 +897,21 @@ function extractApiErrorMessage(err: any): string {
     return raw || t('common.saveFailed')
 }
 
-async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string) {
+async function handleCreateRoom(
+    name: string,
+    inviteCode: string,
+    userName: string,
+    description: string,
+    summary: RoomSummaryConfig,
+    workspace: string,
+    agents: RoomAgentInput[],
+) {
     try {
         store.setUserInfo(userName, description)
         const res = await store.createNewRoom(
             name,
             inviteCode,
-            undefined,
+            agents,
             summary,
             workspace,
             { name: userName, description },
@@ -1122,6 +1162,7 @@ async function handleSummaryConfigurationRequired() {
 }
 
 function resetAgentForm() {
+    selectedAgentPresetId.value = null
     selectedProfile.value = null
     selectedAgentType.value = 'hermes'
     selectedAgentProvider.value = ''
@@ -1131,6 +1172,88 @@ function resetAgentForm() {
     agentName.value = ''
     agentDescription.value = ''
     agentAvatar.value = null
+}
+
+function currentAgentPresetInput(): GroupAgentPresetInput | null {
+    if (!canConfirmAddAgent.value || !selectedProfile.value) return null
+    return {
+        agent: selectedAgentType.value,
+        profile: selectedProfile.value,
+        provider: selectedAgentProvider.value,
+        model: selectedAgentModel.value,
+        apiMode: selectedAgentType.value === 'hermes' ? '' : selectedAgentApiMode.value,
+        reasoningEffort: selectedAgentReasoningEffort.value,
+        name: agentName.value.trim() || selectedProfile.value,
+        description: agentDescription.value.trim(),
+        avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
+    }
+}
+
+async function loadAgentPresets() {
+    try {
+        agentPresets.value = (await listGroupAgentPresets()).presets
+    } catch (err: any) {
+        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetLoadFailed'))
+    }
+}
+
+function applyAgentPreset(presetId: string | null) {
+    selectedAgentPresetId.value = presetId
+    const preset = agentPresets.value.find(item => item.id === presetId)
+    if (!preset) return
+    if (!preset.available) {
+        message.warning(preset.validationError || t('groupChat.agentPresetUnavailable'))
+        return
+    }
+    const input = groupAgentPresetToRoomAgentInput(preset)
+    selectedAgentType.value = input.agent
+    selectedProfile.value = input.profile
+    selectedAgentProvider.value = input.provider || ''
+    selectedAgentModel.value = input.model || ''
+    selectedAgentApiMode.value = normalizeCodingAgentApiMode(
+        input.apiMode,
+        inferCodingAgentApiMode(input.provider),
+    )
+    selectedAgentReasoningEffort.value = input.reasoningEffort || ''
+    agentName.value = input.name || ''
+    agentDescription.value = input.description || ''
+    agentAvatar.value = parseStoredAvatar(input.avatar)
+}
+
+async function saveAgentPreset() {
+    const input = currentAgentPresetInput()
+    if (!input || isSavingAgentPreset.value) return
+    isSavingAgentPreset.value = true
+    try {
+        const result = selectedAgentPresetId.value
+            ? await updateGroupAgentPreset(selectedAgentPresetId.value, input)
+            : await createGroupAgentPreset(input)
+        const index = agentPresets.value.findIndex(item => item.id === result.preset.id)
+        if (index >= 0) agentPresets.value[index] = result.preset
+        else agentPresets.value = [result.preset, ...agentPresets.value]
+        selectedAgentPresetId.value = result.preset.id
+        message.success(t('groupChat.agentPresetSaved'))
+    } catch (err: any) {
+        message.error(extractApiErrorMessage(err))
+    } finally {
+        isSavingAgentPreset.value = false
+    }
+}
+
+async function deleteAgentPreset() {
+    const presetId = selectedAgentPresetId.value
+    if (!presetId || isSavingAgentPreset.value) return
+    isSavingAgentPreset.value = true
+    try {
+        await deleteGroupAgentPreset(presetId)
+        agentPresets.value = agentPresets.value.filter(item => item.id !== presetId)
+        selectedAgentPresetId.value = null
+        message.success(t('groupChat.agentPresetDeleted'))
+    } catch (err: any) {
+        message.error(extractApiErrorMessage(err))
+    } finally {
+        isSavingAgentPreset.value = false
+    }
 }
 
 function closeAgentModal() {
@@ -1144,6 +1267,7 @@ async function handleAddAgent() {
     await Promise.all([
         profilesStore.fetchProfiles(),
         appStore.loadModels(),
+        loadAgentPresets(),
     ])
     editingAgent.value = null
     resetAgentForm()
@@ -1349,6 +1473,7 @@ async function confirmAddAgent() {
     isSavingAgent.value = true
     try {
         await store.addAgentToRoom(store.currentRoomId, {
+            presetId: selectedAgentPresetId.value || undefined,
             agent: selectedAgentType.value,
             profile: selectedProfile.value,
             provider: selectedAgentProvider.value,
@@ -2402,6 +2527,41 @@ function handleClarifyKeydown(event: KeyboardEvent) {
             <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
                 <div class="modal">
                     <h3>{{ editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent') }}</h3>
+                    <div v-if="!editingAgent" class="agent-preset-editor">
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.agentPreset') }}</label>
+                            <NSelect
+                                :value="selectedAgentPresetId"
+                                :options="agentPresetOptions"
+                                clearable
+                                :placeholder="t('groupChat.agentPresetPlaceholder')"
+                                @update:value="applyAgentPreset"
+                            />
+                        </div>
+                        <NSpace>
+                            <NButton
+                                size="small"
+                                secondary
+                                :disabled="!canConfirmAddAgent || isSavingAgentPreset"
+                                :loading="isSavingAgentPreset"
+                                @click="saveAgentPreset"
+                            >
+                                {{ selectedAgentPresetId ? t('groupChat.updateAgentPreset') : t('groupChat.saveAgentPreset') }}
+                            </NButton>
+                            <NPopconfirm
+                                v-if="selectedAgentPresetId"
+                                @positive-click="deleteAgentPreset"
+                            >
+                                <template #trigger>
+                                    <NButton size="small" type="error" secondary :disabled="isSavingAgentPreset">
+                                        {{ t('groupChat.deleteAgentPreset') }}
+                                    </NButton>
+                                </template>
+                                {{ t('groupChat.deleteAgentPresetConfirm') }}
+                            </NPopconfirm>
+                        </NSpace>
+                        <p class="form-hint">{{ t('groupChat.agentPresetSnapshotHint') }}</p>
+                    </div>
                     <div class="group-agent-avatar-editor">
                         <ProfileAvatar
                             :name="selectedAgentType"

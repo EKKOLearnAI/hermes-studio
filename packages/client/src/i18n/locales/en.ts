@@ -2911,6 +2911,20 @@ export default {
 
   // Group Chat
   groupChat: {
+    agentPreset: 'Agent preset',
+    agentPresets: 'Agent presets',
+    agentPresetPlaceholder: 'Select a preset',
+    agentPresetsPlaceholder: 'Select presets to add to the new room',
+    agentPresetsCreateHint: 'Selected presets are copied into the room when it is created.',
+    agentPresetSnapshotHint: 'Applying a preset copies its current definition. Later preset changes do not modify existing Room Agents.',
+    saveAgentPreset: 'Save as preset',
+    updateAgentPreset: 'Update preset',
+    deleteAgentPreset: 'Delete preset',
+    deleteAgentPresetConfirm: 'Delete this preset? Existing Room Agents will not change.',
+    agentPresetSaved: 'Agent preset saved',
+    agentPresetDeleted: 'Agent preset deleted',
+    agentPresetUnavailable: 'Reference unavailable',
+    agentPresetLoadFailed: 'Could not load Agent presets.',
     roomAgentAvatarEmpty: '{room}. No Room Agents. No Agents are running.',
     roomAgentAvatarIdle: '{room}. Room Agents: {agents}. No Agents are running.',
     roomAgentAvatarRunning: '{room}. Room Agents: {agents}. Running Agents: {running}.',

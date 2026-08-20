@@ -122,6 +122,7 @@ export interface GroupAgentActivity {
 }
 
 export interface RoomAgentInput {
+    presetId?: string
     agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
@@ -132,6 +133,34 @@ export interface RoomAgentInput {
     description?: string
     avatar?: string
     invited?: boolean
+}
+
+export interface GroupAgentPreset extends Omit<RoomAgentInput, 'name' | 'description' | 'avatar'> {
+    id: string
+    name: string
+    description: string
+    avatar: string
+    available: boolean
+    validationError: string
+    createdAt: number
+    updatedAt: number
+}
+
+export type GroupAgentPresetInput = Omit<GroupAgentPreset, 'id' | 'available' | 'validationError' | 'createdAt' | 'updatedAt'>
+
+export function groupAgentPresetToRoomAgentInput(preset: GroupAgentPreset): RoomAgentInput {
+    return {
+        presetId: preset.id,
+        agent: preset.agent,
+        profile: preset.profile,
+        provider: preset.provider,
+        model: preset.model,
+        apiMode: preset.agent === 'hermes' ? undefined : preset.apiMode,
+        reasoningEffort: preset.reasoningEffort,
+        name: preset.name,
+        description: preset.description,
+        avatar: preset.avatar,
+    }
 }
 
 export interface AgentAddResult {
@@ -404,6 +433,33 @@ export async function addAgent(roomId: string, data: RoomAgentInput): Promise<{ 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
+    })
+}
+
+export async function listGroupAgentPresets(profile?: string): Promise<{ presets: GroupAgentPreset[] }> {
+    const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+    return request(`/api/hermes/group-chat/agent-presets${query}`)
+}
+
+export async function createGroupAgentPreset(data: GroupAgentPresetInput): Promise<{ preset: GroupAgentPreset }> {
+    return request('/api/hermes/group-chat/agent-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+}
+
+export async function updateGroupAgentPreset(id: string, data: GroupAgentPresetInput): Promise<{ preset: GroupAgentPreset }> {
+    return request(`/api/hermes/group-chat/agent-presets/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+}
+
+export async function deleteGroupAgentPreset(id: string): Promise<{ success: boolean }> {
+    return request(`/api/hermes/group-chat/agent-presets/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
     })
 }
 

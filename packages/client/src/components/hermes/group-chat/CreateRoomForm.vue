@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, computed, watch } from 'vue'
+import { ref, nextTick, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NInput, NButton, NSpace, NInputNumber, NSelect } from 'naive-ui'
 import { getStoredUsername } from '@/api/client'
@@ -9,7 +9,13 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
-import type { RoomSummaryConfig } from '@/api/hermes/group-chat'
+import {
+    groupAgentPresetToRoomAgentInput,
+    listGroupAgentPresets,
+    type GroupAgentPreset,
+    type RoomAgentInput,
+    type RoomSummaryConfig,
+} from '@/api/hermes/group-chat'
 
 type InputLikeInstance = {
     focus: () => void
@@ -19,7 +25,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
 const emit = defineEmits<{
-    submit: [name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string]
+    submit: [name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string, agents: RoomAgentInput[]]
     cancel: []
 }>()
 
@@ -29,6 +35,9 @@ const workspace = ref('')
 const userName = ref(localStorage.getItem('gc_user_name') || getStoredUsername() || '')
 const description = ref(localStorage.getItem('gc_user_description') || '')
 const roomInput = ref<InputLikeInstance | null>(null)
+const agentPresets = ref<GroupAgentPreset[]>([])
+const selectedPresetIds = ref<string[]>([])
+const presetLoadError = ref('')
 
 const summaryProfile = computed(() => profilesStore.activeProfileName || 'default')
 const summaryProvider = ref('')
@@ -58,6 +67,13 @@ const summaryApiModeOptions = computed(() => [
     { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
     { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
 ])
+const agentPresetOptions = computed(() => agentPresets.value.map(preset => ({
+    label: preset.available
+        ? `${preset.name} · ${preset.profile} · ${preset.provider}/${preset.model}`
+        : `${preset.name} · ${t('groupChat.agentPresetUnavailable')}`,
+    value: preset.id,
+    disabled: !preset.available,
+})))
 
 function syncSummaryProvider() {
     const profileModels = appStore.profileModelGroups.find(entry => entry.profile === summaryProfile.value)
@@ -99,12 +115,32 @@ function handleCreate() {
         summaryModel: summaryModel.value,
         summaryApiMode: summaryApiMode.value,
         summaryEveryTurns: summaryEveryTurns.value,
-    }, workspace.value || '')
+    }, workspace.value || '', selectedPresetIds.value
+        .map(id => agentPresets.value.find(preset => preset.id === id))
+        .filter((preset): preset is GroupAgentPreset => Boolean(preset?.available))
+        .map(groupAgentPresetToRoomAgentInput))
 }
 
 function focusRoomInput() {
     nextTick(() => roomInput.value?.focus())
 }
+
+async function loadPresets() {
+    presetLoadError.value = ''
+    try {
+        agentPresets.value = (await listGroupAgentPresets()).presets
+    } catch (error: any) {
+        presetLoadError.value = error?.message || t('groupChat.agentPresetLoadFailed')
+    }
+}
+
+onMounted(() => {
+    void Promise.all([
+        profilesStore.fetchProfiles(),
+        appStore.loadModels(),
+        loadPresets(),
+    ])
+})
 </script>
 
 <template>
@@ -156,6 +192,22 @@ function focusRoomInput() {
             <label class="form-label">{{ t('chat.workspace') }}</label>
             <FolderPicker v-model="workspace" />
         </div>
+
+        <section class="summary-section">
+            <h4>{{ t('groupChat.agentPresets') }}</h4>
+            <p class="form-hint summary-hint">{{ t('groupChat.agentPresetsCreateHint') }}</p>
+            <NSelect
+                v-model:value="selectedPresetIds"
+                multiple
+                clearable
+                :options="agentPresetOptions"
+                :placeholder="t('groupChat.agentPresetsPlaceholder')"
+            />
+            <p v-if="presetLoadError" class="form-hint preset-error">
+                {{ presetLoadError }}
+                <NButton text size="tiny" @click="loadPresets">{{ t('common.retry') }}</NButton>
+            </p>
+        </section>
 
         <section class="summary-section">
             <h4>{{ t('groupChat.summarySettings') }}</h4>
@@ -241,5 +293,9 @@ function focusRoomInput() {
 
 .summary-hint {
     margin: 4px 0 14px;
+}
+
+.preset-error {
+    color: #d03050;
 }
 </style>

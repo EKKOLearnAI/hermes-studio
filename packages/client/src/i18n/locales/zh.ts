@@ -2953,6 +2953,20 @@ export default {
 
   // 群聊
   groupChat: {
+    agentPreset: 'Agent 预设',
+    agentPresets: 'Agent 预设',
+    agentPresetPlaceholder: '选择预设',
+    agentPresetsPlaceholder: '选择要加入新 Room 的预设',
+    agentPresetsCreateHint: '创建 Room 时会复制所选预设的当前定义。',
+    agentPresetSnapshotHint: '应用预设会复制当前定义；后续修改预设不会改写已有 Room Agent。',
+    saveAgentPreset: '保存为预设',
+    updateAgentPreset: '更新预设',
+    deleteAgentPreset: '删除预设',
+    deleteAgentPresetConfirm: '删除此预设？已有 Room Agent 不会改变。',
+    agentPresetSaved: 'Agent 预设已保存',
+    agentPresetDeleted: 'Agent 预设已删除',
+    agentPresetUnavailable: '引用已失效',
+    agentPresetLoadFailed: '无法加载 Agent 预设。',
     roomAgentAvatarEmpty: '{room}。没有群聊 Agent。当前没有 Agent 正在运行。',
     roomAgentAvatarIdle: '{room}。群聊 Agent：{agents}。当前没有 Agent 正在运行。',
     roomAgentAvatarRunning: '{room}。群聊 Agent：{agents}。正在运行的 Agent：{running}。',
