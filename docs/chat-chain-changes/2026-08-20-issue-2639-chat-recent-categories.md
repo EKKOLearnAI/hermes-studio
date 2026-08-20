@@ -1,6 +1,6 @@
 ---
 date: 2026-08-20
-pr: pending
+pr: 2642
 feature: Single-chat recent category presentation
 impact: The single-chat sidebar now preserves the Recent group collapse state, labels recent sessions with their current category, and prevents no-op category moves while surfacing category load failures.
 ---
