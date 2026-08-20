@@ -234,6 +234,10 @@ function startGatewayRunManagedInternal(
   // unexpected exit. Without this, `/restart` (stop -> start) would race
   // against the respawn timer and end up with two gateways on the same port.
   clearRespawnTimer(state, profileDir)
+  if (state.current) {
+    logger.info('[gateway-runner] reusing active managed gateway profileDir=%s pid=%s', profileDir, state.current.pid)
+    return { pid: state.current.pid, reused: true }
+  }
   if (!opts.preserveRespawnAttempts) {
     state.respawnAttempts = 0
   }
