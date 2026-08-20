@@ -2016,6 +2016,7 @@ async function handleSessionModelCustomSubmit() {
             :pinned="sessionBrowserPrefsStore.isPinned(s.id)"
             :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
             :streaming="chatStore.isSessionLive(s.id)"
+            :background-pending="chatStore.backgroundPendingForSession(s.id)"
             :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
@@ -2046,6 +2047,7 @@ async function handleSessionModelCustomSubmit() {
               chatStore.sessions.length > 1
             "
             :streaming="chatStore.isSessionLive(s.id)"
+            :background-pending="chatStore.backgroundPendingForSession(s.id)"
             :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
@@ -2093,6 +2095,7 @@ async function handleSessionModelCustomSubmit() {
                 chatStore.sessions.length > 1
               "
               :streaming="chatStore.isSessionLive(s.id)"
+              :background-pending="chatStore.backgroundPendingForSession(s.id)"
               :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
               :selectable="isBatchMode"
               :selected="isSessionSelected(s)"

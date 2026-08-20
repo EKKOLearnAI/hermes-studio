@@ -920,6 +920,8 @@ export default {
     executionDuration: 'Execution time',
     thinkingLabel: 'Thinking',
     thinkingInProgress: 'Thinking',
+    backgroundDelegationsRunning: '{count} background delegations still running',
+    backgroundDelegationsHint: 'You can continue typing; new messages will not cancel them.',
     thinkingShow: 'Show thinking',
     thinkingHide: 'Hide thinking',
     thinkingDuration: 'Observed {duration}',

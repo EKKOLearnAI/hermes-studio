@@ -820,6 +820,8 @@ export default {
     unchangedLines: '변경 없음 {count}줄',
     executionDuration: '실행 시간',    thinkingLabel: '사고 과정',
     thinkingInProgress: '사고 중',
+    backgroundDelegationsRunning: '백그라운드 위임 {count}개가 아직 실행 중입니다',
+    backgroundDelegationsHint: '계속 입력할 수 있으며 새 메시지는 이 작업을 취소하지 않습니다.',
     thinkingShow: '사고 과정 펼치기',
     thinkingHide: '사고 과정 접기',
     thinkingDuration: '관측 {duration}',

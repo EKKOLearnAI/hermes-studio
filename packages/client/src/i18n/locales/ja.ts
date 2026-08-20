@@ -820,6 +820,8 @@ export default {
     unchangedLines: '変更なし {count} 行',
     executionDuration: '実行時間',    thinkingLabel: '思考過程',
     thinkingInProgress: '思考中',
+    backgroundDelegationsRunning: '{count} 件のバックグラウンド委任が実行中です',
+    backgroundDelegationsHint: '入力を続けられます。新しいメッセージでこれらのタスクはキャンセルされません。',
     thinkingShow: '思考過程を表示',
     thinkingHide: '思考過程を隠す',
     thinkingDuration: '観測 {duration}',
