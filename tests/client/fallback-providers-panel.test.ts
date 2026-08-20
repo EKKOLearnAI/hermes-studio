@@ -13,7 +13,7 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('naive-ui', () => ({
   NButton: { template: '<button type="button" v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>' },
-  NInput: { template: '<input />' },
+  NInput: { props: ['value', 'placeholder', 'size', 'clearable'], template: '<input />' },
   NModal: { template: '<div><slot /></div>' },
   NSpin: { template: '<div><slot /></div>' },
   useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
@@ -39,6 +39,7 @@ async function mountPanel() {
     { provider: 'openrouter', label: 'OpenRouter', models: ['anthropic/claude-sonnet-4'] },
     { provider: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5.6-sol'] },
     { provider: 'lmstudio', label: 'LM Studio', models: ['kimi-k3'] },
+    { provider: 'xai', label: 'xAI', models: ['grok-4'] },
   ] as any
   const wrapper = mount(FallbackProvidersPanel, { global: { plugins: [pinia] } })
   await flushPromises()
@@ -73,6 +74,18 @@ describe('fallback providers panel', () => {
     expect(rows).toHaveLength(3)
     expect(rows[0].text()).toContain('anthropic/claude-sonnet-4')
     expect(rows[2].text()).toContain('kimi-k3')
+  })
+
+  it('adds a model through the shared model picker', async () => {
+    const wrapper = await mountPanel()
+
+    await wrapper.findAll('button').find((button: any) => button.text() === 'models.fallbackAdd')!.trigger('click')
+    await wrapper.findAll('.model-item').find((item: any) => item.text().includes('grok-4'))!.trigger('click')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.fallback-row')
+    expect(rows).toHaveLength(4)
+    expect(rows[3].text()).toContain('grok-4')
   })
 
   it('reorders by dragging a row onto another and saves the new order', async () => {

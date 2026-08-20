@@ -5,7 +5,6 @@ import { NButton, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import AuxiliaryModelsPanel from '@/components/hermes/models/AuxiliaryModelsPanel.vue'
 import CombinationModelsPanel from '@/components/hermes/models/CombinationModelsPanel.vue'
-import FallbackProvidersPanel from '@/components/hermes/models/FallbackProvidersPanel.vue'
 import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
 import VoiceSettings from '@/components/hermes/settings/VoiceSettings.vue'
@@ -20,13 +19,14 @@ const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 const showModal = ref(false)
-type ModelsTab = 'general' | 'auxiliary' | 'combination' | 'fallback' | 'stt' | 'tts'
+type ModelsTab = 'general' | 'auxiliary' | 'combination' | 'stt' | 'tts'
 
-const MODELS_TABS = new Set<ModelsTab>(['general', 'auxiliary', 'combination', 'fallback', 'stt', 'tts'])
+const MODELS_TABS = new Set<ModelsTab>(['general', 'auxiliary', 'combination', 'stt', 'tts'])
 const activeTab = ref<ModelsTab>('general')
 
 function normalizeTab(value: unknown): ModelsTab {
   const tab = typeof value === 'string' ? value : ''
+  if (tab === 'fallback') return 'auxiliary'
   return MODELS_TABS.has(tab as ModelsTab) ? tab as ModelsTab : 'general'
 }
 
@@ -71,6 +71,11 @@ watch(() => route.query.addProvider, (addProvider) => {
 watch(() => route.query.tab, (tab) => {
   if (route.query.addProvider === '1') return
   activeTab.value = normalizeTab(tab)
+  if (tab === 'fallback') {
+    void router.replace({
+      query: { ...route.query, tab: 'auxiliary' },
+    })
+  }
 }, { immediate: true })
 
 function handleModalClose() {
@@ -141,9 +146,6 @@ async function handleRefreshModelCache() {
         </NTabPane>
         <NTabPane name="combination" :tab="t('models.combinationTitle')">
           <CombinationModelsPanel />
-        </NTabPane>
-        <NTabPane name="fallback" :tab="t('models.fallbackTitle')">
-          <FallbackProvidersPanel />
         </NTabPane>
         <NTabPane name="stt" :tab="t('settings.voice.sttProvidersTitle')">
           <VoiceSettings :key="`stt-${profilesStore.activeProfileName || 'default'}`" kind="stt" />

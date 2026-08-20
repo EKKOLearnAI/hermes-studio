@@ -76,7 +76,6 @@ vi.mock('@/api/client', () => ({ isStoredSuperAdmin: () => false }))
 
 vi.mock('@/components/hermes/models/AuxiliaryModelsPanel.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/components/hermes/models/CombinationModelsPanel.vue', () => ({ default: { template: '<div />' } }))
-vi.mock('@/components/hermes/models/FallbackProvidersPanel.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/components/hermes/models/ProvidersPanel.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/components/hermes/models/ProviderFormModal.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/components/hermes/settings/VoiceSettings.vue', () => ({
@@ -131,6 +130,18 @@ describe('Models voice settings tabs', () => {
 
     expect(wrapper.findComponent({ name: 'NTabs' }).props('value')).toBe('general')
     expect(routerReplace).toHaveBeenCalledWith({ query: {} })
+  })
+
+  it('keeps fallback settings in Auxiliary Models and redirects the old tab link', async () => {
+    routeState.query = { tab: 'fallback', profile: 'work' }
+    const wrapper = mount(ModelsView)
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'NTabs' }).props('value')).toBe('auxiliary')
+    expect(wrapper.find('[data-tab="fallback"]').exists()).toBe(false)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: { tab: 'auxiliary', profile: 'work' },
+    })
   })
 
   it('redirects the legacy Settings voice link to Models TTS', async () => {

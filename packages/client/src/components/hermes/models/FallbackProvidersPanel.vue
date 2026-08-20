@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NSpin, useMessage } from 'naive-ui'
+import { NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   fetchFallbackProviders,
@@ -10,6 +10,7 @@ import {
 import { useAppStore } from '@/stores/hermes/app'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import ModelPickerModal from './ModelPickerModal.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -22,35 +23,10 @@ const saving = ref(false)
 const chain = ref<FallbackProviderEntry[]>([])
 const savedChain = ref('')
 const showPicker = ref(false)
-const pickerSearch = ref('')
 const draggingIndex = ref<number | null>(null)
 const rowRefs = ref<(HTMLElement | null)[]>([])
 
 const dirty = computed(() => JSON.stringify(chain.value) !== savedChain.value)
-
-const modelGroups = computed(() => modelsStore.providers
-  .filter(group => group.provider && group.provider.toLowerCase() !== 'moa')
-  .map(group => ({
-    ...group,
-    models: [
-      ...group.models,
-      ...(appStore.customModels[group.provider] || []).filter(model => !group.models.includes(model)),
-    ],
-  })))
-
-const filteredGroups = computed(() => {
-  const query = pickerSearch.value.trim().toLowerCase()
-  if (!query) return modelGroups.value
-  return modelGroups.value
-    .map(group => ({
-      ...group,
-      models: group.models.filter(model => {
-        const display = appStore.displayModelName(model, group.provider)
-        return model.toLowerCase().includes(query) || display.toLowerCase().includes(query)
-      }),
-    }))
-    .filter(group => group.models.length > 0 || (group.label || group.provider).toLowerCase().includes(query))
-})
 
 function providerLabel(provider: string): string {
   return modelsStore.providers.find(group => group.provider === provider)?.label || provider
@@ -73,7 +49,7 @@ async function load() {
   }
 }
 
-function addEntry(provider: string, model: string) {
+function addEntry({ provider, model }: FallbackProviderEntry) {
   if (isChosen(provider, model)) return
   chain.value = [...chain.value, { provider, model }]
 }
@@ -199,36 +175,15 @@ watch(() => profilesStore.activeProfileName, () => {
     <p v-if="chain.length > 1" class="fallback-note">{{ t('models.fallbackReorderHint') }}</p>
     <p class="fallback-note">{{ t('models.fallbackAppliesToNewSessions') }}</p>
 
-    <NModal
+    <ModelPickerModal
       v-model:show="showPicker"
-      preset="card"
       :title="t('models.fallbackAdd')"
-      :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    >
-      <NInput
-        v-model:value="pickerSearch"
-        size="small"
-        clearable
-        :placeholder="t('models.searchPlaceholder')"
-      />
-      <div class="fallback-picker">
-        <div v-for="group in filteredGroups" :key="group.provider" class="fallback-picker-group">
-          <div class="fallback-picker-provider">{{ group.label || group.provider }}</div>
-          <button
-            v-for="model in group.models"
-            :key="`${group.provider}:${model}`"
-            type="button"
-            class="fallback-picker-model"
-            :class="{ chosen: isChosen(group.provider, model) }"
-            :disabled="isChosen(group.provider, model)"
-            @click="addEntry(group.provider, model)"
-          >
-            {{ appStore.displayModelName(model, group.provider) }}
-          </button>
-        </div>
-        <p v-if="filteredGroups.length === 0" class="fallback-empty">{{ t('models.noResults') }}</p>
-      </div>
-    </NModal>
+      :groups="modelsStore.providers"
+      :selected="chain"
+      :close-on-select="false"
+      disable-selected
+      @select="addEntry"
+    />
   </section>
 </template>
 
@@ -351,43 +306,4 @@ watch(() => profilesStore.activeProfileName, () => {
   color: $text-muted;
 }
 
-.fallback-picker {
-  margin-top: 12px;
-  max-height: 50vh;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.fallback-picker-group {
-  margin-bottom: 10px;
-}
-
-.fallback-picker-provider {
-  padding: 6px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: $text-secondary;
-}
-
-.fallback-picker-model {
-  display: block;
-  width: 100%;
-  padding: 7px 10px;
-  text-align: start;
-  background: transparent;
-  border: none;
-  border-radius: $radius-sm;
-  color: $text-primary;
-  font-size: 13px;
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    background: $bg-secondary;
-  }
-
-  &.chosen {
-    color: $text-muted;
-    cursor: default;
-  }
-}
 </style>
