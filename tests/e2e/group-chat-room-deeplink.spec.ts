@@ -4,7 +4,7 @@ import { authenticate, TEST_MODEL_GROUP } from './fixtures'
 type DesktopPlatform = 'darwin' | 'win32'
 
 const baseRooms = [
-  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, agentHandoffEnabled: 1, agentHandoffMaxDepth: 4, agentHandoffUnlimited: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
+  { id: 'room-alpha', name: 'Alpha Room', inviteCode: 'ALPHA1', canManage: true, workspace: '/tmp/alpha', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 123, summaryProfile: 'default', summaryProvider: 'test-provider', summaryModel: 'test-model', summaryApiMode: 'chat_completions', summaryEveryTurns: 20, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, agentHandoffEnabled: 1, agentHandoffMaxDepth: 4, agentHandoffUnlimited: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_001 },
   { id: 'room-beta', name: 'Beta Room', inviteCode: 'BETA22', canManage: true, workspace: '/tmp/beta', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 456, allowGuestAgents: 1, maxGuestAgentsPerMember: 1, allowRemoteWorkspaceAccess: 0, createdAt: 1_790_000_000, lastActiveAt: 1_790_000_100 },
   { id: 'room-readonly', name: 'Read Only Room', inviteCode: null, canManage: false, workspace: '/tmp/readonly', triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10, totalTokens: 0, createdAt: 1_789_999_999, lastActiveAt: 1_789_999_999 },
 ]
@@ -355,7 +355,9 @@ function makeSocket(url, options) {
         setTimeout(() => ack({ activities: [] }), 0)
       }
       if (event === 'message' && typeof ack === 'function') {
-        setTimeout(() => ack({ id: payload && payload.id }), 0)
+        const error = state.nextMessageError
+        state.nextMessageError = ''
+        setTimeout(() => ack(error ? { error } : { id: payload && payload.id }), 0)
       }
       if (event === 'cancel_execution_queue_item' && typeof ack === 'function') {
         const roomId = payload && payload.roomId
@@ -1263,6 +1265,84 @@ test.describe('group chat room deep links', () => {
     expect(await page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
       (item: any) => item.event === 'message',
     ).length)).toBe(0)
+  })
+
+  test('persists isolated room drafts and structured mention identity across navigation and reload', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+
+    const textarea = page.locator('.chat-input-area textarea')
+    await textarea.fill('@')
+    await page.locator('.mention-dropdown-item', { hasText: '@Worker' }).click()
+    await textarea.pressSequentially('inspect alpha')
+
+    await page.locator('.room-item', { hasText: 'Beta Room' }).click()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(textarea).toHaveValue('')
+    await textarea.fill('beta draft')
+
+    await page.locator('.room-item', { hasText: 'Alpha Room' }).click()
+    await expect(textarea).toHaveValue('@Worker inspect alpha')
+    await page.reload()
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+    await expect(textarea).toHaveValue('@Worker inspect alpha')
+    expect(await page.evaluate(() => {
+      const stored = JSON.parse(window.localStorage.getItem('hermes_group_chat_room_drafts_v1') || '{"rooms":{}}')
+      return {
+        alpha: stored.rooms['room-alpha'],
+        beta: stored.rooms['room-beta']?.text || '',
+      }
+    })).toMatchObject({
+      alpha: {
+        text: '@Worker inspect alpha',
+        mentions: [{ type: 'agent', participantId: 'agent-1', displayName: 'Worker', start: 0, end: 7 }],
+      },
+      beta: 'beta draft',
+    })
+  })
+
+  test('retains a routable mention after send failure and clears it after success', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
+    await connectGroupSocket(page)
+    await page.waitForFunction(() => (window as any).__PW_GROUP_SOCKET__?.emitted.some(
+      (item: any) => item.event === 'join' && item.payload?.roomId === 'room-alpha',
+    ))
+    const textarea = page.locator('.chat-input-area textarea')
+    await textarea.fill('@')
+    await page.locator('.mention-dropdown-item', { hasText: '@Worker' }).click()
+    await textarea.pressSequentially('inspect alpha')
+    await page.evaluate(() => {
+      ;(window as any).__PW_GROUP_SOCKET__.nextMessageError = 'send failed'
+    })
+    await page.locator('.send-button').click()
+    await expect(textarea).toHaveValue('@Worker inspect alpha')
+    await expect.poll(() => page.evaluate(() => (window as any).__PW_GROUP_SOCKET__.emitted.filter(
+      (item: any) => item.event === 'message',
+    ).length)).toBe(1)
+    await expect(page.locator('.send-button')).toBeEnabled()
+    expect(await page.evaluate(() => {
+      const sent = (window as any).__PW_GROUP_SOCKET__.emitted.filter((item: any) => item.event === 'message')
+      return sent.at(-1)?.payload?.mentions
+    })).toEqual([{ type: 'agent', participantId: 'agent-1', displayName: 'Worker' }])
+
+    await page.locator('.send-button').click()
+    await expect(textarea).toHaveValue('')
+    expect(await page.evaluate(() => {
+      const stored = JSON.parse(window.localStorage.getItem('hermes_group_chat_room_drafts_v1') || '{"rooms":{}}')
+      return {
+        alpha: stored.rooms['room-alpha'] || null,
+        beta: stored.rooms['room-beta']?.text || '',
+      }
+    })).toEqual({ alpha: null, beta: '' })
   })
 
   test('unknown route room id falls back to the first available room', async ({ page }) => {
