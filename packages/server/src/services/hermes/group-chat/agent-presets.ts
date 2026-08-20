@@ -3,7 +3,11 @@ import type {
   GroupAgentPresetDefinition,
 } from '../../../db/hermes/group-agent-preset-store'
 
-type CapabilityGroup = { provider: string; models: string[] }
+type CapabilityGroup = {
+  provider: string
+  models: string[]
+  model_meta?: Record<string, { disabled?: boolean }>
+}
 
 const ALLOWED_FIELDS = new Set([
   'agent', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
@@ -83,7 +87,11 @@ export function validateGroupAgentPresetCapability(
   groups: CapabilityGroup[],
 ): void {
   const group = groups.find(item => item.provider === preset.provider)
-  if (!group || !group.models.includes(preset.model)) {
+  if (
+    !group
+    || !group.models.includes(preset.model)
+    || group.model_meta?.[preset.model]?.disabled === true
+  ) {
     throw Object.assign(
       new Error(`Preset provider/model is unavailable in profile: ${preset.provider}/${preset.model}`),
       { status: 409, code: 'GROUP_AGENT_PRESET_REFERENCE_UNAVAILABLE' },

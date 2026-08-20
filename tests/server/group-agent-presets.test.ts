@@ -9,7 +9,11 @@ process.env.HERMES_WEB_UI_HOME = join(root, 'home')
 process.env.HERMES_WEBUI_STATE_DIR = join(root, 'home')
 
 const modelGroups = vi.hoisted(() => ({
-  value: [{ provider: 'openai', models: ['gpt-test', 'gpt-new'] }],
+  value: [{ provider: 'openai', models: ['gpt-test', 'gpt-new'] }] as Array<{
+    provider: string
+    models: string[]
+    model_meta?: Record<string, { disabled?: boolean }>
+  }>,
 }))
 vi.mock('../../packages/server/src/controllers/hermes/models', () => ({
   getAvailableModelGroupsForProfile: vi.fn(async () => modelGroups.value),
@@ -93,10 +97,16 @@ describe('group Agent presets', () => {
     expect(() => validateGroupAgentPresetCapability(preset, [
       { provider: 'openai', models: ['gpt-test'] },
     ])).not.toThrow()
+    expect(() => validateGroupAgentPresetCapability(preset, [{
+      provider: 'openai',
+      models: ['gpt-test'],
+      model_meta: { 'gpt-test': { disabled: true } },
+    }])).toThrow(/unavailable/i)
   })
 
-  it('enforces owner/profile boundaries and fail-closes stale preset application', async () => {
+  it('enforces owner/profile boundaries and fail-closes disabled models across CRUD and application', async () => {
     const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    modelGroups.value = [{ provider: 'openai', models: ['gpt-test', 'gpt-new'] }]
     const createCtx: any = {
       state: { user: { id: 41, role: 'admin', profiles: ['research'] } },
       request: { body: {
@@ -115,8 +125,22 @@ describe('group Agent presets', () => {
     expect(createCtx.status).toBe(201)
     const presetId = createCtx.body.preset.id
 
+    const enabledUpdateCtx: any = {
+      state: createCtx.state,
+      params: { presetId },
+      request: { body: { ...createCtx.request.body, model: 'gpt-new' } },
+    }
+    await controller.update(enabledUpdateCtx)
+    expect(enabledUpdateCtx.body.preset).toMatchObject({ model: 'gpt-new', available: true })
+
+    const enabledListCtx: any = { state: createCtx.state, query: {} }
+    await controller.list(enabledListCtx)
+    expect(enabledListCtx.body.presets).toEqual([
+      expect.objectContaining({ id: presetId, model: 'gpt-new', available: true, validationError: '' }),
+    ])
+
     const snapshot = await controller.resolveGroupAgentPresetForApplication(createCtx.state.user, presetId)
-    expect(snapshot).toMatchObject({ name: 'Reviewer API', model: 'gpt-test' })
+    expect(snapshot).toMatchObject({ name: 'Reviewer API', model: 'gpt-new' })
     await expect(controller.resolveGroupAgentPresetForApplication(
       { id: 42, role: 'admin', profiles: ['research'] },
       presetId,
@@ -129,10 +153,50 @@ describe('group Agent presets', () => {
     await controller.create(deniedCtx)
     expect(deniedCtx.status).toBe(403)
 
-    modelGroups.value = [{ provider: 'openai', models: ['gpt-new'] }]
+    const enabledResetCtx: any = {
+      state: createCtx.state,
+      params: { presetId },
+      request: { body: createCtx.request.body },
+    }
+    await controller.update(enabledResetCtx)
+    expect(enabledResetCtx.body.preset).toMatchObject({ model: 'gpt-test', available: true })
+
+    modelGroups.value = [{
+      provider: 'openai',
+      models: ['gpt-test', 'gpt-new'],
+      model_meta: { 'gpt-new': { disabled: true } },
+    }]
+
+    const disabledCreateCtx: any = {
+      state: createCtx.state,
+      request: { body: { ...createCtx.request.body, model: 'gpt-new', name: 'Disabled create' } },
+    }
+    await controller.create(disabledCreateCtx)
+    expect(disabledCreateCtx).toMatchObject({
+      status: 409,
+      body: { code: 'GROUP_AGENT_PRESET_REFERENCE_UNAVAILABLE' },
+    })
+
+    const disabledUpdateCtx: any = {
+      state: createCtx.state,
+      params: { presetId },
+      request: { body: { ...createCtx.request.body, model: 'gpt-new' } },
+    }
+    await controller.update(disabledUpdateCtx)
+    expect(disabledUpdateCtx).toMatchObject({
+      status: 409,
+      body: { code: 'GROUP_AGENT_PRESET_REFERENCE_UNAVAILABLE' },
+    })
+
+    modelGroups.value = [{
+      provider: 'openai',
+      models: ['gpt-test', 'gpt-new'],
+      model_meta: { 'gpt-test': { disabled: true } },
+    }]
+
     await expect(controller.resolveGroupAgentPresetForApplication(createCtx.state.user, presetId))
-      .rejects.toMatchObject({ status: 409 })
-    expect(snapshot).toMatchObject({ name: 'Reviewer API', model: 'gpt-test' })
+      .rejects.toMatchObject({ status: 409, code: 'GROUP_AGENT_PRESET_REFERENCE_UNAVAILABLE' })
+    expect(snapshot).toMatchObject({ name: 'Reviewer API', model: 'gpt-new' })
 
     const listCtx: any = { state: createCtx.state, query: {} }
     await controller.list(listCtx)
