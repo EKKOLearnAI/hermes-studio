@@ -48,19 +48,8 @@ const formData = ref({
   model: '',
 })
 
-const presetValue = ref<string | null>(null)
 
 const isEdit = computed(() => !!props.jobId)
-
-const schedulePresets = computed(() => [
-  { label: t('jobs.presetEveryMinute'), value: '* * * * *' },
-  { label: t('jobs.presetEvery5Min'), value: '*/5 * * * *' },
-  { label: t('jobs.presetEveryHour'), value: '0 * * * *' },
-  { label: t('jobs.presetEveryDay'), value: '0 0 * * *' },
-  { label: t('jobs.presetEveryDay9'), value: '0 9 * * *' },
-  { label: t('jobs.presetEveryMonday'), value: '0 9 * * 1' },
-  { label: t('jobs.presetEveryMonth'), value: '0 9 1 * *' },
-])
 
 const providerOptions = computed(() => {
   const options = [
@@ -307,15 +296,6 @@ function handleClose() {
           :disabled="!formData.provider"
           :options="modelOptions"
           :placeholder="t('jobs.modelPlaceholder')"
-        />
-      </NFormItem>
-
-      <NFormItem :label="t('jobs.quickPresets')">
-        <NSelect
-          v-model:value="presetValue"
-          :options="schedulePresets"
-          :placeholder="t('jobs.selectPreset')"
-          @update:value="v => formData.schedule = v"
         />
       </NFormItem>
 

@@ -338,7 +338,7 @@ const persistedWorkflowScheduleStartNodes = ref<Record<string, WorkflowSelectOpt
 const workflowScheduleModalVisible = ref(false)
 const workflowScheduleSubmitting = ref(false)
 const editingWorkflowScheduleId = ref<string | null>(null)
-const workflowScheduleCron = ref('@daily')
+const workflowScheduleCron = ref('')
 const workflowScheduleTimezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 const workflowScheduleEnabled = ref(true)
 const workflowScheduleInput = ref('')
@@ -404,12 +404,6 @@ const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(
   value: option.value,
   label: t(`workflow.budget.options.${option.value}`),
 })))
-const workflowSchedulePresetOptions = computed(() => [
-  { label: t('workflow.schedule.presets.hourly'), value: '@hourly' },
-  { label: t('workflow.schedule.presets.daily'), value: '@daily' },
-  { label: t('workflow.schedule.presets.weekly'), value: '@weekly' },
-  { label: t('workflow.schedule.presets.monthly'), value: '@monthly' },
-])
 const workflowScheduleStartNodeOptions = computed(() => persistedWorkflowScheduleStartNodes.value[activeWorkflowId.value] || [])
 const workflowScheduleFormTitle = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.editTitle' : 'workflow.schedule.createTitle'))
 const workflowScheduleSubmitLabel = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.save' : 'workflow.schedule.create'))
@@ -1698,7 +1692,7 @@ async function clearSelectedWorkflowRun() {
 
 function resetWorkflowScheduleForm(schedule?: WorkflowScheduleRecord) {
   editingWorkflowScheduleId.value = schedule?.id || null
-  workflowScheduleCron.value = schedule?.schedule || '@daily'
+  workflowScheduleCron.value = schedule?.schedule || ''
   workflowScheduleTimezone.value = schedule?.timezone || (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
   workflowScheduleEnabled.value = schedule?.enabled ?? true
   workflowScheduleInput.value = schedule?.input || ''
@@ -3396,9 +3390,6 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
           <label>{{ t('workflow.schedule.cron') }}
             <NInput v-model:value="workflowScheduleCron" :placeholder="t('workflow.schedule.cronPlaceholder')" :aria-label="t('workflow.schedule.cron')" />
           </label>
-          <div class="workflow-schedule-presets">
-            <NButton v-for="preset in workflowSchedulePresetOptions" :key="String(preset.value)" size="tiny" @click="workflowScheduleCron = String(preset.value)">{{ preset.label }}</NButton>
-          </div>
           <label>{{ t('workflow.schedule.timezone') }}
             <NInput v-model:value="workflowScheduleTimezone" :placeholder="t('workflow.schedule.timezonePlaceholder')" :aria-label="t('workflow.schedule.timezone')" />
           </label>
@@ -4959,7 +4950,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 .workflow-schedule-actions { margin-top: 10px; }
 .workflow-schedule-form { display: flex; flex-direction: column; gap: 12px; }.workflow-schedule-form h3 { margin: 0; }
 .workflow-schedule-form label { display: flex; flex-direction: column; gap: 6px; color: $text-secondary; font-size: 13px; }.workflow-schedule-form .workflow-schedule-checkbox { display: block; }
-.workflow-schedule-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }.workflow-schedule-submit { justify-content: flex-end; }
+.workflow-schedule-submit { justify-content: flex-end; }
 @media (max-width: $breakpoint-mobile) { .workflow-schedules-layout { grid-template-columns: 1fr; } }
 
 .workflow-flow {

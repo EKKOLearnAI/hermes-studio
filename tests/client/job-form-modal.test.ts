@@ -147,11 +147,11 @@ describe('JobFormModal deliver targets', () => {
 
     await flushPromises()
 
-    const labels = wrapper.findAll('.n-select-stub')[4].text()
+    const labels = wrapper.findAll('.n-select-stub')[3].text()
     expect(labels).toContain('WeChat · 微信私聊 (dm)')
     expect(labels).toContain('Feishu · 研发群 (group)')
 
-    const options = wrapper.findAll('.n-select-stub')[4].findAll('option')
+    const options = wrapper.findAll('.n-select-stub')[3].findAll('option')
     const optionByValue = Object.fromEntries(options.map(option => [option.attributes('value'), option]))
     expect(optionByValue['weixin:wx-user@im.wechat']).toBeTruthy()
     expect(optionByValue['feishu:oc_example']).toBeTruthy()
@@ -168,7 +168,7 @@ describe('JobFormModal deliver targets', () => {
     await inputs[0].setValue('Daily research')
     await inputs[1].setValue('0 9 * * *')
     await inputs[2].setValue('summarize updates')
-    await wrapper.findAll('.n-select-stub')[3].setValue(['planner', 'reviewer'])
+    await wrapper.findAll('.n-select-stub')[2].setValue(['planner', 'reviewer'])
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
@@ -246,7 +246,7 @@ describe('JobFormModal deliver targets', () => {
     await inputs[0].setValue('WeChat hello')
     await inputs[1].setValue('*/5 * * * *')
     await inputs[2].setValue('say hello')
-    await wrapper.findAll('.n-select-stub')[4].setValue('weixin:wx-user@im.wechat')
+    await wrapper.findAll('.n-select-stub')[3].setValue('weixin:wx-user@im.wechat')
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
