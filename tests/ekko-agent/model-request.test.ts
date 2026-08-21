@@ -90,6 +90,50 @@ describe('ekko-agent model requests', () => {
     ]))
   })
 
+  it('remembers image-rejecting Chat targets across client instances', async () => {
+    const model = `text-only-memory-test-${Date.now()}-${Math.random()}`
+    const config: ModelProviderConfig = {
+      id: 'custom:adaptive-chat-test',
+      type: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://adaptive-chat.example.com/v1',
+      defaultModel: model,
+    }
+    const bodies: Array<Record<string, any>> = []
+    const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      if (bodies.length === 1) {
+        return new Response(JSON.stringify({
+          error: {
+            message: 'Failed to deserialize messages[14]: unknown variant `image_url`, expected `text`',
+          },
+        }), { status: 400 })
+      }
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'Text fallback worked.' }, finish_reason: 'stop' }],
+      }), { status: 200 })
+    })
+    const request = {
+      messages: [{
+        role: 'user' as const,
+        content: 'Keep this text.',
+        contentParts: [{ type: 'image' as const, mimeType: 'image/png', data: 'aGVsbG8=' }],
+      }],
+    }
+
+    await expect(createModelClient(config, { fetch: fetchMock }).create(request))
+      .resolves.toMatchObject({ content: 'Text fallback worked.' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(bodies[0])).toContain('image_url')
+    expect(JSON.stringify(bodies[1])).not.toContain('image_url')
+    expect(JSON.stringify(bodies[1])).toContain('Keep this text.')
+
+    await expect(createModelClient(config, { fetch: fetchMock }).create(request))
+      .resolves.toMatchObject({ content: 'Text fallback worked.' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(JSON.stringify(bodies[2])).not.toContain('image_url')
+  })
+
   it('completes a Codex Responses tool loop when terminal output arrays are empty', async () => {
     const encoder = new TextEncoder()
     let call = 0

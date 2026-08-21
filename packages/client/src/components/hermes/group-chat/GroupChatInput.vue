@@ -12,9 +12,16 @@ import type { Attachment } from '@/stores/hermes/chat'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 import VoiceDialogueControls from '@/components/hermes/chat/VoiceDialogueControls.vue'
 import { normalizeComposerVoiceTranscript, useComposerVoiceInput } from '@/composables/useComposerVoiceInput'
+import {
+    clearGroupChatRoomDraft,
+    loadGroupChatRoomDraft,
+    saveGroupChatRoomDraft,
+    type GroupChatTrackedMention,
+} from './group-chat-room-drafts'
 
 const { t } = useI18n()
 const props = withDefaults(defineProps<{
+    roomId?: string | null
     sendBlocked?: boolean
     allowAttachments?: boolean
     showSettings?: boolean
@@ -24,6 +31,7 @@ const props = withDefaults(defineProps<{
     /** Stop request already in flight; keep the button latched. */
     isStopping?: boolean
 }>(), {
+    roomId: null,
     sendBlocked: false,
     allowAttachments: true,
     showSettings: true,
@@ -41,13 +49,14 @@ const settingsStore = useSettingsStore()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
 const inputText = ref('')
-type TrackedMention = GroupChatMention & { start: number; end: number }
-const mentions = ref<TrackedMention[]>([])
+const mentions = ref<GroupChatTrackedMention[]>([])
 const previousInputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const attachments = ref<Attachment[]>([])
+const isSending = ref(false)
+const pendingSendRoomId = ref<string | null>(null)
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
@@ -236,6 +245,43 @@ const filteredMentionOptions = computed(() => buildMentionOptions(
 
 const canSend = computed(() => !!inputText.value.trim() || (props.allowAttachments && attachments.value.length > 0))
 
+function resetTransientComposerState() {
+    for (const attachment of attachments.value) URL.revokeObjectURL(attachment.url)
+    attachments.value = []
+    mentionActive.value = false
+    mentionStartIndex.value = -1
+    mentionQuery.value = ''
+}
+
+function restoreRoomDraft(roomId: string | null) {
+    resetTransientComposerState()
+    const draft = roomId ? loadGroupChatRoomDraft(roomId) : null
+    inputText.value = draft?.text || ''
+    mentions.value = draft?.mentions.map(mention => ({ ...mention })) || []
+    previousInputText.value = inputText.value
+    nextTick(() => {
+        autoSizeTextarea()
+    })
+}
+
+watch(
+    () => props.roomId,
+    roomId => restoreRoomDraft(roomId),
+    { immediate: true },
+)
+
+watch(
+    [inputText, mentions],
+    () => {
+        if (!props.roomId) return
+        saveGroupChatRoomDraft(props.roomId, {
+            text: inputText.value,
+            mentions: mentions.value,
+        })
+    },
+    { deep: true, flush: 'sync' },
+)
+
 // ─── Scroll active item into view ──────────────────────
 
 function scrollToActive() {
@@ -318,6 +364,7 @@ function updateMentionState() {
 }
 
 function selectMention(option: MentionOption) {
+    if (isSending.value) return
     const el = textareaRef.value
     if (!el || mentionStartIndex.value === -1) return
 
@@ -336,6 +383,7 @@ function selectMention(option: MentionOption) {
 }
 
 function insertMention(name: string, participantId?: string) {
+    if (isSending.value) return
     const mentionName = String(name || '').trim()
     if (!mentionName) return
 
@@ -408,6 +456,7 @@ function replaceInputRange(start: number, end: number, replacement: string, ment
 }
 
 function insertVoiceTranscriptIntoInput(text: string) {
+    if (isSending.value) return
     const transcript = normalizeComposerVoiceTranscript(text)
     if (!transcript) return
     const el = textareaRef.value
@@ -435,6 +484,7 @@ const voiceInput = useComposerVoiceInput({
 })
 
 function insertStructuredMention(mention: GroupChatMention) {
+    if (isSending.value) return
     const normalized = normalizeMention(mention)
     if (!normalized) return
     if (mentions.value.some(candidate =>
@@ -515,6 +565,7 @@ function handleSend() {
         handleStop()
         return
     }
+    if (isSending.value) return
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
     if (props.sendBlocked) {
@@ -523,13 +574,24 @@ function handleSend() {
     }
 
     const structuredMentions = mentions.value.map(({ start: _start, end: _end, ...mention }) => mention)
+    isSending.value = true
+    pendingSendRoomId.value = props.roomId
     emit('send', content, attachments.value.length > 0 ? attachments.value : undefined, structuredMentions.length ? structuredMentions : undefined)
+}
+
+function completeSend(success: boolean) {
+    if (!isSending.value) return
+    const submittedRoomId = pendingSendRoomId.value
+    isSending.value = false
+    pendingSendRoomId.value = null
+    if (!success) return
+
+    if (submittedRoomId) clearGroupChatRoomDraft(submittedRoomId)
+    if (props.roomId !== submittedRoomId) return
     inputText.value = ''
     mentions.value = []
     previousInputText.value = ''
-    attachments.value = []
-    mentionActive.value = false
-    // 发送后重置到自定义高度（不清除拖拽状态）
+    resetTransientComposerState()
 }
 
 function handleInput(e: Event) {
@@ -584,7 +646,7 @@ function handleCompositionEnd() {
 }
 
 function addFile(file: File) {
-    if (!props.allowAttachments) return
+    if (isSending.value || !props.allowAttachments) return
     if (attachments.value.find(a => a.name === file.name)) return
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
     attachments.value.push({
@@ -652,9 +714,10 @@ function handleDrop(e: DragEvent) {
     addFiles(Array.from(e.dataTransfer?.files || []))
 }
 
-defineExpose({ addFiles, insertMention, handleSend })
+defineExpose({ addFiles, insertMention, handleSend, completeSend })
 
 function removeAttachment(id: string) {
+    if (isSending.value) return
     const idx = attachments.value.findIndex(a => a.id === id)
     if (idx !== -1) {
         URL.revokeObjectURL(attachments.value[idx].url)
@@ -720,6 +783,7 @@ function isImage(type: string): boolean {
                 :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
                 :placeholder="t('groupChat.inputPlaceholder')"
                 rows="1"
+                :readonly="isSending"
                 @keydown="handleKeydown"
                 @compositionstart="handleCompositionStart"
                 @compositionend="handleCompositionEnd"
@@ -778,7 +842,7 @@ function isImage(type: string): boolean {
                         circle
                         class="send-button"
                         :class="{ 'send-button--stop': props.stopMode }"
-                        :disabled="props.stopMode ? props.isStopping : !canSend"
+                        :disabled="props.stopMode ? props.isStopping : (!canSend || isSending)"
                         :aria-label="props.stopMode ? t('chat.stop') : t('chat.send')"
                         @click="props.stopMode ? handleStop() : handleSend()"
                     >

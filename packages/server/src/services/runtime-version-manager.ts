@@ -8,7 +8,8 @@ import { config } from '../config'
 import { getHermesAgentVersion, getHermesWebUiVersion } from './system-info'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
-const DEFAULT_REMOTE_MANIFEST_URL = 'https://hermes-studio.ai/versions.json'
+const DEFAULT_REMOTE_MANIFEST_URL = 'https://api.hermes-studio.ai/api/studio/versions'
+const FALLBACK_REMOTE_MANIFEST_URL = 'https://hermes-studio.ai/versions.json'
 const DEFAULT_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
 const DEFAULT_GITHUB_REPO = 'EKKOLearnAI/hermes-studio'
 
@@ -41,10 +42,10 @@ export interface InstalledWebUiVersion {
   active: boolean
 }
 
-export interface RemoteVersionManifest {
+export interface StudioVersionManifest {
   schema?: number
   hermes?: string[]
-  webui?: string[]
+  mobile?: unknown
 }
 
 export type VersionDownloadKind = 'runtime' | 'webui'
@@ -345,14 +346,36 @@ export function listInstalledWebUiVersions(active = readActiveVersionManifest())
   return installed.sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }))
 }
 
-async function fetchRemoteVersions(): Promise<{ manifest: RemoteVersionManifest | null; error: string }> {
-  const url = process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL?.trim() || DEFAULT_REMOTE_MANIFEST_URL
+function isStudioVersionManifest(value: unknown): value is StudioVersionManifest {
+  return !!value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Array.isArray((value as StudioVersionManifest).hermes)
+}
+
+async function fetchVersionManifest(url: string): Promise<StudioVersionManifest> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+  if (!response.ok) throw new Error(`GET ${url} returned ${response.status}`)
+  const manifest: unknown = await response.json()
+  if (!isStudioVersionManifest(manifest)) throw new Error(`GET ${url} returned an invalid version manifest`)
+  return manifest
+}
+
+async function fetchRemoteVersions(): Promise<{ manifest: StudioVersionManifest | null; error: string }> {
+  const primaryUrl = process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL?.trim() || DEFAULT_REMOTE_MANIFEST_URL
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    if (!response.ok) return { manifest: null, error: `GET ${url} returned ${response.status}` }
-    return { manifest: await response.json() as RemoteVersionManifest, error: '' }
-  } catch (err) {
-    return { manifest: null, error: err instanceof Error ? err.message : String(err) }
+    return { manifest: await fetchVersionManifest(primaryUrl), error: '' }
+  } catch (primaryError) {
+    if (primaryUrl === FALLBACK_REMOTE_MANIFEST_URL) {
+      return { manifest: null, error: primaryError instanceof Error ? primaryError.message : String(primaryError) }
+    }
+    try {
+      return { manifest: await fetchVersionManifest(FALLBACK_REMOTE_MANIFEST_URL), error: '' }
+    } catch (fallbackError) {
+      const primaryMessage = primaryError instanceof Error ? primaryError.message : String(primaryError)
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      return { manifest: null, error: `${primaryMessage}; fallback failed: ${fallbackMessage}` }
+    }
   }
 }
 
@@ -387,7 +410,7 @@ export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
       activeVersion: active?.webUiVersion || webUiVersion,
       activeDirectory: activeWebUiDirectory(active),
       installed: listInstalledWebUiVersions(active),
-      remoteVersions: normalizeStringList(manifest?.webui),
+      remoteVersions: [],
     },
   }
 }

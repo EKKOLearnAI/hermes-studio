@@ -21,6 +21,15 @@ export interface AgentRuntimeContextEstimate {
   systemPromptChars: number
 }
 
+export interface EkkoBackgroundContinuationContext {
+  version: 1
+  subagentId: string
+  originRunId: string
+  originStep: number
+  messages: AgentMessage[]
+  memoryPolicy: 'disabled'
+}
+
 export interface AgentRuntimeOptions {
   modelClient?: ModelClient
   /** Disable every tool source, including built-ins, MCP, memory, and skill tools. */
@@ -69,6 +78,10 @@ export interface AgentRuntimeRunInput {
   contextKey?: string
   context?: unknown
   memoryEnabled?: boolean
+  /** Delete provider-native continuation state when this run exits. */
+  ephemeralContext?: boolean
+  /** Disable session-global skill review side effects for an isolated callback run. */
+  skillReviewEnabled?: boolean
   /** When false, delegate_task only accepts foreground mode for this run. */
   backgroundDelegationEnabled?: boolean
   /** Correlation fields only; log events and payloads remain runtime-owned. */

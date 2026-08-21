@@ -126,6 +126,9 @@ const defaultCapabilities: ModelCapabilities = {
   systemPrompt: true,
 }
 
+const TEXT_ONLY_CHAT_TARGET_LIMIT = 512
+const textOnlyChatTargets = new Set<string>()
+
 export class OpenAICompatibleModelClient implements ModelClient {
   readonly provider: string
   readonly requestStyle = 'openai-chat'
@@ -149,14 +152,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
   }
 
   async create(request: ModelRequest): Promise<ModelResponse> {
-    const payload = toOpenAIChatPayload(this.config, { ...request, stream: false })
-    const response = await this.postJson(payload, request.signal)
-    return normalizeOpenAIChatResponse(this.provider, response)
+    const response = await this.postWithImageFallback({ ...request, stream: false }, request.signal)
+    return normalizeOpenAIChatResponse(this.provider, await parseResponseJson(this.provider, response))
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-    const payload = toOpenAIChatPayload(this.config, { ...request, stream: true })
-    const response = await this.post(payload, request.signal)
+    const response = await this.postWithImageFallback({ ...request, stream: true }, request.signal)
 
     if (!response.body) {
       throw new ModelProviderError('Model provider returned an empty stream body.', {
@@ -263,9 +264,20 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
   }
 
-  private async postJson(payload: OpenAIChatPayload, signal?: AbortSignal): Promise<OpenAIChatResponse> {
-    const response = await this.post(payload, signal)
-    return parseResponseJson(this.provider, response)
+  private async postWithImageFallback(request: ModelRequest, signal?: AbortSignal): Promise<Response> {
+    const model = request.model ?? this.config.defaultModel
+    const target = chatTargetKey(this.config, model)
+    const initialConfig = textOnlyChatTargets.has(target)
+      ? withoutVision(this.config)
+      : this.config
+    const payload = toOpenAIChatPayload(initialConfig, request)
+    try {
+      return await this.post(payload, signal)
+    } catch (error) {
+      if (!payloadContainsImage(payload) || !isUnsupportedImageError(error)) throw error
+      rememberTextOnlyChatTarget(target)
+      return this.post(toOpenAIChatPayload(withoutVision(this.config), request), signal)
+    }
   }
 
   private async post(payload: OpenAIChatPayload, signal?: AbortSignal): Promise<Response> {
@@ -284,8 +296,65 @@ export class OpenAICompatibleModelClient implements ModelClient {
   }
 }
 
+function chatTargetKey(config: ModelProviderConfig, model: string): string {
+  return [config.id, chatCompletionsUrl(config), model]
+    .map(value => value.trim().toLowerCase())
+    .join('\u0000')
+}
+
+function rememberTextOnlyChatTarget(target: string): void {
+  if (textOnlyChatTargets.has(target)) return
+  if (textOnlyChatTargets.size >= TEXT_ONLY_CHAT_TARGET_LIMIT) {
+    const oldest = textOnlyChatTargets.values().next().value
+    if (oldest) textOnlyChatTargets.delete(oldest)
+  }
+  textOnlyChatTargets.add(target)
+}
+
+function withoutVision(config: ModelProviderConfig): ModelProviderConfig {
+  return {
+    ...config,
+    capabilities: {
+      ...config.capabilities,
+      vision: false,
+    },
+  }
+}
+
+function payloadContainsImage(payload: OpenAIChatPayload): boolean {
+  return payload.messages.some(message =>
+    Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))
+}
+
+function isUnsupportedImageError(error: unknown): boolean {
+  if (!(error instanceof ModelProviderError)) return false
+  let details = ''
+  try {
+    details = JSON.stringify(error.details)
+  } catch {
+    // The provider message below is still sufficient for matching.
+  }
+  const text = `${error.message} ${details}`.toLowerCase()
+  const rejectsImageUrl = text.includes('image_url') && (
+    text.includes('unknown variant') ||
+    text.includes('expected') && text.includes('text') ||
+    text.includes('supported values') && text.includes('text') ||
+    text.includes('invalid content')
+  )
+  const rejectsImages = text.includes('image') && (
+    text.includes('does not support') ||
+    text.includes('not support') ||
+    text.includes('unsupported') ||
+    text.includes('text-only') ||
+    text.includes('text only') ||
+    text.includes('only supports text')
+  )
+  return rejectsImageUrl || rejectsImages
+}
+
 export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelRequest): OpenAIChatPayload {
   const isQwenOAuth = config.id === 'qwen-oauth'
+  const supportsVision = config.capabilities?.vision !== false
   const reasoningReplayField = openAIReasoningReplayField(
     config,
     request.model ?? config.defaultModel,
@@ -298,7 +367,7 @@ export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelR
   return {
     model: request.model ?? config.defaultModel,
     messages: request.messages.flatMap(message =>
-      toOpenAIChatMessages(message, isQwenOAuth, reasoningReplayField, requiresAssistantContent)),
+      toOpenAIChatMessages(message, isQwenOAuth, reasoningReplayField, requiresAssistantContent, supportsVision)),
     temperature: request.temperature,
     max_tokens: request.maxTokens,
     ...(tools
@@ -309,7 +378,7 @@ export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelR
       : {}),
     stream: request.stream,
     stream_options: request.stream ? { include_usage: true } : undefined,
-    vl_high_resolution_images: isQwenOAuth ? true : undefined,
+    vl_high_resolution_images: isQwenOAuth && supportsVision ? true : undefined,
   }
 }
 
@@ -349,6 +418,7 @@ function toOpenAIChatMessages(
   qwenOAuth = false,
   reasoningReplayField?: OpenAIChatReasoningReplayFormat,
   requiresAssistantContent = false,
+  supportsVision = true,
 ): OpenAIChatMessage[] {
   const plainContent = message.role === 'assistant' && message.toolCalls?.length
     ? message.content || (requiresAssistantContent ? '' : null)
@@ -381,7 +451,9 @@ function toOpenAIChatMessages(
     tool_call_id: message.toolCallId,
     tool_calls: message.toolCalls?.map(toOpenAIToolCall),
   }
-  const images = message.contentParts?.filter(part => part.type === 'image') ?? []
+  const images = supportsVision
+    ? message.contentParts?.filter(part => part.type === 'image') ?? []
+    : []
   if (message.role === 'user' && images.length > 0) {
     return [{
       ...base,

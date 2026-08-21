@@ -65,6 +65,7 @@ describe('runtime version manager storage migration', () => {
     vi.resetModules()
     process.env = { ...originalEnv }
     delete process.env.HERMES_DESKTOP_RUNTIME_DIR
+    delete process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL
     state.appHome = tempDir('hermes-runtime-version-home-')
   })
 
@@ -111,7 +112,11 @@ describe('runtime version manager storage migration', () => {
     }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ schema: 1, hermes: ['0.19.1'], webui: ['0.6.31'] }),
+      json: async () => ({
+        schema: 1,
+        hermes: ['0.19.1', '0.20.4'],
+        mobile: { version: '1.0.0', channels: {} },
+      }),
     }))
 
     const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
@@ -119,6 +124,51 @@ describe('runtime version manager storage migration', () => {
 
     expect(status.hermes.activeVersion).toBe('0.19.1')
     expect(status.hermes.agentVersion).toBe('v2026.8.1')
+    expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.4'])
+    expect(status.webui.remoteVersions).toEqual([])
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.hermes-studio.ai/api/studio/versions',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('falls back to the previous website manifest when the Studio version API is unavailable', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ schema: 1, hermes: ['0.19.1', '0.20.0'] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
+    const status = await getRuntimeVersionStatus()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.hermes-studio.ai/api/studio/versions',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://hermes-studio.ai/versions.json',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.0'])
+    expect(status.remoteError).toBe('')
+  })
+
+  it('reports both errors when the Studio API and website manifest are unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockRejectedValueOnce(new Error('website unavailable')))
+
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
+    const status = await getRuntimeVersionStatus()
+
+    expect(status.hermes.remoteVersions).toEqual([])
+    expect(status.remoteError).toContain('returned 503')
+    expect(status.remoteError).toContain('fallback failed: website unavailable')
   })
 
   it('rejects a destination nested inside the current Runtime storage root', async () => {

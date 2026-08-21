@@ -749,6 +749,68 @@ describe('group chat agent workspace bridge runs', () => {
     }))
   })
 
+  it('keeps Pi group turns temporary while reinjecting the room history', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async () => ({ ok: true, output: 'done' }))
+    const disposeSession = vi.fn(async () => {})
+    const clients = new AgentClients()
+    clients.setChatRunService({
+      runAndWait,
+      abortSession: vi.fn(async () => {}),
+      disposeSession,
+    })
+    const client = await clients.createAgent({
+      agentId: 'agent-pi-history',
+      agent: 'pi',
+      profile: 'default',
+      name: 'Pi',
+      description: 'Keeps up with the room',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ name: 'History Room', workspace: '' })),
+      getRoomMembers: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    })
+
+    await client.replyToMention('room-history', {
+      messageId: 'msg-1',
+      content: '@Pi remember alpha',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+    await client.replyToMention('room-history', {
+      messageId: 'msg-2',
+      content: '@Pi what came before?',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 2,
+      role: 'user',
+    }, {
+      summary: '',
+      history: [{
+        id: 'msg-1',
+        timestamp: 1,
+        role: 'user',
+        senderName: 'Human',
+        content: '@Pi remember alpha',
+      }],
+    })
+
+    const firstRun = runAndWait.mock.calls[0][0]
+    const secondRun = runAndWait.mock.calls[1][0]
+    expect(firstRun.session_id).toMatch(/^gc_run_/)
+    expect(secondRun.session_id).toMatch(/^gc_run_/)
+    expect(secondRun.session_id).not.toBe(firstRun.session_id)
+    expect(String(secondRun.input)).toContain('Member "Human": @Pi remember alpha')
+    expect(disposeSession).toHaveBeenCalledTimes(2)
+    expect(disposeSession).toHaveBeenNthCalledWith(1, firstRun.session_id)
+    expect(disposeSession).toHaveBeenNthCalledWith(2, secondRun.session_id)
+  })
+
   it('adds the workspace-scoped security policy only when a non-owner mentions the Agent', async () => {
     const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
     const runAndWait = vi.fn(async (_data: any) => ({ ok: true, output: 'done' }))
