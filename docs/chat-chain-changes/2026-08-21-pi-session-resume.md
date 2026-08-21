@@ -1,6 +1,6 @@
 ---
 date: 2026-08-21
-pr: pending
+pr: 2656
 feature: Resume Pi coding-agent sessions
 impact: Direct Pi chats now reopen their persisted native session after each RPC process restart, while group-chat turns remain temporary and receive room history explicitly.
 ---
