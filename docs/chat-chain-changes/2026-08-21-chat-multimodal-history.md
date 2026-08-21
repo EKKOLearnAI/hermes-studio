@@ -1,6 +1,6 @@
 ---
 date: 2026-08-21
-pr: pending
+pr: 2655
 feature: Chat model multimodal history compatibility
 impact: Ekko Agent remembers Chat targets that reject image_url and strips image parts on later runs while preserving image-capable Chat requests.
 ---
