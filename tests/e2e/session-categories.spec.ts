@@ -74,6 +74,7 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /Project Beta/ }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /Project Alpha/ }).first().locator('.session-item-category-tag')).toHaveText('Work')
+  await expect(page.getByRole('link', { name: /General Notes/ }).first().locator('.session-item-category-tag')).toHaveText('Uncategorized')
   await expect(page.getByRole('link', { name: /Project Alpha/ }).last().locator('.session-item-category-tag')).toHaveCount(0)
 
   await expect(recentToggle).toHaveAttribute('aria-expanded', 'true')
@@ -200,7 +201,7 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await expect(page.locator('.session-group-header').filter({ hasText: 'Client Work' })).toHaveCount(0)
   await expect(page.locator('.session-group-header').filter({ hasText: 'Uncategorized' })).toBeVisible()
   await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toBeVisible()
-  await expect(page.getByRole('link', { name: /Project Alpha/ }).first().locator('.session-item-category-tag')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /Project Alpha/ }).first().locator('.session-item-category-tag')).toHaveText('Uncategorized')
   expect(api.requests.some(request =>
     request.method === 'PATCH' && request.pathname === '/api/hermes/session-categories/1',
   )).toBe(true)
@@ -309,6 +310,7 @@ test('shows category load failure and retries instead of presenting an empty men
   await page.goto('/#/hermes/chat')
   const failure = page.locator('.session-category-load-error')
   await expect(failure).toContainText('Failed to load categories')
+  await expect(page.getByRole('link', { name: /General Notes/ }).first().locator('.session-item-category-tag')).toHaveCount(0)
 
   await page.getByRole('link', { name: /General Notes/ }).first().click({ button: 'right' })
   await page.locator('.n-dropdown-option').filter({ hasText: 'Move to category' }).hover()
@@ -316,6 +318,7 @@ test('shows category load failure and retries instead of presenting an empty men
   await failure.getByRole('button', { name: 'Retry' }).click()
 
   await expect(failure).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /General Notes/ }).first().locator('.session-item-category-tag')).toHaveText('Uncategorized')
   expect(attempts).toBe(2)
 
   await page.getByRole('link', { name: /General Notes/ }).first().click({ button: 'right' })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSessionCategoryMenuChildren } from '@/components/hermes/chat/session-category-menu'
+import { buildSessionCategoryMenuChildren, resolveRecentSessionCategoryLabel } from '@/components/hermes/chat/session-category-menu'
 
 describe('session category menu', () => {
   it('disables the current named category without adding a check mark', () => {
@@ -51,5 +51,21 @@ describe('session category menu', () => {
       { label: 'Failed to load categories', key: 'category:load-failed', disabled: true },
       { label: 'Retry', key: 'category:retry', disabled: false },
     ])
+  })
+})
+
+
+describe('recent session category label', () => {
+  const categories = new Map([[1, 'Work']])
+
+  it('shows the localized uncategorized label only after categories load successfully', () => {
+    expect(resolveRecentSessionCategoryLabel(null, categories, true, false, 'Uncategorized')).toBe('Uncategorized')
+    expect(resolveRecentSessionCategoryLabel(null, categories, false, false, 'Uncategorized')).toBeUndefined()
+    expect(resolveRecentSessionCategoryLabel(null, categories, true, true, 'Uncategorized')).toBeUndefined()
+  })
+
+  it('keeps named labels and does not invent a label for unresolved category ids', () => {
+    expect(resolveRecentSessionCategoryLabel(1, categories, true, false, 'Uncategorized')).toBe('Work')
+    expect(resolveRecentSessionCategoryLabel(2, categories, true, false, 'Uncategorized')).toBeUndefined()
   })
 })

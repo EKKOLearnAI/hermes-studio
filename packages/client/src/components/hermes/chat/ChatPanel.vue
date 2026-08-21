@@ -50,7 +50,7 @@ import OutlinePanel from "./OutlinePanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
 import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
-import { buildSessionCategoryMenuChildren } from "./session-category-menu";
+import { buildSessionCategoryMenuChildren, resolveRecentSessionCategoryLabel } from "./session-category-menu";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
@@ -578,8 +578,13 @@ const sessionCategoryNames = computed(() => new Map(
 ));
 
 function recentCategoryLabel(session: Session): string | undefined {
-  if (session.categoryId == null) return undefined;
-  return sessionCategoryNames.value.get(session.categoryId);
+  return resolveRecentSessionCategoryLabel(
+    session.categoryId,
+    sessionCategoryNames.value,
+    sessionCategoriesLoaded.value,
+    sessionCategoriesLoadFailed.value,
+    t("chat.uncategorized"),
+  );
 }
 
 function toggleRecentGroup() {

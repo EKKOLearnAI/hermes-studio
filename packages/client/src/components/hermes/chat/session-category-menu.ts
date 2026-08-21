@@ -44,3 +44,15 @@ export function buildSessionCategoryMenuChildren({
     })),
   ]
 }
+
+export function resolveRecentSessionCategoryLabel(
+  categoryId: number | null | undefined,
+  categoryNames: ReadonlyMap<number, string>,
+  loaded: boolean,
+  loadFailed: boolean,
+  uncategorizedLabel: string,
+): string | undefined {
+  if (!loaded || loadFailed) return undefined
+  if (categoryId == null) return uncategorizedLabel
+  return categoryNames.get(categoryId)
+}
