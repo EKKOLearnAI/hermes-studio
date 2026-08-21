@@ -8,7 +8,7 @@ import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { devicePublicRoutes, deviceRoutes } from './devices'
 import { mcuDeviceRoutes } from './mcu-devices'
-import { codingAgentRoutes } from './coding-agents'
+import { codingAgentPublicRoutes, codingAgentRoutes } from './coding-agents'
 import { appRelayRoutes } from './app-relay'
 import { appConnectionRoutes } from './app-connections'
 import { apiDocsRoutes } from './api-docs'
@@ -72,6 +72,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(petdexPublicRoutes.routes())
   app.use(groupChatPublicRoutes.routes())
   app.use(chatWebhookPublicRoutes.routes())
+  app.use(codingAgentPublicRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))

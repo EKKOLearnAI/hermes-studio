@@ -415,10 +415,11 @@ describe('coding agent launch preparation', () => {
       args: [
         '--append-system-prompt-file',
         join(home, 'global-home', '.claude', 'hermes-rules.md'),
-        '--dangerously-skip-permissions',
+        '--permission-mode',
+        'manual',
       ],
       env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --dangerously-skip-permissions`,
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --permission-mode manual`,
       files: [{
         key: 'prompt',
         path: '~/.claude/hermes-rules.md',
@@ -430,7 +431,7 @@ describe('coding agent launch preparation', () => {
     expect(prompt).toContain('# 输出格式规范')
   })
 
-  it('uses Claude Code auto permission mode instead of dangerous bypass when running as root', async () => {
+  it('uses Claude Code manual permission mode when running as root', async () => {
     mockProcessUid(0)
     const home = makeHome()
 
@@ -448,9 +449,9 @@ describe('coding agent launch preparation', () => {
         '--append-system-prompt-file',
         join(home, 'global-home', '.claude', 'hermes-rules.md'),
         '--permission-mode',
-        'auto',
+        'manual',
       ],
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --permission-mode auto`,
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --permission-mode manual`,
     })
   })
 
@@ -595,7 +596,8 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'mcp.json'),
       '--append-system-prompt-file',
       join(result.rootDir, 'hermes-rules.md'),
-      '--dangerously-skip-permissions',
+      '--permission-mode',
+        'manual',
     ])
     expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} &&`)
     expect(result.shellCommand).toContain(join(result.rootDir, 'launch.sh'))
@@ -604,7 +606,7 @@ describe('coding agent launch preparation', () => {
     expect(result.shellCommand).not.toContain('--model')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('exec claude --settings')
-    expect(launcher).toContain('--dangerously-skip-permissions')
+    expect(launcher).toContain('--permission-mode manual')
     expect(launcher).not.toContain('--model')
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
@@ -890,7 +892,8 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'mcp.json'),
       '--append-system-prompt-file',
       join(result.rootDir, 'hermes-rules.md'),
-      '--dangerously-skip-permissions',
+      '--permission-mode',
+        'manual',
     ])
     expect(result.shellCommand).not.toContain('--setting-sources local')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
@@ -1016,7 +1019,7 @@ describe('coding agent launch preparation', () => {
     ))).toBe(false)
   })
 
-  it('uses Claude Code auto permission mode for scoped root launches', async () => {
+  it('uses Claude Code manual permission mode for scoped root launches', async () => {
     mockProcessUid(0)
     const home = makeHome()
 
@@ -1039,10 +1042,10 @@ describe('coding agent launch preparation', () => {
       '--append-system-prompt-file',
       join(result.rootDir, 'hermes-rules.md'),
       '--permission-mode',
-      'auto',
+      'manual',
     ])
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
-    expect(launcher).toContain('--permission-mode auto')
+    expect(launcher).toContain('--permission-mode manual')
     expect(launcher).not.toContain('--dangerously-skip-permissions')
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
   })

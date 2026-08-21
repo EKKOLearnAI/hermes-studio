@@ -185,16 +185,208 @@ describe('coding agent Windows process launch', () => {
     expect(emitted).toHaveBeenCalledWith(
       'chat-session-pi-ui',
       'approval.requested',
-      expect.objectContaining({ approval_id: 'confirm-1', choices: ['once', 'deny'] }),
+      expect.objectContaining({
+        approval_id: expect.stringMatching(/^approval_pi_0_/),
+        runtime: 'pi',
+        participant_agent: 'pi',
+        generation: 0,
+        choices: ['once', 'deny'],
+      }),
     )
-    expect(manager.resolveApproval('chat-session-pi-ui', 'confirm-1', 'once')).toEqual({
+    const approvalId = emitted.mock.calls[0][2].approval_id
+    expect(manager.resolveApproval('chat-session-pi-ui', approvalId, 'once')).toEqual({
       handled: true,
+      submitted: true,
       resolved: true,
     })
 
     expect(stdin.write.mock.calls.map((call: any[]) => JSON.parse(call[0]))).toEqual([
       { type: 'extension_ui_response', id: 'confirm-1', confirmed: true },
     ])
+  })
+
+  it('routes Claude Code PermissionRequest hooks through a generation-bound Studio approval', async () => {
+    const manager = new CodingAgentRunManager()
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    const run: any = {
+      id: 'agent-session-claude-approval',
+      launch: {
+        agentSessionId: 'agent-session-claude-approval',
+        agentId: 'claude-code',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'claude-test',
+        sessionId: 'chat-session-claude-approval',
+        command: 'claude.cmd',
+        args: ['--permission-mode', 'manual'],
+        shellCommand: 'claude',
+        workspaceDir: process.cwd(),
+        approvalToken: 'claude-hook-token',
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      generation: 4,
+      currentChild: { exitCode: null, signalCode: null, killed: false },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    const response = manager.handleClaudePermissionHook('Bearer claude-hook-token', {
+      hook_event_name: 'PermissionRequest',
+      tool_use_id: 'tool-use-1',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm publish' },
+    })
+    const requested = emitted.mock.calls.find((call: any[]) => call[1] === 'approval.requested')?.[2]
+    expect(requested).toMatchObject({
+      runtime: 'claude-code',
+      generation: 4,
+      command: 'npm publish',
+      choices: ['once', 'deny'],
+    })
+    expect(manager.resolveApproval(
+      'chat-session-claude-approval',
+      requested.approval_id,
+      'once',
+    )).toEqual({ handled: true, submitted: true, resolved: true })
+    await expect(response).resolves.toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    })
+  })
+
+  it('rejects missing or stale Claude approval capabilities and denies pending hooks on cleanup', async () => {
+    const manager = new CodingAgentRunManager()
+    await expect(manager.handleClaudePermissionHook('', {
+      hook_event_name: 'PermissionRequest',
+      tool_use_id: 'unknown',
+    })).rejects.toMatchObject({ status: 401 })
+
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    const run: any = {
+      id: 'agent-session-claude-cleanup',
+      launch: {
+        agentSessionId: 'agent-session-claude-cleanup',
+        agentId: 'claude-code',
+        sessionId: 'chat-session-claude-cleanup',
+        approvalToken: 'cleanup-token',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      generation: 2,
+      currentChild: { exitCode: null, signalCode: null, killed: false },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    const hookResponse = manager.handleClaudePermissionHook('Bearer cleanup-token', {
+      hook_event_name: 'PermissionRequest',
+      tool_use_id: 'tool-cleanup',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm publish' },
+    })
+    ;(manager as any).cleanupRun(run, { kill: false, reportClosed: false })
+
+    await expect(hookResponse).resolves.toMatchObject({
+      hookSpecificOutput: {
+        decision: { behavior: 'deny' },
+      },
+    })
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-claude-cleanup',
+      'approval.resolved',
+      expect.objectContaining({
+        runtime: 'claude-code',
+        generation: 2,
+        resolved: false,
+        stale: true,
+      }),
+    )
+    await expect(manager.handleClaudePermissionHook('Bearer cleanup-token', {
+      hook_event_name: 'PermissionRequest',
+      tool_use_id: 'late',
+    })).rejects.toMatchObject({ status: 401 })
+  })
+
+  it('returns Codex app-server approvals only to the owning session and waits for runtime resolution', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    const stdin = new testState.TestEmitter() as any
+    stdin.write = vi.fn()
+    const run: any = {
+      id: 'agent-session-codex-approval',
+      launch: {
+        agentSessionId: 'agent-session-codex-approval',
+        agentId: 'codex',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'gpt-test',
+        sessionId: 'chat-session-codex-approval',
+        command: 'codex.cmd',
+        args: [],
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      generation: 7,
+      currentChild: { stdin, exitCode: null, signalCode: null, killed: false },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+    ;(manager as any).handleCodexApprovalRequest(run, 41, 'item/commandExecution/requestApproval', {
+      command: 'git push',
+      reason: 'network and repository write',
+    })
+    const requested = emitted.mock.calls.find((call: any[]) => call[1] === 'approval.requested')?.[2]
+    expect(requested).toMatchObject({
+      runtime: 'codex',
+      generation: 7,
+      command: 'git push',
+      choices: ['once', 'session', 'deny'],
+    })
+    expect(manager.resolveApproval('another-session', requested.approval_id, 'once'))
+      .toEqual({ handled: false, submitted: false, resolved: false })
+    expect(manager.resolveApproval(
+      'chat-session-codex-approval',
+      requested.approval_id,
+      'session',
+    )).toEqual({ handled: true, submitted: true, resolved: false })
+    expect(JSON.parse(stdin.write.mock.calls[0][0])).toEqual({
+      jsonrpc: '2.0',
+      id: 41,
+      result: { decision: 'acceptForSession' },
+    })
+    ;(manager as any).handleCodexAppServerLine(
+      run,
+      JSON.stringify({ method: 'serverRequest/resolved', params: { requestId: 41 } }),
+      '',
+      '',
+      [],
+    )
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-codex-approval',
+      'approval.resolved',
+      expect.objectContaining({
+        approval_id: requested.approval_id,
+        runtime: 'codex',
+        generation: 7,
+        choice: 'session',
+        resolved: true,
+      }),
+    )
   })
 
   it('maps Pi select/input/editor UI to clarifications and fails unknown methods closed', () => {
@@ -928,15 +1120,13 @@ describe('coding agent Windows process launch', () => {
       args: expect.arrayContaining(['/d', '/s', '/c']),
     })
     expect(testState.spawnCalls[0].args[3]).toContain('C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"exec^"')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"-c^"')
-    expect(testState.spawnCalls[0].args[3]).toContain('model_reasoning_summary=\\^"auto\\^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"app-server^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"--listen^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"stdio://^"')
     expect(testState.spawnCalls[0].args[3]).not.toContain('developer_instructions=')
     expect(testState.spawnCalls[0].args[3]).not.toContain('system^ prompt^ /^ second^ line')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\n')
     expect(testState.spawnCalls[0].args[3]).not.toContain('\r')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"--model^"')
-    expect(testState.spawnCalls[0].args[3]).toContain('^"-^"')
     expect(testState.spawnCalls[0].args[3]).not.toContain('群聊系统')
     expect(testState.spawnCalls[0].args[3].length).toBeLessThan(8191)
     expect(testState.spawnCalls[0].args[3]).not.toContain('system^ prompt\r\n\r\ntest')
@@ -945,7 +1135,13 @@ describe('coding agent Windows process launch', () => {
       windowsVerbatimArguments: true,
       windowsHide: true,
     })
-    expect(testState.spawnCalls[0].child.stdin.end).toHaveBeenCalledWith(`${groupInput}\n`)
+    const initialization = JSON.parse(testState.spawnCalls[0].child.stdin.write.mock.calls[0][0])
+    expect(initialization).toMatchObject({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { clientInfo: { name: 'hermes-studio' } },
+    })
 
     const run = (manager as any).runs.get('agent-session-codex-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
@@ -1056,7 +1252,7 @@ describe('coding agent Windows process launch', () => {
     }
   })
 
-  it('passes image paths to hidden Codex turns with --image', () => {
+  it('passes image paths to hidden Codex turns through app-server structured input', () => {
     const manager = new CodingAgentRunManager()
     ;(manager as any).ensureDbSession = () => {}
     ;(manager as any).addUserMessage = () => {}
@@ -1087,14 +1283,44 @@ describe('coding agent Windows process launch', () => {
     })
 
     const call = testState.spawnCalls[0]
-    expect(call.args[3]).toContain('^"--image^"')
-    expect(call.args[3]).toContain('C:\\Users\\Administrator\\Pictures\\sample^ image.png')
-    expect(call.args[3]).toContain('^"-^"')
+    const run = (manager as any).runs.get('agent-session-codex-image-1')
+    expect(call.args[3]).toContain('^"app-server^"')
     expect(call.args[3]).not.toContain('^"inspect^ this^ image^"')
     expect(call.options.stdio).toEqual(['pipe', 'pipe', 'pipe'])
-    expect(call.child.stdin.end).toHaveBeenCalledWith('inspect this image\n')
+    ;(manager as any).handleCodexAppServerLine(
+      run,
+      JSON.stringify({ id: 1, result: { userAgent: 'test' } }),
+      'inspect this image',
+      '',
+      [{
+        name: 'sample image.png',
+        path: 'C:\\Users\\Administrator\\Pictures\\sample image.png',
+        mediaType: 'image/png',
+      }],
+    )
+    ;(manager as any).handleCodexAppServerLine(
+      run,
+      JSON.stringify({ id: 2, result: { thread: { id: 'thread-image' } } }),
+      'inspect this image',
+      '',
+      [{
+        name: 'sample image.png',
+        path: 'C:\\Users\\Administrator\\Pictures\\sample image.png',
+        mediaType: 'image/png',
+      }],
+    )
+    const messages = call.child.stdin.write.mock.calls.map((args: any[]) => JSON.parse(args[0]))
+    expect(messages.at(-1)).toMatchObject({
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-image',
+        input: [
+          { type: 'text', text: 'inspect this image' },
+          { type: 'localImage', path: 'C:\\Users\\Administrator\\Pictures\\sample image.png' },
+        ],
+      },
+    })
 
-    const run = (manager as any).runs.get('agent-session-codex-image-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()

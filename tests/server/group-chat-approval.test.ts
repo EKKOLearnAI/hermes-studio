@@ -342,7 +342,7 @@ describe('group chat approval and context baseline', () => {
     await expect(emitAck(inviter, 'approval.respond', {
       roomId: 'room-1', approval_id: 'approval-guest-agent', choice: 'once',
     })).resolves.toEqual({ ok: true, approval_id: 'approval-guest-agent', resolved: true })
-    expect(respondApproval).toHaveBeenCalledWith('approval-guest-agent', 'once')
+    expect(respondApproval).toHaveBeenCalledWith(expect.any(String), 'approval-guest-agent', 'once')
   })
 
   it('does not trust a claimed persisted member identity for off-room approvals when authentication is disabled', async () => {
@@ -462,6 +462,9 @@ describe('group chat approval and context baseline', () => {
       resolved: false,
       expired: true,
       error: 'Approval timed out.',
+      runtime: 'hermes',
+      participant_agent: '',
+      generation: '0',
     })
   })
 
@@ -610,6 +613,64 @@ describe('group chat approval and context baseline', () => {
     expect(respondApproval).toHaveBeenCalledOnce()
   })
 
+  it('keeps a Codex approval pending until the Runtime confirms resolution', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const respondApproval = vi.fn(async () => ({
+      handled: true,
+      submitted: true,
+      resolved: false,
+    }))
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      respondApproval,
+    } as any])
+    const requested = once<any>(human, 'approval.requested')
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval_codex_8_pending',
+      command: 'git push',
+      runtime: 'codex',
+      participant_agent: 'codex',
+      generation: 8,
+    })
+    await requested
+
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval_codex_8_pending',
+      choice: 'once',
+    })).resolves.toEqual({
+      ok: true,
+      approval_id: 'approval_codex_8_pending',
+      resolved: false,
+      pending: true,
+    })
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({
+      pendingApprovals: [expect.objectContaining({ approval_id: 'approval_codex_8_pending' })],
+    })
+
+    const resolved = once<any>(human, 'approval.resolved')
+    agent.emit('approval.resolved', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval_codex_8_pending',
+      choice: 'once',
+      resolved: true,
+      runtime: 'codex',
+      participant_agent: 'codex',
+      generation: 8,
+    })
+    await expect(resolved).resolves.toMatchObject({
+      approval_id: 'approval_codex_8_pending',
+      resolved: true,
+    })
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
+  })
+
   it('falls back to the Hermes bridge when a remote approval responder does not own the request', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const respondApproval = vi.fn(async () => false)
@@ -636,7 +697,7 @@ describe('group chat approval and context baseline', () => {
       approval_id: 'approval-hermes-behind-remote',
       choice: 'once',
     })).resolves.toEqual({ ok: true, approval_id: 'approval-hermes-behind-remote', resolved: true })
-    expect(respondApproval).toHaveBeenCalledWith('approval-hermes-behind-remote', 'once')
+    expect(respondApproval).toHaveBeenCalledWith(expect.any(String), 'approval-hermes-behind-remote', 'once')
     expect(bridgeApproval).toHaveBeenCalledWith('approval-hermes-behind-remote', 'once')
   })
 
@@ -764,6 +825,98 @@ describe('group chat approval and context baseline', () => {
       choice: 'session',
     })).resolves.toEqual({ ok: true, approval_id: 'approval-hermes', resolved: true })
     expect(bridgeApproval).toHaveBeenCalledWith('approval-hermes', 'session')
+  })
+
+  it('uses source ownership for Pi approvals and never falls back to the Hermes bridge', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const bridgeApproval = vi.spyOn(AgentBridgeClient.prototype, 'approvalRespond')
+      .mockResolvedValue({ resolved: true } as any)
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval_pi_3_native',
+      command: 'write file',
+      description: 'Pi requests a write',
+      choices: ['once', 'deny'],
+      source: 'pi',
+      participant_agent: 'pi',
+      generation: '3',
+    })
+    await expect(requested).resolves.toMatchObject({
+      runtime: 'pi',
+      participant_agent: 'pi',
+      generation: '3',
+    })
+
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1',
+      approval_id: 'approval_pi_3_native',
+      choice: 'once',
+    })).resolves.toMatchObject({
+      resolved: false,
+      stale: true,
+    })
+    expect(bridgeApproval).not.toHaveBeenCalled()
+  })
+
+  it('marks pending approvals stale when room runtime state is cleared', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval_codex_4_clear',
+      command: 'git push',
+      runtime: 'codex',
+      participant_agent: 'codex',
+      generation: 4,
+    })
+    await requested
+    const resolved = once<any>(human, 'approval.resolved')
+    await groupServer.clearRoomRuntimeState('room-1')
+    await expect(resolved).resolves.toMatchObject({
+      approval_id: 'approval_codex_4_clear',
+      resolved: false,
+      stale: true,
+      error: 'Room runtime state cleared',
+    })
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
+  })
+
+  it('marks pending approvals stale when the owning Room Agent is removed', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    vi.spyOn(groupServer.agentClients, 'removeAgentFromRoom').mockResolvedValue(undefined)
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval_claude_5_removed',
+      command: 'npm publish',
+      runtime: 'claude',
+      participant_agent: 'claude',
+      generation: 5,
+    })
+    await requested
+
+    const resolved = once<any>(human, 'approval.resolved')
+    const roomAgent = groupServer.getStorage().getRoomAgent('room-1', 'agent-1')
+    expect(roomAgent).toBeTruthy()
+    await expect(emitAck(human, 'remove_agent', {
+      roomId: 'room-1',
+      agentId: roomAgent!.id,
+    })).resolves.toMatchObject({ ok: true })
+
+    await expect(resolved).resolves.toMatchObject({
+      approval_id: 'approval_claude_5_removed',
+      resolved: false,
+      stale: true,
+      error: 'Room Agent was removed',
+    })
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
   })
 
   it('dismisses an approval when its runtime already reports it expired', async () => {

@@ -22,6 +22,7 @@ import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
 import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
+import { approvalAgentLabel } from "@/utils/runtime-approval";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -276,6 +277,10 @@ const canInsertQueuedMessages = computed(() => {
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);
+const visibleApprovalAgent = computed(() => approvalAgentLabel(
+  visibleApproval.value?.runtime,
+  visibleApproval.value?.participantAgent,
+));
 const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
 watch(
@@ -878,8 +883,10 @@ defineExpose({
             </span>
             <span>{{ t("chat.approvalKicker") }}</span>
           </div>
-          <div class="approval-float-title">{{ t("chat.approvalTitle") }}</div>
-          <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+          <div class="approval-float-title">{{ visibleApprovalAgent }} · {{ t("chat.approvalTitle") }}</div>
+          <div class="approval-float-meta"><strong>{{ t("chat.approvalAgent") }}</strong><span>{{ visibleApprovalAgent }}</span></div>
+          <div class="approval-float-meta"><strong>{{ t("chat.approvalSummary") }}</strong><span>{{ visibleApproval.summary }}</span></div>
+          <div class="approval-float-desc"><strong>{{ t("chat.approvalRisk") }}</strong><span>{{ visibleApproval.description }}</span></div>
           <code class="approval-float-command">{{ visibleApproval.command }}</code>
           <div
             v-if="visibleApproval.status && visibleApproval.status !== 'pending'"
@@ -1137,7 +1144,10 @@ defineExpose({
   color: $text-primary;
 }
 
+.approval-float-meta,
 .approval-float-desc {
+  display: grid;
+  gap: 2px;
   padding: 0 4px;
   margin-top: 5px;
   font-size: 12px;

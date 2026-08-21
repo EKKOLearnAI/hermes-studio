@@ -149,12 +149,16 @@ export interface GroupPendingApproval {
     roomId: string
     agentName: string
     approvalId: string
+    summary: string
     command: string
     description: string
     choices: Array<'once' | 'session' | 'always' | 'deny'>
     allowPermanent: boolean
     isMemoryWrite: boolean
     requestedAt: number
+    runtime?: string
+    participantAgent?: string
+    generation?: string
     status?: 'pending' | 'submitting' | 'failed' | 'expired'
     submittedChoice?: 'once' | 'session' | 'always' | 'deny'
     error?: string
@@ -468,7 +472,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         return null
     })
 
-    function upsertPendingApproval(data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; requested_at?: number }) {
+    function upsertPendingApproval(data: { roomId: string; agentName?: string; approval_id?: string; summary?: string; tool?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; requested_at?: number; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }) {
         if (!data.roomId || !data.approval_id) return
         const description = data.description || ''
         const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -484,12 +488,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             roomId: data.roomId,
             agentName: data.agentName || '',
             approvalId: data.approval_id,
+            summary: String(data.summary || data.tool || data.command || ''),
             command: data.command || '',
             description,
             choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
             allowPermanent: Boolean(data.allow_permanent),
             isMemoryWrite,
             requestedAt: Number(data.requested_at) || Date.now(),
+            runtime: String(data.runtime || data.source || 'hermes'),
+            participantAgent: String(data.participant_agent || ''),
+            generation: String(data.generation ?? '0'),
             status: 'pending',
         })
     }
@@ -1179,7 +1187,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             handoffChains.value = new Map(handoffChains.value)
         })
 
-        socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
+        socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; summary?: string; tool?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }) => {
             upsertPendingApproval(data)
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
@@ -1889,6 +1897,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             })
         } else if (response?.resolved === true) {
             pendingApprovals.value.delete(key)
+        } else if (response?.pending === true) {
+            // Keep the card locked while the owning Runtime applies the
+            // response. approval.resolved is the only terminal signal.
         } else {
             pendingApprovals.value.set(key, {
                 ...current,

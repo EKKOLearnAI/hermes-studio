@@ -632,12 +632,25 @@ export class ChatRunSocket {
         data.choice,
       )
       if (codingAgentResult.handled) {
+        if (!codingAgentResult.submitted) {
+          this.emitToSession(socket, data.session_id, 'approval.resolved', {
+            event: 'approval.resolved',
+            approval_id: data.approval_id,
+            choice: data.choice || 'deny',
+            resolved: false,
+            error: 'Approval could not be applied.',
+          })
+        }
+        return
+      }
+      if (/^approval_(?:claude-code|codex|pi)_/.test(data.approval_id)) {
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
           event: 'approval.resolved',
           approval_id: data.approval_id,
           choice: data.choice || 'deny',
-          resolved: codingAgentResult.resolved,
-          ...(!codingAgentResult.resolved ? { error: 'Approval could not be applied.' } : {}),
+          resolved: false,
+          stale: true,
+          error: 'Approval no longer belongs to the active Runtime generation.',
         })
         return
       }
@@ -733,8 +746,12 @@ export class ChatRunSocket {
     })
   }
 
-  respondCodingAgentApproval(sessionId: string, approvalId: string, choice: string): boolean {
-    return codingAgentRunManager.resolveApproval(sessionId, approvalId, choice).resolved
+  respondCodingAgentApproval(
+    sessionId: string,
+    approvalId: string,
+    choice: string,
+  ): { handled: boolean; submitted: boolean; resolved: boolean } {
+    return codingAgentRunManager.resolveApproval(sessionId, approvalId, choice)
   }
 
   respondCodingAgentClarification(sessionId: string, clarifyId: string, response: string): boolean {

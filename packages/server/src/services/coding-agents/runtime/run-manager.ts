@@ -2,6 +2,7 @@ import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
+import { randomUUID } from 'crypto'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import type { ApiMode, CodingAgentImageInput } from '../shared/types'
 import { logger } from '../../logger'
@@ -26,7 +27,6 @@ const CHILD_STDERR_TAIL_CHARS = 8 * 1024
 const CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT = 32 * 1024
 const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
-const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
 const HERMES_MCP_SERVER_NAME = 'hermes-studio'
 const PI_RPC_REQUEST_TIMEOUT_MS = 30_000
 const PI_RPC_COMPACT_TIMEOUT_MS = 5 * 60 * 1000
@@ -83,6 +83,7 @@ export interface CodingAgentRunLaunch {
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   reasoningEffort?: string
   approvalRequired?: boolean
+  approvalToken?: string
 }
 
 export interface CodingAgentRunInfo {
@@ -185,6 +186,20 @@ interface ManagedCodingAgentRun {
   piTextBuffer?: string
   piCurrentMessageText?: string
   piRpcRequests?: Map<string, PiRpcPendingRequest>
+  generation: number
+  runtimeApprovals?: Map<string, RuntimeApprovalRequest>
+}
+
+interface RuntimeApprovalRequest {
+  approvalId: string
+  nativeId: string
+  runtime: 'claude-code' | 'codex' | 'pi'
+  generation: number
+  choices: string[]
+  submitted: boolean
+  submittedChoice?: string
+  timer?: ReturnType<typeof setTimeout>
+  submit: (choice: string) => boolean | Promise<boolean>
 }
 
 interface CodingAgentRunSendOptions {
@@ -641,6 +656,7 @@ export class CodingAgentRunManager {
         startedAt: Date.now(),
         exited: false,
         nativeResumeReady: launch.nativeResume === true,
+        generation: 0,
       }
       this.runs.set(run.id, run)
       this.sessionIndex.set(launch.sessionId, run.id)
@@ -693,6 +709,7 @@ export class CodingAgentRunManager {
       lastActiveAt: Date.now(),
       startedAt: Date.now(),
       exited: false,
+      generation: 0,
     }
 
     this.runs.set(run.id, run)
@@ -740,6 +757,8 @@ export class CodingAgentRunManager {
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
     this.startWorkspaceRunDiff(run)
+    this.cancelRuntimeApprovals(run, 'A newer coding-agent generation started')
+    run.generation += 1
     if (run.launch.agentId === 'claude-code') {
       this.startClaudePrintTurn(run, text, systemPrompt, images)
       return { runId: run.id, messageId }
@@ -871,24 +890,61 @@ export class CodingAgentRunManager {
     return { invalidated, deferred }
   }
 
-  resolveApproval(sessionId: string, approvalId: string, choice = 'deny'): { handled: boolean; resolved: boolean } {
+  resolveApproval(
+    sessionId: string,
+    approvalId: string,
+    choice = 'deny',
+  ): { handled: boolean; submitted: boolean; resolved: boolean } {
     const run = this.getBySession(sessionId)
+    const runtimeRequest = run?.runtimeApprovals?.get(approvalId)
+    if (run && runtimeRequest) {
+      if (runtimeRequest.generation !== run.generation || runtimeRequest.submitted) {
+        return { handled: true, submitted: false, resolved: false }
+      }
+      const normalizedChoice = String(choice || 'deny').trim().toLowerCase()
+      if (!runtimeRequest.choices.includes(normalizedChoice)) {
+        return { handled: true, submitted: false, resolved: false }
+      }
+      runtimeRequest.submitted = true
+      runtimeRequest.submittedChoice = normalizedChoice
+      try {
+        const submitted = runtimeRequest.submit(normalizedChoice)
+        if (submitted instanceof Promise) {
+          void submitted.then((ok) => {
+            if (!ok) this.failRuntimeApproval(run, runtimeRequest, 'Runtime rejected the approval response')
+          }).catch((err) => {
+            this.failRuntimeApproval(run, runtimeRequest, err instanceof Error ? err.message : String(err))
+          })
+          return { handled: true, submitted: true, resolved: false }
+        }
+        if (!submitted) {
+          runtimeRequest.submitted = false
+          return { handled: true, submitted: false, resolved: false }
+        }
+        if (runtimeRequest.runtime === 'codex') return { handled: true, submitted: true, resolved: false }
+        this.finishRuntimeApproval(run, runtimeRequest, normalizedChoice)
+        return { handled: true, submitted: true, resolved: true }
+      } catch {
+        runtimeRequest.submitted = false
+        return { handled: true, submitted: false, resolved: false }
+      }
+    }
     const request = run?.piUiRequests?.get(approvalId)
-    if (!run || !request) return { handled: false, resolved: false }
+    if (!run || !request) return { handled: false, submitted: false, resolved: false }
     const normalizedChoice = String(choice || 'deny').trim().toLowerCase()
     if (!['once', 'deny'].includes(normalizedChoice) || request.method !== 'confirm') {
-      return { handled: true, resolved: false }
+      return { handled: true, submitted: false, resolved: false }
     }
     const response: Record<string, unknown> = { type: 'extension_ui_response', id: approvalId }
     response.confirmed = normalizedChoice === 'once'
     try {
       this.writePiRpcCommand(run, response)
     } catch {
-      return { handled: true, resolved: false }
+      return { handled: true, submitted: false, resolved: false }
     }
     if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
     run.piUiRequests?.delete(approvalId)
-    return { handled: true, resolved: true }
+    return { handled: true, submitted: true, resolved: true }
   }
 
   resolveClarification(sessionId: string, clarifyId: string, responseValue = ''): { handled: boolean; resolved: boolean } {
@@ -914,6 +970,187 @@ export class CodingAgentRunManager {
     if (request.timeoutTimer) clearTimeout(request.timeoutTimer)
     run.piUiRequests?.delete(clarifyId)
     return { handled: true, resolved: true }
+  }
+
+  async handleClaudePermissionHook(
+    authorization: string,
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const token = authorization.replace(/^Bearer\s+/i, '').trim()
+    const run = [...this.runs.values()].find(candidate =>
+      candidate.launch.agentId === 'claude-code' &&
+      candidate.launch.approvalToken === token &&
+      !candidate.exited,
+    )
+    if (!run || !token) {
+      throw Object.assign(new Error('Unknown or expired coding-agent approval capability'), { status: 401 })
+    }
+    if (!childIsRunning(run.currentChild) || run.generation < 1) {
+      throw Object.assign(new Error('Claude Code run is not active'), { status: 409 })
+    }
+
+    const hookEventName = String(payload.hook_event_name || '')
+    const nativeId = String(payload.tool_use_id || '').trim()
+    const toolName = String(payload.tool_name || 'Claude Code tool').trim()
+    if (hookEventName !== 'PermissionRequest' || !nativeId) {
+      throw Object.assign(new Error('Invalid Claude Code permission request'), { status: 400 })
+    }
+    if ([...(run.runtimeApprovals?.values() || [])].some(request =>
+      request.runtime === 'claude-code' && request.nativeId === nativeId,
+    )) {
+      throw Object.assign(new Error('Claude Code permission request is already pending'), { status: 409 })
+    }
+
+    return new Promise((resolve) => {
+      this.registerRuntimeApproval(run, {
+        nativeId,
+        runtime: 'claude-code',
+        summary: toolName,
+        command: this.runtimeApprovalCommand(toolName, payload.tool_input),
+        description: `Claude Code requests permission to use ${toolName}.`,
+        choices: ['once', 'deny'],
+        timeoutMs: 30 * 60 * 1000,
+        submit: (choice) => {
+          resolve({
+            hookSpecificOutput: {
+              hookEventName: 'PermissionRequest',
+              decision: choice === 'once'
+                ? { behavior: 'allow' }
+                : { behavior: 'deny', message: 'Denied in Hermes Studio.' },
+            },
+          })
+          return true
+        },
+      })
+    })
+  }
+
+  private runtimeApprovalCommand(toolName: string, input: unknown): string {
+    const record = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Record<string, unknown>
+      : {}
+    const candidate = record.command ?? record.path ?? record.file_path ?? record.url ?? record.query
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.slice(0, 4_000)
+    try {
+      const serialized = JSON.stringify(record)
+      return serialized && serialized !== '{}' ? `${toolName}: ${serialized}`.slice(0, 4_000) : toolName
+    } catch {
+      return toolName
+    }
+  }
+
+  private registerRuntimeApproval(
+    run: ManagedCodingAgentRun,
+    input: {
+      nativeId: string
+      runtime: RuntimeApprovalRequest['runtime']
+      summary: string
+      command: string
+      description: string
+      choices: string[]
+      timeoutMs: number
+      submit: RuntimeApprovalRequest['submit']
+    },
+  ): RuntimeApprovalRequest {
+    if (!Number.isFinite(run.generation)) run.generation = 0
+    run.runtimeApprovals ??= new Map()
+    for (const pending of run.runtimeApprovals.values()) {
+      if (pending.runtime === input.runtime && pending.nativeId === input.nativeId) return pending
+    }
+    const approvalId = `approval_${input.runtime}_${run.generation}_${randomUUID()}`
+    const request: RuntimeApprovalRequest = {
+      approvalId,
+      nativeId: input.nativeId,
+      runtime: input.runtime,
+      generation: run.generation,
+      choices: [...input.choices],
+      submitted: false,
+      submit: input.submit,
+    }
+    request.timer = setTimeout(() => {
+      if (run.runtimeApprovals?.get(approvalId) !== request) return
+      if (!request.submitted) {
+        try {
+          void request.submit('deny')
+        } catch {}
+      }
+      this.finishRuntimeApproval(run, request, 'deny', {
+        resolved: false,
+        expired: true,
+        stale: true,
+        error: `${input.runtime} approval timed out`,
+      })
+    }, input.timeoutMs)
+    request.timer.unref?.()
+    run.runtimeApprovals.set(approvalId, request)
+    this.emitToChat(run.launch.sessionId, 'approval.requested', {
+      event: 'approval.requested',
+      session_id: run.launch.sessionId,
+      approval_id: approvalId,
+      runtime: input.runtime,
+      participant_agent: run.launch.agentId,
+      generation: run.generation,
+      summary: input.summary,
+      command: input.command,
+      description: input.description,
+      choices: input.choices,
+      allow_permanent: input.choices.includes('always'),
+      timeout_ms: input.timeoutMs,
+    })
+    return request
+  }
+
+  private finishRuntimeApproval(
+    run: ManagedCodingAgentRun,
+    request: RuntimeApprovalRequest,
+    choice: string,
+    result: {
+      resolved?: boolean
+      expired?: boolean
+      stale?: boolean
+      error?: string
+    } = {},
+  ): void {
+    if (run.runtimeApprovals?.get(request.approvalId) !== request) return
+    run.runtimeApprovals.delete(request.approvalId)
+    if (request.timer) clearTimeout(request.timer)
+    this.emitToChat(run.launch.sessionId, 'approval.resolved', {
+      event: 'approval.resolved',
+      session_id: run.launch.sessionId,
+      approval_id: request.approvalId,
+      runtime: request.runtime,
+      participant_agent: run.launch.agentId,
+      generation: request.generation,
+      choice,
+      resolved: result.resolved ?? true,
+      ...(result.expired ? { expired: true } : {}),
+      ...(result.stale ? { stale: true } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    })
+  }
+
+  private failRuntimeApproval(run: ManagedCodingAgentRun, request: RuntimeApprovalRequest, error: string): void {
+    this.finishRuntimeApproval(run, request, 'deny', {
+      resolved: false,
+      stale: true,
+      error,
+    })
+  }
+
+  private cancelRuntimeApprovals(run: ManagedCodingAgentRun, reason: string): void {
+    for (const request of [...(run.runtimeApprovals?.values() || [])]) {
+      if (request.timer) clearTimeout(request.timer)
+      if (!request.submitted) {
+        try {
+          void request.submit('deny')
+        } catch {}
+      }
+      this.finishRuntimeApproval(run, request, 'deny', {
+        resolved: false,
+        stale: true,
+        error: reason,
+      })
+    }
   }
 
   touchByAgentSession(agentSessionId?: string | null) {
@@ -1224,6 +1461,7 @@ export class CodingAgentRunManager {
       })
     }
     run.piUiRequests?.clear()
+    this.cancelRuntimeApprovals(run, 'Coding agent session closed')
     this.flushTerminalOutput(run)
     if (run.terminalFlushTimer) clearTimeout(run.terminalFlushTimer)
     this.runs.delete(run.id)
@@ -1458,9 +1696,29 @@ export class CodingAgentRunManager {
         } catch {}
         return
       }
-      run.piUiRequests ??= new Map()
       const timeoutMs = Number(event.timeout)
       const request = { ...event } as any
+      if (event.method === 'confirm') {
+        this.registerRuntimeApproval(run, {
+          nativeId: approvalId,
+          runtime: 'pi',
+          summary: String(event.title || 'Pi controlled tool'),
+          command: String(event.message || event.title || 'Pi tool request').slice(0, 4_000),
+          description: String(event.title || 'Pi requests permission to use a controlled tool.'),
+          choices: ['once', 'deny'],
+          timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30 * 60 * 1000,
+          submit: (choice) => {
+            this.writePiRpcCommand(run, {
+              type: 'extension_ui_response',
+              id: approvalId,
+              confirmed: choice === 'once',
+            })
+            return true
+          },
+        })
+        return
+      }
+      run.piUiRequests ??= new Map()
       if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
         request.timeoutTimer = setTimeout(() => {
           if (run.piUiRequests?.get(approvalId) !== request) return
@@ -1477,33 +1735,20 @@ export class CodingAgentRunManager {
         request.timeoutTimer.unref?.()
       }
       run.piUiRequests.set(approvalId, request)
-      if (event.method === 'confirm') {
-        this.emitToChat(run.launch.sessionId, 'approval.requested', {
-          event: 'approval.requested',
-          session_id: run.launch.sessionId,
-          approval_id: approvalId,
-          title: String(event.title || 'Pi approval required'),
-          description: String(event.message || ''),
-          choices: ['once', 'deny'],
-          source: 'pi',
-          ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
-        })
-      } else {
-        const options = event.method === 'select' && Array.isArray(event.options)
-          ? event.options.map((value: unknown) => String(value))
-          : null
-        this.emitToChat(run.launch.sessionId, 'clarify.requested', {
-          event: 'clarify.requested',
-          session_id: run.launch.sessionId,
-          clarify_id: approvalId,
-          question: String(event.title || event.placeholder || 'Pi input required'),
-          choices: options,
-          initial_response: event.method === 'editor' ? String(event.prefill || '').slice(0, 20_000) : '',
-          response_mode: event.method,
-          ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
-          source: 'pi',
-        })
-      }
+      const options = event.method === 'select' && Array.isArray(event.options)
+        ? event.options.map((value: unknown) => String(value))
+        : null
+      this.emitToChat(run.launch.sessionId, 'clarify.requested', {
+        event: 'clarify.requested',
+        session_id: run.launch.sessionId,
+        clarify_id: approvalId,
+        question: String(event.title || event.placeholder || 'Pi input required'),
+        choices: options,
+        initial_response: event.method === 'editor' ? String(event.prefill || '').slice(0, 20_000) : '',
+        response_mode: event.method,
+        ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
+        source: 'pi',
+      })
       return
     }
 
@@ -2252,21 +2497,7 @@ export class CodingAgentRunManager {
       },
     })
 
-    const promptArgument = run.launch.mode === 'scoped' ? '' : normalizeCliPromptArgument(systemPrompt)
-    const commonArgs = [
-      '--json',
-      ...CODEX_REASONING_SUMMARY_ARGS,
-      ...(promptArgument ? ['-c', `developer_instructions=${JSON.stringify(promptArgument)}`] : []),
-      ...run.launch.args,
-      ...codexImageArgs(images),
-      '--skip-git-repo-check',
-      '--dangerously-bypass-approvals-and-sandbox',
-    ]
-    const args = run.launch.agentNativeSessionId && run.nativeResumeReady
-      ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, '-']
-      : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, '-']
-
-    const child = spawnCodingAgentChild(run.launch.command, args, {
+    const child = spawnCodingAgentChild(run.launch.command, ['app-server', '--listen', 'stdio://'], {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
       env: {
         ...process.env,
@@ -2282,7 +2513,7 @@ export class CodingAgentRunManager {
       stdoutBuffer += chunk.toString('utf8')
       const lines = stdoutBuffer.split(/\r?\n/)
       stdoutBuffer = lines.pop() || ''
-      for (const line of lines) this.handleCodexExecLine(run, line)
+      for (const line of lines) this.handleCodexAppServerLine(run, line, input, systemPrompt, images)
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -2291,12 +2522,16 @@ export class CodingAgentRunManager {
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
     })
 
-    if (child.stdin) {
-      child.stdin.on('error', (err) => {
-        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex stdin input failed')
-      })
-      child.stdin.end(`${input}\n`)
-    }
+    child.stdin?.on('error', (err) => {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex app-server stdin failed')
+    })
+    this.writeCodexRpc(run, {
+      id: 1,
+      method: 'initialize',
+      params: {
+        clientInfo: { name: 'hermes-studio', title: 'Hermes Studio', version: '0.6.44' },
+      },
+    })
 
     child.on('error', (err) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
@@ -2320,12 +2555,168 @@ export class CodingAgentRunManager {
     })
 
     child.on('exit', (code) => {
-      if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
+      if (stdoutBuffer.trim()) this.handleCodexAppServerLine(run, stdoutBuffer, input, systemPrompt, images)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
-      this.finishCodexExecTurn(run, code)
+      if (!run.printCompleted) this.finishCodexExecTurn(run, code)
+    })
+  }
+
+  private writeCodexRpc(run: ManagedCodingAgentRun, message: Record<string, unknown>): boolean {
+    const child = run.currentChild
+    if (!child?.stdin || !childIsRunning(child)) return false
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
+    return true
+  }
+
+  private handleCodexAppServerLine(
+    run: ManagedCodingAgentRun,
+    line: string,
+    input: string,
+    systemPrompt: string,
+    images: CodingAgentImageInput[],
+  ): void {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    let message: any
+    try {
+      message = JSON.parse(trimmed)
+    } catch {
+      logger.debug({ runId: run.id, line: sanitizeCodingAgentTerminalOutput(trimmed) }, '[coding-agent-run] ignored non-json Codex app-server line')
+      return
+    }
+
+    if (message.id === 1 && message.result) {
+      this.writeCodexRpc(run, { method: 'initialized', params: {} })
+      const resume = Boolean(run.launch.agentNativeSessionId && run.nativeResumeReady)
+      this.writeCodexRpc(run, {
+        id: 2,
+        method: resume ? 'thread/resume' : 'thread/start',
+        params: resume
+          ? {
+              threadId: run.launch.agentNativeSessionId,
+              cwd: run.launch.workspaceDir,
+              model: run.launch.model || null,
+              approvalPolicy: 'untrusted',
+              approvalsReviewer: 'user',
+              sandbox: 'workspace-write',
+              developerInstructions: systemPrompt || null,
+            }
+          : {
+              cwd: run.launch.workspaceDir,
+              model: run.launch.model || null,
+              approvalPolicy: 'untrusted',
+              approvalsReviewer: 'user',
+              sandbox: 'workspace-write',
+              developerInstructions: systemPrompt || null,
+              ephemeral: false,
+            },
+      })
+      return
+    }
+
+    if (message.id === 2) {
+      if (message.error) {
+        this.failCodexExecTurn(run, responseErrorMessage(message.error) || 'Codex thread startup failed')
+        run.currentChild?.kill()
+        return
+      }
+      const threadId = String(message.result?.thread?.id || message.result?.threadId || '').trim()
+      if (!threadId) {
+        this.failCodexExecTurn(run, 'Codex app-server did not return a thread id')
+        run.currentChild?.kill()
+        return
+      }
+      this.recordCodexNativeSessionId(run, threadId)
+      const turnInput: Array<Record<string, unknown>> = [{ type: 'text', text: input }]
+      for (const image of images) turnInput.push({ type: 'localImage', path: image.path })
+      this.writeCodexRpc(run, {
+        id: 3,
+        method: 'turn/start',
+        params: {
+          threadId,
+          input: turnInput,
+          approvalPolicy: 'untrusted',
+          approvalsReviewer: 'user',
+          cwd: run.launch.workspaceDir,
+          model: run.launch.model || null,
+          ...(run.launch.reasoningEffort ? { effort: run.launch.reasoningEffort } : {}),
+        },
+      })
+      return
+    }
+
+    if (message.id === 3) {
+      if (message.error) {
+        this.failCodexExecTurn(run, responseErrorMessage(message.error) || 'Codex turn startup failed')
+        run.currentChild?.kill()
+        return
+      }
+      return
+    }
+
+    const method = String(message.method || '').trim()
+    const params = message.params || {}
+    if (!method) return
+    if (message.id !== undefined && (
+      method === 'item/commandExecution/requestApproval' ||
+      method === 'item/fileChange/requestApproval'
+    )) {
+      this.handleCodexApprovalRequest(run, message.id, method, params)
+      return
+    }
+    if (method === 'serverRequest/resolved') {
+      const nativeId = String(params.requestId ?? params.id ?? '').trim()
+      const request = [...(run.runtimeApprovals?.values() || [])].find(candidate =>
+        candidate.runtime === 'codex' && candidate.nativeId === nativeId,
+      )
+      if (request) this.finishRuntimeApproval(run, request, request.submittedChoice || 'deny')
+      return
+    }
+    if (method === 'turn/completed') {
+      this.cancelRuntimeApprovals(run, 'Codex turn completed before approval resolution')
+      const turn = params.turn || {}
+      if (turn.status === 'failed') {
+        this.failCodexExecTurn(run, responseErrorMessage(turn.error) || 'Codex run failed')
+      } else {
+        this.completeCodexExecTurn(run, params.usage)
+      }
+      run.currentChild?.kill()
+      return
+    }
+    this.handleCodexProtocolEvent(run, method, params)
+  }
+
+  private handleCodexApprovalRequest(run: ManagedCodingAgentRun, requestId: string | number, method: string, params: any): void {
+    const nativeId = String(requestId)
+    const isFileChange = method === 'item/fileChange/requestApproval'
+    const command = isFileChange
+      ? String(params.reason || params.grantRoot || 'Apply requested file changes')
+      : Array.isArray(params.command)
+        ? params.command.join(' ')
+        : String(params.command || params.reason || 'Execute requested command')
+    this.registerRuntimeApproval(run, {
+      nativeId,
+      runtime: 'codex',
+      summary: isFileChange ? 'File change' : 'Command execution',
+      command: command.slice(0, 4_000),
+      description: String(params.reason || (isFileChange
+        ? 'Codex requests permission to modify files.'
+        : 'Codex requests permission to execute a controlled command.')),
+      choices: ['once', 'session', 'deny'],
+      timeoutMs: 30 * 60 * 1000,
+      submit: (choice) => this.writeCodexRpc(run, {
+        id: requestId,
+        result: {
+          decision: choice === 'session'
+            ? 'acceptForSession'
+            : choice === 'once'
+              ? 'accept'
+              : 'decline',
+        },
+      }),
     })
   }
 

@@ -62,7 +62,7 @@
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
     "build:desktop:linux": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
-    "claude": "claude --dangerously-skip-permissions",
+    "claude": "claude --permission-mode manual",
     "test:workflow-live": "vite-node scripts/workflow-live-acceptance.ts"
   },
   "files": [

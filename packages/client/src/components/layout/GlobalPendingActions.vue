@@ -11,6 +11,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
 import { showSystemNotification } from '@/utils/completion-notification'
 import { workflowApprovalKey } from '@/utils/workflow-approval-key'
+import { approvalAgentLabel } from '@/utils/runtime-approval'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
 
@@ -391,8 +392,19 @@ function globalNotificationOptions(action: GlobalPendingAction) {
       : action.kind === 'workflow-approval'
         ? () => h('div', { class: 'global-approval-content' }, t('workflow.status.pending_approval'))
         : () => h('div', { class: 'global-approval-content' }, [
+            h('div', { class: 'global-approval-agent' }, [
+              h('strong', t('chat.approvalAgent')),
+              h('span', approvalAgentLabel(action.pending.runtime, action.pending.participantAgent || ('agentName' in action.pending ? action.pending.agentName : ''))),
+            ]),
+            h('div', { class: 'global-approval-agent' }, [
+              h('strong', t('chat.approvalSummary')),
+              h('span', action.pending.summary),
+            ]),
             action.pending.description
-              ? h('div', { class: 'global-approval-description' }, action.pending.description)
+              ? h('div', { class: 'global-approval-description' }, [
+                  h('strong', t('chat.approvalRisk')),
+                  h('span', action.pending.description),
+                ])
               : null,
             approvalCommand(action),
             approvalStatus(action),
@@ -510,6 +522,8 @@ onUnmounted(() => {
 .global-pending-title:focus-visible { border-radius: 2px; outline: 2px solid var(--accent-info); outline-offset: 3px; }
 .global-pending-actions, .global-clarify-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .global-approval-content, .global-clarify-content { display: grid; gap: 12px; max-width: 520px; max-height: min(420px, calc(100dvh - 190px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.global-approval-agent, .global-approval-description { display: grid; gap: 3px; }
+.global-approval-agent { color: var(--text-secondary); font-size: 13px; }
 .global-approval-description { padding: 10px 12px; border: 1px solid rgba(var(--warning-rgb), 0.28); border-radius: 10px; background: rgba(var(--warning-rgb), 0.08); color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
 .global-approval-status { display: grid; gap: 2px; color: var(--text-secondary); font-size: 12px; }
 .global-approval-status--failed, .global-approval-status--expired { color: var(--error-color); }

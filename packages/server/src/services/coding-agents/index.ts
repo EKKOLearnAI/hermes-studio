@@ -5,7 +5,7 @@ import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'fs/pr
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
-import { getWebUiHome } from '../../config'
+import { config, getWebUiHome } from '../../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from '../config-helpers'
 import { getCompatibleCustomProviders } from '../hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './claude-code/proxy'
@@ -31,8 +31,7 @@ const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be preci
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
-const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
-const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
+const CLAUDE_CODE_STUDIO_PERMISSION_ARGS = ['--permission-mode', 'manual']
 // Claude Code auto-compact is on by default, but Studio never tells it the
 // model context window, so it can compact too late for the 20MB proxy body
 // limit. Mirror Hermes' 50% compression budget and pass Studio's window.
@@ -70,6 +69,7 @@ const HERMES_PROMPT_BLOCK_BEGIN = '<!-- BEGIN HERMES WEB UI PROMPT -->'
 const HERMES_PROMPT_BLOCK_END = '<!-- END HERMES WEB UI PROMPT -->'
 
 let cachedCodexVersion: { version: string; checkedAt: number } | null = null
+const verifiedStructuredApprovalCommands = new Set<string>()
 
 interface EncryptedPiProxyApiKey {
   v: 1 | 2
@@ -271,6 +271,7 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   /** Internal Pi transport: terminal launches are interactive; Studio runs use RPC. */
   piOutputMode?: 'interactive' | 'rpc'
   approveProjectConfig?: boolean
+  approvalToken?: string
 }
 
 export interface CodingAgentLaunchResult {
@@ -288,6 +289,7 @@ export interface CodingAgentLaunchResult {
   shellCommand: string
   files: Array<{ key: string; path: string; absolutePath: string }>
   reasoningEffort?: string
+  approvalToken?: string
 }
 
 export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
@@ -934,15 +936,52 @@ function buildCodexModelCatalog(input: {
   }
 }
 
-function hasRootPrivileges(): boolean {
-  if (process.platform === 'win32') return false
-  const uid = typeof process.getuid === 'function' ? process.getuid() : null
-  const euid = typeof process.geteuid === 'function' ? process.geteuid() : null
-  return uid === 0 || euid === 0
+function claudeCodePermissionArgs(): string[] {
+  return [...CLAUDE_CODE_STUDIO_PERMISSION_ARGS]
 }
 
-function claudeCodePermissionArgs(): string[] {
-  return hasRootPrivileges() ? CLAUDE_CODE_ROOT_PERMISSION_ARGS : CLAUDE_CODE_SKIP_PERMISSIONS_ARGS
+function claudeStudioPermissionHook(approvalToken: string): Record<string, unknown> {
+  return {
+    PermissionRequest: [{
+      matcher: '*',
+      hooks: [{
+        type: 'http',
+        url: `http://127.0.0.1:${config.port}/api/coding-agents/runtime-approval`,
+        headers: {
+          Authorization: `Bearer ${approvalToken}`,
+        },
+        timeout: 3600,
+      }],
+    }],
+  }
+}
+
+async function assertStructuredApprovalRuntime(tool: CodingAgentDefinition): Promise<void> {
+  if (process.env.VITEST || verifiedStructuredApprovalCommands.has(`${tool.id}:${tool.command}`)) return
+  const env = await commandEnv()
+  const resolvedCommand = await resolveCommandForExecution(tool.command, env)
+  const args = tool.id === 'codex' ? ['app-server', '--help'] : ['--help']
+  try {
+    const execution = commandExecution(resolvedCommand, args)
+    const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
+      encoding: 'utf-8',
+      timeout: 8_000,
+      windowsHide: true,
+      windowsVerbatimArguments: execution.windowsVerbatimArguments,
+      env,
+    })
+    const help = `${stdout || ''}\n${stderr || ''}`
+    if (tool.id === 'claude-code' && !/--permission-mode\b/.test(help)) {
+      throw new Error('Claude Code does not expose structured permission mode support')
+    }
+    verifiedStructuredApprovalCommands.add(`${tool.id}:${tool.command}`)
+  } catch (err: any) {
+    const error = new Error(
+      `${tool.name} cannot start because this installed Runtime does not support Hermes Studio structured approvals: ${normalizeError(err)}`,
+    )
+    ;(error as any).status = 409
+    throw error
+  }
 }
 
 function expandHomePath(path: string): string {
@@ -1233,7 +1272,24 @@ function piStudioRuntimeExtension(): string {
   return [
     'import { readFileSync } from "node:fs";',
     '',
+    'const SAFE_TOOLS = new Set(["read", "grep", "find", "ls"]);',
+    '',
+    'function summarizeTool(event: any): string {',
+    '  const name = String(event?.toolName || event?.name || "tool");',
+    '  const input = event?.input ?? event?.args ?? {};',
+    '  const target = input?.command ?? input?.path ?? input?.file_path ?? input?.url;',
+    '  if (typeof target === "string" && target.trim()) return `${name}: ${target.slice(0, 4000)}`;',
+    '  try { return `${name}: ${JSON.stringify(input).slice(0, 4000)}`; } catch { return name; }',
+    '}',
+    '',
     'export default function hermesStudioRuntime(pi: any) {',
+    '  pi.on("tool_call", async (event: any, ctx: any) => {',
+    '    const toolName = String(event?.toolName || event?.name || "").toLowerCase();',
+    '    if (SAFE_TOOLS.has(toolName)) return;',
+    '    if (!ctx?.ui?.confirm) return { block: true, reason: "Studio approval adapter is unavailable." };',
+    '    const allowed = await ctx.ui.confirm("Pi approval required", summarizeTool(event));',
+    '    if (!allowed) return { block: true, reason: "Denied in Hermes Studio." };',
+    '  });',
     '  pi.on("before_agent_start", async (event: any) => {',
     '    const path = String(process.env.HERMES_PI_DYNAMIC_PROMPT_FILE || "").trim();',
     '    if (!path) return;',
@@ -2414,6 +2470,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     : input
   const rootDir = getScopedRuntimeConfigRoot(tool.id, scope, isolatedInput)
   const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
+  if (input.isolateSettings && (tool.id === 'claude-code' || tool.id === 'codex')) {
+    await assertStructuredApprovalRuntime(tool)
+  }
   await mkdir(rootDir, { recursive: true })
   await mkdir(workspaceDir, { recursive: true })
 
@@ -2434,8 +2493,13 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
   let args: string[] = []
   let env: Record<string, string> = {}
+  let runtimeApprovalToken = ''
 
   if (tool.id === 'claude-code') {
+    const approvalToken = String(
+      input.approvalToken || (input.isolateSettings ? randomBytes(32).toString('base64url') : ''),
+    ).trim()
+    runtimeApprovalToken = approvalToken
     const contextWindow = getModelContextLength({ profile: scope.profile, provider, model })
     const proxyTarget = baseUrl && apiKey
       ? registerClaudeCodeProxyTarget({
@@ -2458,6 +2522,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const settings = {
       ...inheritedSettings,
       model,
+      ...(approvalToken ? { hooks: claudeStudioPermissionHook(approvalToken) } : {}),
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
         ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
@@ -2688,6 +2753,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     shellCommand,
     files,
     reasoningEffort,
+    approvalToken: runtimeApprovalToken || undefined,
   }
 }
 
@@ -2721,6 +2787,7 @@ export async function startCodingAgentRun(
     throw err
   }
   const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
+  const approvalToken = randomBytes(32).toString('base64url')
   const canResumeNativeSession = existingSession
     ? storedCodingAgentMode(existingSession) === requestedMode &&
       (existingSession.agent === persistedAgentId(id) || !existingSession.agent) &&
@@ -2737,6 +2804,7 @@ export async function startCodingAgentRun(
     agentNativeSessionId,
     isolateSettings: true,
     piOutputMode: id === 'pi' ? 'rpc' : undefined,
+    approvalToken,
   })
   const commandExecutionEnv = process.platform === 'win32'
     ? {
@@ -2770,6 +2838,7 @@ export async function startCodingAgentRun(
     sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' || sessionSource === 'group_chat'
       ? sessionSource
       : undefined,
+    approvalToken: launch.approvalToken,
   })
   updateSession(sessionId, {
     source: sessionSource,

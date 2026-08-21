@@ -398,12 +398,16 @@ export function formatMessageWithReference(reference: MessageReference, content:
 export interface PendingApproval {
   sessionId: string
   approvalId: string
+  summary: string
   command: string
   description: string
   choices: Array<'once' | 'session' | 'always' | 'deny'>
   allowPermanent: boolean
   isMemoryWrite: boolean
   requestedAt: number
+  runtime?: string
+  participantAgent?: string
+  generation?: string
   status?: 'pending' | 'submitting' | 'failed' | 'expired'
   submittedChoice?: 'once' | 'session' | 'always' | 'deny'
   error?: string
@@ -2966,12 +2970,16 @@ export const useChatStore = defineStore('chat', () => {
     pendingApprovals.value.set(sid, {
       sessionId: sid,
       approvalId,
+      summary: String((evt as any).summary || (evt as any).tool || (evt as any).title || (evt as any).command || ''),
       command: String((evt as any).command || ''),
       description,
       choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
       allowPermanent: Boolean((evt as any).allow_permanent),
       isMemoryWrite,
       requestedAt: Date.now(),
+      runtime: String((evt as any).runtime || (evt as any).source || 'hermes'),
+      participantAgent: String((evt as any).participant_agent || ''),
+      generation: String((evt as any).generation ?? '0'),
       status: 'pending',
     })
     pendingApprovals.value = new Map(pendingApprovals.value)

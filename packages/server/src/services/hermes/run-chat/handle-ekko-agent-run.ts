@@ -1184,12 +1184,16 @@ export async function handleEkkoAgentRun(
             run_id: runId || turnId,
             approval_id: pending.approvalId,
             command: pending.command,
+            summary: pending.toolName,
             description: pending.description,
             choices: pending.choices,
             allow_permanent: pending.allowPermanent,
             timeout_ms: pending.timeoutMs,
             tool: pending.toolName,
             permission_key: pending.key,
+            runtime: 'ekko',
+            participant_agent: 'ekko-agent',
+            generation: runId || turnId,
           })
         },
         onResolved: choice => {
@@ -1199,6 +1203,9 @@ export async function handleEkkoAgentRun(
             approval_id: request.approvalId,
             choice,
             resolved: true,
+            runtime: 'ekko',
+            participant_agent: 'ekko-agent',
+            generation: runId || turnId,
           })
         },
       }),

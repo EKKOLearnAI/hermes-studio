@@ -811,18 +811,25 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
       session_id: sid,
       run_id: 'run-approval',
       approval_id: 'approval-1',
+      summary: 'write_file',
       command: 'write_file /tmp/approved.txt',
       description: 'Allow write_file to create /tmp/approved.txt',
       choices: ['once', 'deny'],
       allow_permanent: false,
+      runtime: 'codex',
+      participant_agent: 'codex',
+      generation: 2,
     })
   }, run.session_id)
 
-  await expect(page.getByText('write_file', { exact: true })).toBeVisible()
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toBeVisible()
   await expect(page.getByText('Writing approved file')).toBeVisible()
   await expect(page.locator('.message.tool .tool-line')).toHaveCount(0)
-  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toBeVisible()
   await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toBeVisible()
+  await expect(page.getByText('Codex · Review tool call before running')).toBeVisible()
+  await expect(page.getByText('Agent')).toBeVisible()
+  await expect(page.getByText('Operation')).toBeVisible()
+  await expect(page.getByText('Risk')).toBeVisible()
   await expect(page.getByText('write_file /tmp/approved.txt')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Allow once' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Allow session' })).toHaveCount(0)

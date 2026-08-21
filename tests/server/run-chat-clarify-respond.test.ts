@@ -5,6 +5,10 @@ const bridgeMock = vi.hoisted(() => ({
   statusIfLoaded: vi.fn(),
 }))
 const respondToEkkoClarificationMock = vi.hoisted(() => vi.fn())
+const codingAgentRunManagerMock = vi.hoisted(() => ({
+  resolveApproval: vi.fn(),
+  resolveClarification: vi.fn(),
+}))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
@@ -13,6 +17,10 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
 vi.mock('../../packages/server/src/services/ekko-agent/clarifications', () => ({
   respondToEkkoClarification: respondToEkkoClarificationMock,
   waitForEkkoClarification: vi.fn(),
+}))
+
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+  codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
@@ -81,7 +89,43 @@ describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
     bridgeMock.statusIfLoaded.mockReset()
     respondToEkkoClarificationMock.mockReset()
     respondToEkkoClarificationMock.mockReturnValue({ handled: false, resolved: false })
+    codingAgentRunManagerMock.resolveApproval.mockReset()
+    codingAgentRunManagerMock.resolveApproval.mockReturnValue({
+      handled: false,
+      submitted: false,
+      resolved: false,
+    })
+    codingAgentRunManagerMock.resolveClarification.mockReset()
+    codingAgentRunManagerMock.resolveClarification.mockReturnValue({ handled: false, resolved: false })
     bridgeMock.statusIfLoaded.mockResolvedValue({ ok: true, exists: false, running: false, loaded: false })
+  })
+
+  it('keeps a submitted Codex approval pending until the Runtime resolves it', async () => {
+    codingAgentRunManagerMock.resolveApproval.mockReturnValueOnce({
+      handled: true,
+      submitted: true,
+      resolved: false,
+    })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, namespaceEmit, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('approval.respond')?.({
+      session_id: 'session-1',
+      approval_id: 'approval_codex_3_pending',
+      choice: 'once',
+    })
+
+    expect(codingAgentRunManagerMock.resolveApproval).toHaveBeenCalledWith(
+      'session-1',
+      'approval_codex_3_pending',
+      'once',
+    )
+    expect(namespaceEmit).not.toHaveBeenCalledWith(
+      'approval.resolved',
+      expect.objectContaining({ approval_id: 'approval_codex_3_pending' }),
+    )
   })
 
   it('routes Ekko clarification responses without calling the Hermes bridge', async () => {

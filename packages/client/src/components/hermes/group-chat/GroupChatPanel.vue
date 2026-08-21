@@ -47,6 +47,7 @@ import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { buildRemoteGroupChatRooms, type RemoteGroupChatRoom } from '@/utils/group-chat-remote-rooms'
 import { handoffErrorTranslationKey } from './handoff-presentation'
 import { clearGroupChatRoomDraft } from './group-chat-room-drafts'
+import { approvalAgentLabel } from '@/utils/runtime-approval'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -528,6 +529,10 @@ const visibleApproval = computed(() =>
         ? store.activePendingApproval
         : null,
 )
+const visibleApprovalAgent = computed(() => approvalAgentLabel(
+    visibleApproval.value?.runtime,
+    visibleApproval.value?.participantAgent || visibleApproval.value?.agentName,
+))
 const visibleClarify = computed(() =>
     currentRoomCanManage.value && pendingAgentPairings.value.length === 0
         ? store.activePendingClarify
@@ -2148,9 +2153,11 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                     <span>{{ t('chat.approvalKicker') }}</span>
                                 </div>
                                 <div class="approval-float-title">
-                                    <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
+                                    {{ visibleApprovalAgent }} · {{ t('chat.approvalTitle') }}
                                 </div>
-                                <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+                                <div class="approval-float-meta"><strong>{{ t('chat.approvalAgent') }}</strong><span>{{ visibleApprovalAgent }}</span></div>
+                                <div class="approval-float-meta"><strong>{{ t('chat.approvalSummary') }}</strong><span>{{ visibleApproval.summary }}</span></div>
+                                <div class="approval-float-desc"><strong>{{ t('chat.approvalRisk') }}</strong><span>{{ visibleApproval.description }}</span></div>
                                 <code class="approval-float-command">{{ visibleApproval.command }}</code>
                                 <div
                                     v-if="visibleApproval.status && visibleApproval.status !== 'pending'"
@@ -3118,7 +3125,10 @@ export default defineComponent({ components: { CreateRoomForm } })
     color: $text-primary;
 }
 
+.approval-float-meta,
 .approval-float-desc {
+    display: grid;
+    gap: 2px;
     padding: 0 4px;
     margin-top: 5px;
     font-size: 12px;

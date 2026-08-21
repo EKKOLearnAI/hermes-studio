@@ -2,7 +2,9 @@ import Router from '@koa/router'
 import * as ctrl from '../controllers/coding-agents'
 
 export const codingAgentRoutes = new Router()
+export const codingAgentPublicRoutes = new Router()
 
+codingAgentPublicRoutes.post('/api/coding-agents/runtime-approval', ctrl.runtimeApproval)
 codingAgentRoutes.get('/api/coding-agents', ctrl.status)
 codingAgentRoutes.post('/api/coding-agents/:id/install', ctrl.install)
 codingAgentRoutes.post('/api/coding-agents/:id/check-update', ctrl.checkUpdate)

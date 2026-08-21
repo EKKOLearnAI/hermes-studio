@@ -95,12 +95,16 @@ interface PendingGroupApprovalRoute {
     ownerMemberId: string
     agentSessionId: string
     approvalId: string
+    summary: string
     command: string
     description: string
     choices: string[]
     allowPermanent: boolean
     timeoutMs: number
     requestedAt: number
+    runtime: string
+    participantAgent: string
+    generation: string
 }
 
 interface PendingGroupClarifyRoute {
@@ -3195,12 +3199,16 @@ export class GroupChatServer {
                 roomId: route.roomId,
                 agentName: route.agentName,
                 approval_id: route.approvalId,
+                summary: route.summary,
                 command: route.command,
                 description: route.description,
                 choices: route.choices,
                 allow_permanent: route.allowPermanent,
                 timeout_ms: route.timeoutMs,
                 requested_at: route.requestedAt,
+                runtime: route.runtime,
+                participant_agent: route.participantAgent,
+                generation: route.generation,
             }))
     }
 
@@ -3909,8 +3917,8 @@ export class GroupChatServer {
         socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string; executionQueueCapability?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
-        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
-        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
+        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; summary?: string; tool?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }) => this.handleApprovalRequested(socket, data))
+        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
         socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
         socket.on('clarify.resolved', (data: { roomId?: string; agentName?: string; clarify_id?: string; resolved?: boolean; reason?: string; agentSessionId?: string }) => this.handleClarifyResolved(socket, data))
@@ -4967,6 +4975,16 @@ export class GroupChatServer {
         if (agent.executorType === 'remote' && agent.connectorId) {
             revokeGroupAgentConnector(agent.connectorId)
         }
+        for (const route of [...this.pendingApprovalRoutes.values()]) {
+            if (route.roomId !== roomId || route.agentName !== agent.name) continue
+            this.expirePendingAgentInteractions(
+                roomId,
+                route.agentName,
+                [route.approvalId],
+                [],
+                'Room Agent was removed',
+            )
+        }
         this.storage.removeRoomAgent(roomId, agent.id)
         this.clearRoomAgentActivities(roomId, agent.id)
         await this.agentClients.removeAgentFromRoom(roomId, agent.agentId)
@@ -4978,7 +4996,7 @@ export class GroupChatServer {
         })
     }
 
-    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }): void {
+    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; summary?: string; tool?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
@@ -4991,12 +5009,16 @@ export class GroupChatServer {
             ownerMemberId: this.groupAgentOwnerMemberId(roomId, agentName),
             agentSessionId: String(data.agentSessionId || '').trim(),
             approvalId: data.approval_id,
+            summary: String(data.summary || data.tool || data.command || ''),
             command: data.command || '',
             description: data.description || '',
             choices,
             allowPermanent: Boolean(data.allow_permanent),
             timeoutMs: normalizePendingInteractionTimeout(data.timeout_ms),
             requestedAt: Date.now(),
+            runtime: String(data.runtime || data.source || 'hermes'),
+            participantAgent: String(data.participant_agent || ''),
+            generation: String(data.generation ?? '0'),
         }
         this.pendingApprovalRoutes.set(routeKey, pendingRoute)
         this.schedulePendingApprovalExpiry(routeKey, pendingRoute)
@@ -5008,20 +5030,31 @@ export class GroupChatServer {
             roomId,
             agentName,
             approval_id: data.approval_id,
+            summary: pendingRoute.summary,
             command: data.command || '',
             description: data.description || '',
             choices,
             allow_permanent: Boolean(data.allow_permanent),
             timeout_ms: pendingRoute.timeoutMs,
+            runtime: pendingRoute.runtime,
+            participant_agent: pendingRoute.participantAgent,
+            generation: pendingRoute.generation,
         })
     }
 
-    private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string }): void {
+    private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string; runtime?: string; source?: string; participant_agent?: string; generation?: string | number }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
         const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
         const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
+        const eventRuntime = String(data.runtime || data.source || '')
+        const eventGeneration = data.generation == null ? '' : String(data.generation)
+        if (pendingRoute && (
+            (eventRuntime && eventRuntime !== pendingRoute.runtime)
+            || (eventGeneration && eventGeneration !== pendingRoute.generation)
+            || (data.participant_agent && data.participant_agent !== pendingRoute.participantAgent)
+        )) return
         if (
             pendingRoute?.roomId === roomId
             && pendingRoute.agentName === agentName
@@ -5040,6 +5073,9 @@ export class GroupChatServer {
             ...(data.expired === true ? { expired: true } : {}),
             ...(data.stale === true ? { stale: true } : {}),
             ...(data.error || data.reason ? { error: data.error || data.reason } : {}),
+            runtime: pendingRoute?.runtime || eventRuntime || 'hermes',
+            participant_agent: pendingRoute?.participantAgent || String(data.participant_agent || ''),
+            generation: pendingRoute?.generation || eventGeneration || '0',
         })
     }
 
@@ -5074,8 +5110,26 @@ export class GroupChatServer {
         )
         if (remoteExecutor?.respondApproval) {
             try {
-                const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
-                if (resolved) {
+                const response = await remoteExecutor.respondApproval(
+                    pendingRoute.agentSessionId,
+                    data.approval_id,
+                    data.choice || 'deny',
+                )
+                if (typeof response === 'object' && response.handled) {
+                    if (!response.submitted) {
+                        ack?.({ error: 'Approval response was rejected by the owning Runtime' })
+                        return
+                    }
+                    if (response.resolved) this.takePendingApprovalRoute(routeKey)
+                    ack?.({
+                        ok: true,
+                        approval_id: data.approval_id,
+                        resolved: response.resolved,
+                        ...(!response.resolved ? { pending: true } : {}),
+                    })
+                    return
+                }
+                if (response === true) {
                     this.takePendingApprovalRoute(routeKey)
                     ack?.({ ok: true, approval_id: data.approval_id, resolved: true })
                     return
@@ -5118,6 +5172,17 @@ export class GroupChatServer {
             }
             this.takePendingApprovalRoute(routeKey)
             ack?.({ ok: true, approval_id: data.approval_id, resolved: true })
+            return
+        }
+        if (pendingRoute.runtime !== 'hermes') {
+            this.takePendingApprovalRoute(routeKey)
+            ack?.({
+                ok: true,
+                approval_id: data.approval_id,
+                resolved: false,
+                stale: true,
+                error: 'Approval no longer belongs to the active Runtime generation',
+            })
             return
         }
         try {
@@ -5334,11 +5399,22 @@ export class GroupChatServer {
         }
     }
 
-    private clearPendingApprovalRoutes(roomId: string): void {
+    private clearPendingApprovalRoutes(roomId: string, reason = 'Room runtime state cleared'): void {
         const pendingRoutes = this.pendingApprovalRoutes
         if (!pendingRoutes) return
         for (const [routeKey, route] of pendingRoutes) {
-            if (route.roomId === roomId) this.takePendingApprovalRoute(routeKey)
+            if (route.roomId !== roomId) continue
+            this.takePendingApprovalRoute(routeKey)
+            this.emitToAgentApprovalOwner(route, 'approval.resolved', {
+                event: 'approval.resolved',
+                roomId,
+                agentName: route.agentName,
+                approval_id: route.approvalId,
+                choice: 'deny',
+                resolved: false,
+                stale: true,
+                error: reason,
+            })
         }
     }
 

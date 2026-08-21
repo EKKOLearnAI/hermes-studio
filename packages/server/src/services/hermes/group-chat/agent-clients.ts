@@ -236,7 +236,11 @@ export interface GroupAgentExecutor {
     interrupt(roomId: string): Promise<boolean>
     getActiveSessionId(roomId: string): string | undefined
     isActiveSession(roomId: string, sessionId: string): boolean
-    respondApproval?(approvalId: string, choice: string): Promise<boolean>
+    respondApproval?(
+        sessionId: string,
+        approvalId: string,
+        choice: string,
+    ): Promise<boolean | { handled: boolean; submitted: boolean; resolved: boolean }>
     respondClarify?(clarifyId: string, response: string): Promise<boolean>
     replyToMention(
         roomId: string,
@@ -296,7 +300,11 @@ export interface GroupChatRunService {
     }>
     abortSession(sessionId: string, reason?: string): Promise<void>
     disposeSession?(sessionId: string): Promise<void>
-    respondCodingAgentApproval?(sessionId: string, approvalId: string, choice: string): boolean
+    respondCodingAgentApproval?(
+        sessionId: string,
+        approvalId: string,
+        choice: string,
+    ): { handled: boolean; submitted: boolean; resolved: boolean }
     respondCodingAgentClarification?(sessionId: string, clarifyId: string, response: string): boolean
 }
 
@@ -448,12 +456,14 @@ export class AgentClient implements GroupAgentExecutor {
         this.acknowledgedToolCallIds.clear()
     }
 
-    respondApproval(approvalId: string, choice: string): Promise<boolean> {
+    respondApproval(
+        sessionId: string,
+        approvalId: string,
+        choice: string,
+    ): Promise<boolean | { handled: boolean; submitted: boolean; resolved: boolean }> {
         if (!this.chatRunService?.respondCodingAgentApproval) return Promise.resolve(false)
-        for (const sessionId of this.activeSessions.values()) {
-            if (this.chatRunService.respondCodingAgentApproval(sessionId, approvalId, choice)) return Promise.resolve(true)
-        }
-        return Promise.resolve(false)
+        if (![...this.activeSessions.values()].includes(sessionId)) return Promise.resolve(false)
+        return Promise.resolve(this.chatRunService.respondCodingAgentApproval(sessionId, approvalId, choice))
     }
 
     respondClarify(clarifyId: string, response: string): Promise<boolean> {
@@ -1556,11 +1566,15 @@ export class AgentClient implements GroupAgentExecutor {
                     event: 'approval.requested',
                     agentSessionId: sessionId,
                     approval_id: (ev as any).approval_id,
+                    summary: (ev as any).summary || (ev as any).tool,
                     command: (ev as any).command,
                     description: (ev as any).description,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : undefined,
                     allow_permanent: (ev as any).allow_permanent,
                     timeout_ms: (ev as any).timeout_ms,
+                    runtime: (ev as any).runtime || (ev as any).source,
+                    participant_agent: (ev as any).participant_agent,
+                    generation: (ev as any).generation,
                 })
             } else if (eventType === 'approval.resolved') {
                 this.emitApprovalResolved(roomId, {
@@ -1568,6 +1582,13 @@ export class AgentClient implements GroupAgentExecutor {
                     agentSessionId: sessionId,
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
+                    resolved: (ev as any).resolved === true,
+                    expired: (ev as any).expired === true,
+                    stale: (ev as any).stale === true,
+                    error: (ev as any).error || (ev as any).reason,
+                    runtime: (ev as any).runtime || (ev as any).source,
+                    participant_agent: (ev as any).participant_agent,
+                    generation: (ev as any).generation,
                 })
             } else if (eventType === 'clarify.requested') {
                 this.emitClarifyRequested(roomId, {

@@ -13,6 +13,7 @@ import {
   writeCodingAgentConfigFile,
   type CodingAgentConfigScope,
 } from '../services/coding-agents'
+import { codingAgentRunManager } from '../services/coding-agents/runtime/run-manager'
 
 function configScope(ctx: Context): CodingAgentConfigScope {
   const body = ctx.request.body as { profile?: unknown; provider?: unknown } | undefined
@@ -175,5 +176,18 @@ export async function stopRun(ctx: Context) {
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to stop coding agent run' }
+  }
+}
+
+export async function runtimeApproval(ctx: Context) {
+  try {
+    const authorization = String(ctx.get('authorization') || '')
+    const body = ctx.request.body && typeof ctx.request.body === 'object'
+      ? ctx.request.body as Record<string, unknown>
+      : {}
+    ctx.body = await codingAgentRunManager.handleClaudePermissionHook(authorization, body)
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to handle coding-agent approval' }
   }
 }
