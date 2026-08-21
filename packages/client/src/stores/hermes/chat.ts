@@ -1581,6 +1581,10 @@ export const useChatStore = defineStore('chat', () => {
       const list = await fetchRuntimeSessions(profile)
       if (requestSequence !== loadSessionsRequestSequence) return
       const fresh = list.map(mapHermesSession)
+      const selectionChanged = selectionSequence !== activeSelectionSequence
+      const explicitlySelectedSession = selectionChanged && activeSessionId.value
+        ? sessions.value.find(session => session.id === activeSessionId.value) || activeSession.value
+        : null
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
       const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
@@ -1594,16 +1598,31 @@ export const useChatStore = defineStore('chat', () => {
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
         if (!s.apiMode && prev?.apiMode) s.apiMode = prev.apiMode
       }
+      const freshIds = new Set(fresh.map(session => session.id))
       const localOnlySessions = sessions.value.filter(session =>
-        session.isLocalOnly && !fresh.some(runtimeSession => runtimeSession.id === session.id),
+        session.isLocalOnly
+        && !freshIds.has(session.id)
+        && (!profile || session.profile === profile),
       )
+      if (
+        explicitlySelectedSession
+        && !freshIds.has(explicitlySelectedSession.id)
+        && !localOnlySessions.some(session => session.id === explicitlySelectedSession.id)
+      ) {
+        localOnlySessions.unshift(explicitlySelectedSession)
+      }
       sessions.value = [...localOnlySessions, ...fresh]
       pruneCompletedUnreadSessions(new Set(sessions.value.map(s => s.id)))
 
       // A session load may have started before the user selected or created a
       // different chat. Keep the refreshed list, but do not let that stale
       // continuation take ownership of the active selection.
-      if (selectionSequence !== activeSelectionSequence) return
+      if (selectionChanged) {
+        activeSession.value = activeSessionId.value
+          ? sessions.value.find(session => session.id === activeSessionId.value) || null
+          : null
+        return
+      }
 
       // Restore route-selected session first (tab-local source of truth),
       // then current in-memory session, then persisted legacy/default choice,
