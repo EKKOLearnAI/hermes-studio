@@ -120,6 +120,26 @@ describe('chat store compression state', () => {
     expect(store.isSessionLive('session-1')).toBe(false)
   })
 
+  it('replaces a prior background delegation count when returning to a session', async () => {
+    let sessionOneResumes = 0
+    chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
+      const backgroundPending = sessionId === 'session-1' && sessionOneResumes++ === 0 ? 1 : 0
+      onResumed({ session_id: sessionId, messages: [], isWorking: false, backgroundPending, events: [] })
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    await store.switchSession('session-1')
+    expect(store.backgroundPending).toBe(1)
+
+    await store.switchSession('session-2')
+    await store.switchSession('session-1')
+
+    expect(store.backgroundPending).toBe(0)
+    expect(store.isSessionLive('session-1')).toBe(false)
+  })
+
   it('does not show a background session compression indicator in the active session', async () => {
     const store = useChatStore()
     store.sessions = [makeSession('session-1'), makeSession('session-2')]
