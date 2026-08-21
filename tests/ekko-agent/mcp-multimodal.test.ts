@@ -88,4 +88,27 @@ describe('Ekko MCP multimodal results', () => {
     const gemini = toGeminiContentsPayload({ ...config, type: 'gemini' }, { messages: [userImage] })
     expect(JSON.stringify(gemini.contents)).toContain('inlineData')
   })
+
+  it('omits images when OpenAI-compatible vision is explicitly disabled', () => {
+    const payload = toOpenAIChatPayload({
+      id: 'custom:text-proxy',
+      type: 'openai-compatible',
+      baseUrl: 'https://chat.example.com/v1',
+      apiKey: 'test',
+      defaultModel: 'future-chat-model',
+      capabilities: { vision: false },
+    }, { messages: [userImage, toolImage] })
+
+    expect(payload.messages).toHaveLength(2)
+    expect(payload.messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Describe this image.',
+    })
+    expect(payload.messages[1]).toMatchObject({
+      role: 'tool',
+      content: 'browser screenshot',
+    })
+    expect(JSON.stringify(payload.messages)).not.toContain('image_url')
+    expect(JSON.stringify(payload.messages)).not.toContain('aGVsbG8=')
+  })
 })

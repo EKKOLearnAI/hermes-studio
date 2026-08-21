@@ -1,7 +1,22 @@
-# Ekko Background Callback Context Fork
+# Background Callback Context Forks
 
 Date: 2026-08-15
-Status: Proposed; not implemented
+Status: Implemented in Studio for embedded Ekko and Hermes; standalone ekko-agent deferred
+
+## Implementation Note
+
+Studio now freezes callback context at the originating run instead of rebuilding
+it from live session history. Embedded Ekko captures the complete tool-batch
+boundary and carries that immutable fork in its internal completion event and
+queue entry. Hermes captures the completed parent run's replayable messages and
+keeps them in the process-local `SessionState`, keyed by delegation ID.
+
+Both callback paths bypass live-history compression. Ekko also uses a fresh
+ephemeral provider context with memory and skill review disabled. Hermes
+snapshots are intentionally not persisted: if Studio restarts before delivery,
+the recovered callback is rejected observably instead of falling back to newer
+session history. The standalone `ekko-agent` repository is not changed by this
+implementation.
 
 ## Decision Summary
 
@@ -391,8 +406,9 @@ following:
 
 ## Out Of Scope
 
-- Implementing the change in this planning pass.
 - Making Ekko background tasks or the run queue durable across server restarts.
+- Persisting Hermes origin forks across Studio restarts.
+- Updating the standalone `ekko-agent` repository.
 - Introducing user-visible session branches.
 - Redesigning background task cards or callback wording.
 - Changing natural-language cancellation into a control-plane command.

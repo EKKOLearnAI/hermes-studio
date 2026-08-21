@@ -35,6 +35,18 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).not.toContain('workspaceValue.value.trim()')
   })
 
+  it('acknowledges the composer only after the asynchronous group send settles', () => {
+    const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const handler = source.slice(
+      source.indexOf('async function handleSendMessage('),
+      source.indexOf('async function handleCancelQueuedExecution('),
+    )
+
+    expect(handler).toContain('const submittedRoomId = store.currentRoomId')
+    expect(handler).toMatch(/await store\.sendMessage[\s\S]*clearGroupChatRoomDraft\(submittedRoomId\)[\s\S]*completeSend\?\.\(true\)/)
+    expect(handler).toMatch(/catch[\s\S]*completeSend\?\.\(false\)/)
+  })
+
   it('gates room management controls while allowing an Agent owner to handle a directed approval', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const visibleApproval = source.slice(

@@ -35,6 +35,7 @@ import {
 import { contentBlocksToString } from './content-blocks'
 import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessages } from './resume-payload'
 import type {
+  BackgroundContinuationContext,
   ChatCodingAgentId,
   ContentBlock,
   QueueInsertionControl,
@@ -788,6 +789,7 @@ export class ChatRunSocket {
     },
     profile: string,
     skipUserMessage = false,
+    backgroundContinuationContext?: BackgroundContinuationContext,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
     if (data.session_id) {
@@ -888,6 +890,7 @@ export class ChatRunSocket {
         skipUserMessage,
         loadSessionStateFromDb,
         this.dequeueNextQueuedRun.bind(this),
+        backgroundContinuationContext,
       )
       return
     }
@@ -917,6 +920,7 @@ export class ChatRunSocket {
         this.sessionMap,
         this.dequeueNextQueuedRun.bind(this),
         skipUserMessage,
+        backgroundContinuationContext,
       )
       return
     }
@@ -1537,6 +1541,13 @@ export class ChatRunSocket {
 
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
     const skipUserMessage = next.displayInput === null
+    const backgroundContinuationContext = next.backgroundContinuationContext
+      || (next.backgroundDelegationId
+        ? this.sessionMap.get(sessionId)?.backgroundContinuationContexts?.[next.backgroundDelegationId]
+        : undefined)
+    const runProfile = backgroundContinuationContext?.runtime === 'hermes'
+      ? backgroundContinuationContext.profile
+      : next.profile || fallbackProfile
     void this.handleRun(socket, {
       input: next.input,
       display_input: next.displayInput,
@@ -1574,7 +1585,7 @@ export class ChatRunSocket {
       background_delegation_id: next.backgroundDelegationId,
       background_claim_id: next.backgroundClaimId,
       autonomous: next.autonomous,
-    }, next.profile || fallbackProfile, skipUserMessage)
+    }, runProfile, skipUserMessage, backgroundContinuationContext)
   }
 
   // --- Helpers ---

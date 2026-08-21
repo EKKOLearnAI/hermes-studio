@@ -688,6 +688,7 @@ export async function handleSessionCommand(
         }
         const deleted = clearSessionMessages(sessionId)
         state.messages = []
+        state.backgroundContinuationContexts = undefined
         clearTransientRunState(state)
         await calcAndUpdateUsage(sessionId, state, (event, payload) => {
           emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
@@ -963,6 +964,7 @@ export async function handleSessionCommand(
         state.bridgeOutput = undefined
         state.bridgePendingTools = undefined
         state.bridgeCompressionResults = undefined
+        state.backgroundContinuationContexts = undefined
         replaceState(ctx.sessionMap, sessionId, 'session.command', {
           event: 'session.command',
           action: 'destroy',

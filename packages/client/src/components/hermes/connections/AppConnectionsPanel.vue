@@ -14,17 +14,29 @@ import {
   type CloudAppAuthorizationResponse,
   type LanAppAuthorizationResponse,
 } from '@/api/hermes/app-connections'
+import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio-versions'
 
 const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
-const HSTUDIO_GITHUB_ANDROID_DOWNLOAD_URL = 'https://github.com/EKKOLearnAI/hermes-studio/releases/download/v1.0.0/HStudio.apk'
-const HSTUDIO_CLOUDFLARE_ANDROID_DOWNLOAD_URL = 'https://download.ekkolearnai.com/v1.0.0/HStudio.apk'
-const HSTUDIO_APP_VERSION = 'v1.0.0'
+const DEFAULT_MOBILE_RELEASE: StudioMobileRelease = {
+  version: '1.0.0',
+  channels: {
+    androidApk: {
+      githubUrl: 'https://github.com/EKKOLearnAI/hermes-studio/releases/download/v1.0.0/HStudio.apk',
+      cloudflareUrl: 'https://download.ekkolearnai.com/v1.0.0/HStudio.apk',
+      online: true,
+    },
+    googlePlay: { url: '', online: false },
+    apple: { testFlightUrl: '', appStoreUrl: '', online: false },
+    harmony: { url: '', online: false },
+  },
+}
 
 const { t } = useI18n()
 const message = useMessage()
 const loading = ref(false)
-const panelView = ref<'list' | 'download'>('list')
+const panelView = ref<'list' | 'download'>('download')
 const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')
+const mobileRelease = ref<StudioMobileRelease>(DEFAULT_MOBILE_RELEASE)
 const connections = ref<AppConnection[]>([])
 const accessFailure = ref<AppConnectionAccessFailure | null>(null)
 const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
@@ -35,7 +47,13 @@ const deletingConnectionId = ref<number | null>(null)
 const lanAuthorization = ref<LanAppAuthorizationResponse | null>(null)
 const cloudAuthorization = ref<CloudAppAuthorizationResponse | null>(null)
 const qrCodeDataUrls = ref<Record<'lan' | 'cloud', string>>({ lan: '', cloud: '' })
-const downloadQrCodeDataUrl = ref('')
+type DownloadQrChannel = 'androidApk' | 'googlePlay' | 'apple' | 'harmony'
+const downloadQrCodeDataUrls = ref<Record<DownloadQrChannel, string>>({
+  androidApk: '',
+  googlePlay: '',
+  apple: '',
+  harmony: '',
+})
 const currentTimestamp = ref(Math.floor(Date.now() / 1000))
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let connectionPollTimer: ReturnType<typeof setInterval> | null = null
@@ -44,9 +62,37 @@ let connectionsRequestInFlight = false
 
 const CONNECTION_POLL_INTERVAL_MS = 3_000
 
-const androidDownloadUrl = computed(() => downloadSource.value === 'cloudflare'
-  ? HSTUDIO_CLOUDFLARE_ANDROID_DOWNLOAD_URL
-  : HSTUDIO_GITHUB_ANDROID_DOWNLOAD_URL)
+const mobileVersionLabel = computed(() => `v${mobileRelease.value.version.replace(/^v/i, '')}`)
+const androidDownloadUrl = computed(() => {
+  const channel = mobileRelease.value.channels.androidApk
+  const selectedUrl = downloadSource.value === 'cloudflare' ? channel.cloudflareUrl : channel.githubUrl
+  return selectedUrl || channel.cloudflareUrl || channel.githubUrl
+})
+const googlePlayDownloadUrl = computed(() => {
+  const channel = mobileRelease.value.channels.googlePlay
+  return channel.url
+})
+const appleUsesOfficialRelease = computed(() => Boolean(
+  mobileRelease.value.channels.apple.online
+  && mobileRelease.value.channels.apple.appStoreUrl,
+))
+const appleDownloadUrl = computed(() => {
+  const channel = mobileRelease.value.channels.apple
+  return appleUsesOfficialRelease.value
+    ? channel.appStoreUrl
+    : channel.testFlightUrl || channel.appStoreUrl
+})
+const harmonyDownloadUrl = computed(() => {
+  const channel = mobileRelease.value.channels.harmony
+  return channel.url
+})
+const appleReleaseLabel = computed(() => {
+  const channel = mobileRelease.value.channels.apple
+  if (channel.testFlightUrl && channel.appStoreUrl) return 'TestFlight · App Store'
+  if (channel.testFlightUrl) return 'TestFlight'
+  if (channel.appStoreUrl) return 'App Store'
+  return t('connections.app.iosPending')
+})
 const activeAuthorization = computed(() => connectionTab.value === 'lan'
   ? lanAuthorization.value
   : cloudAuthorization.value)
@@ -290,19 +336,50 @@ function ensureCurrentAuthorization(type: 'lan' | 'cloud', verifyRelaySession = 
   }
 }
 
-async function generateDownloadQrCode() {
-  const requestedUrl = androidDownloadUrl.value
+async function loadMobileRelease() {
+  try {
+    const manifest = await fetchStudioVersionManifest()
+    mobileRelease.value = manifest.mobile
+    const android = manifest.mobile.channels.androidApk
+    if (!android.cloudflareUrl && android.githubUrl) downloadSource.value = 'github'
+    else if (!android.githubUrl && android.cloudflareUrl) downloadSource.value = 'cloudflare'
+  } catch {
+    mobileRelease.value = DEFAULT_MOBILE_RELEASE
+  }
+}
+
+async function generateDownloadQrCode(channel: DownloadQrChannel, requestedUrl: string) {
+  if (!requestedUrl) {
+    downloadQrCodeDataUrls.value = { ...downloadQrCodeDataUrls.value, [channel]: '' }
+    return
+  }
   try {
     const dataUrl = await QRCode.toDataURL(requestedUrl, {
-      width: 240,
+      width: 220,
       margin: 2,
       errorCorrectionLevel: 'M',
       color: { dark: '#111111', light: '#ffffff' },
     })
-    if (requestedUrl === androidDownloadUrl.value) downloadQrCodeDataUrl.value = dataUrl
+    if (requestedUrl === downloadUrlFor(channel)) {
+      downloadQrCodeDataUrls.value = { ...downloadQrCodeDataUrls.value, [channel]: dataUrl }
+    }
   } catch {
-    if (requestedUrl === androidDownloadUrl.value) downloadQrCodeDataUrl.value = ''
+    if (requestedUrl === downloadUrlFor(channel)) {
+      downloadQrCodeDataUrls.value = { ...downloadQrCodeDataUrls.value, [channel]: '' }
+    }
   }
+}
+
+function downloadUrlFor(channel: DownloadQrChannel): string {
+  if (channel === 'androidApk') return androidDownloadUrl.value
+  if (channel === 'googlePlay') return googlePlayDownloadUrl.value
+  if (channel === 'apple') return appleDownloadUrl.value
+  return harmonyDownloadUrl.value
+}
+
+function generateDownloadQrCodes(): void {
+  const channels: DownloadQrChannel[] = ['androidApk', 'googlePlay', 'apple', 'harmony']
+  for (const channel of channels) void generateDownloadQrCode(channel, downloadUrlFor(channel))
 }
 
 async function deleteConnection(connection: AppConnection) {
@@ -332,13 +409,15 @@ watch(connectionTab, (type) => {
   ensureCurrentAuthorization(type, type === 'cloud')
 })
 
-watch(androidDownloadUrl, () => {
-  void generateDownloadQrCode()
-})
+watch(
+  [androidDownloadUrl, googlePlayDownloadUrl, appleDownloadUrl, harmonyDownloadUrl],
+  generateDownloadQrCodes,
+)
 
 onMounted(() => {
   void loadConnections()
-  void generateDownloadQrCode()
+  void loadMobileRelease()
+  generateDownloadQrCodes()
   countdownTimer = setInterval(() => {
     currentTimestamp.value = Math.floor(Date.now() / 1000)
   }, 1000)
@@ -442,60 +521,36 @@ onUnmounted(() => {
             </div>
             <p>{{ t('connections.app.downloadDescription') }}</p>
             <div class="app-download-meta">
-              <span>{{ HSTUDIO_APP_VERSION }}</span>
+              <span>{{ mobileVersionLabel }}</span>
               <span>Android · iOS · HarmonyOS</span>
             </div>
           </div>
 
-          <div class="app-download-qr-panel">
-            <div class="app-download-qr">
-              <img
-                v-if="downloadQrCodeDataUrl"
-                :src="downloadQrCodeDataUrl"
-                :alt="t('connections.app.downloadScan')"
-              >
-              <NSpin v-else size="small" />
-            </div>
-            <strong>{{ t('connections.app.downloadScan') }}</strong>
-            <span>{{ t('connections.app.downloadScanHint') }}</span>
-            <div class="view-switch download-source-switch" role="tablist" aria-label="GitHub / Cloudflare">
-              <button
-                type="button"
-                role="tab"
-                class="view-switch-button"
-                :class="{ 'view-switch-button--active': downloadSource === 'github' }"
-                :aria-selected="downloadSource === 'github'"
-                @click="downloadSource = 'github'"
-              >
-                GitHub
-              </button>
-              <button
-                type="button"
-                role="tab"
-                class="view-switch-button"
-                :class="{ 'view-switch-button--active': downloadSource === 'cloudflare' }"
-                :aria-selected="downloadSource === 'cloudflare'"
-                @click="downloadSource = 'cloudflare'"
-              >
-                Cloudflare
-              </button>
-            </div>
-          </div>
         </section>
 
         <div class="app-platform-grid">
-          <article class="app-platform-card app-platform-card--available">
+          <article
+            class="app-platform-card app-platform-card--apk"
+            :class="androidDownloadUrl ? 'app-platform-card--available' : 'app-platform-card--pending'"
+          >
             <div class="app-platform-card-header">
               <div class="app-platform-icon" aria-hidden="true">
-                <svg data-platform-icon="google-play" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M3 20.5v-17c0-.59.34-1.11.84-1.35L13.69 12l-9.85 9.85A1.5 1.5 0 0 1 3 20.5Zm13.81-5.38L6.05 21.34l8.49-8.49 2.27 2.27Zm3.35-4.31c.37.22.59.63.59 1.19s-.22.97-.57 1.18l-2.29 1.32-2.5-2.5 2.5-2.5 2.27 1.31ZM6.05 2.66l10.76 6.22-2.27 2.27-8.49-8.49Z" />
+                <svg data-platform-icon="android-apk" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7.2 8.2 5.7 5.6a.7.7 0 0 1 1.2-.7l1.6 2.7a9.7 9.7 0 0 1 7 0l1.6-2.7a.7.7 0 0 1 1.2.7l-1.5 2.6A7.2 7.2 0 0 1 20 13H4a7.2 7.2 0 0 1 3.2-4.8ZM8 11a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM4 14h16v5a2 2 0 0 1-2 2h-1v1.3a.7.7 0 0 1-1.4 0V21H8.4v1.3a.7.7 0 0 1-1.4 0V21H6a2 2 0 0 1-2-2v-5Z" />
                 </svg>
               </div>
-              <NTag size="small" type="success" :bordered="false">{{ t('connections.app.available') }}</NTag>
+              <NTag v-if="androidDownloadUrl && !mobileRelease.channels.androidApk.online" class="download-test-status" size="small" type="warning" :bordered="false">
+                {{ t('connections.app.testVersion') }}
+              </NTag>
+              <div v-if="androidDownloadUrl" class="download-tag-qr">
+                <img v-if="downloadQrCodeDataUrls.androidApk" :src="downloadQrCodeDataUrls.androidApk" :alt="t('connections.app.downloadScan')">
+                <NSpin v-else size="small" />
+              </div>
+              <NTag v-else size="small" :bordered="false">{{ t('connections.app.notReleased') }}</NTag>
             </div>
             <div class="app-platform-copy">
-              <h4>Android</h4>
-              <p>{{ t('connections.app.downloadRequirements') }}</p>
+              <h4>Android APK</h4>
+              <p>Android</p>
             </div>
             <div class="app-platform-download-controls">
               <div class="view-switch download-source-switch" role="tablist" aria-label="GitHub / Cloudflare">
@@ -506,9 +561,7 @@ onUnmounted(() => {
                   :class="{ 'view-switch-button--active': downloadSource === 'github' }"
                   :aria-selected="downloadSource === 'github'"
                   @click="downloadSource = 'github'"
-                >
-                  GitHub
-                </button>
+                >GitHub</button>
                 <button
                   type="button"
                   role="tab"
@@ -516,61 +569,147 @@ onUnmounted(() => {
                   :class="{ 'view-switch-button--active': downloadSource === 'cloudflare' }"
                   :aria-selected="downloadSource === 'cloudflare'"
                   @click="downloadSource = 'cloudflare'"
-                >
-                  Cloudflare
-                </button>
+                >Cloudflare</button>
               </div>
               <NButton
+                v-if="androidDownloadUrl"
                 class="app-platform-action"
                 tag="a"
                 type="primary"
                 :href="androidDownloadUrl"
                 target="_blank"
                 rel="noopener noreferrer"
-              >
-                <template #icon>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-                    <path d="M12 3v12" />
-                    <path d="m7 10 5 5 5-5" />
-                    <path d="M5 21h14" />
-                  </svg>
-                </template>
-                {{ t('connections.app.downloadApk') }}
-              </NButton>
+              >{{ t('connections.app.downloadApk') }}</NButton>
+              <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
             </div>
           </article>
 
-          <article class="app-platform-card app-platform-card--pending">
+          <article
+            class="app-platform-card"
+            :class="googlePlayDownloadUrl ? 'app-platform-card--available' : 'app-platform-card--pending'"
+          >
             <div class="app-platform-card-header">
               <div class="app-platform-icon" aria-hidden="true">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <svg data-platform-icon="google-play" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 20.5v-17c0-.59.34-1.11.84-1.35L13.69 12l-9.85 9.85A1.5 1.5 0 0 1 3 20.5Zm13.81-5.38L6.05 21.34l8.49-8.49 2.27 2.27Zm3.35-4.31c.37.22.59.63.59 1.19s-.22.97-.57 1.18l-2.29 1.32-2.5-2.5 2.5-2.5 2.27 1.31ZM6.05 2.66l10.76 6.22-2.27 2.27-8.49-8.49Z" />
+                </svg>
+              </div>
+              <NTag v-if="googlePlayDownloadUrl && !mobileRelease.channels.googlePlay.online" class="download-test-status" size="small" type="warning" :bordered="false">
+                {{ t('connections.app.testVersion') }}
+              </NTag>
+              <div v-if="googlePlayDownloadUrl" class="download-tag-qr">
+                <img v-if="downloadQrCodeDataUrls.googlePlay" :src="downloadQrCodeDataUrls.googlePlay" :alt="t('connections.app.downloadScan')">
+                <NSpin v-else size="small" />
+              </div>
+              <NTag v-else size="small" :bordered="false">{{ t('connections.app.notReleased') }}</NTag>
+            </div>
+            <div class="app-platform-copy">
+              <h4>Google Play</h4>
+              <p>Android</p>
+            </div>
+            <NButton
+              v-if="googlePlayDownloadUrl"
+              class="app-platform-action"
+              tag="a"
+              type="primary"
+              :href="mobileRelease.channels.googlePlay.url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >Google Play</NButton>
+            <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
+          </article>
+
+          <article
+            class="app-platform-card"
+            :class="appleDownloadUrl ? 'app-platform-card--available' : 'app-platform-card--pending'"
+          >
+            <div class="app-platform-card-header">
+              <div class="app-platform-icon" aria-hidden="true">
+                <svg data-platform-icon="apple" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M16.8 12.7c0-2.4 2-3.6 2.1-3.7a4.5 4.5 0 0 0-3.5-1.9c-1.5-.2-2.9.9-3.6.9-.7 0-1.8-.9-3-.9A4.8 4.8 0 0 0 4.7 9.6c-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3.1 2.4 1.2 0 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.2 3-2.4a10.7 10.7 0 0 0 1.4-2.9 4.2 4.2 0 0 1-3-3.8ZM14.4 5.5A4.2 4.2 0 0 0 15.5 2a4.3 4.3 0 0 0-3 1.7 4 4 0 0 0-1.1 3.4 3.6 3.6 0 0 0 3-1.6Z" />
                 </svg>
               </div>
-              <NTag size="small" :bordered="false">{{ t('connections.app.comingSoon') }}</NTag>
+              <NTag v-if="appleDownloadUrl && !mobileRelease.channels.apple.online" class="download-test-status" size="small" type="warning" :bordered="false">
+                {{ t('connections.app.testVersion') }}
+              </NTag>
+              <div v-if="appleDownloadUrl" class="download-tag-qr">
+                <img v-if="downloadQrCodeDataUrls.apple" :src="downloadQrCodeDataUrls.apple" :alt="t('connections.app.downloadScan')">
+                <NSpin v-else size="small" />
+              </div>
+              <NTag v-else size="small" :bordered="false">{{ t('connections.app.notReleased') }}</NTag>
             </div>
             <div class="app-platform-copy">
-              <h4>iOS</h4>
-              <p>{{ t('connections.app.iosPending') }}</p>
+              <h4>Apple</h4>
+              <p>{{ appleReleaseLabel }}</p>
             </div>
-            <NButton class="app-platform-action" disabled>{{ t('connections.app.comingSoon') }}</NButton>
+            <div v-if="appleDownloadUrl" class="app-platform-actions">
+              <NButton
+                v-if="appleUsesOfficialRelease"
+                class="app-platform-action"
+                tag="a"
+                type="primary"
+                :href="mobileRelease.channels.apple.appStoreUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >App Store</NButton>
+              <NButton
+                v-if="mobileRelease.channels.apple.testFlightUrl"
+                class="app-platform-action"
+                tag="a"
+                :type="appleUsesOfficialRelease ? 'default' : 'primary'"
+                :secondary="appleUsesOfficialRelease"
+                :href="mobileRelease.channels.apple.testFlightUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >TestFlight</NButton>
+              <NButton
+                v-if="mobileRelease.channels.apple.appStoreUrl && !appleUsesOfficialRelease"
+                class="app-platform-action"
+                tag="a"
+                :type="mobileRelease.channels.apple.testFlightUrl ? 'default' : 'primary'"
+                :secondary="Boolean(mobileRelease.channels.apple.testFlightUrl)"
+                :href="mobileRelease.channels.apple.appStoreUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >App Store</NButton>
+            </div>
+            <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
           </article>
 
-          <article class="app-platform-card app-platform-card--pending">
+          <article
+            class="app-platform-card"
+            :class="harmonyDownloadUrl ? 'app-platform-card--available' : 'app-platform-card--pending'"
+          >
             <div class="app-platform-card-header">
               <div class="app-platform-icon" aria-hidden="true">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55">
+                <svg data-platform-icon="harmony" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55">
                   <circle cx="12" cy="12" r="8.5" />
                   <path d="M7.5 14.5c1.4-3.8 7.6-3.8 9 0M9.2 9.5h.01M14.8 9.5h.01" />
                 </svg>
               </div>
-              <NTag size="small" :bordered="false">{{ t('connections.app.comingSoon') }}</NTag>
+              <NTag v-if="harmonyDownloadUrl && !mobileRelease.channels.harmony.online" class="download-test-status" size="small" type="warning" :bordered="false">
+                {{ t('connections.app.testVersion') }}
+              </NTag>
+              <div v-if="harmonyDownloadUrl" class="download-tag-qr">
+                <img v-if="downloadQrCodeDataUrls.harmony" :src="downloadQrCodeDataUrls.harmony" :alt="t('connections.app.downloadScan')">
+                <NSpin v-else size="small" />
+              </div>
+              <NTag v-else size="small" :bordered="false">{{ t('connections.app.notReleased') }}</NTag>
             </div>
             <div class="app-platform-copy">
               <h4>HarmonyOS</h4>
-              <p>{{ t('connections.app.harmonyPending') }}</p>
+              <p>{{ mobileRelease.channels.harmony.online ? 'HarmonyOS' : t('connections.app.harmonyPending') }}</p>
             </div>
-            <NButton class="app-platform-action" disabled>{{ t('connections.app.comingSoon') }}</NButton>
+            <NButton
+              v-if="harmonyDownloadUrl"
+              class="app-platform-action"
+              tag="a"
+              type="primary"
+              :href="mobileRelease.channels.harmony.url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >HarmonyOS</NButton>
+            <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
           </article>
         </div>
       </div>
@@ -783,7 +922,7 @@ onUnmounted(() => {
 
 .app-download-layout {
   width: 100%;
-  max-width: 980px;
+  max-width: 1180px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -794,7 +933,7 @@ onUnmounted(() => {
   position: relative;
   isolation: isolate;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   min-height: 230px;
   padding: 28px 30px;
@@ -899,55 +1038,6 @@ onUnmounted(() => {
   }
 }
 
-.app-download-qr-panel {
-  position: relative;
-  z-index: 1;
-  width: 168px;
-  padding: 13px;
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  flex-direction: column;
-  background: rgba(var(--bg-card-rgb), 0.9);
-  border: 1px solid $border-light;
-  border-radius: 14px;
-  box-shadow: 0 14px 38px rgba(var(--text-primary-rgb), 0.09);
-  text-align: center;
-
-  strong {
-    margin-top: 9px;
-    color: $text-primary;
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 18px;
-  }
-
-  > span {
-    color: $text-muted;
-    font-size: 10px;
-    line-height: 15px;
-  }
-}
-
-.app-download-qr {
-  width: 140px;
-  height: 140px;
-  padding: 6px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #ffffff;
-  border-radius: 9px;
-
-  img {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-}
-
 .download-source-switch {
   width: 100%;
   margin-top: 10px;
@@ -963,11 +1053,12 @@ onUnmounted(() => {
 
 .app-platform-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
 .app-platform-card {
+  position: relative;
   min-height: 188px;
   padding: 18px;
   display: flex;
@@ -1007,6 +1098,35 @@ onUnmounted(() => {
   border-radius: 12px;
 }
 
+.download-tag-qr {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 1;
+  width: 112px;
+  height: 112px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid $border-light;
+  border-radius: 7px;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.download-test-status {
+  align-self: center;
+  margin-inline-end: auto;
+  white-space: nowrap;
+}
+
 .app-platform-copy {
   margin: 14px 0 16px;
 
@@ -1029,6 +1149,21 @@ onUnmounted(() => {
 .app-platform-action {
   width: 100%;
   margin-top: auto;
+}
+
+.app-platform-actions {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+
+  .app-platform-action {
+    margin-top: 0;
+
+    &:only-child {
+      grid-column: 1 / -1;
+    }
+  }
 }
 
 .app-platform-download-controls {
@@ -1130,6 +1265,12 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 
+@media (max-width: 1100px) {
+  .app-platform-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: $breakpoint-mobile) {
   .panel-header {
     align-items: flex-start;
@@ -1154,10 +1295,6 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
     padding: 20px;
     gap: 22px;
-  }
-
-  .app-download-qr-panel {
-    width: 100%;
   }
 
   .app-platform-grid {

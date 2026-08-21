@@ -1,5 +1,18 @@
 import { vi } from 'vitest'
 
+const workerId = process.env.VITEST_POOL_ID || process.env.VITEST_WORKER_ID || '0'
+const pathSeparator = process.platform === 'win32' ? '\\' : '/'
+const tempRoot = (
+  process.env.TMPDIR
+  || process.env.TEMP
+  || process.env.TMP
+  || (process.platform === 'win32' ? 'C:\\Windows\\Temp' : '/tmp')
+).replace(/[\\/]+$/, '')
+const workerStateDir = `${tempRoot}${pathSeparator}hermes-studio-vitest-${process.pid}-${workerId}`
+process.env.HERMES_WEB_UI_HOME = workerStateDir
+process.env.HERMES_WEBUI_STATE_DIR = workerStateDir
+process.env.UPLOAD_DIR = `${workerStateDir}${pathSeparator}upload`
+
 // Vite injects this at build time; unit tests need a stable fallback.
 ;(globalThis as any).__APP_VERSION__ = 'test'
 // Client-only setup (window/localStorage only exist in jsdom)

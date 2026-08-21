@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,6 +39,12 @@ function makeHome() {
   homes.push(home)
   process.env.HERMES_WEB_UI_HOME = home
   return home
+}
+
+function installPiMcpAdapter(home: string) {
+  const entry = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+  mkdirSync(join(entry, '..'), { recursive: true })
+  writeFileSync(entry, 'export default {}')
 }
 
 describe('coding agent resumed session config', () => {
@@ -234,6 +240,74 @@ describe('coding agent resumed session config', () => {
     expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
       agentNativeSessionId: '11111111-1111-4111-8111-111111111111',
       nativeResume: true,
+    }))
+  })
+
+  it('passes the stored native session id to Pi so its RPC process resumes after restart', async () => {
+    const home = makeHome()
+    installPiMcpAdapter(home)
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'pi',
+      agent_mode: 'scoped',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: '11111111-2222-4333-8444-555555555555',
+      provider: 'custom:corp-pi',
+      model: 'gpt-test',
+      api_mode: 'codex_responses',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'corp-pi',
+        base_url: 'https://provider.example/v1',
+        api_key: 'sk-upstream',
+        model: 'gpt-test',
+        api_mode: 'codex_responses',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('pi', { sessionId: 'session-1' })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch).toEqual(expect.objectContaining({
+      agentNativeSessionId: '11111111-2222-4333-8444-555555555555',
+      nativeResume: true,
+    }))
+    expect(launch.args).toEqual(expect.arrayContaining([
+      '--session-id', '11111111-2222-4333-8444-555555555555',
+    ]))
+  })
+
+  it('uses the same generated native session id for a new Pi launch and persistence', async () => {
+    const home = makeHome()
+    installPiMcpAdapter(home)
+    getSessionMock.mockReturnValue(null)
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('pi', {
+      sessionId: 'session-new',
+      profile: 'default',
+      provider: 'custom:corp-pi',
+      model: 'gpt-test',
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+    })
+
+    const launch = startRunMock.mock.calls[0][0]
+    expect(launch.agentNativeSessionId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(launch.nativeResume).toBe(false)
+    expect(launch.args).toEqual(expect.arrayContaining([
+      '--session-id', launch.agentNativeSessionId,
+    ]))
+    expect(updateSessionMock).toHaveBeenCalledWith('session-new', expect.objectContaining({
+      agent_native_session_id: launch.agentNativeSessionId,
     }))
   })
 
