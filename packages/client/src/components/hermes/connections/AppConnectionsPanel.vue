@@ -1123,7 +1123,7 @@ onUnmounted(() => {
 
 .download-test-status {
   align-self: center;
-  margin-right: auto;
+  margin-inline-end: auto;
   white-space: nowrap;
 }
 
