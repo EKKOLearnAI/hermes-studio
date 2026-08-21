@@ -404,6 +404,9 @@ export interface PendingApproval {
   allowPermanent: boolean
   isMemoryWrite: boolean
   requestedAt: number
+  status?: 'pending' | 'submitting' | 'failed' | 'expired'
+  submittedChoice?: 'once' | 'session' | 'always' | 'deny'
+  error?: string
 }
 
 export interface PendingClarify {
@@ -2938,18 +2941,27 @@ export const useChatStore = defineStore('chat', () => {
       allowPermanent: Boolean((evt as any).allow_permanent),
       isMemoryWrite,
       requestedAt: Date.now(),
+      status: 'pending',
     })
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
   function clearPendingApproval(evt: RunEvent) {
-    if ((evt as any).resolved === false) return
     const sid = evt.session_id
     if (!sid) return
     const current = pendingApprovals.value.get(sid)
     if (!current) return
     const approvalId = (evt as any).approval_id
     if (approvalId && current.approvalId !== approvalId) return
+    if ((evt as any).resolved !== true) {
+      pendingApprovals.value.set(sid, {
+        ...current,
+        status: (evt as any).expired === true || (evt as any).stale === true ? 'expired' : 'failed',
+        error: String((evt as any).error || (evt as any).reason || ''),
+      })
+      pendingApprovals.value = new Map(pendingApprovals.value)
+      return
+    }
     pendingApprovals.value.delete(sid)
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
@@ -3014,18 +3026,35 @@ export const useChatStore = defineStore('chat', () => {
   }
 
 
-  function respondApprovalFor(sessionId: string, approvalId: string, choice: PendingApproval['choices'][number]) {
+  async function respondApprovalFor(sessionId: string, approvalId: string, choice: PendingApproval['choices'][number]) {
     const pending = pendingApprovals.value.get(sessionId)
-    if (!pending || pending.approvalId !== approvalId) return
-    respondToolApproval(sessionId, approvalId, choice, runtimeTransport())
+    if (!pending || pending.approvalId !== approvalId || pending.status === 'submitting' || pending.status === 'expired') return
+    pendingApprovals.value.set(sessionId, {
+      ...pending,
+      status: 'submitting',
+      submittedChoice: choice,
+      error: undefined,
+    })
+    pendingApprovals.value = new Map(pendingApprovals.value)
+    try {
+      const result = await respondToolApproval(sessionId, approvalId, choice, runtimeTransport())
+      clearPendingApproval(result)
+    } catch (error) {
+      const current = pendingApprovals.value.get(sessionId)
+      if (!current || current.approvalId !== approvalId) return
+      pendingApprovals.value.set(sessionId, {
+        ...current,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      pendingApprovals.value = new Map(pendingApprovals.value)
+    }
   }
 
-  function respondApproval(choice: PendingApproval['choices'][number]) {
+  async function respondApproval(choice: PendingApproval['choices'][number]) {
     const pending = activePendingApproval.value
     if (!pending) return
-    respondApprovalFor(pending.sessionId, pending.approvalId, choice)
-    pendingApprovals.value.delete(pending.sessionId)
-    pendingApprovals.value = new Map(pendingApprovals.value)
+    await respondApprovalFor(pending.sessionId, pending.approvalId, choice)
   }
 
   function updateSessionTitle(sessionId: string) {

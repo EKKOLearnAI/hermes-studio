@@ -1391,6 +1391,10 @@ async function applyBridgeChunkAsync(
         run_id: chunk.run_id,
         approval_id: ev.approval_id,
         choice: ev.choice,
+        resolved: ev.resolved === true,
+        ...(ev.expired === true ? { expired: true } : {}),
+        ...(ev.stale === true ? { stale: true } : {}),
+        ...(ev.error || ev.reason ? { error: String(ev.error || ev.reason) } : {}),
       }
       replaceState(sessionMap, sessionId, 'approval.resolved', payload)
       emit('approval.resolved', payload)

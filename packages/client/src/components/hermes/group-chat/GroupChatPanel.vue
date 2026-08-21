@@ -2146,17 +2146,36 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                 </div>
                                 <div class="approval-float-desc">{{ visibleApproval.description }}</div>
                                 <code class="approval-float-command">{{ visibleApproval.command }}</code>
-                                <div class="approval-float-actions">
-                                    <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
+                                <div
+                                    v-if="visibleApproval.status && visibleApproval.status !== 'pending'"
+                                    class="approval-float-status"
+                                    :class="`approval-float-status--${visibleApproval.status}`"
+                                    role="status"
+                                >
+                                    <strong>
+                                        {{ visibleApproval.status === 'submitting'
+                                            ? t('chat.approvalSubmitting')
+                                            : visibleApproval.status === 'expired'
+                                                ? t('chat.approvalExpired')
+                                                : t('chat.approvalFailed') }}
+                                    </strong>
+                                    <span v-if="visibleApproval.status === 'expired'">{{ t('chat.approvalExpiredHint') }}</span>
+                                    <span v-if="visibleApproval.error">{{ visibleApproval.error }}</span>
+                                </div>
+                                <div v-if="visibleApproval.status !== 'expired'" class="approval-float-actions">
+                                    <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" :loading="visibleApproval.status === 'submitting'" :disabled="visibleApproval.status === 'submitting'" @click="handleApproval('once')">
                                         {{ t('chat.approvalAgree') }}
                                     </NButton>
-                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" :loading="visibleApproval.status === 'submitting'" :disabled="visibleApproval.status === 'submitting'" @click="handleApproval('once')">
                                         {{ t('chat.approvalAllowOnce') }}
                                     </NButton>
-                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary :loading="visibleApproval.status === 'submitting'" :disabled="visibleApproval.status === 'submitting'" @click="handleApproval('session')">
+                                        {{ t('chat.approvalAllowSession') }}
+                                    </NButton>
+                                    <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary :loading="visibleApproval.status === 'submitting'" :disabled="visibleApproval.status === 'submitting'" @click="handleApproval('always')">
                                         {{ t('chat.approvalAlways') }}
                                     </NButton>
-                                    <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
+                                    <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary :loading="visibleApproval.status === 'submitting'" :disabled="visibleApproval.status === 'submitting'" @click="handleApproval('deny')">
                                         {{ t('chat.approvalDeny') }}
                                     </NButton>
                                 </div>
@@ -3098,6 +3117,19 @@ export default defineComponent({ components: { CreateRoomForm } })
     font-size: 12px;
     line-height: 1.45;
     color: $text-secondary;
+}
+
+.approval-float-status {
+    display: grid;
+    gap: 2px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--studio-text-secondary);
+}
+
+.approval-float-status--failed,
+.approval-float-status--expired {
+    color: var(--studio-danger);
 }
 
 .approval-float-command {

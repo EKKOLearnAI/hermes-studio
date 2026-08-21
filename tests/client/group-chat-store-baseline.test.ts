@@ -1183,7 +1183,7 @@ describe('group chat store baseline lifecycle', () => {
       approvalId: 'approval-1',
       choices: ['once', 'session', 'deny'],
     }))
-    emitSocket('approval.resolved', { roomId: 'room-1', approval_id: 'approval-1' })
+    emitSocket('approval.resolved', { roomId: 'room-1', approval_id: 'approval-1', resolved: true })
     expect(store.pendingApprovals.size).toBe(0)
   })
 
@@ -1263,7 +1263,7 @@ describe('group chat store baseline lifecycle', () => {
     })
 
     expect([...store.pendingApprovals.values()].map(item => item.roomId).sort()).toEqual(['room-a', 'room-b'])
-    emitSocket('approval.resolved', { roomId: 'room-a', approval_id: 'approval-shared' })
+    emitSocket('approval.resolved', { roomId: 'room-a', approval_id: 'approval-shared', resolved: true })
     expect([...store.pendingApprovals.values()]).toEqual([
       expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-shared' }),
     ])
@@ -1306,7 +1306,69 @@ describe('group chat store baseline lifecycle', () => {
 
     await store.respondApprovalFor('room-b', 'approval-b', 'once')
 
-    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ roomId: 'room-b', approvalId: 'approval-b' }))
+    expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({
+      roomId: 'room-b',
+      approvalId: 'approval-b',
+      status: 'failed',
+    }))
+  })
+
+  it('shows submitting state, blocks duplicate approval clicks, and preserves runtime errors', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+    groupChatApiMock.socket.emit.mockClear()
+    let resolveAck: ((value: any) => void) | undefined
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, _data: any, ack?: Function) => {
+      if (event === 'approval.respond') resolveAck = ack
+      return groupChatApiMock.socket
+    })
+
+    const first = store.respondApprovalFor('room-b', 'approval-b', 'once')
+    const duplicate = store.respondApprovalFor('room-b', 'approval-b', 'once')
+    await Promise.resolve()
+
+    expect(store.pendingApprovals.get('room-b:approval-b')).toMatchObject({
+      status: 'submitting',
+      submittedChoice: 'once',
+    })
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledTimes(1)
+
+    resolveAck?.({ ok: true, resolved: false, error: 'Runtime did not accept the approval.' })
+    await Promise.all([first, duplicate])
+    expect(store.pendingApprovals.get('room-b:approval-b')).toMatchObject({
+      status: 'failed',
+      error: 'Runtime did not accept the approval.',
+    })
+  })
+
+  it('marks expired approvals from authoritative broadcasts and ignores the wrong id', async () => {
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-b', agentName: 'Agent', approval_id: 'approval-b',
+      command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+    })
+
+    emitSocket('approval.resolved', {
+      roomId: 'room-b', approval_id: 'wrong-id', resolved: true,
+    })
+    expect(store.pendingApprovals.has('room-b:approval-b')).toBe(true)
+
+    emitSocket('approval.resolved', {
+      roomId: 'room-b',
+      approval_id: 'approval-b',
+      resolved: false,
+      expired: true,
+      error: 'Approval timed out.',
+    })
+    expect(store.pendingApprovals.get('room-b:approval-b')).toMatchObject({
+      status: 'expired',
+      error: 'Approval timed out.',
+    })
   })
 
   it('updates the current room name and token display on room_updated', async () => {

@@ -711,12 +711,25 @@ export function respondToolApproval(
   approvalId: string,
   choice: 'once' | 'session' | 'always' | 'deny',
   transport: ChatRunTransport = 'chat-run',
-): void {
+): Promise<RunEvent> {
   const socket = connectChatRun(null, transport)
-  socket.emit('approval.respond', {
-    session_id: sessionId,
-    approval_id: approvalId,
-    choice,
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      socket.off('approval.resolved', handleResolved)
+      reject(new Error('Approval response timed out.'))
+    }, 15_000)
+    const handleResolved = (event: RunEvent) => {
+      if (event.session_id !== sessionId || (event as any).approval_id !== approvalId) return
+      window.clearTimeout(timeout)
+      socket.off('approval.resolved', handleResolved)
+      resolve(event)
+    }
+    socket.on('approval.resolved', handleResolved)
+    socket.emit('approval.respond', {
+      session_id: sessionId,
+      approval_id: approvalId,
+      choice,
+    })
   })
 }
 

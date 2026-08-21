@@ -3910,7 +3910,7 @@ export class GroupChatServer {
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
-        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
+        socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
         socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
         socket.on('clarify.resolved', (data: { roomId?: string; agentName?: string; clarify_id?: string; resolved?: boolean; reason?: string; agentSessionId?: string }) => this.handleClarifyResolved(socket, data))
@@ -5016,13 +5016,17 @@ export class GroupChatServer {
         })
     }
 
-    private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }): void {
+    private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; resolved?: boolean; expired?: boolean; stale?: boolean; error?: string; reason?: string; agentSessionId?: string }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
         const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
         const pendingRoute = this.pendingApprovalRoutes.get(routeKey)
-        if (pendingRoute?.roomId === roomId && pendingRoute.agentName === agentName) {
+        if (
+            pendingRoute?.roomId === roomId
+            && pendingRoute.agentName === agentName
+            && (data.resolved === true || data.expired === true || data.stale === true)
+        ) {
             this.takePendingApprovalRoute(routeKey)
         }
         const ownerMemberId = pendingRoute?.ownerMemberId || this.groupAgentOwnerMemberId(roomId, agentName)
@@ -5032,6 +5036,10 @@ export class GroupChatServer {
             agentName,
             approval_id: data.approval_id,
             choice: data.choice || '',
+            resolved: data.resolved === true,
+            ...(data.expired === true ? { expired: true } : {}),
+            ...(data.stale === true ? { stale: true } : {}),
+            ...(data.error || data.reason ? { error: data.error || data.reason } : {}),
         })
     }
 
@@ -5069,7 +5077,7 @@ export class GroupChatServer {
                 const resolved = await remoteExecutor.respondApproval(data.approval_id, data.choice || 'deny')
                 if (resolved) {
                     this.takePendingApprovalRoute(routeKey)
-                    ack?.({ ok: true, resolved: true })
+                    ack?.({ ok: true, approval_id: data.approval_id, resolved: true })
                     return
                 }
             } catch (err: any) {
@@ -5081,7 +5089,15 @@ export class GroupChatServer {
                         [],
                         err?.message || 'Approval expired',
                     )
-                    ack?.({ ok: true, resolved: true, stale: true })
+                    const error = err?.message || 'Approval expired'
+                    ack?.({
+                        ok: true,
+                        approval_id: data.approval_id,
+                        resolved: false,
+                        expired: true,
+                        stale: true,
+                        error,
+                    })
                     return
                 }
                 ack?.({ error: err.message || 'approval response failed' })
@@ -5101,14 +5117,24 @@ export class GroupChatServer {
                 return
             }
             this.takePendingApprovalRoute(routeKey)
-            ack?.({ ok: true, resolved: true })
+            ack?.({ ok: true, approval_id: data.approval_id, resolved: true })
             return
         }
         try {
             const result = await new AgentBridgeClient().approvalRespond(data.approval_id, data.choice || 'deny')
             const resolved = Boolean((result as any)?.resolved)
             if (resolved) this.takePendingApprovalRoute(routeKey)
-            ack?.({ ok: true, resolved })
+            else if ((result as any)?.expired === true || (result as any)?.stale === true) {
+                this.takePendingApprovalRoute(routeKey)
+            }
+            ack?.({
+                ok: true,
+                approval_id: data.approval_id,
+                resolved,
+                ...((result as any)?.expired === true ? { expired: true } : {}),
+                ...((result as any)?.stale === true ? { stale: true } : {}),
+                ...((result as any)?.error ? { error: String((result as any).error) } : {}),
+            })
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to respond approval ${data.approval_id}: ${err.message}`)
             if (isExpiredInteractionError(err?.message || err)) {
@@ -5119,7 +5145,15 @@ export class GroupChatServer {
                     [],
                     err?.message || 'Approval expired',
                 )
-                ack?.({ ok: true, resolved: true, stale: true })
+                const error = err?.message || 'Approval expired'
+                ack?.({
+                    ok: true,
+                    approval_id: data.approval_id,
+                    resolved: false,
+                    expired: true,
+                    stale: true,
+                    error,
+                })
                 return
             }
             ack?.({ error: err.message || 'approval response failed' })
@@ -5278,7 +5312,10 @@ export class GroupChatServer {
                 agentName,
                 approval_id: approvalId,
                 choice: 'deny',
-                reason: boundedReason,
+                resolved: false,
+                expired: true,
+                stale: true,
+                error: boundedReason,
             })
         }
         for (const clarifyId of new Set(clarifyIds)) {

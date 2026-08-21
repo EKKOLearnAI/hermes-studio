@@ -6,6 +6,7 @@ const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(),
   resumeSession: vi.fn(),
   registerSessionHandlers: vi.fn(),
+  respondToolApproval: vi.fn(),
   globalPendingHandler: undefined as undefined | ((event: any) => void),
   unregisterSessionHandlers: vi.fn(),
 }))
@@ -21,7 +22,7 @@ vi.mock('@/api/hermes/chat', () => ({
   registerSessionHandlers: chatApi.registerSessionHandlers,
   unregisterSessionHandlers: chatApi.unregisterSessionHandlers,
   getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
-  respondToolApproval: vi.fn(),
+  respondToolApproval: chatApi.respondToolApproval,
   respondClarify: vi.fn(),
   onPeerUserMessage: vi.fn((handler: (event: any) => void) => { chatApi.globalPendingHandler = handler; return vi.fn() }),
   onApprovalRequested: vi.fn(() => vi.fn()),
@@ -166,6 +167,79 @@ describe('chat store error handling - #1644', () => {
     })
 
     expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b' })
+  })
+
+  it('keeps approval cards pending until the matching runtime response succeeds', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-a')]
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-a', approval_id: 'approval-a', choices: ['once', 'deny'],
+    })
+    let resolveResponse: ((value: any) => void) | undefined
+    chatApi.respondToolApproval.mockReturnValue(new Promise(resolve => { resolveResponse = resolve }))
+
+    const first = store.respondApprovalFor('session-a', 'approval-a', 'once')
+    const duplicate = store.respondApprovalFor('session-a', 'approval-a', 'once')
+
+    expect(store.pendingApprovals.get('session-a')).toMatchObject({
+      approvalId: 'approval-a',
+      status: 'submitting',
+      submittedChoice: 'once',
+    })
+    expect(chatApi.respondToolApproval).toHaveBeenCalledTimes(1)
+
+    resolveResponse?.({
+      session_id: 'session-a',
+      approval_id: 'approval-a',
+      resolved: false,
+      error: 'Runtime did not accept the approval.',
+    })
+    await Promise.all([first, duplicate])
+
+    expect(store.pendingApprovals.get('session-a')).toMatchObject({
+      approvalId: 'approval-a',
+      status: 'failed',
+      error: 'Runtime did not accept the approval.',
+    })
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved',
+      session_id: 'session-a',
+      approval_id: 'wrong-id',
+      resolved: true,
+    })
+    expect(store.pendingApprovals.get('session-a')).toMatchObject({ approvalId: 'approval-a' })
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved',
+      session_id: 'session-a',
+      approval_id: 'approval-a',
+      resolved: true,
+    })
+    expect(store.pendingApprovals.has('session-a')).toBe(false)
+  })
+
+  it('marks an expired approval without pretending that the command ran', () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-a')]
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-a', approval_id: 'approval-a', choices: ['once', 'deny'],
+    })
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved',
+      session_id: 'session-a',
+      approval_id: 'approval-a',
+      resolved: false,
+      expired: true,
+      error: 'Approval timed out.',
+    })
+
+    expect(store.pendingApprovals.get('session-a')).toMatchObject({
+      approvalId: 'approval-a',
+      status: 'expired',
+      error: 'Approval timed out.',
+    })
   })
 
   it('preserves assistant content when run.failed fires during streaming with substantial content', async () => {

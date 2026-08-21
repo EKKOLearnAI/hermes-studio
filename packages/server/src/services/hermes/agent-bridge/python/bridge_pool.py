@@ -1384,8 +1384,10 @@ class AgentPool:
             })
             try:
                 choice = response_queue.get(timeout=APPROVAL_TIMEOUT_SECONDS)
+                timed_out = False
             except queue.Empty:
                 choice = "deny"
+                timed_out = True
             finally:
                 with self._lock:
                     self._approval_requests.pop(approval_id, None)
@@ -1393,6 +1395,12 @@ class AgentPool:
                 "event": "approval.resolved",
                 "approval_id": approval_id,
                 "choice": choice,
+                "resolved": not timed_out,
+                **({
+                    "expired": True,
+                    "stale": True,
+                    "error": "Approval timed out.",
+                } if timed_out else {}),
             })
             return choice
 
@@ -2171,7 +2179,14 @@ class AgentPool:
                 gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
                 pattern_keys = self._gateway_approval_pattern_keys.pop(approval_id, [])
             if gateway_session_id is None:
-                return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
+                return {
+                    "approval_id": approval_id,
+                    "resolved": False,
+                    "choice": cleaned,
+                    "expired": True,
+                    "stale": True,
+                    "error": "Approval is no longer pending.",
+                }
             try:
                 from tools.approval import resolve_gateway_approval
 
@@ -2180,16 +2195,30 @@ class AgentPool:
                 resolved = False
             if resolved:
                 _persist_execute_code_approval_choice(gateway_session_id, pattern_keys, cleaned)
+            result = {
+                "approval_id": approval_id,
+                "resolved": resolved,
+                "choice": cleaned,
+                **({} if resolved else {
+                    "expired": True,
+                    "stale": True,
+                    "error": "Approval is no longer pending.",
+                }),
+            }
             self._append_event(gateway_session_id, {
                 "event": "approval.resolved",
-                "approval_id": approval_id,
-                "choice": cleaned,
+                **result,
             })
-            return {"approval_id": approval_id, "resolved": resolved, "choice": cleaned}
+            return result
         try:
             response_queue.put_nowait(cleaned)
         except queue.Full:
-            pass
+            return {
+                "approval_id": approval_id,
+                "resolved": False,
+                "choice": cleaned,
+                "error": "Approval response is already being processed.",
+            }
         return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
 
     def respond_clarify(self, clarify_id: str, response: str) -> dict[str, Any]:

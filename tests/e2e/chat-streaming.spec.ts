@@ -844,8 +844,9 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
 
   await page.getByRole('button', { name: 'Allow once' }).click()
 
-  await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Allow once' })).toHaveCount(0)
+  await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toBeVisible()
+  await expect(page.getByText('Sending approval…')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Allow once' })).toBeDisabled()
   await expect.poll(async () => page.evaluate(() => {
     const emitted = (window as any).__PW_CHAT_SOCKET__.emitted
     return emitted.filter((item: any) => item.event === 'approval.respond')
@@ -893,6 +894,8 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
     })
   }, run.session_id)
 
+  await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Allow once' })).toHaveCount(0)
   const persistedToolTrace = page.locator('.message.tool .tool-line').filter({ hasText: 'write_file' })
   await expect(persistedToolTrace).toHaveCount(1)
   await persistedToolTrace.click()

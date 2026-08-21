@@ -647,6 +647,9 @@ export class ChatRunSocket {
           approval_id: data.approval_id,
           choice: data.choice || 'deny',
           resolved: Boolean(result.resolved),
+          ...(result.expired === true ? { expired: true } : {}),
+          ...(result.stale === true ? { stale: true } : {}),
+          ...(result.error ? { error: String(result.error) } : {}),
         })
       } catch (err) {
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
@@ -1678,6 +1681,9 @@ export class ChatRunSocket {
             approval_id: approvalId,
             choice,
             resolved: Boolean((result as any)?.resolved),
+            ...((result as any)?.expired === true ? { expired: true } : {}),
+            ...((result as any)?.stale === true ? { stale: true } : {}),
+            ...((result as any)?.error ? { error: String((result as any).error) } : {}),
           }
           observeChatRunWebhookEvent({
             event: 'approval.resolved',

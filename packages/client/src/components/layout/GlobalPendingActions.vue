@@ -216,6 +216,7 @@ function approvalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-appr
 
 function approvalButtons(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
   const pending = action.pending
+  if (pending.status === 'expired') return null
   const choices: ApprovalChoice[] = pending.isMemoryWrite ? ['once', 'deny'] : pending.choices
   const labels: Record<ApprovalChoice, string> = {
     once: pending.isMemoryWrite ? t('chat.approvalAgree') : t('chat.approvalAllowOnce'),
@@ -227,7 +228,8 @@ function approvalButtons(action: Extract<GlobalPendingAction, { kind: 'chat-appr
     size: 'small',
     type: choice === 'deny' ? 'error' : choice === 'once' ? 'primary' : 'default',
     secondary: choice !== 'once',
-    loading: submitting[action.key],
+    loading: submitting[action.key] || pending.status === 'submitting',
+    disabled: submitting[action.key] || pending.status === 'submitting',
     onClick: () => void submitApproval(action, choice),
   }, { default: () => labels[choice] })))
 }
@@ -236,13 +238,30 @@ async function submitApproval(action: Extract<GlobalPendingAction, { kind: 'chat
   if (submitting[action.key]) return
   submitting[action.key] = true
   try {
-    if (action.kind === 'chat-approval') chatStore.respondApprovalFor(action.pending.sessionId, action.pending.approvalId, choice)
+    if (action.kind === 'chat-approval') await chatStore.respondApprovalFor(action.pending.sessionId, action.pending.approvalId, choice)
     else await groupChatStore.respondApprovalFor(action.pending.roomId, action.pending.approvalId, choice)
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
   } finally {
     submitting[action.key] = false
   }
+}
+
+function approvalStatus(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
+  const pending = action.pending
+  if (!pending.status || pending.status === 'pending') return null
+  const label = pending.status === 'submitting'
+    ? t('chat.approvalSubmitting')
+    : pending.status === 'expired'
+      ? `${t('chat.approvalExpired')} · ${t('chat.approvalExpiredHint')}`
+      : t('chat.approvalFailed')
+  return h('div', {
+    class: ['global-approval-status', `global-approval-status--${pending.status}`],
+    role: 'status',
+  }, [
+    h('strong', label),
+    pending.error ? h('span', pending.error) : null,
+  ])
 }
 
 function clarifyContent(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' | 'group-clarify' }>) {
@@ -376,6 +395,7 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
               ? h('div', { class: 'global-approval-description' }, action.pending.description)
               : null,
             approvalCommand(action),
+            approvalStatus(action),
           ]),
     action: clarify
       ? () => h(NButton, {
@@ -483,6 +503,8 @@ onUnmounted(() => {
 .global-pending-actions, .global-clarify-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .global-approval-content, .global-clarify-content { display: grid; gap: 12px; max-width: 520px; max-height: min(420px, calc(100dvh - 190px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
 .global-approval-description { padding: 10px 12px; border: 1px solid rgba(var(--warning-rgb), 0.28); border-radius: 10px; background: rgba(var(--warning-rgb), 0.08); color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.global-approval-status { display: grid; gap: 2px; color: var(--text-secondary); font-size: 12px; }
+.global-approval-status--failed, .global-approval-status--expired { color: var(--error-color); }
 .global-approval-command { min-width: 0; overflow: hidden; border: 1px solid rgba(var(--text-primary-rgb), 0.1); border-radius: 10px; background: rgba(var(--accent-primary-rgb), 0.055); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.035); }
 .global-approval-command-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 4px 6px 4px 12px; border-bottom: 1px solid rgba(var(--text-primary-rgb), 0.08); }
 .global-approval-command-label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }

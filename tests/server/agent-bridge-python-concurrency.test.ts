@@ -1279,6 +1279,44 @@ assert approval._check_execute_code_calls == [("print(4)", "local", True)]
 `)
   })
 
+  it('reports unresolved gateway approvals without broadcasting false success', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+events = []
+pool._append_event = lambda _session_id, event: events.append(event)
+notify = pool._gateway_approval_notify("session-a")
+notify({
+    "command": "touch expired",
+    "description": "expired approval",
+    "pattern_key": "touch",
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+approval.resolve_gateway_approval = lambda _session_id, _choice: 0
+
+result = pool.respond_approval(approval_id, "once")
+assert result == {
+    "approval_id": approval_id,
+    "resolved": False,
+    "choice": "once",
+    "expired": True,
+    "stale": True,
+    "error": "Approval is no longer pending.",
+}
+event = events[-1]
+assert event == {
+    "event": "approval.resolved",
+    "approval_id": approval_id,
+    "choice": "once",
+    "resolved": False,
+    "expired": True,
+    "stale": True,
+    "error": "Approval is no longer pending.",
+}
+`)
+  })
+
   it('routes terminal/gateway approvals and stream callbacks per concurrent session', () => {
     runPython(String.raw`
 ${harness}

@@ -798,6 +798,16 @@ function makeSocket(url, options) {
       onceListeners.set(event, handlers)
       return this
     },
+    off(event, handler) {
+      if (!handler) {
+        listeners.delete(event)
+        onceListeners.delete(event)
+        return this
+      }
+      listeners.set(event, (listeners.get(event) || []).filter((candidate) => candidate !== handler))
+      onceListeners.set(event, (onceListeners.get(event) || []).filter((candidate) => candidate !== handler))
+      return this
+    },
     emit(event, payload) {
       state.emitted.push({ event, payload })
       if (event === 'resume') {

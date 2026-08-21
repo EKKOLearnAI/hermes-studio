@@ -155,6 +155,9 @@ export interface GroupPendingApproval {
     allowPermanent: boolean
     isMemoryWrite: boolean
     requestedAt: number
+    status?: 'pending' | 'submitting' | 'failed' | 'expired'
+    submittedChoice?: 'once' | 'session' | 'always' | 'deny'
+    error?: string
 }
 
 export interface GroupPendingClarify {
@@ -487,6 +490,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             allowPermanent: Boolean(data.allow_permanent),
             isMemoryWrite,
             requestedAt: Number(data.requested_at) || Date.now(),
+            status: 'pending',
         })
     }
 
@@ -1180,9 +1184,27 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
-        socket.on('approval.resolved', (data: { roomId?: string; approval_id?: string; resolved?: boolean }) => {
-            if (!data.roomId || !data.approval_id || data.resolved === false) return
-            pendingApprovals.value.delete(pendingApprovalKey(data.roomId, data.approval_id))
+        socket.on('approval.resolved', (data: {
+            roomId?: string
+            approval_id?: string
+            resolved?: boolean
+            expired?: boolean
+            stale?: boolean
+            error?: string
+            reason?: string
+        }) => {
+            if (!data.roomId || !data.approval_id) return
+            const key = pendingApprovalKey(data.roomId, data.approval_id)
+            const pending = pendingApprovals.value.get(key)
+            if (!pending) return
+            if (data.resolved === true) pendingApprovals.value.delete(key)
+            else {
+                pendingApprovals.value.set(key, {
+                    ...pending,
+                    status: data.expired === true || data.stale === true ? 'expired' : 'failed',
+                    error: String(data.error || data.reason || ''),
+                })
+            }
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
@@ -1818,26 +1840,63 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     async function respondApprovalFor(roomId: string, approvalId: string, choice: GroupPendingApproval['choices'][number]) {
         const key = pendingApprovalKey(roomId, approvalId)
         const pending = pendingApprovals.value.get(key)
-        if (!pending) return
-        const socket = await ensureRealtimeSocket()
-        let resolved = false
-        await new Promise<void>((resolve, reject) => {
-            socket.emit('approval.respond', {
-                roomId: pending.roomId,
-                approval_id: pending.approvalId,
-                choice,
-            }, (res: any) => {
-                if (res?.error) reject(new Error(res.error))
-                else {
-                    resolved = res?.resolved !== false
-                    resolve()
-                }
-            })
+        if (!pending || pending.status === 'submitting' || pending.status === 'expired') return
+        pendingApprovals.value.set(key, {
+            ...pending,
+            status: 'submitting',
+            submittedChoice: choice,
+            error: undefined,
         })
-        if (resolved) {
-            pendingApprovals.value.delete(key)
+        pendingApprovals.value = new Map(pendingApprovals.value)
+        let response: any
+        try {
+          const socket = await ensureRealtimeSocket()
+          response = await new Promise<any>((resolve, reject) => {
+            const timer = window.setTimeout(() => reject(new Error('Approval response timed out.')), 15_000)
+            try {
+              socket.emit('approval.respond', {
+                  roomId: pending.roomId,
+                  approval_id: pending.approvalId,
+                  choice,
+              }, (res: any) => {
+                  window.clearTimeout(timer)
+                  resolve(res)
+              })
+            } catch (error) {
+              window.clearTimeout(timer)
+              reject(error)
+            }
+          })
+        } catch (error) {
+          const current = pendingApprovals.value.get(key)
+          if (current?.approvalId === approvalId) {
+            pendingApprovals.value.set(key, {
+              ...current,
+              status: 'failed',
+              error: error instanceof Error ? error.message : String(error),
+            })
             pendingApprovals.value = new Map(pendingApprovals.value)
+          }
+          return
         }
+        const current = pendingApprovals.value.get(key)
+        if (!current || current.approvalId !== approvalId) return
+        if (response?.resolved === true && response?.approval_id !== approvalId) {
+            pendingApprovals.value.set(key, {
+                ...current,
+                status: 'failed',
+                error: 'Approval response did not match the pending request.',
+            })
+        } else if (response?.resolved === true) {
+            pendingApprovals.value.delete(key)
+        } else {
+            pendingApprovals.value.set(key, {
+                ...current,
+                status: response?.expired === true || response?.stale === true ? 'expired' : 'failed',
+                error: String(response?.error || ''),
+            })
+        }
+        pendingApprovals.value = new Map(pendingApprovals.value)
     }
 
     async function respondApproval(choice: GroupPendingApproval['choices'][number]) {

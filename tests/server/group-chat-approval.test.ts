@@ -183,7 +183,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-global',
       choice: 'once',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-global', resolved: true })
     await expect(approval).resolves.toBe('once')
   })
 
@@ -285,7 +285,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-private-global',
       choice: 'deny',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-private-global', resolved: true })
     await expect(approval).resolves.toBe('deny')
   })
 
@@ -341,7 +341,7 @@ describe('group chat approval and context baseline', () => {
     })).resolves.toEqual({ error: 'Access denied' })
     await expect(emitAck(inviter, 'approval.respond', {
       roomId: 'room-1', approval_id: 'approval-guest-agent', choice: 'once',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-guest-agent', resolved: true })
     expect(respondApproval).toHaveBeenCalledWith('approval-guest-agent', 'once')
   })
 
@@ -442,7 +442,16 @@ describe('group chat approval and context baseline', () => {
     const { agent, human, agentSessionId } = await joinPair()
     const resolved = once<any>(human, 'approval.resolved')
 
-    agent.emit('approval.resolved', { roomId: 'room-1', agentName: 'Agent', agentSessionId, approval_id: 'approval-1', choice: 'deny' })
+    agent.emit('approval.resolved', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: 'approval-1',
+      choice: 'deny',
+      resolved: false,
+      expired: true,
+      error: 'Approval timed out.',
+    })
 
     expect(await resolved).toEqual({
       event: 'approval.resolved',
@@ -450,6 +459,9 @@ describe('group chat approval and context baseline', () => {
       agentName: 'Agent',
       approval_id: 'approval-1',
       choice: 'deny',
+      resolved: false,
+      expired: true,
+      error: 'Approval timed out.',
     })
   })
 
@@ -561,7 +573,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-ekko',
       choice: 'once',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-ekko', resolved: true })
     await expect(approval).resolves.toBe('once')
     expect(bridgeApproval).not.toHaveBeenCalled()
   })
@@ -589,7 +601,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-remote-once',
       choice: 'once',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-remote-once', resolved: true })
     await expect(emitAck(human, 'approval.respond', {
       roomId: 'room-1',
       approval_id: 'approval-remote-once',
@@ -623,7 +635,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-hermes-behind-remote',
       choice: 'once',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-hermes-behind-remote', resolved: true })
     expect(respondApproval).toHaveBeenCalledWith('approval-hermes-behind-remote', 'once')
     expect(bridgeApproval).toHaveBeenCalledWith('approval-hermes-behind-remote', 'once')
   })
@@ -718,7 +730,11 @@ describe('group chat approval and context baseline', () => {
     )
 
     await expect(approvalResolved).resolves.toMatchObject({
-      approval_id: 'approval-expired', choice: 'deny', reason: 'Remote Agent run timed out',
+      approval_id: 'approval-expired',
+      choice: 'deny',
+      resolved: false,
+      expired: true,
+      error: 'Remote Agent run timed out',
     })
     await expect(clarifyResolved).resolves.toMatchObject({
       clarify_id: 'clarify-expired', resolved: false, reason: 'Remote Agent run timed out',
@@ -746,7 +762,7 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1',
       approval_id: 'approval-hermes',
       choice: 'session',
-    })).resolves.toEqual({ ok: true, resolved: true })
+    })).resolves.toEqual({ ok: true, approval_id: 'approval-hermes', resolved: true })
     expect(bridgeApproval).toHaveBeenCalledWith('approval-hermes', 'session')
   })
 
@@ -764,9 +780,20 @@ describe('group chat approval and context baseline', () => {
 
     await expect(emitAck(human, 'approval.respond', {
       roomId: 'room-1', approval_id: 'approval-stale', choice: 'deny',
-    })).resolves.toEqual({ ok: true, resolved: true, stale: true })
+    })).resolves.toEqual({
+      ok: true,
+      approval_id: 'approval-stale',
+      resolved: false,
+      expired: true,
+      stale: true,
+      error: 'unknown approval request: approval-stale',
+    })
     await expect(resolved).resolves.toMatchObject({
-      approval_id: 'approval-stale', choice: 'deny', reason: 'unknown approval request: approval-stale',
+      approval_id: 'approval-stale',
+      choice: 'deny',
+      resolved: false,
+      expired: true,
+      error: 'unknown approval request: approval-stale',
     })
     await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
   })
