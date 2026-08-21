@@ -46,7 +46,7 @@ import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { buildOutboundRunEvent } from './resume-payload'
 import { estimateUsageTokensFromMessages } from './usage'
-import type { ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
+import type { BackgroundContinuationContext, ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 
 export interface EkkoAgentRunSocketData {
@@ -391,6 +391,7 @@ export async function handleEkkoAgentRun(
   sessionMap: Map<string, SessionState>,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => boolean,
   skipUserMessage = false,
+  backgroundContinuationContext?: BackgroundContinuationContext,
 ) {
   const sessionId = String(data.session_id || '').trim()
   if (!sessionId) {
@@ -658,6 +659,14 @@ export async function handleEkkoAgentRun(
       event.status === 'interrupted' ||
       scheduledBackgroundContinuations.has(event.subagentId)
     ) return
+    if (!event.continuationContext) {
+      logger.error(
+        '[chat-run-socket] suppressed Ekko background callback %s for session %s because its origin context is missing',
+        event.subagentId,
+        sessionId,
+      )
+      return
+    }
     scheduledBackgroundContinuations.add(event.subagentId)
     const result = String(event.output || '').trim() || event.summary.trim() || event.outputTail.trim()
     const continuationMessage = [
@@ -691,6 +700,10 @@ export async function handleEkkoAgentRun(
       mcpServers,
       reasoningEffort,
       backgroundDelegationId: event.subagentId,
+      backgroundContinuationContext: {
+        runtime: 'ekko',
+        ...event.continuationContext,
+      },
       autonomous: true,
     }
     state.queue.push(queuedRun)
@@ -1219,36 +1232,48 @@ export async function handleEkkoAgentRun(
       user_id: authenticatedUserId,
       profile,
     }
+    const callbackContext = data.background_delegation_id
+      && backgroundContinuationContext?.runtime === 'ekko'
+      && backgroundContinuationContext.subagentId === data.background_delegation_id
+      ? backgroundContinuationContext
+      : undefined
+    if (data.background_delegation_id && !callbackContext) {
+      throw new Error(
+        `Background callback ${data.background_delegation_id} cannot continue because its origin context is unavailable.`,
+      )
+    }
     let fixedContextEstimate: Promise<number> | undefined
-    const compressedHistory = data.context_compression_enabled === false ? [] : await buildCompressedHistory(
-      sessionId,
-      profile,
-      baseUrl,
-      apiKey,
-      emit,
-      sessionMap,
-      {
-        model: modelConfig.model,
-        provider: modelConfig.provider,
-        allowHermesFallback: false,
-      },
-      async (_messages, localMessageTokens) => {
-        fixedContextEstimate ||= agent.estimateContext({
-          modelClient,
+    const compressedHistory = callbackContext
+      ? []
+      : data.context_compression_enabled === false ? [] : await buildCompressedHistory(
+        sessionId,
+        profile,
+        baseUrl,
+        apiKey,
+        emit,
+        sessionMap,
+        {
           model: modelConfig.model,
-          modelDefaults: { model: modelConfig.model },
-          messages: instructionMessages,
-          signal: abortController.signal,
-          memoryEnabled: false,
-          toolContext,
-          metadata,
-          backgroundDelegationEnabled: data.background_delegation_enabled !== false,
-        }).then(estimate => estimate.contextTokens)
-        return (await fixedContextEstimate) + localMessageTokens
-      },
-      currentInputTokens,
-      shouldPersistUserMessage && data.display_role !== 'command',
-    )
+          provider: modelConfig.provider,
+          allowHermesFallback: false,
+        },
+        async (_messages, localMessageTokens) => {
+          fixedContextEstimate ||= agent.estimateContext({
+            modelClient,
+            model: modelConfig.model,
+            modelDefaults: { model: modelConfig.model },
+            messages: instructionMessages,
+            signal: abortController.signal,
+            memoryEnabled: false,
+            toolContext,
+            metadata,
+            backgroundDelegationEnabled: data.background_delegation_enabled !== false,
+          }).then(estimate => estimate.contextTokens)
+          return (await fixedContextEstimate) + localMessageTokens
+        },
+        currentInputTokens,
+        shouldPersistUserMessage && data.display_role !== 'command',
+      )
     const currentMessage: AgentMessage = {
       role: 'user',
       ...await toUserAgentContent(data.input),
@@ -1265,7 +1290,9 @@ export async function handleEkkoAgentRun(
       },
       messages: [
         ...instructionMessages,
-        ...await toAgentMessages(compressedHistory),
+        ...(callbackContext
+          ? structuredClone(callbackContext.messages)
+          : await toAgentMessages(compressedHistory)),
         currentMessage,
       ],
       signal: abortController.signal,
@@ -1309,6 +1336,14 @@ export async function handleEkkoAgentRun(
       },
       toolContext,
       metadata,
+      ...(callbackContext
+        ? {
+            contextKey: `${sessionId}:background-callback:${callbackContext.subagentId}`,
+            memoryEnabled: false,
+            ephemeralContext: true,
+            skillReviewEnabled: false,
+          }
+        : {}),
       backgroundDelegationEnabled: data.background_delegation_enabled !== false,
     })
     assistantText = result.output.content || assistantText

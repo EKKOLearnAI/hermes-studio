@@ -3764,6 +3764,72 @@
         }
       }
     },
+    "/api/hermes/config/fallback-providers": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get fallback-providers",
+        "description": "GET /api/hermes/config/fallback-providers",
+        "operationId": "getFallbackProviders",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update fallback-providers",
+        "description": "PUT /api/hermes/config/fallback-providers",
+        "operationId": "updateFallbackProviders",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fallback_providers": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/config/moa": {
       "get": {
         "tags": [
