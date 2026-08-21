@@ -1321,6 +1321,7 @@ export const useChatStore = defineStore('chat', () => {
   const isRunActive = computed(() => isStreaming.value)
   let loadSessionsRequestSequence = 0
   let switchSessionRequestSequence = 0
+  let activeSelectionSequence = 0
 
   function beginMessageLoad(sessionId: string, requestSequence: number) {
     const next = new Map(messageLoadRequests.value)
@@ -1463,6 +1464,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearActiveSession() {
+    activeSelectionSequence++
     const sid = activeSessionId.value
     activeSessionId.value = null
     activeSession.value = null
@@ -1573,6 +1575,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
     const requestSequence = ++loadSessionsRequestSequence
+    const selectionSequence = activeSelectionSequence
     isLoadingSessions.value = true
     try {
       const list = await fetchRuntimeSessions(profile)
@@ -1591,8 +1594,16 @@ export const useChatStore = defineStore('chat', () => {
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
         if (!s.apiMode && prev?.apiMode) s.apiMode = prev.apiMode
       }
-      sessions.value = fresh
+      const localOnlySessions = sessions.value.filter(session =>
+        session.isLocalOnly && !fresh.some(runtimeSession => runtimeSession.id === session.id),
+      )
+      sessions.value = [...localOnlySessions, ...fresh]
       pruneCompletedUnreadSessions(new Set(sessions.value.map(s => s.id)))
+
+      // A session load may have started before the user selected or created a
+      // different chat. Keep the refreshed list, but do not let that stale
+      // continuation take ownership of the active selection.
+      if (selectionSequence !== activeSelectionSequence) return
 
       // Restore route-selected session first (tab-local source of truth),
       // then current in-memory session, then persisted legacy/default choice,
@@ -1806,6 +1817,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function switchSession(sessionId: string, focusId?: string | null) {
+    activeSelectionSequence++
     const requestSequence = ++switchSessionRequestSequence
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId

@@ -160,4 +160,23 @@ describe('chat session ordering', () => {
     expect(store.activeSessionId).toBe('session-b')
     expect(store.activeSession?.id).toBe('session-b')
   })
+
+  it('does not let an in-flight session load replace a newly created chat', async () => {
+    const pending: Array<(sessions: any[]) => void> = []
+    vi.mocked(fetchSessions).mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+
+    const store = useChatStore()
+    const load = store.loadSessions(null, 'session-a')
+    const newSession = store.newChat()
+
+    expect(store.activeSessionId).toBe(newSession.id)
+
+    pending[0]([makeSession('session-a', { started_at: 1000, last_active: 1000 })])
+    pending[1]([])
+    await load
+
+    expect(store.sessions.map(session => session.id)).toEqual([newSession.id, 'session-a'])
+    expect(store.activeSessionId).toBe(newSession.id)
+    expect(store.activeSession?.id).toBe(newSession.id)
+  })
 })
