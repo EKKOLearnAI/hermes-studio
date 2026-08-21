@@ -897,6 +897,7 @@ export default {
   },
 
   // スケジュールジョブ
+  scheduleBuilder: { time: '時刻', hour: '時', minute: '分', weekday: '曜日', monthDay: '日付' },
   jobs: {
     title: 'スケジュールジョブ',
     createJob: 'ジョブを作成',
@@ -914,9 +915,15 @@ export default {
     schedule: 'スケジュール (Cron 式)',
     schedulePlaceholder: '例: 0 9 * * *',
     quickPresets: 'クイックプリセット',
-    selectPreset: 'プリセットを選択...',
+    frequency: '実行頻度',
+    selectPreset: '実行頻度を選択...',
+    customSchedule: 'カスタムスケジュール（上級）',
+    frequencyDaily: '毎日',
+    frequencyWeekly: '毎週',
+    frequencyMonthly: '毎月',
     presetEveryMinute: '毎分',
     presetEvery5Min: '5分ごと',
+    presetEvery30Min: '30分ごと',
     presetEveryHour: '毎時',
     presetEveryDay: '毎日 00:00',
     presetEveryDay9: '毎日 09:00',
@@ -2480,6 +2487,8 @@ export default {
       disabled: "無効",
       empty: "スケジュールはまだありません",
       cron: "Cron スケジュール",
+      frequency: "実行頻度",
+      selectFrequency: "実行頻度を選択...",
       cronPlaceholder: "例：0 9 * * * または {'@'}daily",
       timezone: "タイムゾーン",
       timezonePlaceholder: "IANA タイムゾーン（例：Asia/Shanghai）",
@@ -2501,10 +2510,14 @@ export default {
       required: "Cron スケジュールとタイムゾーンは必須です",
       reset: "リセット",
       presets: {
+        everyMinute: "毎分",
+        every5Minutes: "5分ごと",
+        every30Minutes: "30分ごと",
         hourly: "毎時",
         daily: "毎日",
         weekly: "毎週",
         monthly: "毎月",
+        custom: "カスタム Cron 式（上級）",
       },
     },
     evidence: {

@@ -267,6 +267,8 @@ const WORKFLOW_SCHEDULE_LOCALIZED_KEYS = [
   'workflow.schedule.enabled',
   'workflow.schedule.disabled',
   'workflow.schedule.empty',
+  'workflow.schedule.frequency',
+  'workflow.schedule.selectFrequency',
   'workflow.schedule.cron',
   'workflow.schedule.cronPlaceholder',
   'workflow.schedule.timezone',
@@ -288,10 +290,14 @@ const WORKFLOW_SCHEDULE_LOCALIZED_KEYS = [
   'workflow.schedule.deleteFailed',
   'workflow.schedule.required',
   'workflow.schedule.reset',
+  'workflow.schedule.presets.everyMinute',
+  'workflow.schedule.presets.every5Minutes',
+  'workflow.schedule.presets.every30Minutes',
   'workflow.schedule.presets.hourly',
   'workflow.schedule.presets.daily',
   'workflow.schedule.presets.weekly',
   'workflow.schedule.presets.monthly',
+  'workflow.schedule.presets.custom',
 ]
 
 const PLATFORM_SETTINGS_LOCALIZED_KEYS = [

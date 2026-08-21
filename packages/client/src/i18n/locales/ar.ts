@@ -975,6 +975,8 @@ export default {
       enabled: "مفعّل",
       disabled: "معطّل",
       empty: "لا توجد جداول بعد",
+      frequency: "تكرار التشغيل",
+      selectFrequency: "اختر تكرار التشغيل...",
       cron: "جدول Cron",
       cronPlaceholder: "مثل: 0 9 * * * أو {'@'}daily",
       timezone: "المنطقة الزمنية",
@@ -997,10 +999,14 @@ export default {
       required: "يلزم إدخال جدول Cron والمنطقة الزمنية",
       reset: "إعادة تعيين",
       presets: {
+        everyMinute: "كل دقيقة",
+        every5Minutes: "كل 5 دقائق",
+        every30Minutes: "كل 30 دقيقة",
         hourly: "كل ساعة",
         daily: "يوميًا",
         weekly: "أسبوعيًا",
         monthly: "شهريًا",
+        custom: "تعبير Cron مخصص (متقدم)",
       },
     },
     evidence: {
@@ -1337,6 +1343,7 @@ export default {
   },
 
   // Jobs
+  scheduleBuilder: { time: 'الوقت', hour: 'الساعة', minute: 'الدقيقة', weekday: 'يوم الأسبوع', monthDay: 'يوم الشهر' },
   jobs: {
     title: 'المهام المجدولة',
     createJob: 'إنشاء مهمة',
@@ -1354,9 +1361,15 @@ export default {
     schedule: 'الجدولة (تعبير cron)',
     schedulePlaceholder: 'مثال: 0 9 * * *',
     quickPresets: 'إعدادات جاهزة',
-    selectPreset: 'اختر إعدادًا جاهزًا...',
+    frequency: 'تكرار التشغيل',
+    selectPreset: 'اختر تكرار التشغيل...',
+    customSchedule: 'جدول مخصص (متقدم)',
+    frequencyDaily: 'كل يوم',
+    frequencyWeekly: 'كل أسبوع',
+    frequencyMonthly: 'كل شهر',
     presetEveryMinute: 'كل دقيقة',
     presetEvery5Min: 'كل 5 دقائق',
+    presetEvery30Min: 'كل 30 دقيقة',
     presetEveryHour: 'كل ساعة',
     presetEveryDay: 'كل يوم عند 00:00',
     presetEveryDay9: 'كل يوم عند 09:00',

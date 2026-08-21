@@ -845,6 +845,8 @@ export default {
       enabled: "Включено",
       disabled: "Отключено",
       empty: "Расписаний пока нет",
+      frequency: "Частота запуска",
+      selectFrequency: "Выберите частоту...",
       cron: "Расписание Cron",
       cronPlaceholder: "например, 0 9 * * * или {'@'}daily",
       timezone: "Часовой пояс",
@@ -867,10 +869,14 @@ export default {
       required: "Требуются расписание Cron и часовой пояс",
       reset: "Сбросить",
       presets: {
+        everyMinute: "Каждую минуту",
+        every5Minutes: "Каждые 5 минут",
+        every30Minutes: "Каждые 30 минут",
         hourly: "Каждый час",
         daily: "Ежедневно",
         weekly: "Еженедельно",
         monthly: "Ежемесячно",
+        custom: "Пользовательское Cron-выражение (расширенное)",
       },
     },
     evidence: {
@@ -1186,6 +1192,7 @@ export default {
   },
 
 
+  scheduleBuilder: { time: 'Время', hour: 'Час', minute: 'Минута', weekday: 'День недели', monthDay: 'День месяца' },
   jobs: {
     title: 'Периодические задачи',
     createJob: 'Создать задачу',
@@ -1203,9 +1210,15 @@ export default {
     schedule: 'Выражение расписания (Cron)',
     schedulePlaceholder: 'Например, 0 9 * * *',
     quickPresets: 'Быстрые предустановки',
-    selectPreset: 'Выберите предустановку...',
+    frequency: 'Частота запуска',
+    selectPreset: 'Выберите частоту...',
+    customSchedule: 'Пользовательское расписание (расширенное)',
+    frequencyDaily: 'Каждый день',
+    frequencyWeekly: 'Каждую неделю',
+    frequencyMonthly: 'Каждый месяц',
     presetEveryMinute: 'Каждую минуту',
     presetEvery5Min: 'Каждые 5 минут',
+    presetEvery30Min: 'Каждые 30 минут',
     presetEveryHour: 'Каждый час',
     presetEveryDay: 'Каждый день в 00:00',
     presetEveryDay9: 'Каждый день в 09:00',

@@ -980,8 +980,8 @@ export default {
       nodeStartRemaining: '{remaining} remaining at node start',
     },
     schedule: {
-      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Cron schedule and timezone are required', reset: 'Reset',
-      presets: { hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' },
+      title: 'Workflow schedules', manage: 'Manage schedules', createTitle: 'Create schedule', editTitle: 'Edit schedule', create: 'Create schedule', save: 'Save schedule', edit: 'Edit schedule', delete: 'Delete schedule', deleteConfirm: 'Delete this schedule?', deleted: 'Schedule deleted', enable: 'Enable schedule', disable: 'Disable schedule', enabled: 'Enabled', disabled: 'Disabled', empty: 'No schedules yet', frequency: 'Run frequency', selectFrequency: 'Select a frequency...', cron: 'Cron schedule', cronPlaceholder: "e.g. 0 9 * * * or {'@'}daily", timezone: 'Timezone', timezonePlaceholder: 'IANA timezone, e.g. Asia/Shanghai', initialInput: 'Initial input', initialInputPlaceholder: 'Optional input for every scheduled Run', startNodes: 'Start nodes', startNodesPlaceholder: 'Default workflow start nodes', timeout: 'Total timeout (minutes)', timeoutPlaceholder: 'No deadline', policies: 'Concurrency: skip · Missed runs: skip', lastScheduled: 'Last scheduled', nextRun: 'Next run', lastRun: 'Last Run', never: 'Never', loadFailed: 'Failed to load schedules', saveFailed: 'Failed to save schedule', saved: 'Schedule saved', deleteFailed: 'Failed to delete schedule', required: 'Run frequency and timezone are required', reset: 'Reset',
+      presets: { everyMinute: 'Every minute', every5Minutes: 'Every 5 minutes', every30Minutes: 'Every 30 minutes', hourly: 'Every hour', daily: 'Every day', weekly: 'Every week', monthly: 'Every month', custom: 'Custom Cron expression (advanced)' },
     },
     evidence: {
       historyPage: 'Run history', detailsPage: 'Run details', backToRuns: 'Back to run history', resultStatus: 'Status', duration: 'Duration', budgetLabel: 'Budget', actualExecution: 'Executed', otherJudgments: 'Other judgments', loopEvents: 'Loop events', evaluatedNotExecuted: 'Evaluated, not executed',
@@ -1317,6 +1317,7 @@ export default {
   },
 
   // Jobs
+  scheduleBuilder: { time: 'Time', hour: 'Hour', minute: 'Minute', weekday: 'Day of week', monthDay: 'Day of month' },
   jobs: {
     title: 'Scheduled Jobs',
     createJob: 'Create Job',
@@ -1334,9 +1335,15 @@ export default {
     schedule: 'Schedule (Cron Expression)',
     schedulePlaceholder: 'e.g. 0 9 * * *',
     quickPresets: 'Quick Presets',
-    selectPreset: 'Select a preset...',
+    frequency: 'Run frequency',
+    selectPreset: 'Select a frequency...',
+    customSchedule: 'Custom schedule (advanced)',
+    frequencyDaily: 'Every day',
+    frequencyWeekly: 'Every week',
+    frequencyMonthly: 'Every month',
     presetEveryMinute: 'Every minute',
     presetEvery5Min: 'Every 5 minutes',
+    presetEvery30Min: 'Every 30 minutes',
     presetEveryHour: 'Every hour',
     presetEveryDay: 'Every day at 00:00',
     presetEveryDay9: 'Every day at 09:00',

@@ -897,6 +897,7 @@ export default {
   },
 
   // 예약 작업
+  scheduleBuilder: { time: '시간', hour: '시', minute: '분', weekday: '요일', monthDay: '매월 날짜' },
   jobs: {
     title: '예약 작업',
     createJob: '작업 생성',
@@ -914,9 +915,15 @@ export default {
     schedule: '스케줄 (Cron 표현식)',
     schedulePlaceholder: '예: 0 9 * * *',
     quickPresets: '빠른 프리셋',
-    selectPreset: '프리셋 선택...',
+    frequency: '실행 빈도',
+    selectPreset: '실행 빈도 선택...',
+    customSchedule: '사용자 지정 일정(고급)',
+    frequencyDaily: '매일',
+    frequencyWeekly: '매주',
+    frequencyMonthly: '매월',
     presetEveryMinute: '매 분',
     presetEvery5Min: '매 5분',
+    presetEvery30Min: '매 30분',
     presetEveryHour: '매 시간',
     presetEveryDay: '매일 00:00',
     presetEveryDay9: '매일 09:00',
@@ -2479,6 +2486,8 @@ export default {
       enabled: "사용",
       disabled: "사용 안 함",
       empty: "일정이 없습니다",
+      frequency: "실행 빈도",
+      selectFrequency: "실행 빈도 선택...",
       cron: "Cron 일정",
       cronPlaceholder: "예: 0 9 * * * 또는 {'@'}daily",
       timezone: "시간대",
@@ -2501,10 +2510,14 @@ export default {
       required: "Cron 일정과 시간대가 필요합니다",
       reset: "재설정",
       presets: {
+        everyMinute: "매분",
+        every5Minutes: "5분마다",
+        every30Minutes: "30분마다",
         hourly: "매시간",
         daily: "매일",
         weekly: "매주",
         monthly: "매월",
+        custom: "사용자 지정 Cron 표현식(고급)",
       },
     },
     evidence: {

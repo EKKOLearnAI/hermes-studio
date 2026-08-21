@@ -966,6 +966,8 @@ export default {
       enabled: "已啟用",
       disabled: "已停用",
       empty: "目前沒有排程",
+      frequency: "執行頻率",
+      selectFrequency: "選擇執行頻率...",
       cron: "Cron 排程",
       cronPlaceholder: "例如：0 9 * * * 或 {'@'}daily",
       timezone: "時區",
@@ -988,10 +990,14 @@ export default {
       required: "必須填寫 Cron 排程和時區",
       reset: "重設",
       presets: {
+        everyMinute: "每分鐘",
+        every5Minutes: "每 5 分鐘",
+        every30Minutes: "每 30 分鐘",
         hourly: "每小時",
         daily: "每天",
         weekly: "每週",
         monthly: "每月",
+        custom: "自訂 Cron 運算式（進階）",
       },
     },
     evidence: {
@@ -1332,6 +1338,7 @@ export default {
   },
 
   // 排程任務
+  scheduleBuilder: { time: '時間', hour: '小時', minute: '分鐘', weekday: '星期', monthDay: '每月日期' },
   jobs: {
     title: '排程任務',
     createJob: '建立任務',
@@ -1349,9 +1356,15 @@ export default {
     schedule: '排程運算式 (Cron)',
     schedulePlaceholder: '例如 0 9 * * *',
     quickPresets: '快速預設',
-    selectPreset: '選擇預設...',
+    frequency: '執行頻率',
+    selectPreset: '選擇執行頻率...',
+    customSchedule: '自訂排程（進階）',
+    frequencyDaily: '每天',
+    frequencyWeekly: '每週',
+    frequencyMonthly: '每月',
     presetEveryMinute: '每分鐘',
     presetEvery5Min: '每 5 分鐘',
+    presetEvery30Min: '每 30 分鐘',
     presetEveryHour: '每小時',
     presetEveryDay: '每天 00:00',
     presetEveryDay9: '每天 09:00',
