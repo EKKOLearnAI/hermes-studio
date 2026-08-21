@@ -2734,6 +2734,7 @@ export async function startCodingAgentRun(
     ...resolvedInput,
     sessionId,
     agentSessionId,
+    agentNativeSessionId,
     isolateSettings: true,
     piOutputMode: id === 'pi' ? 'rpc' : undefined,
   })
