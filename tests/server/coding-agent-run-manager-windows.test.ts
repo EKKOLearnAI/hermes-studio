@@ -389,6 +389,69 @@ describe('coding agent Windows process launch', () => {
     )
   })
 
+  it('treats a Codex server request with id 2 as an approval instead of a thread response', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted = vi.fn()
+    ;(manager as any).emitToChat = emitted
+    const stdin = new testState.TestEmitter() as any
+    stdin.write = vi.fn()
+    const kill = vi.fn()
+    const run: any = {
+      id: 'agent-session-codex-colliding-request',
+      launch: {
+        agentSessionId: 'agent-session-codex-colliding-request',
+        agentId: 'codex',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'gpt-test',
+        sessionId: 'chat-session-codex-colliding-request',
+        command: 'codex.cmd',
+        args: [],
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      generation: 8,
+      currentChild: {
+        stdin,
+        kill,
+        exitCode: null,
+        signalCode: null,
+        killed: false,
+      },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    ;(manager as any).handleCodexAppServerLine(
+      run,
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'item/commandExecution/requestApproval',
+        params: { command: ['git', 'status'], reason: 'inspect repository state' },
+      }),
+      '',
+      '',
+      [],
+    )
+
+    expect(kill).not.toHaveBeenCalled()
+    expect(emitted).toHaveBeenCalledWith(
+      'chat-session-codex-colliding-request',
+      'approval.requested',
+      expect.objectContaining({
+        runtime: 'codex',
+        generation: 8,
+        command: 'git status',
+        choices: ['once', 'session', 'deny'],
+      }),
+    )
+  })
+
   it('maps Pi select/input/editor UI to clarifications and fails unknown methods closed', () => {
     const manager = new CodingAgentRunManager()
     const emitted = vi.fn()

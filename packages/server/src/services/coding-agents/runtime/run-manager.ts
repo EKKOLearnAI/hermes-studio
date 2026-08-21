@@ -2588,6 +2588,39 @@ export class CodingAgentRunManager {
       return
     }
 
+    const method = String(message.method || '').trim()
+    const params = message.params || {}
+    if (method) {
+      if (message.id !== undefined && (
+        method === 'item/commandExecution/requestApproval' ||
+        method === 'item/fileChange/requestApproval'
+      )) {
+        this.handleCodexApprovalRequest(run, message.id, method, params)
+        return
+      }
+      if (method === 'serverRequest/resolved') {
+        const nativeId = String(params.requestId ?? params.id ?? '').trim()
+        const request = [...(run.runtimeApprovals?.values() || [])].find(candidate =>
+          candidate.runtime === 'codex' && candidate.nativeId === nativeId,
+        )
+        if (request) this.finishRuntimeApproval(run, request, request.submittedChoice || 'deny')
+        return
+      }
+      if (method === 'turn/completed') {
+        this.cancelRuntimeApprovals(run, 'Codex turn completed before approval resolution')
+        const turn = params.turn || {}
+        if (turn.status === 'failed') {
+          this.failCodexExecTurn(run, responseErrorMessage(turn.error) || 'Codex run failed')
+        } else {
+          this.completeCodexExecTurn(run, params.usage)
+        }
+        run.currentChild?.kill()
+        return
+      }
+      this.handleCodexProtocolEvent(run, method, params)
+      return
+    }
+
     if (message.id === 1 && message.result) {
       this.writeCodexRpc(run, { method: 'initialized', params: {} })
       const resume = Boolean(run.launch.agentNativeSessionId && run.nativeResumeReady)
@@ -2657,36 +2690,6 @@ export class CodingAgentRunManager {
       return
     }
 
-    const method = String(message.method || '').trim()
-    const params = message.params || {}
-    if (!method) return
-    if (message.id !== undefined && (
-      method === 'item/commandExecution/requestApproval' ||
-      method === 'item/fileChange/requestApproval'
-    )) {
-      this.handleCodexApprovalRequest(run, message.id, method, params)
-      return
-    }
-    if (method === 'serverRequest/resolved') {
-      const nativeId = String(params.requestId ?? params.id ?? '').trim()
-      const request = [...(run.runtimeApprovals?.values() || [])].find(candidate =>
-        candidate.runtime === 'codex' && candidate.nativeId === nativeId,
-      )
-      if (request) this.finishRuntimeApproval(run, request, request.submittedChoice || 'deny')
-      return
-    }
-    if (method === 'turn/completed') {
-      this.cancelRuntimeApprovals(run, 'Codex turn completed before approval resolution')
-      const turn = params.turn || {}
-      if (turn.status === 'failed') {
-        this.failCodexExecTurn(run, responseErrorMessage(turn.error) || 'Codex run failed')
-      } else {
-        this.completeCodexExecTurn(run, params.usage)
-      }
-      run.currentChild?.kill()
-      return
-    }
-    this.handleCodexProtocolEvent(run, method, params)
   }
 
   private handleCodexApprovalRequest(run: ManagedCodingAgentRun, requestId: string | number, method: string, params: any): void {
