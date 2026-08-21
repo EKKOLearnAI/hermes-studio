@@ -14,6 +14,7 @@ import {
 } from '@/api/hermes/config'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import FallbackProvidersPanel from './FallbackProvidersPanel.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -441,6 +442,10 @@ watch(() => delegationForm.value.provider, (provider) => {
       </div>
     </NSpin>
 
+    <div class="fallback-section">
+      <FallbackProvidersPanel />
+    </div>
+
     <NModal
       v-model:show="showDelegationEditor"
       preset="card"
@@ -678,6 +683,11 @@ watch(() => delegationForm.value.provider, (provider) => {
 .auxiliary-table-scroll {
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+.fallback-section {
+  padding: 16px;
+  border-top: 1px solid $border-light;
 }
 
 .auxiliary-table {

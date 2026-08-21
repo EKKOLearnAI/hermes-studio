@@ -53,6 +53,7 @@ import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./se
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
+import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
@@ -89,6 +90,7 @@ const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
   addFiles?: (files: File[]) => void;
   addBrowserAttachment?: (file: File, context: string) => void;
+  focusComposer?: () => void;
 }) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
 const chatMainContentRef = ref<HTMLElement | null>(null);
@@ -440,6 +442,11 @@ watch(
     }
 
     await nextTick();
+    // A session you just opened should be ready to type in. Without this the
+    // composer keeps whatever focus the sidebar click left behind, so the first
+    // keystroke goes nowhere.
+    chatInputRef.value?.focusComposer?.();
+
     const surface = chatMainContentRef.value;
     if (!surface || typeof surface.animate !== "function") return;
 
@@ -1614,7 +1621,10 @@ const showSessionModelModeModal = ref(false);
 const sessionModelSessionId = ref<string | null>(null);
 const sessionModelSearch = ref("");
 const sessionModelKind = ref<"model" | "moa">("model");
-const sessionModelCollapsedGroups = ref<Record<string, boolean>>({});
+const {
+  isGroupCollapsed: isSessionModelGroupCollapsed,
+  toggleGroup: toggleSessionModelCollapsedGroup,
+} = useCollapsedProviderGroups();
 const sessionModelValue = ref("");
 const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
@@ -1741,7 +1751,6 @@ async function openSessionModelModal(sessionId: string) {
   sessionModelCustomProvider.value = usesMoa ? defaults.provider : sessionModelProvider.value;
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
-  sessionModelCollapsedGroups.value = {};
   showSessionModelModal.value = true;
 }
 
@@ -1760,13 +1769,9 @@ function handleHeaderModelClick() {
   openSessionModelModal(sessionId);
 }
 
-function isSessionModelGroupCollapsed(provider: string) {
-  return !!sessionModelCollapsedGroups.value[provider];
-}
-
 function toggleSessionModelGroup(provider: string) {
   if (sessionModelSwitching.value) return;
-  sessionModelCollapsedGroups.value[provider] = !sessionModelCollapsedGroups.value[provider];
+  toggleSessionModelCollapsedGroup(provider);
 }
 
 function isCustomSessionModel(model: string, provider: string) {
@@ -2630,7 +2635,7 @@ async function handleSessionModelCustomSubmit() {
               </svg>
             </template>
           </NButton>
-          <span class="header-session-title">{{ headerTitle }}</span>
+          <span class="header-session-title" dir="auto">{{ headerTitle }}</span>
           <button
             v-if="chatStore.activeSession?.workspace"
             class="workspace-badge"

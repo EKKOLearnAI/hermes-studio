@@ -180,6 +180,49 @@ describe('session DB compression lineage', () => {
     })
   })
 
+  it('keeps session reset children as separate visible history entries', async () => {
+    insertSession(db!, {
+      id: 'before-reset',
+      source: 'feishu',
+      title: 'Before reset',
+      started_at: 100,
+      ended_at: 200,
+      end_reason: 'session_reset',
+    })
+    insertSession(db!, {
+      id: 'after-reset',
+      source: 'feishu',
+      parent_session_id: 'before-reset',
+      title: 'After reset',
+      started_at: 201,
+    })
+    insertMessage(db!, { id: 11, session_id: 'before-reset', content: 'before reset history', timestamp: 101 })
+    insertMessage(db!, { id: 12, session_id: 'after-reset', content: '重置后可搜索', timestamp: 202 })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const summaries = await mod.listSessionSummaries('feishu', 20)
+    expect(summaries.map(summary => summary.id)).toEqual(['after-reset', 'before-reset'])
+
+    const groups = await mod.listSessionSummaryGroups(20, 'default')
+    expect(groups.groups).toEqual([
+      expect.objectContaining({
+        source: 'feishu',
+        sessions: [
+          expect.objectContaining({ id: 'after-reset' }),
+          expect.objectContaining({ id: 'before-reset' }),
+        ],
+      }),
+    ])
+
+    const beforeDetail = await mod.getSessionDetailFromDb('before-reset')
+    const afterDetail = await mod.getSessionDetailFromDb('after-reset')
+    expect(beforeDetail?.messages.map(message => message.session_id)).toEqual(['before-reset'])
+    expect(afterDetail?.messages.map(message => message.session_id)).toEqual(['after-reset'])
+
+    const search = await mod.searchSessionSummaries('重置后可搜索', 'feishu', 20)
+    expect(search.map(summary => summary.id)).toEqual(['after-reset'])
+  })
+
   it('returns an independent first page and continuation signal for each source', async () => {
     insertSession(db!, { id: 'cli-new', source: 'cli', started_at: 300 })
     insertSession(db!, { id: 'cli-old', source: 'cli', started_at: 200 })

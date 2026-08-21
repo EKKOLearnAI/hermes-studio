@@ -28,6 +28,9 @@ const profilesStore = vi.hoisted(() => ({
 vi.mock('@/api/hermes/config', () => apiMocks)
 vi.mock('@/stores/hermes/models', () => ({ useModelsStore: () => modelsStore }))
 vi.mock('@/stores/hermes/profiles', () => ({ useProfilesStore: () => profilesStore }))
+vi.mock('@/components/hermes/models/FallbackProvidersPanel.vue', () => ({
+  default: { template: '<div data-testid="fallback-providers-panel" />' },
+}))
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
@@ -113,6 +116,7 @@ describe('AuxiliaryModelsPanel delegation model', () => {
     expect(apiMocks.fetchAuxiliaryModels).toHaveBeenCalledOnce()
     expect(apiMocks.fetchDelegationModel).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('openrouter / old-model')
+    expect(wrapper.find('[data-testid="fallback-providers-panel"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="delegation-edit"]').trigger('click')
     const selects = wrapper.findAllComponents({ name: 'NSelect' })

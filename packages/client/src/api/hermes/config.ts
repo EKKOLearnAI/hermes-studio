@@ -134,6 +134,15 @@ export interface DelegationModelResponse {
   delegation: DelegationModelConfig
 }
 
+export interface FallbackProviderEntry {
+  provider: string
+  model: string
+}
+
+export interface FallbackProvidersResponse {
+  fallback_providers: FallbackProviderEntry[]
+}
+
 export interface MoaModelSlot {
   provider: string
   model: string
@@ -202,6 +211,20 @@ export async function saveDelegationModel(delegation: DelegationModelConfig): Pr
   return request<{ success: boolean; delegation: DelegationModelConfig }>('/api/hermes/config/delegation-model', {
     method: 'PUT',
     body: JSON.stringify({ delegation }),
+  })
+}
+
+export async function fetchFallbackProviders(): Promise<FallbackProvidersResponse> {
+  return request<FallbackProvidersResponse>('/api/hermes/config/fallback-providers')
+}
+
+export async function saveFallbackProviders(fallbackProviders: FallbackProviderEntry[]): Promise<{
+  success: boolean
+  fallback_providers: FallbackProviderEntry[]
+}> {
+  return request<{ success: boolean; fallback_providers: FallbackProviderEntry[] }>('/api/hermes/config/fallback-providers', {
+    method: 'PUT',
+    body: JSON.stringify({ fallback_providers: fallbackProviders }),
   })
 }
 

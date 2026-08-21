@@ -724,6 +724,7 @@ export default {
     attachFiles: 'Attach files',
     reasoningEffort: {
       tooltip: 'Reasoning effort',
+      dragHint: 'Drag to choose · {count} levels',
       defaultLabel: 'Default',
       options: {
         default: 'Default (config.yaml)',
@@ -1709,6 +1710,7 @@ export default {
     providerReconnectHint: 'Changes apply to new runs. Existing chat or coding-agent sessions must reconnect.',
     testConnection: 'Test connection',
     providerTestSuccess: 'Connection succeeded; {count} models found',
+    providerTestNoCatalog: 'Reachable, but this endpoint does not list models. Enter the model ID yourself, and check the base URL if you expected a list.',
     providerTestFailed: 'Provider connection test failed',
     providerTestFailedTitle: 'Connection test failed',
     providerSaveAnywayHint: 'You can still save these settings explicitly, but the provider may be unavailable.',
@@ -1843,6 +1845,16 @@ export default {
     delegationSaveFailed: 'Failed to save subagent model',
     auxiliarySubtitle: 'Side-task model overrides for compression, vision, approvals, MCP, and background maintenance.',
     combinationTitle: 'Model Ensembles',
+    fallbackTitle: 'Fallback',
+    fallbackSubtitle: 'If the main model fails, Hermes tries these in order without losing the conversation.',
+    fallbackAdd: 'Add fallback',
+    fallbackReorderHint: 'Drag a row to change the order Hermes tries them in. With the keyboard, focus a row and hold Alt with the up or down arrow.',
+    fallbackRowAria: 'Fallback {position} of {total}',
+    fallbackEmpty: 'No fallback models yet.',
+    fallbackSaved: 'Fallback chain saved',
+    fallbackSaveFailed: 'Failed to save the fallback chain',
+    fallbackLoadFailed: 'Failed to load the fallback chain',
+    fallbackAppliesToNewSessions: 'Applies to sessions started after saving; running sessions keep the chain they began with.',
     combinationSubtitle: 'Configure MoA presets: reference models provide perspectives first, then one aggregator model handles the final response and tool calls.',
     combinationPreset: 'Preset',
     combinationName: 'Name',
@@ -3268,6 +3280,14 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_44_1: 'This release covers all 13 PRs merged after v0.6.43, focused on live Group Chat history and activity, App connection reliability, provider usability, and Agent Bridge persistence',
+    new_0_6_44_2: 'Group Chat now shows active Agent runs across rooms, places a taller Tool panel above the transcript, lets the active room section collapse, and loads complete history directly in the live room (#2572, #2573, #2584, #2594)',
+    new_0_6_44_3: 'App connections now prefer physical LAN addresses over VPN adapters, refresh stale relay pairing codes correctly, and serve compact profile avatars to mobile clients (#2591, #2592, #2598)',
+    new_0_6_44_4: 'The public website adds an English and Chinese privacy policy covering Google user data, permission revocation, storage, sharing, and Limited Use requirements (#2590)',
+    new_0_6_44_5: 'Model and Provider workflows remember collapsed provider groups across pickers, while reachable providers without a model catalog can be saved with a clear warning instead of a false connection failure (#2585, #2587)',
+    new_0_6_44_6: 'The file manager now accepts valid names beginning with multiple dots, such as ..hidden, while continuing to block real parent-directory traversal (#2586)',
+    new_0_6_44_7: 'Web UI conversations now receive the configured fallback provider chain, allowing an eligible primary-model failure such as a rate limit to switch to a backup provider (#2599)',
+    new_0_6_44_8: 'Chat history no longer stores the same user message twice when Studio and Hermes share the session database; failed early writes still fall back to native persistence so messages are not lost (#2601)',
     new_0_6_43_1: 'This release covers all 19 PRs merged after v0.6.42, centered on Pi and native Coding Agent commands, secure App and device connections, complete Group Chat history, cancellable queues, and reliability improvements',
     new_0_6_43_2: 'Pi joins Studio as a managed Coding Agent with scoped and Global RPC sessions, live text and reasoning, Studio approvals and clarifications, isolated configuration, lazy MCP tools, provider routing, and native session continuity (#2528)',
     new_0_6_43_3: 'Codex, Claude, and Pi chats now handle /context, /compact, /usage, and /status before prompts reach the CLI; /compact uses each Agent’s native compaction and reports native failures without an unsafe Studio fallback (#2566)',

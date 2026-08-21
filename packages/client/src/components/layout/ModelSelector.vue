@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 import { useI18n } from 'vue-i18n'
 
 const emit = defineEmits<{
@@ -15,7 +16,7 @@ const profilesStore = useProfilesStore()
 
 const showModal = ref(false)
 const searchQuery = ref('')
-const collapsedGroups = ref<Record<string, boolean>>({})
+const { isGroupCollapsed, toggleGroup } = useCollapsedProviderGroups()
 const customInput = ref('')
 const customProvider = ref('')
 
@@ -79,14 +80,6 @@ const filteredGroups = computed(() => {
     .filter(g => g.models.length > 0 || safeLower(g.label).includes(q))
 })
 
-function toggleGroup(provider: string) {
-  collapsedGroups.value[provider] = !collapsedGroups.value[provider]
-}
-
-function isGroupCollapsed(provider: string) {
-  return !!collapsedGroups.value[provider]
-}
-
 function handleSelect(model: string, provider: string) {
   const meta = activeModelGroups.value.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
@@ -121,7 +114,6 @@ function setModalShow(show: boolean) {
 }
 
 function openModal() {
-  collapsedGroups.value = {}
   searchQuery.value = ''
   customInput.value = ''
   customProvider.value = appStore.selectedProvider

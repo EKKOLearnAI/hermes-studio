@@ -724,6 +724,7 @@ export default {
     attachFiles: '添加附件',
     reasoningEffort: {
       tooltip: '推理强度',
+      dragHint: '拖动选择 · 共 {count} 档',
       defaultLabel: '默认',
       options: {
         default: '默认 (config.yaml)',
@@ -1757,6 +1758,7 @@ export default {
     providerReconnectHint: '修改只对新运行生效；现有聊天或 Coding Agent 会话需要重新连接。',
     testConnection: '测试连接',
     providerTestSuccess: '连接成功，共发现 {count} 个模型',
+    providerTestNoCatalog: '连接正常，但该端点不提供模型列表。请手动填写模型 ID；如果本应有列表，请检查 Base URL。',
     providerTestFailed: 'Provider 连接测试失败',
     providerTestFailedTitle: '连接测试失败',
     providerSaveAnywayHint: '你仍可明确选择保存，但该 Provider 可能暂时不可用。',
@@ -1891,6 +1893,16 @@ export default {
     delegationSaveFailed: '保存子代理模型失败',
     auxiliarySubtitle: '为压缩、视觉、审批、MCP 和后台维护等辅助任务单独指定模型。',
     combinationTitle: '组合模型',
+    fallbackTitle: '备用模型',
+    fallbackSubtitle: '主模型失败时，Hermes 会按顺序尝试这些模型，且不丢失对话上下文。',
+    fallbackAdd: '添加备用',
+    fallbackReorderHint: '拖动行即可调整 Hermes 的尝试顺序。使用键盘时，选中某行后按住 Alt 加上下方向键。',
+    fallbackRowAria: '备用 {position} / {total}',
+    fallbackEmpty: '还没有备用模型。',
+    fallbackSaved: '备用链已保存',
+    fallbackSaveFailed: '保存备用链失败',
+    fallbackLoadFailed: '加载备用链失败',
+    fallbackAppliesToNewSessions: '对保存后新建的会话生效；进行中的会话仍使用启动时的备用链。',
     combinationSubtitle: '配置 MoA 预设：多个参考模型先给出视角，再由一个汇总模型负责最终回复和工具调用。',
     combinationPreset: '预设',
     combinationName: '名称',
@@ -3318,6 +3330,14 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_44_1: '本版本涵盖 v0.6.43 之后合并的全部 13 个 PR，重点改进群聊实时历史与运行状态、App 连接可靠性、模型与 Provider 使用体验，以及 Agent Bridge 消息持久化',
+    new_0_6_44_2: '群聊现可跨房间显示正在运行的 Agent，将更高的 Tool 面板置于对话文本上方，允许折叠当前房间分组，并直接在实时房间中加载完整历史（#2572、#2573、#2584、#2594）',
+    new_0_6_44_3: 'App 连接现会优先使用物理局域网地址而非 VPN 网卡，正确刷新失效的 Relay 配对码，并向移动端提供更紧凑的用户头像数据（#2591、#2592、#2598）',
+    new_0_6_44_4: '官方网站新增中英文隐私政策，说明 Google 用户数据的访问、撤销授权、存储、共享及 Limited Use 要求（#2590）',
+    new_0_6_44_5: '模型与 Provider 流程会在不同选择器之间记住已折叠的 Provider 分组；对于可正常访问但不提供模型目录的服务，也可在明确警告后保存，不再误报连接失败（#2585、#2587）',
+    new_0_6_44_6: '文件管理器现可正确处理 ..hidden 等以多个点开头的合法文件名，同时继续阻止真正的父目录穿越（#2586）',
+    new_0_6_44_7: 'Web UI 对话现会加载已配置的备用 Provider 链；主模型遇到限流等符合条件的错误时，可以自动切换到备用 Provider（#2599）',
+    new_0_6_44_8: 'Studio 与 Hermes 共用会话数据库时，聊天历史不再重复保存同一条用户消息；若提前写入失败，仍由原生持久化兜底，避免消息丢失（#2601）',
     new_0_6_43_1: '本版本涵盖 v0.6.42 之后合并的全部 19 个 PR，重点新增 Pi 与 Coding Agent 原生命令、安全 App 与设备连接、完整群聊历史、可取消执行队列及多项可靠性改进',
     new_0_6_43_2: 'Pi 作为受管 Coding Agent 接入 Studio，支持 Scoped 与 Global RPC 会话、实时文本与推理、Studio 审批和澄清、隔离配置、延迟加载 MCP 工具、Provider 路由及原生会话续接（#2528）',
     new_0_6_43_3: 'Codex、Claude 和 Pi 单聊会在输入到达 CLI 前处理 /context、/compact、/usage 与 /status；/compact 使用各 Agent 的原生压缩，并直接报告原生失败，不进行不安全的 Studio 回退（#2566）',

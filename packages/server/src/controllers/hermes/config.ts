@@ -643,6 +643,73 @@ export async function updateDelegationModel(ctx: any) {
   }
 }
 
+/**
+ * Hermes reads `fallback_providers` from the profile's config.yaml and hands
+ * the chain to the agent when a session starts. Entries missing a provider or
+ * a model are ignored by the agent, so they are dropped here rather than
+ * written out to sit in the file doing nothing.
+ */
+const MAX_FALLBACK_PROVIDERS = 10
+
+function normalizeFallbackProviders(value: unknown): Array<{ provider: string; model: string }> {
+  if (!Array.isArray(value)) return []
+  const normalized: Array<{ provider: string; model: string }> = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (!isPlainRecord(entry)) continue
+    const provider = typeof entry.provider === 'string' ? entry.provider.trim() : ''
+    const model = typeof entry.model === 'string' ? entry.model.trim() : ''
+    if (!provider || !model) continue
+    // The chain is tried in order, so a repeat of an earlier pair can never fire.
+    const key = `${provider}\u0000${model}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    normalized.push({ provider, model })
+    if (normalized.length >= MAX_FALLBACK_PROVIDERS) break
+  }
+  return normalized
+}
+
+export async function getFallbackProviders(ctx: any) {
+  try {
+    const profile = requestedProfile(ctx)
+    const config = await readConfig(profile)
+    ctx.body = { fallback_providers: normalizeFallbackProviders(config.fallback_providers) }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function updateFallbackProviders(ctx: any) {
+  const body = ctx.request.body as { fallback_providers?: unknown }
+  if (!body || !Array.isArray(body.fallback_providers)) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing fallback_providers list' }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const fallbackProviders = normalizeFallbackProviders(body.fallback_providers)
+    await safeFileStore.updateYaml(configPath(profile), (config) => {
+      // An empty chain removes the key instead of leaving `fallback_providers: []`.
+      if (fallbackProviders.length > 0) config.fallback_providers = fallbackProviders
+      else delete config.fallback_providers
+      return config
+    }, {
+      backup: true,
+      dumpOptions: {
+        forceQuotes: true,
+      },
+    })
+    ctx.body = { success: true, fallback_providers: fallbackProviders }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
 export async function getMoaConfig(ctx: any) {
   try {
     const profile = requestedProfile(ctx)
