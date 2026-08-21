@@ -419,7 +419,7 @@ onUnmounted(() => {
   justify-content: center;
   min-width: 16px;
   height: 16px;
-  margin-left: 5px;
+  margin-inline-start: 5px;
   padding: 0 4px;
   border-radius: 8px;
   color: var(--text-primary);
