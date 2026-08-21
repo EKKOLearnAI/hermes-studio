@@ -1,6 +1,6 @@
 ---
 date: 2026-08-21
-pr: pending
+pr: 2648
 feature: Runtime-authoritative approval response lifecycle
 impact: Direct and group chat approval cards now show submitting, retryable failure, or expired states and close only after the matching runtime approval is confirmed.
 ---
