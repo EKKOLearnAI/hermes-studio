@@ -1077,16 +1077,14 @@ test.describe('group chat room deep links', () => {
     }])
   })
 
-  test('copies selected Agent presets into the create-Room request', async ({ page }) => {
+  test('does not offer or apply Agent presets while creating a Room', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat')
 
     await page.getByRole('button', { name: 'Create Room', exact: true }).click()
     const drawer = page.locator('.n-drawer').filter({ hasText: 'Create Room' })
-    await drawer.getByPlaceholder('Enter room name').fill('Preset Room')
+    await expect(drawer.getByText('Agent presets', { exact: true })).toHaveCount(0)
+    await drawer.getByPlaceholder('Enter room name').fill('Plain Room')
     await drawer.getByPlaceholder('Enter your display name').fill('Owner')
-    const presetSection = drawer.locator('section').filter({ hasText: 'Agent presets' })
-    await presetSection.locator('.n-base-selection').click()
-    await page.getByText('Preset Reviewer · default · test-provider/test-model', { exact: true }).click()
 
     const response = page.waitForResponse(item =>
       item.request().method() === 'POST'
@@ -1095,10 +1093,29 @@ test.describe('group chat room deep links', () => {
     await expect((await response).status()).toBe(200)
     expect(api.createdRooms).toEqual([
       expect.objectContaining({
-        name: 'Preset Room',
-        agents: [expect.objectContaining({ presetId: 'preset-reviewer', name: 'Preset Reviewer' })],
+        name: 'Plain Room',
+        agents: [],
       }),
     ])
+  })
+
+  test('manages Agent presets only while editing an existing Room Agent', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await page.locator('.agent-avatar-rail-add').click()
+    const addModal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    await expect(addModal.getByRole('button', { name: 'Save as preset' })).toHaveCount(0)
+    await addModal.getByRole('button', { name: 'Cancel' }).click()
+
+    await page.getByRole('button', { name: 'Worker' }).click()
+    const editModal = page.locator('.modal').filter({ hasText: 'Edit Worker' })
+    await expect(editModal.getByRole('button', { name: 'Save as preset' })).toBeVisible()
+    const presetField = editModal.locator('.form-group').filter({ hasText: 'Agent preset' })
+    await presetField.locator('.n-base-selection').click()
+    await page.getByText('Preset Reviewer · default · test-provider/test-model', { exact: true }).click()
+    await expect(editModal.getByPlaceholder('Custom name (leave empty to use profile name)')).toHaveValue('Worker')
+    await expect(editModal.getByRole('button', { name: 'Update preset' })).toBeVisible()
+    await expect(editModal.getByRole('button', { name: 'Delete preset' })).toBeVisible()
   })
 
   test('member count collapses the default-open scrollable avatar rail', async ({ page }) => {

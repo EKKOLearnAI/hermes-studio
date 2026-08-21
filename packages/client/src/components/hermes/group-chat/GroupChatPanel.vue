@@ -1197,6 +1197,10 @@ async function loadAgentPresets() {
     }
 }
 
+function selectAgentPresetForManagement(presetId: string | null) {
+    selectedAgentPresetId.value = presetId
+}
+
 function applyAgentPreset(presetId: string | null) {
     selectedAgentPresetId.value = presetId
     const preset = agentPresets.value.find(item => item.id === presetId)
@@ -1329,7 +1333,9 @@ async function handleEditAgent(agent: RoomAgent) {
     await Promise.all([
         profilesStore.fetchProfiles(),
         appStore.loadModels(),
+        loadAgentPresets(),
     ])
+    selectedAgentPresetId.value = null
     editingAgent.value = agent
     selectedAgentType.value = agent.agent || 'hermes'
     selectedProfile.value = agent.profile
@@ -2527,7 +2533,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
             <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
                 <div class="modal">
                     <h3>{{ editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent') }}</h3>
-                    <div v-if="!editingAgent" class="agent-preset-editor">
+                    <div v-if="!editingAgent" class="agent-preset-selector">
                         <div class="form-group">
                             <label class="form-label">{{ t('groupChat.agentPreset') }}</label>
                             <NSelect
@@ -2536,6 +2542,19 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                 clearable
                                 :placeholder="t('groupChat.agentPresetPlaceholder')"
                                 @update:value="applyAgentPreset"
+                            />
+                        </div>
+                        <p class="form-hint">{{ t('groupChat.agentPresetSnapshotHint') }}</p>
+                    </div>
+                    <div v-if="editingAgent" class="agent-preset-manager">
+                        <div class="form-group">
+                            <label class="form-label">{{ t('groupChat.agentPreset') }}</label>
+                            <NSelect
+                                :value="selectedAgentPresetId"
+                                :options="agentPresetOptions"
+                                clearable
+                                :placeholder="t('groupChat.agentPresetPlaceholder')"
+                                @update:value="selectAgentPresetForManagement"
                             />
                         </div>
                         <NSpace>
