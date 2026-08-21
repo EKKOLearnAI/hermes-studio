@@ -44,6 +44,7 @@ import {
     uploadGroupChatAttachments,
 } from '@/api/hermes/group-chat-attachments'
 import { groupMessageAgent } from '@/utils/group-agent-avatar'
+import { normalizeStudioApprovalChoices } from '@/utils/runtime-approval'
 
 type GroupChatSocket = ReturnType<typeof connectGroupChat>
 export const GROUP_CHAT_MEMBER_REMOVED = 'ROOM_MEMBER_REMOVED'
@@ -481,9 +482,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             normalizedDescription.startsWith('save to memory:') ||
             normalizedDescription.startsWith('save to memory?')
         )
-        const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
-            .filter((choice): choice is GroupPendingApproval['choices'][number] =>
-                choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+        const runtime = String(data.runtime || data.source || 'hermes')
+        const choices = normalizeStudioApprovalChoices(runtime, data.choices)
         pendingApprovals.value.set(pendingApprovalKey(data.roomId, data.approval_id), {
             roomId: data.roomId,
             agentName: data.agentName || '',
@@ -491,11 +491,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             summary: String(data.summary || data.tool || data.command || ''),
             command: data.command || '',
             description,
-            choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
+            choices: isMemoryWrite ? ['once', 'deny'] : choices,
             allowPermanent: Boolean(data.allow_permanent),
             isMemoryWrite,
             requestedAt: Number(data.requested_at) || Date.now(),
-            runtime: String(data.runtime || data.source || 'hermes'),
+            runtime,
             participantAgent: String(data.participant_agent || ''),
             generation: String(data.generation ?? '0'),
             status: 'pending',

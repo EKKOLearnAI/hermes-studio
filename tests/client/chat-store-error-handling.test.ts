@@ -155,6 +155,34 @@ describe('chat store error handling - #1644', () => {
     expect(store.activePendingApproval).toBeNull()
   })
 
+  it.each([
+    ['claude-code', undefined, ['once', 'deny']],
+    ['claude-code', [], ['once', 'deny']],
+    ['claude-code', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['pi', undefined, ['once', 'deny']],
+    ['pi', [], ['once', 'deny']],
+    ['pi', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['codex', undefined, ['once', 'session', 'deny']],
+    ['codex', [], ['once', 'session', 'deny']],
+    ['codex', ['session', 'always', 'invalid'], ['session']],
+    ['unknown-runtime', undefined, ['once', 'deny']],
+    ['unknown-runtime', ['session', 'deny'], ['deny']],
+  ])('does not expand %s approval choices when input is %j', (runtime, choices, expectedChoices) => {
+    const store = useChatStore()
+    const sessionId = `session-${runtime}-${JSON.stringify(choices)}`
+    store.sessions = [makeSession(sessionId)]
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested',
+      session_id: sessionId,
+      approval_id: `approval-${runtime}-${JSON.stringify(choices)}`,
+      runtime,
+      ...(choices === undefined ? {} : { choices }),
+    })
+
+    expect(store.pendingApprovals.get(sessionId)?.choices).toEqual(expectedChoices)
+  })
+
   it('keeps a pending approval when the authoritative response is unresolved', () => {
     const store = useChatStore()
     store.sessions = [makeSession('session-a'), makeSession('session-b')]

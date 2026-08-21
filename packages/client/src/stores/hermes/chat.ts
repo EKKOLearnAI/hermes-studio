@@ -14,6 +14,7 @@ import { showCompletionNotification } from '@/utils/completion-notification'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 import { isKnownBridgeSessionCommand } from '@/utils/hermes/bridge-session-commands'
 import { responseErrorMessage } from '@/utils/http-error'
+import { normalizeStudioApprovalChoices } from '@/utils/runtime-approval'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -2963,21 +2964,19 @@ export const useChatStore = defineStore('chat', () => {
       normalizedDescription.startsWith('save to memory:') ||
       normalizedDescription.startsWith('save to memory?')
     )
-    const rawChoices = Array.isArray((evt as any).choices) ? (evt as any).choices : ['once', 'session', 'deny']
-    const choices = rawChoices
-      .filter((choice: unknown): choice is PendingApproval['choices'][number] =>
-        choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+    const runtime = String((evt as any).runtime || (evt as any).source || 'hermes')
+    const choices = normalizeStudioApprovalChoices(runtime, (evt as any).choices)
     pendingApprovals.value.set(sid, {
       sessionId: sid,
       approvalId,
       summary: String((evt as any).summary || (evt as any).tool || (evt as any).title || (evt as any).command || ''),
       command: String((evt as any).command || ''),
       description,
-      choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
+      choices: isMemoryWrite ? ['once', 'deny'] : choices,
       allowPermanent: Boolean((evt as any).allow_permanent),
       isMemoryWrite,
       requestedAt: Date.now(),
-      runtime: String((evt as any).runtime || (evt as any).source || 'hermes'),
+      runtime,
       participantAgent: String((evt as any).participant_agent || ''),
       generation: String((evt as any).generation ?? '0'),
       status: 'pending',

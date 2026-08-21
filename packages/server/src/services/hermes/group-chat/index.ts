@@ -37,6 +37,7 @@ import {
     type GroupChatAgentHandoffPolicy,
 } from './handoff-depth'
 import { buildOutboundToolMessage } from '../run-chat/resume-payload'
+import { normalizeGroupApprovalChoices } from './approval-choices'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -5000,7 +5001,8 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        const choices = Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny']
+        const runtime = String(data.runtime || data.source || 'hermes')
+        const choices = normalizeGroupApprovalChoices(runtime, data.choices)
         const routeKey = this.pendingApprovalRouteKey(roomId, data.approval_id)
         this.takePendingApprovalRoute(routeKey)
         const pendingRoute: PendingGroupApprovalRoute = {
@@ -5016,7 +5018,7 @@ export class GroupChatServer {
             allowPermanent: Boolean(data.allow_permanent),
             timeoutMs: normalizePendingInteractionTimeout(data.timeout_ms),
             requestedAt: Date.now(),
-            runtime: String(data.runtime || data.source || 'hermes'),
+            runtime,
             participantAgent: String(data.participant_agent || ''),
             generation: String(data.generation ?? '0'),
         }

@@ -376,7 +376,7 @@ describe('group chat approval and context baseline', () => {
     })).resolves.toEqual({ error: 'Access denied' })
   })
 
-  it('relays approval requested with default choices', async () => {
+  it('relays Codex approval requested with its supported default choices', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const requested = once<any>(human, 'approval.requested')
 
@@ -387,6 +387,7 @@ describe('group chat approval and context baseline', () => {
       approval_id: 'approval-1',
       command: 'touch file',
       description: 'needs approval',
+      runtime: 'codex',
     })
 
     expect(await requested).toMatchObject({
@@ -395,6 +396,39 @@ describe('group chat approval and context baseline', () => {
       agentName: 'Agent',
       approval_id: 'approval-1',
       choices: ['once', 'session', 'deny'],
+    })
+  })
+
+  it.each([
+    ['claude-code', undefined, ['once', 'deny']],
+    ['claude-code', [], ['once', 'deny']],
+    ['claude-code', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['pi', undefined, ['once', 'deny']],
+    ['pi', [], ['once', 'deny']],
+    ['pi', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['codex', undefined, ['once', 'session', 'deny']],
+    ['codex', [], ['once', 'session', 'deny']],
+    ['codex', ['session', 'always', 'invalid'], ['session']],
+    ['unknown-runtime', undefined, ['once', 'deny']],
+    ['unknown-runtime', ['session', 'deny'], ['deny']],
+  ])('does not expand %s approval choices when input is %j', async (runtime, choices, expectedChoices) => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const requested = once<any>(human, 'approval.requested')
+
+    agent.emit('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      approval_id: `approval-${runtime}-${JSON.stringify(choices)}`,
+      command: 'touch file',
+      description: 'needs approval',
+      runtime,
+      ...(choices === undefined ? {} : { choices }),
+    })
+
+    expect(await requested).toMatchObject({
+      runtime,
+      choices: expectedChoices,
     })
   })
 

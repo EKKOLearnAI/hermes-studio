@@ -1187,6 +1187,35 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.pendingApprovals.size).toBe(0)
   })
 
+  it.each([
+    ['claude-code', undefined, ['once', 'deny']],
+    ['claude-code', [], ['once', 'deny']],
+    ['claude-code', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['pi', undefined, ['once', 'deny']],
+    ['pi', [], ['once', 'deny']],
+    ['pi', ['session', 'always', 'invalid'], ['once', 'deny']],
+    ['codex', undefined, ['once', 'session', 'deny']],
+    ['codex', [], ['once', 'session', 'deny']],
+    ['codex', ['session', 'always', 'invalid'], ['session']],
+    ['unknown-runtime', undefined, ['once', 'deny']],
+    ['unknown-runtime', ['session', 'deny'], ['deny']],
+  ])('does not expand %s approval choices when input is %j', async (runtime, choices, expectedChoices) => {
+    const store = await loadStore()
+    await store.connect()
+    await store.joinRoom('room-1')
+    const approvalId = `approval-${runtime}-${JSON.stringify(choices)}`
+
+    emitSocket('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      approval_id: approvalId,
+      runtime,
+      ...(choices === undefined ? {} : { choices }),
+    })
+
+    expect(store.pendingApprovals.get(`room-1:${approvalId}`)?.choices).toEqual(expectedChoices)
+  })
+
   it('tracks group clarifications and removes them when resolved', async () => {
     const store = await loadStore()
     await store.connect()

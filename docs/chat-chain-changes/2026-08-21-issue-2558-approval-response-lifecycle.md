@@ -32,7 +32,11 @@ interfaces fail before a managed run starts; Studio does not fall back to
 permission bypass flags or PTY text parsing.
 
 The card now identifies the Agent, risk description, command/target, and only
-the choices supported by that Runtime. Workflow approvals are unchanged and
-remain outside this change.
+the choices supported by that Runtime. Missing, empty, or invalid option lists
+are normalized against the identified Runtime: Claude Code and Pi remain
+limited to once/deny, Codex to once/session/deny, and unknown Runtimes use the
+conservative once/deny fallback. Legal Runtime-provided subsets remain
+authoritative rather than being expanded by the server or client stores.
+Workflow approvals are unchanged and remain outside this change.
 
 Closes #2558.
