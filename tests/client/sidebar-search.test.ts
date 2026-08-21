@@ -110,6 +110,7 @@ function fakeJwt(payload: Record<string, unknown>) {
 describe('AppSidebar navigation', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop
     openSessionSearchMock.mockClear()
     mockAppStore.serverVersion = 'test'
     mockAppStore.latestVersion = ''
@@ -139,6 +140,51 @@ describe('AppSidebar navigation', () => {
     expect(wrapper.text()).not.toContain('sidebar.search')
     expect(wrapper.text()).not.toContain('sidebar.reloadClientVersion')
     expect(wrapper.find('.sidebar-return-tab').exists()).toBe(true)
+  })
+
+  it('shows version management only in the desktop shell', async () => {
+    const webWrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          VersionManagementModal: {
+            name: 'VersionManagementModal',
+            props: ['show'],
+            template: '<div class="version-management-modal-stub" :data-show="String(show)" />',
+          },
+        },
+      },
+    })
+
+    expect(webWrapper.find('.version-management-btn').exists()).toBe(false)
+    expect(webWrapper.find('.version-management-modal-stub').exists()).toBe(false)
+
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true }
+    const desktopWrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          VersionManagementModal: {
+            name: 'VersionManagementModal',
+            props: ['show'],
+            template: '<div class="version-management-modal-stub" :data-show="String(show)" />',
+          },
+        },
+      },
+    })
+
+    expect(desktopWrapper.find('.version-management-btn').exists()).toBe(true)
+    expect(desktopWrapper.get('.version-management-modal-stub').attributes('data-show')).toBe('false')
+
+    await desktopWrapper.get('.version-management-btn').trigger('click')
+
+    expect(desktopWrapper.get('.version-management-modal-stub').attributes('data-show')).toBe('true')
   })
 
   it('uses short group labels and keeps group folding active when collapsed', async () => {
@@ -204,7 +250,7 @@ describe('AppSidebar navigation', () => {
       },
     })
 
-    const button = wrapper.get('.update-btn')
+    const button = wrapper.get('.update-btn:not(.version-management-btn)')
     expect(button.classes()).not.toContain('docker-update-btn')
     expect(button.text()).toContain('sidebar.updateVersion')
 
@@ -229,7 +275,7 @@ describe('AppSidebar navigation', () => {
       },
     })
 
-    await wrapper.get('.update-btn').trigger('click')
+    await wrapper.get('.update-btn:not(.version-management-btn)').trigger('click')
 
     expect(mockAppStore.doUpdate).toHaveBeenCalledOnce()
     expect(wrapper.text()).not.toContain('sidebar.dockerUpdateGuide')
