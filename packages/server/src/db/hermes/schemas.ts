@@ -646,6 +646,11 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   name: 'TEXT NOT NULL',
   inviteCode: 'TEXT UNIQUE',
   createdAt: 'INTEGER NOT NULL DEFAULT 0',
+  // 'chat' = classic group chat (mentions run agent turns).
+  // 'collab' = group collaboration (mentions create Kanban tasks that a
+  // coordinator profile decomposes and fans out to specialist profiles).
+  // Defaults to 'chat' so every pre-existing room keeps its behaviour.
+  roomKind: "TEXT NOT NULL DEFAULT 'chat'",
   summaryProfile: "TEXT NOT NULL DEFAULT 'default'",
   summaryProvider: "TEXT NOT NULL DEFAULT ''",
   summaryModel: "TEXT NOT NULL DEFAULT ''",
@@ -667,6 +672,40 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   agentHandoffEnabled: 'INTEGER NOT NULL DEFAULT 1',
   agentHandoffMaxDepth: 'INTEGER',
   agentHandoffUnlimited: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+// One row per "群协作" run: a user @mentions a coordinator profile, which
+// becomes a Kanban root task that fans out into child tasks. The row is the
+// bridge between a group-chat message and the Kanban board — every task in
+// the run shares `tenant`, so the whole tree is one `kanban list --tenant`
+// call away (children inherit the root's tenant inside decompose_triage_task).
+export const GC_COLLAB_SESSIONS_TABLE = 'gc_collab_sessions'
+
+export const GC_COLLAB_SESSIONS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  roomId: 'TEXT NOT NULL',
+  // The human message that triggered the run.
+  triggerMessageId: "TEXT NOT NULL DEFAULT ''",
+  // The assistant message whose body renders the live task board.
+  anchorMessageId: "TEXT NOT NULL DEFAULT ''",
+  rootTaskId: "TEXT NOT NULL DEFAULT ''",
+  tenant: "TEXT NOT NULL DEFAULT ''",
+  board: "TEXT NOT NULL DEFAULT 'default'",
+  coordinator: "TEXT NOT NULL DEFAULT ''",
+  goal: "TEXT NOT NULL DEFAULT ''",
+  workspace: "TEXT NOT NULL DEFAULT ''",
+  // creating | decomposing | running | done | failed
+  status: "TEXT NOT NULL DEFAULT 'creating'",
+  error: "TEXT NOT NULL DEFAULT ''",
+  createdAt: 'INTEGER NOT NULL DEFAULT 0',
+  updatedAt: 'INTEGER NOT NULL DEFAULT 0',
+}
+
+export const GC_COLLAB_SESSIONS_INDEXES = {
+  idx_gc_collab_sessions_room:
+    'CREATE INDEX IF NOT EXISTS idx_gc_collab_sessions_room ON gc_collab_sessions(roomId, createdAt)',
+  idx_gc_collab_sessions_anchor:
+    'CREATE INDEX IF NOT EXISTS idx_gc_collab_sessions_anchor ON gc_collab_sessions(anchorMessageId)',
 }
 
 export const GC_HANDOFF_CHAINS_TABLE = 'gc_handoff_chains'
@@ -1530,6 +1569,13 @@ export function initAllHermesTables(): void {
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
+    syncTable(GC_COLLAB_SESSIONS_TABLE, GC_COLLAB_SESSIONS_SCHEMA, {
+      indexes: GC_COLLAB_SESSIONS_INDEXES,
+    })
+    // syncTable() only creates indexes for brand-new tables, so an install that
+    // predates this table needs them applied here too. The statements are
+    // IF NOT EXISTS, which is what keeps every subsequent boot a no-op.
+    createIndexes(db, GC_COLLAB_SESSIONS_INDEXES)
     syncTable(GC_HANDOFF_CHAINS_TABLE, GC_HANDOFF_CHAINS_SCHEMA, { indexes: GC_HANDOFF_CHAINS_INDEXES })
     syncTable(GC_HANDOFF_ATTEMPTS_TABLE, GC_HANDOFF_ATTEMPTS_SCHEMA, { indexes: GC_HANDOFF_ATTEMPTS_INDEXES })
     // Migrate the legacy one-attempt-per-chain index to retained history plus

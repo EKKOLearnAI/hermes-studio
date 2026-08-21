@@ -230,6 +230,7 @@ export default {
     devices: 'Gerate',
     connections: 'Geräteverbindungen',
     groupChat: 'Gruppenchat',
+    groupCollab: 'Kollab',
     groupConversation: 'Konversation',
     groupConversationShort: 'Konv',
     groupAgent: 'Agent',

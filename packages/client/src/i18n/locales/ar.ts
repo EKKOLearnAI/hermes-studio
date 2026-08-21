@@ -218,6 +218,7 @@ export default {
     singleChat: 'محادثة',
     globalAgent: 'الوكيل العام',
     groupChat: 'محادثة جماعية',
+    groupCollab: 'تعاون',
     files: 'الملفات',
     devices: 'الأجهزة',
     connections: 'ترابط الأجهزة',

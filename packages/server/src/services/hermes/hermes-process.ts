@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess, ExecFileOptions, SpawnOptions } from 'child_process'
 import { existsSync } from 'fs'
-import { basename, dirname, resolve } from 'path'
+import { basename, delimiter, dirname, join, resolve } from 'path'
 
 export interface HermesInvocation {
   command: string
@@ -13,8 +13,59 @@ export interface HermesExecResult {
   stderr: string
 }
 
+/**
+ * Well-known launcher locations, tried in order when the bare name is not
+ * resolvable on PATH. Studio shells out to the CLI for kanban, sessions,
+ * profiles and more, and a Docker install keeps `hermes` inside a venv that is
+ * not on the service PATH — without this every one of those calls would fail
+ * with a bare ENOENT that reads like a missing install.
+ */
+function launcherCandidates(env: NodeJS.ProcessEnv, name: string): string[] {
+  const installDir = env.HERMES_INSTALL_DIR?.trim()
+  const home = env.HOME?.trim()
+  return [
+    installDir ? join(installDir, '.venv', 'bin', name) : '',
+    // Docker image layout.
+    join('/opt', 'hermes', '.venv', 'bin', name),
+    // Managed install created by the hermes installer.
+    home ? join(home, '.hermes', 'hermes-agent', 'venv', 'bin', name) : '',
+    home ? join(home, '.local', 'bin', name) : '',
+  ].filter(Boolean)
+}
+
+/**
+ * Resolve the launcher to hand to execFile/spawn. Exported for testing; callers
+ * should use `resolveHermesBin`, which caches the disk probing.
+ */
+export function findHermesLauncher(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = existsSync,
+  isWindows: boolean = process.platform === 'win32',
+): string {
+  const explicit = env.HERMES_BIN?.trim()
+  if (explicit) return explicit
+
+  const name = isWindows ? 'hermes.exe' : 'hermes'
+  // Prefer PATH resolution when it works, so an operator's chosen install wins
+  // over the well-known locations below.
+  for (const dir of String(env.PATH || '').split(delimiter)) {
+    if (dir && exists(join(dir, name))) return name
+  }
+
+  for (const candidate of launcherCandidates(env, name)) {
+    if (exists(candidate)) return candidate
+  }
+  // Nothing found — return the bare name so the failure names the command.
+  return name
+}
+
+let cachedLauncher: string | null = null
+
 export function resolveHermesBin(customBin?: string): string {
-  return customBin?.trim() || process.env.HERMES_BIN?.trim() || 'hermes'
+  const explicit = customBin?.trim()
+  if (explicit) return explicit
+  if (cachedLauncher === null) cachedLauncher = findHermesLauncher()
+  return cachedLauncher
 }
 
 function bundledCliPythonForWindows(hermesBin: string): string | null {

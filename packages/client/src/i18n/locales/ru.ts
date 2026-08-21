@@ -143,6 +143,7 @@ export default {
     singleChat: 'Чат',
     globalAgent: 'Global Agent',
     groupChat: 'Групповой чат',
+    groupCollab: 'Совместно',
     files: 'Файлы',
     devices: 'Устройства',
     connections: 'Подключение устройств',

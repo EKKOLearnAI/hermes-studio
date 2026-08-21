@@ -183,6 +183,17 @@ const router = createRouter({
       name: 'hermes.groupChatRoom',
       component: () => import('@/views/hermes/GroupChatView.vue'),
     },
+    // 群协作 — same surface as group chat, but @mentions open Kanban runs.
+    {
+      path: '/hermes/group-collab',
+      name: 'hermes.groupCollab',
+      component: () => import('@/views/hermes/GroupCollabView.vue'),
+    },
+    {
+      path: '/hermes/group-collab/room/:roomId',
+      name: 'hermes.groupCollabRoom',
+      component: () => import('@/views/hermes/GroupCollabView.vue'),
+    },
     {
       path: '/hermes/history/group-chat/:roomId',
       redirect: to => ({

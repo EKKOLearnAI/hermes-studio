@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import {
     GROUP_CHAT_MESSAGE_WINDOW,
     ROOM_PARTICIPANT_NAME_CONFLICT,
+    normalizeRoomKind,
     type GroupChatServer,
 } from '../../services/hermes/group-chat'
 import { isReservedMentionName } from '../../services/hermes/group-chat/mention-routing'
@@ -370,8 +371,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         workspace?: string
         memberName?: string
         memberDescription?: string
+        roomKind?: string
     }
     const { name, inviteCode, agents, summary, workspace, memberName, memberDescription } = createInput
+    const roomKind = normalizeRoomKind(createInput.roomKind)
     if (!name || !inviteCode) {
         ctx.status = 400
         ctx.body = { error: 'name and inviteCode are required' }
@@ -448,6 +451,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         summaryApiMode,
         summaryEveryTurns,
         workspace: normalizedWorkspace,
+        roomKind,
     }
     storage.saveRoom(roomId, name, inviteCode, roomConfig)
     persistRoomCreator(storage, roomId, ctx.state?.user, memberName, memberDescription)
@@ -484,6 +488,149 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     }
 })
 
+/**
+ * 群协作 read APIs. Live updates arrive over Socket.IO
+ * (`collab_session_updated`); these endpoints exist for the cold path — page
+ * load, reconnect, and on-demand drill-down into a worker's log.
+ *
+ * Every lookup is scoped through the run, so a caller cannot reach arbitrary
+ * Kanban tasks or logs by id through this surface.
+ */
+function resolveCollabAccess(ctx: any): { server: GroupChatServer; roomId: string } | null {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return null
+    }
+    const roomId = String(ctx.params.roomId || '')
+    if (!canReadRoom(chatServer.getStorage(), roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return null
+    }
+    return { server: chatServer, roomId }
+}
+
+// List every collaboration run in a room (used to hydrate the transcript).
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/collab', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    const orchestrator = access.server.getCollabOrchestrator()
+    const rows = orchestrator.listRoomSessions(access.roomId)
+    const sessions = await Promise.all(rows.map(row => orchestrator.snapshot(row.id)))
+    ctx.body = { sessions: sessions.filter(Boolean) }
+})
+
+// One run's live task tree.
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/collab/:sessionId', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    const snapshot = await access.server.getCollabOrchestrator().snapshot(String(ctx.params.sessionId || ''))
+    if (!snapshot || snapshot.roomId !== access.roomId) {
+        ctx.status = 404
+        ctx.body = { error: 'Collaboration run not found' }
+        return
+    }
+    ctx.body = { session: snapshot }
+})
+
+/** Abort every unfinished collaboration run in the room (composer stop button). */
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/collab/stop', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    if (!canManageRoom(access.server.getStorage(), access.roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    try {
+        const sessions = await access.server.getCollabOrchestrator().stopRoom(access.roomId)
+        ctx.body = { sessions }
+    } catch (err: any) {
+        ctx.status = 502
+        ctx.body = { error: err?.message || 'Failed to stop collaboration' }
+    }
+})
+
+/** Abort one collaboration run. */
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/collab/:sessionId/stop', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    if (!canManageRoom(access.server.getStorage(), access.roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+    const sessionId = String(ctx.params.sessionId || '')
+    try {
+        const session = await access.server.getCollabOrchestrator().stop(sessionId)
+        if (!session || session.roomId !== access.roomId) {
+            ctx.status = 404
+            ctx.body = { error: 'Collaboration run not found' }
+            return
+        }
+        ctx.body = { session }
+    } catch (err: any) {
+        ctx.status = 502
+        ctx.body = { error: err?.message || 'Failed to stop collaboration' }
+    }
+})
+
+// A single worker's execution log — this is what surfaces "what did this
+// digital human actually do" in the UI.
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/collab/:sessionId/tasks/:taskId/log', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    const sessionId = String(ctx.params.sessionId || '')
+    const orchestrator = access.server.getCollabOrchestrator()
+    const snapshot = await orchestrator.snapshot(sessionId)
+    if (!snapshot || snapshot.roomId !== access.roomId) {
+        ctx.status = 404
+        ctx.body = { error: 'Collaboration run not found' }
+        return
+    }
+    const rawTail = Number(ctx.query.tail)
+    const tail = Number.isFinite(rawTail) && rawTail > 0 ? Math.min(rawTail, 1_000_000) : 40_000
+    try {
+        const log = await orchestrator.taskLog(sessionId, String(ctx.params.taskId || ''), tail)
+        if (!log) {
+            ctx.status = 404
+            ctx.body = { error: 'Task not part of this collaboration run' }
+            return
+        }
+        ctx.body = { log }
+    } catch (err: any) {
+        ctx.status = 502
+        ctx.body = { error: err?.message || 'Failed to read worker log' }
+    }
+})
+
+// Task detail (runs, comments, summary) for the drill-down drawer.
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/collab/:sessionId/tasks/:taskId', async (ctx) => {
+    const access = resolveCollabAccess(ctx)
+    if (!access) return
+    const sessionId = String(ctx.params.sessionId || '')
+    const orchestrator = access.server.getCollabOrchestrator()
+    const snapshot = await orchestrator.snapshot(sessionId)
+    if (!snapshot || snapshot.roomId !== access.roomId) {
+        ctx.status = 404
+        ctx.body = { error: 'Collaboration run not found' }
+        return
+    }
+    try {
+        const detail = await orchestrator.taskDetail(sessionId, String(ctx.params.taskId || ''))
+        if (!detail) {
+            ctx.status = 404
+            ctx.body = { error: 'Task not part of this collaboration run' }
+            return
+        }
+        ctx.body = { detail }
+    } catch (err: any) {
+        ctx.status = 502
+        ctx.body = { error: err?.message || 'Failed to read task detail' }
+    }
+})
+
 // Clone room roles/config without copying the conversation context.
 groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) => {
     if (!chatServer) {
@@ -509,6 +656,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     const roomId = generateId()
     const code = inviteCode?.trim() || generateInviteCode()
     storage.saveRoom(roomId, name?.trim() || `${sourceRoom.name} Copy`, code, {
+        // A clone must stay on the same surface it was cloned from, otherwise a
+        // duplicated collab room would silently behave like a plain group chat.
+        roomKind: normalizeRoomKind(sourceRoom.roomKind),
         summaryProfile: sourceRoom.summaryProfile,
         summaryProvider: sourceRoom.summaryProvider,
         summaryModel: sourceRoom.summaryModel,

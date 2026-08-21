@@ -24,6 +24,11 @@ import {
     type GroupExecutionQueueItem,
     type GroupWorkspaceDiffPayload,
     type MemberInfo,
+    type GroupRoomKind,
+    type CollabSessionSnapshot,
+    listCollabSessions,
+    getCollabTaskLog,
+    stopCollabRoom,
     createRoom,
     listRooms,
     getRoomDetail,
@@ -203,6 +208,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
     const pendingClarifies = ref<Map<string, GroupPendingClarify>>(new Map())
+    /** 群协作: sessionId → live Kanban task tree, keyed for O(1) anchor lookup. */
+    const collabSessions = ref<Map<string, CollabSessionSnapshot>>(new Map())
+    const collabNotice = ref<{ code: string; at: number } | null>(null)
+    /** True while a stop request is in flight — mirrors chat's isAborting. */
+    const isStoppingCollab = ref(false)
 
     function pendingApprovalKey(roomId: string, approvalId: string): string {
         return `${roomId}:${approvalId}`
@@ -1169,6 +1179,21 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             roomSummaryStates.value = new Map(roomSummaryStates.value)
         })
 
+        // 群协作: the server streams a full task-tree snapshot on every board
+        // change, so the client just replaces its copy — no incremental merge to
+        // get out of sync with the Kanban board.
+        socket.on('collab_session_updated', (data: { roomId?: string; session?: CollabSessionSnapshot }) => {
+            const session = data?.session
+            if (!session?.id) return
+            collabSessions.value.set(session.id, session)
+            collabSessions.value = new Map(collabSessions.value)
+        })
+
+        socket.on('collab_notice', (data: { roomId?: string; messageId?: string; code?: string }) => {
+            if (!data?.code || data.roomId !== currentRoomId.value) return
+            collabNotice.value = { code: data.code, at: Date.now() }
+        })
+
         socket.on('handoff_updated', (chain: RoomAgentHandoffChain) => {
             if (!chain?.chainId || chain.roomId !== currentRoomId.value) return
             handoffChains.value.set(chain.chainId, chain)
@@ -1508,6 +1533,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         summary?: RoomSummaryConfig,
         workspace?: string,
         memberProfile?: { name: string; description?: string },
+        roomKind: GroupRoomKind = 'chat',
     ) {
         try {
             const res = await createRoom({
@@ -1524,6 +1550,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     everyTurns: summary?.summaryEveryTurns || 20,
                 },
                 workspace: workspace || undefined,
+                roomKind,
             })
             upsertRoom({ ...res.room, agents: summarizeRoomAgents(res.agents || []) })
             return res
@@ -1531,6 +1558,73 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             error.value = err.message
             throw err
         }
+    }
+
+    // ─── 群协作 ────────────────────────────────────────────────
+
+    /**
+     * Hydrate the task trees for a room's collaboration runs. Live updates come
+     * over `collab_session_updated`; this covers the cold path where a run was
+     * started before this browser joined (or while it was disconnected).
+     */
+    async function loadCollabSessions(roomId: string) {
+        if (!roomId) return
+        try {
+            const res = await listCollabSessions(roomId)
+            for (const session of res.sessions || []) {
+                if (session?.id) collabSessions.value.set(session.id, session)
+            }
+            collabSessions.value = new Map(collabSessions.value)
+        } catch (err: any) {
+            // A missing board should degrade the task view, not break the room.
+            console.warn('[GroupCollab] failed to load sessions:', err?.message || err)
+        }
+    }
+
+    async function fetchCollabTaskLog(sessionId: string, taskId: string, tail?: number) {
+        const session = collabSessions.value.get(sessionId)
+        const roomId = session?.roomId || currentRoomId.value
+        if (!roomId) throw new Error('No room for this collaboration run')
+        const res = await getCollabTaskLog(roomId, sessionId, taskId, tail)
+        return res.log
+    }
+
+    function getCollabSessionById(sessionId: string): CollabSessionSnapshot | null {
+        return collabSessions.value.get(sessionId) || null
+    }
+
+    /** Any unfinished run in the current room — drives the composer stop button. */
+    function hasActiveCollabRun(roomId: string | null = currentRoomId.value): boolean {
+        if (!roomId) return false
+        for (const session of collabSessions.value.values()) {
+            if (session.roomId !== roomId) continue
+            if (session.status === 'creating' || session.status === 'decomposing' || session.status === 'running') {
+                return true
+            }
+        }
+        return false
+    }
+
+    async function stopActiveCollabRuns() {
+        const roomId = currentRoomId.value
+        if (!roomId || isStoppingCollab.value) return
+        isStoppingCollab.value = true
+        try {
+            const res = await stopCollabRoom(roomId)
+            for (const session of res.sessions || []) {
+                if (session?.id) collabSessions.value.set(session.id, session)
+            }
+            collabSessions.value = new Map(collabSessions.value)
+        } catch (err: any) {
+            error.value = err?.message || 'Failed to stop collaboration'
+            throw err
+        } finally {
+            isStoppingCollab.value = false
+        }
+    }
+
+    function clearCollabNotice() {
+        collabNotice.value = null
     }
 
     async function joinByCode(code: string, options: { guest?: boolean } = {}) {
@@ -1555,6 +1649,28 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    /**
+     * Release the open room without tearing the socket down.
+     *
+     * `currentRoomId` is shared by the 群聊 and 群协作 surfaces, so a room left
+     * open on one of them keeps rendering its transcript on the other. Whoever
+     * navigates to a surface the open room does not belong to has to call this.
+     */
+    function closeRoom() {
+        resetLocalTypingState()
+        clearRemoteTypingState()
+        currentRoomId.value = null
+        realtimeJoinedRoomId.value = null
+        realtimeJoinedSocketId.value = null
+        clearPendingStreamDeltas()
+        messages.value = []
+        historicalMessageAgents.value = []
+        resetMessagePaging()
+        members.value = []
+        agents.value = []
+        roomName.value = ''
+    }
+
     async function deleteRoom(roomId: string) {
         try {
             await deleteRoomApi(roomId)
@@ -1567,20 +1683,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
             handoffChains.value = new Map(handoffChains.value)
             clearMessageReference(roomId)
-            if (currentRoomId.value === roomId) {
-                resetLocalTypingState()
-                clearRemoteTypingState()
-                currentRoomId.value = null
-                realtimeJoinedRoomId.value = null
-                realtimeJoinedSocketId.value = null
-                clearPendingStreamDeltas()
-                messages.value = []
-                historicalMessageAgents.value = []
-                resetMessagePaging()
-                members.value = []
-                agents.value = []
-                roomName.value = ''
-            }
+            if (currentRoomId.value === roomId) closeRoom()
         } catch (err: any) {
             error.value = err.message
             throw err
@@ -1916,6 +2019,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         executionQueue,
         pendingApprovals,
         pendingClarifies,
+        collabSessions,
+        collabNotice,
+        isStoppingCollab,
+        loadCollabSessions,
+        fetchCollabTaskLog,
+        getCollabSessionById,
+        hasActiveCollabRun,
+        stopActiveCollabRuns,
+        clearCollabNotice,
         activePendingApproval,
         activePendingClarify,
         autoPlaySpeechEnabled,
@@ -1964,6 +2076,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         cancelExecutionQueueItem,
         createNewRoom,
         joinByCode,
+        closeRoom,
         deleteRoom,
         cloneRoom,
         clearCurrentRoomContext,

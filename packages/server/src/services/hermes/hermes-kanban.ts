@@ -84,6 +84,24 @@ export interface KanbanTaskDetail {
   comments: KanbanComment[]
   events: KanbanEvent[]
   runs: KanbanRun[]
+  /**
+   * `kanban show --json` also emits the dependency edges and the newest run
+   * summary. Workers hand their result off through `task_runs.summary` and
+   * leave `tasks.result` NULL, so `latest_summary` is the field that actually
+   * carries a finished task's output.
+   */
+  parents?: string[]
+  children?: string[]
+  latest_summary?: string | null
+}
+
+export interface KanbanDecomposeOutcome {
+  task_id: string
+  ok: boolean
+  reason: string
+  fanout: boolean
+  child_ids: string[] | null
+  new_title?: string | null
 }
 
 export interface KanbanStats {
@@ -588,6 +606,75 @@ export async function createTask(
     logger.error(err, 'Hermes CLI: kanban create failed')
     throw new Error(`Failed to create kanban task: ${err.message}`)
   }
+}
+
+/**
+ * Fan a triage-column task out into a graph of child tasks routed to
+ * specialist profiles. This calls the `auxiliary.kanban_decomposer` LLM, so it
+ * is far slower than the other kanban commands — hence the long timeout and
+ * why callers must run it off the request path.
+ *
+ * Children inherit the root's tenant and workspace, which is what lets a whole
+ * run be tracked with a single tenant-scoped `listTasks` call.
+ */
+export async function decomposeTask(
+  taskId: string,
+  opts?: KanbanBoardOptions & { author?: string; timeoutMs?: number },
+): Promise<KanbanDecomposeOutcome> {
+  const args = [...boardArgs(opts?.board), 'decompose', taskId, '--json']
+  if (opts?.author) args.push('--author', opts.author)
+
+  let stdout: string
+  try {
+    const result = await execHermes(args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: opts?.timeoutMs ?? 300000,
+      ...execOpts,
+    })
+    stdout = String(result.stdout || '')
+  } catch (err: any) {
+    // A decomposer that declines to fan out still exits non-zero in some
+    // versions while printing a usable JSON verdict. Prefer that verdict over
+    // a generic throw so callers can surface the real reason.
+    const salvaged = parseDecomposeOutcome(String(err?.stdout || ''), taskId)
+    if (salvaged) return salvaged
+    logger.error(err, 'Hermes CLI: kanban decompose failed')
+    throw new Error(`Failed to decompose kanban task: ${err.message}`)
+  }
+
+  const outcome = parseDecomposeOutcome(stdout, taskId)
+  if (!outcome) {
+    throw new Error('Failed to decompose kanban task: decomposer returned no JSON verdict')
+  }
+  return outcome
+}
+
+/**
+ * `decompose --json` emits one JSON object per task, so a multi-task sweep
+ * produces concatenated/newline-delimited objects rather than an array. Scan
+ * for the object belonging to `taskId` and fall back to the last parsable one.
+ */
+function parseDecomposeOutcome(raw: string, taskId: string): KanbanDecomposeOutcome | null {
+  const candidates: KanbanDecomposeOutcome[] = []
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      candidates.push(JSON.parse(trimmed) as KanbanDecomposeOutcome)
+    } catch {
+      // Ignore progress chatter interleaved with the JSON verdicts.
+    }
+  }
+  if (candidates.length === 0) {
+    const trimmed = raw.trim()
+    if (!trimmed.startsWith('{')) return null
+    try {
+      candidates.push(JSON.parse(trimmed) as KanbanDecomposeOutcome)
+    } catch {
+      return null
+    }
+  }
+  return candidates.find(entry => entry?.task_id === taskId) || candidates[candidates.length - 1] || null
 }
 
 export async function completeTasks(
