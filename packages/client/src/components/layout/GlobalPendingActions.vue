@@ -382,9 +382,9 @@ function notificationTitle(action: GlobalPendingAction, clarify: boolean) {
   }, `${action.title} · ${clarify ? t('chat.clarifyTitle') : t('chat.approvalTitle')}`)
 }
 
-function createGlobalNotification(action: GlobalPendingAction): NotificationReactive {
+function globalNotificationOptions(action: GlobalPendingAction) {
   const clarify = action.kind === 'chat-clarify' || action.kind === 'group-clarify'
-  return notification.create({
+  return {
     title: () => notificationTitle(action, clarify),
     content: clarify
       ? () => clarifyContent(action)
@@ -410,7 +410,11 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
         : () => approvalButtons(action),
     duration: 0,
     closable: false,
-  })
+  }
+}
+
+function createGlobalNotification(action: GlobalPendingAction): NotificationReactive {
+  return notification.create(globalNotificationOptions(action))
 }
 
 watch(pendingSoundActionKeys, keys => {
@@ -452,7 +456,11 @@ watch(pendingActions, actions => {
     delete submitting[key]
   }
   for (const action of actions) {
-    if (handles.has(action.key)) continue
+    const handle = handles.get(action.key)
+    if (handle) {
+      Object.assign(handle, globalNotificationOptions(action))
+      continue
+    }
     handles.set(action.key, createGlobalNotification(action))
   }
 }, { deep: true, immediate: true })

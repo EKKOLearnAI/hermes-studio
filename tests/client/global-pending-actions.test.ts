@@ -61,7 +61,8 @@ vi.mock('naive-ui', async () => {
     useMessage: () => ({ error: uiMock.messageError }),
     useNotification: () => ({
       create: vi.fn((options: any) => {
-        const entry = { options, destroy: vi.fn() }
+        const entry: any = Object.assign(options, { destroy: vi.fn() })
+        entry.options = entry
         created.push(entry)
         return entry
       }),
