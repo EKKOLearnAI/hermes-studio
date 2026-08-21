@@ -544,6 +544,72 @@ describe('GlobalPendingActions', () => {
     expect(groupState.respondApprovalFor).toHaveBeenCalledWith('room-b', 'approval-b', 'once')
   })
 
+  it.each([
+    {
+      source: 'direct',
+      seed: (pending: any) => {
+        chatState.sessions = [{ id: 'session-b', title: 'Direct approval' }]
+        chatState.pendingApprovals = new Map([['session-b', pending]])
+      },
+      pending: {
+        sessionId: 'session-b',
+        approvalId: 'approval-b',
+        description: 'Run command',
+        command: 'pwd',
+        choices: ['once', 'deny'],
+      },
+      title: 'Direct approval',
+    },
+    {
+      source: 'group',
+      seed: (pending: any) => {
+        groupState.rooms = [{ id: 'room-b', name: 'Group approval' }]
+        groupState.pendingApprovals = new Map([['room-b:approval-b', pending]])
+      },
+      pending: {
+        roomId: 'room-b',
+        approvalId: 'approval-b',
+        agentName: 'Builder',
+        description: 'Run command',
+        command: 'pwd',
+        choices: ['once', 'deny'],
+      },
+      title: 'Group approval',
+    },
+  ])('keeps an existing $source notification reactive when its Map value is replaced', async ({ seed, pending, title }) => {
+    seed({ ...pending, status: 'pending' })
+    mount(GlobalPendingActions)
+    await nextTick()
+
+    const notification = created.find(entry => notificationTitleText(entry).includes(title))
+    expect(notification).toBeTruthy()
+
+    seed({ ...pending, status: 'submitting' })
+    await nextTick()
+    const submittingContent = await render(notification.options.content)
+    const submittingActions = await render(notification.options.action)
+    expect(submittingContent.get('.global-approval-status').text()).toContain('chat.approvalSubmitting')
+    expect(submittingActions.findAll('button')).toHaveLength(2)
+    expect(submittingActions.findAll('button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
+
+    seed({ ...pending, status: 'failed', error: 'Runtime rejected the response' })
+    await nextTick()
+    const failedContent = await render(notification.options.content)
+    const failedActions = await render(notification.options.action)
+    expect(failedContent.get('.global-approval-status').text()).toContain('chat.approvalFailed')
+    expect(failedContent.get('.global-approval-status').text()).toContain('Runtime rejected the response')
+    expect(failedActions.findAll('button')).toHaveLength(2)
+    expect(failedActions.findAll('button').every(button => button.attributes('disabled') === undefined)).toBe(true)
+
+    seed({ ...pending, status: 'expired', error: 'Approval expired' })
+    await nextTick()
+    const expiredContent = await render(notification.options.content)
+    const expiredActions = await render(notification.options.action)
+    expect(expiredContent.get('.global-approval-status').text()).toContain('chat.approvalExpired')
+    expect(expiredContent.get('.global-approval-status').text()).toContain('chat.approvalExpiredHint')
+    expect(expiredActions.find('button').exists()).toBe(false)
+  })
+
   it('destroys a global notification when the authoritative pending entry resolves', async () => {
     chatState.pendingApprovals = new Map([['session-b', {
       sessionId: 'session-b', approvalId: 'approval-b', description: 'Run', command: 'pwd', choices: ['once'],
