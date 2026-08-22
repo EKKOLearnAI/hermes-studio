@@ -301,10 +301,10 @@ onUnmounted(() => {
             >
               <div class="result-main">
                 <div class="result-title-row">
-                  <span class="result-title">{{ getItemTitle(item) }}</span>
+                  <span class="result-title" dir="auto">{{ getItemTitle(item) }}</span>
                   <span class="result-source">{{ formatSource(item.source) }}</span>
                 </div>
-                <div class="result-snippet">
+                <div class="result-snippet" dir="auto">
                   {{ hasQuery ? item.snippet || t('chat.searchNoSnippet') : item.preview || t('chat.searchRecent') }}
                 </div>
               </div>

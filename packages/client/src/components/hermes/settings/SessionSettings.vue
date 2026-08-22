@@ -131,6 +131,15 @@ async function toggleWriteApproval(section: "memory" | "skills", value: boolean)
       />
     </SettingRow>
     <SettingRow
+      :label="t('settings.session.showRecentSessions')"
+      :hint="t('settings.session.showRecentSessionsHint')"
+    >
+      <NSwitch
+        :value="sessionBrowserPrefsStore.showRecentSessions"
+        @update:value="(value) => sessionBrowserPrefsStore.setShowRecentSessions(value)"
+      />
+    </SettingRow>
+    <SettingRow
       :label="t('settings.session.liveMonitorHumanOnly')"
       :hint="t('settings.session.liveMonitorHumanOnlyHint')"
     >

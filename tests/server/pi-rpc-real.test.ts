@@ -168,6 +168,11 @@ describeReal('real Pi RPC end-to-end', () => {
     await writeFile(join(configDir, 'settings.json'), `${JSON.stringify({
       extensions: [extensionEntry, adapterEntry],
       quietStartup: true,
+      compaction: {
+        enabled: true,
+        reserveTokens: 4096,
+        keepRecentTokens: 1,
+      },
     }, null, 2)}\n`, 'utf8')
     await writeFile(join(configDir, 'mcp.json'), `${JSON.stringify({
       settings: {
@@ -332,6 +337,17 @@ describeReal('real Pi RPC end-to-end', () => {
     const startFirstStudioTurn = () => firstStudio.manager.start(launch('studio-pi-chat-1'))
     startFirstStudioTurn()
 
+    const initialNativeState = await firstStudio.manager.getPiSessionState('studio-pi-chat-1')
+    expect(initialNativeState).toMatchObject({
+      sessionId: nativeSessionId,
+      isStreaming: false,
+      isCompacting: false,
+      autoCompactionEnabled: true,
+    })
+    const initialNativeStats = await firstStudio.manager.getPiSessionStats('studio-pi-chat-1')
+    expect(initialNativeStats.sessionId).toBe(nativeSessionId)
+    expect(initialNativeStats.tokens.total).toBeGreaterThanOrEqual(0)
+
     let from = firstStudio.emitted.length
     firstStudio.manager.send('studio-pi-chat-1', 'Studio E2E image', {
       images: [{ name: '图片 示例.png', path: imagePath, mediaType: 'image/png' }],
@@ -365,6 +381,14 @@ describeReal('real Pi RPC end-to-end', () => {
       event.event === 'tool.completed'
       && JSON.stringify(event.payload).includes('local:works')
     ))).toBe(true)
+
+    startFirstStudioTurn()
+    const compactResult = await firstStudio.manager.compact('studio-pi-chat-1', 'focus on code changes')
+    expect(compactResult).toEqual(expect.objectContaining({
+      compacted: true,
+      beforeTokens: expect.any(Number),
+    }))
+    expect(firstStudio.manager.stop('studio-pi-chat-1', { reportClosed: false })).toBe(true)
 
     from = firstStudio.emitted.length
     startFirstStudioTurn()

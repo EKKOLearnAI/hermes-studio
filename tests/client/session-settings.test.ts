@@ -15,8 +15,12 @@ const mockSettingsStore = vi.hoisted(() => ({
 
 const mockPrefsStore = vi.hoisted(() => ({
   humanOnly: true,
+  showRecentSessions: true,
   setHumanOnly: vi.fn((value: boolean) => {
     mockPrefsStore.humanOnly = value
+  }),
+  setShowRecentSessions: vi.fn((value: boolean) => {
+    mockPrefsStore.showRecentSessions = value
   }),
 }))
 
@@ -51,6 +55,7 @@ describe('SessionSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockPrefsStore.humanOnly = true
+    mockPrefsStore.showRecentSessions = true
     mockSettingsStore.memory.write_approval = false
     mockSettingsStore.skills.write_approval = true
   })
@@ -89,13 +94,43 @@ describe('SessionSettings', () => {
     expect(wrapper.text()).toContain('settings.session.liveMonitorHumanOnly')
 
     const toggles = wrapper.findAll('.n-switch')
-    expect(toggles.length).toBe(4)
-    const humanOnlyToggle = toggles[3]
+    expect(toggles.length).toBe(5)
+    const humanOnlyToggle = toggles[4]
 
     await humanOnlyToggle.trigger('click')
     await Promise.resolve()
 
     expect(mockPrefsStore.setHumanOnly).toHaveBeenCalledWith(false)
+  })
+
+  it('surfaces the browser-local recent sessions visibility preference', async () => {
+    const wrapper = mount(SessionSettings, {
+      global: {
+        stubs: {
+          SettingRow: {
+            props: ['label', 'hint'],
+            template: '<div class="setting-row"><div class="setting-row-label">{{ label }}</div><slot /></div>',
+          },
+          NSelect: true,
+          NInputNumber: true,
+          NSwitch: {
+            props: ['value'],
+            emits: ['update:value'],
+            template: '<button class="n-switch" @click="$emit(\'update:value\', !value)"></button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('settings.session.showRecentSessions')
+
+    const toggles = wrapper.findAll('.n-switch')
+    expect(toggles.length).toBe(5)
+    await toggles[3].trigger('click')
+    await Promise.resolve()
+
+    expect(mockPrefsStore.setShowRecentSessions).toHaveBeenCalledWith(false)
   })
 
   it('saves write approval toggles to memory and skills config sections', async () => {

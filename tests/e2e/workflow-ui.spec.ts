@@ -1,6 +1,16 @@
 import { readFile } from 'fs/promises'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY, TEST_MODEL_GROUP } from './fixtures'
+
+async function selectWorkflowScheduleFrequency(page: Page, modal: Locator, frequency: string) {
+  await modal.getByTestId('workflow-schedule-frequency').click()
+  await page.getByText(frequency, { exact: true }).last().click()
+}
+
+async function selectWorkflowScheduleField(page: Page, modal: Locator, testId: string, value: string) {
+  await modal.getByTestId(testId).click()
+  await page.getByText(value, { exact: true }).last().click()
+}
 
 test('workflow Run sends the selected total time budget', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
@@ -1231,14 +1241,19 @@ test('workflow schedules can be created, edited, disabled, and deleted from the 
   await page.getByRole('button', { name: 'Manage schedules' }).click()
   const modal = page.getByTestId('workflow-schedules-modal')
   await expect(modal).toBeVisible()
-  await modal.getByRole('textbox').nth(0).fill('@hourly')
-  await modal.getByRole('textbox').nth(1).fill('Asia/Shanghai')
+  await expect(modal.getByTestId('workflow-schedule-frequency')).toContainText('Select a frequency')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every week')
+  await selectWorkflowScheduleField(page, modal, 'workflow-schedule-weekday', 'Wednesday')
+  await selectWorkflowScheduleField(page, modal, 'workflow-schedule-hour', '08')
+  await selectWorkflowScheduleField(page, modal, 'workflow-schedule-minute', '05')
+  await modal.getByRole('textbox', { name: 'Timezone' }).fill('Asia/Shanghai')
   await modal.getByRole('button', { name: 'Create schedule' }).click()
-  await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
+  await expect(modal.getByText('5 8 * * 3', { exact: true })).toBeVisible()
   await modal.getByRole('button', { name: 'Edit schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('0 9 * * *')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every month')
+  await selectWorkflowScheduleField(page, modal, 'workflow-schedule-month-day', '5')
   await modal.getByRole('button', { name: 'Save schedule' }).click()
-  await expect(modal.getByText('0 9 * * *', { exact: true })).toBeVisible()
+  await expect(modal.getByText('5 8 5 * *', { exact: true })).toBeVisible()
   await modal.getByRole('button', { name: 'Disable schedule' }).click()
   await expect(modal.getByText('Disabled', { exact: true })).toBeVisible()
   await modal.getByRole('button', { name: 'Delete schedule' }).click()
@@ -1266,7 +1281,7 @@ test('workflow schedule form preserves disabled state and input whitespace after
   const modal = page.getByTestId('workflow-schedules-modal')
   await modal.getByRole('button', { name: 'Edit schedule' }).click()
   await modal.getByRole('button', { name: 'Disable schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('@hourly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every hour')
   await modal.getByRole('button', { name: 'Save schedule' }).click()
 
   const saveRequest = api.requests.filter(request => request.method === 'PATCH' && request.pathname.endsWith('/schedules/schedule-1')).at(-1)
@@ -1288,7 +1303,7 @@ test('workflow schedule start nodes only include the saved workflow definition',
   await expect(page.locator('.vue-flow__node')).toHaveCount(2)
   await page.getByRole('button', { name: 'Manage schedules' }).click()
   const modal = page.getByTestId('workflow-schedules-modal')
-  await modal.locator('.n-select').click()
+  await modal.getByTestId('workflow-schedule-start-nodes').click()
   await expect(page.getByText('Agent A', { exact: true }).last()).toBeVisible()
   await expect(page.getByText('Node 2', { exact: true })).toHaveCount(0)
 })
@@ -1333,7 +1348,7 @@ test('workflow schedule saves do not overwrite the active workflow schedule list
   await page.goto('/#/hermes/workflow')
   await page.getByRole('button', { name: 'Manage schedules' }).click()
   const modal = page.getByTestId('workflow-schedules-modal')
-  await modal.getByRole('textbox').nth(0).fill('@weekly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every week')
   await modal.getByRole('button', { name: 'Create schedule' }).click()
   await expect.poll(() => api.requests.filter(request => (
     request.method === 'POST' && request.pathname === '/api/hermes/workflows/wf-schedule-a/schedules'
@@ -1346,7 +1361,7 @@ test('workflow schedule saves do not overwrite the active workflow schedule list
   await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
   await page.waitForTimeout(650)
   await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
-  await expect(modal.getByText('@weekly', { exact: true })).toHaveCount(0)
+  await expect(modal.getByText('0 9 * * 1', { exact: true })).toHaveCount(0)
   expect(api.requests.filter(request => (
     request.pathname.startsWith('/api/hermes/workflows/wf-schedule-b/schedules/')
     && request.method !== 'GET'
@@ -1369,7 +1384,7 @@ test('workflow schedule saves cannot restore a schedule deleted while the save i
   await page.getByRole('button', { name: 'Manage schedules' }).click()
   const modal = page.getByTestId('workflow-schedules-modal')
   await modal.getByRole('button', { name: 'Edit schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('@hourly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every hour')
   await modal.getByRole('button', { name: 'Save schedule' }).click()
   await expect.poll(() => api.requests.filter(request => (
     request.method === 'PATCH' && request.pathname === '/api/hermes/workflows/wf-schedule-delete/schedules/schedule-delete'
@@ -1383,7 +1398,7 @@ test('workflow schedule saves cannot restore a schedule deleted while the save i
   await expect(modal.getByText('No schedules yet', { exact: true })).toBeVisible()
   await page.waitForTimeout(650)
   await expect(modal.getByText('No schedules yet', { exact: true })).toBeVisible()
-  await expect(modal.getByText('@hourly', { exact: true })).toHaveCount(0)
+  await expect(modal.getByText('0 * * * *', { exact: true })).toHaveCount(0)
 })
 
 test('workflow schedules show server errors without changing displayed schedule state', async ({ page }) => {
@@ -1418,14 +1433,14 @@ test('workflow schedule mutations keep unrelated saves and toggles synchronized'
   const scheduleA = modal.locator('.workflow-schedule-item').filter({ hasText: '@daily' })
   const scheduleB = modal.locator('.workflow-schedule-item').filter({ hasText: '@hourly' })
   await scheduleA.getByRole('button', { name: 'Edit schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('@weekly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every week')
   await modal.getByRole('button', { name: 'Save schedule' }).click()
   await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname.endsWith('/schedules/schedule-a')).length).toBe(1)
   await scheduleB.getByRole('button', { name: 'Disable schedule' }).click()
   await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname.endsWith('/schedules/schedule-b')).length).toBe(1)
 
   await expect(modal.getByRole('button', { name: 'Create schedule' })).toBeEnabled()
-  await expect(modal.getByText('@weekly', { exact: true })).toBeVisible()
+  await expect(modal.getByText('0 0 * * 1', { exact: true })).toBeVisible()
   await expect(scheduleB.getByText('Disabled', { exact: true })).toBeVisible()
 })
 
@@ -1465,12 +1480,12 @@ test('a stale schedule list response cannot overwrite a successful create', asyn
   await page.goto('/#/hermes/workflow')
   await page.getByRole('button', { name: 'Manage schedules' }).click()
   const modal = page.getByTestId('workflow-schedules-modal')
-  await modal.getByRole('textbox').nth(0).fill('@hourly')
-  await modal.getByRole('textbox').nth(1).fill('UTC')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every hour')
+  await modal.getByRole('textbox', { name: 'Timezone' }).fill('UTC')
   await modal.getByRole('button', { name: 'Create schedule' }).click()
-  await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
+  await expect(modal.getByText('0 * * * *', { exact: true })).toBeVisible()
   await page.waitForTimeout(1_600)
-  await expect(modal.getByText('@hourly', { exact: true })).toBeVisible()
+  await expect(modal.getByText('0 * * * *', { exact: true })).toBeVisible()
 })
 
 test('a completed save does not reset a newer schedule editing draft', async ({ page }) => {
@@ -1490,14 +1505,14 @@ test('a completed save does not reset a newer schedule editing draft', async ({ 
   const scheduleA = modal.locator('.workflow-schedule-item').filter({ hasText: '@daily' })
   const scheduleB = modal.locator('.workflow-schedule-item').filter({ hasText: '@hourly' })
   await scheduleA.getByRole('button', { name: 'Edit schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('@weekly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every week')
   await modal.getByRole('button', { name: 'Save schedule' }).click()
   await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname.endsWith('/schedules/schedule-a')).length).toBe(1)
   await scheduleB.getByRole('button', { name: 'Edit schedule' }).click()
-  await modal.getByRole('textbox').nth(0).fill('@monthly')
+  await selectWorkflowScheduleFrequency(page, modal, 'Every month')
 
   await page.waitForTimeout(450)
-  await expect(modal.getByRole('textbox').nth(0)).toHaveValue('@monthly')
+  await expect(modal.getByTestId('workflow-schedule-frequency')).toContainText('Every month')
   await expect(modal.getByRole('button', { name: 'Save schedule' })).toBeEnabled()
 })
 

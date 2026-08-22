@@ -1,7 +1,7 @@
 # Tool-Boundary Queue Insertion
 
 Date: 2026-08-06
-Status: Implemented for Hermes Agent and Ekko Agent; Coding Agents deferred
+Status: Implemented; Hermes/Ekko use tool boundaries, Claude/Codex/Pi use immediate interruption
 
 ## Decision Summary
 
@@ -19,11 +19,14 @@ The feature must not send `/steer`, `/queue`, or any other Hermes command. It
 must not append the queued text to a tool result, a system reminder, or the
 currently active turn.
 
-Hermes Agent and Ekko Agent can provide strict runtime-owned boundaries. Claude
-Code can provide the same boundary on versions that support `PostToolBatch`.
-The current Codex `exec --json` integration can initially provide only a
-best-effort boundary; a strict Codex guarantee requires a blocking runtime
-control point that the current protocol does not expose.
+Hermes Agent and Ekko Agent provide strict runtime-owned boundaries. The current
+one-shot Claude Code, Codex, and Pi integrations take the smaller immediate
+interruption path: persist the partial response, terminate the current process,
+wait for its streams to close, and start the selected queued message through the
+existing native-session resume path. This coding-agent path may interrupt an
+active tool and is explicitly reported as `interruption_mode: "immediate"`; it
+is not a tool-boundary guarantee. Hook- or protocol-based safe boundaries remain
+future work.
 
 ## Context
 
@@ -75,8 +78,8 @@ conversation.
   tool boundary.
 - Submit the dequeued message through the normal run path as a new user turn.
 - Support Hermes Agent and Ekko Agent, including their Global Agent chat
-  surfaces, through one capability-based server contract. Coding Agents remain
-  deferred until their strict boundary behavior is selected.
+  surfaces, through one capability-based server contract. Support Claude Code,
+  Codex, and Pi through immediate process interruption and native resume.
 - Keep explicit hard stop behavior available while a boundary stop is waiting.
 - Preserve already-detached background delegations unless the user explicitly
   requests a hard stop.
@@ -189,14 +192,15 @@ Add one run-scoped control object to `SessionState`:
 
 ```ts
 type BoundaryGuarantee = 'strict' | 'best_effort'
+type QueueInsertionGuarantee = 'strict' | 'immediate'
 
 interface QueueInsertionControl {
   generation: string
   runId?: string
   runMarker?: string
   queueId: string
-  runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'direct'
-  guarantee: BoundaryGuarantee
+  runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
+  guarantee: QueueInsertionGuarantee
   phase:
     | 'requesting'
     | 'waiting_for_tool_batch'
@@ -248,7 +252,7 @@ Hermes, Ekko, and Coding Agent managers implement it independently.
 When the insertion arrow is clicked for a normal queued message:
 
 1. Validate that the queue item is a visible user/command item and the active
-   runtime is Hermes or Ekko.
+   runtime is Hermes, Ekko, Claude Code, Codex, or Pi.
 2. Promote the selected item to the queue head and emit the authoritative
    `run.queued` snapshot to every page in the session room.
 3. Create `QueueInsertionControl` if the active run has no insertion request.
@@ -285,10 +289,13 @@ For a boundary stop, emit the existing terminal event with explicit metadata:
 }
 ```
 
-The old run is not a failure. Any assistant text and completed tool results
-that existed before the boundary remain in history. The terminalizer then
-calls the existing `dequeueNextQueuedRun()`, which submits the queued content as
-a normal new user turn.
+For Hermes and Ekko, the old run is not a failure. Any assistant text and
+completed tool results that existed before the boundary remain in history. The
+one-shot coding-agent adapter uses the existing `run.failed` terminal channel
+with `interrupted: true`, `stop_reason: "queue_insertion"`, and
+`interruption_mode: "immediate"`; clients treat that as an intentional stop.
+Both paths then call the existing `dequeueNextQueuedRun()`, which submits the
+queued content as a normal new user turn.
 
 ### Socket Event
 
@@ -312,7 +319,7 @@ Payload:
     | 'stopping_current_turn'
     | 'starting_queued_message'
     | 'cancelled',
-  guarantee: 'strict' | 'best_effort'
+  guarantee: 'strict' | 'immediate'
 }
 ```
 
@@ -320,6 +327,19 @@ This event is state, not a chat message, and must not be persisted into model
 history.
 
 ## Runtime Adapters
+
+### Claude Code, Codex, And Pi: Immediate One-Shot Interruption
+
+The shipped coding-agent adapter does not wait for a tool boundary. It marks
+the current one-shot invocation as intentionally stopped, terminates its child
+process, waits for the process streams to close so final buffered output is
+captured, persists the partial assistant response and workspace diff, then
+releases the selected queue item. The next run uses the existing Claude
+`--resume`, Codex `exec resume`, or Pi session-file flow.
+
+The run ID check prevents a stale insertion request from stopping a newer run.
+Natural child-exit handling is suppressed after the intentional stop so it
+cannot emit a second terminal event or dequeue twice.
 
 ### Hermes Agent: Strict Bridge Boundary
 
@@ -402,7 +422,7 @@ Only the matching foreground run is affected. Detached Ekko subagents remain
 running. A foreground `delegate_task` that is part of the current batch is
 allowed to finish like any other foreground tool.
 
-### Claude Code: Strict Hook Boundary
+### Future Claude Code: Strict Hook Boundary
 
 For supported Claude Code versions, add Studio-owned `PreToolUse` and
 `PostToolBatch` command hooks through the per-process `--settings` argument. Do
@@ -451,7 +471,7 @@ the adapter reports `best_effort` and falls back to observed `tool_use` /
 `tool_result` events plus child interruption. The UI and logs must not call
 that fallback strict.
 
-### Codex: Best-Effort First, Strict Capability Later
+### Future Codex: Tool-Boundary Capability
 
 For the current `codex exec --json` transport:
 
@@ -491,8 +511,9 @@ the run as `queue_insertion`.
 | --- | --- | --- | --- |
 | Hermes Agent | Python Bridge post-tool-batch wrapper | Strict | Disable automatic insertion if the runtime hook is incompatible |
 | Ekko Agent | Internal runtime method before the next model step | Strict | None; fail the capability test in development |
-| Claude Code | `PreToolUse` + `PostToolBatch` hooks from per-process settings | Strict when hook IPC is healthy | Observed stream events + child interrupt |
-| Codex | Observed `item.completed` + child interrupt | Best effort | Wait for natural completion if process interruption is unsafe |
+| Claude Code | Current child-process interruption | Immediate, not tool-safe | Future `PreToolUse` + `PostToolBatch` hook boundary |
+| Codex | Current child-process interruption | Immediate, not tool-safe | Future atomic App Server or blocking boundary |
+| Pi | Current RPC-process interruption | Immediate, not tool-safe | Future runtime-owned boundary |
 | Direct API response | Studio-owned abort signal, no tools | Strict immediate stop | Existing hard-stop mechanics |
 
 ## Race And Lifecycle Rules
@@ -627,23 +648,29 @@ This establishes the contract in a runtime Studio fully owns.
 - Add runtime compatibility probing.
 - Verify detached background delegations continue.
 
-### Phase 3: Claude Code — Deferred
+### Phase 3: One-Shot Coding Agents — Complete
+
+- Enable the insertion arrow for Claude Code, Codex, and Pi.
+- Persist partial output, stop the child, wait for close, and release the
+  selected queued message through the normal run path.
+- Preserve native resume identity and identify the stop as immediate.
+
+### Phase 4: Strict Claude Code Boundary — Deferred
 
 - Add temporary `PreToolUse` and `PostToolBatch` settings.
 - Add authenticated local hook IPC and helper.
 - Detect unsupported or disabled hooks.
 - Suppress Studio's synthetic stop marker from chat history.
 
-### Phase 4: Codex — Deferred
+### Phase 5: Codex Tool Boundary — Deferred
 
-- Ship the measured best-effort adapter behind an explicit capability label.
 - Evaluate App Server migration separately.
-- Promote to strict only when an atomic runtime boundary is available and
-  covered by integration tests.
+- Replace immediate interruption with a tool-safe adapter only when an atomic
+  runtime boundary is available and covered by integration tests.
 
-The feature may be enabled per runtime as each strict adapter lands. Codex can
-remain opt-in or display its best-effort guarantee until the product decision
-is made.
+Immediate insertion is enabled now for all three one-shot coding agents. Future
+strict adapters can replace that behavior per runtime without changing queue
+or resume semantics.
 
 ## Test Plan
 
@@ -708,6 +735,13 @@ is made.
 - Interruption delay is measured.
 - Tests and UI never label the adapter strict.
 
+### Immediate Coding-Agent Tests
+
+- Claude Code, Codex, and Pi all terminalize once and release the queue once.
+- Partial assistant output and workspace changes are persisted before dequeue.
+- The queued run does not start until the interrupted child streams close.
+- A stale run ID cannot stop the current child.
+
 ### Client And End-To-End Tests
 
 - Queue state changes render without adding chat messages.
@@ -730,7 +764,8 @@ Chat-chain implementation must include the required
 - No slash command, steer marker, tool-result injection, or synthetic hook
   warning enters model-visible history.
 - Detached background work is preserved.
-- Claude Code and Codex do not expose the arrow in this implementation.
+- Claude Code, Codex, and Pi expose the arrow and perform immediate interruption;
+  the UI does not describe this path as a safe tool-boundary stop.
 
 ## Expected Change Surface
 

@@ -221,6 +221,10 @@ export class AppRelayClient {
     })
 
     this.socket.on('connect', () => {
+      // Every Socket.IO connection represents a new relay-side host session.
+      // Preconnections are held in relay process memory, so anything cached by
+      // Studio before a disconnect cannot be reused safely after reconnecting.
+      this.clearRelaySessionState()
       this.preconnectionExpired = false
       logger.info({ relayUrl: this.redactedRelayUrl(), machineId: this.options.machineId }, '[app-relay] connected')
     })
@@ -229,6 +233,7 @@ export class AppRelayClient {
     })
     this.socket.on('disconnect', (reason: string) => {
       this.closeLocalBridges()
+      this.clearRelaySessionState()
       logger.info({ reason, relayUrl: this.redactedRelayUrl() }, '[app-relay] disconnected')
     })
     this.socket.on('relay.replaced', () => this.stop())
@@ -280,6 +285,7 @@ export class AppRelayClient {
 
   stop(): void {
     this.closeLocalBridges()
+    this.clearRelaySessionState()
     this.socket?.disconnect()
     this.socket = null
   }
@@ -364,7 +370,10 @@ export class AppRelayClient {
     now = Math.floor(Date.now() / 1000),
   ): CloudAppPreconnection | null {
     for (const [preconnectId, pending] of this.pendingPreconnections.entries()) {
-      if (pending.preconnection.hardExpiresAt <= now) {
+      if (
+        pending.preconnection.expiresAt <= now
+        || pending.preconnection.hardExpiresAt <= now
+      ) {
         this.pendingPreconnections.delete(preconnectId)
         continue
       }
@@ -573,6 +582,13 @@ export class AppRelayClient {
     } catch {
       return '<invalid-url>'
     }
+  }
+
+  private clearRelaySessionState(): void {
+    this.pendingPreconnections.clear()
+    this.cloudConnectionOnline.clear()
+    this.pairingCode = ''
+    this.pairingExpiresAt = 0
   }
 
   private async authorizeCloudConnection(request: Record<string, unknown>): Promise<Record<string, unknown>> {

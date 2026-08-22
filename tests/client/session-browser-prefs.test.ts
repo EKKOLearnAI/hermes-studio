@@ -39,6 +39,41 @@ describe('session browser prefs store', () => {
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1'])
   })
 
+  it('persists whether the recent group is collapsed', () => {
+    const store = useSessionBrowserPrefsStore()
+
+    expect(store.recentCollapsed).toBe(false)
+
+    store.setRecentCollapsed(true)
+
+    expect(store.recentCollapsed).toBe(true)
+    expect(window.localStorage.getItem('hermes_recent_sessions_collapsed_v1')).toBe('true')
+
+    setActivePinia(createPinia())
+    expect(useSessionBrowserPrefsStore().recentCollapsed).toBe(true)
+  })
+
+  it('persists recent visibility without changing the saved recent count', () => {
+    const store = useSessionBrowserPrefsStore()
+
+    expect(store.showRecentSessions).toBe(true)
+    store.setRecentCount(24)
+    store.setShowRecentSessions(false)
+
+    expect(store.showRecentSessions).toBe(false)
+    expect(store.recentCount).toBe(24)
+    expect(window.localStorage.getItem('hermes_show_recent_sessions_v1')).toBe('false')
+    expect(window.localStorage.getItem('hermes_recent_session_count_v1')).toBe('24')
+
+    setActivePinia(createPinia())
+    const restoredStore = useSessionBrowserPrefsStore()
+    expect(restoredStore.showRecentSessions).toBe(false)
+    expect(restoredStore.recentCount).toBe(24)
+
+    restoredStore.setShowRecentSessions(true)
+    expect(restoredStore.recentCount).toBe(24)
+  })
+
   it('reloads pin and human-only preferences automatically when the active profile changes', async () => {
     const profilesStore = useProfilesStore()
     profilesStore.activeProfileName = 'default'

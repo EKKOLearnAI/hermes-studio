@@ -38,6 +38,7 @@ vi.mock('vue-i18n', () => ({
       if (key === 'models.credentialConfigured') return 'Configured'
       if (key === 'models.credentialNotConfigured') return 'Not configured'
       if (key === 'models.providerTestSuccess') return `Found ${params?.count || 0}`
+      if (key === 'models.providerTestNoCatalog') return 'No model catalog'
       return key
     },
   }),
@@ -232,6 +233,23 @@ describe('ProviderEditorModal', () => {
     expect(revision).toBe('revision-1')
     expect(patch).toMatchObject({ credential_action: 'keep' })
     expect(patch).not.toHaveProperty('api_key')
+  })
+
+  it('warns but still saves when the provider has no model catalog', async () => {
+    const wrapper = await mountEditor()
+    apiMock.testProviderEditor.mockResolvedValueOnce({
+      success: true,
+      models: [],
+      model_count: 0,
+      catalog_unavailable: true,
+    })
+
+    await wrapper.findAll('button').find(button => button.text() === 'Save')!.trigger('click')
+    await flushPromises()
+
+    expect(messageMock.warning).toHaveBeenCalledWith('No model catalog')
+    expect(dialogMock.warning).not.toHaveBeenCalled()
+    expect(storeMock.saveProviderEditor).toHaveBeenCalledOnce()
   })
 
   it('sends a replacement only after the user enters a new credential', async () => {

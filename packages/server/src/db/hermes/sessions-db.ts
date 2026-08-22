@@ -52,6 +52,7 @@ export interface HermesMessageRow {
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
+  run_marker: string | null
   timestamp: number
   token_count: number | null
   finish_reason: string | null
@@ -379,6 +380,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     tool_call_id: normalizeNullableString(row.tool_call_id),
     tool_calls: parseToolCalls(row.tool_calls),
     tool_name: normalizeNullableString(row.tool_name),
+    run_marker: normalizeNullableString(row.run_marker),
     timestamp: normalizeNumber(row.timestamp),
     token_count: normalizeNullableNumber(row.token_count),
     finish_reason: normalizeNullableString(row.finish_reason),
@@ -551,6 +553,12 @@ function getLatestContinuationChild(
     .map(id => idx.byId.get(id))
     .filter((c): c is HermesSessionInternalRow => !!c)
   return selectCompressionContinuationChild(parent, candidates)
+}
+
+function isCompressionContinuationChild(session: HermesSessionInternalRow, idx: SessionIndex): boolean {
+  if (!session.parent_session_id) return false
+  const parent = idx.byId.get(session.parent_session_id)
+  return !!parent && getLatestContinuationChild(parent, idx)?.id === session.id
 }
 
 function collectCompressionPath(
@@ -1502,28 +1510,11 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
 
   try {
-    const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'", "s.id NOT LIKE 'compress_%'"]
-    const params: any[] = []
-    if (source) {
-      clauses.push('s.source = ?')
-      params.push(source)
-    }
-    params.push(Math.max(limit * 4, limit))
-
-    const rawRows = db.prepare(`
-      SELECT
-        ${SESSION_SELECT},
-        s.parent_session_id AS parent_session_id
-      FROM sessions s
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY s.started_at DESC
-      LIMIT ?
-    `).all(...params) as Record<string, unknown>[] | undefined
-    const roots = (Array.isArray(rawRows) ? rawRows : []).map(mapInternalSessionRow)
-
     const idx = loadAllSessions(db)
-    return roots
-      .map(root => projectSessionSummary(root, collectSessionChain(root, idx)))
+    return [...idx.byId.values()]
+      .filter(session => !source || session.source === source)
+      .filter(session => !isCompressionContinuationChild(session, idx))
+      .map(session => projectSessionSummary(session, collectSessionChain(session, idx)))
       .sort(compareSessionSummariesNewestFirst)
       .slice(0, limit)
   } finally {
@@ -1548,7 +1539,7 @@ export async function listSessionSummaryGroups(
     const included = new Map<string, HermesSessionRow>()
 
     for (const root of idx.byId.values()) {
-      if (root.parent_session_id != null) continue
+      if (isCompressionContinuationChild(root, idx)) continue
       const summary = projectSessionSummary(root, collectSessionChain(root, idx))
       const sessions = grouped.get(summary.source) || []
       sessions.push(summary)

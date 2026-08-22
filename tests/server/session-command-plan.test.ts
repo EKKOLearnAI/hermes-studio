@@ -674,6 +674,8 @@ describe('plan session command', () => {
       expect(parsed).not.toBeNull()
       if (commandName === 'fork') {
         expect(parsed).toEqual(expect.objectContaining({ name: 'branch', rawName: 'fork' }))
+      } else if (commandName === 'compact') {
+        expect(parsed).toEqual(expect.objectContaining({ name: 'compress', rawName: 'compact' }))
       } else {
         expect(parsed).toEqual(expect.objectContaining({ name: commandName }))
       }

@@ -570,6 +570,7 @@ describe('group chat baseline behavior', () => {
       allowRemoteWorkspaceAccess: true,
     })
     storage.addRoomMember('room-relay', 'guest-relay', 'Relay Guest', '')
+    storage.addRoomMember('room-relay', 'auth:7', 'Relay Observer', '')
     const created = relayStore.createGroupAgentPairingRequest({
       roomId: 'room-relay',
       ownerMemberId: 'guest-relay',
@@ -963,6 +964,15 @@ describe('group chat baseline behavior', () => {
     expect(failedError?.outcomeUnknown).not.toBe(true)
 
     const uncertainRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const responseRunId = 'remote-response-disconnect'
+    vi.spyOn(AgentClient.prototype, 'emitContextStatus').mockImplementation((roomId, status, extra) => {
+      ;(groupServer as any).updateRoomAgentActivity(
+        roomId,
+        'Updated Relay Agent',
+        status,
+        typeof extra?.runId === 'string' ? extra.runId : '',
+      )
+    })
     const uncertainReply = executor.replyToMention('room-relay', {
       messageId: 'transport-loss-message',
       content: '@Updated Relay Agent keep running across a transport loss',
@@ -970,14 +980,47 @@ describe('group chat baseline behavior', () => {
       senderId: 'guest-relay',
       timestamp: Date.now(),
       role: 'user',
+    }, { summary: '', history: [] }, (status, extra) => {
+      ;(groupServer as any).updateRoomAgentActivity(
+        'room-relay',
+        'Updated Relay Agent',
+        status,
+        typeof extra?.runId === 'string' ? extra.runId : '',
+      )
     })
     const uncertainRun = await uncertainRunRequested
     intendedTarget.emit('run.accepted', { runId: uncertainRun.runId })
+    await expect(emitAck<any>(intendedTarget as any, 'agent.event', {
+      runId: uncertainRun.runId,
+      seq: 1,
+      event: 'context_status',
+      data: {
+        status: 'replying',
+        runId: responseRunId,
+      },
+    })).resolves.toEqual({ ok: true })
+    const loadActivities = () => {
+      const ack = vi.fn()
+      ;(groupServer as any).handleLoadRoomAgentActivities(
+        { id: 'observer-socket', data: { authUser: { id: 7 } } },
+        {},
+        ack,
+      )
+      return ack.mock.calls[0]?.[0]
+    }
+    expect(loadActivities()).toEqual({
+      activities: [expect.objectContaining({
+        roomId: 'room-relay',
+        runId: responseRunId,
+        status: 'replying',
+      })],
+    })
     intendedTarget.disconnect()
     await expect(uncertainReply).rejects.toMatchObject({
       code: 'GROUP_AGENT_OFFLINE',
       outcomeUnknown: true,
     })
+    expect(loadActivities()).toEqual({ activities: [] })
     await vi.waitFor(() => {
       expect(storage.getMentionableRoomAgents('room-relay')).toEqual([])
     })

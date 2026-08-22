@@ -579,7 +579,10 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
           parentMessageId: relayResult.parentMessageId || null,
         })
       }
-      onStatus?.('ready')
+      onStatus?.(
+        'ready',
+        relayResult.responseRunId ? { runId: relayResult.responseRunId } : undefined,
+      )
     }
   }
 
@@ -814,10 +817,15 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
         this.proxy.stopTyping(pending.roomId)
         break
       case 'context_status':
+        if (typeof data.runId === 'string' && data.runId.trim()) {
+          pending.result.responseRunId = data.runId.slice(0, 500)
+        }
         this.proxy.emitContextStatus(
           pending.roomId,
           data.status === 'compressing' || data.status === 'ready' ? data.status : 'replying',
-          undefined,
+          typeof data.runId === 'string' && data.runId.trim()
+            ? { runId: data.runId.slice(0, 500) }
+            : undefined,
           sessionId || undefined,
         )
         break

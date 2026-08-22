@@ -93,6 +93,7 @@ vi.mock('@/components/hermes/group-chat/GroupMessageItem.vue', () => ({
 
 import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { getRoomDetail } from '@/api/hermes/group-chat'
 
 function makeMessage(id: string): ChatMessage {
   return {
@@ -255,5 +256,51 @@ describe('GroupMessageList scroll behavior', () => {
 
     expect(mockScrollToBottom).toHaveBeenCalledWith({ frames: 4, keepAliveMs: 600 })
     expect(wrapper.find('.scroll-bottom-button').exists()).toBe(false)
+  })
+
+  it('coalesces repeated top events and restores the viewport after prepending one page', async () => {
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-1'
+    store.messages = [makeMessage('message-151')]
+    store.loadedMessageCount = 150
+    store.totalMessages = 300
+    store.hasMoreBefore = true
+    const viewport = { anchorId: 'message-151', offset: 24 }
+    mockCaptureViewportPosition.mockReturnValue(viewport)
+    let resolvePage!: (value: any) => void
+    vi.mocked(getRoomDetail).mockImplementationOnce(() => new Promise(resolve => {
+      resolvePage = resolve
+    }))
+
+    const wrapper = mount(GroupMessageList)
+    await flushListUpdates()
+    vi.clearAllMocks()
+    mockCaptureViewportPosition.mockReturnValue(viewport)
+
+    const list = wrapper.getComponent({ name: 'VirtualMessageList' })
+    list.vm.$emit('top-reach')
+    list.vm.$emit('top-reach')
+    await nextTick()
+
+    expect(getRoomDetail).toHaveBeenCalledTimes(1)
+    expect(getRoomDetail).toHaveBeenCalledWith('room-1', {
+      before: 'message-151',
+      limit: 150,
+      history: true,
+    })
+
+    resolvePage({
+      room: { id: 'room-1', name: 'Room 1' },
+      messages: [makeMessage('message-150')],
+      agents: [],
+      members: [],
+      total: 300,
+      hasMore: true,
+    })
+    await vi.waitFor(() => {
+      expect(mockRestoreViewportPosition).toHaveBeenCalledWith(viewport, 30)
+    })
+
+    expect(store.messages.map(message => message.id)).toEqual(['message-150', 'message-151'])
   })
 })

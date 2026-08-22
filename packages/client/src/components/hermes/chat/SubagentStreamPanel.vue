@@ -198,7 +198,7 @@ onBeforeUnmount(stopElapsedTimer)
           <span>{{ t('subagent.title') }}</span>
           <span v-if="taskPosition" class="subagent-task-position">{{ taskPosition }}</span>
         </div>
-        <div class="subagent-stream-title">{{ stream?.goal || t('subagent.noGoal') }}</div>
+        <div class="subagent-stream-title" dir="auto">{{ stream?.goal || t('subagent.noGoal') }}</div>
         <div v-if="metrics.length" class="subagent-stream-metrics">
           <span v-for="metric in metrics" :key="metric.key">{{ metric.value }}</span>
         </div>

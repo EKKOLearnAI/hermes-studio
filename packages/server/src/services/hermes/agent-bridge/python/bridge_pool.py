@@ -28,6 +28,7 @@ from bridge_runtime import (
     _jsonable,
     _load_cfg,
     _load_enabled_toolsets,
+    _load_fallback_model,
     _load_reasoning_config,
     _load_service_tier,
     _mcp_tool_names_from_names,
@@ -456,6 +457,7 @@ class AgentPool:
 
                 agent = AIAgent(
                     model=resolved_model,
+                    fallback_model=_load_fallback_model(cfg),
                     max_iterations=_cfg_max_turns(cfg, 90),
                     provider=runtime.get("provider"),
                     base_url=runtime.get("base_url"),
@@ -485,6 +487,7 @@ class AgentPool:
                 )
                 agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
+                self._install_prepersist_dedup_hook(agent)
                 mcp_tool_names = self._mcp_tool_names(self._agent_tool_names(getattr(agent, "tools", None) or []))
 
                 session = AgentSession(
@@ -773,6 +776,24 @@ class AgentPool:
                 profile or str(session.config.get("profile") or "default"),
                 add_note=True,
             )
+
+    def _install_prepersist_dedup_hook(self, agent: Any) -> None:
+        """Skip one bridge-pre-persisted user message in the native DB flush."""
+        original = getattr(agent, "_persist_session", None)
+        if not callable(original) or getattr(original, "_hermes_bridge_prepersist_dedup_wrapper", False):
+            return
+
+        def wrapped_persist_session(messages: Any, conversation_history: Any = None, *args: Any, **kwargs: Any):
+            if getattr(agent, "_hermes_bridge_prepersisted_user_pending", False) and isinstance(messages, list):
+                for message in reversed(messages):
+                    if isinstance(message, dict) and message.get("role") == "user" and not message.get("_db_persisted"):
+                        message["_db_persisted"] = True
+                        agent._hermes_bridge_prepersisted_user_pending = False
+                        break
+            return original(messages, conversation_history, *args, **kwargs)
+
+        wrapped_persist_session._hermes_bridge_prepersist_dedup_wrapper = True  # type: ignore[attr-defined]
+        agent._persist_session = wrapped_persist_session
 
     def _install_compression_hook(self, agent: Any, session_id: str) -> None:
         original = getattr(agent, "_compress_context", None)
@@ -1504,6 +1525,11 @@ class AgentPool:
                 content=user_content,
             )
 
+            # The native agent flush receives its own live message list. Mark
+            # exactly one user entry in that list only after this durable write
+            # succeeds, so fallback persistence remains available on failures.
+            session.agent._hermes_bridge_prepersisted_user_pending = True
+
             # AIAgent will build messages as conversation_history + current user.
             # Since the current user was pre-persisted above, align the flush
             # cursor so the normal end-of-turn flush starts at assistant/tool
@@ -1887,6 +1913,9 @@ class AgentPool:
                     session.last_used_at = time.time()
                 self._apply_pending_session_model_switch(session)
             finally:
+                # A failed or interrupted run may never reach a native flush.
+                # Do not let its one-shot marker affect a later fallback turn.
+                session.agent._hermes_bridge_prepersisted_user_pending = False
                 with self._lock:
                     self._approval_handlers.pop(session.session_id, None)
                 try:

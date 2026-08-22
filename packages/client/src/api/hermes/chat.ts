@@ -53,6 +53,7 @@ export interface StartRunResponse {
 export interface RunEvent {
   event: string
   run_id?: string
+  run_marker?: string
   delta?: string
   /** Payload text for `reasoning.delta` / `thinking.delta` / `reasoning.available` events. */
   text?: string
@@ -104,6 +105,9 @@ export interface RunEvent {
   task_count?: number
   goal?: string
   model?: string
+  provider?: string
+  api_mode?: ProviderApiMode
+  reasoning_effort?: string
   status?: string
   summary?: string
   arguments?: unknown
@@ -126,9 +130,9 @@ export interface RunEvent {
   }>
   generation?: string
   queue_id?: string
-  runtime?: 'hermes' | 'ekko'
+  runtime?: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
   phase?: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message' | 'cancelled'
-  guarantee?: 'strict'
+  guarantee?: 'strict' | 'immediate'
   requested_at?: number
   reason?: string
   /** True when a terminal event intentionally stopped the previous run. */
@@ -137,6 +141,8 @@ export interface RunEvent {
   stop_reason?: 'queue_insertion' | string
   /** Safety guarantee used when the previous run was interrupted. */
   boundary_guarantee?: 'strict'
+  /** Immediate process interruption used by one-shot coding agents. */
+  interruption_mode?: 'immediate'
   /** User message broadcast to other windows already watching the same session. */
   message?: {
     id?: string | number
@@ -161,15 +167,19 @@ export interface ResumeSessionPayload {
   outputTokens?: number
   contextTokens?: number
   workspace?: string | null
+  model?: string
+  provider?: string
+  api_mode?: ProviderApiMode | ''
+  reasoning_effort?: string
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
   queueInsertion?: {
     generation: string
     run_id?: string
     queue_id: string
-    runtime: 'hermes' | 'ekko'
+    runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
     phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message'
-    guarantee: 'strict'
+    guarantee: 'strict' | 'immediate'
     requested_at: number
   } | null
   backgroundTasks?: Array<Record<string, unknown>>
@@ -219,6 +229,7 @@ const sessionEventHandlers = new Map<string, {
   onSessionCommand?: (event: RunEvent) => void
   onSessionTitleUpdated?: (event: RunEvent) => void
   onSessionWorkspaceUpdated?: (event: RunEvent) => void
+  onSessionSettingsUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onQueueInsertionUpdated?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
@@ -232,6 +243,7 @@ const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
 const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
 const sessionWorkspaceUpdatedHandlers = new Set<(event: RunEvent) => void>()
+const sessionSettingsUpdatedHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -530,6 +542,13 @@ function globalSessionWorkspaceUpdatedHandler(event: RunEvent): void {
   }
 }
 
+function globalSessionSettingsUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+  sessionEventHandlers.get(sid)?.onSessionSettingsUpdated?.(event)
+  for (const handler of sessionSettingsUpdatedHandlers) handler(event)
+}
+
 function globalAgentEventHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
@@ -639,6 +658,7 @@ export function registerSessionHandlers(
     onSessionCommand?: (event: RunEvent) => void
     onSessionTitleUpdated?: (event: RunEvent) => void
     onSessionWorkspaceUpdated?: (event: RunEvent) => void
+    onSessionSettingsUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onQueueInsertionUpdated?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
@@ -689,6 +709,13 @@ export function onSessionWorkspaceUpdated(handler: (event: RunEvent) => void): (
   sessionWorkspaceUpdatedHandlers.add(handler)
   return () => {
     sessionWorkspaceUpdatedHandlers.delete(handler)
+  }
+}
+
+export function onSessionSettingsUpdated(handler: (event: RunEvent) => void): () => void {
+  sessionSettingsUpdatedHandlers.add(handler)
+  return () => {
+    sessionSettingsUpdatedHandlers.delete(handler)
   }
 }
 
@@ -824,6 +851,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
     chatRunSocket.on('session.command', globalSessionCommandHandler)
     chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
     chatRunSocket.on('session.workspace.updated', globalSessionWorkspaceUpdatedHandler)
+    chatRunSocket.on('session.settings.updated', globalSessionSettingsUpdatedHandler)
 
     globalListenersRegistered = true
   }
@@ -1078,6 +1106,9 @@ export function startRunViaSocket(
       onDone()
     },
     onSessionTitleUpdated: (evt: RunEvent) => {
+      onEvent(evt)
+    },
+    onSessionSettingsUpdated: (evt: RunEvent) => {
       onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {

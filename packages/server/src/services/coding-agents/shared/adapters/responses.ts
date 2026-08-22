@@ -1,8 +1,11 @@
 // Shared Responses payload translation for Coding Agent provider proxies.
 import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
+import { shouldPreserveReasoningContent } from './anthropic'
 
 export interface ResponsesAdapterTarget {
   model: string
+  provider?: string
+  baseUrl?: string
 }
 
 const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
@@ -571,7 +574,25 @@ function chatRoleForResponsesRole(role: unknown): string {
   return 'user'
 }
 
-function responsesInputToChatMessages(body: any): any[] {
+function responsesReasoningText(item: any): string {
+  for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+    if (typeof item?.[field] === 'string' && item[field]) return item[field]
+  }
+
+  const textParts = (value: unknown): string[] => {
+    const entries = Array.isArray(value) ? value : [value]
+    return entries.flatMap((entry: any) => {
+      if (typeof entry === 'string') return entry ? [entry] : []
+      if (!entry || typeof entry !== 'object') return []
+      if (typeof entry.text === 'string' && entry.text) return [entry.text]
+      return textParts(entry.summary)
+    })
+  }
+
+  return [...textParts(item?.summary), ...textParts(item?.content)].join('')
+}
+
+function responsesInputToChatMessages(body: any, target: ResponsesAdapterTarget): any[] {
   const messages: any[] = []
   if (body?.instructions) {
     messages.push({ role: 'system', content: stringifyContent(body.instructions) })
@@ -585,6 +606,12 @@ function responsesInputToChatMessages(body: any): any[] {
 
   let pendingToolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = []
   let pendingToolOutputs = new Map<string, any>()
+  let pendingReasoning = ''
+  const preserveReasoningContent = shouldPreserveReasoningContent({
+    provider: String(target.provider || ''),
+    model: target.model,
+    baseUrl: String(target.baseUrl || ''),
+  })
   const flushCompletedToolCalls = () => {
     if (!pendingToolCalls.length) return
     const outputs = pendingToolCalls.map(call => pendingToolOutputs.get(call.id))
@@ -593,6 +620,9 @@ function responsesInputToChatMessages(body: any): any[] {
       messages.push({
         role: 'assistant',
         content: null,
+        ...(preserveReasoningContent && pendingReasoning
+          ? { reasoning_content: pendingReasoning }
+          : {}),
         tool_calls: pendingToolCalls,
       })
       for (let index = 0; index < pendingToolCalls.length; index += 1) {
@@ -618,10 +648,18 @@ function responsesInputToChatMessages(body: any): any[] {
     }
     pendingToolCalls = []
     pendingToolOutputs = new Map()
+    pendingReasoning = ''
   }
 
   for (const item of Array.isArray(input) ? input : []) {
     if (!item || typeof item !== 'object') continue
+    if (item.type === 'reasoning') {
+      flushCompletedToolCalls()
+      const reasoning = responsesReasoningText(item)
+      if (reasoning.startsWith(pendingReasoning)) pendingReasoning = reasoning
+      else if (reasoning && !pendingReasoning.endsWith(reasoning)) pendingReasoning += reasoning
+      continue
+    }
     if (item.type === 'function_call' || item.type === 'tool_search_call') {
       const callId = String(item.call_id || item.id || `call_${messages.length}`)
       pendingToolCalls.push({
@@ -650,10 +688,15 @@ function responsesInputToChatMessages(body: any): any[] {
     }
     flushCompletedToolCalls()
     if (item.role) {
+      const role = chatRoleForResponsesRole(item.role)
       messages.push({
-        role: chatRoleForResponsesRole(item.role),
+        role,
         content: responseContentToOpenAiChat(item.content),
+        ...(role === 'assistant' && preserveReasoningContent && pendingReasoning
+          ? { reasoning_content: pendingReasoning }
+          : {}),
       })
+      pendingReasoning = ''
     }
   }
   flushCompletedToolCalls()
@@ -681,7 +724,7 @@ export function responsesToOpenAiChat(body: any, target: ResponsesAdapterTarget,
   const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
-    messages: responsesInputToChatMessages(body),
+    messages: responsesInputToChatMessages(body, target),
     ...(typeof body?.max_output_tokens === 'number' ? { max_tokens: body.max_output_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(typeof body?.top_p === 'number' ? { top_p: body.top_p } : {}),

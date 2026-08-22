@@ -195,7 +195,7 @@ function contextChanges(): Record<string, number | null> {
   return changes
 }
 
-async function testDraft(showSuccess = true): Promise<{ success: boolean; error?: string }> {
+async function testDraft(showSuccess = true): Promise<{ success: boolean; catalogUnavailable?: boolean; error?: string }> {
   if (!detail.value?.connection_test_supported) {
     return { success: false, error: detail.value?.connection_test_reason || t('models.providerTestUnsupported') }
   }
@@ -203,11 +203,18 @@ async function testDraft(showSuccess = true): Promise<{ success: boolean; error?
   try {
     const result = await systemApi.testProviderEditor(props.provider.provider, buildPatch())
     if (result.success) {
-      if (showSuccess) message.success(t('models.providerTestSuccess', { count: result.model_count || 0 }))
+      // Reachable without a catalog is a warning, not a success: the provider
+      // works, but nothing was listed and the model ID has to be typed in.
+      if (showSuccess && result.catalog_unavailable) message.warning(t('models.providerTestNoCatalog'))
+      else if (showSuccess) message.success(t('models.providerTestSuccess', { count: result.model_count || 0 }))
     } else if (showSuccess) {
       message.error(result.error || t('models.providerTestFailed'))
     }
-    return { success: result.success, error: result.error }
+    return {
+      success: result.success,
+      catalogUnavailable: result.catalog_unavailable,
+      error: result.error,
+    }
   } catch (error: any) {
     const errorText = error?.message || t('models.providerTestFailed')
     if (showSuccess) message.error(errorText)
@@ -243,6 +250,7 @@ async function save() {
   }
   if (detail.value.connection_test_supported) {
     const test = await testDraft(false)
+    if (test.catalogUnavailable) message.warning(t('models.providerTestNoCatalog'))
     if (!test.success && !await confirmSaveAfterFailedTest(test.error || t('models.providerTestFailed'))) return
   }
 

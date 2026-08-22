@@ -6,6 +6,12 @@ const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
 const ekkoBoundaryInterruptMock = vi.hoisted(() => vi.fn())
+const codingAgentRunManagerMock = vi.hoisted(() => ({
+  interruptForQueueInsertion: vi.fn(),
+  resolveApproval: vi.fn(() => ({ handled: false, resolved: false })),
+  resolveClarification: vi.fn(() => ({ handled: false, resolved: false })),
+  stop: vi.fn(),
+}))
 const sessionCommandMocks = vi.hoisted(() => ({
   handleSessionCommand: vi.fn(),
   isSessionCommand: vi.fn(() => false),
@@ -54,6 +60,10 @@ vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
   abortGlobalEkkoBackgroundTasks: vi.fn(async () => 0),
 }))
 
+vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+  codingAgentRunManager: codingAgentRunManagerMock,
+}))
+
 vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
@@ -65,7 +75,15 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   clearSessionMessages: sessionStoreMocks.clearSessionMessages,
   getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
-  getSessionMetadata: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
+  getSessionMetadata: vi.fn(() => ({
+    id: 'session-1',
+    profile: 'default',
+    source: 'cli',
+    model: 'gpt-5.5',
+    provider: 'openai',
+    api_mode: 'responses',
+    reasoning_effort: 'high',
+  })),
   getSessionDetail: vi.fn(() => null),
 }))
 
@@ -133,6 +151,9 @@ describe('ChatRunSocket queued bridge runs', () => {
     })
     ekkoBoundaryInterruptMock.mockReturnValue({
       status: 'accepted', runId: 'run-ekko', phase: 'model',
+    })
+    codingAgentRunManagerMock.interruptForQueueInsertion.mockReturnValue({
+      status: 'interrupted', runId: 'run-codex', responseId: 'response-codex',
     })
     bridgeMock.approvalRespond.mockResolvedValue({ resolved: true })
     sessionStoreMocks.clearSessionMessages.mockReturnValue(2)
@@ -244,7 +265,7 @@ describe('ChatRunSocket queued bridge runs', () => {
     }))
   })
 
-  it('does not expose queue insertion for Claude or Codex coding runs', async () => {
+  it('immediately interrupts a Codex run before starting the selected queued message', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { handlers, io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
@@ -256,10 +277,29 @@ describe('ChatRunSocket queued bridge runs', () => {
     })
 
     handlers.get('insert_queued_run')?.({ session_id: 'session-1', queue_id: 'queue-codex' })
-    await Promise.resolve()
+    await vi.waitFor(() => expect(codingAgentRunManagerMock.interruptForQueueInsertion).toHaveBeenCalledOnce())
 
     expect(bridgeMock.requestBoundaryInterrupt).not.toHaveBeenCalled()
-    expect((server as any).sessionMap.get('session-1').queueInsertion).toBeUndefined()
+    expect(codingAgentRunManagerMock.interruptForQueueInsertion)
+      .toHaveBeenCalledWith('session-1', 'run-codex')
+    expect((server as any).sessionMap.get('session-1').queueInsertion).toEqual(expect.objectContaining({
+      queueId: 'queue-codex',
+      runtime: 'codex',
+      phase: 'stopping_current_turn',
+      guarantee: 'immediate',
+    }))
+
+    server.markExternalRunCompleted('session-1', 'run.failed')
+    await vi.waitFor(() => expect(handleCodingAgentRunMock).toHaveBeenCalledOnce())
+    expect(handleCodingAgentRunMock.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+      session_id: 'session-1',
+      input: 'later',
+    }))
+    expect((server as any).sessionMap.get('session-1')).toEqual(expect.objectContaining({
+      queue: [],
+      queueInsertion: undefined,
+      isWorking: true,
+    }))
   })
 
   it('routes Ekko and Global Agent queue insertion through the Ekko-owned boundary', async () => {
@@ -626,6 +666,10 @@ describe('ChatRunSocket queued bridge runs', () => {
     expect(socket.emit).toHaveBeenCalledWith('resumed', expect.objectContaining({
       session_id: 'session-1',
       isWorking: false,
+      model: 'gpt-5.5',
+      provider: 'openai',
+      api_mode: 'responses',
+      reasoning_effort: 'high',
     }))
   })
 

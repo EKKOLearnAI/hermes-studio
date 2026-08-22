@@ -53,13 +53,13 @@ describe('response stream reasoning storage', () => {
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_text.delta', {
       delta: 'Before tool.',
     })
-    applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+    const started = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
       item: { type: 'function_call', call_id: 'tool-1', name: 'Bash', arguments: '{}' },
     })
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.reasoning.delta', {
       delta: 'think after. ',
     })
-    applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
+    const completed = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.done', {
       item: { type: 'function_call_output', call_id: 'tool-1', output: 'tool output' },
     })
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_text.delta', {
@@ -67,6 +67,8 @@ describe('response stream reasoning storage', () => {
     })
 
     expect(state.messages.map(message => message.role)).toEqual(['assistant', 'assistant', 'tool', 'assistant'])
+    expect(started?.payload.run_marker).toBe('run-1')
+    expect(completed?.payload.run_marker).toBe('run-1')
     expect(state.messages[0]).toMatchObject({
       role: 'assistant',
       content: 'Before tool.',
@@ -145,6 +147,7 @@ describe('response stream reasoning storage', () => {
       session_id: 'session-1',
       role: 'assistant',
       content: 'answer',
+      run_marker: 'run-1',
       reasoning: 'stored thinking',
       reasoning_content: 'stored thinking',
     }))
@@ -166,9 +169,11 @@ describe('response stream reasoning storage', () => {
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_text.delta', {
       delta: 'Final answer.',
     })
+    state.responseRun!.reasoningMessageId = state.messages[2].id
 
     expect(flushResponseRunToDb(state, 'session-1')).toBe('42')
     expect(state.messages.map(message => message.id)).toEqual([40, 41, 42])
+    expect(state.responseRun?.reasoningMessageId).toBe(42)
   })
 
   it('deduplicates final reasoning snapshots after streamed reasoning deltas', () => {
@@ -195,5 +200,27 @@ describe('response stream reasoning storage', () => {
       reasoning: 'Need inspect.',
       reasoning_content: 'Need inspect.',
     })
+  })
+
+  it('emits only the new suffix when a provider follows reasoning deltas with cumulative snapshots', () => {
+    const state: SessionState = { messages: [], isWorking: false, events: [], queue: [] }
+
+    applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
+      response: { id: 'resp-1', status: 'in_progress' },
+    })
+    const first = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.reasoning.delta', {
+      delta: 'Need ',
+    })
+    const cumulative = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.reasoning.delta', {
+      delta: 'Need inspect.',
+    })
+    const duplicate = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.reasoning.delta', {
+      delta: 'Need inspect.',
+    })
+
+    expect(first?.payload.delta).toBe('Need ')
+    expect(cumulative?.payload.delta).toBe('inspect.')
+    expect(duplicate).toBeNull()
+    expect(state.responseRun?.pendingReasoning).toBe('Need inspect.')
   })
 })

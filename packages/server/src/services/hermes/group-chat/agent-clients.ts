@@ -106,6 +106,7 @@ type AgentActivityBroadcaster = (
     roomId: string,
     agentName: string,
     status: 'compressing' | 'replying' | 'ready',
+    runId?: string,
 ) => void
 type ExecutionQueueBroadcaster = (roomId: string) => void
 
@@ -1055,7 +1056,7 @@ export class AgentClient implements GroupAgentExecutor {
         this.activeSessions.set(roomId, sessionId)
         const interruptVersion = this.interruptVersion(sessionId)
         const reportStatus = (status: 'compressing' | 'replying' | 'ready') => {
-            onStatus?.(status, { agentSessionId: sessionId })
+            onStatus?.(status, { agentSessionId: sessionId, runId: responseRunId })
         }
         let streamStarted = false
         let streamEnded = false
@@ -1247,7 +1248,7 @@ export class AgentClient implements GroupAgentExecutor {
             this.activeSessions.set(roomId, sessionId)
             const replyInterruptVersion = this.interruptVersion(sessionId)
             const reportStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-                onStatus?.(status, { ...extra, agentSessionId: sessionId })
+                onStatus?.(status, { ...extra, agentSessionId: sessionId, runId: runMessageId })
             }
             activeSessionId = sessionId
             activeReplyInterruptVersion = replyInterruptVersion
@@ -1484,9 +1485,9 @@ export class AgentClient implements GroupAgentExecutor {
             }
             this.stopTyping(roomId)
             if (activeSessionId) {
-                onStatus?.('ready', { agentSessionId: activeSessionId })
+                onStatus?.('ready', { agentSessionId: activeSessionId, runId: runMessageId })
             } else {
-                onStatus?.('ready')
+                onStatus?.('ready', { runId: runMessageId })
             }
         } finally {
             if (activeSessionId) {
@@ -2193,8 +2194,9 @@ export class AgentClients {
         roomId: string,
         agentName: string,
         status: 'compressing' | 'replying' | 'ready',
+        runId?: string,
     ): void {
-        this._activityBroadcaster?.(roomId, agentName, status)
+        this._activityBroadcaster?.(roomId, agentName, status, runId)
         logger.debug(`[AgentClients] room ${roomId} agent ${agentName} status: ${status}`)
     }
 
@@ -2612,7 +2614,8 @@ export class AgentClients {
                     const results = runnableTarget ? await Promise.allSettled([Promise.resolve().then(async () => {
                         const { agent } = runnableTarget
                         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
-                            if (status !== 'ready') this.reportAgentActivity(roomId, agent.name, status)
+                            const runId = typeof extra?.runId === 'string' ? extra.runId : undefined
+                            this.reportAgentActivity(roomId, agent.name, status, runId)
                         }
                         if (next.msg.continuationAttemptId) {
                             if (!agent.connected) {

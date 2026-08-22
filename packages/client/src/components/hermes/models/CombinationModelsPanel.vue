@@ -6,6 +6,7 @@ import { fetchMoaConfig, saveMoaConfig, type MoaConfig, type MoaModelSlot, type 
 import { useAppStore } from '@/stores/hermes/app'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -23,7 +24,7 @@ const formPreset = ref<MoaPreset>(createEmptyPreset())
 const showModelPicker = ref(false)
 const pickerTarget = ref<{ kind: 'reference' | 'aggregator'; index?: number } | null>(null)
 const pickerSearch = ref('')
-const collapsedGroups = ref<Record<string, boolean>>({})
+const { isGroupCollapsed: isModelPickerGroupCollapsed, toggleGroup: toggleModelPickerGroup } = useCollapsedProviderGroups()
 const customProvider = ref('')
 const customInput = ref('')
 
@@ -105,14 +106,6 @@ function modelAlias(model: string, provider: string): string {
 
 function isCustomModel(model: string, provider: string): boolean {
   return (appStore.customModels[provider] || []).includes(model)
-}
-
-function isModelPickerGroupCollapsed(provider: string): boolean {
-  return !!collapsedGroups.value[provider]
-}
-
-function toggleModelPickerGroup(provider: string) {
-  collapsedGroups.value[provider] = !collapsedGroups.value[provider]
 }
 
 async function loadMoaConfig() {
@@ -227,7 +220,6 @@ async function deletePreset(name: string) {
 function openModelPicker(kind: 'reference' | 'aggregator', index?: number) {
   pickerTarget.value = { kind, index }
   pickerSearch.value = ''
-  collapsedGroups.value = {}
   customProvider.value = modelGroupsWithCustom.value[0]?.provider || ''
   customInput.value = ''
   showModelPicker.value = true

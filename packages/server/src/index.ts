@@ -3,7 +3,6 @@ import type { Context } from 'koa'
 import cors from '@koa/cors'
 import serve from 'koa-static'
 import send from 'koa-send'
-import os from 'os'
 import { relative, resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
@@ -28,7 +27,7 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
-import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
+import { scanLanDevices, selectLanIPv4Address, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { startGlobalAgentServer } from './services/global-agent/server'
 import { startLocalAppRelayServer } from './services/app-relay/server'
@@ -105,18 +104,6 @@ function getLoopbackBaseUrl(httpServer: any): string {
   const address = httpServer?.address?.()
   const port = typeof address === 'object' && address?.port ? address.port : config.port
   return `http://127.0.0.1:${port}`
-}
-
-/**
- * 安全获取网络接口信息（兼容 Termux/proot 环境）
- * 在 proot 环境中 os.networkInterfaces() 会抛出权限错误（errno 13）
- */
-function safeNetworkInterfaces() {
-  try {
-    return os.networkInterfaces()
-  } catch {
-    return {}
-  }
 }
 
 function isDesktopRuntime(): boolean {
@@ -434,8 +421,8 @@ export async function bootstrap() {
     })
   })
 
-  const interfaces = safeNetworkInterfaces()
-  const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
+  const selectedLanAddress = selectLanIPv4Address('')
+  const localIp = selectedLanAddress === '127.0.0.1' ? 'localhost' : selectedLanAddress
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)

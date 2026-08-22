@@ -44,6 +44,15 @@ describe('Hermes path containment helpers', () => {
     expect(isPathWithin('/tmp/hermes-profile/state.db', '/tmp/hermes-profile')).toBe(true)
   })
 
+  it('treats a child whose name begins with dots as inside the base', () => {
+    expect(isPathWithin('/tmp/hermes-profile/..hidden', '/tmp/hermes-profile')).toBe(true)
+    expect(isPathWithin('/tmp/hermes-profile/...', '/tmp/hermes-profile')).toBe(true)
+    expect(isPathWithin('/tmp/hermes-profile/notes/..archive.md', '/tmp/hermes-profile')).toBe(true)
+    // A first segment of exactly `..` is still the one that leaves the base.
+    expect(isPathWithin('/tmp/hermes-profile/../evil', '/tmp/hermes-profile')).toBe(false)
+    expect(isPathWithin('/tmp', '/tmp/hermes-profile')).toBe(false)
+  })
+
   it('returns normalized relative paths only for children', () => {
     expect(relativePathFromBase('/tmp/hermes-profile/logs/run.txt', '/tmp/hermes-profile'))
       .toBe('logs/run.txt')

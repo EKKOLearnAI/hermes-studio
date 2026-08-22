@@ -930,26 +930,67 @@ onBeforeUnmount(() => {
           v-if="message.toolStatus === 'running'"
           class="tool-spinner"
         ></span>
-        <span v-if="message.toolStatus === 'error'" class="tool-error-badge">{{
-          t("chat.error")
-        }}</span>
+        <svg
+          v-if="message.toolStatus === 'done'"
+          class="tool-status-icon tool-success-icon"
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          :aria-label="t('subagent.completed')"
+          role="img"
+        >
+          <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.14" />
+          <path
+            d="m8 12 3 3 5-6"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <svg
+          v-if="message.toolStatus === 'error'"
+          class="tool-error-badge tool-status-icon"
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          :aria-label="t('subagent.failed')"
+          role="img"
+        >
+          <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.14" />
+          <path
+            d="m9 9 6 6m0-6-6 6"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
       </div>
-      <div v-if="!isSubagentTool && toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
-        <div v-if="message.reasoning?.trim()" class="tool-detail-section">
-          <div class="tool-detail-label">{{ t("chat.thinkingLabel") }}</div>
-          <div class="tool-detail-reasoning">
-            <MarkdownRenderer :content="message.reasoning" />
+      <Transition name="tool-detail-expand">
+        <div
+          v-if="!isSubagentTool && toolExpanded && hasToolDetails"
+          class="tool-details-expand"
+        >
+          <div class="tool-details" @click="handleToolDetailClick">
+            <div v-if="message.reasoning?.trim()" class="tool-detail-section">
+              <div class="tool-detail-label">{{ t("chat.thinkingLabel") }}</div>
+              <div class="tool-detail-reasoning">
+                <MarkdownRenderer :content="message.reasoning" />
+              </div>
+            </div>
+            <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
+              <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
+              <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
+            </div>
+            <div v-if="formattedToolResult" class="tool-detail-section" data-copy-source="tool-result">
+              <div class="tool-detail-label">{{ t("chat.result") }}</div>
+              <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
+            </div>
           </div>
         </div>
-        <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
-          <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
-          <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
-        </div>
-        <div v-if="formattedToolResult" class="tool-detail-section" data-copy-source="tool-result">
-          <div class="tool-detail-label">{{ t("chat.result") }}</div>
-          <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
-        </div>
-      </div>
+      </Transition>
     </template>
     <template v-else>
       <div class="msg-body">
@@ -1776,21 +1817,55 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.tool-error-badge {
-  font-size: 9px;
-  color: $error;
-  background: rgba(var(--error-rgb), 0.08);
-  padding: 0 4px;
-  border-radius: 3px;
-  line-height: 14px;
+.tool-status-icon {
+  flex: 0 0 auto;
   margin-inline-start: 4px;
 }
 
+.tool-success-icon {
+  color: $success;
+}
+
+.tool-error-badge {
+  color: $error;
+}
+
+.tool-details-expand {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .tool-details {
+  min-height: 0;
+  overflow: hidden;
   margin-inline-start: 16px;
   margin-top: 2px;
   border-inline-start: 2px solid $border-light;
   padding-inline-start: 10px;
+}
+
+.tool-detail-expand-enter-active,
+.tool-detail-expand-leave-active {
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 150ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tool-detail-expand-enter-from,
+.tool-detail-expand-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-detail-expand-enter-active,
+  .tool-detail-expand-leave-active {
+    transition: none;
+  }
 }
 
 .tool-detail-section {

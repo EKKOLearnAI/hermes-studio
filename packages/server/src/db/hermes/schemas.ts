@@ -64,6 +64,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
   api_mode: 'TEXT NOT NULL DEFAULT \'\'',
+  reasoning_effort: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
   parent_session_id: 'TEXT',
   fork_point_message_id: 'TEXT',
@@ -105,6 +106,7 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
   tool_call_id: 'TEXT',
   tool_calls: 'TEXT',
   tool_name: 'TEXT',
+  run_marker: 'TEXT',
   timestamp: 'INTEGER NOT NULL',
   token_count: 'INTEGER',
   finish_reason: 'TEXT',
@@ -848,6 +850,24 @@ export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
   removedAt: 'INTEGER NOT NULL DEFAULT 0',
 }
 
+export const GC_AGENT_PRESETS_TABLE = 'gc_agent_presets'
+
+export const GC_AGENT_PRESETS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  ownerUserId: 'INTEGER NOT NULL',
+  agent: "TEXT NOT NULL DEFAULT 'hermes'",
+  profile: 'TEXT NOT NULL',
+  provider: 'TEXT NOT NULL',
+  model: 'TEXT NOT NULL',
+  apiMode: "TEXT NOT NULL DEFAULT ''",
+  reasoningEffort: "TEXT NOT NULL DEFAULT ''",
+  name: 'TEXT NOT NULL',
+  description: "TEXT NOT NULL DEFAULT ''",
+  avatar: "TEXT NOT NULL DEFAULT ''",
+  createdAt: 'INTEGER NOT NULL',
+  updatedAt: 'INTEGER NOT NULL',
+}
+
 export const GC_AGENT_PAIRING_REQUESTS_TABLE = 'gc_agent_pairing_requests'
 
 export const GC_AGENT_PAIRING_REQUESTS_SCHEMA: Record<string, string> = {
@@ -1569,6 +1589,12 @@ export function initAllHermesTables(): void {
       indexes: {
         idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
       }
+    })
+    syncTable(GC_AGENT_PRESETS_TABLE, GC_AGENT_PRESETS_SCHEMA, {
+      indexes: {
+        idx_gc_agent_presets_owner_updated: 'CREATE INDEX idx_gc_agent_presets_owner_updated ON gc_agent_presets(ownerUserId, updatedAt DESC)',
+        idx_gc_agent_presets_owner_name: 'CREATE UNIQUE INDEX idx_gc_agent_presets_owner_name ON gc_agent_presets(ownerUserId, name)',
+      },
     })
     syncTable(GC_AGENT_PAIRING_REQUESTS_TABLE, GC_AGENT_PAIRING_REQUESTS_SCHEMA, {
       indexes: {

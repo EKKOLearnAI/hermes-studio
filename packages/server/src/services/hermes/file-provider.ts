@@ -127,7 +127,9 @@ export function resolveHermesPath(relativePath: string, profile?: string): strin
     return homeDir
   }
   const normalized = normalize(relativePath).replace(/\\/g, '/')
-  if (normalized.startsWith('..') || normalized.includes('/../') || normalized.startsWith('/')) {
+  // Only a literal `..` segment is traversal. `..hidden` and `...` are ordinary
+  // names, and validatePath already draws that line for absolute paths.
+  if (hasTraversalSegment(normalized) || normalized.startsWith('/')) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
   const resolved = resolve(homeDir, normalized)

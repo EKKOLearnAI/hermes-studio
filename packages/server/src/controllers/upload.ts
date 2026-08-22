@@ -4,6 +4,7 @@ import { join } from 'path'
 import { getActiveProfileName } from '../services/hermes/hermes-profile'
 import { getProfileUploadDir } from '../services/hermes/upload-paths'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
+import { drainRejectedRequest, nonDestroyingRequestBody } from '../lib/request-body'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
 
@@ -20,14 +21,26 @@ export async function handleUpload(ctx: any) {
   if (!boundaryBuf) {
     ctx.status = 400; ctx.body = { error: 'Missing boundary' }; return
   }
-  const chunks: Buffer[] = []
+  let chunks: Buffer[] = []
   let totalSize = 0
-  for await (const chunk of ctx.req) {
+  let oversize = false
+  // Leave the stream alive when the loop ends early; the iterator would
+  // otherwise destroy it and take the unsent response down with it.
+  const body = nonDestroyingRequestBody(ctx.req)
+  for await (const chunk of body) {
     totalSize += chunk.length
     if (totalSize > MAX_UPLOAD_SIZE) {
-      ctx.status = 413; ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }; return
+      oversize = true
+      break
     }
     chunks.push(chunk)
+  }
+  if (oversize) {
+    chunks = []
+    await drainRejectedRequest(ctx.req)
+    ctx.status = 413
+    ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }
+    return
   }
   const raw = Buffer.concat(chunks)
   const parts = splitMultipart(raw, boundaryBuf)

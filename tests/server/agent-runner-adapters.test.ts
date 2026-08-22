@@ -118,6 +118,46 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('replays Responses reasoning_content on DeepSeek tool-call continuations', () => {
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'inspect the repo' }] },
+        {
+          type: 'reasoning',
+          id: 'rs_deepseek',
+          summary: [{ type: 'summary_text', text: 'I should inspect the repository first.' }],
+        },
+        {
+          type: 'function_call',
+          call_id: 'call_read',
+          name: 'read_file',
+          arguments: '{"path":"README.md"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_read',
+          output: 'repository contents',
+        },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, anthropicTarget).messages).toEqual([
+      { role: 'user', content: 'inspect the repo' },
+      {
+        role: 'assistant',
+        content: null,
+        reasoning_content: 'I should inspect the repository first.',
+        tool_calls: [{
+          id: 'call_read',
+          type: 'function',
+          function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_read', content: 'repository contents' },
+    ])
+    expect(responsesToOpenAiChat(body, target).messages[1]).not.toHaveProperty('reasoning_content')
+  })
+
   it('preserves Responses image inputs for Chat and Anthropic providers', () => {
     const imageUrl = 'data:image/png;base64,AQID'
     const body = {

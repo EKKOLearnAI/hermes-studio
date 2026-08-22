@@ -191,6 +191,7 @@ describe('GroupChatInput mentions', () => {
       undefined,
       [{ type: 'agent', participantId: 'agent-1', displayName: 'Worker' }],
     )
+    ;(wrapper.vm as any).completeSend(true)
     store.setMessageReference('room-1', {
       id: 'message-2',
       role: 'assistant',
@@ -376,5 +377,105 @@ describe('GroupChatInput mentions', () => {
     expect(onSendBlocked).toHaveBeenCalledOnce()
     expect(wrapper.emitted('send')).toBeUndefined()
     expect((textarea.element as HTMLTextAreaElement).value).toBe('@Worker keep this draft')
+  })
+
+  it('restores isolated room drafts with routable structured mentions', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.agents = [{ id: 'agent-1', agentId: 'agent-1', profile: 'worker', name: 'Worker', roomId: 'room-a', description: '', invited: 1 }]
+    store.emitTyping = vi.fn()
+    const onSend = vi.fn()
+    const wrapper = mount(GroupChatInput, {
+      props: { roomId: 'room-a', onSend },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+
+    ;(wrapper.vm as any).insertMention('Worker', 'agent-1')
+    await wrapper.get('textarea').setValue('@Worker inspect room A')
+    await nextTick()
+    await wrapper.setProps({ roomId: 'room-b' })
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+    await wrapper.get('textarea').setValue('room B draft')
+    await wrapper.setProps({ roomId: 'room-a' })
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('@Worker inspect room A')
+
+    wrapper.unmount()
+    const remounted = mount(GroupChatInput, {
+      props: { roomId: 'room-a', onSend },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    await nextTick()
+    ;(remounted.vm as any).handleSend()
+
+    expect(onSend).toHaveBeenCalledWith(
+      '@Worker inspect room A',
+      undefined,
+      [{ type: 'agent', participantId: 'agent-1', displayName: 'Worker' }],
+    )
+  })
+
+  it('clears only after async send success and retains the draft after failure', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const wrapper = mount(GroupChatInput, {
+      props: { roomId: 'room-a' },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const textarea = wrapper.get('textarea')
+
+    await textarea.setValue('keep until acknowledged')
+    ;(wrapper.vm as any).handleSend()
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('keep until acknowledged')
+
+    ;(wrapper.vm as any).completeSend(false)
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('keep until acknowledged')
+
+    ;(wrapper.vm as any).handleSend()
+    ;(wrapper.vm as any).completeSend(true)
+    await nextTick()
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('')
+
+    wrapper.unmount()
+    const remounted = mount(GroupChatInput, {
+      props: { roomId: 'room-a' },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    await nextTick()
+    expect((remounted.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('does not restore local attachments or reply references after remount', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const store = useGroupChatStore()
+    store.currentRoomId = 'room-a'
+    const wrapper = mount(GroupChatInput, {
+      props: { roomId: 'room-a' },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    ;(wrapper.vm as any).addFiles([new File(['draft'], 'draft.txt', { type: 'text/plain' })])
+    store.setMessageReference('room-a', {
+      id: 'message-1',
+      role: 'assistant',
+      content: 'Do not persist me',
+      sender: 'Worker',
+    })
+    await wrapper.get('textarea').setValue('persist only text')
+    wrapper.unmount()
+    store.clearMessageReference('room-a')
+
+    const remounted = mount(GroupChatInput, {
+      props: { roomId: 'room-a' },
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    await nextTick()
+
+    expect((remounted.get('textarea').element as HTMLTextAreaElement).value).toBe('persist only text')
+    expect(remounted.find('.attachment-previews').exists()).toBe(false)
+    expect(remounted.find('.message-reference-preview').exists()).toBe(false)
   })
 })

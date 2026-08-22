@@ -10,6 +10,7 @@ import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from '../con
 import { getCompatibleCustomProviders } from '../hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './claude-code/proxy'
 import { registerCodexProxyTarget, restoreCodexProxyTarget } from './codex/proxy'
+import { compactCodexThread } from './runtime/codex-compact'
 import type { ApiMode, CodingAgentImageInput } from './shared/types'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from '../hermes/model-context'
@@ -32,6 +33,10 @@ const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
 const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
+// Claude Code auto-compact is on by default, but Studio never tells it the
+// model context window, so it can compact too late for the 20MB proxy body
+// limit. Mirror Hermes' 50% compression budget and pass Studio's window.
+const CLAUDE_CODE_AUTO_COMPACT_PERCENT = 50
 const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_CODING_AGENT_VERSION = '0.84.1'
@@ -42,6 +47,10 @@ const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
 const PI_STUDIO_EXTENSION_FILE = 'hermes-studio-runtime.ts'
 const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
 const PI_PROXY_TARGET_LEGACY_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
+// Codex ToolSearch became stable in 0.128; always-defer was removed in 0.142.
+const CODEX_TOOL_SEARCH_MIN_VERSION = '0.128.0'
+const CODEX_TOOL_SEARCH_ALWAYS_DEFER_REMOVED_VERSION = '0.142.0'
+const CODEX_VERSION_CACHE_TTL_MS = 5 * 60 * 1000
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
   { name: 'hermes-studio-api', toolset: 'api' },
   { name: 'hermes-studio-browser', toolset: 'browser' },
@@ -59,6 +68,8 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const HERMES_PROMPT_BLOCK_BEGIN = '<!-- BEGIN HERMES WEB UI PROMPT -->'
 const HERMES_PROMPT_BLOCK_END = '<!-- END HERMES WEB UI PROMPT -->'
+
+let cachedCodexVersion: { version: string; checkedAt: number } | null = null
 
 interface EncryptedPiProxyApiKey {
   v: 1 | 2
@@ -2047,6 +2058,30 @@ function versionGte(a: string, b: string): boolean {
   return true
 }
 
+export function codexToolSearchConfig(version: string): { toolSearch: boolean; alwaysDefer: boolean } {
+  if (!String(version || '').trim()) {
+    // Keep the pre-gating behavior when the CLI version cannot be resolved.
+    return { toolSearch: true, alwaysDefer: true }
+  }
+  const toolSearch = versionGte(version, CODEX_TOOL_SEARCH_MIN_VERSION)
+  return {
+    toolSearch,
+    alwaysDefer: toolSearch && !versionGte(version, CODEX_TOOL_SEARCH_ALWAYS_DEFER_REMOVED_VERSION),
+  }
+}
+
+async function resolveCodexToolSearchConfig(): Promise<{ toolSearch: boolean; alwaysDefer: boolean }> {
+  if (process.env.VITEST) return { toolSearch: true, alwaysDefer: true }
+  if (cachedCodexVersion && Date.now() - cachedCodexVersion.checkedAt < CODEX_VERSION_CACHE_TTL_MS) {
+    return codexToolSearchConfig(cachedCodexVersion.version)
+  }
+  const definition = getCodingAgentDefinition('codex')
+  if (!definition) return { toolSearch: true, alwaysDefer: true }
+  const status = await getCodingAgentStatus(definition)
+  cachedCodexVersion = { version: status.version, checkedAt: Date.now() }
+  return codexToolSearchConfig(status.version)
+}
+
 export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateResult> {
   const tool = getCodingAgentDefinition(id)
   if (!tool) {
@@ -2401,6 +2436,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   let env: Record<string, string> = {}
 
   if (tool.id === 'claude-code') {
+    const contextWindow = getModelContextLength({ profile: scope.profile, provider, model })
     const proxyTarget = baseUrl && apiKey
       ? registerClaudeCodeProxyTarget({
           provider,
@@ -2434,6 +2470,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: modelName,
         ANTHROPIC_DEFAULT_OPUS_MODEL: model,
         ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: modelName,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(CLAUDE_CODE_AUTO_COMPACT_PERCENT),
+        ENABLE_TOOL_SEARCH: 'true',
       },
     }
     env = settings.env
@@ -2482,6 +2521,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const codexApiKey = proxyTarget?.token || apiKey
     const providerId = 'custom'
     const catalogPath = join(rootDir, CODEX_MODEL_CATALOG_FILE)
+    const toolSearchFeatures = await resolveCodexToolSearchConfig()
+    const featureConfig = toolSearchFeatures.toolSearch || toolSearchFeatures.alwaysDefer
+      ? [
+          '',
+          '[features]',
+          ...(toolSearchFeatures.toolSearch ? ['tool_search = true'] : []),
+          ...(toolSearchFeatures.alwaysDefer ? ['tool_search_always_defer_mcp_tools = true'] : []),
+        ]
+      : []
     const configToml = [
       `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
@@ -2503,6 +2551,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
         await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
       ),
+      ...featureConfig,
     ].join('\n')
     const catalog = buildCodexModelCatalog({
       profile: scope.profile,
@@ -2685,6 +2734,7 @@ export async function startCodingAgentRun(
     ...resolvedInput,
     sessionId,
     agentSessionId,
+    agentNativeSessionId,
     isolateSettings: true,
     piOutputMode: id === 'pi' ? 'rpc' : undefined,
   })
@@ -2739,6 +2789,49 @@ export async function startCodingAgentRun(
     sessionId,
     pid: started.pid,
   }
+}
+
+export async function compactStoredCodingAgentSession(
+  sessionId: string,
+  profile: string,
+): Promise<{ compacted: boolean; beforeTokens?: number | null; afterTokens?: number | null }> {
+  const session = getSession(sessionId)
+  if (!session || (session.agent !== 'codex' && session.agent !== 'claude')) {
+    throw new Error('Coding agent session not found or is not a Codex/Claude Code session')
+  }
+  if (session.agent !== 'codex') {
+    throw new Error('Claude Code compact requires an active session run')
+  }
+  const nativeSessionId = String(session.agent_native_session_id || '').trim()
+  if (!nativeSessionId) {
+    throw new Error('Codex session has no native thread to compact')
+  }
+  const resolved = await resolveStoredProviderLaunchInput({
+    sessionId,
+    profile,
+    mode: session.agent_mode === 'global' ? 'global' : 'scoped',
+    workspace: session.workspace || undefined,
+    agentNativeSessionId: session.agent_native_session_id || undefined,
+    agentSessionId: session.agent_session_id || undefined,
+  }, session)
+  const launch = await prepareCodingAgentLaunch('codex', {
+    ...resolved,
+    sessionId,
+    profile,
+    isolateSettings: true,
+  })
+  const launchEnv = {
+    ...process.env,
+    ...launch.env,
+  }
+  const command = process.platform === 'win32'
+    ? await resolveCommandForExecution(launch.command, launchEnv)
+    : launch.command
+  return compactCodexThread({
+    command,
+    env: launchEnv,
+    workspaceDir: launch.workspaceDir,
+  }, nativeSessionId)
 }
 
 export function sendCodingAgentRunInput(

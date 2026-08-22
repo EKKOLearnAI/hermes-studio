@@ -415,6 +415,88 @@ describe('Profile Routes', () => {
   })
 
   describe('profile avatars', () => {
+    it('returns a compressed image avatar from the App-only profile endpoint', async () => {
+      const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-app-avatar-'))
+      tempHomes.push(webUiHome)
+      process.env.HERMES_WEB_UI_HOME = webUiHome
+      const metadataDir = join(webUiHome, 'profile-metadata', Buffer.from('work', 'utf-8').toString('base64url'))
+      await mkdir(metadataDir, { recursive: true })
+      const { default: sharp } = await import('sharp')
+      const source = await sharp({
+        create: {
+          width: 640,
+          height: 480,
+          channels: 4,
+          background: { r: 53, g: 88, b: 212, alpha: 1 },
+        },
+      }).png().toBuffer()
+      await writeFile(join(metadataDir, 'avatar.bin'), source)
+      await writeFile(join(metadataDir, 'avatar.json'), JSON.stringify({
+        type: 'image',
+        file: 'avatar.bin',
+        mime: 'image/png',
+        updatedAt: 123,
+      }), 'utf-8')
+      vi.mocked(hermesCli.listProfiles).mockResolvedValue([{
+        name: 'work',
+        active: true,
+        model: 'test-model',
+        alias: '',
+      }] as any)
+      const { listForApp } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        state: { profile: { name: 'work' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await listForApp(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.profiles).toHaveLength(1)
+      const dataUrl = String(ctx.body.profiles[0].avatar.dataUrl)
+      expect(dataUrl).toMatch(/^data:image\/webp;base64,/)
+      const preview = Buffer.from(dataUrl.split(',', 2)[1], 'base64')
+      const metadata = await sharp(preview).metadata()
+      expect(metadata.width).toBe(128)
+      expect(metadata.height).toBe(96)
+      expect(preview.length).toBeLessThan(source.length)
+    })
+
+    it('keeps generated App avatars as seed metadata instead of embedding SVG', async () => {
+      const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-app-avatar-'))
+      tempHomes.push(webUiHome)
+      process.env.HERMES_WEB_UI_HOME = webUiHome
+      const metadataDir = join(webUiHome, 'profile-metadata', Buffer.from('work', 'utf-8').toString('base64url'))
+      await mkdir(metadataDir, { recursive: true })
+      await writeFile(join(metadataDir, 'avatar.json'), JSON.stringify({
+        type: 'generated',
+        seed: 'app-seed',
+        updatedAt: 456,
+      }), 'utf-8')
+      vi.mocked(hermesCli.listProfiles).mockResolvedValue([{
+        name: 'work',
+        active: true,
+        model: 'test-model',
+        alias: '',
+      }] as any)
+      const { listForApp } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        state: { profile: { name: 'work' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await listForApp(ctx)
+
+      expect(ctx.body.profiles[0].avatar).toEqual({
+        type: 'generated',
+        seed: 'app-seed',
+        updatedAt: 456,
+      })
+      expect(ctx.body.profiles[0].avatar.dataUrl).toBeUndefined()
+    })
+
     it('stores generated avatar metadata under the Web UI home', async () => {
       const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-avatar-'))
       tempHomes.push(webUiHome)

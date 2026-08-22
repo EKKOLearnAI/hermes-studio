@@ -40,6 +40,15 @@ import {
   workflowRunBudgetSnapshot,
   type WorkflowRunBudgetChoice,
 } from '@/utils/workflow-run-budget'
+import {
+  buildScheduleExpression,
+  parseScheduleExpression,
+  scheduleWeekdayOptions,
+  SCHEDULE_HOUR_OPTIONS,
+  SCHEDULE_MINUTE_OPTIONS,
+  SCHEDULE_MONTH_DAY_OPTIONS,
+  type ScheduleFrequency,
+} from '@/utils/schedule-frequency'
 import { createConnectedAgentTransaction, type CanvasTransaction } from '@/utils/workflow-canvas'
 import {
   createWorkflowAuthoringEdge,
@@ -117,7 +126,7 @@ import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
@@ -338,7 +347,12 @@ const persistedWorkflowScheduleStartNodes = ref<Record<string, WorkflowSelectOpt
 const workflowScheduleModalVisible = ref(false)
 const workflowScheduleSubmitting = ref(false)
 const editingWorkflowScheduleId = ref<string | null>(null)
-const workflowScheduleCron = ref('@daily')
+const workflowScheduleFrequency = ref<ScheduleFrequency | null>(null)
+const workflowScheduleHour = ref(9)
+const workflowScheduleMinute = ref(0)
+const workflowScheduleWeekday = ref(1)
+const workflowScheduleMonthDay = ref(1)
+const workflowScheduleCron = ref('')
 const workflowScheduleTimezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 const workflowScheduleEnabled = ref(true)
 const workflowScheduleInput = ref('')
@@ -404,12 +418,17 @@ const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(
   value: option.value,
   label: t(`workflow.budget.options.${option.value}`),
 })))
-const workflowSchedulePresetOptions = computed(() => [
-  { label: t('workflow.schedule.presets.hourly'), value: '@hourly' },
-  { label: t('workflow.schedule.presets.daily'), value: '@daily' },
-  { label: t('workflow.schedule.presets.weekly'), value: '@weekly' },
-  { label: t('workflow.schedule.presets.monthly'), value: '@monthly' },
+const workflowScheduleOptions = computed(() => [
+  { label: t('workflow.schedule.presets.everyMinute'), value: 'every-minute' },
+  { label: t('workflow.schedule.presets.every5Minutes'), value: 'every-5-minutes' },
+  { label: t('workflow.schedule.presets.every30Minutes'), value: 'every-30-minutes' },
+  { label: t('workflow.schedule.presets.hourly'), value: 'hourly' },
+  { label: t('workflow.schedule.presets.daily'), value: 'daily' },
+  { label: t('workflow.schedule.presets.weekly'), value: 'weekly' },
+  { label: t('workflow.schedule.presets.monthly'), value: 'monthly' },
+  { label: t('workflow.schedule.presets.custom'), value: 'custom' },
 ])
+const workflowScheduleWeekdays = computed(() => scheduleWeekdayOptions(locale.value))
 const workflowScheduleStartNodeOptions = computed(() => persistedWorkflowScheduleStartNodes.value[activeWorkflowId.value] || [])
 const workflowScheduleFormTitle = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.editTitle' : 'workflow.schedule.createTitle'))
 const workflowScheduleSubmitLabel = computed(() => t(editingWorkflowScheduleId.value ? 'workflow.schedule.save' : 'workflow.schedule.create'))
@@ -1697,13 +1716,51 @@ async function clearSelectedWorkflowRun() {
 }
 
 function resetWorkflowScheduleForm(schedule?: WorkflowScheduleRecord) {
+  const savedSchedule = schedule?.schedule || ''
+  const parsedSchedule = parseScheduleExpression(savedSchedule)
   editingWorkflowScheduleId.value = schedule?.id || null
-  workflowScheduleCron.value = schedule?.schedule || '@daily'
+  workflowScheduleCron.value = savedSchedule
+  workflowScheduleFrequency.value = savedSchedule ? parsedSchedule.frequency : null
+  workflowScheduleHour.value = parsedSchedule.hour
+  workflowScheduleMinute.value = parsedSchedule.minute
+  workflowScheduleWeekday.value = parsedSchedule.weekday
+  workflowScheduleMonthDay.value = parsedSchedule.monthDay
   workflowScheduleTimezone.value = schedule?.timezone || (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
   workflowScheduleEnabled.value = schedule?.enabled ?? true
   workflowScheduleInput.value = schedule?.input || ''
   workflowScheduleStartNodeIds.value = [...(schedule?.start_node_ids || [])]
   workflowScheduleTimeoutMinutes.value = schedule?.timeout_ms == null ? null : schedule.timeout_ms / 60_000
+}
+
+function syncGeneratedWorkflowSchedule() {
+  if (!workflowScheduleFrequency.value || workflowScheduleFrequency.value === 'custom') return
+  workflowScheduleCron.value = buildScheduleExpression({
+    frequency: workflowScheduleFrequency.value,
+    hour: workflowScheduleHour.value,
+    minute: workflowScheduleMinute.value,
+    weekday: workflowScheduleWeekday.value,
+    monthDay: workflowScheduleMonthDay.value,
+  })
+}
+
+function handleWorkflowScheduleFrequency(value: ScheduleFrequency | null) {
+  const previous = workflowScheduleFrequency.value
+  workflowScheduleFrequency.value = value
+  if (!value) {
+    workflowScheduleCron.value = ''
+  } else if (value === 'custom') {
+    if (previous !== 'custom') workflowScheduleCron.value = ''
+  } else {
+    syncGeneratedWorkflowSchedule()
+  }
+}
+
+function setWorkflowScheduleHour(value: number) { workflowScheduleHour.value = value; syncGeneratedWorkflowSchedule() }
+function setWorkflowScheduleMinute(value: number) { workflowScheduleMinute.value = value; syncGeneratedWorkflowSchedule() }
+function setWorkflowScheduleWeekday(value: number) { workflowScheduleWeekday.value = value; syncGeneratedWorkflowSchedule() }
+function setWorkflowScheduleMonthDay(value: number) {
+  workflowScheduleMonthDay.value = value
+  syncGeneratedWorkflowSchedule()
 }
 
 function setPersistedWorkflowScheduleStartNodes(workflow: WorkflowDocument) {
@@ -3393,12 +3450,65 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
         </section>
         <section class="workflow-schedule-form">
           <h3>{{ workflowScheduleFormTitle }}</h3>
-          <label>{{ t('workflow.schedule.cron') }}
-            <NInput v-model:value="workflowScheduleCron" :placeholder="t('workflow.schedule.cronPlaceholder')" :aria-label="t('workflow.schedule.cron')" />
+          <label>{{ t('workflow.schedule.frequency') }}
+            <NSelect
+              data-testid="workflow-schedule-frequency"
+              :value="workflowScheduleFrequency"
+              :options="workflowScheduleOptions"
+              :placeholder="t('workflow.schedule.selectFrequency')"
+              :aria-label="t('workflow.schedule.frequency')"
+              clearable
+              @update:value="handleWorkflowScheduleFrequency"
+            />
           </label>
-          <div class="workflow-schedule-presets">
-            <NButton v-for="preset in workflowSchedulePresetOptions" :key="String(preset.value)" size="tiny" @click="workflowScheduleCron = String(preset.value)">{{ preset.label }}</NButton>
-          </div>
+          <label v-if="workflowScheduleFrequency === 'hourly'">{{ t('scheduleBuilder.minute') }}
+            <NSelect
+              data-testid="workflow-schedule-minute"
+              :value="workflowScheduleMinute"
+              :options="SCHEDULE_MINUTE_OPTIONS"
+              :aria-label="t('scheduleBuilder.minute')"
+              @update:value="setWorkflowScheduleMinute"
+            />
+          </label>
+          <label v-if="workflowScheduleFrequency === 'weekly'">{{ t('scheduleBuilder.weekday') }}
+            <NSelect
+              data-testid="workflow-schedule-weekday"
+              :value="workflowScheduleWeekday"
+              :options="workflowScheduleWeekdays"
+              :aria-label="t('scheduleBuilder.weekday')"
+              @update:value="setWorkflowScheduleWeekday"
+            />
+          </label>
+          <label v-if="workflowScheduleFrequency === 'monthly'">{{ t('scheduleBuilder.monthDay') }}
+            <NSelect
+              data-testid="workflow-schedule-month-day"
+              :value="workflowScheduleMonthDay"
+              :options="SCHEDULE_MONTH_DAY_OPTIONS"
+              @update:value="setWorkflowScheduleMonthDay"
+            />
+          </label>
+          <label v-if="workflowScheduleFrequency === 'daily' || workflowScheduleFrequency === 'weekly' || workflowScheduleFrequency === 'monthly'">{{ t('scheduleBuilder.time') }}
+            <div class="workflow-schedule-time-fields">
+              <NSelect
+                data-testid="workflow-schedule-hour"
+                :value="workflowScheduleHour"
+                :options="SCHEDULE_HOUR_OPTIONS"
+                :aria-label="t('scheduleBuilder.hour')"
+                @update:value="setWorkflowScheduleHour"
+              />
+              <span>:</span>
+              <NSelect
+                data-testid="workflow-schedule-minute"
+                :value="workflowScheduleMinute"
+                :options="SCHEDULE_MINUTE_OPTIONS"
+                :aria-label="t('scheduleBuilder.minute')"
+                @update:value="setWorkflowScheduleMinute"
+              />
+            </div>
+          </label>
+          <label v-if="workflowScheduleFrequency === 'custom'">{{ t('workflow.schedule.cron') }}
+            <NInput data-testid="workflow-schedule-custom" v-model:value="workflowScheduleCron" :placeholder="t('workflow.schedule.cronPlaceholder')" :aria-label="t('workflow.schedule.cron')" />
+          </label>
           <label>{{ t('workflow.schedule.timezone') }}
             <NInput v-model:value="workflowScheduleTimezone" :placeholder="t('workflow.schedule.timezonePlaceholder')" :aria-label="t('workflow.schedule.timezone')" />
           </label>
@@ -3407,7 +3517,7 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
             <NInput v-model:value="workflowScheduleInput" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :placeholder="t('workflow.schedule.initialInputPlaceholder')" />
           </label>
           <label>{{ t('workflow.schedule.startNodes') }}
-            <NSelect v-model:value="workflowScheduleStartNodeIds" multiple :options="workflowScheduleStartNodeOptions" :placeholder="t('workflow.schedule.startNodesPlaceholder')" />
+            <NSelect data-testid="workflow-schedule-start-nodes" v-model:value="workflowScheduleStartNodeIds" multiple :options="workflowScheduleStartNodeOptions" :placeholder="t('workflow.schedule.startNodesPlaceholder')" />
           </label>
           <label>{{ t('workflow.schedule.timeout') }}
             <NInputNumber v-model:value="workflowScheduleTimeoutMinutes" :min="0.1" :max="1440" :precision="1" :placeholder="t('workflow.schedule.timeoutPlaceholder')" />
@@ -4959,7 +5069,8 @@ function nodeColor(node: { data: WorkflowAgentNodeData }) {
 .workflow-schedule-actions { margin-top: 10px; }
 .workflow-schedule-form { display: flex; flex-direction: column; gap: 12px; }.workflow-schedule-form h3 { margin: 0; }
 .workflow-schedule-form label { display: flex; flex-direction: column; gap: 6px; color: $text-secondary; font-size: 13px; }.workflow-schedule-form .workflow-schedule-checkbox { display: block; }
-.workflow-schedule-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }.workflow-schedule-submit { justify-content: flex-end; }
+.workflow-schedule-time-fields { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.workflow-schedule-submit { justify-content: flex-end; }
 @media (max-width: $breakpoint-mobile) { .workflow-schedules-layout { grid-template-columns: 1fr; } }
 
 .workflow-flow {

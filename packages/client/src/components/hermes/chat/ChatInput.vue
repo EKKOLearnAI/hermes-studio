@@ -30,8 +30,10 @@ const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
 const props = withDefaults(defineProps<{
   modelLabel?: string
+  modelDisabled?: boolean
 }>(), {
   modelLabel: '',
+  modelDisabled: false,
 })
 
 const emit = defineEmits<{
@@ -92,6 +94,7 @@ function onReasoningEffortSliderChange(value: number | [number, number]) {
 }
 
 function handleModelButtonClick() {
+  if (props.modelDisabled) return
   emit('modelClick')
 }
 
@@ -178,6 +181,8 @@ const voiceInput = useComposerVoiceInput({
   insertTranscript: insertVoiceTranscriptIntoInput,
 })
 
+const CODING_AGENT_SLASH_COMMANDS = ['context', 'compact', 'usage', 'status']
+
 const bridgeCommands = computed<SlashCommandOption[]>(() =>
   BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
     key: command.key,
@@ -214,6 +219,17 @@ const isBridgeSession = computed(() => {
   if (!session) return chatStore.runtimeMode !== 'global_agent'
   return session.source === 'cli'
 })
+const isCodingAgentSession = computed(() => {
+  const session = chatStore.activeSession
+  return !!session && (
+    session.source === 'coding_agent'
+    || !!session.codingAgentId
+    || session.agent === 'claude'
+    || session.agent === 'codex'
+    || session.agent === 'claude-code'
+    || session.agent === 'pi'
+  )
+})
 const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
 const skillPickerItems = computed(() => {
   const byName = new Map<string, SkillInfo>()
@@ -237,9 +253,11 @@ const filteredBridgeCommands = computed(() => {
   const query = slashQuery.value.trim().toLowerCase()
   const commands = isBridgeSession.value
     ? bridgeCommands.value
-    : isForkCommandSession.value
-      ? bridgeCommands.value.filter(command => command.name === 'fork')
-      : []
+    : isCodingAgentSession.value
+      ? bridgeCommands.value.filter(command => CODING_AGENT_SLASH_COMMANDS.includes(command.name))
+      : isForkCommandSession.value
+        ? bridgeCommands.value.filter(command => command.name === 'fork')
+        : []
   if (!query) return commands
   return commands.filter((command) => {
     const name = command.name.toLowerCase()
@@ -537,7 +555,7 @@ function scrollCommandIntoView() {
 }
 
 function updateSlashState() {
-  if (!isBridgeSession.value && !isForkCommandSession.value) {
+  if (!isBridgeSession.value && !isCodingAgentSession.value && !isForkCommandSession.value) {
     slashActive.value = false
     return
   }
@@ -874,7 +892,17 @@ function handleDrop(e: DragEvent) {
   addFiles(files)
 }
 
-defineExpose({ addFiles, addBrowserAttachment })
+/**
+ * Put the caret in the composer so the next keystroke lands in the message box.
+ * Refused on a phone, where taking focus raises the on-screen keyboard over the
+ * conversation the user just opened.
+ */
+function focusComposer() {
+  if (isMobileViewport.value) return
+  nextTick(() => textareaRef.value?.focus())
+}
+
+defineExpose({ addFiles, addBrowserAttachment, focusComposer })
 
 // --- Send ---
 
@@ -1171,6 +1199,9 @@ function isImage(type: string): boolean {
                 <span>{{ reasoningEffortOptions[0].label }}</span>
                 <span>{{ reasoningEffortOptions[reasoningEffortOptions.length - 1].label }}</span>
               </div>
+              <div class="reasoning-effort-slider-hint">
+                {{ t('chat.reasoningEffort.dragHint', { count: reasoningEffortOptions.length }) }}
+              </div>
             </div>
           </NPopover>
 
@@ -1208,6 +1239,7 @@ function isImage(type: string): boolean {
                 quaternary
                 size="tiny"
                 class="input-model-button"
+                :disabled="props.modelDisabled"
                 :title="isMobileViewport ? undefined : props.modelLabel || t('models.selectModel')"
                 :aria-label="props.modelLabel || t('models.selectModel')"
                 @click="handleModelButtonClick"
@@ -1620,6 +1652,13 @@ function isImage(type: string): boolean {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.reasoning-effort-slider-hint {
+  margin-top: 6px;
+  color: $text-muted;
+  font-size: 11px;
+  text-align: center;
 }
 
 .reasoning-effort-slider-heading {

@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
+import { startRunViaSocket } from '@/api/hermes/chat'
 import { archiveSession, fetchSessions } from '@/api/hermes/sessions'
 
 vi.mock('@/api/hermes/sessions', () => ({
@@ -15,7 +16,7 @@ vi.mock('@/api/hermes/sessions', () => ({
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
-  startRunViaSocket: vi.fn(),
+  startRunViaSocket: vi.fn(() => ({ abort: vi.fn() })),
   resumeSession: vi.fn((_sessionId: string, cb: (data: any) => void) => {
     cb({ session_id: _sessionId, isWorking: false, messages: [] })
   }),
@@ -28,10 +29,12 @@ vi.mock('@/api/hermes/chat', () => ({
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
   onSessionWorkspaceUpdated: vi.fn(() => vi.fn()),
+  onSessionSettingsUpdated: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/api/client', () => ({
   getActiveProfileName: () => 'default',
+  hasApiKey: () => false,
 }))
 
 vi.mock('@/api/hermes/download', () => ({
@@ -159,5 +162,79 @@ describe('chat session ordering', () => {
     expect(store.sessions.map(session => session.id)).toEqual(['session-b'])
     expect(store.activeSessionId).toBe('session-b')
     expect(store.activeSession?.id).toBe('session-b')
+  })
+
+  it('does not let an in-flight session load replace a newly created chat', async () => {
+    const pending: Array<(sessions: any[]) => void> = []
+    vi.mocked(fetchSessions).mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+
+    const store = useChatStore()
+    const load = store.loadSessions(null, 'session-a')
+    const newSession = store.newChat()
+
+    expect(store.activeSessionId).toBe(newSession.id)
+
+    pending[0]([makeSession('session-a', { started_at: 1000, last_active: 1000 })])
+    pending[1]([])
+    await load
+
+    expect(store.sessions.map(session => session.id)).toEqual([newSession.id, 'session-a'])
+    expect(store.activeSessionId).toBe(newSession.id)
+    expect(store.activeSession?.id).toBe(newSession.id)
+
+    await store.sendMessage('first message')
+    expect(startRunViaSocket).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: newSession.id }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      undefined,
+      expect.any(Object),
+    )
+  })
+
+  it('does not retain a local-only chat outside the requested profile', async () => {
+    vi.mocked(fetchSessions)
+      .mockResolvedValueOnce([
+        { ...makeSession('research-session', { started_at: 1000 }), profile: 'research' },
+      ] as any)
+      .mockResolvedValueOnce([])
+
+    const store = useChatStore()
+    const localSession = store.newChat({ profile: 'default' })
+
+    await store.loadSessions('research')
+
+    expect(store.sessions.map(session => session.id)).toEqual(['research-session'])
+    expect(store.sessions.some(session => session.id === localSession.id)).toBe(false)
+    expect(store.activeSessionId).toBe('research-session')
+  })
+
+  it('rebinds the active session after a stale list refresh during an explicit switch', async () => {
+    vi.mocked(fetchSessions)
+      .mockResolvedValueOnce([
+        makeSession('session-a', { started_at: 2000 }),
+        makeSession('session-b', { started_at: 1000 }),
+      ] as any)
+      .mockResolvedValueOnce([])
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    const pending: Array<(sessions: any[]) => void> = []
+    vi.mocked(fetchSessions).mockImplementation(() => new Promise(resolve => pending.push(resolve)))
+
+    const load = store.loadSessions(null, 'session-a')
+    await store.switchSession('session-b')
+
+    pending[0]([
+      makeSession('session-a', { started_at: 2000 }),
+      makeSession('session-b', { started_at: 1000 }),
+    ])
+    pending[1]([])
+    await load
+
+    expect(store.activeSessionId).toBe('session-b')
+    expect(store.activeSession).toBe(store.sessions.find(session => session.id === 'session-b'))
   })
 })

@@ -28,9 +28,14 @@ import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
+import {
+  handleCodingAgentSessionCommand,
+  parseCodingAgentSessionCommand,
+} from '../../coding-agents/session-command'
 import { contentBlocksToString } from './content-blocks'
 import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessages } from './resume-payload'
 import type {
+  BackgroundContinuationContext,
   ChatCodingAgentId,
   ContentBlock,
   QueueInsertionControl,
@@ -225,6 +230,19 @@ export class ChatRunSocket {
     this.nsp = io.of('/chat-run')
   }
 
+  emitSessionSettingsUpdated(sessionId: string, settings: {
+    model?: string
+    provider?: string
+    api_mode?: string
+    reasoning_effort?: string
+  }): void {
+    this.nsp.to(`session:${sessionId}`).emit('session.settings.updated', {
+      event: 'session.settings.updated',
+      session_id: sessionId,
+      ...settings,
+    })
+  }
+
   init() {
     this.closing = false
     this.nsp.use(this.authMiddleware.bind(this))
@@ -400,6 +418,15 @@ export class ChatRunSocket {
             })
           }
           return
+        }
+        if (isCodingAgentExecution(source, data)) {
+          if (typeof data.input === 'string') {
+            const codingAgentCommand = parseCodingAgentSessionCommand(data.input)
+            if (codingAgentCommand) {
+              await handleCodingAgentSessionCommand(this.nsp, socket, data, codingAgentCommand, runProfile, this.sessionMap)
+              return
+            }
+          }
         }
         if (state.isWorking) {
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -772,6 +799,7 @@ export class ChatRunSocket {
     },
     profile: string,
     skipUserMessage = false,
+    backgroundContinuationContext?: BackgroundContinuationContext,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
     if (data.session_id) {
@@ -872,6 +900,7 @@ export class ChatRunSocket {
         skipUserMessage,
         loadSessionStateFromDb,
         this.dequeueNextQueuedRun.bind(this),
+        backgroundContinuationContext,
       )
       return
     }
@@ -901,6 +930,7 @@ export class ChatRunSocket {
         this.sessionMap,
         this.dequeueNextQueuedRun.bind(this),
         skipUserMessage,
+        backgroundContinuationContext,
       )
       return
     }
@@ -1214,6 +1244,10 @@ export class ChatRunSocket {
       parentLastMessage: sessionDetail?.parent_last_message || null,
       parentLastMessageRole: sessionDetail?.parent_last_message_role || null,
       workspace: sessionDetail?.workspace || null,
+      model: sessionDetail?.model || '',
+      provider: sessionDetail?.provider || '',
+      api_mode: sessionDetail?.api_mode || '',
+      reasoning_effort: sessionDetail?.reasoning_effort || '',
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents),
@@ -1344,6 +1378,7 @@ export class ChatRunSocket {
     const activeAgent = state.webhookAgent
       || (storedAgent === 'ekko-agent' ? 'ekko' : storedAgent === 'claude' ? 'claude-code' : storedAgent === 'codex' ? 'codex' : storedAgent === 'pi' ? 'pi' : 'bridge')
     if (activeAgent === 'ekko') return 'ekko'
+    if (activeAgent === 'claude-code' || activeAgent === 'codex' || activeAgent === 'pi') return activeAgent
     if (activeAgent !== 'bridge') return null
     if (state.source === 'coding_agent') return null
     return state.source === 'cli' || state.source === 'global_agent' ? 'hermes' : null
@@ -1411,7 +1446,7 @@ export class ChatRunSocket {
       runId: state.runId,
       runtime,
       phase: 'requesting',
-      guarantee: 'strict',
+      guarantee: runtime === 'hermes' || runtime === 'ekko' ? 'strict' : 'immediate',
       requestedAt: Date.now(),
     }
     state.queueInsertion = control
@@ -1429,6 +1464,19 @@ export class ChatRunSocket {
     if (!state || !control || control.generation !== generation || control.phase !== 'requesting' || !control.runId) return
 
     try {
+      if (control.runtime === 'claude-code' || control.runtime === 'codex' || control.runtime === 'pi') {
+        control.phase = 'stopping_current_turn'
+        this.emitQueueInsertionUpdate(sessionId, control)
+        const result = await codingAgentRunManager.interruptForQueueInsertion(sessionId, control.runId)
+        if (result.status !== 'interrupted') {
+          const currentState = this.sessionMap.get(sessionId)
+          if (currentState?.queueInsertion?.generation === generation) {
+            this.clearQueueInsertion(sessionId, currentState, result.status)
+          }
+        }
+        return
+      }
+
       const result = control.runtime === 'ekko'
         ? getGlobalEkkoAgent(state.profile || 'default').requestBoundaryInterrupt({
             sessionId,
@@ -1486,7 +1534,8 @@ export class ChatRunSocket {
     if (control.phase !== 'requesting') {
       payload.interrupted = true
       payload.stop_reason = 'queue_insertion'
-      payload.boundary_guarantee = control.guarantee
+      if (control.guarantee === 'strict') payload.boundary_guarantee = 'strict'
+      else payload.interruption_mode = 'immediate'
     }
     if (state.queue.length === 0) this.clearQueueInsertion(sessionId, state, 'queue_empty')
   }
@@ -1521,6 +1570,13 @@ export class ChatRunSocket {
 
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
     const skipUserMessage = next.displayInput === null
+    const backgroundContinuationContext = next.backgroundContinuationContext
+      || (next.backgroundDelegationId
+        ? this.sessionMap.get(sessionId)?.backgroundContinuationContexts?.[next.backgroundDelegationId]
+        : undefined)
+    const runProfile = backgroundContinuationContext?.runtime === 'hermes'
+      ? backgroundContinuationContext.profile
+      : next.profile || fallbackProfile
     void this.handleRun(socket, {
       input: next.input,
       display_input: next.displayInput,
@@ -1558,7 +1614,7 @@ export class ChatRunSocket {
       background_delegation_id: next.backgroundDelegationId,
       background_claim_id: next.backgroundClaimId,
       autonomous: next.autonomous,
-    }, next.profile || fallbackProfile, skipUserMessage)
+    }, runProfile, skipUserMessage, backgroundContinuationContext)
   }
 
   // --- Helpers ---

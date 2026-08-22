@@ -13,6 +13,8 @@ async function loadAuth(overrides: Partial<FsMocks> & { home?: string } = {}) {
   const mkdir = overrides.mkdir ?? vi.fn()
   const home = overrides.home ?? '/tmp/hermes-home'
 
+  delete process.env.HERMES_WEB_UI_HOME
+  delete process.env.HERMES_WEBUI_STATE_DIR
   vi.resetModules()
   vi.doMock('fs/promises', () => ({ readFile, writeFile, mkdir }))
   vi.doMock('os', () => ({ homedir: () => home }))

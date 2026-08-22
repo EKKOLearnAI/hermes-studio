@@ -98,6 +98,16 @@ function isComparableAbsolute(path: string, useWindows: boolean): boolean {
   return useWindows ? pathWin32.isAbsolute(path) : isAbsolute(path)
 }
 
+/**
+ * A relative path leaves its base only when its first segment is exactly `..`.
+ * A first segment that merely begins with dots — `..hidden`, `...` — names a
+ * child, and `relative()` can only produce it for a target inside the base.
+ */
+function startsWithParentSegment(relativePath: string): boolean {
+  const [first] = relativePath.split(/[\\/]/)
+  return first === '..'
+}
+
 function dirnameComparablePath(path: string, useWindows: boolean): string {
   return useWindows ? pathWin32.dirname(path) : dirname(path)
 }
@@ -107,7 +117,7 @@ export function isPathWithin(targetPath: string, basePath: string): boolean {
   const base = resolveComparablePath(basePath, useWindows)
   const target = resolveComparablePath(targetPath, useWindows)
   const rel = relativeComparablePath(comparablePath(base), comparablePath(target), useWindows)
-  return rel === '' || (!!rel && !rel.startsWith('..') && !isComparableAbsolute(rel, useWindows))
+  return rel === '' || (!!rel && !startsWithParentSegment(rel) && !isComparableAbsolute(rel, useWindows))
 }
 
 export function relativePathFromBase(targetPath: string, basePath: string): string | null {

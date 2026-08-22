@@ -103,6 +103,21 @@ describe('invite-scoped group chat attachments', () => {
     expect(crossRoom.status).toBe(404)
   })
 
+  it('returns a readable 413 response for an oversized group attachment', async () => {
+    const form = new FormData()
+    form.append('file', new Blob([Buffer.alloc(21 * 1024 * 1024, 0x61)]), 'too-large.bin')
+
+    const upload = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments`, {
+      method: 'POST',
+      body: form,
+    })
+
+    expect(upload.status).toBe(413)
+    await expect(upload.json()).resolves.toEqual({
+      error: 'Group chat attachment is too large (max 20MB)',
+    })
+  })
+
   it('uses the same isolated storage for authenticated room attachment routes', async () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.from('room-file')], { type: 'image/png' }), 'room.png')

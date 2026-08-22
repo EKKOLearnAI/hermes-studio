@@ -1,7 +1,7 @@
 import type { AgentOutputMessage } from '../model/messages'
 import type { AgentToolCall, ModelUsage } from '../model/types'
 import type { AgentToolResult } from '../tools/types'
-import type { AgentRuntimeContextEstimate } from './types'
+import type { AgentRuntimeContextEstimate, EkkoBackgroundContinuationContext } from './types'
 import type { MemoryContextDiagnostics } from '../memory/types'
 
 export type AgentRuntimeEvent =
@@ -45,6 +45,7 @@ export type AgentRuntimeEvent =
       cacheReadTokens: number
       cacheWriteTokens: number
       reasoningTokens: number
+      continuationContext?: EkkoBackgroundContinuationContext
     }
   | { type: 'run.tool_failure_limit'; runId: string; failures: number }
   | { type: 'run.completed'; runId: string; output: AgentOutputMessage; steps: number; context?: unknown; contextEstimate?: AgentRuntimeContextEstimate }

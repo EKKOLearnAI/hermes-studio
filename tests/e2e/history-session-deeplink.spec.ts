@@ -112,11 +112,12 @@ function detailFor(id: string, sessions = historySessions) {
   }
 }
 
-async function mockHistoryApi(page: Page, sessions = historySessions) {
-  const groupRooms = [
+const defaultGroupRooms = [
     { id: 'room-new', name: 'Newest Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_001_000 },
     { id: 'room-old', name: 'Older Group Room', inviteCode: null, canManage: false, lastActiveAt: 1_790_000_000 },
-  ]
+]
+
+async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms = defaultGroupRooms) {
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -226,36 +227,12 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('API Server', { exact: true }).first()).toBeVisible()
   })
 
-  test('GROUP rooms share the History shell and preserve direct navigation', async ({ page }) => {
-    await page.goto('/#/hermes/history/group-chat/room-new')
+  test('does not expose Group Chat as a History source', async ({ page }) => {
+    await page.goto('/#/hermes/history/session/hist-alpha')
 
-    const groupHeader = page.locator('.session-group-header', { hasText: 'GROUP' })
-    await expect(groupHeader).toBeVisible()
-    await expect(page.getByText('Newest Group Room').first()).toBeVisible()
-    await expect(page.getByText('Older Group Room').first()).toBeVisible()
-    await expect(page.getByText('History for Newest Group Room')).toBeVisible()
-    await expect(page.locator('textarea')).toHaveCount(0)
-    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-new$/)
-
-    await page.getByText('Older Group Room').first().click()
-    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
-    await expect(page.getByText('History for Older Group Room')).toBeVisible()
-
-    await page.reload()
-    await expect(page.getByText('History for Older Group Room')).toBeVisible()
-  })
-
-  test('mobile History can open GROUP, select a room, and keep the transcript usable', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto('/#/hermes/history/group-chat/room-new')
-
-    await page.locator('.hamburger-btn').click()
-    await expect(page.locator('.session-group-header', { hasText: 'GROUP' })).toBeVisible()
-    await page.getByText('Older Group Room').first().click()
-
-    await expect(page).toHaveURL(/#\/hermes\/history\/group-chat\/room-old$/)
-    await expect(page.getByText('History for Older Group Room')).toBeVisible()
-    await expect(page.locator('[data-group-history-scroller]')).toBeVisible()
+    await expect(page.locator('.session-group-label', { hasText: 'GROUP' })).toHaveCount(0)
+    await expect(page.locator('.group-room-history-item')).toHaveCount(0)
+    await expect(page.getByText('Newest Group Room')).toHaveCount(0)
   })
 
   test('clicking another history session updates URL and reload preserves it', async ({ page }) => {

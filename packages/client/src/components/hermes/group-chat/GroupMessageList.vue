@@ -8,7 +8,6 @@ import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 import GroupAgentRunCard from './GroupAgentRunCard.vue'
 import VirtualMessageList from '../chat/VirtualMessageList.vue'
-import HistoryArchiveLink from '../chat/HistoryArchiveLink.vue'
 
 const store = useGroupChatStore()
 const props = withDefaults(defineProps<{
@@ -87,6 +86,12 @@ function isOtherMemberMessage(message: import('@/api/hermes/group-chat').ChatMes
     )
 }
 
+function stableMessageAgentId(message: import('@/api/hermes/group-chat').ChatMessage): string {
+    if (message.senderAgentRecordId) return message.senderAgentRecordId
+    return store.messageAgents.find(agent => agent.agentId === message.senderId)?.id
+        || message.senderId
+}
+
 function updateScrollBottomButton(): void {
     showScrollBottomButton.value = displayMessages.value.length > 0 && !(listRef.value?.isNearBottom(1000) ?? true)
 }
@@ -100,22 +105,18 @@ function handleScrollBottomClick(): void {
 }
 
 async function handleTopReach(): Promise<void> {
-    if (!store.hasMoreBefore || store.isLoadingOlderMessages || store.hasReachedMessageDisplayLimit) return
+    if (!store.hasMoreBefore || store.isLoadingOlderMessages) return
     const snapshot = listRef.value?.captureViewportPosition() ?? null
     const loaded = await store.loadOlderMessages()
     if (!loaded) return
     await nextTick()
-    listRef.value?.restoreViewportPosition(snapshot)
+    listRef.value?.restoreViewportPosition(snapshot, 30)
     updateScrollBottomButton()
 }
 
 function retryOlderMessages(): void {
     void handleTopReach()
 }
-
-const completeHistoryHref = computed(() => store.currentRoomId
-    ? `#/hermes/history/group-chat/${encodeURIComponent(store.currentRoomId)}`
-    : '#/hermes/group-chat')
 
 watch(() => store.currentRoomId, (roomId) => {
     pendingInitialBottomRoomId = roomId
@@ -181,13 +182,8 @@ defineExpose({ scrollToBottom })
                 </div>
             </template>
             <template #before>
-                <HistoryArchiveLink
-                    v-if="store.hasReachedMessageDisplayLimit"
-                    :href="completeHistoryHref"
-                    :label="t('groupChat.viewCompleteHistory')"
-                />
                 <div
-                    v-else-if="store.olderMessagesError"
+                    v-if="store.olderMessagesError"
                     class="history-load-error"
                     role="alert"
                 >
@@ -212,6 +208,11 @@ defineExpose({ scrollToBottom })
                         :members="store.members"
                         :current-user-id="store.userId"
                         :allow-speech="props.allowSpeech"
+                        :active="store.isAgentRunActive(
+                            msg.roomId,
+                            stableMessageAgentId(msg),
+                            msg.run_id,
+                        )"
                         @mention-agent="emit('mentionAgent', $event)"
                     />
                     <GroupMessageItem

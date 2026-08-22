@@ -41,8 +41,8 @@ describe('session DB summaries', () => {
     getActiveProfileDirMock.mockReturnValue('/tmp/hermes-profile')
   })
 
-  it('queries sqlite for lightweight session summaries', async () => {
-    allMock.mockReturnValue([
+  it('queries sqlite for session summaries through the session index', async () => {
+    indexAllMock.mockReturnValue([
       {
         id: 's1',
         source: 'cli',
@@ -73,7 +73,7 @@ describe('session DB summaries', () => {
 
     expect(databaseSyncMock).toHaveBeenCalledWith('/tmp/hermes-profile/state.db', { open: true, readOnly: true })
     expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
-    expect(allMock).toHaveBeenCalledWith(200)
+    expect(indexAllMock).toHaveBeenCalledWith()
     expect(closeMock).toHaveBeenCalled()
     expect(rows).toEqual([
       {
@@ -102,8 +102,8 @@ describe('session DB summaries', () => {
     ])
   })
 
-  it('adds source filter and falls back last_active to started_at', async () => {
-    allMock.mockReturnValue([
+  it('filters indexed summaries by source and falls back last_active to started_at', async () => {
+    indexAllMock.mockReturnValue([
       {
         id: 's2',
         source: 'telegram',
@@ -133,7 +133,7 @@ describe('session DB summaries', () => {
     const rows = await mod.listSessionSummaries('telegram', 2)
 
     expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
-    expect(allMock).toHaveBeenCalledWith('telegram', 8)
+    expect(indexAllMock).toHaveBeenCalledWith()
     expect(rows[0].last_active).toBe(1710000100)
     expect(rows[0].source).toBe('telegram')
     expect(rows[0].title).toBe('preview text')

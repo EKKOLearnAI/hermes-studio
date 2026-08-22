@@ -545,6 +545,16 @@ def _load_cfg(profile: str | None = None) -> dict[str, Any]:
             return {}
 
 
+def _load_fallback_model(cfg: dict[str, Any]) -> list | None:
+    """Return the canonical configured fallback chain for a bridge agent."""
+    try:
+        from hermes_cli.fallback_config import get_fallback_chain
+
+        return get_fallback_chain(cfg) or None
+    except Exception:
+        return None
+
+
 def _apply_profile_env(profile: str | None) -> str | None:
     """Temporarily set HERMES_HOME to the profile directory.
     Returns the original HERMES_HOME value to restore later.
