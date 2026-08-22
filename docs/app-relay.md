@@ -103,6 +103,11 @@ If Studio has any active cloud App records, it connects to the cloud at startup.
 Socket.IO reconnects indefinitely after transient disconnects. The cloud
 restores the formal-connection snapshot; Studio reconciles it against local
 revocation tombstones so an offline cloud deletion is eventually propagated.
+Development Web UI hosts register as non-preemptive: when the same machine ID
+already has a packaged desktop host online, starting `npm run dev` does not
+replace that desktop socket or overwrite its machine metadata. Production hosts
+retain the existing takeover behavior so a restarted desktop can recover stale
+connections.
 
 ## Forwarded protocols
 

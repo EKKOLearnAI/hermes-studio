@@ -139,6 +139,7 @@ export interface StartAppRelayClientOptions {
   relayUrl?: string
   machineId: string
   publicKey: string
+  replaceExistingHost?: boolean
   machineInfo?: Record<string, unknown>
   localBaseUrl?: string
   fetchImpl?: typeof fetch
@@ -209,6 +210,7 @@ export class AppRelayClient {
           nonce,
           timestamp,
           signature,
+          replaceExistingHost: this.options.replaceExistingHost,
           machine: this.options.machineInfo,
         })
       },
@@ -750,6 +752,7 @@ export function startAppRelayClient(options: StartAppRelayClientOptions): AppRel
     relayUrl,
     machineId,
     publicKey,
+    replaceExistingHost: options.replaceExistingHost ?? true,
     machineInfo: options.machineInfo,
     localBaseUrl: options.localBaseUrl || `http://127.0.0.1:${config.port}`,
     fetchImpl: options.fetchImpl || fetch,

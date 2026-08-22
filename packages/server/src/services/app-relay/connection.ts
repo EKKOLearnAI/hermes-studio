@@ -10,6 +10,12 @@ import {
 
 export const APP_RELAY_CONNECTION_ID = 'app-relay'
 
+export function shouldReplaceExistingAppRelayHost(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  return environment.NODE_ENV === 'production'
+}
+
 export async function ensureAppRelayHostClient(): Promise<AppRelayClient | null> {
   const existing = getAppRelayClient(APP_RELAY_CONNECTION_ID)
   if (existing && !existing.isPreconnectionExpired()) return existing
@@ -20,6 +26,7 @@ export async function ensureAppRelayHostClient(): Promise<AppRelayClient | null>
     relayUrl: config.appRelay.url,
     machineId: identity.device_id,
     publicKey: identity.device_public_key,
+    replaceExistingHost: shouldReplaceExistingAppRelayHost(),
     machineInfo: {
       ...info,
       http_port: config.port,
