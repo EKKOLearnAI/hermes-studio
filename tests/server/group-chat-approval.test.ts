@@ -7,6 +7,7 @@ import {
 } from './group-chat-test-helpers'
 import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
+import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
@@ -845,6 +846,112 @@ describe('group chat approval and context baseline', () => {
       roomId: 'room-1', agentName: 'Agent',
     })).resolves.toEqual({ ok: true })
     expect(cancelClarify).toHaveBeenCalledTimes(1)
+  })
+
+  it('settles an Ekko clarification through the real GroupChat interrupt and ChatRun abort chain', async () => {
+    const human = await connectGroupChatClient(port, 'human-1', 'Human')
+    harness.sockets.push(human)
+    groupServer.getIO().of('/group-chat').sockets.get(human.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const chatRun = new ChatRunSocket(groupServer.getIO())
+    const abortSession = vi.spyOn(chatRun, 'abortSession')
+    const agent = await groupServer.agentClients.createAgent({
+      agentId: 'agent-1',
+      agent: 'ekko',
+      profile: 'default',
+      name: 'Agent',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    }, {}, port)
+    await groupServer.agentClients.addAgentToRoom('room-1', agent)
+    groupServer.agentClients.setChatRunService(chatRun)
+
+    let runtimeWaiterSettled = false
+    let runtimeSessionId = ''
+    vi.spyOn(chatRun, 'runAndWait').mockImplementation(async (data, options) => {
+      const runtimeRunId = 'runtime-current'
+      runtimeSessionId = data.session_id
+      // Reproduce the installed ordering: the Runtime clarification belongs to
+      // the active generation, while ChatRun's local abort controller no longer
+      // owns that waiter. GroupChat must still settle it explicitly.
+      ;(chatRun as any).sessionMap.set(data.session_id, {
+        messages: [],
+        isWorking: true,
+        events: [],
+        queue: [],
+        source: 'group_chat',
+        runId: runtimeRunId,
+        abortController: new AbortController(),
+        profile: 'default',
+      })
+      const response = await waitForEkkoClarification({
+        clarifyId: 'clarify-real-chain',
+        question: 'Which city?',
+        choices: null,
+        timeoutMs: 300_000,
+      }, {
+        sessionId: data.session_id,
+        runId: runtimeRunId,
+        onRequested: pending => options?.onEvent?.('clarify.requested', {
+          event: 'clarify.requested',
+          run_id: runtimeRunId,
+          clarify_id: pending.clarifyId,
+          question: pending.question,
+          choices: pending.choices,
+          timeout_ms: pending.timeoutMs,
+        }),
+        onResolved: resolution => options?.onEvent?.('clarify.resolved', {
+          event: 'clarify.resolved',
+          run_id: runtimeRunId,
+          clarify_id: 'clarify-real-chain',
+          resolved: resolution.reason === 'response',
+          reason: resolution.reason,
+        }),
+      })
+      runtimeWaiterSettled = true
+      return { ok: false, error: response }
+    })
+
+    const requested = once<any>(human, 'clarify.requested')
+    const delivery = groupServer.agentClients.processMentions('room-1', {
+      messageId: 'message-real-chain',
+      content: '@Agent check the weather',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: Date.now(),
+      role: 'user',
+      mentions: [{ type: 'agent', participantId: 'agent-1', displayName: 'Agent' }],
+    })
+    await expect(requested).resolves.toMatchObject({
+      clarify_id: 'clarify-real-chain',
+      agentName: 'Agent',
+    })
+
+    const resolved = once<any>(human, 'clarify.resolved')
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+
+    await expect(resolved).resolves.toMatchObject({
+      clarify_id: 'clarify-real-chain',
+      resolved: false,
+    })
+    expect(abortSession).toHaveBeenCalledWith(
+      runtimeSessionId,
+      'Interrupted by group chat user',
+    )
+    expect(runtimeWaiterSettled).toBe(true)
+    await expect(emitAck(human, 'clarify.respond', {
+      roomId: 'room-1', clarify_id: 'clarify-real-chain', response: 'late',
+    })).resolves.toEqual({ error: 'Clarification is not pending in this room' })
+    const joined = await emitAck<any>(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(joined.pendingClarifies).toEqual([])
+    await delivery
+    await chatRun.close()
   })
 
   it('claims the active approval before an interrupt can race with a user response', async () => {

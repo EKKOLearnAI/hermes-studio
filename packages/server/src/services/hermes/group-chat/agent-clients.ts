@@ -108,6 +108,7 @@ type AgentActivityBroadcaster = (
     agentName: string,
     status: 'compressing' | 'replying' | 'ready',
     runId?: string,
+    agentSessionId?: string,
 ) => void
 type ExecutionQueueBroadcaster = (roomId: string) => void
 
@@ -2224,8 +2225,9 @@ export class AgentClients {
         agentName: string,
         status: 'compressing' | 'replying' | 'ready',
         runId?: string,
+        agentSessionId?: string,
     ): void {
-        this._activityBroadcaster?.(roomId, agentName, status, runId)
+        this._activityBroadcaster?.(roomId, agentName, status, runId, agentSessionId)
         logger.debug(`[AgentClients] room ${roomId} agent ${agentName} status: ${status}`)
     }
 
@@ -2644,7 +2646,10 @@ export class AgentClients {
                         const { agent } = runnableTarget
                         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                             const runId = typeof extra?.runId === 'string' ? extra.runId : undefined
-                            this.reportAgentActivity(roomId, agent.name, status, runId)
+                            const agentSessionId = typeof extra?.agentSessionId === 'string'
+                                ? extra.agentSessionId
+                                : undefined
+                            this.reportAgentActivity(roomId, agent.name, status, runId, agentSessionId)
                         }
                         if (next.msg.continuationAttemptId) {
                             if (!agent.connected) {

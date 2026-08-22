@@ -3277,7 +3277,7 @@ export class GroupChatServer {
             this.agentClients.getAgent(roomId, agentId)?.connected === true
         )
         this.agentClients.setRoomSummaryService(this.roomSummaryService)
-        this.agentClients.setActivityBroadcaster((roomId, agentName, status, runId) => {
+        this.agentClients.setActivityBroadcaster((roomId, agentName, status, runId, agentSessionId) => {
             let roomStatuses = this.contextStatusState.get(roomId)
             if (status === 'ready') {
                 roomStatuses?.delete(agentName)
@@ -3287,7 +3287,12 @@ export class GroupChatServer {
                     roomStatuses = new Map()
                     this.contextStatusState.set(roomId, roomStatuses)
                 }
-                roomStatuses.set(agentName, { agentName, status })
+                roomStatuses.set(agentName, {
+                    agentName,
+                    status,
+                    ...(runId ? { runId } : {}),
+                    ...(agentSessionId ? { agentSessionId } : {}),
+                })
             }
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status })
             if (runId) this.updateRoomAgentActivity(roomId, agentName, status, runId)
