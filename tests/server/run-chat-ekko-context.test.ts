@@ -126,6 +126,20 @@ function makeHarness() {
   return { nsp, socket, sessionMap, state, events }
 }
 
+function continuationContext(subagentId = 'child-background') {
+  return {
+    version: 1 as const,
+    subagentId,
+    originRunId: 'run-parent',
+    originStep: 1,
+    messages: [
+      { role: 'user' as const, content: 'run checks in the background' },
+      { role: 'assistant' as const, content: 'Validation is running.' },
+    ],
+    memoryPolicy: 'disabled' as const,
+  }
+}
+
 describe('ekko-agent context usage events', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -888,6 +902,7 @@ describe('ekko-agent context usage events', () => {
       cacheReadTokens: 3,
       cacheWriteTokens: 2,
       reasoningTokens: 1,
+      continuationContext: continuationContext(),
     })
 
     expect(state.backgroundTasks['child-background']).toEqual(expect.objectContaining({
@@ -1003,6 +1018,7 @@ describe('ekko-agent context usage events', () => {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         reasoningTokens: 0,
+        continuationContext: continuationContext(),
       })
       expect(dequeueNextQueuedRun).not.toHaveBeenCalled()
       return {
@@ -1049,7 +1065,14 @@ describe('ekko-agent context usage events', () => {
       }
     })
     const { handleEkkoAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-ekko-agent-run')
-    const { nsp, socket, sessionMap, events } = makeHarness()
+    const { nsp, socket, sessionMap, state, events } = makeHarness()
+    state.messages.push({
+      id: 99,
+      session_id: 'session-1',
+      role: 'user',
+      content: 'This message was sent after the background task started.',
+      timestamp: 2,
+    })
 
     await handleEkkoAgentRun(nsp as any, socket as any, {
       session_id: 'session-1',
@@ -1060,7 +1083,26 @@ describe('ekko-agent context usage events', () => {
       autonomous: true,
       background_delegation_id: 'child-background',
       onEvent: (event: string, payload: any) => events.push({ event, payload }),
-    }, 'default', sessionMap, vi.fn(() => false), true)
+    }, 'default', sessionMap, vi.fn(() => false), true, {
+      runtime: 'ekko',
+      ...continuationContext(),
+    })
+
+    expect(buildCompressedHistoryMock).not.toHaveBeenCalled()
+    expect(agentRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      contextKey: 'session-1:background-callback:child-background',
+      memoryEnabled: false,
+      ephemeralContext: true,
+      skillReviewEnabled: false,
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: 'run checks in the background' }),
+        expect.objectContaining({ role: 'user', content: 'Background subtask result: Validation passed.' }),
+      ]),
+    }))
+    const callbackMessages = agentRunMock.mock.calls[0][0].messages
+    expect(callbackMessages).not.toContainEqual(expect.objectContaining({
+      content: 'This message was sent after the background task started.',
+    }))
 
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({

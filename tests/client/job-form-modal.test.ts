@@ -39,6 +39,7 @@ const mockFetchSkills = vi.hoisted(() => vi.fn(async () => ({
 })))
 
 const mockListJobDeliveryTargets = vi.hoisted(() => vi.fn())
+const mockGetJob = vi.hoisted(() => vi.fn())
 
 vi.mock('@/stores/hermes/jobs', () => ({
   useJobsStore: () => mockJobsStore,
@@ -52,7 +53,7 @@ vi.mock('@/api/hermes/jobs', async () => {
   const actual = await vi.importActual<any>('@/api/hermes/jobs')
   return {
     ...actual,
-    getJob: vi.fn(),
+    getJob: mockGetJob,
     listJobDeliveryTargets: mockListJobDeliveryTargets,
   }
 })
@@ -64,6 +65,7 @@ vi.mock('@/api/hermes/skills', () => ({
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key,
+    locale: { value: 'en-US' },
   }),
 }))
 
@@ -147,11 +149,11 @@ describe('JobFormModal deliver targets', () => {
 
     await flushPromises()
 
-    const labels = wrapper.findAll('.n-select-stub')[4].text()
+    const labels = wrapper.get('[data-testid="job-delivery"]').text()
     expect(labels).toContain('WeChat · 微信私聊 (dm)')
     expect(labels).toContain('Feishu · 研发群 (group)')
 
-    const options = wrapper.findAll('.n-select-stub')[4].findAll('option')
+    const options = wrapper.get('[data-testid="job-delivery"]').findAll('option')
     const optionByValue = Object.fromEntries(options.map(option => [option.attributes('value'), option]))
     expect(optionByValue['weixin:wx-user@im.wechat']).toBeTruthy()
     expect(optionByValue['feishu:oc_example']).toBeTruthy()
@@ -166,9 +168,9 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
     const inputs = wrapper.findAll('.n-input-stub')
     await inputs[0].setValue('Daily research')
-    await inputs[1].setValue('0 9 * * *')
-    await inputs[2].setValue('summarize updates')
-    await wrapper.findAll('.n-select-stub')[3].setValue(['planner', 'reviewer'])
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('daily')
+    await inputs[1].setValue('summarize updates')
+    await wrapper.get('[data-testid="job-skills"]').setValue(['planner', 'reviewer'])
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
@@ -192,7 +194,7 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
     const inputs = wrapper.findAll('.n-input-stub')
     await inputs[0].setValue('Daily research')
-    await inputs[1].setValue('0 9 * * *')
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('daily')
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
@@ -210,11 +212,11 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
     const inputs = wrapper.findAll('.n-input-stub')
     await inputs[0].setValue('Daily research')
-    await inputs[1].setValue('0 9 * * *')
-    await inputs[2].setValue('summarize updates')
-    await wrapper.findAll('.n-select-stub')[0].setValue('openai')
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('daily')
+    await inputs[1].setValue('summarize updates')
+    await wrapper.get('[data-testid="job-provider"]').setValue('openai')
     await flushPromises()
-    await wrapper.findAll('.n-select-stub')[1].setValue('gpt-4.1-mini')
+    await wrapper.get('[data-testid="job-model"]').setValue('gpt-4.1-mini')
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
@@ -244,14 +246,72 @@ describe('JobFormModal deliver targets', () => {
     await flushPromises()
     const inputs = wrapper.findAll('.n-input-stub')
     await inputs[0].setValue('WeChat hello')
-    await inputs[1].setValue('*/5 * * * *')
-    await inputs[2].setValue('say hello')
-    await wrapper.findAll('.n-select-stub')[4].setValue('weixin:wx-user@im.wechat')
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('every-5-minutes')
+    await inputs[1].setValue('say hello')
+    await wrapper.get('[data-testid="job-delivery"]').setValue('weixin:wx-user@im.wechat')
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()
 
     expect(mockJobsStore.createJob).toHaveBeenCalledWith(expect.objectContaining({
       deliver: 'weixin:wx-user@im.wechat',
     }))
+  })
+
+  it('only asks for an expression when the advanced custom schedule is selected', async () => {
+    const wrapper = mount(JobFormModal, {
+      props: { jobId: null },
+    })
+
+    await flushPromises()
+    expect(wrapper.find('[data-testid="job-schedule-custom"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('custom')
+
+    expect(wrapper.find('[data-testid="job-schedule-custom"]').exists()).toBe(true)
+  })
+
+  it('builds a weekly schedule from weekday and time controls', async () => {
+    mockJobsStore.createJob.mockResolvedValue({ id: 'job-1' })
+    const wrapper = mount(JobFormModal, {
+      props: { jobId: null },
+    })
+
+    await flushPromises()
+    const inputs = wrapper.findAll('.n-input-stub')
+    await inputs[0].setValue('Weekly report')
+    await wrapper.get('[data-testid="job-schedule-frequency"]').setValue('weekly')
+    await wrapper.get('[data-testid="job-schedule-weekday"]').setValue('3')
+    await wrapper.get('[data-testid="job-schedule-hour"]').setValue('8')
+    await wrapper.get('[data-testid="job-schedule-minute"]').setValue('30')
+    await inputs[1].setValue('prepare the report')
+    await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockJobsStore.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      schedule: '30 8 * * 3',
+    }))
+  })
+
+  it('keeps an existing non-Cron schedule editable through the advanced option', async () => {
+    mockGetJob.mockResolvedValue({
+      id: 'job-custom',
+      job_id: 'job-custom',
+      name: 'Legacy interval',
+      prompt: 'run it',
+      schedule: { kind: 'interval', minutes: 90, display: 'every 90m' },
+      schedule_display: 'every 90m',
+      deliver: 'local',
+      skills: [],
+      repeat: { times: null, completed: 0 },
+      provider: null,
+      model: null,
+    })
+    const wrapper = mount(JobFormModal, {
+      props: { jobId: 'job-custom' },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="job-schedule-custom"]').attributes('value')).toBe('every 90m')
   })
 })

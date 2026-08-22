@@ -489,8 +489,89 @@ describe('ekko-agent runtime', () => {
         outputTokens: 3,
         cacheReadTokens: 5,
         reasoningTokens: 2,
+        continuationContext: expect.objectContaining({
+          version: 1,
+          originRunId: result.runId,
+          originStep: 1,
+          memoryPolicy: 'disabled',
+          messages: expect.arrayContaining([
+            expect.objectContaining({ role: 'assistant', toolCalls: expect.any(Array) }),
+            expect.objectContaining({ role: 'tool', toolCallId: 'delegate-bg' }),
+          ]),
+        }),
       }),
     ]))
+  })
+
+  it('waits for the complete parent tool batch before publishing a fast background result', async () => {
+    const tools = new AgentToolRegistry()
+    tools.register(new DelegateTaskTool())
+    let releaseSlowTool!: () => void
+    let slowToolStarted!: () => void
+    const slowToolStart = new Promise<void>((resolve) => {
+      slowToolStarted = resolve
+    })
+    const slowToolRelease = new Promise<void>((resolve) => {
+      releaseSlowTool = resolve
+    })
+    tools.register({
+      definition: {
+        name: 'slow_echo',
+        parameters: { type: 'object', properties: {} },
+      },
+      async execute() {
+        slowToolStarted()
+        await slowToolRelease
+        return { ok: true, content: 'slow tool finished' }
+      },
+    })
+    const client = modelClient((_request, call) => {
+      if (call === 1) {
+        return {
+          content: '',
+          toolCalls: [
+            {
+              id: 'delegate-fast',
+              name: 'delegate_task',
+              arguments: { goal: 'Finish immediately', mode: 'background' },
+            },
+            {
+              id: 'slow-sibling',
+              name: 'slow_echo',
+              arguments: {},
+            },
+          ],
+          finishReason: 'tool_calls',
+        }
+      }
+      if (call === 2) return { content: 'Fast child result', finishReason: 'stop' }
+      return { content: 'Parent finished its tool batch', finishReason: 'stop' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+    const events: any[] = []
+
+    const parentRun = runtime.run({
+      messages: ['Start both tools'],
+      metadata: { session_id: 'fast-background-session' },
+      onEvent: event => events.push(event),
+    })
+    await slowToolStart
+    await Promise.resolve()
+    expect(events.some(event => event.type === 'subagent.complete')).toBe(false)
+
+    releaseSlowTool()
+    await parentRun
+    await vi.waitFor(() => {
+      expect(events.some(event => event.type === 'subagent.complete')).toBe(true)
+    })
+    const completed = events.find(event => event.type === 'subagent.complete')
+    expect(completed.continuationContext.messages.map((message: any) => message.role))
+      .toEqual(['user', 'assistant', 'tool', 'tool'])
+    expect(completed.continuationContext.messages.filter((message: any) => message.role === 'tool'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolCallId: 'delegate-fast' }),
+        expect.objectContaining({ toolCallId: 'slow-sibling', content: 'slow tool finished' }),
+      ]))
   })
 
   it('removes and rejects background delegation when the run disables it', async () => {

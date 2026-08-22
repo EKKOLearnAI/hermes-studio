@@ -13,9 +13,18 @@ import {
 import type { CreateJobRequest, Job, JobDeliveryTarget } from '@/api/hermes/jobs'
 import { fetchSkills } from '@/api/hermes/skills'
 import type { SkillInfo } from '@/api/hermes/skills'
+import {
+  buildScheduleExpression,
+  parseScheduleExpression,
+  scheduleWeekdayOptions,
+  SCHEDULE_HOUR_OPTIONS,
+  SCHEDULE_MINUTE_OPTIONS,
+  SCHEDULE_MONTH_DAY_OPTIONS,
+  type ScheduleFrequency,
+} from '@/utils/schedule-frequency'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   jobId: string | null
@@ -48,19 +57,62 @@ const formData = ref({
   model: '',
 })
 
-const presetValue = ref<string | null>(null)
+const scheduleFrequency = ref<ScheduleFrequency | null>(null)
+const scheduleHour = ref(9)
+const scheduleMinute = ref(0)
+const scheduleWeekday = ref(1)
+const scheduleMonthDay = ref(1)
 
 const isEdit = computed(() => !!props.jobId)
 
-const schedulePresets = computed(() => [
-  { label: t('jobs.presetEveryMinute'), value: '* * * * *' },
-  { label: t('jobs.presetEvery5Min'), value: '*/5 * * * *' },
-  { label: t('jobs.presetEveryHour'), value: '0 * * * *' },
-  { label: t('jobs.presetEveryDay'), value: '0 0 * * *' },
-  { label: t('jobs.presetEveryDay9'), value: '0 9 * * *' },
-  { label: t('jobs.presetEveryMonday'), value: '0 9 * * 1' },
-  { label: t('jobs.presetEveryMonth'), value: '0 9 1 * *' },
+const scheduleFrequencyOptions = computed(() => [
+  { label: t('jobs.presetEveryMinute'), value: 'every-minute' },
+  { label: t('jobs.presetEvery5Min'), value: 'every-5-minutes' },
+  { label: t('jobs.presetEvery30Min'), value: 'every-30-minutes' },
+  { label: t('jobs.presetEveryHour'), value: 'hourly' },
+  { label: t('jobs.frequencyDaily'), value: 'daily' },
+  { label: t('jobs.frequencyWeekly'), value: 'weekly' },
+  { label: t('jobs.frequencyMonthly'), value: 'monthly' },
+  { label: t('jobs.customSchedule'), value: 'custom' },
 ])
+const scheduleWeekdays = computed(() => scheduleWeekdayOptions(locale.value))
+
+function generatedSchedule() {
+  if (!scheduleFrequency.value) return ''
+  return buildScheduleExpression({
+    frequency: scheduleFrequency.value,
+    hour: scheduleHour.value,
+    minute: scheduleMinute.value,
+    weekday: scheduleWeekday.value,
+    monthDay: scheduleMonthDay.value,
+  })
+}
+
+function syncGeneratedSchedule() {
+  if (scheduleFrequency.value && scheduleFrequency.value !== 'custom') {
+    formData.value.schedule = generatedSchedule()
+  }
+}
+
+function handleScheduleFrequency(value: ScheduleFrequency | null) {
+  const previous = scheduleFrequency.value
+  scheduleFrequency.value = value
+  if (!value) {
+    formData.value.schedule = ''
+  } else if (value === 'custom') {
+    if (previous !== 'custom') formData.value.schedule = ''
+  } else {
+    syncGeneratedSchedule()
+  }
+}
+
+function setScheduleHour(value: number) { scheduleHour.value = value; syncGeneratedSchedule() }
+function setScheduleMinute(value: number) { scheduleMinute.value = value; syncGeneratedSchedule() }
+function setScheduleWeekday(value: number) { scheduleWeekday.value = value; syncGeneratedSchedule() }
+function setScheduleMonthDay(value: number) {
+  scheduleMonthDay.value = value
+  syncGeneratedSchedule()
+}
 
 const providerOptions = computed(() => {
   const options = [
@@ -191,9 +243,11 @@ onMounted(async () => {
     try {
       const job = await getJob(props.jobId)
       originalJob.value = job
+      const schedule = scheduleToEditableInput(job.schedule, job.schedule_display || '')
+      const parsedSchedule = parseScheduleExpression(schedule)
       formData.value = {
         name: job.name,
-        schedule: scheduleToEditableInput(job.schedule, job.schedule_display || ''),
+        schedule,
         prompt: job.prompt,
         deliver: job.deliver || 'origin',
         skills: job.skills || (job.skill ? [job.skill] : []),
@@ -201,6 +255,11 @@ onMounted(async () => {
         provider: job.provider || '',
         model: job.model || '',
       }
+      scheduleFrequency.value = parsedSchedule.frequency
+      scheduleHour.value = parsedSchedule.hour
+      scheduleMinute.value = parsedSchedule.minute
+      scheduleWeekday.value = parsedSchedule.weekday
+      scheduleMonthDay.value = parsedSchedule.monthDay
     } catch (e: any) {
       message.error(t('jobs.loadFailed') + ': ' + e.message)
     }
@@ -283,16 +342,75 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem :label="t('jobs.schedule')" required>
+      <NFormItem :label="t('jobs.frequency')" required>
+        <NSelect
+          data-testid="job-schedule-frequency"
+          :value="scheduleFrequency"
+          :options="scheduleFrequencyOptions"
+          :placeholder="t('jobs.selectPreset')"
+          clearable
+          @update:value="handleScheduleFrequency"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="scheduleFrequency === 'hourly'" :label="t('scheduleBuilder.minute')" required>
+        <NSelect
+          data-testid="job-schedule-minute"
+          :value="scheduleMinute"
+          :options="SCHEDULE_MINUTE_OPTIONS"
+          @update:value="setScheduleMinute"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="scheduleFrequency === 'weekly'" :label="t('scheduleBuilder.weekday')" required>
+        <NSelect
+          data-testid="job-schedule-weekday"
+          :value="scheduleWeekday"
+          :options="scheduleWeekdays"
+          @update:value="setScheduleWeekday"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="scheduleFrequency === 'monthly'" :label="t('scheduleBuilder.monthDay')" required>
+        <NSelect
+          data-testid="job-schedule-month-day"
+          :value="scheduleMonthDay"
+          :options="SCHEDULE_MONTH_DAY_OPTIONS"
+          @update:value="setScheduleMonthDay"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="scheduleFrequency === 'daily' || scheduleFrequency === 'weekly' || scheduleFrequency === 'monthly'" :label="t('scheduleBuilder.time')" required>
+        <div class="schedule-time-fields">
+          <NSelect
+            data-testid="job-schedule-hour"
+            :value="scheduleHour"
+            :options="SCHEDULE_HOUR_OPTIONS"
+            :aria-label="t('scheduleBuilder.hour')"
+            @update:value="setScheduleHour"
+          />
+          <span>:</span>
+          <NSelect
+            data-testid="job-schedule-minute"
+            :value="scheduleMinute"
+            :options="SCHEDULE_MINUTE_OPTIONS"
+            :aria-label="t('scheduleBuilder.minute')"
+            @update:value="setScheduleMinute"
+          />
+        </div>
+      </NFormItem>
+
+      <NFormItem v-if="scheduleFrequency === 'custom'" :label="t('jobs.schedule')" required>
         <NInput
+          data-testid="job-schedule-custom"
           v-model:value="formData.schedule"
           :placeholder="t('jobs.schedulePlaceholder')"
         />
       </NFormItem>
 
-
       <NFormItem :label="t('jobs.provider')">
         <NSelect
+          data-testid="job-provider"
           :value="formData.provider"
           :options="providerOptions"
           @update:value="handleProviderChange"
@@ -301,21 +419,13 @@ function handleClose() {
 
       <NFormItem :label="t('jobs.model')">
         <NSelect
+          data-testid="job-model"
           v-model:value="formData.model"
           filterable
           clearable
           :disabled="!formData.provider"
           :options="modelOptions"
           :placeholder="t('jobs.modelPlaceholder')"
-        />
-      </NFormItem>
-
-      <NFormItem :label="t('jobs.quickPresets')">
-        <NSelect
-          v-model:value="presetValue"
-          :options="schedulePresets"
-          :placeholder="t('jobs.selectPreset')"
-          @update:value="v => formData.schedule = v"
         />
       </NFormItem>
 
@@ -332,6 +442,7 @@ function handleClose() {
 
       <NFormItem :label="t('jobs.skills')">
         <NSelect
+          data-testid="job-skills"
           v-model:value="formData.skills"
           multiple
           filterable
@@ -344,6 +455,7 @@ function handleClose() {
 
       <NFormItem :label="t('jobs.deliverTarget')">
         <NSelect
+          data-testid="job-delivery"
           v-model:value="formData.deliver"
           :options="targetOptions"
           :loading="deliveryTargetsLoading"
@@ -378,5 +490,13 @@ function handleClose() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.schedule-time-fields {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
 }
 </style>
