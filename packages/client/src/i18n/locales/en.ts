@@ -3246,6 +3246,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_45_1: 'This release covers all 16 PRs merged after v0.6.44, improving reasoning and tool traces, model and download management, chat continuity, Group Chat drafts, and reliability',
+    new_0_6_45_2: 'Live reasoning and running tools now stay in stable one-line rows; completed tools move into animated run cards with explicit status. Resume preserves those cards, DeepSeek continuations replay reasoning, and global Codex, Claude, and Pi keep CLI-owned model settings (#2662)',
+    new_0_6_45_3: 'A Fallback tab now lets you add, reorder by drag or keyboard, remove, and save up to 10 fallback provider/model pairs for new sessions (#2627)',
+    new_0_6_45_4: 'Studio now loads managed Runtime versions from release manifests and offers a mobile download hub with persistent QR codes for Android, Google Play, Apple, and HarmonyOS (#2659)',
+    new_0_6_45_5: 'Group Chat drafts now persist separately per room, including Mentions, survive navigation, reloads, and send failures, and clear only after a successful send (#2643)',
+    new_0_6_45_6: 'Chat navigation is more reliable: session switches focus the composer on desktop, /new histories remain visible, titles and outlines choose their own text direction, and stale loads no longer take over a new chat (#2606, #2609, #2614, #2650)',
+    new_0_6_45_7: 'Coding and background chat continuity improved: unsupported image endpoints are remembered as text-only, Pi resumes native sessions between turns, and callbacks keep their originating context (#2655, #2656, #2657)',
+    new_0_6_45_8: 'Controls and errors are clearer: reasoning effort shows its eight draggable levels, schedules require explicit Cron input, and oversized uploads now return the real 413 message (#2604, #2605, #2647)',
+    new_0_6_45_9: 'Maintenance removes the legacy website from Studio and isolates tests by worker on Node 24, reducing duplicate release surfaces and flaky CI (#2622, #2654)',
     new_0_6_44_1: 'This release covers all 13 PRs merged after v0.6.43, focused on live Group Chat history and activity, App connection reliability, provider usability, and Agent Bridge persistence',
     new_0_6_44_2: 'Group Chat now shows active Agent runs across rooms, places a taller Tool panel above the transcript, lets the active room section collapse, and loads complete history directly in the live room (#2572, #2573, #2584, #2594)',
     new_0_6_44_3: 'App connections now prefer physical LAN addresses over VPN adapters, refresh stale relay pairing codes correctly, and serve compact profile avatars to mobile clients (#2591, #2592, #2598)',
