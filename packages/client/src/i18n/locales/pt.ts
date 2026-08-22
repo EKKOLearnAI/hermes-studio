@@ -766,6 +766,7 @@ export default {
     batchDeletePartial: '{failed} sessões falharam ao excluir',
     batchDeleteFailed: 'Falha na exclusão em lote',
     importToWebUi: 'Importar para Web UI',
+    continueInChat: 'Continuar no chat',
     importSessionSuccess: 'Sessão importada para Web UI',
     importSessionAlreadyExists: 'A sessão já existe no Web UI',
     importSessionFailed: 'Falha ao importar sessão',

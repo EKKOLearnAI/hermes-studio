@@ -766,6 +766,7 @@ export default {
     batchDeletePartial: '{failed}개의 세션 삭제 실패',
     batchDeleteFailed: '일괄 삭제 실패',
     importToWebUi: 'Web UI로 가져오기',
+    continueInChat: '채팅에서 계속',
     importSessionSuccess: '세션을 Web UI로 가져왔습니다',
     importSessionAlreadyExists: '세션이 이미 Web UI에 있습니다',
     importSessionFailed: '세션 가져오기 실패',

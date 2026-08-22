@@ -819,6 +819,7 @@ export default {
     batchDeletePartial: '{failed} 個工作階段刪除失敗',
     batchDeleteFailed: '批次刪除失敗',
     importToWebUi: '匯入到 Web UI',
+    continueInChat: '在聊天中繼續',
     importSessionSuccess: '工作階段已匯入 Web UI',
     importSessionAlreadyExists: '工作階段已存在於 Web UI',
     importSessionFailed: '匯入工作階段失敗',

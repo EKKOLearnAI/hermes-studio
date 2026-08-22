@@ -123,8 +123,13 @@ const contextSessionPinned = computed(() =>
   contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
 )
 
+const canContinueActiveSession = computed(() => historySession.value?.source === 'coding_agent')
+
 const contextMenuOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
+    ...(contextSessionSummary.value?.source === 'coding_agent'
+      ? [{ label: t('chat.continueInChat'), key: 'continue-chat' }]
+      : []),
     {
       label: t('chat.importToWebUi'),
       key: 'import-webui',
@@ -665,6 +670,18 @@ function historySessionProfile(sessionId: string): string | null {
     : findHistorySession(sessionId)?.profile || null
 }
 
+async function continueInChat(id?: string) {
+  const sessionId = id || historySessionId.value
+  if (!sessionId) return
+  const summary = findHistorySession(sessionId)
+  if (!summary || summary.source !== 'coding_agent') return
+  await router.push({
+    name: 'hermes.session',
+    params: { sessionId },
+    query: summary.profile ? { profile: summary.profile } : undefined,
+  })
+}
+
 function buildHistorySessionUrl(sessionId: string, profile?: string | null) {
   const href = router.resolve({
     name: 'hermes.historySession',
@@ -713,7 +730,9 @@ async function handleImportToWebUi(sessionId: string) {
 async function handleContextMenuSelect(key: string) {
   showContextMenu.value = false
   if (!contextSessionId.value) return
-  if (key === 'pin') {
+  if (key === 'continue-chat') {
+    await continueInChat(contextSessionId.value)
+  } else if (key === 'pin') {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
   } else if (key === 'copy-link') {
     await copySessionLink(contextSessionId.value)
@@ -1027,6 +1046,16 @@ function handleBatchDeleteConfirm() {
               </NButton>
             </template>
             {{ t('chat.copySessionId') }}
+          </NTooltip>
+          <NTooltip v-if="canContinueActiveSession" trigger="hover">
+            <template #trigger>
+              <NButton quaternary size="small" circle :aria-label="t('chat.continueInChat')" @click="continueInChat()">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-4 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.continueInChat') }}
           </NTooltip>
         </div>
       </header>
