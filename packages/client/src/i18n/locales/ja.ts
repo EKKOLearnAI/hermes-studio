@@ -2621,6 +2621,7 @@ export default {
     deleteAgentPreset: 'Delete preset',
     deleteAgentPresetConfirm: 'Delete this preset? Existing Room Agents will not change.',
     agentPresetSaved: 'Agent preset saved',
+    agentPresetAlreadyExists: 'このプリセットはすでに追加されています。',
     agentPresetDeleted: 'Agent preset deleted',
     agentPresetUnavailable: 'Reference unavailable',
     agentPresetLoadFailed: 'Could not load Agent presets.',

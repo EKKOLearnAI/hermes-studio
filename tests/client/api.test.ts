@@ -182,6 +182,24 @@ describe('API Client', () => {
       await expect(request('/api/coding-agents/runs/session-1/input')).rejects.toThrow('API Error 500: spawn claude ENOENT')
     })
 
+    it('preserves application error status and code for localized handling', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        text: () => Promise.resolve(JSON.stringify({
+          code: 'GROUP_AGENT_PRESET_NAME_CONFLICT',
+          error: 'Agent preset already exists',
+        })),
+      })
+
+      await expect(request('/api/hermes/group-chat/agent-presets')).rejects.toMatchObject({
+        status: 409,
+        code: 'GROUP_AGENT_PRESET_NAME_CONFLICT',
+        message: 'API Error 409: Agent preset already exists',
+      })
+    })
+
     it('returns parsed JSON on success', async () => {
       const data = { sessions: [{ id: '1' }] }
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(data) })

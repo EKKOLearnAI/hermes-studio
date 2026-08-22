@@ -1294,7 +1294,11 @@ async function saveAgentPreset(presetId: string | null) {
         pendingAgentPresetId.value = result.preset.id
         message.success(t('groupChat.agentPresetSaved'))
     } catch (err: any) {
-        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'))
+        message.error(
+            err?.code === 'GROUP_AGENT_PRESET_NAME_CONFLICT'
+                ? t('groupChat.agentPresetAlreadyExists')
+                : extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'),
+        )
     } finally {
         isSavingAgentPreset.value = false
     }

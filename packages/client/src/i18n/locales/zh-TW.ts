@@ -2862,6 +2862,7 @@ export default {
     deleteAgentPreset: '刪除預設',
     deleteAgentPresetConfirm: '刪除此預設？既有 Room Agent 不會改變。',
     agentPresetSaved: 'Agent 預設已儲存',
+    agentPresetAlreadyExists: '此預設已新增過',
     agentPresetDeleted: 'Agent 預設已刪除',
     agentPresetUnavailable: '引用已失效',
     agentPresetLoadFailed: '無法載入 Agent 預設。',
