@@ -90,6 +90,7 @@ function stopThinkingTimer() {
 }
 
 const isRunIndicatorActive = computed(() => chatStore.isRunActive || !!chatStore.abortState);
+const backgroundPending = computed(() => chatStore.backgroundPending);
 const formattedThinkingElapsed = computed(() => formatElapsed(thinkingElapsedMs.value));
 
 const currentToolCalls = computed(() => {
@@ -712,6 +713,10 @@ defineExpose({
         />
       </template>
       <template #after>
+        <div v-if="backgroundPending > 0 && !isRunIndicatorActive" class="background-delegations-status" role="status">
+          <strong>{{ t('chat.backgroundDelegationsRunning', { count: backgroundPending }) }}</strong>
+          <span>{{ t('chat.backgroundDelegationsHint') }}</span>
+        </div>
         <Transition name="fade">
         <div v-if="isRunIndicatorActive" class="streaming-indicator">
           <LiveReasoningStatus
@@ -1052,6 +1057,21 @@ defineExpose({
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
+
+.background-delegations-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.35);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  font-size: 13px;
+
+  strong { color: var(--text-primary); }
+}
 
 .message-list-shell {
   flex: 1;

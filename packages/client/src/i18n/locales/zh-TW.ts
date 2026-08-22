@@ -889,6 +889,8 @@ export default {
     executionDuration: '執行時長',
     thinkingLabel: '思考過程',
     thinkingInProgress: '正在思考',
+    backgroundDelegationsRunning: '仍有 {count} 個背景委派工作正在執行',
+    backgroundDelegationsHint: '你可以繼續輸入；新訊息不會取消這些工作。',
     thinkingShow: '展開思考過程',
     thinkingHide: '收起思考過程',
     thinkingDuration: '已觀察 {duration}',

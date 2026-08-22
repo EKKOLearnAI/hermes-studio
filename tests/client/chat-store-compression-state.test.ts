@@ -95,6 +95,51 @@ describe('chat store compression state', () => {
     })
   })
 
+  it('restores and clears a per-session background delegation count independently of foreground streaming', async () => {
+    chatApi.resumeSession.mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({ session_id: sessionId, messages: [], isWorking: false, backgroundPending: 2, events: [] })
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    await store.switchSession('session-1')
+    expect(store.backgroundPending).toBe(2)
+    expect(store.isRunActive).toBe(false)
+    expect(store.isSessionLive('session-1')).toBe(true)
+
+    const sessionHandlers = chatApi.registerSessionHandlers.mock.calls.find(call => call[0] === 'session-1')?.[1]
+    sessionHandlers.onRunCompleted({
+      event: 'run.completed',
+      session_id: 'session-1',
+      autonomous: true,
+      background_pending: 0,
+    })
+
+    expect(store.backgroundPending).toBe(0)
+    expect(store.isSessionLive('session-1')).toBe(false)
+  })
+
+  it('replaces a prior background delegation count when returning to a session', async () => {
+    let sessionOneResumes = 0
+    chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
+      const backgroundPending = sessionId === 'session-1' && sessionOneResumes++ === 0 ? 1 : 0
+      onResumed({ session_id: sessionId, messages: [], isWorking: false, backgroundPending, events: [] })
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1'), makeSession('session-2')]
+
+    await store.switchSession('session-1')
+    expect(store.backgroundPending).toBe(1)
+
+    await store.switchSession('session-2')
+    await store.switchSession('session-1')
+
+    expect(store.backgroundPending).toBe(0)
+    expect(store.isSessionLive('session-1')).toBe(false)
+  })
+
   it('does not show a background session compression indicator in the active session', async () => {
     const store = useChatStore()
     store.sessions = [makeSession('session-1'), makeSession('session-2')]

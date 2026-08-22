@@ -778,6 +778,8 @@ export default {
     executionDuration: 'Длительность выполнения',
     thinkingLabel: 'Процесс размышления',
     thinkingInProgress: 'Размышление',
+    backgroundDelegationsRunning: 'Выполняется фоновых делегирований: {count}',
+    backgroundDelegationsHint: 'Можно продолжать ввод; новые сообщения не отменят эти задачи.',
     thinkingShow: 'Развернуть процесс размышления',
     thinkingHide: 'Свернуть процесс размышления',
     thinkingDuration: 'Наблюдается {duration}',

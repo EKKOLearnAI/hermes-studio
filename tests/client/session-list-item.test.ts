@@ -59,6 +59,24 @@ describe('SessionListItem', () => {
     expect(source).not.toMatch(/\.session-item-agent-logo\s*\{[^}]*background:/s)
   })
 
+  it('renders a visible background delegation count', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        backgroundPending: 2,
+        to: '/session/s1',
+      },
+      global: {
+        stubs: { ProfileAvatar: true },
+      },
+    })
+
+    expect(wrapper.get('.session-item-background-count').text()).toBe('2')
+  })
+
   it('renders normal mode as a link to the session route', () => {
     const wrapper = mount(SessionListItem, {
       props: {

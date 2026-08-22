@@ -1249,6 +1249,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+  /** sessionId → background delegations which have not reached a terminal state */
+  const backgroundPendingBySession = ref<Map<string, number>>(new Map())
   /** sessionIds with a terminal /fork command submitted but not settled yet */
   const pendingForkCommands = ref<Set<string>>(new Set())
   /** Sessions that completed while the user was viewing another session. */
@@ -1326,6 +1328,18 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? messageLoadRequests.value.has(sid) : false
   })
   const isRunActive = computed(() => isStreaming.value)
+  const backgroundPending = computed(() => {
+    const sid = activeSessionId.value
+    return sid ? backgroundPendingBySession.value.get(sid) || 0 : 0
+  })
+
+  function setBackgroundPending(sessionId: string, pending: unknown) {
+    const count = Math.max(0, Number(pending) || 0)
+    const next = new Map(backgroundPendingBySession.value)
+    if (count > 0) next.set(sessionId, count)
+    else next.delete(sessionId)
+    backgroundPendingBySession.value = next
+  }
   let loadSessionsRequestSequence = 0
   let switchSessionRequestSequence = 0
   let activeSelectionSequence = 0
@@ -1375,6 +1389,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingClarifies.value = new Map()
     streamStates.value = new Map()
     serverWorking.value = new Set()
+    backgroundPendingBySession.value = new Map()
     pendingForkCommands.value = new Set()
     workspaceRunChangesBySession.value = new Map()
     abortStates.value = new Map()
@@ -1425,7 +1440,13 @@ export const useChatStore = defineStore('chat', () => {
   const workspaceRunChangeLoadRequests = new Set<string>()
 
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
+    return streamStates.value.has(sessionId)
+      || serverWorking.value.has(sessionId)
+      || (backgroundPendingBySession.value.get(sessionId) || 0) > 0
+  }
+
+  function backgroundPendingForSession(sessionId: string): number {
+    return backgroundPendingBySession.value.get(sessionId) || 0
   }
 
   function isSessionCompletedUnread(sessionId: string): boolean {
@@ -1884,6 +1905,7 @@ export const useChatStore = defineStore('chat', () => {
             serverWorking.value.delete(sessionId)
           }
           backgroundPendingOnResume = Number(data.backgroundPending || 0)
+          setBackgroundPending(sessionId, backgroundPendingOnResume)
           if (data.queueLength && data.queueLength > 0) {
             queueLengths.value.set(sessionId, data.queueLength)
           } else {
@@ -4264,6 +4286,7 @@ export const useChatStore = defineStore('chat', () => {
       if (closed) return
       // Filter events for this session (server tags all events with session_id)
       if (evt.session_id && evt.session_id !== sid) return
+      if (evt.background_pending != null) setBackgroundPending(sid, evt.background_pending)
       const eventRunMarker = readRunMarker(evt)
       if (eventRunMarker) activeRunMarker = eventRunMarker
       switch (evt.event) {
@@ -5156,7 +5179,9 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     isForkPending,
     isRunActive,
+    backgroundPending,
     isSessionLive,
+    backgroundPendingForSession,
     isSessionCompletedUnread,
     clearSessionCompletedUnread,
     sessionProfileFilter,

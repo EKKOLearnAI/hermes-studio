@@ -820,6 +820,8 @@ export default {
     unchangedLines: '{count} linhas inalteradas',
     executionDuration: 'Tempo de execução',    thinkingLabel: 'Raciocínio',
     thinkingInProgress: 'Pensando',
+    backgroundDelegationsRunning: '{count} delegações em segundo plano ainda estão em execução',
+    backgroundDelegationsHint: 'Você pode continuar digitando; novas mensagens não as cancelarão.',
     thinkingShow: 'Mostrar raciocínio',
     thinkingHide: 'Ocultar raciocínio',
     thinkingDuration: 'Observado {duration}',

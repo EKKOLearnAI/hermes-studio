@@ -820,6 +820,8 @@ export default {
     unchangedLines: '{count} unveränderte Zeilen',
     executionDuration: 'Ausführungszeit',    thinkingLabel: 'Denkprozess',
     thinkingInProgress: 'Denkt',
+    backgroundDelegationsRunning: '{count} Hintergrunddelegierungen laufen noch',
+    backgroundDelegationsHint: 'Du kannst weiterschreiben; neue Nachrichten brechen sie nicht ab.',
     thinkingShow: 'Denkprozess anzeigen',
     thinkingHide: 'Denkprozess ausblenden',
     thinkingDuration: 'Beobachtet {duration}',

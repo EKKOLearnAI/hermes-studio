@@ -900,6 +900,8 @@ export default {
     executionDuration: 'وقت التنفيذ',
     thinkingLabel: 'التفكير',
     thinkingInProgress: 'التفكير',
+    backgroundDelegationsRunning: '{count} من التفويضات الخلفية لا تزال قيد التشغيل',
+    backgroundDelegationsHint: 'يمكنك متابعة الكتابة؛ لن تلغي الرسائل الجديدة هذه المهام.',
     thinkingShow: 'إظهار التفكير',
     thinkingHide: 'إخفاء التفكير',
     thinkingDuration: 'المدة المرصودة {duration}',

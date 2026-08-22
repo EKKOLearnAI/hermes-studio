@@ -15,6 +15,7 @@ const props = withDefaults(defineProps<{
   pinned: boolean
   canDelete: boolean
   streaming?: boolean
+  backgroundPending?: number
   completedUnread?: boolean
   selectable?: boolean
   selected?: boolean
@@ -133,6 +134,12 @@ onUnmounted(() => {
             </svg>
           </span>
           <span v-if="completedUnread" class="session-item-unread-dot" aria-hidden="true" />
+          <span
+            v-if="backgroundPending && backgroundPending > 0"
+            class="session-item-background-count"
+            :aria-label="t('chat.backgroundDelegationsRunning', { count: backgroundPending })"
+            :title="t('chat.backgroundDelegationsRunning', { count: backgroundPending })"
+          >{{ backgroundPending }}</span>
           <span class="session-item-title" dir="auto">
             {{ session.title }}
           </span>
@@ -404,6 +411,21 @@ onUnmounted(() => {
     0 0 10px rgba(255, 107, 107, 0.4),
     0 0 20px rgba(255, 107, 107, 0.2);
   animation: rainbow-glow 4s linear infinite;
+}
+
+.session-item-background-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-inline-start: 5px;
+  padding: 0 4px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: rgba(var(--accent-primary-rgb), 0.5);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-item-agent-logo {

@@ -920,6 +920,8 @@ export default {
     executionDuration: '执行时长',
     thinkingLabel: '思考过程',
     thinkingInProgress: '正在思考',
+    backgroundDelegationsRunning: '仍有 {count} 个后台委派任务在运行',
+    backgroundDelegationsHint: '你可以继续输入；新消息不会取消这些任务。',
     thinkingShow: '展开思考过程',
     thinkingHide: '收起思考过程',
     thinkingDuration: '已观察 {duration}',
