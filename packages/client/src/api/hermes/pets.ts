@@ -50,3 +50,57 @@ export async function updateActivePetPreferences(input: {
   })
   return res.pet
 }
+
+export interface LocalImportedPet {
+  slug: string
+  displayName: string
+  kind: string
+  submittedBy: string
+  source: 'petdex' | 'local'
+  spritesheetFile: string
+  petJsonFile?: string
+  mime: string
+  installedAt: number
+  updatedAt: number
+}
+
+export async function fetchLocalPets(): Promise<LocalImportedPet[]> {
+  const res = await request<{ pets: LocalImportedPet[] }>('/api/hermes/pets/local')
+  return res.pets
+}
+
+export function localPetAssetUrl(slug: string): string {
+  return `/api/hermes/pets/local/${encodeURIComponent(slug)}/asset`
+}
+
+export function localPetPreviewUrl(slug: string): string {
+  return `/api/hermes/pets/local/${encodeURIComponent(slug)}/preview`
+}
+
+export async function importLocalPet(input: {
+  slug: string
+  displayName: string
+  kind: string
+  submittedBy: string
+  spritesheet: File
+  petJson?: File | null
+}): Promise<LocalImportedPet> {
+  const form = new FormData()
+  form.append('slug', input.slug)
+  form.append('displayName', input.displayName)
+  form.append('kind', input.kind)
+  form.append('submittedBy', input.submittedBy)
+  form.append('spritesheet', input.spritesheet)
+  if (input.petJson) form.append('petJson', input.petJson)
+  const res = await request<{ pet: LocalImportedPet }>('/api/hermes/pets/import', {
+    method: 'POST',
+    body: form,
+  })
+  return res.pet
+}
+
+export async function deleteLocalPet(slug: string): Promise<{ deleted: boolean; wasActive: boolean }> {
+  return request<{ deleted: boolean; wasActive: boolean }>(`/api/hermes/pets/local/${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+  })
+}
