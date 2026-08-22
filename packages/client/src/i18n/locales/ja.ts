@@ -1370,6 +1370,8 @@ export default {
     auxiliaryTaskCurator: 'キュレーター',
     auxiliaryTaskSessionSearch: 'セッション検索',
     auxiliaryTaskFlushMemories: 'メモリ書き込み',
+    auxiliaryTaskImageGeneration: '画像生成',
+    auxiliaryTaskImageEdit: '画像編集',
     currentDefault: '現在のデフォルト',
     defaultShort: 'デフォルト',
     setDefaultProvider: 'デフォルトプロバイダーに設定',

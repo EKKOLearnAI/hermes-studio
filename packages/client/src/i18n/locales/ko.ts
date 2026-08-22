@@ -1370,6 +1370,8 @@ export default {
     auxiliaryTaskCurator: '큐레이터',
     auxiliaryTaskSessionSearch: '세션 검색',
     auxiliaryTaskFlushMemories: '메모리 쓰기',
+    auxiliaryTaskImageGeneration: '이미지 생성',
+    auxiliaryTaskImageEdit: '이미지 편집',
     currentDefault: '현재 기본값',
     defaultShort: '기본값',
     setDefaultProvider: '기본 Provider로 설정',

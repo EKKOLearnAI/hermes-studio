@@ -1884,6 +1884,8 @@ export default {
     auxiliaryTaskCurator: 'Curator',
     auxiliaryTaskSessionSearch: 'Session search',
     auxiliaryTaskFlushMemories: 'Flush memories',
+    auxiliaryTaskImageGeneration: 'Image generation',
+    auxiliaryTaskImageEdit: 'Image editing',
     currentDefault: 'Current default',
     defaultShort: 'Default',
     setDefaultProvider: 'Set default provider',

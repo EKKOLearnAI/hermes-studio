@@ -1930,6 +1930,8 @@ export default {
     auxiliaryTaskCurator: '策展',
     auxiliaryTaskSessionSearch: '会话搜索',
     auxiliaryTaskFlushMemories: '写入记忆',
+    auxiliaryTaskImageGeneration: '图像生成',
+    auxiliaryTaskImageEdit: '图像编辑',
     currentDefault: '当前默认',
     defaultShort: '默认',
     setDefaultProvider: '设为默认 Provider',

@@ -102,6 +102,99 @@ describe('media controller', () => {
     }
   })
 
+  it('takes the image models and provider from the profile auxiliary settings', async () => {
+    vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'studio-images',
+          base_url: 'https://images.example/v1',
+          api_key_env: 'STUDIO_IMG_KEY',
+        }],
+        auxiliary: {
+          image_generation: { provider: 'studio-images', model: 'seedream-4' },
+          image_edit: { provider: 'studio-images', model: 'qwen-image-edit' },
+        },
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"data":[{"b64_json":"aW1hZ2UtYnl0ZXM="}]}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        // No provider and no model in the request: everything comes from config.
+        request: { body: { mode: 'text', prompt: 'make an icon', output_path: '/tmp/hermes-web-ui-configured.png' } },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ ok: true, provider: 'studio-images' })
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://images.example/v1/images/generations')
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)))
+        .toMatchObject({ model: 'seedream-4' })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('lets the request override the configured image model', async () => {
+    vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'studio-images',
+          base_url: 'https://images.example/v1',
+          api_key_env: 'STUDIO_IMG_KEY',
+        }],
+        auxiliary: { image_generation: { provider: 'studio-images', model: 'seedream-4' } },
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"data":[{"b64_json":"aW1hZ2UtYnl0ZXM="}]}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: { body: { mode: 'text', prompt: 'x', model: 'explicit-model', output_path: '/tmp/hermes-web-ui-override.png' } },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)))
+        .toMatchObject({ model: 'explicit-model' })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('forces response storage off for reference-image generation', async () => {
     vi.stubEnv('AGNES_API_KEY', 'agnes-secret')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({

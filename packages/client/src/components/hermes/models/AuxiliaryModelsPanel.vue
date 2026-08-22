@@ -142,6 +142,8 @@ function taskLabel(task: AuxiliaryModelTask): string {
     case 'curator': return t('models.auxiliaryTaskCurator')
     case 'session_search': return t('models.auxiliaryTaskSessionSearch')
     case 'flush_memories': return t('models.auxiliaryTaskFlushMemories')
+    case 'image_generation': return t('models.auxiliaryTaskImageGeneration')
+    case 'image_edit': return t('models.auxiliaryTaskImageEdit')
     default: return task.label || task.key
   }
 }

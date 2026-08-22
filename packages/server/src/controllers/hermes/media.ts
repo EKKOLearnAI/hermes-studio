@@ -116,7 +116,28 @@ function normalizeCustomProviderName(value: unknown): string {
 }
 
 function requestedApiKeyImageProviderName(body: any): string {
-  return normalizeCustomProviderName(body?.provider || body?.provider_name || body?.custom_provider) || APIKEY_IMAGE_PROVIDER
+  // No fallback to the built-in name here: resolveApiKeyImageProvider consults
+  // the profile's configured provider before reaching for the constant.
+  return normalizeCustomProviderName(body?.provider || body?.provider_name || body?.custom_provider)
+}
+
+/**
+ * Image generation and editing had their provider and models fixed in code, so
+ * a profile pointed at a different image API could not be reached at all. The
+ * values now come from the `auxiliary` section of the profile's config.yaml —
+ * the same place every other per-task model lives — and the constants stay as
+ * the last resort, so a profile that configures nothing behaves exactly as it
+ * did before.
+ */
+type AuxiliaryImageSettings = { provider: string; model: string }
+
+function auxiliaryImageSettings(hermesConfig: any, task: 'image_generation' | 'image_edit'): AuxiliaryImageSettings {
+  const auxiliary = hermesConfig?.auxiliary
+  const entry = auxiliary && typeof auxiliary === 'object' ? (auxiliary as Record<string, any>)[task] : null
+  const provider = entry && typeof entry.provider === 'string' ? entry.provider.trim() : ''
+  const model = entry && typeof entry.model === 'string' ? entry.model.trim() : ''
+  // `auto` is how the auxiliary settings say "no explicit choice".
+  return { provider: provider === 'auto' ? '' : provider, model }
 }
 
 function apiKeyFromCustomProvider(provider: any): string {
@@ -126,9 +147,12 @@ function apiKeyFromCustomProvider(provider: any): string {
   return envName ? String(process.env[envName] || '').trim() : ''
 }
 
-async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY_IMAGE_PROVIDER): Promise<ApiKeyImageProvider | null> {
-  const requestedName = normalizeCustomProviderName(providerName) || APIKEY_IMAGE_PROVIDER
+async function resolveApiKeyImageProvider(profile: string, providerName = ''): Promise<ApiKeyImageProvider | null> {
   const hermesConfig = await readConfigYamlForProfile(profile)
+  const configured = auxiliaryImageSettings(hermesConfig, 'image_generation').provider
+  const requestedName = normalizeCustomProviderName(providerName)
+    || normalizeCustomProviderName(configured)
+    || APIKEY_IMAGE_PROVIDER
   const customProviders = getCompatibleCustomProviders(hermesConfig)
   const provider = customProviders.find(entry => normalizeCustomProviderName(entry?.name) === requestedName)
   const apiKey = apiKeyFromCustomProvider(provider)
@@ -474,7 +498,7 @@ async function readSseImageResults(res: Response, limit: number): Promise<string
   return images.slice(0, limit)
 }
 
-async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyImageMode, body: any): Promise<string[]> {
+async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyImageMode, body: any, models: { generation: string; edit: string } = { generation: '', edit: '' }): Promise<string[]> {
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (!prompt) {
     const err: any = new Error('prompt is required')
@@ -496,7 +520,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
       headers: { ...headers, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
-        model: body.model || APIKEY_IMAGE_MODEL,
+        model: body.model || models.generation || APIKEY_IMAGE_MODEL,
         prompt,
         n,
         size: body.size || '1024x1024',
@@ -511,7 +535,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
       headers: { ...headers, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
-        model: body.model || provider.model || APIKEY_IMAGE_TO_IMAGE_MODEL,
+        model: body.model || models.edit || provider.model || APIKEY_IMAGE_TO_IMAGE_MODEL,
         store: false,
         stream: true,
         input: [{
@@ -523,7 +547,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
         }],
         tools: [{
           type: 'image_generation',
-          model: body.image_model || APIKEY_IMAGE_MODEL,
+          model: body.image_model || models.generation || APIKEY_IMAGE_MODEL,
           size: body.size || '1024x1024',
           quality: body.quality || 'auto',
           output_format: body.output_format || 'png',
@@ -538,7 +562,7 @@ async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyIma
     const form = new FormData()
     form.append('image', new Blob([imageBytes.buffer], { type: image.mime }), image.name)
     form.append('prompt', prompt)
-    form.append('model', body.model || APIKEY_IMAGE_MODEL)
+    form.append('model', body.model || models.generation || APIKEY_IMAGE_MODEL)
     form.append('n', String(n))
     form.append('quality', body.quality || 'auto')
     form.append('size', body.size || '1024x1024')
@@ -595,9 +619,10 @@ export async function apiKeyImageGenerate(ctx: Context) {
   const provider = await resolveApiKeyImageProvider(profile, providerName)
   if (!provider) {
     ctx.status = 401
-    const isDefaultProvider = providerName === APIKEY_IMAGE_PROVIDER
+    const attemptedName = providerName || APIKEY_IMAGE_PROVIDER
+    const isDefaultProvider = attemptedName === APIKEY_IMAGE_PROVIDER
     ctx.body = {
-      error: `Missing ${providerName} provider in profile "${profile}" config.yaml.`,
+      error: `Missing ${attemptedName} provider in profile "${profile}" config.yaml.`,
       code: isDefaultProvider ? 'missing_fun_codex_provider' : 'missing_apikey_image_provider',
     }
     return
@@ -605,7 +630,11 @@ export async function apiKeyImageGenerate(ctx: Context) {
 
   try {
     const mode = normalizeImageMode(body.mode)
-    const images = await requestApiKeyImage(provider, mode, body)
+    const hermesConfig = await readConfigYamlForProfile(profile)
+    const images = await requestApiKeyImage(provider, mode, body, {
+      generation: auxiliaryImageSettings(hermesConfig, 'image_generation').model,
+      edit: auxiliaryImageSettings(hermesConfig, 'image_edit').model,
+    })
     const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
     const outputPaths = saveGeneratedImages(images, requestedOutputPath || undefined)
     ctx.body = {

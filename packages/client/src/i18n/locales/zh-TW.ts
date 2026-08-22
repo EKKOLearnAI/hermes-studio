@@ -1841,6 +1841,8 @@ export default {
     auxiliaryTaskCurator: '策展',
     auxiliaryTaskSessionSearch: '會話搜尋',
     auxiliaryTaskFlushMemories: '寫入記憶',
+    auxiliaryTaskImageGeneration: '圖像生成',
+    auxiliaryTaskImageEdit: '圖像編輯',
     currentDefault: '目前預設',
     defaultShort: '預設',
     setDefaultProvider: '設為預設 Provider',

@@ -1673,6 +1673,8 @@ export default {
     auxiliaryTaskCurator: 'Куратор',
     auxiliaryTaskSessionSearch: 'Поиск сессий',
     auxiliaryTaskFlushMemories: 'Запись воспоминаний',
+    auxiliaryTaskImageGeneration: 'Генерация изображений',
+    auxiliaryTaskImageEdit: 'Редактирование изображений',
     currentDefault: 'Текущая по умолчанию',
     defaultShort: 'По умолч.',
     setDefaultProvider: 'Сделать провайдером по умолчанию',

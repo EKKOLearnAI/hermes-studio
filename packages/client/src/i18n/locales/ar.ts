@@ -1903,6 +1903,8 @@ export default {
     auxiliaryTaskCurator: 'المنظّم',
     auxiliaryTaskSessionSearch: 'البحث في الجلسات',
     auxiliaryTaskFlushMemories: 'تفريغ الذاكرة',
+    auxiliaryTaskImageGeneration: 'توليد الصور',
+    auxiliaryTaskImageEdit: 'تعديل الصور',
     currentDefault: 'الافتراضي الحالي',
     defaultShort: 'افتراضي',
     setDefaultProvider: 'تعيين المزوّد الافتراضي',
