@@ -227,7 +227,7 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
-  it('denies only the interrupted session approval queues', () => {
+  it('denies only the interrupted session run generation approval queues', () => {
     runPython(String.raw`
 ${harness}
 
@@ -242,7 +242,7 @@ class InterruptibleAgent:
 
 agents = {sid: InterruptibleAgent() for sid in ("session-a", "session-b")}
 for sid, agent in agents.items():
-    session = bridge.AgentSession(session_id=sid, agent=agent)
+    session = bridge.AgentSession(session_id=sid, agent=agent, current_run_id="run-current")
     session.running = True
     agent.session = session
     with pool._lock:
@@ -250,12 +250,14 @@ for sid, agent in agents.items():
 
 choices = {}
 threads = []
-for sid in ("session-a", "session-b"):
+for sid, run_id in (("session-a", "run-previous"), ("session-a", "run-current"), ("session-b", "run-current")):
+    with pool._lock:
+        pool._sessions[sid].current_run_id = run_id
     thread = threading.Thread(
-        target=lambda current=sid: choices.__setitem__(
-            current,
+        target=lambda current=sid, generation=run_id: choices.__setitem__(
+            f"{current}:{generation}",
             pool._approval_callback(current)(
-                f"printf harmless {current}",
+                f"printf harmless {current} {generation}",
                 "harmless test command",
                 allow_permanent=False,
             ),
@@ -264,32 +266,49 @@ for sid in ("session-a", "session-b"):
     )
     thread.start()
     threads.append(thread)
-
-def terminal_ready():
-    with pool._lock:
-        return set(pool._approval_request_sessions.values()) == {"session-a", "session-b"}
-
-assert wait_for(terminal_ready)
+    assert wait_for(lambda current=sid, generation=run_id: (
+        current,
+        generation,
+    ) in set(pool._approval_request_generations.values()))
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-previous"
 pool._gateway_approval_notify("session-a")({
-    "command": "printf harmless gateway",
+    "command": "printf harmless previous gateway",
+    "description": "harmless test command",
+})
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-current"
+pool._gateway_approval_notify("session-a")({
+    "command": "printf harmless current gateway",
     "description": "harmless test command",
 })
 
 result = pool.interrupt("session-a", "test interrupt")
 assert result["status"] == "interrupted"
-threads[0].join(timeout=5)
-assert not threads[0].is_alive()
-assert choices["session-a"] == "deny"
-with pool._lock:
-    assert set(pool._approval_request_sessions.values()) == {"session-b"}
-    remaining_id = next(iter(pool._approval_requests))
-assert approval._resolved_gateway == [("session-a", "deny")]
-
-assert pool.respond_approval(remaining_id, "deny")["resolved"] is True
 threads[1].join(timeout=5)
 assert not threads[1].is_alive()
-assert choices["session-b"] == "deny"
-assert pool.respond_approval(remaining_id, "once")["resolved"] is False
+assert choices["session-a:run-current"] == "deny"
+assert threads[0].is_alive()
+with pool._lock:
+    assert set(pool._approval_request_generations.values()) == {
+        ("session-a", "run-previous"),
+        ("session-b", "run-current"),
+    }
+    remaining = dict(pool._approval_request_generations)
+    previous_id = next(key for key, value in remaining.items() if value == ("session-a", "run-previous"))
+    other_session_id = next(key for key, value in remaining.items() if value == ("session-b", "run-current"))
+    assert set(pool._gateway_approval_requests.values()) == {("session-a", "run-previous")}
+assert approval._resolved_gateway == [("session-a", "deny")]
+
+assert pool.respond_approval(previous_id, "deny")["resolved"] is True
+assert pool.respond_approval(other_session_id, "deny")["resolved"] is True
+threads[0].join(timeout=5)
+threads[2].join(timeout=5)
+assert not threads[0].is_alive()
+assert not threads[2].is_alive()
+assert choices["session-a:run-previous"] == "deny"
+assert choices["session-b:run-current"] == "deny"
+assert pool.respond_approval(other_session_id, "once")["resolved"] is False
 `)
   })
 

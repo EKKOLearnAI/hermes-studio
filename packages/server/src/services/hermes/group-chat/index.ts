@@ -5035,13 +5035,14 @@ export class GroupChatServer {
         agentSessionId: string,
         runId: string,
     ): PendingGroupApprovalRoute[] {
-        if (!agentSessionId) return []
+        if (!agentSessionId || !runId || !(this.pendingApprovalRoutes instanceof Map)) return []
         const routes: PendingGroupApprovalRoute[] = []
         for (const [routeKey, route] of this.pendingApprovalRoutes) {
             if (route.roomId !== roomId
                 || route.agentName !== agentName
                 || route.agentSessionId !== agentSessionId
-                || (runId && route.runId && route.runId !== runId)) {
+                || !route.runId
+                || route.runId !== runId) {
                 continue
             }
             const claimed = this.takePendingApprovalRoute(routeKey)

@@ -751,6 +751,12 @@ describe('group chat approval and context baseline', () => {
       approval_id: 'approval-next', command: 'printf harmless',
     })
     await nextRequested
+    const missingGenerationRequested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      approval_id: 'approval-missing-generation', command: 'printf harmless',
+    })
+    await missingGenerationRequested
     const resolved = once<any>(human, 'approval.resolved')
 
     await expect(emitAck(human, 'interrupt_agent', {
@@ -763,13 +769,58 @@ describe('group chat approval and context baseline', () => {
     expect(respondApproval).toHaveBeenCalledTimes(1)
     expect(respondApproval).toHaveBeenCalledWith('approval-current', 'deny')
     await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({
-      pendingApprovals: [expect.objectContaining({ approval_id: 'approval-next' })],
+      pendingApprovals: [
+        expect.objectContaining({ approval_id: 'approval-next' }),
+        expect.objectContaining({ approval_id: 'approval-missing-generation' }),
+      ],
     })
 
     await expect(emitAck(human, 'interrupt_agent', {
       roomId: 'room-1', agentName: 'Agent',
     })).resolves.toEqual({ ok: true })
     expect(respondApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims the active approval before an interrupt can race with a user response', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    let finishInterrupt!: () => void
+    const interruptPending = new Promise<void>(resolve => {
+      finishInterrupt = resolve
+    })
+    const respondApproval = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      respondApproval,
+    } as any])
+    vi.spyOn(groupServer.agentClients, 'interruptAgent').mockImplementation(async () => {
+      await interruptPending
+    })
+
+    agent.emit('context_status', {
+      roomId: 'room-1', agentName: 'Agent', status: 'replying',
+      agentSessionId, runId: 'run-current',
+    })
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId, runId: 'run-current',
+      approval_id: 'approval-race', command: 'printf harmless',
+    })
+    await requested
+
+    const interrupted = emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })
+    await vi.waitFor(() => {
+      expect(groupServer.agentClients.interruptAgent).toHaveBeenCalledTimes(1)
+    })
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1', approval_id: 'approval-race', choice: 'once',
+    })).resolves.toEqual({ error: 'Approval is not pending in this room' })
+
+    finishInterrupt()
+    await expect(interrupted).resolves.toEqual({ ok: true })
+    expect(respondApproval).toHaveBeenCalledTimes(1)
+    expect(respondApproval).toHaveBeenCalledWith('approval-race', 'deny')
   })
 
   it('keeps Hermes approval responses routed through the Agent Bridge', async () => {
