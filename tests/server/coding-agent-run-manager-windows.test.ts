@@ -452,6 +452,51 @@ describe('coding agent Windows process launch', () => {
     )
   })
 
+  it('uses Codex app-server as the only text stream while the native child is active', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    const run: any = {
+      id: 'agent-session-codex-authoritative-stream',
+      launch: {
+        agentSessionId: 'agent-session-codex-authoritative-stream',
+        agentId: 'codex',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'gpt-test',
+        sessionId: 'chat-session-codex-authoritative-stream',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: true, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      generation: 3,
+      printResponseId: 'resp-codex-stream',
+      printMessageId: 'msg-codex-stream',
+      printText: '',
+      printTextStarted: false,
+      printCompleted: false,
+      currentChild: { exitCode: null, signalCode: null, killed: false },
+    }
+    ;(manager as any).runs.set(run.id, run)
+    ;(manager as any).sessionIndex.set(run.launch.sessionId, run.id)
+
+    manager.handleResponseEvent(run.id, {
+      type: 'response.output_text.delta',
+      data: { type: 'response.output_text.delta', delta: 'done' },
+    } as any)
+    ;(manager as any).handleCodexProtocolEvent(run, 'item/agentMessage/delta', {
+      delta: 'done',
+    })
+
+    expect(emitted.filter(item => item.event === 'message.delta').map(item => item.payload.delta))
+      .toEqual(['done'])
+  })
+
   it('maps Pi select/input/editor UI to clarifications and fails unknown methods closed', () => {
     const manager = new CodingAgentRunManager()
     const emitted = vi.fn()

@@ -2471,7 +2471,7 @@ describe('Claude Code stream-json mapping', () => {
 })
 
 describe('Codex JSONL tool mapping', () => {
-  it('keeps proxy text streaming but uses native JSONL for tool events', () => {
+  it('uses native JSONL for Codex text and tool events while the app-server child is active', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
@@ -2532,6 +2532,10 @@ describe('Codex JSONL tool mapping', () => {
       },
     })
 
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      method: 'item/agentMessage/delta',
+      params: { delta: 'Searching...' },
+    }))
     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
       type: 'item.started',
       item: {

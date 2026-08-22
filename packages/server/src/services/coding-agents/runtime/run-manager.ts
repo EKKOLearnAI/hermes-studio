@@ -1216,6 +1216,16 @@ export class CodingAgentRunManager {
     if (
       run.launch.agentId === 'codex' &&
       !run.acceptingPrintEvent &&
+      childIsRunning(run.currentChild) &&
+      storageSafeResponseEvent.type === 'response.output_text.delta'
+    ) {
+      // Codex app-server is the authoritative text stream. The provider proxy
+      // remains connected for transport and usage accounting only.
+      return
+    }
+    if (
+      run.launch.agentId === 'codex' &&
+      !run.acceptingPrintEvent &&
       isProxyToolEvent(storageSafeResponseEvent)
     ) {
       // Keep proxy text deltas for responsive streaming, but use Codex JSONL as

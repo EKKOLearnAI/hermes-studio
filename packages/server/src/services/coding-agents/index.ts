@@ -1167,13 +1167,27 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
   }
 }
 
-function claudeMcpConfigJson(profile: string, ...existingContents: Array<string | null | undefined>): string {
+function claudeMcpConfigJson(
+  profile: string,
+  approvalToken: string,
+  ...existingContents: Array<string | null | undefined>
+): string {
   const mcpServers: Record<string, unknown> = {}
   for (const content of existingContents) {
     Object.assign(mcpServers, parseClaudeMcpServers(content))
   }
   for (const server of HERMES_MCP_SERVERS) {
     mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset)
+  }
+  if (approvalToken) {
+    const approvalServer = hermesMcpServerConfig(profile, 'hermes-studio-approval', 'approval')
+    mcpServers['hermes-studio-approval'] = {
+      ...approvalServer,
+      env: {
+        ...approvalServer.env,
+        HERMES_RUNTIME_APPROVAL_TOKEN: approvalToken,
+      },
+    }
   }
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
@@ -2546,7 +2560,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const existingMcpPath = getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath
     const globalMcpConfig = globalMcpPath ? await safeReadFile(globalMcpPath) : ''
     const existingMcpConfig = existingMcpPath ? await safeReadFile(existingMcpPath) : ''
-    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, globalMcpConfig, existingMcpConfig))
+    await writeScopedFile('mcp', claudeMcpConfigJson(scope.profile, approvalToken, globalMcpConfig, existingMcpConfig))
     await writeScopedFile('prompt', hermesPromptDocument(scopedSystemPrompt))
 
     const settingsPath = join(rootDir, 'settings.json')
@@ -2561,6 +2575,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '--append-system-prompt-file',
       promptPath,
       ...claudeCodePermissionArgs(),
+      ...(approvalToken ? [
+        '--permission-prompt-tool',
+        'mcp__hermes-studio-approval__hermes_studio_runtime_approval',
+      ] : []),
     ]
   } else if (tool.id === 'codex') {
     if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {

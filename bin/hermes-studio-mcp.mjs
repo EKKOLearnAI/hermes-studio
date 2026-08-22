@@ -10,7 +10,7 @@ const DEFAULT_PORT = process.env.HERMES_WEB_UI_PORT || process.env.PORT || '8648
 const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`
 const DISPLAY_COMMAND = 'hermes-studio-mcp'
 const SERVER_NAME = process.env.HERMES_MCP_SERVER_NAME || DISPLAY_COMMAND
-const TOOLSETS = new Set(['api', 'browser', 'devices', 'use'])
+const TOOLSETS = new Set(['api', 'approval', 'browser', 'devices', 'use'])
 const ALLOWED_PUBLIC_REQUEST_HEADERS = new Set([
   'accept',
   'accept-language',
@@ -45,7 +45,7 @@ function printHelp() {
 Hermes Studio MCP stdio server.
 
 Usage:
-  ${DISPLAY_COMMAND} [api|browser|devices|use]
+  ${DISPLAY_COMMAND} [api|approval|browser|devices|use]
   ${DISPLAY_COMMAND} --help
   ${DISPLAY_COMMAND} --version
 
@@ -56,7 +56,7 @@ Environment:
   HERMES_WEB_UI_PROFILE   Default Hermes profile when a tool call omits profile.
   HERMES_WEB_UI_TOKEN     Optional explicit API token.
   AUTH_TOKEN              Optional explicit API token fallback.
-  HERMES_MCP_TOOLSET      Tool category to expose: api, browser, devices, or use. Default: api.
+  HERMES_MCP_TOOLSET      Tool category to expose: api, approval, browser, devices, or use. Default: api.
 
 When run without options, this process waits for MCP JSON-RPC messages on stdin.
 `)
@@ -853,6 +853,16 @@ function compactAvailableModelsPayload(payload, args = {}) {
 }
 
 const tools = [
+  {
+    name: 'hermes_studio_runtime_approval',
+    toolset: 'approval',
+    description: 'Internal Claude Code permission prompt adapter. This tool is invoked by the Runtime only.',
+    inputSchema: inputSchema({
+      tool_use_id: { type: 'string' },
+      tool_name: { type: 'string' },
+      input: { type: 'object', additionalProperties: true },
+    }, ['tool_use_id', 'tool_name', 'input']),
+  },
   {
     name: 'hermes_studio_browser_tabs',
     toolset: 'browser',
@@ -1747,6 +1757,31 @@ async function callTool(name, args = {}) {
   const categoryToolset = categoryToolsetDefinition(ACTIVE_TOOLSET)
   if (resolvedName === categoryToolset?.name) return await callCategoryToolset(args)
   switch (resolvedName) {
+    case 'hermes_studio_runtime_approval': {
+      const token = String(process.env.HERMES_RUNTIME_APPROVAL_TOKEN || '').trim()
+      if (!token) return jsonText({ behavior: 'deny', message: 'Studio approval capability is unavailable.' })
+      try {
+        const response = await request('/api/coding-agents/runtime-approval', {
+          method: 'POST',
+          token,
+          allowTokenFile: false,
+          body: {
+            hook_event_name: 'PermissionRequest',
+            tool_use_id: args.tool_use_id,
+            tool_name: args.tool_name,
+            tool_input: args.input,
+          },
+        })
+        const decision = response?.hookSpecificOutput?.decision
+        if (decision?.behavior === 'allow') return jsonText({ behavior: 'allow' })
+        return jsonText({ behavior: 'deny', message: String(decision?.message || 'Denied in Hermes Studio.') })
+      } catch (error) {
+        return jsonText({
+          behavior: 'deny',
+          message: error instanceof Error ? error.message : 'Studio approval failed.',
+        })
+      }
+    }
     case 'hermes_studio_browser_tabs': {
       if (args.action === 'list') return jsonText(await browserRequest('tabs.list'))
       if (args.action === 'create') return jsonText(await browserRequest('tabs.create', { url: args.url, activate: args.activate }))

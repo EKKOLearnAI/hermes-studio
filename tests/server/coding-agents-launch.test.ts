@@ -893,7 +893,9 @@ describe('coding agent launch preparation', () => {
       '--append-system-prompt-file',
       join(result.rootDir, 'hermes-rules.md'),
       '--permission-mode',
-        'manual',
+      'manual',
+      '--permission-prompt-tool',
+      'mcp__hermes-studio-approval__hermes_studio_runtime_approval',
     ])
     expect(result.shellCommand).not.toContain('--setting-sources local')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
@@ -1043,7 +1045,16 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'hermes-rules.md'),
       '--permission-mode',
       'manual',
+      '--permission-prompt-tool',
+      'mcp__hermes-studio-approval__hermes_studio_runtime_approval',
     ])
+    const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    expect(mcp.mcpServers['hermes-studio-approval']).toMatchObject({
+      env: {
+        HERMES_MCP_TOOLSET: 'approval',
+        HERMES_RUNTIME_APPROVAL_TOKEN: expect.any(String),
+      },
+    })
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('--permission-mode manual')
     expect(launcher).not.toContain('--dangerously-skip-permissions')

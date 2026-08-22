@@ -922,4 +922,75 @@ describe('hermes-web-ui MCP server', () => {
 
     await new Promise<void>(resolve => server.close(() => resolve()))
   })
+
+  it('adapts Claude permission prompts through an isolated MCP toolset', async () => {
+    let authorization = ''
+    let requestBody: any
+    const server = createServer((req, res) => {
+      if (req.url === '/api/coding-agents/runtime-approval' && req.method === 'POST') {
+        authorization = String(req.headers.authorization || '')
+        let raw = ''
+        req.on('data', chunk => { raw += chunk })
+        req.on('end', () => {
+          requestBody = JSON.parse(raw)
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: 'PermissionRequest',
+              decision: { behavior: 'allow' },
+            },
+          }))
+        })
+        return
+      }
+      res.statusCode = 404
+      res.end('{}')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('expected TCP server address')
+
+    const responses = new Map<number, any>()
+    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'approval'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_RUNTIME_APPROVAL_TOKEN: 'runtime-capability',
+      },
+    })
+    child.stdout.on('data', (chunk) => {
+      for (const line of String(chunk).trim().split('\n')) {
+        if (!line) continue
+        const message = JSON.parse(line)
+        responses.set(message.id, message)
+      }
+    })
+
+    writeRpc(child, 1, 'initialize', {})
+    writeRpc(child, 2, 'tools/list')
+    writeRpc(child, 3, 'tools/call', {
+      name: 'hermes_studio_runtime_approval',
+      arguments: {
+        tool_use_id: 'tool-1',
+        tool_name: 'Write',
+        input: { file_path: 'approved.txt', content: 'approved' },
+      },
+    })
+
+    expect((await waitForRpc(responses, 1)).result.serverInfo).toMatchObject({ toolset: 'approval' })
+    const list = await waitForRpc(responses, 2)
+    expect(list.result.tools.map((tool: any) => tool.name)).toEqual(['hermes_studio_runtime_approval'])
+    const result = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
+    expect(result).toEqual({ behavior: 'allow' })
+    expect(authorization).toBe('Bearer runtime-capability')
+    expect(requestBody).toEqual({
+      hook_event_name: 'PermissionRequest',
+      tool_use_id: 'tool-1',
+      tool_name: 'Write',
+      tool_input: { file_path: 'approved.txt', content: 'approved' },
+    })
+
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  })
 })

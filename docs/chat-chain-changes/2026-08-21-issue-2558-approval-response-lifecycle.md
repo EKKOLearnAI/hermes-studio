@@ -13,10 +13,13 @@ expired approval explicitly states that its command will not execute.
 Managed Coding Agent runs now use structured Runtime adapters instead of
 interactive text or bypass flags:
 
-- Claude Code runs in manual permission mode and sends `PermissionRequest`
-  HTTP hooks to a per-run bearer capability.
+- Claude Code runs in manual permission mode and delegates non-interactive
+  permission prompts to an isolated MCP adapter backed by a per-run bearer
+  capability.
 - Codex runs through `app-server` JSON-RPC and maps native command/file-change
-  approval requests and `serverRequest/resolved` notifications.
+  approval requests and `serverRequest/resolved` notifications. Its app-server
+  stream is the sole text projection source while the provider proxy remains
+  responsible for transport and usage accounting.
 - Pi guards controlled tool calls with its RPC `confirm` UI request; read-only
   tools remain non-interactive.
 - Ekko keeps its structured tool approval service and now identifies its
