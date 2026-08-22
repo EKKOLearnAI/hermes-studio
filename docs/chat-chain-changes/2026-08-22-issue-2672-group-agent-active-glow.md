@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2673
 feature: Group Agent active avatar glow
 impact: Running Room Agents now have a clearer per-avatar status ring and glow, while message-list run indicators follow the circular avatar outline.
 ---
