@@ -48,6 +48,7 @@ import { defaultHermesWorkspace, ensureHermesRunWorkspace } from '../../services
 import { getChatRunServer } from '../../services/hermes/run-chat/server-registry'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE, validatePath } from '../../services/hermes/file-provider'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../../services/hermes/file-preview'
+import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../../services/hermes/workspace-git-status'
 import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
 import { relative, normalize as pathNormalize, resolve as pathResolve } from 'path'
 
@@ -831,7 +832,13 @@ export async function listWorkspaceFiles(ctx: any) {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
       return a.name.localeCompare(b.name)
     })
-    ctx.body = { entries: mapped, path: relativePath, absolutePath: fullPath }
+    const decorated = await decorateWorkspaceEntries(workspace, relativePath, mapped)
+    ctx.body = {
+      entries: decorated.entries,
+      path: relativePath,
+      absolutePath: fullPath,
+      ...decorated.directoryDecoration,
+    }
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }
@@ -853,6 +860,21 @@ export async function readWorkspaceFile(ctx: any) {
     }
     const data = await readFile(fullPath)
     ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function diffWorkspaceFile(ctx: any) {
+  try {
+    const { relativePath, fullPath, workspace } = await resolveSessionWorkspaceFile(ctx, ctx.query.path)
+    const info = await fsStat(fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    ctx.body = await getWorkspaceFileGitDiff(workspace, relativePath)
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }

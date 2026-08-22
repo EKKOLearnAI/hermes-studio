@@ -7225,6 +7225,50 @@
         ]
       }
     },
+    "/api/hermes/group-chat/rooms/{roomId}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms/{roomId}/workspace-file/mkdir": {
       "post": {
         "tags": [
@@ -12920,6 +12964,50 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/sessions/:id/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }

@@ -9,6 +9,7 @@ import {
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE } from '../../services/hermes/file-provider'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../../services/hermes/file-preview'
 import { defaultHermesWorkspace } from '../../services/hermes/run-chat/workspace'
+import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../../services/hermes/workspace-git-status'
 
 function managedRoom(ctx: any): { room: any; storage: ReturnType<NonNullable<ReturnType<typeof getGroupChatRuntimeServer>>['getStorage']> } {
     const server = getGroupChatRuntimeServer()
@@ -77,7 +78,13 @@ export async function listWorkspaceFiles(ctx: any): Promise<void> {
             }
         }))
         entries.sort((a, b) => a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1)
-        ctx.body = { entries, path: relativePath, absolutePath: fullPath }
+        const decorated = await decorateWorkspaceEntries(workspace, relativePath, entries)
+        ctx.body = {
+            entries: decorated.entries,
+            path: relativePath,
+            absolutePath: fullPath,
+            ...decorated.directoryDecoration,
+        }
     } catch (error) {
         handleWorkspaceError(ctx, error)
     }
@@ -91,6 +98,17 @@ export async function readWorkspaceFile(ctx: any): Promise<void> {
         if (info.size > MAX_EDIT_SIZE) throw Object.assign(new Error('File too large to edit'), { status: 413, code: 'file_too_large' })
         const data = await readFile(fullPath)
         ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+    } catch (error) {
+        handleWorkspaceError(ctx, error)
+    }
+}
+
+export async function diffWorkspaceFile(ctx: any): Promise<void> {
+    try {
+        const { relativePath, fullPath, workspace } = await resolveRoomPath(ctx, ctx.query.path)
+        const info = await stat(fullPath)
+        if (!info.isFile()) throw Object.assign(new Error('Not a file'), { status: 400, code: 'not_a_file' })
+        ctx.body = await getWorkspaceFileGitDiff(workspace, relativePath)
     } catch (error) {
         handleWorkspaceError(ctx, error)
     }

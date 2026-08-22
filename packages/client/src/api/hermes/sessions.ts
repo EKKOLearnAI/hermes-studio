@@ -238,6 +238,16 @@ export async function readSessionWorkspaceFile(
   )
 }
 
+export async function fetchSessionWorkspaceFileDiff(
+  sessionId: string,
+  path: string,
+): Promise<import('./files').WorkspaceFileDiff> {
+  const params = new URLSearchParams({ path })
+  return request(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/diff?${params}`,
+  )
+}
+
 export async function fetchSessionWorkspaceFileBlob(
   sessionId: string,
   path: string,
@@ -288,7 +298,7 @@ export async function downloadSessionWorkspaceFile(
 export async function listSessionWorkspaceFiles(
   sessionId: string,
   path: string = '',
-): Promise<{ entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>; path: string; absolutePath?: string }> {
+): Promise<import('./files').FileListResult> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()

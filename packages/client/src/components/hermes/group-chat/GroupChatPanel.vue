@@ -71,7 +71,6 @@ import { handoffErrorTranslationKey } from './handoff-presentation'
 import { clearGroupChatRoomDraft } from './group-chat-room-drafts'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
-const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default)
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/DesktopBrowserPanel.vue')).default)
 const TerminalPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/TerminalPanel.vue')).default)
@@ -2501,10 +2500,6 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                         <div class="group-workspace-panel-inner">
                             <WorkspaceDiffPreview
                                 v-if="toolPanelStore.workspaceDiff"
-                                :custom-close="closeWorkspacePanel"
-                            />
-                            <FilePreview
-                                v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
                                 :custom-close="closeWorkspacePanel"
                             />
                             <template v-else>

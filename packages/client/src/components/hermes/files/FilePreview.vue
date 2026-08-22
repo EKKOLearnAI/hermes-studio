@@ -283,6 +283,11 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .preview-error { width: min(680px, 100%); align-self: flex-start; }
@@ -301,10 +306,34 @@ onBeforeUnmount(() => {
 }
 
 .preview-code {
+  height: 100%;
   width: 100%;
+  overflow: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 
   :deep(.hljs-code-block) {
+    width: 100%;
+    min-height: 100%;
     margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :deep(.hljs-code-block .code-header) {
+    display: none;
+  }
+
+  :deep(.hljs-code-block code.hljs) {
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
 }
 </style>
