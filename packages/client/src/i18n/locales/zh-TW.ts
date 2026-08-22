@@ -2225,6 +2225,8 @@ export default {
       atHour: '定時重設時間',
       humanOnly: '僅顯示人類工作階段',
       humanOnlyHint: '預設隱藏子代理和工作階段監看雜訊',
+      showRecentSessions: '顯示最近工作階段',
+      showRecentSessionsHint: '在聊天側邊欄顯示「最近」快速分組',
       liveMonitorHumanOnly: '即時監看：僅顯示人類工作階段',
       liveMonitorHumanOnlyHint: '在即時監看中預設隱藏子代理和工作階段監看雜訊',
       atHourHint: '每天在指定小時重設工作階段',

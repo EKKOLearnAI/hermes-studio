@@ -134,6 +134,64 @@ test('persists the collapsed recent group across reloads without changing the ac
   await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
 })
 
+test('hides the entire recent group from settings and restores its saved count', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => {
+    localStorage.setItem('hermes_recent_session_count_v1', '2')
+  })
+  await mockHermesApi(page, {
+    sessionCategories: [{ id: 1, name: 'Work' }],
+    sessions: [
+      sessionSummary('latest-session', 'Latest Notes', null, 300),
+      sessionSummary('work-session', 'Project Alpha', 1, 200),
+      sessionSummary('older-session', 'Older Notes', null, 100),
+    ],
+  })
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+  const recentHeader = page.locator('.session-group-header--recent')
+  await expect(recentHeader).toBeVisible()
+  await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
+
+  await page.goto('/#/hermes/settings?tab=session')
+  const recentVisibilityRow = page.locator('.setting-row').filter({ hasText: 'Show recent sessions' })
+  await expect(recentVisibilityRow).toBeVisible()
+  await recentVisibilityRow.locator('.n-switch').click()
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_show_recent_sessions_v1'))).toBe('false')
+
+  await page.goto('/#/hermes/chat')
+  await expect(recentHeader).toHaveCount(0)
+  await expect(page.locator('.session-group-config')).toHaveCount(0)
+  const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
+  const uncategorizedHeader = page.locator('.session-group-header').filter({ hasText: 'Uncategorized' })
+  await expect(workHeader.locator('.session-group-count')).toHaveText('1')
+  await expect(uncategorizedHeader.locator('.session-group-count')).toHaveText('2')
+  await expect(page.getByRole('link', { name: /Latest Notes/ })).toHaveCount(1)
+  await workHeader.click()
+  await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
+  await expect(page.getByRole('link', { name: /Older Notes/ })).toHaveCount(1)
+
+  await page.reload()
+  await expect(recentHeader).toHaveCount(0)
+
+  const settingsPage = await page.context().newPage()
+  await authenticate(settingsPage, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(settingsPage)
+  await settingsPage.goto('/#/hermes/settings?tab=session')
+  await settingsPage.locator('.setting-row')
+    .filter({ hasText: 'Show recent sessions' })
+    .locator('.n-switch')
+    .click()
+  await expect.poll(() => settingsPage.evaluate(() => localStorage.getItem('hermes_show_recent_sessions_v1'))).toBe('true')
+  await settingsPage.close()
+
+  await page.reload()
+  await expect(recentHeader).toBeVisible()
+  await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_recent_session_count_v1'))).toBe('2')
+})
+
 test('creates a category in the new chat selector and sends its id with the first run', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)

@@ -2294,6 +2294,8 @@ export default {
       atHour: 'Scheduled Reset Time',
       humanOnly: 'Show human sessions only',
       humanOnlyHint: 'Hide sub-agent/session monitor noise by default',
+      showRecentSessions: 'Show recent sessions',
+      showRecentSessionsHint: 'Show the Recent shortcut group in the chat sidebar',
       liveMonitorHumanOnly: 'Live monitor: show human sessions only',
       liveMonitorHumanOnlyHint: 'Hide sub-agent/session monitor noise in the Live monitor by default',
       atHourHint: 'Reset session at this hour daily',

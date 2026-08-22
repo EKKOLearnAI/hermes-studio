@@ -2040,7 +2040,12 @@ async function handleSessionModelCustomSubmit() {
           {{ t("chat.noSessions") }}
         </div>
 
-        <template v-if="recentSessions.sessions.length > 0">
+        <template
+          v-if="
+            sessionBrowserPrefsStore.showRecentSessions &&
+            recentSessions.sessions.length > 0
+          "
+        >
           <div class="session-group-header session-group-header--recent">
             <button
               class="session-group-toggle"

@@ -1774,6 +1774,8 @@ export default {
       atHour: '예약 초기화 시간',
       humanOnly: '사람 세션만 표시',
       humanOnlyHint: '하위 에이전트 및 세션 모니터 노이즈를 기본으로 숨깁니다',
+      showRecentSessions: '최근 세션 표시',
+      showRecentSessionsHint: '채팅 사이드바에 최근 그룹을 표시합니다',
       liveMonitorHumanOnly: '라이브 모니터: 사람 세션만 표시',
       liveMonitorHumanOnlyHint: '라이브 모니터에서 하위 에이전트 및 세션 모니터 노이즈를 기본으로 숨깁니다',
       atHourHint: '매일 지정한 시간에 세션 초기화',

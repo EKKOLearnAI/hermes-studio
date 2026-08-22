@@ -2332,6 +2332,8 @@ export default {
       atHour: '定时重置时间',
       humanOnly: '仅显示人类会话',
       humanOnlyHint: '默认隐藏子代理和会话监看噪音',
+      showRecentSessions: '显示最近会话',
+      showRecentSessionsHint: '在聊天侧边栏显示“最近”快捷分组',
       liveMonitorHumanOnly: '实时监看：仅显示人类会话',
       liveMonitorHumanOnlyHint: '在实时监看中默认隐藏子代理和会话监看噪音',
       atHourHint: '每天在指定小时重置会话',

@@ -1774,6 +1774,8 @@ export default {
       atHour: 'スケジュールリセット時刻',
       humanOnly: '人間のセッションのみ表示',
       humanOnlyHint: 'サブエージェントやセッション監視ノイズを既定で隠します',
+      showRecentSessions: '最近のセッションを表示',
+      showRecentSessionsHint: 'チャットのサイドバーに「最近」グループを表示します',
       liveMonitorHumanOnly: 'ライブモニター: 人間のセッションのみ表示',
       liveMonitorHumanOnlyHint: 'ライブモニターでサブエージェントやセッション監視ノイズを既定で隠します',
       atHourHint: '毎日指定時刻にセッションをリセット',
