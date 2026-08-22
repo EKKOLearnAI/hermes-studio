@@ -3,6 +3,7 @@ export type BridgeSessionCommandName =
   | 'context'
   | 'status'
   | 'yolo'
+  | 'approval_mode'
   | 'abort'
   | 'queue'
   | 'skill'
@@ -39,6 +40,9 @@ export const BRIDGE_SESSION_COMMAND_DEFINITIONS: BridgeSessionCommandDefinition[
   { key: 'command:context', name: 'context', args: '', descriptionKey: 'chat.slashCommands.context' },
   { key: 'command:status', name: 'status', args: '', descriptionKey: 'chat.slashCommands.status' },
   { key: 'command:yolo', name: 'yolo', args: '', descriptionKey: 'chat.slashCommands.yolo' },
+  { key: 'command:approval-mode-manual', name: 'approval_mode', args: 'manual', insertText: 'approval_mode manual', descriptionKey: 'chat.slashCommands.approvalModeManual' },
+  { key: 'command:approval-mode-smart', name: 'approval_mode', args: 'smart', insertText: 'approval_mode smart', descriptionKey: 'chat.slashCommands.approvalModeSmart' },
+  { key: 'command:approval-mode-off', name: 'approval_mode', args: 'off', insertText: 'approval_mode off', descriptionKey: 'chat.slashCommands.approvalModeOff' },
   { key: 'command:abort', name: 'abort', args: '', descriptionKey: 'chat.slashCommands.abort' },
   { key: 'command:queue', name: 'queue', argsKey: 'chat.slashCommandArgs.message', descriptionKey: 'chat.slashCommands.queue' },
   { key: 'command:skill', name: 'skill', args: '', descriptionKey: 'skills.title', opensSkillPicker: true },
