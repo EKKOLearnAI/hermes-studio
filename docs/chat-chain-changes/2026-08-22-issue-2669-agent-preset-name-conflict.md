@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2670
 feature: Localized duplicate Agent preset feedback
 impact: Group Chat preset creation and rename conflicts now show a localized application message instead of exposing SQLite error details.
 ---
