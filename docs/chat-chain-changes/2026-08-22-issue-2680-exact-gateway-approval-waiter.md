@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2681
 feature: Exact Gateway approval waiter settlement
 impact: Interrupting a Group Agent run now denies its exact Hermes Gateway waiter by Runtime request ID without consuming another generation's waiter from the same Session.
 ---
