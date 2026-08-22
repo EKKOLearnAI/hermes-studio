@@ -21,6 +21,7 @@ import {
     stripMentionRoutingTokens,
 } from './mention-routing'
 import { buildAgentInstructions, buildNonOwnerRequestSecurityPrompt } from '../context-engine/prompt'
+import { cancelPendingEkkoClarification } from '../../ekko-agent/clarifications'
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
@@ -238,6 +239,7 @@ export interface GroupAgentExecutor {
     isActiveSession(roomId: string, sessionId: string): boolean
     respondApproval?(approvalId: string, choice: string): Promise<boolean>
     respondClarify?(clarifyId: string, response: string): Promise<boolean>
+    cancelClarify?(clarifyId: string, sessionId: string, runId: string): Promise<boolean>
     replyToMention(
         roomId: string,
         msg: MentionMessage,
@@ -462,6 +464,19 @@ export class AgentClient implements GroupAgentExecutor {
             if (this.chatRunService.respondCodingAgentClarification(sessionId, clarifyId, response)) return Promise.resolve(true)
         }
         return Promise.resolve(false)
+    }
+
+    async cancelClarify(clarifyId: string, sessionId: string, runId: string): Promise<boolean> {
+        if (this.agent !== 'hermes') {
+            return cancelPendingEkkoClarification(sessionId, clarifyId, runId).resolved
+        }
+        const result = await new AgentBridgeClient().clarifyCancel(
+            clarifyId,
+            sessionId,
+            runId,
+            this.profile,
+        )
+        return Boolean((result as any)?.resolved)
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -1159,7 +1174,13 @@ export class AgentClient implements GroupAgentExecutor {
                     } else if (event === 'approval.resolved') {
                         this.emitApprovalResolved(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'clarify.requested') {
-                        this.emitClarifyRequested(roomId, { ...payload, agentSessionId: sessionId })
+                        const { run_id: runtimeRunId, runId: runtimeCamelRunId, ...clarifyPayload } = payload
+                        this.emitClarifyRequested(roomId, {
+                            ...clarifyPayload,
+                            agentSessionId: sessionId,
+                            runId: responseRunId,
+                            runtimeRunId: String(runtimeRunId || runtimeCamelRunId || ''),
+                        })
                     } else if (event === 'clarify.resolved') {
                         this.emitClarifyResolved(roomId, { ...payload, agentSessionId: sessionId })
                     }
@@ -1579,6 +1600,8 @@ export class AgentClient implements GroupAgentExecutor {
                 this.emitClarifyRequested(roomId, {
                     event: 'clarify.requested',
                     agentSessionId: sessionId,
+                    runId: responseRunId,
+                    runtimeRunId: String((ev as any).run_id || (ev as any).runId || ''),
                     clarify_id: (ev as any).clarify_id,
                     question: (ev as any).question,
                     choices: Array.isArray((ev as any).choices) ? (ev as any).choices : null,

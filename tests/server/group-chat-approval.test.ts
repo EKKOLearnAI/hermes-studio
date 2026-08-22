@@ -781,6 +781,72 @@ describe('group chat approval and context baseline', () => {
     expect(respondApproval).toHaveBeenCalledTimes(1)
   })
 
+  it('interrupts only the active run generation and cancels its pending clarification', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const cancelClarify = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      cancelClarify,
+    } as any])
+    vi.spyOn(groupServer.agentClients, 'interruptAgent').mockResolvedValue()
+
+    agent.emit('context_status', {
+      roomId: 'room-1', agentName: 'Agent', status: 'replying',
+      agentSessionId, runId: 'run-current',
+    })
+    const currentRequested = once<any>(human, 'clarify.requested')
+    agent.emit('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      runId: 'run-current', runtimeRunId: 'runtime-current',
+      clarify_id: 'clarify-current', question: 'Current question?',
+    })
+    await currentRequested
+    const nextRequested = once<any>(human, 'clarify.requested')
+    agent.emit('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      runId: 'run-next', runtimeRunId: 'runtime-next',
+      clarify_id: 'clarify-next', question: 'Next question?',
+    })
+    await nextRequested
+    const missingGenerationRequested = once<any>(human, 'clarify.requested')
+    agent.emit('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      clarify_id: 'clarify-missing-generation', question: 'Unscoped question?',
+    })
+    await missingGenerationRequested
+    const resolved = once<any>(human, 'clarify.resolved')
+
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+
+    await expect(resolved).resolves.toMatchObject({
+      clarify_id: 'clarify-current',
+      resolved: false,
+      reason: 'Agent run interrupted',
+    })
+    expect(cancelClarify).toHaveBeenCalledTimes(1)
+    expect(cancelClarify).toHaveBeenCalledWith(
+      'clarify-current',
+      agentSessionId,
+      'runtime-current',
+    )
+    await expect(emitAck(human, 'clarify.respond', {
+      roomId: 'room-1', clarify_id: 'clarify-current', response: 'late answer',
+    })).resolves.toEqual({ error: 'Clarification is not pending in this room' })
+
+    const joined = await emitAck<any>(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+    expect(joined.pendingClarifies).toEqual([
+      expect.objectContaining({ clarify_id: 'clarify-next' }),
+      expect.objectContaining({ clarify_id: 'clarify-missing-generation' }),
+    ])
+
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+    expect(cancelClarify).toHaveBeenCalledTimes(1)
+  })
+
   it('claims the active approval before an interrupt can race with a user response', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     let finishInterrupt!: () => void

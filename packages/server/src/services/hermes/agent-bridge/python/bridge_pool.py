@@ -192,6 +192,7 @@ class AgentPool:
         self._background_notification_claims: dict[tuple[str, str], dict[str, Any]] = {}
         self._suppressed_background_delegations: set[str] = set()
         self._clarify_requests: dict[str, queue.Queue[str]] = {}
+        self._clarify_request_generations: dict[str, tuple[str, str]] = {}
         self._run_context = threading.local()
         self._approval_handlers: dict[str, Callable[..., str]] = {}
         self._exec_ask_depth = 0
@@ -1409,9 +1410,12 @@ class AgentPool:
             clarify_id = uuid.uuid4().hex
             response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
             with self._lock:
+                run_id = str(self._sessions.get(session_id).current_run_id or "") if self._sessions.get(session_id) else ""
                 self._clarify_requests[clarify_id] = response_queue
+                self._clarify_request_generations[clarify_id] = (session_id, run_id)
             self._append_event(session_id, {
                 "event": "clarify.requested",
+                "run_id": run_id,
                 "clarify_id": clarify_id,
                 "question": str(question or ""),
                 "choices": list(choices) if choices else None,
@@ -1424,6 +1428,7 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._clarify_requests.pop(clarify_id, None)
+                    self._clarify_request_generations.pop(clarify_id, None)
             return user_response
 
         return callback
@@ -2061,6 +2066,7 @@ class AgentPool:
             raise RuntimeError("agent does not support interrupt")
         session.agent.interrupt(message)
         self._cancel_pending_approvals_for_generation(session_id, interrupted_run_id)
+        self._cancel_pending_clarifications_for_generation(session_id, interrupted_run_id)
         deadline = time.time() + 10.0
         synced = False
         while time.time() < deadline:
@@ -2120,6 +2126,32 @@ class AgentPool:
                 "reason": "Session interrupted",
             })
         return len(terminal_queues) + len(gateway_approvals)
+
+    def _cancel_pending_clarifications_for_generation(self, session_id: str, run_id: str) -> int:
+        if not session_id or not run_id:
+            return 0
+        pending: list[tuple[str, queue.Queue[str]]] = []
+        with self._lock:
+            for clarify_id, generation in list(self._clarify_request_generations.items()):
+                if generation != (session_id, run_id):
+                    continue
+                response_queue = self._clarify_requests.pop(clarify_id, None)
+                self._clarify_request_generations.pop(clarify_id, None)
+                if response_queue is not None:
+                    pending.append((clarify_id, response_queue))
+        for clarify_id, response_queue in pending:
+            try:
+                response_queue.put_nowait("[clarification cancelled because the run was interrupted]")
+            except queue.Full:
+                pass
+            self._append_event(session_id, {
+                "event": "clarify.resolved",
+                "run_id": run_id,
+                "clarify_id": clarify_id,
+                "resolved": False,
+                "reason": "interrupted",
+            })
+        return len(pending)
 
     def request_boundary_interrupt(
         self,
@@ -2264,6 +2296,28 @@ class AgentPool:
             response_queue.put_nowait(response)
         except queue.Full:
             pass
+        return {"clarify_id": clarify_id, "resolved": True}
+
+    def cancel_clarify(self, clarify_id: str, session_id: str, run_id: str) -> dict[str, Any]:
+        with self._lock:
+            generation = self._clarify_request_generations.get(clarify_id)
+            if generation != (session_id, run_id):
+                return {"clarify_id": clarify_id, "resolved": False}
+            response_queue = self._clarify_requests.pop(clarify_id, None)
+            self._clarify_request_generations.pop(clarify_id, None)
+        if response_queue is None:
+            return {"clarify_id": clarify_id, "resolved": False}
+        try:
+            response_queue.put_nowait("[clarification cancelled because the run was interrupted]")
+        except queue.Full:
+            pass
+        self._append_event(session_id, {
+            "event": "clarify.resolved",
+            "run_id": run_id,
+            "clarify_id": clarify_id,
+            "resolved": False,
+            "reason": "interrupted",
+        })
         return {"clarify_id": clarify_id, "resolved": True}
 
     def get_history(self, session_id: str) -> dict[str, Any]:

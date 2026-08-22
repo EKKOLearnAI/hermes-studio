@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  cancelPendingEkkoClarification,
   cancelPendingEkkoClarifications,
   respondToEkkoClarification,
   waitForEkkoClarification,
@@ -61,6 +62,36 @@ describe('Ekko clarification broker', () => {
       resolved: true,
     })
     await expect(result).resolves.toBe('B')
+  })
+
+  it('cancels only the matching session and run generation', async () => {
+    const result = waitForEkkoClarification(request(), {
+      sessionId: 'session-1',
+      runId: 'run-current',
+      onRequested: vi.fn(),
+    })
+
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', 'run-stale')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-2', 'clarify-1', 'run-current')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', '')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', 'run-current')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    await expect(result).resolves.toBe('[clarification cancelled because the run was aborted]')
+    expect(respondToEkkoClarification('session-1', 'clarify-1', 'late')).toEqual({
+      handled: false,
+      resolved: false,
+    })
   })
 
   it('returns a bounded result when another clarification is already pending', async () => {

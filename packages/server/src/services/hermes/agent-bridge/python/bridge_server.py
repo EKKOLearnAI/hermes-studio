@@ -215,6 +215,14 @@ class BridgeServer:
             response = str(req.get("response") or "").strip()
             return self.pool.respond_clarify(clarify_id, response)
 
+        if action == "clarify_cancel":
+            clarify_id = str(req.get("clarify_id") or "").strip()
+            session_id = str(req.get("session_id") or "").strip()
+            run_id = str(req.get("run_id") or "").strip()
+            if not clarify_id or not session_id or not run_id:
+                raise ValueError("clarify_id, session_id, and run_id are required")
+            return self.pool.cancel_clarify(clarify_id, session_id, run_id)
+
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
             if not request_id:

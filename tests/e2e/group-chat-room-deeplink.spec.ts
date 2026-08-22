@@ -765,6 +765,35 @@ test.describe('group chat room deep links', () => {
     }
   })
 
+  test('removes an interrupted run clarification and does not restore it after reload', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await triggerGroupSocket(page, 'clarify.requested', {
+      event: 'clarify.requested',
+      roomId: 'room-alpha',
+      agentName: 'Worker',
+      clarify_id: 'clarify-interrupted',
+      question: 'Which city should I use?',
+      choices: null,
+      timeout_ms: 300_000,
+    })
+    await expect(page.locator('.approval-float-panel')).toContainText('Which city should I use?')
+
+    await triggerGroupSocket(page, 'clarify.resolved', {
+      event: 'clarify.resolved',
+      roomId: 'room-alpha',
+      agentName: 'Worker',
+      clarify_id: 'clarify-interrupted',
+      resolved: false,
+      reason: 'Agent run interrupted',
+    })
+    await expect(page.locator('.approval-float-panel')).toHaveCount(0)
+
+    await page.reload()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-alpha$/)
+    await expect(page.locator('.approval-float-panel')).toHaveCount(0)
+  })
+
   test('loads all group history by stable cursor beyond 600 messages with retry, de-duplication, and anchor preservation', async ({ page }) => {
     test.setTimeout(45_000)
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')

@@ -334,7 +334,7 @@ class BridgeBroker:
                 raise KeyError(f"unknown approval request: {approval_id}")
             return self._forward(profile, req, worker_key)
 
-        if action == "clarify_respond":
+        if action in {"clarify_respond", "clarify_cancel"}:
             clarify_id = str(req.get("clarify_id") or "").strip()
             if not clarify_id:
                 raise ValueError("clarify_id is required")

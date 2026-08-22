@@ -242,6 +242,78 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('cancels only the interrupted session run generation clarification waiter', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+
+class InterruptibleAgent:
+    def __init__(self):
+        self.session = None
+
+    def interrupt(self, _message=None):
+        self.session.running = False
+
+agents = {sid: InterruptibleAgent() for sid in ("session-a", "session-b")}
+for sid, agent in agents.items():
+    session = bridge.AgentSession(session_id=sid, agent=agent, current_run_id="run-current")
+    session.running = True
+    agent.session = session
+    with pool._lock:
+        pool._sessions[sid] = session
+
+responses = {}
+threads = []
+for sid, run_id in (("session-a", "run-previous"), ("session-a", "run-current"), ("session-b", "run-current")):
+    with pool._lock:
+        pool._sessions[sid].current_run_id = run_id
+    thread = threading.Thread(
+        target=lambda current=sid, generation=run_id: responses.__setitem__(
+            f"{current}:{generation}",
+            pool._clarify_callback(current)(f"question:{current}:{generation}"),
+        ),
+        daemon=True,
+    )
+    thread.start()
+    threads.append(thread)
+    assert wait_for(lambda current=sid, generation=run_id: (
+        current,
+        generation,
+    ) in set(pool._clarify_request_generations.values()))
+
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-current"
+
+result = pool.interrupt("session-a", "test interrupt")
+assert result["status"] == "interrupted"
+threads[1].join(timeout=5)
+assert not threads[1].is_alive()
+assert responses["session-a:run-current"] == "[clarification cancelled because the run was interrupted]"
+assert threads[0].is_alive()
+assert threads[2].is_alive()
+with pool._lock:
+    assert set(pool._clarify_request_generations.values()) == {
+        ("session-a", "run-previous"),
+        ("session-b", "run-current"),
+    }
+    remaining = dict(pool._clarify_request_generations)
+    previous_id = next(key for key, value in remaining.items() if value == ("session-a", "run-previous"))
+    other_session_id = next(key for key, value in remaining.items() if value == ("session-b", "run-current"))
+
+assert pool.cancel_clarify(previous_id, "session-a", "run-current")["resolved"] is False
+assert pool.respond_clarify(previous_id, "previous answer")["resolved"] is True
+assert pool.respond_clarify(other_session_id, "other answer")["resolved"] is True
+threads[0].join(timeout=5)
+threads[2].join(timeout=5)
+assert not threads[0].is_alive()
+assert not threads[2].is_alive()
+assert responses["session-a:run-previous"] == "previous answer"
+assert responses["session-b:run-current"] == "other answer"
+assert pool.cancel_clarify(other_session_id, "session-b", "run-current")["resolved"] is False
+`)
+  })
+
   it('denies only the interrupted session run generation approval queues', () => {
     runPython(String.raw`
 ${harness}

@@ -699,6 +699,21 @@ export class AgentBridgeClient {
     return this.request({ action: 'clarify_respond', clarify_id: clarifyId, response })
   }
 
+  clarifyCancel(
+    clarifyId: string,
+    sessionId: string,
+    runId: string,
+    profile?: string,
+  ): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'clarify_cancel',
+      clarify_id: clarifyId,
+      session_id: sessionId,
+      run_id: runId,
+      ...(profile ? { profile } : {}),
+    })
+  }
+
   compressionRespond(
     requestId: string,
     payload: { messages?: unknown[]; system_message?: string; error?: string },

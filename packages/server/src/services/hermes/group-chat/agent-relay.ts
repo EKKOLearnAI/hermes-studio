@@ -975,6 +975,10 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     })
   }
 
+  async cancelClarify(clarifyId: string, _sessionId: string, _runId: string): Promise<boolean> {
+    return !this.pendingRun?.clarifyIds.has(clarifyId)
+  }
+
   private remoteMessageId(pending: PendingRelayRun, value: unknown, create: boolean): string {
     const remoteId = String(value || '').trim()
     if (!remoteId || remoteId.length > 240) throw relayError('Invalid remote message id', 'GROUP_AGENT_EVENT_INVALID')
