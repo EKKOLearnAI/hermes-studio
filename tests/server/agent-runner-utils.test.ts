@@ -18,7 +18,6 @@ import {
   codingAgentGatewayErrorMessage,
   sanitizeCodingAgentTerminalOutput,
 } from '../../packages/server/src/services/coding-agents/runtime/run-manager'
-import { mapCodingAgentResponseEvent } from '../../packages/server/src/services/coding-agents/runtime/event-mapper'
 import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
@@ -1543,6 +1542,13 @@ describe('coding agent run state', () => {
       params: { delta: ' Extra.' },
     }))
     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'reasoning',
+        summary: [{ text: 'Need inspect. Then answer. From response item. Extra.' }],
+      },
+    }))
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
       method: 'item/agentMessage/delta',
       params: { delta: 'Done.' },
     }))
@@ -1872,12 +1878,16 @@ describe('coding agent run state', () => {
     expect(textMessages.map((message: any) => message.content)).toEqual([openingText, finalText])
     expect(textMessages.at(-1)).toEqual(expect.objectContaining({ finish_reason: 'stop' }))
     const dbMessages = getSessionDetail(chatSessionId)?.messages || []
-    expect(dbMessages.filter(message => message.role === 'assistant' && message.tool_calls?.length)).toHaveLength(1)
-    expect(dbMessages).toContainEqual(expect.objectContaining({
+    const dbToolCallMessages = dbMessages.filter(message => message.role === 'assistant' && message.tool_calls?.length)
+    const dbToolMessage = dbMessages.find(message => message.role === 'tool' && message.tool_call_id === 'cmd-1')
+    expect(dbToolCallMessages).toHaveLength(1)
+    expect(dbToolMessage).toEqual(expect.objectContaining({
       role: 'tool',
       content: 'ai素材\ncache\ngit',
       tool_call_id: 'cmd-1',
+      run_marker: expect.any(String),
     }))
+    expect(dbToolMessage?.run_marker).toBe(dbToolCallMessages[0].run_marker)
     expect(dbMessages).toContainEqual(expect.objectContaining({
       role: 'assistant',
       content: finalText,
@@ -2161,27 +2171,32 @@ describe('coding agent run state', () => {
   })
 })
 
-describe('coding agent chat event mapper', () => {
+describe('response stream chat event mapper', () => {
   it('does not surface raw provider stream events as chat agent events', () => {
-    const mapped = mapCodingAgentResponseEvent({
-      type: 'response.output_text.delta',
-      data: { type: 'response.output_text.delta', delta: 'hello' },
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const mapped = applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_item.added', {
+      item: { type: 'message', content: [] },
     })
 
-    expect(mapped).toEqual([])
+    expect(mapped).toBeNull()
   })
 
   it('maps reasoning deltas to chat reasoning deltas', () => {
-    expect(mapCodingAgentResponseEvent({
-      type: 'response.reasoning.delta',
-      data: { type: 'response.reasoning.delta', delta: 'thinking' },
-    })).toEqual([{
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.created', {
+      response: { id: 'resp-1', status: 'in_progress' },
+    })
+
+    expect(applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.reasoning.delta', {
+      delta: 'thinking',
+    })).toEqual({
       event: 'reasoning.delta',
       payload: expect.objectContaining({
         event: 'reasoning.delta',
         delta: 'thinking',
       }),
-    }])
+      runId: 'resp-1',
+    })
   })
 })
 

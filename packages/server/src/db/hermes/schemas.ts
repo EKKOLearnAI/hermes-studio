@@ -105,6 +105,7 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
   tool_call_id: 'TEXT',
   tool_calls: 'TEXT',
   tool_name: 'TEXT',
+  run_marker: 'TEXT',
   timestamp: 'INTEGER NOT NULL',
   token_count: 'INTEGER',
   finish_reason: 'TEXT',

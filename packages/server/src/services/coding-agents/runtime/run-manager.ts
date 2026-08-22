@@ -11,7 +11,6 @@ import { calcAndUpdateUsage, updateContextTokenUsage } from '../../hermes/run-ch
 import { extractResponseText } from '../../hermes/run-chat/response-utils'
 import type { SessionState } from '../../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from '../shared/adapters/responses-stream'
-import { mapCodingAgentResponseEvent } from './event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../../hermes/run-chat/workspace-diff-tracker'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
@@ -1019,9 +1018,6 @@ export class CodingAgentRunManager {
         ? 'workflow'
         : 'coding_agent'
     run.state.runId = run.id
-    for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
-      this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
-    }
     const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
     if (mapped) {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
@@ -1176,7 +1172,13 @@ export class CodingAgentRunManager {
       content,
       timestamp,
     })
-    const id = addMessage({ session_id: run.launch.sessionId, role: 'user', content, timestamp })
+    const id = addMessage({
+      session_id: run.launch.sessionId,
+      role: 'user',
+      content,
+      run_marker: run.runMarker ?? null,
+      timestamp,
+    })
     logger.debug({ runId: run.id, sessionId: run.launch.sessionId, messageId: id }, '[coding-agent-run] recorded user message')
     return id
   }

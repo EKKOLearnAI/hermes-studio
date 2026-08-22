@@ -100,6 +100,7 @@ describe('chat store reasoning/tool boundaries', () => {
     onEvent({
       event: 'tool.started',
       session_id: 'session-1',
+      run_marker: 'run-1',
       tool_call_id: 'tool-1',
       tool: 'shell',
       arguments: '{}',
@@ -108,6 +109,7 @@ describe('chat store reasoning/tool boundaries', () => {
     onEvent({
       event: 'tool.completed',
       session_id: 'session-1',
+      run_marker: 'run-1',
       tool_call_id: 'tool-1',
       output: 'tool output',
     } as RunEvent)
@@ -130,6 +132,7 @@ describe('chat store reasoning/tool boundaries', () => {
       toolStatus: 'done',
       toolResult: 'tool output',
       reasoning: 'think before. ',
+      runMarker: 'run-1',
     }))
     expect(store.messages[3]).toEqual(expect.objectContaining({
       role: 'assistant',
@@ -184,6 +187,7 @@ describe('chat store reasoning/tool boundaries', () => {
           role: 'tool',
           content: 'file contents',
           tool_call_id: 'tool-1',
+          run_marker: 'run-1',
           timestamp: 2,
         },
       ],
@@ -200,6 +204,7 @@ describe('chat store reasoning/tool boundaries', () => {
         toolCallId: 'tool-1',
         reasoning: 'I should inspect the file before answering.',
         toolResult: 'file contents',
+        runMarker: 'run-1',
       }),
     ])
   })

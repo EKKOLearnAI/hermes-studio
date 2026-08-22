@@ -54,7 +54,8 @@ export function handleMessage(messages: SessionMessage[], sid: string): any[] {
         if (Object.prototype.hasOwnProperty.call(m, 'finish_reason')) {
           msg.finish_reason = m.finish_reason ?? null
         }
-        if (m.runMarker) msg.runMarker = m.runMarker
+        const runMarker = m.runMarker || m.run_marker
+        if (runMarker) msg.runMarker = runMarker
         // Convert Anthropic format content to OpenAI format
         if (m.role === 'assistant' && typeof m.content === 'string') {
           let contentToParse = m.content

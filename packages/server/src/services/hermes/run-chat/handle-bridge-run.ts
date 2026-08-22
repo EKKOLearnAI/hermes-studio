@@ -547,6 +547,7 @@ export async function handleBridgeRun(
       content: storageInputStr,
       display_role: displayRoleForStorage,
       display_content: displayContentForStorage,
+      run_marker: runMarker,
       timestamp: now,
     })
 

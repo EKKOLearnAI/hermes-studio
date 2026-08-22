@@ -55,7 +55,10 @@ describe('tool trace visibility', () => {
   function mountLiveList() {
     const chatStore = useChatStore()
     chatStore.activeSessionId = 'session-1'
-    chatStore.activeSession = makeSession(sampleMessages)
+    chatStore.activeSession = makeSession([
+      ...sampleMessages,
+      { id: 'tool-running', role: 'tool', content: '', timestamp: 5, toolName: 'search', toolStatus: 'running' },
+    ])
     chatStore.abortState = { aborting: true, synced: false }
 
     return mount(MessageList, {
@@ -76,7 +79,7 @@ describe('tool trace visibility', () => {
       'tool-named',
       'assistant-1',
     ])
-    expect(wrapper.findAll('.tool-call-name').map(node => node.text())).toContain('read_file')
+    expect(wrapper.findAll('.tool-call-name').map(node => node.text())).toContain('search')
   })
 
   it('applies the same default-visible rule to history sessions', () => {
@@ -116,7 +119,7 @@ describe('tool trace visibility', () => {
       'user-1',
       'assistant-1',
     ])
-    expect(liveWrapper.findAll('.tool-call-name').map(node => node.text())).toContain('read_file')
+    expect(liveWrapper.findAll('.tool-call-name').map(node => node.text())).toContain('search')
 
     const historyWrapper = mount(HistoryMessageList, {
       props: { session: makeSession(sampleMessages) },

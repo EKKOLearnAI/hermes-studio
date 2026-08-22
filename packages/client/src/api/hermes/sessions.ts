@@ -112,6 +112,7 @@ export interface HermesMessage {
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
+  run_marker: string | null
   timestamp: number
   token_count: number | null
   finish_reason: string | null
