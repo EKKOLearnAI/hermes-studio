@@ -186,7 +186,7 @@ class AgentPool:
         self._db = SessionDbHolder()
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._approval_request_generations: dict[str, tuple[str, str]] = {}
-        self._gateway_approval_requests: dict[str, tuple[str, str]] = {}
+        self._gateway_approval_requests: dict[str, tuple[str, str, str]] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._background_notification_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1473,9 +1473,10 @@ class AgentPool:
             approval_id = uuid.uuid4().hex
             choices = ["once", "session", "always", "deny"]
             pattern_keys = _approval_pattern_keys(approval_data)
+            request_id = str(approval_data.get("request_id") or "").strip()
             with self._lock:
                 run_id = str(self._sessions.get(session_id).current_run_id or "") if self._sessions.get(session_id) else ""
-                self._gateway_approval_requests[approval_id] = (session_id, run_id)
+                self._gateway_approval_requests[approval_id] = (session_id, run_id, request_id)
                 self._gateway_approval_pattern_keys[approval_id] = pattern_keys
             self._append_event(session_id, {
                 "event": "approval.requested",
@@ -2080,7 +2081,7 @@ class AgentPool:
         if not session_id or not run_id:
             return 0
         terminal_queues: list[queue.Queue[str]] = []
-        gateway_approvals: list[tuple[str, list[str]]] = []
+        gateway_approvals: list[tuple[str, str, list[str]]] = []
         with self._lock:
             for approval_id, approval_generation in list(self._approval_request_generations.items()):
                 if approval_generation != (session_id, run_id):
@@ -2090,11 +2091,12 @@ class AgentPool:
                 if response_queue is not None:
                     terminal_queues.append(response_queue)
             for approval_id, approval_generation in list(self._gateway_approval_requests.items()):
-                if approval_generation != (session_id, run_id):
+                if approval_generation[:2] != (session_id, run_id):
                     continue
                 self._gateway_approval_requests.pop(approval_id, None)
                 gateway_approvals.append((
                     approval_id,
+                    approval_generation[2],
                     self._gateway_approval_pattern_keys.pop(approval_id, []),
                 ))
         for response_queue in terminal_queues:
@@ -2102,11 +2104,12 @@ class AgentPool:
                 response_queue.put_nowait("deny")
             except queue.Full:
                 pass
-        for approval_id, _pattern_keys in gateway_approvals:
+        for approval_id, request_id, _pattern_keys in gateway_approvals:
             try:
                 from tools.approval import resolve_gateway_approval
 
-                resolve_gateway_approval(session_id, "deny")
+                if request_id:
+                    resolve_gateway_approval(session_id, "deny", request_id=request_id)
             except Exception:
                 pass
             self._append_event(session_id, {
@@ -2230,11 +2233,15 @@ class AgentPool:
                 pattern_keys = self._gateway_approval_pattern_keys.pop(approval_id, [])
             if gateway_generation is None:
                 return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
-            gateway_session_id, gateway_run_id = gateway_generation
+            gateway_session_id, gateway_run_id, gateway_request_id = gateway_generation
             try:
                 from tools.approval import resolve_gateway_approval
 
-                resolved = resolve_gateway_approval(gateway_session_id, cleaned) > 0
+                resolved = bool(gateway_request_id) and resolve_gateway_approval(
+                    gateway_session_id,
+                    cleaned,
+                    request_id=gateway_request_id,
+                ) > 0
             except Exception:
                 resolved = False
             if resolved:
