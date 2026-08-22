@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2662
 feature: Stable Coding Agent reasoning and grouped tool runs
 impact: Single-chat runs keep live reasoning and running tools in fixed-height rows, persist run markers for completed tool grouping, and preserve provider reasoning state across tool continuations.
 ---
@@ -10,6 +10,12 @@ strip. Completed calls move into the transcript immediately and calls that
 share a run marker are grouped into an animated, collapsible card. Calls
 without a run marker remain individual transcript rows. Persisting the marker
 on each message keeps the grouping stable after session reloads and branches.
+Bridge/Hermes, Ekko Agent, and Responses-based Coding Agents now use one shared
+run-message persistence path, so the database row and live in-memory message
+receive the same run marker, tool status, reasoning, and display metadata.
+Group-chat room messages keep their separate persistence and presentation
+pipeline; only their temporary Agent child execution passes through this
+shared normalizer before that child session is disposed.
 
 Live reasoning uses one reserved line that follows streaming text without
 inserting an ellipsis. The running-tool strip also stays on one reserved line,

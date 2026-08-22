@@ -1572,6 +1572,7 @@ describe('ekko-agent context usage events', () => {
     expect(addMessagesMock).toHaveBeenCalledWith([
       expect.objectContaining({
         role: 'assistant',
+        run_marker: 'run-abort',
         tool_calls: [{
           id: 'call-search',
           type: 'function',
@@ -1598,12 +1599,19 @@ describe('ekko-agent context usage events', () => {
       }),
       expect.objectContaining({
         role: 'tool',
+        run_marker: 'run-abort',
         content: '{"skills":["apikey-image-gen"]}',
         tool_call_id: 'call-search',
         tool_name: 'skill_list',
       }),
     ])
-    expect(state.messages.slice(-2).map((message: any) => message.role)).toEqual(['assistant', 'tool'])
+    expect(state.messages.slice(-2).map((message: any) => ({
+      role: message.role,
+      runMarker: message.runMarker,
+    }))).toEqual([
+      { role: 'assistant', runMarker: 'run-abort' },
+      { role: 'tool', runMarker: 'run-abort' },
+    ])
     expect(events.some(item => item.event === 'run.failed')).toBe(false)
   })
 
@@ -1658,6 +1666,7 @@ describe('ekko-agent context usage events', () => {
 
     const rows = addMessagesMock.mock.calls[0][0]
     expect(rows.map((row: any) => row.role)).toEqual(['assistant', 'tool', 'tool'])
+    expect(rows.map((row: any) => row.run_marker)).toEqual(['run-multi', 'run-multi', 'run-multi'])
     expect(rows[2]).toEqual(expect.objectContaining({
       tool_call_id: 'call-two',
       finish_reason: 'error',

@@ -169,9 +169,11 @@ describe('response stream reasoning storage', () => {
     applyResponseStreamEvent(state, 'session-1', 'run-1', 'response.output_text.delta', {
       delta: 'Final answer.',
     })
+    state.responseRun!.reasoningMessageId = state.messages[2].id
 
     expect(flushResponseRunToDb(state, 'session-1')).toBe('42')
     expect(state.messages.map(message => message.id)).toEqual([40, 41, 42])
+    expect(state.responseRun?.reasoningMessageId).toBe(42)
   })
 
   it('deduplicates final reasoning snapshots after streamed reasoning deltas', () => {
