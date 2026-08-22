@@ -166,6 +166,12 @@ const agentAvatar = ref<ProfileAvatarData | null>(null)
 const agentAvatarFileInput = ref<HTMLInputElement | null>(null)
 const agentPresets = ref<GroupAgentPreset[]>([])
 const selectedAgentPresetId = ref<string | null>(null)
+const showAgentPresetDialog = ref(false)
+const agentPresetDialogMode = ref<'select' | 'manage'>('select')
+const agentPresetSearch = ref('')
+const pendingAgentPresetId = ref<string | null>(null)
+const isLoadingAgentPresets = ref(false)
+const agentPresetLoadError = ref('')
 const isSavingAgentPreset = ref(false)
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
@@ -285,13 +291,24 @@ const agentApiModeOptions = computed(() => [
     { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
     { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
 ])
-const agentPresetOptions = computed(() => agentPresets.value.map(preset => ({
-    label: preset.available
-        ? `${preset.name} · ${preset.profile} · ${preset.provider}/${preset.model}`
-        : `${preset.name} · ${t('groupChat.agentPresetUnavailable')}`,
-    value: preset.id,
-    disabled: !preset.available,
-})))
+const filteredAgentPresets = computed(() => {
+    const query = agentPresetSearch.value.trim().toLocaleLowerCase()
+    if (!query) return agentPresets.value
+    return agentPresets.value.filter((preset) => {
+        const searchable = [
+            preset.name,
+            preset.description,
+            preset.profile,
+            preset.provider,
+            preset.model,
+            preset.validationError,
+        ].join(' ').toLocaleLowerCase()
+        return searchable.includes(query)
+    })
+})
+const pendingAgentPreset = computed(() =>
+    agentPresets.value.find(preset => preset.id === pendingAgentPresetId.value) || null
+)
 
 const agentReasoningEffortOptions = computed(() => [
     { label: t('chat.reasoningEffort.options.default'), value: '' },
@@ -1196,15 +1213,48 @@ function currentAgentPresetInput(): GroupAgentPresetInput | null {
 }
 
 async function loadAgentPresets() {
+    isLoadingAgentPresets.value = true
+    agentPresetLoadError.value = ''
     try {
         agentPresets.value = (await listGroupAgentPresets()).presets
     } catch (err: any) {
-        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetLoadFailed'))
+        agentPresetLoadError.value = extractApiErrorMessage(err) || t('groupChat.agentPresetLoadFailed')
+        message.error(agentPresetLoadError.value)
+    } finally {
+        isLoadingAgentPresets.value = false
     }
 }
 
-function selectAgentPresetForManagement(presetId: string | null) {
-    selectedAgentPresetId.value = presetId
+function openAgentPresetSelection() {
+    agentPresetDialogMode.value = 'select'
+    pendingAgentPresetId.value = selectedAgentPresetId.value
+    agentPresetSearch.value = ''
+    showAgentPresetDialog.value = true
+}
+
+function openAgentPresetManager() {
+    agentPresetDialogMode.value = 'manage'
+    pendingAgentPresetId.value = null
+    agentPresetSearch.value = ''
+    showAgentPresetDialog.value = true
+}
+
+function closeAgentPresetDialog() {
+    showAgentPresetDialog.value = false
+    pendingAgentPresetId.value = null
+    agentPresetSearch.value = ''
+}
+
+function selectAgentPresetForDialog(preset: GroupAgentPreset) {
+    if (!preset.available) return
+    pendingAgentPresetId.value = preset.id
+}
+
+function confirmAgentPresetSelection() {
+    const preset = pendingAgentPreset.value
+    if (!preset?.available) return
+    applyAgentPreset(preset.id)
+    closeAgentPresetDialog()
 }
 
 function applyAgentPreset(presetId: string | null) {
@@ -1230,43 +1280,55 @@ function applyAgentPreset(presetId: string | null) {
     agentAvatar.value = parseStoredAvatar(input.avatar)
 }
 
-async function saveAgentPreset() {
+async function saveAgentPreset(presetId: string | null) {
     const input = currentAgentPresetInput()
     if (!input || isSavingAgentPreset.value) return
     isSavingAgentPreset.value = true
     try {
-        const result = selectedAgentPresetId.value
-            ? await updateGroupAgentPreset(selectedAgentPresetId.value, input)
+        const result = presetId
+            ? await updateGroupAgentPreset(presetId, input)
             : await createGroupAgentPreset(input)
         const index = agentPresets.value.findIndex(item => item.id === result.preset.id)
         if (index >= 0) agentPresets.value[index] = result.preset
         else agentPresets.value = [result.preset, ...agentPresets.value]
-        selectedAgentPresetId.value = result.preset.id
+        pendingAgentPresetId.value = result.preset.id
         message.success(t('groupChat.agentPresetSaved'))
     } catch (err: any) {
-        message.error(extractApiErrorMessage(err))
+        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'))
     } finally {
         isSavingAgentPreset.value = false
     }
 }
 
+async function createAgentPresetFromCurrent() {
+    pendingAgentPresetId.value = null
+    await saveAgentPreset(null)
+}
+
+async function updateSelectedAgentPreset() {
+    if (!pendingAgentPresetId.value) return
+    await saveAgentPreset(pendingAgentPresetId.value)
+}
+
 async function deleteAgentPreset() {
-    const presetId = selectedAgentPresetId.value
+    const presetId = pendingAgentPresetId.value
     if (!presetId || isSavingAgentPreset.value) return
     isSavingAgentPreset.value = true
     try {
         await deleteGroupAgentPreset(presetId)
         agentPresets.value = agentPresets.value.filter(item => item.id !== presetId)
-        selectedAgentPresetId.value = null
+        if (selectedAgentPresetId.value === presetId) selectedAgentPresetId.value = null
+        pendingAgentPresetId.value = null
         message.success(t('groupChat.agentPresetDeleted'))
     } catch (err: any) {
-        message.error(extractApiErrorMessage(err))
+        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'))
     } finally {
         isSavingAgentPreset.value = false
     }
 }
 
 function closeAgentModal() {
+    closeAgentPresetDialog()
     showAddAgentModal.value = false
     editingAgent.value = null
     resetAgentForm()
@@ -2540,52 +2602,16 @@ function handleClarifyKeydown(event: KeyboardEvent) {
             <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
                 <div class="modal">
                     <h3>{{ editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent') }}</h3>
-                    <div v-if="!editingAgent" class="agent-preset-selector">
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.agentPreset') }}</label>
-                            <NSelect
-                                :value="selectedAgentPresetId"
-                                :options="agentPresetOptions"
-                                clearable
-                                :placeholder="t('groupChat.agentPresetPlaceholder')"
-                                @update:value="applyAgentPreset"
-                            />
-                        </div>
+                    <div v-if="!editingAgent" class="agent-preset-entry">
+                        <NButton secondary block @click="openAgentPresetSelection">
+                            {{ t('groupChat.chooseAgentPreset') }}
+                        </NButton>
                         <p class="form-hint">{{ t('groupChat.agentPresetSnapshotHint') }}</p>
                     </div>
-                    <div v-if="editingAgent" class="agent-preset-manager">
-                        <div class="form-group">
-                            <label class="form-label">{{ t('groupChat.agentPreset') }}</label>
-                            <NSelect
-                                :value="selectedAgentPresetId"
-                                :options="agentPresetOptions"
-                                clearable
-                                :placeholder="t('groupChat.agentPresetPlaceholder')"
-                                @update:value="selectAgentPresetForManagement"
-                            />
-                        </div>
-                        <NSpace>
-                            <NButton
-                                size="small"
-                                secondary
-                                :disabled="!canConfirmAddAgent || isSavingAgentPreset"
-                                :loading="isSavingAgentPreset"
-                                @click="saveAgentPreset"
-                            >
-                                {{ selectedAgentPresetId ? t('groupChat.updateAgentPreset') : t('groupChat.saveAgentPreset') }}
-                            </NButton>
-                            <NPopconfirm
-                                v-if="selectedAgentPresetId"
-                                @positive-click="deleteAgentPreset"
-                            >
-                                <template #trigger>
-                                    <NButton size="small" type="error" secondary :disabled="isSavingAgentPreset">
-                                        {{ t('groupChat.deleteAgentPreset') }}
-                                    </NButton>
-                                </template>
-                                {{ t('groupChat.deleteAgentPresetConfirm') }}
-                            </NPopconfirm>
-                        </NSpace>
+                    <div v-if="editingAgent" class="agent-preset-entry">
+                        <NButton secondary block @click="openAgentPresetManager">
+                            {{ t('groupChat.manageAgentPresets') }}
+                        </NButton>
                         <p class="form-hint">{{ t('groupChat.agentPresetSnapshotHint') }}</p>
                     </div>
                     <div class="group-agent-avatar-editor">
@@ -2707,6 +2733,105 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                 {{ editingAgent ? t('common.update') : t('common.add') }}
                             </NButton>
                         </NSpace>
+                    </div>
+                </div>
+            </div>
+            <div
+                v-if="showAgentPresetDialog"
+                class="modal-backdrop agent-preset-dialog-backdrop"
+                @click.self="closeAgentPresetDialog"
+            >
+                <div class="modal agent-preset-dialog">
+                    <h3>
+                        {{ agentPresetDialogMode === 'select'
+                            ? t('groupChat.chooseAgentPreset')
+                            : t('groupChat.manageAgentPresets') }}
+                    </h3>
+                    <NInput
+                        v-model:value="agentPresetSearch"
+                        clearable
+                        :placeholder="t('groupChat.searchAgentPresets')"
+                    />
+                    <div v-if="isLoadingAgentPresets" class="agent-preset-dialog-state">
+                        {{ t('groupChat.agentPresetsLoading') }}
+                    </div>
+                    <div v-else-if="agentPresetLoadError" class="agent-preset-dialog-state is-error">
+                        <span>{{ agentPresetLoadError }}</span>
+                        <NButton size="small" secondary @click="loadAgentPresets">
+                            {{ t('common.retry') }}
+                        </NButton>
+                    </div>
+                    <div v-else-if="agentPresets.length === 0" class="agent-preset-dialog-state">
+                        {{ t('groupChat.agentPresetsEmpty') }}
+                    </div>
+                    <div v-else-if="filteredAgentPresets.length === 0" class="agent-preset-dialog-state">
+                        {{ t('groupChat.agentPresetsNoResults') }}
+                    </div>
+                    <div v-else class="agent-preset-dialog-list">
+                        <button
+                            v-for="preset in filteredAgentPresets"
+                            :key="preset.id"
+                            type="button"
+                            class="agent-preset-dialog-row"
+                            :class="{
+                                selected: pendingAgentPresetId === preset.id,
+                                unavailable: !preset.available,
+                            }"
+                            :disabled="!preset.available"
+                            :aria-pressed="pendingAgentPresetId === preset.id"
+                            @click="selectAgentPresetForDialog(preset)"
+                        >
+                            <span class="agent-preset-dialog-row-name">{{ preset.name }}</span>
+                            <span class="agent-preset-dialog-row-config">
+                                {{ preset.profile }} · {{ preset.provider }}/{{ preset.model }}
+                            </span>
+                            <span v-if="!preset.available" class="agent-preset-dialog-row-error">
+                                {{ preset.validationError || t('groupChat.agentPresetUnavailable') }}
+                            </span>
+                        </button>
+                    </div>
+                    <p class="form-hint">{{ t('groupChat.agentPresetSnapshotHint') }}</p>
+                    <div v-if="agentPresetDialogMode === 'manage'" class="agent-preset-management-actions">
+                        <NButton
+                            secondary
+                            :disabled="!canConfirmAddAgent || isSavingAgentPreset"
+                            :loading="isSavingAgentPreset && !pendingAgentPresetId"
+                            @click="createAgentPresetFromCurrent"
+                        >
+                            {{ t('groupChat.saveCurrentAgentAsPreset') }}
+                        </NButton>
+                        <NButton
+                            secondary
+                            :disabled="!pendingAgentPresetId || !canConfirmAddAgent || isSavingAgentPreset"
+                            :loading="isSavingAgentPreset && Boolean(pendingAgentPresetId)"
+                            @click="updateSelectedAgentPreset"
+                        >
+                            {{ t('groupChat.updateAgentPreset') }}
+                        </NButton>
+                        <NPopconfirm
+                            v-if="pendingAgentPresetId"
+                            @positive-click="deleteAgentPreset"
+                        >
+                            <template #trigger>
+                                <NButton type="error" secondary :disabled="isSavingAgentPreset">
+                                    {{ t('groupChat.deleteAgentPreset') }}
+                                </NButton>
+                            </template>
+                            {{ t('groupChat.deleteAgentPresetConfirm') }}
+                        </NPopconfirm>
+                    </div>
+                    <div class="modal-actions">
+                        <NButton @click="closeAgentPresetDialog">
+                            {{ t('common.cancel') }}
+                        </NButton>
+                        <NButton
+                            v-if="agentPresetDialogMode === 'select'"
+                            type="primary"
+                            :disabled="!pendingAgentPreset?.available"
+                            @click="confirmAgentPresetSelection"
+                        >
+                            {{ t('groupChat.applyAgentPreset') }}
+                        </NButton>
                     </div>
                 </div>
             </div>
@@ -4494,6 +4619,104 @@ export default defineComponent({ components: { CreateRoomForm } })
         color: $text-primary;
         margin: 0 0 20px;
     }
+}
+
+.agent-preset-entry {
+    margin-bottom: 18px;
+}
+
+.agent-preset-dialog-backdrop {
+    z-index: 1010;
+}
+
+.agent-preset-dialog {
+    width: 480px;
+}
+
+.agent-preset-dialog-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    margin-top: 12px;
+    overflow-y: auto;
+}
+
+.agent-preset-dialog-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid $border-color;
+    border-radius: $radius-md;
+    color: $text-primary;
+    background: $bg-main-surface;
+    text-align: start;
+    cursor: pointer;
+    transition:
+        border-color $transition-fast,
+        background-color $transition-fast;
+
+    &:hover:not(:disabled) {
+        border-color: rgba(var(--accent-primary-rgb), 0.55);
+        background: rgba(var(--accent-primary-rgb), 0.05);
+    }
+
+    &.selected {
+        border-color: var(--accent-primary);
+        background: rgba(var(--accent-primary-rgb), 0.09);
+    }
+
+    &.unavailable {
+        cursor: not-allowed;
+        opacity: 0.72;
+    }
+}
+
+.agent-preset-dialog-row-name {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.agent-preset-dialog-row-config,
+.agent-preset-dialog-row-error {
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.agent-preset-dialog-row-config {
+    color: $text-secondary;
+}
+
+.agent-preset-dialog-row-error {
+    color: $error;
+}
+
+.agent-preset-dialog-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 28px 16px;
+    border: 1px dashed $border-color;
+    border-radius: $radius-md;
+    color: $text-muted;
+    text-align: center;
+
+    &.is-error {
+        color: $error;
+    }
+}
+
+.agent-preset-management-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
 }
 
 .room-settings-drawer {

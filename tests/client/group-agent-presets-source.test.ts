@@ -12,12 +12,16 @@ describe('group Agent preset UI sources', () => {
     expect(createRoom).not.toContain("t('groupChat.agentPresets')")
   })
 
-  it('separates add-member preset selection from existing-member preset management', () => {
+  it('uses explicit preset dialogs instead of embedded selects', () => {
     const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
 
-    expect(panel).toContain('v-if="!editingAgent" class="agent-preset-selector"')
-    expect(panel).toContain('v-if="editingAgent" class="agent-preset-manager"')
-    expect(panel).toContain('@update:value="selectAgentPresetForManagement"')
+    expect(panel).toContain('@click="openAgentPresetSelection"')
+    expect(panel).toContain('@click="openAgentPresetManager"')
+    expect(panel).toContain('class="agent-preset-dialog-list"')
+    expect(panel).toContain('@click="confirmAgentPresetSelection"')
+    expect(panel).toContain('preset.validationError')
+    expect(panel).not.toContain('class="agent-preset-selector"')
+    expect(panel).not.toContain('class="agent-preset-manager"')
     expect(panel).toContain('saveAgentPreset')
     expect(panel).toContain('deleteAgentPreset')
   })

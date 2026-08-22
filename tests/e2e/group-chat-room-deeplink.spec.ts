@@ -107,6 +107,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
   const roomConfigUpdates: Array<{ roomId: string, body: any }> = []
   const addedAgents: Array<{ roomId: string, body: any }> = []
   const createdRooms: any[] = []
+  const presetOperations: Array<{ method: string, id?: string, body?: any }> = []
   let agentPresets = [{
     id: 'preset-reviewer',
     agent: 'codex',
@@ -120,6 +121,21 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     avatar: '',
     available: true,
     validationError: '',
+    createdAt: 1,
+    updatedAt: 1,
+  }, {
+    id: 'preset-unavailable',
+    agent: 'codex',
+    profile: 'missing-profile',
+    provider: 'missing-provider',
+    model: 'missing-model',
+    apiMode: 'codex_responses',
+    reasoningEffort: '',
+    name: 'Unavailable Reviewer',
+    description: 'Unavailable configuration',
+    avatar: '',
+    available: false,
+    validationError: 'Profile "missing-profile" is unavailable',
     createdAt: 1,
     updatedAt: 1,
   }]
@@ -174,6 +190,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     }
     if (pathname === '/api/hermes/group-chat/agent-presets' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() || '{}')
+      presetOperations.push({ method: 'POST', body })
       const preset = { ...body, id: `preset-${agentPresets.length + 1}`, available: true, validationError: '', createdAt: 2, updatedAt: 2 }
       agentPresets = [preset, ...agentPresets]
       return json({ preset }, 201)
@@ -181,12 +198,14 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     const presetMatch = pathname.match(/^\/api\/hermes\/group-chat\/agent-presets\/([^/]+)$/)
     if (presetMatch && request.method() === 'PUT') {
       const body = JSON.parse(request.postData() || '{}')
+      presetOperations.push({ method: 'PUT', id: presetMatch[1], body })
       const index = agentPresets.findIndex(item => item.id === presetMatch[1])
       const preset = { ...agentPresets[index], ...body, updatedAt: 3 }
       agentPresets[index] = preset
       return json({ preset })
     }
     if (presetMatch && request.method() === 'DELETE') {
+      presetOperations.push({ method: 'DELETE', id: presetMatch[1] })
       agentPresets = agentPresets.filter(item => item.id !== presetMatch[1])
       return json({ success: true })
     }
@@ -366,6 +385,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
     roomDetailRequests,
     addedAgents,
     createdRooms,
+    presetOperations,
     failRoomDetail(roomId: string, offset: number, times = 1) {
       roomDetailFailures.set(`${roomId}:${offset}`, times)
     },
@@ -1057,9 +1077,17 @@ test.describe('group chat room deep links', () => {
 
     await page.locator('.agent-avatar-rail-add').click()
     const modal = page.locator('.modal').filter({ hasText: 'Add Agent' })
-    const presetField = modal.locator('.form-group').filter({ hasText: 'Agent preset' })
-    await presetField.locator('.n-base-selection').click()
-    await page.getByText('Preset Reviewer · default · test-provider/test-model', { exact: true }).click()
+    const nameInput = modal.getByPlaceholder('Custom name (leave empty to use profile name)')
+    await nameInput.fill('Draft Agent')
+    await modal.getByRole('button', { name: 'Choose preset' }).click()
+    const presetDialog = page.locator('.agent-preset-dialog').filter({ hasText: 'Choose preset' })
+    await expect(presetDialog).toBeVisible()
+    await expect(presetDialog.getByText('Profile "missing-profile" is unavailable', { exact: true })).toBeVisible()
+    await expect(presetDialog.getByRole('button', { name: /Unavailable Reviewer/ })).toBeDisabled()
+    await presetDialog.getByPlaceholder('Search presets').fill('Reviewer')
+    await presetDialog.getByRole('button', { name: /Preset Reviewer/ }).click()
+    await expect(nameInput).toHaveValue('Draft Agent')
+    await presetDialog.getByRole('button', { name: 'Apply', exact: true }).click()
     await expect(modal.getByPlaceholder('Custom name (leave empty to use profile name)')).toHaveValue('Preset Reviewer')
     await expect(modal.getByPlaceholder('Describe what this agent does...')).toHaveValue('Reviews changes')
 
@@ -1077,6 +1105,21 @@ test.describe('group chat room deep links', () => {
         model: 'test-model',
       }),
     }])
+  })
+
+  test('cancels preset selection without changing the Agent form', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await page.locator('.agent-avatar-rail-add').click()
+    const modal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    const nameInput = modal.getByPlaceholder('Custom name (leave empty to use profile name)')
+    await nameInput.fill('Keep this draft')
+    await modal.getByRole('button', { name: 'Choose preset' }).click()
+    const presetDialog = page.locator('.agent-preset-dialog').filter({ hasText: 'Choose preset' })
+    await presetDialog.getByRole('button', { name: /Preset Reviewer/ }).click()
+    await presetDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(presetDialog).toHaveCount(0)
+    await expect(nameInput).toHaveValue('Keep this draft')
   })
 
   test('does not offer or apply Agent presets while creating a Room', async ({ page }) => {
@@ -1102,22 +1145,38 @@ test.describe('group chat room deep links', () => {
   })
 
   test('manages Agent presets only while editing an existing Room Agent', async ({ page }) => {
-    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     await page.locator('.agent-avatar-rail-add').click()
     const addModal = page.locator('.modal').filter({ hasText: 'Add Agent' })
-    await expect(addModal.getByRole('button', { name: 'Save as preset' })).toHaveCount(0)
+    await expect(addModal.getByRole('button', { name: 'Manage presets' })).toHaveCount(0)
     await addModal.getByRole('button', { name: 'Cancel' }).click()
 
     await page.getByRole('button', { name: 'Worker' }).click()
     const editModal = page.locator('.modal').filter({ hasText: 'Edit Worker' })
-    await expect(editModal.getByRole('button', { name: 'Save as preset' })).toBeVisible()
-    const presetField = editModal.locator('.form-group').filter({ hasText: 'Agent preset' })
-    await presetField.locator('.n-base-selection').click()
-    await page.getByText('Preset Reviewer · default · test-provider/test-model', { exact: true }).click()
+    await editModal.getByRole('button', { name: 'Manage presets' }).click()
+    const presetDialog = page.locator('.agent-preset-dialog').filter({ hasText: 'Manage presets' })
+    await presetDialog.getByRole('button', { name: 'Save current Agent as new preset' }).click()
+    await expect.poll(() => api.presetOperations).toContainEqual({
+      method: 'POST',
+      body: expect.objectContaining({ name: 'Worker', description: 'Group agent' }),
+    })
+    await presetDialog.getByPlaceholder('Search presets').fill('Reviewer')
+    await presetDialog.getByRole('button', { name: /Preset Reviewer/ }).click()
     await expect(editModal.getByPlaceholder('Custom name (leave empty to use profile name)')).toHaveValue('Worker')
-    await expect(editModal.getByRole('button', { name: 'Update preset' })).toBeVisible()
-    await expect(editModal.getByRole('button', { name: 'Delete preset' })).toBeVisible()
+    await presetDialog.getByRole('button', { name: 'Update preset' }).click()
+    await expect.poll(() => api.presetOperations).toContainEqual({
+      method: 'PUT',
+      id: 'preset-reviewer',
+      body: expect.objectContaining({ name: 'Worker', description: 'Group agent' }),
+    })
+    await presetDialog.getByRole('button', { name: 'Delete preset' }).click()
+    await page.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await expect.poll(() => api.presetOperations).toContainEqual({
+      method: 'DELETE',
+      id: 'preset-reviewer',
+    })
+    await expect(editModal.getByPlaceholder('Custom name (leave empty to use profile name)')).toHaveValue('Worker')
   })
 
   test('member count collapses the default-open scrollable avatar rail', async ({ page }) => {
