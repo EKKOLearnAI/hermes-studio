@@ -668,7 +668,13 @@ async function resolveStoredProviderLaunchInput(
   input: CodingAgentLaunchInput & { sessionId: string },
   existingSession: HermesSessionRow | null,
 ): Promise<CodingAgentLaunchInput & { sessionId: string }> {
-  if (input.mode === 'global') return input
+  if (input.mode === 'global') {
+    return {
+      ...input,
+      provider: input.provider || 'global',
+      model: input.model || '',
+    }
+  }
 
   const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
   const inputProvider = String(input.provider || '').trim()

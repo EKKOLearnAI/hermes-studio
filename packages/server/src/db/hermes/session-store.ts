@@ -236,6 +236,99 @@ export function createSession(data: {
   return getSession(data.id)!
 }
 
+export function upsertExternalCodingAgentSession(data: {
+  id: string
+  profile?: string
+  agent: 'codex' | 'claude'
+  nativeSessionId: string
+  title?: string
+  workspace?: string | null
+  startedAt: number
+  lastActive: number
+  messages: Array<{
+    role: 'user' | 'assistant'
+    content: string
+    timestamp: number
+  }>
+}): HermesSessionRow | null {
+  if (!isSqliteAvailable()) return null
+  const db = getDb()!
+  const existing = getSession(data.id)
+  if (existing && (
+    existing.source !== 'coding_agent'
+    || existing.agent !== data.agent
+    || existing.agent_native_session_id !== data.nativeSessionId
+  )) return null
+
+  const insertMessage = db.prepare(
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, timestamp)
+     VALUES (?, ?, ?, ?)`,
+  )
+
+  db.exec('BEGIN')
+  try {
+    if (!existing) {
+      db.prepare(
+        `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, provider, title, started_at, ended_at, end_reason, last_active, workspace, message_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        data.id,
+        data.profile || 'default',
+        'coding_agent',
+        data.agent,
+        'global',
+        data.nativeSessionId,
+        data.nativeSessionId,
+        'global',
+        data.title || null,
+        data.startedAt,
+        data.lastActive,
+        'external_import',
+        data.lastActive,
+        data.workspace || null,
+        0,
+      )
+    } else {
+      db.prepare(
+        `UPDATE ${SESSIONS_TABLE}
+         SET agent_mode = 'global',
+             provider = 'global',
+             title = CASE WHEN COALESCE(title, '') = '' THEN ? ELSE title END,
+             started_at = MIN(started_at, ?),
+             last_active = MAX(last_active, ?),
+             workspace = COALESCE(NULLIF(workspace, ''), ?)
+         WHERE id = ?`,
+      ).run(data.title || null, data.startedAt, data.lastActive, data.workspace || null, data.id)
+    }
+
+    const existingMessages = db.prepare(
+      `SELECT role, content, timestamp FROM ${MESSAGES_TABLE} WHERE session_id = ?`,
+    ).all(data.id) as Array<{ role: string; content: string; timestamp: number }>
+    const knownMessages = new Set(
+      existingMessages.map(message => `${message.role}\u0000${message.timestamp}\u0000${message.content}`),
+    )
+    for (const message of data.messages) {
+      const key = `${message.role}\u0000${message.timestamp}\u0000${message.content}`
+      if (knownMessages.has(key)) continue
+      insertMessage.run(data.id, message.role, normalizeMessageContentForStorageRole(message.role, message.content), message.timestamp)
+      knownMessages.add(key)
+    }
+
+    db.prepare(
+      `UPDATE ${SESSIONS_TABLE}
+       SET message_count = (SELECT COUNT(*) FROM ${MESSAGES_TABLE} WHERE session_id = ?),
+           last_active = MAX(last_active, COALESCE((SELECT MAX(timestamp) FROM ${MESSAGES_TABLE} WHERE session_id = ?), last_active))
+       WHERE id = ?`,
+    ).run(data.id, data.id, data.id)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  return getSession(data.id)
+}
+
 export function createBranchedSession(data: {
   parent_session_id: string
   id: string

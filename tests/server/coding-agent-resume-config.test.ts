@@ -341,7 +341,6 @@ describe('coding agent resumed session config', () => {
       nativeResume: false,
       provider: 'global',
       model: '',
-      env: {},
       args: [],
     }))
     expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
@@ -349,6 +348,42 @@ describe('coding agent resumed session config', () => {
       agent_native_session_id: '',
       provider: 'global',
       model: '',
+    }))
+  })
+
+  it('resumes an imported global Codex session with its native thread and workspace', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'external-codex-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_mode: 'global',
+      agent_session_id: 'codex-native-1',
+      agent_native_session_id: 'codex-native-1',
+      provider: 'global',
+      model: '',
+      workspace: 'C:\\repo',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', { sessionId: 'external-codex-1', mode: 'global', workspace: 'C:\\repo' })
+
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      agentSessionId: 'codex-native-1',
+      agentNativeSessionId: 'codex-native-1',
+      nativeResume: true,
+      provider: 'global',
+      model: '',
+      workspaceDir: 'C:\\repo',
+    }))
+    expect(updateSessionMock).toHaveBeenCalledWith('external-codex-1', expect.objectContaining({
+      agent_mode: 'global',
+      agent_native_session_id: 'codex-native-1',
+      provider: 'global',
+      workspace: 'C:\\repo',
     }))
   })
 

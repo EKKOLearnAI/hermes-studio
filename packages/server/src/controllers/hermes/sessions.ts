@@ -39,6 +39,7 @@ import {
 } from '../../services/hermes/workspace-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
+import { syncExternalCodingAgentHistory } from '../../services/coding-agents/external-history-sync'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
@@ -560,6 +561,7 @@ export async function listHermesSessions(ctx: any) {
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const offset = ctx.query.offset ? parseInt(ctx.query.offset as string, 10) : 0
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
   const effectiveLimit = limit && limit > 0 ? limit : 2000
   const normalizedOffset = Number.isFinite(offset) && offset > 0 ? offset : 0
   const paginated = Boolean(source) || normalizedOffset > 0
@@ -593,6 +595,7 @@ export async function listHermesSessionGroups(ctx: any) {
   const requestedLimit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 20
   const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 20
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
   const rawIncluded = ctx.query.include
   const includedIds = (Array.isArray(rawIncluded) ? rawIncluded : rawIncluded ? [rawIncluded] : [])
     .map(value => String(value || '').trim())
@@ -1058,6 +1061,7 @@ export async function getContext(ctx: any) {
  */
 export async function getHermesSession(ctx: any) {
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
 
   // Prefer the Web UI local session store. Hermes state.db can lag behind or
   // miss messages for Bridge-backed runs, while the local store is the source
