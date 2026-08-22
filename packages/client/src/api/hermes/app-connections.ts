@@ -1,6 +1,7 @@
 import { request } from '../client'
 
 export type AppConnectionType = 'lan' | 'cloud'
+export type AppRelayRoute = 'official' | 'cloudflare'
 
 export interface AppConnection {
   id: number
@@ -56,6 +57,7 @@ export interface CloudAppAuthorizationResponse {
   expires_at: number
   hard_expires_at: number
   refresh_remaining: number
+  relay_route: AppRelayRoute
   qr_payload: string
 }
 
@@ -69,10 +71,13 @@ export async function createLanAppAuthorization(): Promise<LanAppAuthorizationRe
   })
 }
 
-export async function createCloudAppAuthorization(refresh = false): Promise<CloudAppAuthorizationResponse> {
+export async function createCloudAppAuthorization(
+  refresh = false,
+  route: AppRelayRoute = 'official',
+): Promise<CloudAppAuthorizationResponse> {
   return request<CloudAppAuthorizationResponse>('/api/app-connections/authorization-codes/cloud', {
     method: 'POST',
-    body: JSON.stringify({ refresh }),
+    body: JSON.stringify({ refresh, route }),
   })
 }
 

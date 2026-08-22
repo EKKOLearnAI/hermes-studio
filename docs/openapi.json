@@ -157,6 +157,10 @@
       "description": "Mobile App authorization and connection management"
     },
     {
+      "name": "App Relay",
+      "description": "Mobile App cloud relay route and connection management"
+    },
+    {
       "name": "Devices",
       "description": "Device pairing and LAN peer operations"
     },
@@ -299,6 +303,160 @@
             }
           }
         ]
+      }
+    },
+    "/api/app-relay/connect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create connect",
+        "description": "POST /api/app-relay/connect",
+        "operationId": "connectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/disconnect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create disconnect",
+        "description": "POST /api/app-relay/disconnect",
+        "operationId": "disconnectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/pairing-code": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create pairing-code",
+        "description": "POST /api/app-relay/pairing-code",
+        "operationId": "refreshAppRelayPairingController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/route": {
+      "put": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Update route",
+        "description": "PUT /api/app-relay/route",
+        "operationId": "updateAppRelayRouteController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/status": {
+      "get": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/app-relay/status",
+        "operationId": "getAppRelayStatusController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
       }
     },
     "/api/app/profiles": {

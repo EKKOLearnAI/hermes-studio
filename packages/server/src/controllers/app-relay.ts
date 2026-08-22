@@ -5,7 +5,12 @@ import {
   ensureAppRelayHostClient,
   stopAppRelayHostClient,
 } from '../services/app-relay/connection'
-import { getDeviceIdentity } from '../services/system-info'
+import { getAppRelayDeviceIdentity } from '../services/system-info'
+import {
+  appRelayUrlForRoute,
+  getAppRelayRoute,
+  isAppRelayRoute,
+} from '../services/app-relay/route'
 
 function appRelayResponse(relay: Record<string, unknown>) {
   return { relay }
@@ -13,18 +18,29 @@ function appRelayResponse(relay: Record<string, unknown>) {
 
 export async function getAppRelayStatusController(ctx: Context) {
   const client = getAppRelayClient(APP_RELAY_CONNECTION_ID)
+  const route = await getAppRelayRoute()
   ctx.body = appRelayResponse(
-    client?.status() || {
-      connected: false,
-      machineId: (await getDeviceIdentity()).device_id,
-      pairingCode: '',
-      pairingExpiresAt: 0,
+    {
+      ...(client?.status() || {
+        connected: false,
+        machineId: (await getAppRelayDeviceIdentity()).device_id,
+        pairingCode: '',
+        pairingExpiresAt: 0,
+      }),
+      route,
+      relayUrl: appRelayUrlForRoute(route),
     },
   )
 }
 
 export async function connectAppRelayController(ctx: Context) {
-  const client = await ensureAppRelayHostClient()
+  const requestedRoute = (ctx.request?.body as Record<string, unknown> | undefined)?.route
+  if (requestedRoute != null && !isAppRelayRoute(requestedRoute)) {
+    ctx.status = 400
+    ctx.body = { error: 'invalid_app_relay_route' }
+    return
+  }
+  const client = await ensureAppRelayHostClient(isAppRelayRoute(requestedRoute) ? requestedRoute : undefined)
   if (!client || !await client.waitForConnected(8000)) {
     ctx.status = 502
     ctx.body = { error: 'Failed to connect App relay' }
@@ -32,7 +48,28 @@ export async function connectAppRelayController(ctx: Context) {
   }
 
   const pairing = await client.requestPairingCode(8000)
-  ctx.body = appRelayResponse({ ...client.status(), ...pairing })
+  const route = await getAppRelayRoute()
+  ctx.body = appRelayResponse({ ...client.status(), ...pairing, route, relayUrl: appRelayUrlForRoute(route) })
+}
+
+export async function updateAppRelayRouteController(ctx: Context) {
+  const requestedRoute = (ctx.request?.body as Record<string, unknown> | undefined)?.route
+  if (!isAppRelayRoute(requestedRoute)) {
+    ctx.status = 400
+    ctx.body = { error: 'invalid_app_relay_route' }
+    return
+  }
+  const client = await ensureAppRelayHostClient(requestedRoute)
+  if (!client || !await client.waitForConnected(8000)) {
+    ctx.status = 502
+    ctx.body = { error: 'app_relay_unavailable' }
+    return
+  }
+  ctx.body = appRelayResponse({
+    ...client.status(),
+    route: requestedRoute,
+    relayUrl: appRelayUrlForRoute(requestedRoute),
+  })
 }
 
 export async function refreshAppRelayPairingController(ctx: Context) {
@@ -48,10 +85,13 @@ export async function refreshAppRelayPairingController(ctx: Context) {
 
 export async function disconnectAppRelayController(ctx: Context) {
   stopAppRelayHostClient()
+  const route = await getAppRelayRoute()
   ctx.body = appRelayResponse({
-      connected: false,
-      machineId: (await getDeviceIdentity()).device_id,
-      pairingCode: '',
-      pairingExpiresAt: 0,
+    connected: false,
+    machineId: (await getAppRelayDeviceIdentity()).device_id,
+    pairingCode: '',
+    pairingExpiresAt: 0,
+    route,
+    relayUrl: appRelayUrlForRoute(route),
   })
 }
