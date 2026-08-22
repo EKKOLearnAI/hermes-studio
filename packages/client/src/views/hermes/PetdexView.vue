@@ -75,14 +75,20 @@ watch(previewUrl, (url) => {
 
 const spriteDimensions = ref<{ width: number; height: number } | null>(null)
 
-watch(spritesheetFile, (file) => {
+watch(spritesheetFile, () => {
   spriteDimensions.value = null
-  if (!file) return
+  // Reuse the managed previewUrl blob (already revoke-on-replace) instead of
+  // creating a second one here, which would leak.
+  const url = previewUrl.value
+  if (!url) return
   const img = new Image()
   img.onload = () => {
     spriteDimensions.value = { width: img.naturalWidth, height: img.naturalHeight }
   }
-  img.src = URL.createObjectURL(file)
+  img.onerror = () => {
+    spriteDimensions.value = null
+  }
+  img.src = url
 })
 
 const previewStyle = computed(() => {
