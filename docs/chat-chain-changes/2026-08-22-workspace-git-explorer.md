@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2674
 feature: Workspace Git explorer
 impact: Direct and group chat workspace panels now show live Git decorations and file diffs while keeping file previews inside the Explorer layout.
 ---
