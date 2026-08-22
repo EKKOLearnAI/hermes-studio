@@ -46,6 +46,7 @@ import {
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { buildRemoteGroupChatRooms, type RemoteGroupChatRoom } from '@/utils/group-chat-remote-rooms'
 import { handoffErrorTranslationKey } from './handoff-presentation'
+import { clearGroupChatRoomDraft } from './group-chat-room-drafts'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -160,6 +161,7 @@ const isUpdatingRemoteRoom = ref(false)
 const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & {
     addFiles?: (files: File[]) => void
     insertMention?: (name: string, participantId?: string) => void
+    completeSend?: (success: boolean) => void
 }) | null>(null)
 const summarySettingsSectionRef = ref<HTMLElement | null>(null)
 const chatDropCounter = ref(0)
@@ -1095,9 +1097,13 @@ async function handleSelectRoom(roomId: string) {
 }
 
 async function handleSendMessage(content: string, attachments?: Attachment[], mentions?: GroupChatMention[]) {
+    const submittedRoomId = store.currentRoomId
     try {
         await store.sendMessage(content, attachments, mentions)
+        if (submittedRoomId) clearGroupChatRoomDraft(submittedRoomId)
+        groupChatInputRef.value?.completeSend?.(true)
     } catch (err: any) {
+        groupChatInputRef.value?.completeSend?.(false)
         message.error(err.message)
     }
 }
@@ -2259,6 +2265,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                     </div>
                     <GroupChatInput
                         ref="groupChatInputRef"
+                        :room-id="store.currentRoomId"
                         :send-blocked="currentRoomNeedsSummaryConfiguration"
                         :allow-attachments="true"
                         :show-settings="!props.standalone"

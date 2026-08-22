@@ -103,6 +103,19 @@ describe('VersionManagementModal Runtime storage selector', () => {
     expect(runtimeDirectory.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64')
   })
 
+  it('shows Runtime versions returned by the Studio version API', async () => {
+    const status = runtimeStatus()
+    status.hermes.remoteVersions = ['0.20.4', '0.20.0']
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('0.20.4')
+    expect(wrapper.text()).toContain('0.20.0')
+  })
+
   it('shows the Runtime fallback reason and hides Web UI version switching', async () => {
     const status = runtimeStatus()
     status.hermes.activationError = 'Selected Runtime 0.20.0 is missing node/node.exe.'
