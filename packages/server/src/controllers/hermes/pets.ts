@@ -28,7 +28,18 @@ export async function adopt(ctx: Context) {
 
   const profile = requestedProfile(ctx)
   try {
-    ctx.body = { pet: await adoptInstalledPet(profile, slug).catch(() => adoptPetFromPetdex(profile, slug)) }
+    // Prefer locally installed pets (e.g. imported pets); fall back to petdex.
+    // Only fall back when the pet isn't installed locally — other errors
+    // (missing asset, corrupt metadata, etc.) must surface so callers can
+    // distinguish them from a successful petdex adopt.
+    ctx.body = {
+      pet: await adoptInstalledPet(profile, slug).catch((err) => {
+        if (err instanceof Error && err.message.includes('was not found')) {
+          return adoptPetFromPetdex(profile, slug)
+        }
+        throw err
+      }),
+    }
   } catch (err) {
     const message = errorMessage(err)
     ctx.status = message.includes('was not found') ? 404 : 400
@@ -71,7 +82,9 @@ export async function localAsset(ctx: Context) {
     return
   }
   ctx.set('Content-Type', asset.mime)
-  ctx.set('Cache-Control', 'public, max-age=60')
+  // Asset is profile-scoped user content; use private to avoid shared
+  // caches leaking images across users/profiles.
+  ctx.set('Cache-Control', 'private, max-age=60')
   ctx.body = asset.buffer
 }
 

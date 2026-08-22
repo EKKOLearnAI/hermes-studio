@@ -374,6 +374,10 @@ export async function importLocalPet(profile: string, input: ImportLocalPetInput
     ? `spritesheet${extension}`
     : mime === 'image/png' ? 'spritesheet.png' : 'spritesheet.webp'
   const targetDir = petDir(profile, slug)
+  // Clear any previous import for the same slug so we don't leave stale files
+  // (e.g. spritesheet extension changed from .png to .webp, or pet.json content
+  // is out of date). Re-imports replace the slug contents.
+  await rm(targetDir, { recursive: true, force: true })
   await mkdir(targetDir, { recursive: true })
   await writeFile(join(targetDir, spritesheetFile), input.spritesheet, { mode: 0o600 })
 
@@ -436,7 +440,7 @@ export async function listInstalledPets(profile: string): Promise<LocalImportedP
       source: installed.source,
       spritesheetFile: installed.spritesheetFile || 'spritesheet.webp',
       petJsonFile: installed.petJsonFile,
-      mime: installed.mime || mimeFromFilename(installed.spritesheetFile),
+      mime: installed.mime || mimeFromFilename(installed.spritesheetFile || 'spritesheet.webp'),
       installedAt: installed.installedAt,
       updatedAt: installed.updatedAt,
     })
@@ -452,7 +456,7 @@ export async function getLocalPetAsset(profile: string, slugInput: string): Prom
   if (!existsSync(filePath)) return null
   return {
     buffer: await readFile(filePath),
-    mime: installed.mime || mimeFromFilename(installed.spritesheetFile),
+    mime: installed.mime || mimeFromFilename(installed.spritesheetFile || 'spritesheet.webp'),
   }
 }
 
