@@ -423,9 +423,9 @@ export interface QueueInsertionState {
   generation: string
   runId?: string
   queueId: string
-  runtime: 'hermes' | 'ekko'
+  runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
   phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn'
-  guarantee: 'strict'
+  guarantee: 'strict' | 'immediate'
   requestedAt: number
 }
 
@@ -2822,9 +2822,14 @@ export const useChatStore = defineStore('chat', () => {
       generation,
       runId: typeof raw.run_id === 'string' ? raw.run_id : undefined,
       queueId,
-      runtime: raw.runtime === 'ekko' ? 'ekko' : 'hermes',
+      runtime: raw.runtime === 'ekko'
+        || raw.runtime === 'claude-code'
+        || raw.runtime === 'codex'
+        || raw.runtime === 'pi'
+        ? raw.runtime
+        : 'hermes',
       phase,
-      guarantee: 'strict',
+      guarantee: raw.guarantee === 'immediate' ? 'immediate' : 'strict',
       requestedAt: typeof raw.requested_at === 'number' ? raw.requested_at : Date.now(),
     })
     queueInsertionStates.value = nextMap

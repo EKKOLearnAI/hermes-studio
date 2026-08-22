@@ -129,6 +129,10 @@ export interface PiNativeSessionState {
   pendingMessageCount: number
 }
 
+export type CodingAgentQueueInsertionInterruptResult =
+  | { status: 'interrupted'; runId: string; responseId: string }
+  | { status: 'not_found' | 'run_mismatch' | 'not_running' }
+
 interface PiRpcPendingRequest {
   command: string
   resolve: (data: any) => void
@@ -516,6 +520,25 @@ function forceKillChildProcess(child?: ChildProcess) {
   }
 }
 
+function waitForChildProcessClose(child?: ChildProcess, timeoutMs = 2_500): Promise<void> {
+  if (!child || child.exitCode != null || child.signalCode != null || typeof child.once !== 'function') {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.off?.('close', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    timer.unref?.()
+    child.once('close', finish)
+  })
+}
+
 function claudeContentToText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) {
@@ -836,6 +859,55 @@ export class CodingAgentRunManager {
     if (options.reportClosed === false) run.stoppedByUser = true
     this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? true })
     return true
+  }
+
+  async interruptForQueueInsertion(
+    sessionId: string,
+    expectedRunId?: string,
+  ): Promise<CodingAgentQueueInsertionInterruptResult> {
+    const run = this.getBySession(sessionId)
+    if (!run || run.exited) return { status: 'not_found' }
+    if (expectedRunId && run.id !== expectedRunId) return { status: 'run_mismatch' }
+    const isRunning = run.launch.agentId === 'pi'
+      ? run.turnActive === true
+      : childIsRunning(run.currentChild)
+    if (!isRunning) return { status: 'not_running' }
+
+    const responseId = String(run.printResponseId || run.runMarker || run.id)
+    // The current CLI invocation is intentionally disposable. Stop it before
+    // releasing the queued run so the next one can resume the native session
+    // without overlapping the old process.
+    run.stoppedByUser = true
+    const interruptedChild = run.currentChild
+    const childClosed = waitForChildProcessClose(interruptedChild)
+    this.cleanupRun(run, { kill: true, reportClosed: false })
+    await childClosed
+    for (const message of run.state.messages) {
+      if (
+        message.runMarker === run.runMarker
+        && message.role === 'assistant'
+        && message.finish_reason == null
+      ) {
+        message.finish_reason = 'interrupted'
+      }
+    }
+    run.assistantMessageId = this.persistTerminalResponse(run)
+    const workspaceRunChange = this.completeWorkspaceRunDiff(run)
+    const queueRemaining = run.state.queue.length
+    this.emitToChat(sessionId, 'run.failed', {
+      event: 'run.failed',
+      run_id: responseId,
+      response_id: responseId,
+      error: 'Interrupted to insert a queued message',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      interruption_mode: 'immediate',
+      ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
+      ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
+      workspace_run_change: workspaceRunChange,
+    })
+    this.markChatRunCompleted(sessionId, 'run.failed')
+    return { status: 'interrupted', runId: run.id, responseId }
   }
 
   stopMatching(

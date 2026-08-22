@@ -100,7 +100,8 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
-export type QueueInsertionRuntime = 'hermes' | 'ekko'
+export type QueueInsertionRuntime = 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
+export type QueueInsertionGuarantee = 'strict' | 'immediate'
 export type QueueInsertionPhase =
   | 'requesting'
   | 'waiting_for_tool_batch'
@@ -113,7 +114,7 @@ export interface QueueInsertionControl {
   runId?: string
   runtime: QueueInsertionRuntime
   phase: QueueInsertionPhase
-  guarantee: 'strict'
+  guarantee: QueueInsertionGuarantee
   requestedAt: number
 }
 

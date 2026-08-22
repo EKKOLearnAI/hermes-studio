@@ -127,9 +127,9 @@ export interface RunEvent {
   }>
   generation?: string
   queue_id?: string
-  runtime?: 'hermes' | 'ekko'
+  runtime?: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
   phase?: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message' | 'cancelled'
-  guarantee?: 'strict'
+  guarantee?: 'strict' | 'immediate'
   requested_at?: number
   reason?: string
   /** True when a terminal event intentionally stopped the previous run. */
@@ -138,6 +138,8 @@ export interface RunEvent {
   stop_reason?: 'queue_insertion' | string
   /** Safety guarantee used when the previous run was interrupted. */
   boundary_guarantee?: 'strict'
+  /** Immediate process interruption used by one-shot coding agents. */
+  interruption_mode?: 'immediate'
   /** User message broadcast to other windows already watching the same session. */
   message?: {
     id?: string | number
@@ -168,9 +170,9 @@ export interface ResumeSessionPayload {
     generation: string
     run_id?: string
     queue_id: string
-    runtime: 'hermes' | 'ekko'
+    runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
     phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message'
-    guarantee: 'strict'
+    guarantee: 'strict' | 'immediate'
     requested_at: number
   } | null
   backgroundTasks?: Array<Record<string, unknown>>
