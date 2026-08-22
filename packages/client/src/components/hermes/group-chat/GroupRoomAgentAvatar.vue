@@ -112,7 +112,7 @@ const accessibleSummary = computed(() => {
     flex: 0 0 36px;
     width: 36px;
     height: 36px;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
     border: 1px solid $border-color;
     border-radius: 8px;
@@ -135,23 +135,22 @@ const accessibleSummary = computed(() => {
     &.is-active::before {
         position: absolute;
         z-index: 2;
-        right: -1px;
-        bottom: -1px;
-        width: 5px;
-        height: 5px;
-        border: 1px solid var(--bg-sidebar);
-        border-radius: 50%;
-        background: $success;
+        inset: -1px;
+        border: 1px solid #fff;
+        border-radius: 6px;
+        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.9);
         content: '';
+        pointer-events: none;
     }
 
     &.is-active::after {
         position: absolute;
-        inset: -2px;
-        border: 1px solid rgba(var(--accent-primary-rgb), 0.8);
-        border-radius: 6px;
+        z-index: 1;
+        inset: -5px;
+        border-radius: 9px;
+        box-shadow: 0 0 5px 2px rgba(var(--accent-primary-rgb), 0.72);
         content: '';
-        animation: room-agent-grid-pulse 2.4s ease-in-out infinite;
+        animation: room-agent-grid-breathe 1.6s ease-in-out infinite;
         pointer-events: none;
     }
 }
@@ -250,19 +249,21 @@ const accessibleSummary = computed(() => {
     }
 }
 
-@keyframes room-agent-grid-pulse {
+@keyframes room-agent-grid-breathe {
     0%, 100% {
-        opacity: 0.45;
+        opacity: 0.35;
+        box-shadow: 0 0 4px 1px rgba(var(--accent-primary-rgb), 0.58);
     }
 
     50% {
-        opacity: 1;
+        opacity: 0.9;
+        box-shadow: 0 0 7px 3px rgba(var(--accent-primary-rgb), 0.8);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .room-agent-grid-cell.is-active::after {
-        opacity: 0.9;
+        opacity: 0.7;
         animation: none;
     }
 }

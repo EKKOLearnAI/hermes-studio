@@ -681,10 +681,54 @@ test.describe('group chat room deep links', () => {
 
     await triggerGroupSocket(page, 'room_agent_activity', activity())
     await triggerGroupSocket(page, 'room_agent_activity', activity({ runId: 'run-live-tools-2' }))
-    await expect(alphaGrid.locator('[data-agent-id="agent-row-1"]')).toHaveClass(/is-active/)
+    const activeAlphaAgent = alphaGrid.locator('[data-agent-id="agent-row-1"]')
+    const activeRunAvatar = page.locator('.group-agent-run[data-run-id="run-live-tools"] .run-avatar')
+    await expect(activeAlphaAgent).toHaveClass(/is-active/)
     await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(1)
-    await expect(page.locator('.group-agent-run[data-run-id="run-live-tools"] .run-avatar')).toHaveClass(/run-avatar-active/)
+    await expect(activeRunAvatar).toHaveClass(/run-avatar-active/)
     await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-avatar')).not.toHaveClass(/run-avatar-active/)
+    await expect.poll(() => activeAlphaAgent.evaluate((element) => {
+      const ring = getComputedStyle(element, '::before')
+      const glow = getComputedStyle(element, '::after')
+      return {
+        ringBorder: ring.borderTopWidth,
+        ringShadow: ring.boxShadow,
+        glowInset: glow.top,
+        glowAnimation: glow.animationName,
+        glowTransform: glow.transform,
+      }
+    })).toMatchObject({
+      ringBorder: '1px',
+      glowInset: '-5px',
+      glowAnimation: expect.stringContaining('room-agent-grid-breathe'),
+      glowTransform: 'none',
+    })
+    await expect.poll(() => activeRunAvatar.evaluate((element) => {
+      const avatar = getComputedStyle(element)
+      const ring = getComputedStyle(element, '::before')
+      const glow = getComputedStyle(element, '::after')
+      return {
+        avatarRadius: avatar.borderRadius,
+        ringRadius: ring.borderRadius,
+        ringShadow: ring.boxShadow,
+        glowRadius: glow.borderRadius,
+        glowAnimation: glow.animationName,
+        glowTransform: glow.transform,
+      }
+    })).toMatchObject({
+      avatarRadius: '50%',
+      ringRadius: '50%',
+      glowRadius: '50%',
+      glowAnimation: expect.stringContaining('run-avatar-active-glow'),
+      glowTransform: 'none',
+    })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect.poll(() => Promise.all([
+      activeAlphaAgent.evaluate(element => getComputedStyle(element, '::after').animationName),
+      activeRunAvatar.evaluate(element => getComputedStyle(element, '::after').animationName),
+      activeRunAvatar.evaluate(element => getComputedStyle(element, '::before').boxShadow),
+    ])).toEqual(['none', 'none', expect.not.stringMatching(/^none$/)])
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
 
     await triggerGroupSocket(page, 'room_agent_activity', activity({
       roomId: 'room-beta',

@@ -168,36 +168,53 @@ function handleToolListWheel(event: WheelEvent): void {
 }
 
 .run-avatar {
+    position: relative;
     width: 36px;
     height: 36px;
     flex: 0 0 36px;
     margin-top: 2px;
     overflow: visible;
-    border-radius: 8px;
+    border-radius: 50%;
 }
 
-.run-avatar-active {
-    animation: run-avatar-active-glow 4s linear infinite;
+.run-avatar-active::before,
+.run-avatar-active::after {
+    position: absolute;
+    border-radius: 50%;
+    content: '';
+    pointer-events: none;
+}
+
+.run-avatar-active::before {
+    z-index: 2;
+    inset: -1px;
+    border: 1px solid #fff;
+    box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.9);
+}
+
+.run-avatar-active::after {
+    z-index: 1;
+    inset: -5px;
+    box-shadow: 0 0 5px 2px rgba(var(--accent-primary-rgb), 0.72);
+    animation: run-avatar-active-glow 1.6s ease-in-out infinite;
 }
 
 @keyframes run-avatar-active-glow {
-    0% {
-        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+    0%, 100% {
+        opacity: 0.35;
+        box-shadow: 0 0 4px 1px rgba(var(--accent-primary-rgb), 0.58);
     }
 
     50% {
-        box-shadow: 0 0 0 2px rgba(185, 100, 255, 0.85), 0 0 12px rgba(185, 100, 255, 0.4);
-    }
-
-    100% {
-        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+        opacity: 0.9;
+        box-shadow: 0 0 7px 3px rgba(var(--accent-primary-rgb), 0.8);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .run-avatar-active {
+    .run-avatar-active::after {
+        opacity: 0.7;
         animation: none;
-        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.75);
     }
 }
 
