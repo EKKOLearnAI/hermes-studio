@@ -75,7 +75,15 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   clearSessionMessages: sessionStoreMocks.clearSessionMessages,
   getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
-  getSessionMetadata: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
+  getSessionMetadata: vi.fn(() => ({
+    id: 'session-1',
+    profile: 'default',
+    source: 'cli',
+    model: 'gpt-5.5',
+    provider: 'openai',
+    api_mode: 'responses',
+    reasoning_effort: 'high',
+  })),
   getSessionDetail: vi.fn(() => null),
 }))
 
@@ -658,6 +666,10 @@ describe('ChatRunSocket queued bridge runs', () => {
     expect(socket.emit).toHaveBeenCalledWith('resumed', expect.objectContaining({
       session_id: 'session-1',
       isWorking: false,
+      model: 'gpt-5.5',
+      provider: 'openai',
+      api_mode: 'responses',
+      reasoning_effort: 'high',
     }))
   })
 

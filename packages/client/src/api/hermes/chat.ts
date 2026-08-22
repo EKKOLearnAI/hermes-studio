@@ -105,6 +105,9 @@ export interface RunEvent {
   task_count?: number
   goal?: string
   model?: string
+  provider?: string
+  api_mode?: ProviderApiMode
+  reasoning_effort?: string
   status?: string
   summary?: string
   arguments?: unknown
@@ -164,6 +167,10 @@ export interface ResumeSessionPayload {
   outputTokens?: number
   contextTokens?: number
   workspace?: string | null
+  model?: string
+  provider?: string
+  api_mode?: ProviderApiMode | ''
+  reasoning_effort?: string
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
   queueInsertion?: {
@@ -222,6 +229,7 @@ const sessionEventHandlers = new Map<string, {
   onSessionCommand?: (event: RunEvent) => void
   onSessionTitleUpdated?: (event: RunEvent) => void
   onSessionWorkspaceUpdated?: (event: RunEvent) => void
+  onSessionSettingsUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onQueueInsertionUpdated?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
@@ -235,6 +243,7 @@ const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
 const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
 const sessionWorkspaceUpdatedHandlers = new Set<(event: RunEvent) => void>()
+const sessionSettingsUpdatedHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -533,6 +542,13 @@ function globalSessionWorkspaceUpdatedHandler(event: RunEvent): void {
   }
 }
 
+function globalSessionSettingsUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+  sessionEventHandlers.get(sid)?.onSessionSettingsUpdated?.(event)
+  for (const handler of sessionSettingsUpdatedHandlers) handler(event)
+}
+
 function globalAgentEventHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
@@ -642,6 +658,7 @@ export function registerSessionHandlers(
     onSessionCommand?: (event: RunEvent) => void
     onSessionTitleUpdated?: (event: RunEvent) => void
     onSessionWorkspaceUpdated?: (event: RunEvent) => void
+    onSessionSettingsUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onQueueInsertionUpdated?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
@@ -692,6 +709,13 @@ export function onSessionWorkspaceUpdated(handler: (event: RunEvent) => void): (
   sessionWorkspaceUpdatedHandlers.add(handler)
   return () => {
     sessionWorkspaceUpdatedHandlers.delete(handler)
+  }
+}
+
+export function onSessionSettingsUpdated(handler: (event: RunEvent) => void): () => void {
+  sessionSettingsUpdatedHandlers.add(handler)
+  return () => {
+    sessionSettingsUpdatedHandlers.delete(handler)
   }
 }
 
@@ -827,6 +851,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
     chatRunSocket.on('session.command', globalSessionCommandHandler)
     chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
     chatRunSocket.on('session.workspace.updated', globalSessionWorkspaceUpdatedHandler)
+    chatRunSocket.on('session.settings.updated', globalSessionSettingsUpdatedHandler)
 
     globalListenersRegistered = true
   }
@@ -1081,6 +1106,9 @@ export function startRunViaSocket(
       onDone()
     },
     onSessionTitleUpdated: (evt: RunEvent) => {
+      onEvent(evt)
+    },
+    onSessionSettingsUpdated: (evt: RunEvent) => {
       onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {

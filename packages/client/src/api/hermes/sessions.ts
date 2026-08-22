@@ -13,6 +13,7 @@ export interface SessionSummary {
   model: string
   provider?: string
   api_mode?: ProviderApiMode
+  reasoning_effort?: string
   title: string | null
   parent_session_id?: string | null
   fork_point_message_id?: string | null
@@ -548,6 +549,18 @@ export async function setSessionModel(id: string, model: string, provider: strin
     await request(`/api/hermes/sessions/${id}/model`, {
       method: 'POST',
       body: JSON.stringify({ model, provider, apiMode }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function setSessionReasoningEffort(id: string, reasoningEffort: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/reasoning-effort`, {
+      method: 'POST',
+      body: JSON.stringify({ reasoningEffort }),
     })
     return true
   } catch {

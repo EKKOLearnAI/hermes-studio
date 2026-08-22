@@ -442,7 +442,8 @@ export async function handleEkkoAgentRun(
   const baseUrl = runtimeConfig.baseUrl || ''
   const apiMode = runtimeConfig.apiMode
   const apiKey = runtimeConfig.apiKey
-  const reasoningEffort = resolveReasoningEffort(data.reasoning_effort)
+  const persistedReasoningEffort = normalizeReasoningEffort(data.reasoning_effort ?? storedSession?.reasoning_effort)
+  const reasoningEffort = resolveReasoningEffort(persistedReasoningEffort)
   const agent = getGlobalEkkoAgent(profile)
   const workspace = data.workspace || storedSession?.workspace || agent.sessionWorkspaceDirectory(sessionId)
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
@@ -488,6 +489,7 @@ export async function handleEkkoAgentRun(
       model: modelConfig.model,
       provider: modelConfig.provider,
       api_mode: apiMode || '',
+      reasoning_effort: persistedReasoningEffort || '',
       title,
       workspace,
       category_id: data.category_id,

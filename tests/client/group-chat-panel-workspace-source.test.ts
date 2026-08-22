@@ -501,6 +501,7 @@ describe('GroupChatPanel workspace save handling', () => {
 
   it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const linkView = readFileSync('packages/client/src/views/hermes/GroupChatLinkView.vue', 'utf8')
 
     expect(source).toContain("const selectedAgentProvider = ref('')")
     expect(source).toContain("const selectedAgentModel = ref('')")
@@ -510,6 +511,11 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('model: selectedAgentModel.value')
     expect(source).toContain("apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value")
     expect(source).toContain('reasoningEffort: selectedAgentReasoningEffort.value')
+    for (const modelSource of [source, linkView]) {
+      expect(modelSource).toContain('function handleAgentModelChange(model: string)')
+      expect(modelSource).toContain("selectedAgentReasoningEffort.value = ''")
+      expect(modelSource).toContain('@update:value="handleAgentModelChange"')
+    }
     expect(source).toContain('inferCodingAgentApiMode(')
     expect(source).toContain('normalizeCodingAgentApiMode(')
     expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")

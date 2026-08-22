@@ -23,6 +23,7 @@ const unarchiveMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setReasoningEffortMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
 const createWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -69,6 +70,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   setWorkspace: setWorkspaceMock,
   setCategory: setCategoryMock,
   setModel: setModelMock,
+  setReasoningEffort: setReasoningEffortMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
   createWorkspaceFolder: createWorkspaceFolderMock,
   renameWorkspaceFolder: renameWorkspaceFolderMock,
@@ -115,6 +117,7 @@ describe('session routes', () => {
     unarchiveMock.mockClear()
     setCategoryMock.mockClear()
     setModelMock.mockClear()
+    setReasoningEffortMock.mockClear()
     listWorkspaceFoldersMock.mockClear()
     createWorkspaceFolderMock.mockClear()
     renameWorkspaceFolderMock.mockClear()
@@ -171,6 +174,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/:id/unarchive',
       '/api/hermes/sessions/:id/category',
       '/api/hermes/sessions/:id/model',
+      '/api/hermes/sessions/:id/reasoning-effort',
       '/api/hermes/workspace/folders',
       '/api/hermes/workspace/folders/rename',
     ]))

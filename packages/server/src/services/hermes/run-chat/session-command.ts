@@ -1214,6 +1214,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     model: parent.model || ctx.model || '',
     provider: parent.provider || ctx.provider || '',
     api_mode: parent.api_mode || '',
+    reasoning_effort: parent.reasoning_effort || '',
     title,
     parent_session_id: parentSessionId,
     workspace: parent.workspace || undefined,

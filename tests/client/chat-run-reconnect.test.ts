@@ -225,6 +225,29 @@ describe('chat-run socket reconnect handling', () => {
     expect(onGlobalCommand).toHaveBeenCalledTimes(1)
   })
 
+  it('fans session settings updates to idle global listeners without a running stream', async () => {
+    const { onSessionSettingsUpdated, resumeSession } = await import('../../packages/client/src/api/hermes/chat')
+    const onSettingsUpdated = vi.fn()
+    const offSettingsUpdated = onSessionSettingsUpdated(onSettingsUpdated)
+
+    resumeSession('session-1', vi.fn(), 'default')
+    const socket = socketState.sockets[0]
+    const event = {
+      event: 'session.settings.updated',
+      session_id: 'session-1',
+      model: 'gpt-5.5',
+      provider: 'openai',
+      reasoning_effort: 'high',
+    }
+
+    socket.__trigger('session.settings.updated', event)
+
+    expect(onSettingsUpdated).toHaveBeenCalledWith(event)
+    offSettingsUpdated()
+    socket.__trigger('session.settings.updated', { ...event, reasoning_effort: 'low' })
+    expect(onSettingsUpdated).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the session listener alive while background delegations remain', async () => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
     const onEvent = vi.fn()

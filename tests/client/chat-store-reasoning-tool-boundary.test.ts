@@ -26,6 +26,7 @@ vi.mock('@/api/hermes/chat', () => ({
   onSessionCommand: vi.fn(() => vi.fn()),
   onSessionTitleUpdated: vi.fn(() => vi.fn()),
   onSessionWorkspaceUpdated: vi.fn(() => vi.fn()),
+  onSessionSettingsUpdated: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -713,6 +714,7 @@ describe('chat store reasoning/tool boundaries', () => {
     session.baseUrl = 'https://api.xiaomimimo.com/v1'
     session.apiKey = 'sk-xiaomi'
     session.apiMode = 'chat_completions'
+    session.reasoningEffort = 'high'
     store.sessions = [session]
     store.activeSessionId = 'session-1'
     store.activeSession = session
@@ -731,6 +733,7 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(session.baseUrl).toBeUndefined()
     expect(session.apiKey).toBeUndefined()
     expect(session.apiMode).toBe('chat_completions')
+    expect(session.reasoningEffort).toBeUndefined()
   })
 
   it('keeps a local-only session workspace when switching models before the first message', async () => {
@@ -740,6 +743,7 @@ describe('chat store reasoning/tool boundaries', () => {
     session.workspace = 'D:\\projects\\hermes'
     session.provider = 'deepseek'
     session.model = 'deepseek-chat'
+    session.reasoningEffort = 'max'
     store.sessions = [session]
     store.activeSessionId = 'session-1'
     store.activeSession = session
@@ -750,6 +754,7 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(sessionsApi.setSessionModel).not.toHaveBeenCalled()
     expect(session.model).toBe('deepseek-reasoner')
     expect(session.provider).toBe('deepseek')
+    expect(session.reasoningEffort).toBeUndefined()
     expect(session.workspace).toBe('D:\\projects\\hermes')
     expect(session.isLocalOnly).toBe(true)
 

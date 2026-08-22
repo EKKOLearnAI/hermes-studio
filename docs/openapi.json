@@ -5278,6 +5278,160 @@
         }
       }
     },
+    "/api/hermes/group-chat/agent-presets": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "List agent-presets",
+        "description": "GET /api/hermes/group-chat/agent-presets",
+        "operationId": "list",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create agent-presets",
+        "description": "POST /api/hermes/group-chat/agent-presets",
+        "operationId": "create",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat/agent-presets/{presetId}": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update :presetId",
+        "description": "PUT /api/hermes/group-chat/agent-presets/:presetId",
+        "operationId": "update",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "presetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Delete :presetId",
+        "description": "DELETE /api/hermes/group-chat/agent-presets/:presetId",
+        "operationId": "remove",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "presetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/invites/{code}/agent-link-handoffs": {
       "post": {
         "tags": [
@@ -6141,41 +6295,8 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {
-                  "agent": {
-                    "type": "string"
-                  },
-                  "apiMode": {
-                    "type": "string"
-                  },
-                  "avatar": {
-                    "type": "string"
-                  },
-                  "description": {
-                    "type": "string"
-                  },
-                  "invited": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "profile": {
-                    "type": "string"
-                  },
-                  "provider": {
-                    "type": "string"
-                  },
-                  "reasoningEffort": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "profile"
-                ]
+                "properties": {},
+                "additionalProperties": true
               }
             }
           }
@@ -12426,6 +12547,54 @@
                 "required": [
                   "model"
                 ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/{id}/reasoning-effort": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create reasoning-effort",
+        "description": "POST /api/hermes/sessions/:id/reasoning-effort",
+        "operationId": "setReasoningEffort",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
               }
             }
           }

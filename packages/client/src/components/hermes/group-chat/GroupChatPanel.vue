@@ -441,6 +441,7 @@ function syncAgentModelSelection(profile: string) {
     const defaults = getDefaultAgentModel(profile)
     selectedAgentProvider.value = defaults.provider
     selectedAgentModel.value = defaults.model
+    selectedAgentReasoningEffort.value = ''
     syncAgentApiMode()
 }
 
@@ -457,7 +458,13 @@ function handleAgentTypeChange(agent: GroupAgentType) {
 function handleAgentProviderChange(provider: string) {
     selectedAgentProvider.value = provider
     selectedAgentModel.value = agentModelOptions.value[0]?.value || ''
+    selectedAgentReasoningEffort.value = ''
     syncAgentApiMode()
+}
+
+function handleAgentModelChange(model: string) {
+    selectedAgentModel.value = model
+    selectedAgentReasoningEffort.value = ''
 }
 
 function agentAvatarName(agent: RoomAgent): string {
@@ -2674,11 +2681,12 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                     <div class="form-group">
                         <label class="form-label">{{ t('models.models') }}</label>
                         <NSelect
-                            v-model:value="selectedAgentModel"
+                            :value="selectedAgentModel"
                             :options="agentModelOptions"
                             :placeholder="t('models.selectModel')"
                             :disabled="!selectedAgentProvider"
                             filterable
+                            @update:value="handleAgentModelChange"
                         />
                     </div>
                     <div v-if="selectedAgentType !== 'hermes'" class="form-group">

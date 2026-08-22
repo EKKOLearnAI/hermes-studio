@@ -230,6 +230,19 @@ export class ChatRunSocket {
     this.nsp = io.of('/chat-run')
   }
 
+  emitSessionSettingsUpdated(sessionId: string, settings: {
+    model?: string
+    provider?: string
+    api_mode?: string
+    reasoning_effort?: string
+  }): void {
+    this.nsp.to(`session:${sessionId}`).emit('session.settings.updated', {
+      event: 'session.settings.updated',
+      session_id: sessionId,
+      ...settings,
+    })
+  }
+
   init() {
     this.closing = false
     this.nsp.use(this.authMiddleware.bind(this))
@@ -1231,6 +1244,10 @@ export class ChatRunSocket {
       parentLastMessage: sessionDetail?.parent_last_message || null,
       parentLastMessageRole: sessionDetail?.parent_last_message_role || null,
       workspace: sessionDetail?.workspace || null,
+      model: sessionDetail?.model || '',
+      provider: sessionDetail?.provider || '',
+      api_mode: sessionDetail?.api_mode || '',
+      reasoning_effort: sessionDetail?.reasoning_effort || '',
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents),

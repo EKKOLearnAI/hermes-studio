@@ -1229,6 +1229,7 @@ export class CodingAgentRunManager {
       model: run.launch.model,
       provider: run.launch.provider,
       api_mode: run.launch.apiMode || '',
+      reasoning_effort: run.launch.reasoningEffort || '',
       title: '',
       workspace: run.launch.workspaceDir,
     })

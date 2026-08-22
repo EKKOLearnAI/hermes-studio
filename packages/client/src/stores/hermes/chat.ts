@@ -1,11 +1,11 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { ProviderApiMode } from '@/api/hermes/system'
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
@@ -1112,6 +1112,7 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     apiMode: s.api_mode,
+    reasoningEffort: s.reasoning_effort || undefined,
     messageCount: s.message_count,
     messageTotal: s.message_count,
     loadedMessageCount: 0,
@@ -1329,6 +1330,9 @@ export const useChatStore = defineStore('chat', () => {
   let loadSessionsRequestSequence = 0
   let switchSessionRequestSequence = 0
   let activeSelectionSequence = 0
+  const reasoningEffortWriteChains = new Map<string, Promise<boolean>>()
+  const reasoningEffortWriteTargets = new Map<string, string | undefined>()
+  const reasoningEffortConfirmedValues = new Map<string, string | undefined>()
 
   function beginMessageLoad(sessionId: string, requestSequence: number) {
     const next = new Map(messageLoadRequests.value)
@@ -1699,6 +1703,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.model = fresh.model
           existing.provider = fresh.provider
           existing.apiMode = fresh.apiMode || existing.apiMode
+          existing.reasoningEffort = fresh.reasoningEffort
           existing.messageCount = fresh.messageCount
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
@@ -1904,6 +1909,7 @@ export const useChatStore = defineStore('chat', () => {
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
+          applyResumedSessionSettings(data)
           if (typeof data.workspace === 'string') {
             target.workspace = data.workspace.trim() || null
             target.isLocalOnly = false
@@ -2177,6 +2183,7 @@ export const useChatStore = defineStore('chat', () => {
       : undefined)
     const isLocalOnly = target?.isLocalOnly === true || activeTarget?.isLocalOnly === true
     if (!isLocalOnly) {
+      await reasoningEffortWriteChains.get(targetId)?.catch(() => false)
       const ok = await setSessionModel(targetId, modelId, provider || '', preservedApiMode)
       if (!ok) return false
     }
@@ -2184,12 +2191,14 @@ export const useChatStore = defineStore('chat', () => {
       target.model = modelId
       target.provider = provider || ''
       target.apiMode = preservedApiMode
+      target.reasoningEffort = undefined
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(target)
     }
     if (activeTarget) {
       activeTarget.model = modelId
       activeTarget.provider = provider || ''
       activeTarget.apiMode = preservedApiMode
+      activeTarget.reasoningEffort = undefined
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
     return true
@@ -3123,6 +3132,36 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function applySessionSettingsUpdate(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const targets = [sessions.value.find(s => s.id === sid), activeSession.value?.id === sid ? activeSession.value : null]
+      .filter((session): session is Session => Boolean(session))
+    for (const target of new Set(targets)) {
+      if (typeof evt.model === 'string') target.model = evt.model
+      if (typeof evt.provider === 'string') target.provider = evt.provider
+      if (typeof evt.api_mode === 'string') target.apiMode = evt.api_mode as ProviderApiMode || undefined
+      if (typeof evt.reasoning_effort === 'string') {
+        const incomingEffort = evt.reasoning_effort || undefined
+        const pendingEffort = reasoningEffortWriteTargets.get(sid)
+        if (!reasoningEffortWriteTargets.has(sid) || pendingEffort === incomingEffort) {
+          target.reasoningEffort = incomingEffort
+        }
+      }
+    }
+  }
+
+  function applyResumedSessionSettings(data: ResumeSessionPayload) {
+    applySessionSettingsUpdate({
+      event: 'session.settings.updated',
+      session_id: data.session_id,
+      ...(typeof data.model === 'string' ? { model: data.model } : {}),
+      ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
+      ...(typeof data.api_mode === 'string' ? { api_mode: data.api_mode || undefined } : {}),
+      ...(typeof data.reasoning_effort === 'string' ? { reasoning_effort: data.reasoning_effort } : {}),
+    })
+  }
+
   function primeNotificationSoundIfEnabled() {
     const { display } = useSettingsStore()
     if (display.bell_on_complete || display.approval_bell) {
@@ -3429,6 +3468,7 @@ export const useChatStore = defineStore('chat', () => {
         if (data.inputTokens != null) target.inputTokens = data.inputTokens
         if (data.outputTokens != null) target.outputTokens = data.outputTokens
         if (data.contextTokens != null) target.contextTokens = data.contextTokens
+        applyResumedSessionSettings(data)
 
         if (Array.isArray(data.messages)) {
           const previousActiveAssistantMessageId = activeAssistantMessageId
@@ -3586,6 +3626,11 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'session.workspace.updated': {
               applySessionWorkspaceUpdate(evt)
+              break
+            }
+
+            case 'session.settings.updated': {
+              applySessionSettingsUpdate(evt)
               break
             }
 
@@ -4292,6 +4337,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'session.settings.updated': {
+          applySessionSettingsUpdate(evt)
+          break
+        }
+
         case 'agent.event': {
           handleAgentEvent(evt)
           break
@@ -4873,6 +4923,7 @@ export const useChatStore = defineStore('chat', () => {
       onAgentEvent: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onSessionWorkspaceUpdated: (evt) => handleEvent(evt),
+      onSessionSettingsUpdated: applySessionSettingsUpdate,
       onRunQueued: (evt) => handleEvent(evt),
       onQueueInsertionUpdated: (evt) => handleEvent(evt),
       onClarifyRequested: (evt) => handleEvent(evt),
@@ -4964,6 +5015,7 @@ export const useChatStore = defineStore('chat', () => {
 
   onSessionTitleUpdated(applyGeneratedSessionTitle)
   onSessionWorkspaceUpdated(applySessionWorkspaceUpdate)
+  onSessionSettingsUpdated(applySessionSettingsUpdate)
 
   function stopStreaming() {
     const sid = activeSessionId.value
@@ -5016,6 +5068,7 @@ export const useChatStore = defineStore('chat', () => {
               setAbortState(sid, null)
             }
             if (!data.isWorking) setCompressionState(sid, null)
+            applyResumedSessionSettings(data)
             if (data.messages?.length && activeSession.value) {
               if (typeof data.workspace === 'string') {
                 activeSession.value.workspace = data.workspace.trim() || null
@@ -5100,41 +5153,44 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Persisted in localStorage keyed by sessionId so the choice survives
-  // page reloads. Cleared on session deletion is NOT implemented (best-effort
-  // — orphan keys are tiny and never read again).
-  const REASONING_LS_PREFIX = 'hermes:reasoning_effort:'
-  function setSessionReasoningEffort(sessionId: string, effort: string) {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session) return
-    session.reasoningEffort = effort || undefined
-    try {
-      if (effort) {
-        localStorage.setItem(REASONING_LS_PREFIX + sessionId, effort)
-      } else {
-        localStorage.removeItem(REASONING_LS_PREFIX + sessionId)
-      }
-    } catch {
-      // localStorage may be unavailable (private mode); silently ignore
+  async function setSessionReasoningEffort(sessionId: string, effort: string): Promise<boolean> {
+    const target = sessions.value.find(s => s.id === sessionId)
+    const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
+    const session = target || activeTarget
+    if (!session) return false
+
+    const nextEffort = effort || undefined
+    const previousEffort = session.reasoningEffort
+    if (target) target.reasoningEffort = nextEffort
+    if (activeTarget) activeTarget.reasoningEffort = nextEffort
+    if (session.isLocalOnly) return true
+
+    if (!reasoningEffortWriteChains.has(sessionId)) {
+      reasoningEffortConfirmedValues.set(sessionId, previousEffort)
     }
+    reasoningEffortWriteTargets.set(sessionId, nextEffort)
+    const previousWrite = reasoningEffortWriteChains.get(sessionId) || Promise.resolve(true)
+    const write: Promise<boolean> = previousWrite
+      .catch(() => false)
+      .then(() => persistSessionReasoningEffort(sessionId, effort))
+      .then((ok) => {
+        if (ok) reasoningEffortConfirmedValues.set(sessionId, nextEffort)
+        if (!ok && reasoningEffortWriteTargets.get(sessionId) === nextEffort) {
+          const confirmedEffort = reasoningEffortConfirmedValues.get(sessionId)
+          if (target) target.reasoningEffort = confirmedEffort
+          if (activeTarget) activeTarget.reasoningEffort = confirmedEffort
+        }
+        return ok
+      })
+      .finally(() => {
+        if (reasoningEffortWriteChains.get(sessionId) !== write) return
+        reasoningEffortWriteChains.delete(sessionId)
+        reasoningEffortWriteTargets.delete(sessionId)
+        reasoningEffortConfirmedValues.delete(sessionId)
+      })
+    reasoningEffortWriteChains.set(sessionId, write)
+    return write
   }
-  function getStoredReasoningEffort(sessionId: string): string | undefined {
-    try {
-      return localStorage.getItem(REASONING_LS_PREFIX + sessionId) || undefined
-    } catch {
-      return undefined
-    }
-  }
-  // Hydrate reasoningEffort onto sessions whenever they come in fresh from
-  // the server (mapHermesSession doesn't carry this — it's client-only state).
-  watch(sessions, (list) => {
-    for (const s of list) {
-      if (s.reasoningEffort === undefined) {
-        const stored = getStoredReasoningEffort(s.id)
-        if (stored) s.reasoningEffort = stored
-      }
-    }
-  }, { deep: false })
 
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
