@@ -4,7 +4,7 @@ import { NModal, NForm, NFormItem, NInput, NButton, NSelect, useMessage } from '
 import { useI18n } from 'vue-i18n'
 import { probeVoiceProvider, type VoiceProviderProbeModel } from '@/api/hermes/voice-provider-probe'
 import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
-import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice } from '@/constants/doubaoTtsVoices'
+import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE, DOUBAO_TTS_ICL_RESOURCE_ID, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice, serializeDoubaoTtsCloneVoices, type DoubaoTtsCloneVoice } from '@/constants/doubaoTtsVoices'
 import type { VoiceApiKind, VoiceApiProviderCompatibility } from '@/types/voice-api'
 
 const props = defineProps<{
@@ -16,7 +16,7 @@ const emit = defineEmits<{
   close: []
   saved: [payload: {
     preset: typeof VOICE_API_PRESETS[number]
-    settings: Record<string, string>
+    settings: Record<string, unknown>
     secrets: Record<string, string>
   }]
 }>()
@@ -34,6 +34,7 @@ const formData = ref({
   voice: '',
   audioTranscode: 'none',
 })
+const cloneVoices = ref<DoubaoTtsCloneVoice[]>([])
 
 const modelManuallyEdited = ref(false)
 const modelTouched = ref(false)
@@ -64,6 +65,12 @@ const isCustomProvider = computed(() => selectedPreset.value?.provider === 'cust
 const isDoubaoTtsPreset = computed(() => props.kind === 'tts' && selectedPreset.value?.provider === 'doubao')
 const canProbeModels = computed(() => compatibility.value === 'openai-compatible')
 const modelOptions = computed(() => {
+  if (isDoubaoTtsPreset.value) {
+    return [
+      { label: 'Seed TTS 2.0', value: DOUBAO_TTS_2_RESOURCE_ID },
+      { label: 'Seed ICL 2.0', value: DOUBAO_TTS_ICL_RESOURCE_ID },
+    ]
+  }
   const discovered = probeModels.value.map(model => ({
     label: model.capability === 'preferred' ? `${model.label} · ${t('settings.voice.modelRecommendedSuffix')}` : model.label,
     value: model.id,
@@ -79,6 +86,9 @@ const sttAudioTranscodeOptions = computed(() => [
   { label: t('settings.voice.sttAudioTranscodeFfmpeg'), value: 'ffmpeg' },
 ])
 const doubaoVoiceOptions = computed(() => {
+  if (formData.value.model.trim() === DOUBAO_TTS_ICL_RESOURCE_ID) {
+    return cloneVoices.value.map(option => ({ label: option.name, value: option.id }))
+  }
   const current = formData.value.voice.trim()
   const presetOptions = DOUBAO_TTS_VOICE_OPTIONS.map(option => ({
     label: option.label,
@@ -119,7 +129,7 @@ const canSave = computed(() => {
     if (validateBaseUrl(formData.value.baseUrl)) return false
   }
   if (selectedPreset.value.capabilities?.models && !formData.value.model.trim()) return false
-  if (isDoubaoTtsPreset.value && !formData.value.voice.trim()) return false
+  if (isDoubaoTtsPreset.value && (!formData.value.voice.trim() || (formData.value.model.trim() === DOUBAO_TTS_ICL_RESOURCE_ID && !cloneVoices.value.length))) return false
   return true
 })
 const connectHelpText = computed(() => {
@@ -157,6 +167,7 @@ function resetForm() {
   selectedPresetId.value = null
   compatibility.value = 'openai-compatible'
   formData.value = { baseUrl: '', apiKey: '', model: '', voice: '', audioTranscode: 'none' }
+  cloneVoices.value = []
   modelManuallyEdited.value = false
   modelTouched.value = false
   baseUrlTouched.value = false
@@ -227,13 +238,41 @@ function handlePresetChange(id: string) {
 
 function handleModelUpdate(value: string) {
   formData.value.model = value || ''
+  if (isDoubaoTtsPreset.value) {
+    formData.value.voice = value === DOUBAO_TTS_ICL_RESOURCE_ID
+      ? (cloneVoices.value[0]?.id || '')
+      : DOUBAO_TTS_DEFAULT_VOICE
+  }
   modelManuallyEdited.value = true
   modelTouched.value = true
 }
 
 function handleDoubaoVoiceUpdate(value: string) {
-  formData.value.voice = value || ''
-  formData.value.model = doubaoTtsResourceForVoice(value) || DOUBAO_TTS_2_RESOURCE_ID
+  const next = value || ''
+  if (formData.value.model.trim() === DOUBAO_TTS_ICL_RESOURCE_ID) {
+    const existing = cloneVoices.value.find(voice => voice.id === next)
+    if (existing) {
+      formData.value.voice = existing.id
+      return
+    }
+    const comma = next.indexOf(',')
+    const id = comma >= 0 ? next.slice(0, comma).trim() : ''
+    const name = comma >= 0 ? next.slice(comma + 1).trim() : ''
+    if (!id || !name) {
+      message.warning(t('settings.voice.doubaoCloneVoiceFormatError'))
+      return
+    }
+    const duplicate = cloneVoices.value.find(voice => voice.id === id)
+    if (duplicate) {
+      formData.value.voice = duplicate.id
+      return
+    }
+    cloneVoices.value.push({ id, name })
+    formData.value.voice = id
+    return
+  }
+  formData.value.voice = next
+  formData.value.model = doubaoTtsResourceForVoice(next) || DOUBAO_TTS_2_RESOURCE_ID
   modelTouched.value = true
   modelManuallyEdited.value = false
 }
@@ -344,6 +383,7 @@ async function handleSave() {
         baseUrl: normalizeBaseUrl(formData.value.baseUrl),
         model: formData.value.model.trim(),
         ...(props.kind === 'tts' && formData.value.voice.trim() ? { voice: formData.value.voice.trim() } : {}),
+        ...(isDoubaoTtsPreset.value && formData.value.model.trim() === DOUBAO_TTS_ICL_RESOURCE_ID ? { cloneVoices: serializeDoubaoTtsCloneVoices(cloneVoices.value) } : {}),
         ...(props.kind === 'stt' ? { audioTranscode: formData.value.audioTranscode } : {}),
       },
       secrets: {
@@ -469,7 +509,7 @@ async function handleSave() {
         <section v-if="kind === 'tts' && selectedPreset.capabilities?.voices" class="form-section">
           <div class="section-heading">
             <span>{{ t('settings.voice.voice') }}</span>
-            <small>{{ t('settings.voice.doubaoVoiceHint') }}</small>
+            <small>{{ formData.model === DOUBAO_TTS_ICL_RESOURCE_ID ? t('settings.voice.doubaoCloneVoiceHint') : t('settings.voice.doubaoVoiceHint') }}</small>
           </div>
 
           <NFormItem :label="t('settings.voice.voice')">
@@ -479,6 +519,7 @@ async function handleSave() {
               :options="doubaoVoiceOptions"
               tag
               filterable
+              :placeholder="formData.model === DOUBAO_TTS_ICL_RESOURCE_ID ? t('settings.voice.doubaoCloneVoicePlaceholder') : undefined"
               data-testid="voice-provider-voice"
               @update:value="handleDoubaoVoiceUpdate"
             />
@@ -547,6 +588,7 @@ async function handleSave() {
   display: flex;
   justify-content: flex-start;
 }
+
 
 .inline-error {
   display: grid;

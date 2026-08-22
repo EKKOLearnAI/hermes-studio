@@ -24,6 +24,7 @@ const SETTINGS_KEYS = [
   'baseUrlPresets',
   'model',
   'voice',
+  'cloneVoices',
   'rate',
   'pitch',
   'authMode',

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { NDrawer, NDrawerContent, NForm, NFormItem, NInput, NSelect, NSlider, NButton, NSpace } from 'naive-ui'
+import { NDrawer, NDrawerContent, NForm, NFormItem, NInput, NSelect, NSlider, NButton, NSpace, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { VoiceApiConnection, VoiceApiSavePayload } from '@/types/voice-api'
 import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
-import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice } from '@/constants/doubaoTtsVoices'
+import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_ICL_RESOURCE_ID, DOUBAO_TTS_VOICE_OPTIONS, doubaoTtsResourceForVoice, parseDoubaoTtsCloneVoices, serializeDoubaoTtsCloneVoices, type DoubaoTtsCloneVoice } from '@/constants/doubaoTtsVoices'
 import { EDGE_TTS_VOICE_OPTIONS } from '@/constants/edgeTtsVoices'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
@@ -20,6 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const message = useMessage()
 const voiceSettings = useVoiceSettings()
 
 const loading = ref(false)
@@ -29,6 +30,7 @@ const mimoCloneAudioInput = ref<HTMLInputElement | null>(null)
 const mimoCloneDataUri = ref('')
 const mimoCloneFileName = ref('')
 const mimoCloneFormat = ref<'mp3' | 'wav'>('wav')
+const cloneVoices = ref<DoubaoTtsCloneVoice[]>([])
 const MIMO_CLONE_AUDIO_MAX_BYTES = 10 * 1024 * 1024
 const MIMO_CLONE_AUDIO_ACCEPT = 'audio/mpeg,audio/mp3,audio/wav,.mp3,.wav'
 
@@ -64,6 +66,7 @@ watch(() => props.connection, (conn) => {
       model: conn.model || String(conn.settings.model || ''),
       voice: conn.voice || String(conn.settings.voice || ''),
     }
+    cloneVoices.value = parseDoubaoTtsCloneVoices(conn.settings.cloneVoices, conn.voice || String(conn.settings.voice || ''))
     if (conn.provider === 'edge') {
       formData.value.rate = numberField('rate', 1.0)
       formData.value.pitch = numberField('pitch', 0)
@@ -134,6 +137,13 @@ async function handleSave() {
   try {
     const apiKey = apiKeyInput.value.trim()
     const settings: Record<string, unknown> = { ...formData.value }
+    if (props.connection.provider === 'doubao') {
+      if (stringField('model') === DOUBAO_TTS_ICL_RESOURCE_ID) {
+        settings.cloneVoices = serializeDoubaoTtsCloneVoices(cloneVoices.value)
+      } else {
+        delete settings.cloneVoices
+      }
+    }
     if (props.connection.provider === 'mimo') {
       const model = stringField('model')
       settings.voiceMode = model === 'mimo-v2.5-tts-voiceclone'
@@ -182,9 +192,13 @@ const mimoModelOptions = [
 
 const doubaoModelOptions = [
   { label: 'Seed TTS 2.0', value: DOUBAO_TTS_2_RESOURCE_ID },
+  { label: 'Seed ICL 2.0', value: DOUBAO_TTS_ICL_RESOURCE_ID },
 ]
 
 const doubaoVoiceOptions = computed(() => {
+  if (stringField('model') === DOUBAO_TTS_ICL_RESOURCE_ID) {
+    return cloneVoices.value.map(option => ({ label: option.name, value: option.id }))
+  }
   const current = stringField('voice').trim()
   const presetOptions = DOUBAO_TTS_VOICE_OPTIONS.map(option => ({
     label: option.label,
@@ -207,7 +221,38 @@ const booleanOptions = computed(() => [
 
 function handleDoubaoVoiceUpdate(value: string) {
   setField('voice', value)
-  setField('model', doubaoTtsResourceForVoice(value) || DOUBAO_TTS_2_RESOURCE_ID)
+  if (stringField('model') !== DOUBAO_TTS_ICL_RESOURCE_ID) setField('model', doubaoTtsResourceForVoice(value) || DOUBAO_TTS_2_RESOURCE_ID)
+}
+
+function handleDoubaoModelUpdate(value: string) {
+  setField('model', value)
+  if (value === DOUBAO_TTS_ICL_RESOURCE_ID) {
+    setField('voice', cloneVoices.value[0]?.id || '')
+  } else {
+    setField('voice', DOUBAO_TTS_VOICE_OPTIONS[0]?.value || '')
+  }
+}
+
+function handleDoubaoCloneVoiceUpdate(value: string) {
+  const existing = cloneVoices.value.find(voice => voice.id === value)
+  if (existing) {
+    setField('voice', existing.id)
+    return
+  }
+  const comma = value.indexOf(',')
+  const id = comma >= 0 ? value.slice(0, comma).trim() : ''
+  const name = comma >= 0 ? value.slice(comma + 1).trim() : ''
+  if (!id || !name) {
+    message.warning(t('settings.voice.doubaoCloneVoiceFormatError'))
+    return
+  }
+  const duplicate = cloneVoices.value.find(voice => voice.id === id)
+  if (duplicate) {
+    setField('voice', duplicate.id)
+    return
+  }
+  cloneVoices.value.push({ id, name })
+  setField('voice', id)
 }
 </script>
 
@@ -238,7 +283,7 @@ function handleDoubaoVoiceUpdate(value: string) {
             :options="doubaoModelOptions"
             tag
             filterable
-            @update:value="value => setField('model', value)"
+            @update:value="handleDoubaoModelUpdate"
           />
           <NInput
             v-else
@@ -275,7 +320,8 @@ function handleDoubaoVoiceUpdate(value: string) {
             :options="doubaoVoiceOptions"
             tag
             filterable
-            @update:value="handleDoubaoVoiceUpdate"
+            :placeholder="stringField('model') === DOUBAO_TTS_ICL_RESOURCE_ID ? t('settings.voice.doubaoCloneVoicePlaceholder') : undefined"
+            @update:value="stringField('model') === DOUBAO_TTS_ICL_RESOURCE_ID ? handleDoubaoCloneVoiceUpdate : handleDoubaoVoiceUpdate"
           />
           <NInput
             v-else

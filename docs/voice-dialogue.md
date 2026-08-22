@@ -44,6 +44,17 @@ Web UI catalog entries are backed by working server adapters:
 - TTS: Edge, OpenAI-compatible, MiMo, Doubao, ElevenLabs, Gemini, xAI, Mistral, MiniMax, and DeepInfra.
 - STT: Browser, OpenAI-compatible, Doubao, Groq, Mistral, xAI, ElevenLabs, and DeepInfra.
 
+## Doubao Seed ICL voices
+
+The TTS provider editor supports the `seed-icl-2.0` resource for Volcengine
+voice-clone voices. Select that model, then enter each saved voice as
+`voice-id,voice-name` in the voice field. The voice name is only for display;
+the voice ID is sent to Doubao as the active `speaker`.
+
+Multiple clone voices can be saved. Selecting a voice keeps its ID in the
+provider's `voice` setting, while the complete list is stored in `cloneVoices`.
+Existing configurations that only contain a single `voice` remain supported.
+
 Provider-specific calls follow Hermes Agent's native contracts. For example, ElevenLabs uses `xi-api-key`, xAI uses its dedicated `/v1/tts` and `/v1/stt` endpoints, Mistral TTS decodes `audio_data`, Gemini wraps returned 24 kHz PCM as WAV, and MiniMax decodes its hex audio payload. Local model providers remain native to Hermes rather than being duplicated in the Node server.
 
 ## Barge-in and cancellation

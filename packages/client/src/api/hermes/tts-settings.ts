@@ -8,6 +8,7 @@ export interface TtsStoredSettings {
   baseUrlPresets?: string[]
   model?: string
   voice?: string
+  cloneVoices?: string
   rate?: string
   pitch?: string
   authMode?: string

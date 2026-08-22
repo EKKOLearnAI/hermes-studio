@@ -93,6 +93,7 @@ const translations: Record<string, string> = {
   'settings.voice.presetEdgeTtsDescription': 'Free high-quality cloud voices from Microsoft Edge.',
   'settings.voice.presetOpenaiTtsLabel': 'OpenAI TTS',
   'settings.voice.presetMimoTtsLabel': 'MiMo TTS',
+  'settings.voice.presetDoubaoTtsLabel': 'Volcengine Doubao TTS',
   'settings.voice.presetCustomTtsLabel': 'Custom TTS',
   'settings.voice.presetBrowserSttLabel': 'Browser STT',
   'settings.voice.presetBrowserSttDescription': 'Native browser speech recognition API.',
@@ -110,6 +111,10 @@ const translations: Record<string, string> = {
   'settings.voice.connectFetchModels': 'Connect & fetch models',
   'settings.voice.modelRecommendedSuffix': 'recommended',
   'settings.voice.modelConnectManualHint': 'Connect to auto-fill, or enter manually.',
+  'settings.voice.doubaoVoiceHint': 'Select a Seed TTS 2.0 voice.',
+  'settings.voice.doubaoCloneVoiceHint': 'Enter voice ID,voice name.',
+  'settings.voice.doubaoCloneVoicePlaceholder': 'Example: S_xxxxx,My voice',
+  'settings.voice.doubaoCloneVoiceFormatError': 'Enter voice ID,voice name.',
   'settings.voice.modelRequiredConnectManual': 'Model is required. Connect to auto-fill, or enter manually.',
   'settings.voice.apiKeyRequired': 'API key is required.',
   'settings.voice.apiKeyRequiredForDiscovery': 'API key is required to fetch models.',
@@ -1065,6 +1070,69 @@ describe('VoiceSettings STT UI', () => {
       secrets: { apiKey: 'raw-doubao-api-key' },
     }))
     expect(wrapper.text()).not.toContain('raw-doubao-api-key')
+  })
+
+  it('shows a named Seed ICL voice with its ID on the provider card', async () => {
+    mockFetchTtsSettings.mockResolvedValue({
+      providers: [{
+        provider: 'doubao',
+        settings: {
+          baseUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+          model: 'seed-icl-2.0',
+          voice: 'S_primary',
+          cloneVoices: '[{"id":"S_primary","name":"My voice"}]',
+        },
+        secrets: { apiKey: '[stored]' },
+        updatedAt: 5,
+      }],
+    })
+
+    const wrapper = await mountComponent({ kind: 'tts' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('My voice(S_primary)')
+  })
+
+  it('adds and persists named Doubao Seed ICL clone voices from one input', async () => {
+    mockSaveTtsSettings.mockResolvedValue({
+      provider: 'doubao',
+      settings: {
+        baseUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+        model: 'seed-icl-2.0',
+        voice: 'S_primary',
+        cloneVoices: '[{"id":"S_primary","name":"My voice"},{"id":"S_support","name":"Support voice"}]',
+      },
+      secrets: { apiKey: '[stored]' },
+      updatedAt: 7,
+    })
+    mockFetchTtsSettings.mockResolvedValue({ providers: [] })
+
+    const wrapper = await mountComponent({ kind: 'tts' })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('Add TTS API'))!.trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="voice-provider-select"]').setValue('tts-doubao')
+    await wrapper.get('[data-testid="voice-provider-api-key"]').setValue('raw-doubao-api-key')
+    await wrapper.get('[data-testid="voice-provider-model"]').setValue('seed-icl-2.0')
+    await wrapper.get('[data-testid="voice-provider-voice"]').setValue('S_primary,My voice')
+    await wrapper.get('[data-testid="voice-provider-voice"]').setValue('S_support,Support voice')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('My voice')
+    expect(wrapper.text()).toContain('Support voice')
+    await wrapper.findAll('button').find(button => button.text().includes('common.add'))!.trigger('click')
+    await flushPromises()
+
+    expect(mockSaveTtsSettings).toHaveBeenCalledWith('doubao', expect.objectContaining({
+      activeProvider: 'doubao',
+      settings: expect.objectContaining({
+        model: 'seed-icl-2.0',
+        voice: 'S_support',
+        cloneVoices: '[{"id":"S_primary","name":"My voice"},{"id":"S_support","name":"Support voice"}]',
+      }),
+      secrets: { apiKey: 'raw-doubao-api-key' },
+    }))
   })
 
   it('uses connection-first discovery without typing spam or overwriting manual models', async () => {

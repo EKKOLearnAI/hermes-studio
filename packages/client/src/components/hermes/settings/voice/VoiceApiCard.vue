@@ -4,6 +4,7 @@ import { NButton, NDropdown, NTag } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import ProviderMetaItem from './ProviderMetaItem.vue'
 import type { VoiceApiConnection } from '@/types/voice-api'
+import { DOUBAO_TTS_ICL_RESOURCE_ID, parseDoubaoTtsCloneVoices } from '@/constants/doubaoTtsVoices'
 
 export type VoiceApiCardTestState = {
   status: 'idle' | 'recording' | 'loading' | 'success' | 'error'
@@ -54,7 +55,12 @@ const statusLabel = computed(() => {
 })
 
 const modelValue = computed(() => props.connection.model || String(props.connection.settings.model || ''))
-const voiceValue = computed(() => props.connection.voice || String(props.connection.settings.voice || ''))
+const voiceValue = computed(() => {
+  const voice = props.connection.voice || String(props.connection.settings.voice || '')
+  if (props.connection.provider !== 'doubao' || modelValue.value !== DOUBAO_TTS_ICL_RESOURCE_ID || !voice) return voice
+  const entry = parseDoubaoTtsCloneVoices(props.connection.settings.cloneVoices).find(item => item.id === voice)
+  return entry ? `${entry.name}(${entry.id})` : voice
+})
 const sourceValue = computed(() => props.connection.baseUrl || (props.connection.isBuiltin ? t('settings.voice.localBuiltin') : ''))
 const lastTestLabel = computed(() => {
   const status = props.testState?.status
