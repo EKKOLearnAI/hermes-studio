@@ -26,6 +26,7 @@ import type {
   AgentRuntimeRunInput,
   AgentRuntimeRunResult,
   AgentRuntimeStep,
+  EkkoBackgroundContinuationContext,
 } from './types'
 import type { MemoryContext, MemoryRuntimeIdentity } from '../memory/types'
 import type { MemoryCaptureMessage } from '../memory/service'
@@ -54,6 +55,7 @@ interface BackgroundTask {
   sessionId?: string
   controller: AbortController
   promise: Promise<AgentToolResult>
+  resolveContinuationContext: (context: EkkoBackgroundContinuationContext | null) => void
 }
 
 interface ActiveBoundaryRun {
@@ -93,6 +95,10 @@ function foregroundOnlyDelegateTaskDefinition(definition: AgentToolDefinition): 
       },
     },
   }
+}
+
+function cloneAgentMessages(messages: AgentMessage[]): AgentMessage[] {
+  return structuredClone(messages)
 }
 
 export class AgentRuntime {
@@ -186,7 +192,10 @@ export class AgentRuntime {
   async abortBackgroundTasks(sessionId?: string): Promise<number> {
     const tasks = [...this.backgroundTasks.values()]
       .filter(task => !sessionId || task.sessionId === sessionId)
-    for (const task of tasks) task.controller.abort()
+    for (const task of tasks) {
+      task.controller.abort()
+      task.resolveContinuationContext(null)
+    }
     await Promise.allSettled(tasks.map(task => task.promise))
     return tasks.length
   }
@@ -258,6 +267,7 @@ export class AgentRuntime {
     const maxSteps = input.maxSteps ?? this.maxSteps
     const maxModelRetries = input.maxModelRetries ?? this.maxModelRetries
     const maxConsecutiveToolFailures = input.maxConsecutiveToolFailures ?? this.maxConsecutiveToolFailures
+    const pendingBackgroundSubagentIds = new Set<string>()
     const emit = (event: AgentRuntimeEvent) => {
       events.push(event)
       input.onEvent?.(event)
@@ -288,7 +298,13 @@ export class AgentRuntime {
             error: 'Background subtask delegation is disabled for this run. Use foreground mode.',
           })
         }
-        return this.delegateTask(request, input, runId, emit)
+        return this.delegateTask(
+          request,
+          input,
+          runId,
+          emit,
+          subagentId => pendingBackgroundSubagentIds.add(subagentId),
+        )
       },
     }
     if (memoryContext) {
@@ -386,7 +402,7 @@ export class AgentRuntime {
           messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
           steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
           consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
-          this.recordSkillToolCall(contextKey, toolCall.name)
+          if (input.skillReviewEnabled !== false) this.recordSkillToolCall(contextKey, toolCall.name)
           if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {
             if (activeBoundaryRun) activeBoundaryRun.terminal = true
             emit({ type: 'run.tool_failure_limit', runId, failures: consecutiveToolFailures })
@@ -401,6 +417,20 @@ export class AgentRuntime {
             this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
             return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
           }
+        }
+        if (pendingBackgroundSubagentIds.size > 0) {
+          const continuationMessages = cloneAgentMessages(messages.slice(1))
+          for (const subagentId of pendingBackgroundSubagentIds) {
+            this.backgroundTasks.get(subagentId)?.resolveContinuationContext({
+              version: 1,
+              subagentId,
+              originRunId: runId,
+              originStep: step,
+              messages: continuationMessages,
+              memoryPolicy: 'disabled',
+            })
+          }
+          pendingBackgroundSubagentIds.clear()
         }
         if (activeBoundaryRun?.pending) return completeBoundaryInterrupt(step)
       }
@@ -431,6 +461,12 @@ export class AgentRuntime {
       emit({ type: 'run.failed', runId, error: message, steps: steps.length })
       throw error
     } finally {
+      for (const subagentId of pendingBackgroundSubagentIds) {
+        const task = this.backgroundTasks.get(subagentId)
+        task?.controller.abort()
+        task?.resolveContinuationContext(null)
+      }
+      if (input.ephemeralContext && contextKey) this.modelContexts.delete(contextKey)
       if (activeBoundaryRun) this.activeBoundaryRuns.delete(activeBoundaryRun.runId)
     }
   }
@@ -694,6 +730,7 @@ export class AgentRuntime {
     emit?: (event: AgentRuntimeEvent) => void,
   ): void {
     if (
+      input.skillReviewEnabled === false ||
       (input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0) > 0 ||
       !this.skillReview ||
       this.skillReviewEveryToolCalls <= 0 ||
@@ -854,11 +891,16 @@ export class AgentRuntime {
     parentInput: AgentRuntimeRunInput,
     parentRunId: string,
     emit: (event: AgentRuntimeEvent) => void,
+    onBackgroundStarted?: (subagentId: string) => void,
   ): Promise<AgentToolResult> {
     const subagentId = randomUUID()
     const background = request.mode === 'background'
     const startedAt = Date.now()
     const controller = new AbortController()
+    let resolveContinuationContext!: (context: EkkoBackgroundContinuationContext | null) => void
+    const continuationContextReady = new Promise<EkkoBackgroundContinuationContext | null>((resolve) => {
+      resolveContinuationContext = resolve
+    })
     const sessionId = this.contextKeyFor(parentInput)
     const childContextKey = sessionId
       ? `${sessionId}:subagent:${subagentId}`
@@ -1002,6 +1044,17 @@ export class AgentRuntime {
         this.modelContexts.delete(childContextKey)
       }
 
+      let continuationContext: EkkoBackgroundContinuationContext | undefined
+      if (background && status !== 'interrupted') {
+        const captured = await continuationContextReady
+        if (captured) {
+          continuationContext = captured
+        } else {
+          status = 'interrupted'
+          error = 'Background subtask result was suppressed because its origin context was not captured.'
+          output = error
+        }
+      }
       const summary = subtaskSummary(output, status)
       emit({
         type: 'subagent.complete',
@@ -1022,6 +1075,7 @@ export class AgentRuntime {
         cacheReadTokens,
         cacheWriteTokens,
         reasoningTokens,
+        ...(continuationContext ? { continuationContext } : {}),
       })
       const payload = {
         runtime: 'ekko',
@@ -1053,7 +1107,9 @@ export class AgentRuntime {
       sessionId,
       controller,
       promise: childPromise,
+      resolveContinuationContext,
     })
+    onBackgroundStarted?.(subagentId)
     void childPromise.then(
       () => this.backgroundTasks.delete(subagentId),
       () => this.backgroundTasks.delete(subagentId),
