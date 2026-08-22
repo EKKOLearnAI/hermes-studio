@@ -1,6 +1,6 @@
 ---
 date: 2026-08-22
-pr: pending
+pr: 2671
 feature: Server-persisted session reasoning effort
 impact: Single-chat reasoning effort now follows the session across clients, resets to the model default after model changes, and is inherited by new runs without localStorage.
 ---
