@@ -227,6 +227,72 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('denies only the interrupted session approval queues', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+
+class InterruptibleAgent:
+    def __init__(self):
+        self.session = None
+
+    def interrupt(self, _message=None):
+        self.session.running = False
+
+agents = {sid: InterruptibleAgent() for sid in ("session-a", "session-b")}
+for sid, agent in agents.items():
+    session = bridge.AgentSession(session_id=sid, agent=agent)
+    session.running = True
+    agent.session = session
+    with pool._lock:
+        pool._sessions[sid] = session
+
+choices = {}
+threads = []
+for sid in ("session-a", "session-b"):
+    thread = threading.Thread(
+        target=lambda current=sid: choices.__setitem__(
+            current,
+            pool._approval_callback(current)(
+                f"printf harmless {current}",
+                "harmless test command",
+                allow_permanent=False,
+            ),
+        ),
+        daemon=True,
+    )
+    thread.start()
+    threads.append(thread)
+
+def terminal_ready():
+    with pool._lock:
+        return set(pool._approval_request_sessions.values()) == {"session-a", "session-b"}
+
+assert wait_for(terminal_ready)
+pool._gateway_approval_notify("session-a")({
+    "command": "printf harmless gateway",
+    "description": "harmless test command",
+})
+
+result = pool.interrupt("session-a", "test interrupt")
+assert result["status"] == "interrupted"
+threads[0].join(timeout=5)
+assert not threads[0].is_alive()
+assert choices["session-a"] == "deny"
+with pool._lock:
+    assert set(pool._approval_request_sessions.values()) == {"session-b"}
+    remaining_id = next(iter(pool._approval_requests))
+assert approval._resolved_gateway == [("session-a", "deny")]
+
+assert pool.respond_approval(remaining_id, "deny")["resolved"] is True
+threads[1].join(timeout=5)
+assert not threads[1].is_alive()
+assert choices["session-b"] == "deny"
+assert pool.respond_approval(remaining_id, "once")["resolved"] is False
+`)
+  })
+
   it('toggles YOLO for a session before its first Agent session exists', () => {
     runPython(String.raw`
 ${harness}

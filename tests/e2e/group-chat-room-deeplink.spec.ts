@@ -735,6 +735,36 @@ test.describe('group chat room deep links', () => {
     await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).toHaveClass(/is-active/)
   })
 
+  test('removes an interrupted run approval from the room approval surface', async ({ page }) => {
+    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+
+    await triggerGroupSocket(page, 'approval.requested', {
+      event: 'approval.requested',
+      roomId: 'room-alpha',
+      agentName: 'Worker',
+      approval_id: 'approval-interrupted',
+      command: 'printf harmless',
+      description: 'Harmless command awaiting approval',
+      choices: ['once', 'deny'],
+    })
+    await expect(page.locator('.approval-float-panel')).toContainText('printf harmless')
+
+    await triggerGroupSocket(page, 'approval.resolved', {
+      event: 'approval.resolved',
+      roomId: 'room-alpha',
+      agentName: 'Worker',
+      approval_id: 'approval-interrupted',
+      choice: 'deny',
+      reason: 'Agent run interrupted',
+    })
+    await expect(page.locator('.approval-float-panel')).toHaveCount(0)
+    if (process.env.HERMES_VISUAL_EVIDENCE_DIR) {
+      await page.screenshot({
+        path: `${process.env.HERMES_VISUAL_EVIDENCE_DIR}/approval-removed-after-interrupt.png`,
+      })
+    }
+  })
+
   test('loads all group history by stable cursor beyond 600 messages with retry, de-duplication, and anchor preservation', async ({ page }) => {
     test.setTimeout(45_000)
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')

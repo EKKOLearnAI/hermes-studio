@@ -94,6 +94,7 @@ interface PendingGroupApprovalRoute {
     agentName: string
     ownerMemberId: string
     agentSessionId: string
+    runId: string
     approvalId: string
     command: string
     description: string
@@ -3116,6 +3117,7 @@ export class GroupChatServer {
         agentName: string
         status: string
         agentSessionId?: string
+        runId?: string
     }>>()
     /** Stable room + persisted Agent row + run activity visible across authorized rooms. */
     private roomAgentActivityState = new Map<string, Map<string, GroupAgentActivity>>()
@@ -3909,7 +3911,7 @@ export class GroupChatServer {
         socket.on('cancel_execution_queue_item', (data: { roomId?: string; queueId?: string; executionQueueCapability?: string }, ack?: (response?: unknown) => void) => this.handleCancelExecutionQueueItem(socket, data, ack))
         socket.on('interrupt_agent', (data: { roomId?: string; agentName?: string }, ack?: (response?: unknown) => void) => this.handleInterruptAgent(socket, data, ack))
         socket.on('remove_agent', (data: { roomId?: string; agentId?: string }, ack?: (response?: unknown) => void) => this.handleRemoveAgent(socket, data, ack))
-        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }) => this.handleApprovalRequested(socket, data))
+        socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string; runId?: string }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
         socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
@@ -4836,6 +4838,7 @@ export class GroupChatServer {
                 agentName,
                 status,
                 ...(agentSessionId ? { agentSessionId } : {}),
+                ...(typeof data.runId === 'string' && data.runId.trim() ? { runId: data.runId.trim() } : {}),
             })
         }
 
@@ -4866,8 +4869,16 @@ export class GroupChatServer {
             ack?.({ error: 'Access denied' })
             return
         }
+        const activeGeneration = this.contextStatusState.get(roomId)?.get(agentName)
+        const interruptedApprovals = this.takePendingApprovalsForGeneration(
+            roomId,
+            agentName,
+            activeGeneration?.agentSessionId || '',
+            activeGeneration?.runId || '',
+        )
         try {
             await this.agentClients.interruptAgent(roomId, agentName)
+            await this.settleInterruptedApprovals(interruptedApprovals)
             const roomStatuses = this.contextStatusState.get(roomId)
             roomStatuses?.delete(agentName)
             if (roomStatuses?.size === 0) this.contextStatusState.delete(roomId)
@@ -4878,6 +4889,7 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status: 'ready' })
             ack?.({ ok: true })
         } catch (err: any) {
+            await this.settleInterruptedApprovals(interruptedApprovals)
             logger.warn(`[GroupChat] failed to interrupt agent ${agentName} in room ${roomId}: ${err.message}`)
             ack?.({ error: err.message || 'interrupt failed' })
         }
@@ -4978,7 +4990,7 @@ export class GroupChatServer {
         })
     }
 
-    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string }): void {
+    private handleApprovalRequested(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string; runId?: string }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.approval_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
@@ -4990,6 +5002,7 @@ export class GroupChatServer {
             agentName,
             ownerMemberId: this.groupAgentOwnerMemberId(roomId, agentName),
             agentSessionId: String(data.agentSessionId || '').trim(),
+            runId: String(data.runId || '').trim(),
             approvalId: data.approval_id,
             command: data.command || '',
             description: data.description || '',
@@ -5014,6 +5027,55 @@ export class GroupChatServer {
             allow_permanent: Boolean(data.allow_permanent),
             timeout_ms: pendingRoute.timeoutMs,
         })
+    }
+
+    private takePendingApprovalsForGeneration(
+        roomId: string,
+        agentName: string,
+        agentSessionId: string,
+        runId: string,
+    ): PendingGroupApprovalRoute[] {
+        if (!agentSessionId) return []
+        const routes: PendingGroupApprovalRoute[] = []
+        for (const [routeKey, route] of this.pendingApprovalRoutes) {
+            if (route.roomId !== roomId
+                || route.agentName !== agentName
+                || route.agentSessionId !== agentSessionId
+                || (runId && route.runId && route.runId !== runId)) {
+                continue
+            }
+            const claimed = this.takePendingApprovalRoute(routeKey)
+            if (claimed) routes.push(claimed)
+        }
+        return routes
+    }
+
+    private async settleInterruptedApprovals(routes: PendingGroupApprovalRoute[]): Promise<void> {
+        for (const route of routes) {
+            let resolved = false
+            const executor = this.agentClients.getAgents(route.roomId).find(agent =>
+                agent.name === route.agentName && typeof agent.respondApproval === 'function'
+            )
+            try {
+                resolved = Boolean(await executor?.respondApproval?.(route.approvalId, 'deny'))
+                if (!resolved) {
+                    resolved = Boolean((await new AgentBridgeClient().approvalRespond(route.approvalId, 'deny') as any)?.resolved)
+                }
+            } catch (err: any) {
+                if (!isExpiredInteractionError(err?.message || err)) {
+                    logger.warn(`[GroupChat] failed to cancel interrupted approval ${route.approvalId}: ${err?.message || err}`)
+                }
+            }
+            this.emitToAgentApprovalOwner(route, 'approval.resolved', {
+                event: 'approval.resolved',
+                roomId: route.roomId,
+                agentName: route.agentName,
+                approval_id: route.approvalId,
+                choice: 'deny',
+                reason: 'Agent run interrupted',
+                resolved,
+            })
+        }
     }
 
     private handleApprovalResolved(socket: Socket, data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }): void {

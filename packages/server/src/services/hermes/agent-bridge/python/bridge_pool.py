@@ -185,6 +185,7 @@ class AgentPool:
         self._lock = threading.RLock()
         self._db = SessionDbHolder()
         self._approval_requests: dict[str, queue.Queue[str]] = {}
+        self._approval_request_sessions: dict[str, str] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
@@ -1372,6 +1373,7 @@ class AgentPool:
             response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
             with self._lock:
                 self._approval_requests[approval_id] = response_queue
+                self._approval_request_sessions[approval_id] = session_id
             choices = ["once", "session", "always", "deny"] if allow_permanent else ["once", "session", "deny"]
             self._append_event(session_id, {
                 "event": "approval.requested",
@@ -1389,6 +1391,7 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._approval_requests.pop(approval_id, None)
+                    self._approval_request_sessions.pop(approval_id, None)
             self._append_event(session_id, {
                 "event": "approval.resolved",
                 "approval_id": approval_id,
@@ -2050,6 +2053,7 @@ class AgentPool:
         if not hasattr(session.agent, "interrupt"):
             raise RuntimeError("agent does not support interrupt")
         session.agent.interrupt(message)
+        self._cancel_pending_approvals_for_session(session_id)
         deadline = time.time() + 10.0
         synced = False
         while time.time() < deadline:
@@ -2065,6 +2069,45 @@ class AgentPool:
             "background_interrupted": background_interrupted,
             "background_delegation_ids": background_delegation_ids,
         }
+
+    def _cancel_pending_approvals_for_session(self, session_id: str) -> int:
+        terminal_queues: list[queue.Queue[str]] = []
+        gateway_approvals: list[tuple[str, list[str]]] = []
+        with self._lock:
+            for approval_id, approval_session_id in list(self._approval_request_sessions.items()):
+                if approval_session_id != session_id:
+                    continue
+                response_queue = self._approval_requests.pop(approval_id, None)
+                self._approval_request_sessions.pop(approval_id, None)
+                if response_queue is not None:
+                    terminal_queues.append(response_queue)
+            for approval_id, approval_session_id in list(self._gateway_approval_requests.items()):
+                if approval_session_id != session_id:
+                    continue
+                self._gateway_approval_requests.pop(approval_id, None)
+                gateway_approvals.append((
+                    approval_id,
+                    self._gateway_approval_pattern_keys.pop(approval_id, []),
+                ))
+        for response_queue in terminal_queues:
+            try:
+                response_queue.put_nowait("deny")
+            except queue.Full:
+                pass
+        for approval_id, _pattern_keys in gateway_approvals:
+            try:
+                from tools.approval import resolve_gateway_approval
+
+                resolve_gateway_approval(session_id, "deny")
+            except Exception:
+                pass
+            self._append_event(session_id, {
+                "event": "approval.resolved",
+                "approval_id": approval_id,
+                "choice": "deny",
+                "reason": "Session interrupted",
+            })
+        return len(terminal_queues) + len(gateway_approvals)
 
     def request_boundary_interrupt(
         self,
@@ -2165,7 +2208,13 @@ class AgentPool:
         if cleaned not in {"once", "session", "always", "deny"}:
             cleaned = "deny"
         with self._lock:
-            response_queue = self._approval_requests.get(approval_id)
+            response_queue = self._approval_requests.pop(approval_id, None)
+            if response_queue is not None:
+                self._approval_request_sessions.pop(approval_id, None)
+                try:
+                    response_queue.put_nowait(cleaned)
+                except queue.Full:
+                    pass
         if response_queue is None:
             with self._lock:
                 gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
@@ -2186,10 +2235,6 @@ class AgentPool:
                 "choice": cleaned,
             })
             return {"approval_id": approval_id, "resolved": resolved, "choice": cleaned}
-        try:
-            response_queue.put_nowait(cleaned)
-        except queue.Full:
-            pass
         return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
 
     def respond_clarify(self, clarify_id: str, response: str) -> dict[str, Any]:

@@ -1555,6 +1555,7 @@ export class AgentClient implements GroupAgentExecutor {
                 this.emitApprovalRequested(roomId, {
                     event: 'approval.requested',
                     agentSessionId: sessionId,
+                    runId: responseRunId,
                     approval_id: (ev as any).approval_id,
                     command: (ev as any).command,
                     description: (ev as any).description,
