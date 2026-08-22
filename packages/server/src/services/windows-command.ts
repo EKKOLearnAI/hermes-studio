@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs'
-import { dirname, extname, join } from 'path'
+import { dirname, extname, join, sep } from 'path'
 
 export interface WindowsCommandExecution {
   command: string
@@ -38,7 +38,7 @@ export function windowsNpmShimExecution(command: string, args: string[]): Window
   if (!match) return null
 
   const shimDir = dirname(normalizedCommand)
-  const script = join(shimDir, match[1])
+  const script = join(shimDir, match[1].replaceAll('\\', sep))
   if (!existsSync(script)) return null
 
   const localNode = join(shimDir, 'node.exe')
