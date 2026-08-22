@@ -71,12 +71,14 @@ describe('Hermes voice config sync', () => {
         baseUrl: 'https://voice.example/v1/audio/speech',
         model: 'custom-tts',
         voice: 'nova',
+        cloneVoices: JSON.stringify([{ id: 'S_one', name: 'My voice' }, { id: 'S_two', name: '客服女声' }]),
         rate: 1.25,
         pitch: 4,
       },
       secrets: { apiKey: 'tts-secret' },
     })
     ttsStore.saveActiveTtsProvider('default', 'custom')
+    expect(ttsStore.getTtsProviderSetting('default', 'custom')?.settings.cloneVoices).toBe('[{"id":"S_one","name":"My voice"},{"id":"S_two","name":"客服女声"}]')
 
     const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
     await expect(syncVoiceConfigToHermesProfile('default')).resolves.toEqual({

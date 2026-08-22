@@ -5,7 +5,40 @@ export interface DoubaoTtsVoiceOption {
 }
 
 export const DOUBAO_TTS_2_RESOURCE_ID = 'seed-tts-2.0'
+export const DOUBAO_TTS_ICL_RESOURCE_ID = 'seed-icl-2.0'
 export const DOUBAO_TTS_DEFAULT_VOICE = 'zh_female_xiaohe_uranus_bigtts'
+
+export interface DoubaoTtsCloneVoice {
+  id: string
+  name: string
+}
+
+export function parseDoubaoTtsCloneVoices(value: unknown, legacyVoice = ''): DoubaoTtsCloneVoice[] {
+  let parsed: unknown = value
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value) } catch { parsed = [] }
+  }
+  const result: DoubaoTtsCloneVoice[] = []
+  const seen = new Set<string>()
+  for (const entry of Array.isArray(parsed) ? parsed : []) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    result.push({ id, name: name || id })
+  }
+  const legacy = legacyVoice.trim()
+  if (legacy && !seen.has(legacy)) result.unshift({ id: legacy, name: legacy })
+  return result
+}
+
+export function serializeDoubaoTtsCloneVoices(voices: DoubaoTtsCloneVoice[]): string {
+  return JSON.stringify(voices
+    .map(voice => ({ id: voice.id.trim(), name: voice.name.trim() || voice.id.trim() }))
+    .filter(voice => voice.id))
+}
 
 export const DOUBAO_TTS_VOICE_OPTIONS: DoubaoTtsVoiceOption[] = [
   {
