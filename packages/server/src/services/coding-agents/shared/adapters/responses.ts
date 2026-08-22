@@ -701,7 +701,38 @@ function responsesInputToChatMessages(body: any, target: ResponsesAdapterTarget)
   }
   flushCompletedToolCalls()
 
-  return messages.length ? messages : [{ role: 'user', content: '' }]
+  const built = messages.length ? messages : [{ role: 'user', content: '' }]
+  return consolidateChatSystemMessages(built)
+}
+
+// Codex sends both a top-level `instructions` string and `developer` messages
+// inside `input`; converting each to a `system` message yields multiple system
+// messages with the later ones out of position. Some providers (notably vLLM)
+// reject that with "System message must be at the beginning" (400). Fix: keep
+// exactly one leading system message — merging any additional ones into it in
+// original order (top-level instructions first, then in-input developer
+// messages).
+function consolidateChatSystemMessages(messages: any[]): any[] {
+  const systemMessages: any[] = []
+  const rest: any[] = []
+  for (const message of messages) {
+    if (message?.role === 'system') systemMessages.push(message)
+    else rest.push(message)
+  }
+  if (systemMessages.length === 0) return messages
+  // Exactly one system message: keep its content verbatim (string or image
+  // parts) and only relocate it to the front if it was mid-conversation.
+  if (systemMessages.length === 1) {
+    const only = systemMessages[0]
+    if (messages[0] === only) return messages
+    return [only, ...rest]
+  }
+  // Multiple system messages (top-level instructions + in-input developer
+  // messages): merge their text into one leading system message.
+  const parts = systemMessages
+    .map(message => (typeof message.content === 'string' ? message.content : stringifyContent(message.content)))
+    .filter(Boolean)
+  return [{ role: 'system', content: parts.join('\n\n') }, ...rest]
 }
 
 function responsesToolsToChatTools(tools: unknown): any[] | undefined {
