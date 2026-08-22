@@ -256,6 +256,7 @@ export function upsertExternalCodingAgentSession(data: {
   const existing = getSession(data.id)
   if (existing && (
     existing.source !== 'coding_agent'
+    && existing.source !== data.agent
     || existing.agent !== data.agent
     || existing.agent_native_session_id !== data.nativeSessionId
   )) return null
@@ -269,12 +270,12 @@ export function upsertExternalCodingAgentSession(data: {
   try {
     if (!existing) {
       db.prepare(
-        `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, provider, title, started_at, ended_at, end_reason, last_active, workspace, message_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, provider, title, started_at, ended_at, end_reason, last_active, workspace, message_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         data.id,
         data.profile || 'default',
-        'coding_agent',
+        data.agent,
         data.agent,
         'global',
         data.nativeSessionId,
@@ -291,14 +292,15 @@ export function upsertExternalCodingAgentSession(data: {
     } else {
       db.prepare(
         `UPDATE ${SESSIONS_TABLE}
-         SET agent_mode = 'global',
+         SET source = ?,
+             agent_mode = 'global',
              provider = 'global',
              title = CASE WHEN COALESCE(title, '') = '' THEN ? ELSE title END,
              started_at = MIN(started_at, ?),
              last_active = MAX(last_active, ?),
              workspace = COALESCE(NULLIF(workspace, ''), ?)
          WHERE id = ?`,
-      ).run(data.title || null, data.startedAt, data.lastActive, data.workspace || null, data.id)
+       ).run(data.agent, data.title || null, data.startedAt, data.lastActive, data.workspace || null, data.id)
     }
 
     const existingMessages = db.prepare(

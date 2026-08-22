@@ -56,7 +56,7 @@ describe('upsertExternalCodingAgentSession', () => {
     expect(mocks.sessionRun).toHaveBeenCalledWith(
       'external_codex_1',
       'default',
-      'coding_agent',
+      'codex',
       'codex',
       'global',
       'codex-native-1',
@@ -79,8 +79,8 @@ describe('upsertExternalCodingAgentSession', () => {
   it('does not duplicate messages when an external file is synced again', async () => {
     const { upsertExternalCodingAgentSession } = await import('../../packages/server/src/db/hermes/session-store')
     mocks.sessionGet
-      .mockReturnValueOnce({ id: 'external_claude_1', source: 'coding_agent', agent: 'claude', agent_native_session_id: 'claude-native-1' })
-      .mockReturnValueOnce({ id: 'external_claude_1', source: 'coding_agent', agent: 'claude' })
+      .mockReturnValueOnce({ id: 'external_claude_1', source: 'claude', agent: 'claude', agent_native_session_id: 'claude-native-1' })
+      .mockReturnValueOnce({ id: 'external_claude_1', source: 'claude', agent: 'claude' })
     mocks.messageRows.mockReturnValue([
       { role: 'user', content: 'Hello', timestamp: 100 },
     ])

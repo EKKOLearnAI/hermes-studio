@@ -1131,7 +1131,7 @@ describe('session conversations controller', () => {
 
     await mod.listHermesSessionGroups(ctx)
 
-    expect(listSessionSummaryGroupsMock).toHaveBeenCalledWith(2, 'travel', ['cli-pinned'])
+    expect(listSessionSummaryGroupsMock).toHaveBeenCalledWith(2, 'travel', ['cli-pinned'], undefined)
     expect(ctx.body).toEqual({
       groups: [
         expect.objectContaining({ source: 'cli', hasMore: true, sessions: [expect.objectContaining({ id: 'cli-1' }), expect.objectContaining({ id: 'cli-2' })] }),
@@ -1140,6 +1140,23 @@ describe('session conversations controller', () => {
       ],
       included: [expect.objectContaining({ id: 'cli-pinned', profile: 'travel' })],
     })
+  })
+
+  it('passes a requested source filter to Hermes history groups', async () => {
+    localListSessionsMock.mockReturnValue([])
+    listSessionSummaryGroupsMock.mockResolvedValue({ groups: [], included: [] })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { profile: 'travel', source: 'codex', limit: '2' },
+      state: {},
+      body: null,
+    }
+
+    await mod.listHermesSessionGroups(ctx)
+
+    expect(listSessionSummaryGroupsMock).toHaveBeenCalledWith(2, 'travel', [], 'codex')
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', 'codex', 2000)
   })
 
   it('paginates one Hermes history source without mixing other local sources', async () => {
@@ -1352,7 +1369,7 @@ describe('session conversations controller', () => {
     await mod.search(ctx)
 
     expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10, {
-      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      sources: ['api_server', 'cli', 'coding_agent', 'claude', 'codex', 'global_agent'],
       profiles: ['default', 'travel'],
       includeArchived: false,
       excludeSessionIds: [],

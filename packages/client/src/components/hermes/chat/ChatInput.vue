@@ -230,7 +230,7 @@ const isCodingAgentSession = computed(() => {
     || session.agent === 'pi'
   )
 })
-const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
+const isForkCommandSession = computed(() => !!chatStore.activeSession && !isCodingAgentSession.value)
 const skillPickerItems = computed(() => {
   const byName = new Map<string, SkillInfo>()
   for (const category of skillCategories.value) {

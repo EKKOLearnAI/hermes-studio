@@ -33,9 +33,9 @@ describe('external coding-agent history parser', () => {
 
   it('normalizes Codex session metadata and text messages', () => {
     const result = parseCodexHistoryText([
-      JSON.stringify({ timestamp: '2026-08-22T02:00:00.000Z', type: 'event_msg', payload: { type: 'session_meta', id: 'codex-native-1', cwd: 'C:\\repo' } }),
+      JSON.stringify({ timestamp: '2026-08-22T02:00:00.000Z', type: 'session_meta', payload: { id: 'codex-native-1', cwd: 'C:\\repo' } }),
       JSON.stringify({ timestamp: '2026-08-22T02:01:00.000Z', type: 'event_msg', payload: { type: 'user_message', message: 'Review the change' } }),
-      JSON.stringify({ timestamp: '2026-08-22T02:02:00.000Z', type: 'response_item', payload: { type: 'agent_message', message: 'The change is ready.' } }),
+      JSON.stringify({ timestamp: '2026-08-22T02:02:00.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'The change is ready.' } }),
       JSON.stringify({ timestamp: '2026-08-22T02:02:30.000Z', type: 'response_item', payload: { type: 'function_call', name: 'shell' } }),
     ].join('\n'))
 
@@ -50,6 +50,29 @@ describe('external coding-agent history parser', () => {
       ],
     })
     expect(result?.lastActive).toBe(Math.floor(Date.parse('2026-08-22T02:02:30.000Z') / 1000))
+  })
+
+  it('reads the workspace from a real Codex top-level session_meta record', () => {
+    const result = parseCodexHistoryText([
+      JSON.stringify({
+        timestamp: '2026-08-22T02:00:00.000Z',
+        type: 'session_meta',
+        payload: {
+          id: '01a00902-6122-7033-8931-4562e82d4571',
+          cwd: 'C:\\Users\\wkc_1\\Documents\\Codex\\workspace',
+        },
+      }),
+      JSON.stringify({
+        timestamp: '2026-08-22T02:01:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'Continue in this workspace' },
+      }),
+    ].join('\n'))
+
+    expect(result).toMatchObject({
+      nativeSessionId: '01a00902-6122-7033-8931-4562e82d4571',
+      workspace: 'C:\\Users\\wkc_1\\Documents\\Codex\\workspace',
+    })
   })
 
   it('creates a stable database id without exposing the native session id', () => {

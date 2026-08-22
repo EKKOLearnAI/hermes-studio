@@ -177,9 +177,11 @@ export function parseCodexHistoryText(text: string, sourcePath = ''): ExternalHi
     const timestamp = timestampSeconds(record.timestamp || payload.timestamp)
     if (timestamp > 0 && (fallbackTimestamp === 0 || timestamp < fallbackTimestamp)) fallbackTimestamp = timestamp
     if (timestamp > latestTimestamp) latestTimestamp = timestamp
-    if (payload.type === 'session_meta') {
-      nativeSessionId ||= String(payload.id || '').trim()
-      workspace ||= typeof payload.cwd === 'string' ? payload.cwd : null
+    if (record.type === 'session_meta' || payload.type === 'session_meta') {
+      nativeSessionId ||= String(payload.id || payload.session_id || record.sessionId || '').trim()
+      workspace ||= typeof payload.cwd === 'string'
+        ? payload.cwd
+        : typeof record.cwd === 'string' ? record.cwd : null
       continue
     }
 
@@ -191,9 +193,12 @@ export function parseCodexHistoryText(text: string, sourcePath = ''): ExternalHi
     } else if (payload.type === 'agent_message') {
       role = 'assistant'
       content = payload.message
-    } else if (payload.type === 'response_item' && (payload.role === 'user' || payload.role === 'assistant')) {
+    } else if (record.type === 'response_item' && payload.type === 'message' && (payload.role === 'user' || payload.role === 'assistant')) {
       role = payload.role
       content = payload.content ?? payload.message
+    } else if (record.type === 'response_item' && (payload.type === 'user_message' || payload.type === 'agent_message')) {
+      role = payload.type === 'user_message' ? 'user' : 'assistant'
+      content = payload.message
     }
     if (!role) continue
 

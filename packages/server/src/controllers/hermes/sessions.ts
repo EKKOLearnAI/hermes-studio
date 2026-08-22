@@ -136,11 +136,12 @@ function denySessionAccess(ctx: any, session: any | null | undefined): boolean {
 }
 
 function isVisibleWebUiSessionSource(source?: string | null): boolean {
-  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent'
+  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'claude' || source === 'codex' || source === 'global_agent'
 }
 
 function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
   if (source === 'global_agent') return sessionSource === 'global_agent'
+  if (source === 'claude' || source === 'codex') return sessionSource === source
   if (source === 'workflow') return sessionSource === 'workflow'
   if (source === 'group_chat') return sessionSource === 'group_chat'
   return isVisibleWebUiSessionSource(sessionSource)
@@ -148,9 +149,10 @@ function isRequestedSessionSource(source: string | undefined, sessionSource?: st
 
 function requestedSessionSources(source?: string): string[] {
   if (source === 'global_agent') return ['global_agent']
+  if (source === 'claude' || source === 'codex') return [source]
   if (source === 'workflow') return ['workflow']
   if (source === 'group_chat') return ['group_chat']
-  return ['api_server', 'cli', 'coding_agent', 'global_agent']
+  return ['api_server', 'cli', 'coding_agent', 'claude', 'codex', 'global_agent']
 }
 
 function isHermesHistorySessionSource(source?: string | null): boolean {
@@ -594,6 +596,7 @@ export async function listHermesSessions(ctx: any) {
 export async function listHermesSessionGroups(ctx: any) {
   const requestedLimit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 20
   const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 20
+  const source = typeof ctx.query.source === 'string' ? ctx.query.source : undefined
   const profile = requestedProfile(ctx)
   await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
   const rawIncluded = ctx.query.include
@@ -603,8 +606,8 @@ export async function listHermesSessionGroups(ctx: any) {
     .slice(0, 100)
 
   const [hermesResult, localSessions] = await Promise.all([
-    listSessionSummaryGroups(limit, profile, includedIds),
-    Promise.resolve(localListSessions(profile, undefined, 2000)),
+    listSessionSummaryGroups(limit, profile, includedIds, source),
+    Promise.resolve(localListSessions(profile, source, 2000)),
   ])
   const hermesGroups = new Map(hermesResult.groups.map(group => [group.source, group]))
   const sources = new Set([
