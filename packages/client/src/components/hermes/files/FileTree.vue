@@ -248,7 +248,7 @@ watch(() => filesStore.entries, async () => {
 }
 
 :deep(.n-tree-node-content__prefix) {
-  margin-right: 6px;
+  margin-inline-end: 6px;
 }
 
 :deep(.n-tree-node-content__text) {
