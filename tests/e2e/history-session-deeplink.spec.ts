@@ -399,6 +399,67 @@ test.describe('history session deep links', () => {
     expect(await resume.jsonValue()).toBeTruthy()
     await expect(page.getByText('claude-project')).toBeVisible()
   })
+
+  test('continues a Codex CLI history session in Chat with the same session and workspace', async ({ page }) => {
+    await authenticate(page)
+    await page.addInitScript(() => {
+      ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+        'hist-codex': {
+          session_id: 'hist-codex',
+          messages: [
+            {
+              id: 1,
+              session_id: 'hist-codex',
+              role: 'user',
+              content: 'Continue the native Codex session',
+              timestamp: 1_790_000_800,
+              tool_call_id: null,
+              tool_calls: null,
+              tool_name: null,
+              token_count: null,
+              finish_reason: null,
+              reasoning: null,
+            },
+          ],
+          workspace: 'C:/workspaces/codex-project',
+          isWorking: false,
+          events: [],
+        },
+      }
+    })
+    await mockHermesApi(page, { sessions: [historySessions[4]] })
+    await mockChatSocket(page)
+    await page.route('**/api/hermes/sessions/hermes**', async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname
+      if (path === '/api/hermes/sessions/hermes/groups') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ groups: [{ source: 'codex', sessions: [historySessions[4]], hasMore: false }], included: [] }),
+        })
+        return
+      }
+      if (path === '/api/hermes/sessions/hermes') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [historySessions[4]], hasMore: false, offset: 0, limit: 20 }) })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ session: detailFor('hist-codex') }) })
+    })
+
+    await page.goto('/#/hermes/history/session/hist-codex')
+    await expect(page.getByText('Codex CLI History Session').first()).toBeVisible()
+    await page.getByTestId('continue-in-chat').click()
+    await expect(page).toHaveURL(/#\/hermes\/session\/hist-codex\?profile=default$/)
+    await expect(page.getByText('Continue the native Codex session')).toBeVisible()
+
+    const resume = await page.waitForFunction(() => {
+      const state = (window as any).__PW_CHAT_SOCKET__
+      return state?.emitted?.find((item: any) => item.event === 'resume' && item.payload?.session_id === 'hist-codex') || null
+    })
+    expect(await resume.jsonValue()).toBeTruthy()
+    await expect(page.getByText('codex-project')).toBeVisible()
+  })
 })
 
 test.describe('history source pagination', () => {

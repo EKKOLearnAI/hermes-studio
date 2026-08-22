@@ -83,8 +83,12 @@ export async function handleCodingAgentRun(
   }
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
-  const mode = data.mode === 'global' ? 'global' : 'scoped'
   const storedSession = getSession(sessionId)
+  const mode = data.mode || (
+    storedSession?.agent_mode === 'global' || storedSession?.provider === 'global'
+      ? 'global'
+      : 'scoped'
+  )
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)

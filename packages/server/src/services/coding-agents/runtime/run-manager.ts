@@ -11,7 +11,7 @@ import { calcAndUpdateUsage, updateContextTokenUsage } from '../../hermes/run-ch
 import { extractResponseText } from '../../hermes/run-chat/response-utils'
 import type { SessionState } from '../../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from '../shared/adapters/responses-stream'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../windows-command'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, windowsNpmShimExecution } from '../../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../../hermes/run-chat/workspace-diff-tracker'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
@@ -404,7 +404,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
 }): ChildProcess {
   const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    const execution = windowsCmdShimExecution(normalizedCommand, args)
+    const execution = windowsNpmShimExecution(normalizedCommand, args) || windowsCmdShimExecution(normalizedCommand, args)
     return spawn(execution.command, execution.args, {
       cwd: options.cwd,
       env: options.env,

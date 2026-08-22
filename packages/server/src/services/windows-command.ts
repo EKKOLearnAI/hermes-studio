@@ -1,12 +1,14 @@
-import { extname } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { dirname, extname, join } from 'path'
 
 export interface WindowsCommandExecution {
   command: string
   args: string[]
-  windowsVerbatimArguments: true
+  windowsVerbatimArguments: boolean
 }
 
 const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
+const NPM_SHIM_TARGET = /"%_prog%"\s+"%dp0%\\([^"\r\n]+)"\s+%\*/i
 
 export function normalizeWindowsCommandPath(command: string): string {
   const trimmed = command.trim()
@@ -19,6 +21,32 @@ export function normalizeWindowsCommandPath(command: string): string {
 export function windowsCommandNeedsShell(command: string): boolean {
   const extension = extname(normalizeWindowsCommandPath(command)).toLowerCase()
   return extension === '.cmd' || extension === '.bat'
+}
+
+export function windowsNpmShimExecution(command: string, args: string[]): WindowsCommandExecution | null {
+  const normalizedCommand = normalizeWindowsCommandPath(command)
+  if (!windowsCommandNeedsShell(normalizedCommand)) return null
+
+  let content: string
+  try {
+    content = readFileSync(normalizedCommand, 'utf8')
+  } catch {
+    return null
+  }
+
+  const match = content.match(NPM_SHIM_TARGET)
+  if (!match) return null
+
+  const shimDir = dirname(normalizedCommand)
+  const script = join(shimDir, match[1])
+  if (!existsSync(script)) return null
+
+  const localNode = join(shimDir, 'node.exe')
+  return {
+    command: existsSync(localNode) ? localNode : 'node',
+    args: [script, ...args],
+    windowsVerbatimArguments: false,
+  }
 }
 
 function escapeCmdCommand(value: string): string {

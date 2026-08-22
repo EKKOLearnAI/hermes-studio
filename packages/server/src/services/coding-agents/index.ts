@@ -20,7 +20,7 @@ import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { getSession, updateSession, type HermesSessionRow } from '../../db/hermes/session-store'
 import type { SessionState } from '../hermes/run-chat/types'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../windows-command'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, windowsNpmShimExecution, type WindowsCommandExecution } from '../windows-command'
 import { assertScopedCodingAgentProviderAllowed } from './shared/provider-policy'
 
 const execFileAsync = promisify(execFile)
@@ -1902,7 +1902,7 @@ async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEn
 function commandExecution(command: string, args: string[]): CommandExecution {
   const normalizedCommand = normalizeWindowsCommandPath(command)
   if (process.platform === 'win32' && windowsCommandNeedsShell(normalizedCommand)) {
-    return windowsCmdShimExecution(normalizedCommand, args)
+    return windowsNpmShimExecution(normalizedCommand, args) || windowsCmdShimExecution(normalizedCommand, args)
   }
   return { command: normalizedCommand, args }
 }
@@ -2717,11 +2717,12 @@ export async function startCodingAgentRun(
       ? 'workflow'
       : 'coding_agent'
   const existingAgentSessionId = existingSession?.agent_session_id || ''
-  const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
-  const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
+  const requestedMode = input.mode || (existingSession ? storedCodingAgentMode(existingSession) : 'scoped')
+  const resolvedInput = await resolveStoredProviderLaunchInput({ ...input, mode: requestedMode }, existingSession)
+  const effectiveMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
   const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
-  assertScopedCodingAgentProviderAllowed(requestedMode, requestedProvider)
-  if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
+  assertScopedCodingAgentProviderAllowed(effectiveMode, requestedProvider)
+  if (effectiveMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
     const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
     ;(err as any).status = 400
     throw err

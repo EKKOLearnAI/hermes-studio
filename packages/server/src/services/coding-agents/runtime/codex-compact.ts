@@ -5,6 +5,7 @@ import {
   normalizeWindowsCommandPath,
   windowsCmdShimExecution,
   windowsCommandNeedsShell,
+  windowsNpmShimExecution,
 } from '../../windows-command'
 
 const APP_SERVER_READY_TIMEOUT_MS = 30_000
@@ -33,7 +34,7 @@ export async function compactCodexThread(
   const command = process.platform === 'win32' ? normalizeWindowsCommandPath(launch.command) : launch.command
   const appArgs = ['app-server', '--stdio']
   const execution = process.platform === 'win32' && windowsCommandNeedsShell(launch.command)
-    ? windowsCmdShimExecution(command, appArgs)
+    ? windowsNpmShimExecution(command, appArgs) || windowsCmdShimExecution(command, appArgs)
     : { command, args: appArgs }
 
   const child: ChildProcess = spawn(execution.command, execution.args, {

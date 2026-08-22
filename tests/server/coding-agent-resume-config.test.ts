@@ -387,6 +387,35 @@ describe('coding agent resumed session config', () => {
     }))
   })
 
+  it('uses the stored global mode when a Codex resume request omits mode', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'external-codex-2',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_mode: 'global',
+      agent_session_id: 'codex-native-2',
+      agent_native_session_id: 'codex-native-2',
+      provider: 'global',
+      model: '',
+      workspace: 'C:\\repo',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', { sessionId: 'external-codex-2', workspace: 'C:\\repo' })
+
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'global',
+      nativeResume: true,
+      agentNativeSessionId: 'codex-native-2',
+      provider: 'global',
+      env: expect.not.objectContaining({ CODEX_HOME: expect.anything() }),
+    }))
+  })
+
 
   it('prefers a stored coding-agent API mode when resuming without an explicit mode', async () => {
     makeHome()
