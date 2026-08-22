@@ -53,6 +53,10 @@ import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
+import {
+    createBrowserAnnotationAttachment,
+    type BrowserAnnotationSubmission,
+} from '@/utils/browser-annotation-submit'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import {
     inferCodingAgentApiMode,
@@ -780,8 +784,20 @@ function handleOpenDesktopBrowserPanelRequest(): void {
     selectWorkspacePanel('browser')
 }
 
-function handleBrowserAttachment(payload: { file: File }): void {
-    groupChatInputRef.value?.addFiles?.([payload.file])
+async function submitBrowserAnnotations(payload: BrowserAnnotationSubmission): Promise<boolean> {
+    if (currentRoomNeedsSummaryConfiguration.value) {
+        await handleSummaryConfigurationRequired()
+        return false
+    }
+    const attachment = createBrowserAnnotationAttachment(payload)
+    try {
+        await store.sendMessage('', [attachment])
+        return true
+    } catch (err: any) {
+        URL.revokeObjectURL(attachment.url)
+        message.error(err instanceof Error ? err.message : String(err))
+        return false
+    }
 }
 
 function groupWorkspacePreviewPath(filePath: string): string | null {
@@ -2584,7 +2600,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                         v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
                                         class="group-browser-panel"
                                         :visible="toolPanelTransitionReady"
-                                        @attach="handleBrowserAttachment"
+                                        :submit="submitBrowserAnnotations"
                                     />
                                 </div>
                             </template>

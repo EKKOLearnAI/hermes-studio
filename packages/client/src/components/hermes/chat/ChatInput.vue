@@ -816,7 +816,7 @@ function formatTokens(n: number): string {
 
 // --- File attachment helpers ---
 
-function addFile(file: File, context?: string) {
+function addFile(file: File) {
   if (attachments.value.find(a => a.name === file.name)) return
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
   const url = URL.createObjectURL(file)
@@ -827,18 +827,12 @@ function addFile(file: File, context?: string) {
     size: file.size,
     url,
     file,
-    ...(context?.trim() ? { context: context.trim() } : {}),
   })
 }
 
 function addFiles(files: File[]) {
   for (const file of files) addFile(file)
   if (files.length > 0) textareaRef.value?.focus()
-}
-
-function addBrowserAttachment(file: File, context: string) {
-  addFile(file, context)
-  textareaRef.value?.focus()
 }
 
 function handleAttachClick() {
@@ -902,7 +896,7 @@ function focusComposer() {
   nextTick(() => textareaRef.value?.focus())
 }
 
-defineExpose({ addFiles, addBrowserAttachment, focusComposer })
+defineExpose({ addFiles, focusComposer })
 
 // --- Send ---
 
