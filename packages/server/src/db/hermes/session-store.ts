@@ -58,6 +58,7 @@ export interface HermesMessageRow {
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
+  run_marker: string | null
   timestamp: number
   token_count: number | null
   finish_reason: string | null
@@ -157,6 +158,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     tool_call_id: row.tool_call_id != null ? String(row.tool_call_id) : null,
     tool_calls: parseToolCalls(row.tool_calls),
     tool_name: row.tool_name != null ? String(row.tool_name) : null,
+    run_marker: row.run_marker != null ? String(row.run_marker) : null,
     timestamp: Number(row.timestamp || 0),
     token_count: row.token_count != null ? Number(row.token_count) : null,
     finish_reason: row.finish_reason != null ? String(row.finish_reason) : null,
@@ -255,6 +257,7 @@ export function createBranchedSession(data: {
     tool_call_id?: string | null
     tool_calls?: any[] | null
     tool_name?: string | null
+    run_marker?: string | null
     timestamp?: number
     token_count?: number | null
     finish_reason?: string | null
@@ -268,8 +271,8 @@ export function createBranchedSession(data: {
   const source = data.source || 'api_server'
   const agent = data.agent || (source === 'cli' ? 'hermes' : '')
   const insertMessage = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   db.exec('BEGIN')
@@ -312,6 +315,7 @@ export function createBranchedSession(data: {
         msg.tool_call_id ?? null,
         msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
         msg.tool_name ?? null,
+        msg.run_marker ?? null,
         msg.timestamp ?? data.last_active,
         msg.token_count ?? null,
         msg.finish_reason ?? null,
@@ -779,6 +783,7 @@ export function addMessage(msg: {
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
+  run_marker?: string | null
   timestamp?: number
   token_count?: number | null
   finish_reason?: string | null
@@ -790,12 +795,13 @@ export function addMessage(msg: {
   const db = getDb()!
   const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
   const result = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.session_id, msg.role, normalizeMessageContentForStorageRole(msg.role, msg.content),
     msg.display_role ?? null, msg.display_content ?? null,
     msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
+    msg.run_marker ?? null,
     msg.timestamp ?? Math.floor(Date.now() / 1000),
     msg.token_count ?? null, msg.finish_reason ?? null,
     msg.reasoning ?? null, msg.reasoning_details ?? null,
@@ -813,6 +819,7 @@ export function addMessages(msgs: Array<{
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
+  run_marker?: string | null
   timestamp?: number
   token_count?: number | null
   finish_reason?: string | null
@@ -823,8 +830,8 @@ export function addMessages(msgs: Array<{
   if (!isSqliteAvailable() || msgs.length === 0) return []
   const db = getDb()!
   const insert = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   const ids: number[] = []
   db.exec('BEGIN')
@@ -835,6 +842,7 @@ export function addMessages(msgs: Array<{
         msg.session_id, msg.role, normalizeMessageContentForStorageRole(msg.role, msg.content),
         msg.display_role ?? null, msg.display_content ?? null,
         msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
+        msg.run_marker ?? null,
         msg.timestamp ?? Math.floor(Date.now() / 1000),
         msg.token_count ?? null, msg.finish_reason ?? null,
         msg.reasoning ?? null, msg.reasoning_details ?? null,

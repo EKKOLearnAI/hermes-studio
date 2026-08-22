@@ -1347,6 +1347,7 @@ export async function handleEkkoAgentRun(
       backgroundDelegationEnabled: data.background_delegation_enabled !== false,
     })
     assistantText = result.output.content || assistantText
+    const persistedRunMarker = runId || result.runId
     const outputUsage = result.output.usage
     if (outputUsage && !usageInput && !usageOutput) {
       usageInput += outputUsage.inputTokens || 0
@@ -1365,6 +1366,7 @@ export async function handleEkkoAgentRun(
           role: 'assistant',
           content: step.message.content || '',
           tool_calls: toolCalls,
+          run_marker: persistedRunMarker,
           timestamp,
           finish_reason: 'tool_calls',
           reasoning: reasoningText || null,
@@ -1375,6 +1377,7 @@ export async function handleEkkoAgentRun(
         state.messages.push({
           id: assistantId || state.messages.length + 1,
           session_id: sessionId,
+          runMarker: persistedRunMarker,
           role: 'assistant',
           content: step.message.content || '',
           tool_calls: toolCalls,
@@ -1393,12 +1396,14 @@ export async function handleEkkoAgentRun(
           content: step.result.content,
           tool_call_id: step.toolCallId,
           tool_name: step.toolName,
+          run_marker: persistedRunMarker,
           timestamp,
           finish_reason: step.result.ok ? null : 'error',
         })
         state.messages.push({
           id: toolId || state.messages.length + 1,
           session_id: sessionId,
+          runMarker: persistedRunMarker,
           role: 'tool',
           content: step.result.content,
           tool_call_id: step.toolCallId,
@@ -1447,6 +1452,7 @@ export async function handleEkkoAgentRun(
         session_id: sessionId,
         role: 'assistant',
         content: assistantText,
+        run_marker: persistedRunMarker,
         timestamp: Math.floor(Date.now() / 1000),
         finish_reason: result.output.finishReason || null,
         reasoning: assistantReasoning || null,
@@ -1457,6 +1463,7 @@ export async function handleEkkoAgentRun(
       state.messages.push({
         id: assistantId || state.messages.length + 1,
         session_id: sessionId,
+        runMarker: persistedRunMarker,
         role: 'assistant',
         content: assistantText,
         timestamp: Math.floor(Date.now() / 1000),

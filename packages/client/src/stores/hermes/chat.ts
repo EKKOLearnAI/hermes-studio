@@ -82,11 +82,13 @@ export interface Message {
   // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
-  systemType?: 'command' | 'error' | 'fork-divider'
+  systemType?: 'command' | 'error' | 'fork-divider' | 'tool-run'
   commandAction?: string
   commandData?: Record<string, unknown>
   finishReason?: string | null
   runMarker?: string | null
+  toolRunId?: string
+  toolMessages?: Message[]
 }
 
 export type SubagentStreamStatus =
@@ -774,6 +776,11 @@ function readRunMarker(value: unknown): string | null | undefined {
   if (Object.prototype.hasOwnProperty.call(record, 'run_marker')) {
     return typeof record.run_marker === 'string' || record.run_marker == null
       ? record.run_marker as string | null
+      : undefined
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'run_id')) {
+    return typeof record.run_id === 'string' || record.run_id == null
+      ? record.run_id as string | null
       : undefined
   }
   return undefined
@@ -1984,6 +1991,7 @@ export const useChatStore = defineStore('chat', () => {
                 if (existingTool) {
                   updateMessage(sessionId, existingTool.id, {
                     toolName: e.tool || e.name,
+                    runMarker: existingTool.runMarker || readRunMarker(e),
                     toolArgs: hasRuntimeToolPayload((e as any).arguments) ? (e as any).arguments : existingTool.toolArgs,
                     toolPreview: e.preview || existingTool.toolPreview,
                     toolStatus: existingTool.toolStatus || 'running',
@@ -1996,6 +2004,7 @@ export const useChatStore = defineStore('chat', () => {
                     timestamp: Date.now(),
                     toolName: e.tool || e.name,
                     toolCallId,
+                    runMarker: readRunMarker(e),
                     toolPreview: e.preview,
                     toolArgs: runtimeToolPayloadOrUndefined((e as any).arguments),
                     toolStatus: 'running',
@@ -2028,7 +2037,9 @@ export const useChatStore = defineStore('chat', () => {
                   continue
                 }
                 if (toolMsgs.length > 0) {
-                  updateMessage(sessionId, toolMsgs[toolMsgs.length - 1].id, {
+                  const last = toolMsgs[toolMsgs.length - 1]
+                  updateMessage(sessionId, last.id, {
+                    runMarker: last.runMarker || readRunMarker(e),
                     toolStatus: e.event === 'tool.failed' || e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
                     toolDuration: e.duration,
                     toolResult: output,
@@ -2153,6 +2164,8 @@ export const useChatStore = defineStore('chat', () => {
     if (!targetId) return false
     const target = sessions.value.find(s => s.id === targetId)
     const activeTarget = activeSession.value?.id === targetId ? activeSession.value : null
+    const session = target || activeTarget
+    if (session?.codingAgentMode === 'global' && isCodingAgentLikeSession(session)) return false
     const previousProvider = String(target?.provider ?? activeTarget?.provider ?? '')
     const nextProvider = provider || ''
     const shouldClearRuntimeCredentials = previousProvider !== nextProvider && (
@@ -2509,6 +2522,7 @@ export const useChatStore = defineStore('chat', () => {
       const update: Partial<Message> = {
         toolName: 'moa_reference',
         toolCallId,
+        runMarker: readRunMarker(evt),
         toolPreview: label.slice(0, 220),
         toolStatus: 'done',
         toolResult: output,
@@ -2535,6 +2549,7 @@ export const useChatStore = defineStore('chat', () => {
     const update: Partial<Message> = {
       toolName: 'moa_aggregating',
       toolCallId,
+      runMarker: readRunMarker(evt),
       toolPreview: aggregator.slice(0, 220),
       toolStatus: 'running',
       toolArgs: { aggregator },
@@ -3802,6 +3817,7 @@ export const useChatStore = defineStore('chat', () => {
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
                   toolName: evt.tool || evt.name,
+                  runMarker: existingTool.runMarker || readRunMarker(evt),
                   toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
                   toolPreview: evt.preview || existingTool.toolPreview,
                   reasoning: existingTool.reasoning || toolReasoning,
@@ -3816,6 +3832,7 @@ export const useChatStore = defineStore('chat', () => {
                 timestamp: Date.now(),
                 toolName: evt.tool || evt.name,
                 toolCallId,
+                runMarker: readRunMarker(evt),
                 toolPreview: evt.preview,
                 toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
                 reasoning: toolReasoning,
@@ -3860,6 +3877,7 @@ export const useChatStore = defineStore('chat', () => {
                 const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
+                  runMarker: last.runMarker || readRunMarker(evt),
                   toolStatus: hasError ? 'error' : 'done',
                   toolDuration: duration,
                   toolResult: output,
@@ -4512,6 +4530,7 @@ export const useChatStore = defineStore('chat', () => {
           if (existingTool) {
             updateMessage(sid, existingTool.id, {
               toolName: evt.tool || evt.name,
+              runMarker: existingTool.runMarker || readRunMarker(evt),
               toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
               toolPreview: evt.preview || existingTool.toolPreview,
               reasoning: existingTool.reasoning || toolReasoning,
@@ -4526,6 +4545,7 @@ export const useChatStore = defineStore('chat', () => {
             timestamp: Date.now(),
             toolName: evt.tool || evt.name,
             toolCallId,
+            runMarker: readRunMarker(evt),
             toolPreview: evt.preview,
             toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
             reasoning: toolReasoning,
@@ -4567,7 +4587,9 @@ export const useChatStore = defineStore('chat', () => {
           }
           if (toolMsgs.length > 0) {
             const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
-            updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
+            const last = toolMsgs[toolMsgs.length - 1]
+            updateMessage(sid, last.id, {
+              runMarker: last.runMarker || readRunMarker(evt),
               toolStatus: hasError ? 'error' : 'done',
               toolDuration: (evt as any).duration,
               toolResult: output,

@@ -49,13 +49,16 @@ function appendedTextDelta(existing: string, next: string): string {
   return next
 }
 
-function appendReasoningToMessage(run: ResponseRunState, message: any, text: string): void {
-  if (!text || message?.role !== 'assistant') return
-  const delta = appendedTextDelta(message.reasoning || message.reasoning_content || '', text)
-  if (!delta) return
-  message.reasoning = `${message.reasoning || ''}${delta}`
-  message.reasoning_content = `${message.reasoning_content || ''}${delta}`
+function appendReasoningToMessage(run: ResponseRunState, message: any, text: string): string {
+  if (!text || message?.role !== 'assistant') return ''
+  const existing = message.reasoning || message.reasoning_content || ''
+  const delta = appendedTextDelta(existing, text)
+  if (!delta) return ''
+  const reasoning = `${existing}${delta}`
+  message.reasoning = reasoning
+  message.reasoning_content = reasoning
   run.reasoningMessageId = message.id
+  return delta
 }
 
 function captureToolBoundaryReasoning(
@@ -145,6 +148,7 @@ export function applyResponseStreamEvent(
       payload: {
         event: 'run.started',
         run_id: run.responseId,
+        run_marker: runMarker,
         response_id: run.responseId,
         status: response.status || 'in_progress',
         queue_length: state.queue.length || 0,
@@ -185,6 +189,7 @@ export function applyResponseStreamEvent(
       payload: {
         event: 'message.delta',
         run_id: run.responseId,
+        run_marker: runMarker,
         response_id: run.responseId,
         delta: deltaText,
       },
@@ -210,14 +215,28 @@ export function applyResponseStreamEvent(
         ? lastMessage
         : null
     const target = existingTarget?.role === 'assistant' ? existingTarget : fallbackTarget
+    let appendedDelta = ''
     if (target) {
-      appendReasoningToMessage(run, target, deltaText)
+      appendedDelta = appendReasoningToMessage(run, target, deltaText)
     } else {
-      const delta = appendedTextDelta(run.pendingReasoning || '', deltaText)
-      if (!delta) return null
-      run.pendingReasoning = `${run.pendingReasoning || ''}${delta}`
+      appendedDelta = appendedTextDelta(run.pendingReasoning || '', deltaText)
+      if (appendedDelta) {
+        run.pendingReasoning = `${run.pendingReasoning || ''}${appendedDelta}`
+      }
     }
-    return null
+    if (!appendedDelta) return null
+    const responseId = run.responseId || parsed?.response?.id || parsed?.id || parsed?.item_id
+    return {
+      event: 'reasoning.delta',
+      runId: responseId,
+      payload: {
+        event: 'reasoning.delta',
+        run_id: responseId,
+        run_marker: runMarker,
+        response_id: responseId,
+        delta: appendedDelta,
+      },
+    }
   }
 
   if (eventType === 'response.output_text.done') {
@@ -250,6 +269,7 @@ export function applyResponseStreamEvent(
       payload: {
         event: 'tool.started',
         run_id: run.responseId,
+        run_marker: runMarker,
         response_id: run.responseId,
         tool_call_id: callId,
         tool: toolCall.function.name,
@@ -321,6 +341,7 @@ export function applyResponseStreamEvent(
         payload: {
           event: 'tool.started',
           run_id: run.responseId,
+          run_marker: runMarker,
           response_id: run.responseId,
           tool_call_id: callId,
           tool: toolCall.function.name,
@@ -362,6 +383,7 @@ export function applyResponseStreamEvent(
         payload: {
           event: eventName,
           run_id: run.responseId,
+          run_marker: runMarker,
           response_id: run.responseId,
           tool_call_id: callId,
           tool: toolName,
@@ -450,6 +472,7 @@ export function flushResponseRunToDb(state: SessionState, sessionId: string): st
       tool_call_id: msg.tool_call_id ?? null,
       tool_calls: msg.tool_calls ?? null,
       tool_name: msg.tool_name ?? null,
+      run_marker: msg.runMarker ?? null,
       finish_reason: msg.finish_reason ?? null,
       reasoning: msg.reasoning ?? null,
       reasoning_content: msg.reasoning_content ?? null,

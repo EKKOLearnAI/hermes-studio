@@ -60,6 +60,7 @@ describe('Bridge tool result context projection', () => {
     expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
       role: 'tool',
       content: completeToolResult,
+      run_marker: 'run-1',
     }))
     expect(truncateToolResultForContext(completeToolResult)).toHaveLength(5_500)
   })

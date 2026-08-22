@@ -17,6 +17,7 @@ export function flushBridgePendingToDb(state: SessionState, sessionId: string, r
     session_id: sessionId,
     role: 'assistant',
     content,
+    run_marker: runMarker ?? null,
     reasoning: reasoning || null,
     reasoning_content: reasoning || null,
     timestamp: Math.floor(Date.now() / 1000),
@@ -116,6 +117,7 @@ export function recordBridgeToolStarted(
     session_id: sessionId,
     role: 'assistant',
     content: '',
+    run_marker: runMarker,
     tool_calls: [toolCall],
     finish_reason: 'tool_calls',
     reasoning: reasoning || null,
@@ -179,6 +181,7 @@ export function recordBridgeToolCompleted(
     content: output,
     tool_call_id: id,
     tool_name: toolName || pending?.name || null,
+    run_marker: runMarker,
     timestamp,
   })
   state.messages.push(message)
@@ -217,6 +220,7 @@ export function recordBridgeMoaDisplayTool(
     display_role: 'tool',
     tool_call_id: toolCallId,
     tool_name: toolName,
+    run_marker: runMarker,
     timestamp,
   })
 }

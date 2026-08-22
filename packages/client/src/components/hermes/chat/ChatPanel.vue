@@ -669,8 +669,14 @@ const activeSessionTitle = computed(
   () => chatStore.activeSession?.title || t("chat.newChat"),
 );
 
+const activeSessionUsesGlobalCodingAgentConfig = computed(() => {
+  const session = chatStore.activeSession;
+  return session?.codingAgentMode === "global" && Boolean(session.codingAgentId || session.source === "coding_agent");
+});
+
 const activeSessionModelLabel = computed(() => {
   const session = chatStore.activeSession;
+  if (activeSessionUsesGlobalCodingAgentConfig.value) return t("codingAgents.launchModeGlobal");
   if (!session?.model) return t("models.selectModel");
   if (session.provider === "moa") return `MoA · ${session.model}`;
   return appStore.displayModelName(session.model, session.provider);
@@ -1409,7 +1415,10 @@ const contextMenuOptions = computed(() => {
 
   options.push({ label: t("chat.setWorkspace"), key: "workspace" })
 
-  if (contextSession.value?.source === "cli" || contextSession.value?.source === "coding_agent") {
+  if (
+    contextSession.value?.source === "cli" ||
+    (contextSession.value?.source === "coding_agent" && contextSession.value?.codingAgentMode !== "global")
+  ) {
     options.push({ label: t("chat.setModel"), key: "model" })
   }
 
@@ -1722,6 +1731,13 @@ const filteredSessionMoaModels = computed(() => {
 });
 
 async function openSessionModelModal(sessionId: string) {
+  const requestedSession =
+    chatStore.sessions.find((s) => s.id === sessionId) ||
+    (chatStore.activeSession?.id === sessionId ? chatStore.activeSession : undefined);
+  if (
+    requestedSession?.codingAgentMode === "global" &&
+    Boolean(requestedSession.codingAgentId || requestedSession.source === "coding_agent")
+  ) return;
   if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
     await appStore.loadModels();
   }
@@ -1761,6 +1777,7 @@ function handleSessionModelKindChange(value: "model" | "moa") {
 }
 
 function handleHeaderModelClick() {
+  if (activeSessionUsesGlobalCodingAgentConfig.value) return;
   const sessionId = chatStore.activeSession?.id;
   if (!sessionId) {
     openNewChatModal();
@@ -2761,6 +2778,7 @@ async function handleSessionModelCustomSubmit() {
             <ChatInput
               ref="chatInputRef"
               :model-label="activeSessionModelLabel"
+              :model-disabled="activeSessionUsesGlobalCodingAgentConfig"
               @model-click="handleHeaderModelClick"
               @voice-click="openRealtimeVoice"
             />
