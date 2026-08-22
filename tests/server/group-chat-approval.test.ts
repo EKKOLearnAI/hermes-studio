@@ -884,14 +884,24 @@ describe('group chat approval and context baseline', () => {
       generation: '3',
     })
 
+    const resolved = once<any>(human, 'approval.resolved')
     await expect(emitAck(human, 'approval.respond', {
       roomId: 'room-1',
       approval_id: 'approval_pi_3_native',
       choice: 'once',
     })).resolves.toMatchObject({
       resolved: false,
+      expired: true,
       stale: true,
     })
+    await expect(resolved).resolves.toMatchObject({
+      approval_id: 'approval_pi_3_native',
+      resolved: false,
+      expired: true,
+      stale: true,
+      error: 'Approval no longer belongs to the active Runtime generation',
+    })
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
     expect(bridgeApproval).not.toHaveBeenCalled()
   })
 

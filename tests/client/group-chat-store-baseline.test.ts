@@ -441,6 +441,66 @@ describe('group chat store baseline lifecycle', () => {
     ])
   })
 
+  it('removes an expired approval when the Runtime publishes its terminal event', async () => {
+    const store = await loadStore()
+    await store.connect()
+
+    emitSocket('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      approval_id: 'approval-expired',
+      command: 'touch expired',
+      choices: ['once', 'deny'],
+      runtime: 'codex',
+      generation: 4,
+    })
+    expect(store.pendingApprovals.has('room-1:approval-expired')).toBe(true)
+
+    emitSocket('approval.resolved', {
+      roomId: 'room-1',
+      approval_id: 'approval-expired',
+      resolved: false,
+      expired: true,
+      stale: true,
+      error: 'Approval no longer belongs to the active Runtime generation',
+    })
+
+    expect(store.pendingApprovals.has('room-1:approval-expired')).toBe(false)
+  })
+
+  it('removes an expired approval when its response ACK reports stale', async () => {
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'load_pending_approvals' && ack) ack({ pendingApprovals: [] })
+      if (event === 'load_room_agent_activities' && ack) ack({ activities: [] })
+      if (event === 'approval.respond' && ack) {
+        ack({
+          ok: true,
+          approval_id: data.approval_id,
+          resolved: false,
+          expired: true,
+          stale: true,
+          error: 'Approval no longer belongs to the active Runtime generation',
+        })
+      }
+      return groupChatApiMock.socket
+    })
+    const store = await loadStore()
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      approval_id: 'approval-ack-stale',
+      command: 'touch stale',
+      choices: ['once', 'deny'],
+      runtime: 'codex',
+      generation: 5,
+    })
+
+    await store.respondApprovalFor('room-1', 'approval-ack-stale', 'once')
+
+    expect(store.pendingApprovals.has('room-1:approval-ack-stale')).toBe(false)
+  })
+
   it('uses server persisted activity time instead of an agent display timestamp for live room ordering', async () => {
     const store = await loadStore()
     store.rooms = [
@@ -1374,7 +1434,7 @@ describe('group chat store baseline lifecycle', () => {
     })
   })
 
-  it('marks expired approvals from authoritative broadcasts and ignores the wrong id', async () => {
+  it('removes expired approvals from authoritative broadcasts and ignores the wrong id', async () => {
     const store = await loadStore()
     await store.connect()
     emitSocket('approval.requested', {
@@ -1394,10 +1454,7 @@ describe('group chat store baseline lifecycle', () => {
       expired: true,
       error: 'Approval timed out.',
     })
-    expect(store.pendingApprovals.get('room-b:approval-b')).toMatchObject({
-      status: 'expired',
-      error: 'Approval timed out.',
-    })
+    expect(store.pendingApprovals.has('room-b:approval-b')).toBe(false)
   })
 
   it('updates the current room name and token display on room_updated', async () => {

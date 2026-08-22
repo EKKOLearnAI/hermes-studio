@@ -1205,11 +1205,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const key = pendingApprovalKey(data.roomId, data.approval_id)
             const pending = pendingApprovals.value.get(key)
             if (!pending) return
-            if (data.resolved === true) pendingApprovals.value.delete(key)
+            if (data.resolved === true || data.expired === true || data.stale === true) {
+                pendingApprovals.value.delete(key)
+            }
             else {
                 pendingApprovals.value.set(key, {
                     ...pending,
-                    status: data.expired === true || data.stale === true ? 'expired' : 'failed',
+                    status: 'failed',
                     error: String(data.error || data.reason || ''),
                 })
             }
@@ -1900,10 +1902,12 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         } else if (response?.pending === true) {
             // Keep the card locked while the owning Runtime applies the
             // response. approval.resolved is the only terminal signal.
+        } else if (response?.expired === true || response?.stale === true) {
+            pendingApprovals.value.delete(key)
         } else {
             pendingApprovals.value.set(key, {
                 ...current,
-                status: response?.expired === true || response?.stale === true ? 'expired' : 'failed',
+                status: 'failed',
                 error: String(response?.error || ''),
             })
         }

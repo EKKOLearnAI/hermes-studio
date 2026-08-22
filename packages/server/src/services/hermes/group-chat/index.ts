@@ -5177,13 +5177,21 @@ export class GroupChatServer {
             return
         }
         if (pendingRoute.runtime !== 'hermes') {
-            this.takePendingApprovalRoute(routeKey)
+            const error = 'Approval no longer belongs to the active Runtime generation'
+            this.expirePendingAgentInteractions(
+                roomId,
+                pendingRoute.agentName,
+                [data.approval_id],
+                [],
+                error,
+            )
             ack?.({
                 ok: true,
                 approval_id: data.approval_id,
                 resolved: false,
+                expired: true,
                 stale: true,
-                error: 'Approval no longer belongs to the active Runtime generation',
+                error,
             })
             return
         }
