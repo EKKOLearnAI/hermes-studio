@@ -558,7 +558,7 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   expect(second.run.input).toBe('Second queued contract')
   await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
 
-  const insertionArrow = page.getByRole('button', { name: 'Insert after the current safe boundary' })
+  const insertionArrow = page.getByRole('button', { name: 'Insert queued message' })
   await expect(insertionArrow).toBeVisible()
   await insertionArrow.click()
   const insertionRequest = await page.waitForFunction(() => {
@@ -680,7 +680,7 @@ test('does not report a safe queue insertion stop as an empty model response', a
 
   await sendChatMessage(page, 'Insert this next')
   const second = await waitForRun(page, 1)
-  await page.getByRole('button', { name: 'Insert after the current safe boundary' }).click()
+  await page.getByRole('button', { name: 'Insert queued message' }).click()
   await page.evaluate(({ sid, queueId }) => {
     const socket = (window as any).__PW_CHAT_SOCKET__.latest
     socket.__trigger('run.queue_insertion.updated', {
