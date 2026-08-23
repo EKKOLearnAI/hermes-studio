@@ -930,6 +930,8 @@ export default {
     thinkingShow: 'Show thinking',
     thinkingHide: 'Hide thinking',
     thinkingDuration: 'Observed {duration}',
+    ttft: 'First token {ms}ms',
+    ttftTitle: 'Time to first token',
     thinkingChars: '{count} chars',
     copyBubble: 'Copy message',
     copiedBubble: 'Message copied',

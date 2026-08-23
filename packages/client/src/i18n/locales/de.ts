@@ -823,6 +823,8 @@ export default {
     thinkingShow: 'Denkprozess anzeigen',
     thinkingHide: 'Denkprozess ausblenden',
     thinkingDuration: 'Beobachtet {duration}',
+    ttft: 'Erstes Token {ms}ms',
+    ttftTitle: 'Zeit bis zum ersten Token',
     thinkingChars: '{count} Zeichen',
     copyBubble: 'Nachricht kopieren',
     copiedBubble: 'Nachricht kopiert',

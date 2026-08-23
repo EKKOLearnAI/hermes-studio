@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { consumeFirstDelta, noteRunStart } from '@/utils/hermes/ttft-tracker'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { showCompletionNotification } from '@/utils/completion-notification'
@@ -89,6 +90,8 @@ export interface Message {
   runMarker?: string | null
   toolRunId?: string
   toolMessages?: Message[]
+  /** Additive: time-to-first-token in ms for assistant messages (null/undefined = not measured). */
+  ttftMs?: number
 }
 
 export type SubagentStreamStatus =
@@ -3583,6 +3586,8 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
+      // TTFT (additive): record run issue time so the first content delta can be timed.
+      noteRunStart(sid)
       // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
       const ctrl = startRunViaSocket(
         runPayload,
@@ -3775,6 +3780,8 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'message.delta': {
+              // TTFT (additive): consume once per run on the first content delta.
+              const ttftMs = consumeFirstDelta(sid) ?? undefined
               if (evt.delta) {
                 runProducedAssistantText = true
                 runProducedAssistantContent = true
@@ -3784,6 +3791,7 @@ export const useChatStore = defineStore('chat', () => {
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : null
               if (last?.role === 'assistant' && last.isStreaming) {
+                if (ttftMs !== undefined && last.ttftMs === undefined) last.ttftMs = ttftMs
                 const prev = last.content
                 const next = prev + (evt.delta || '')
                 noteThinkingDelta(last.id, prev, next)
@@ -3797,6 +3805,7 @@ export const useChatStore = defineStore('chat', () => {
                 addMessage(sid, {
                   id: newId,
                   role: 'assistant',
+                  ttftMs,
                   content: nextContent,
                   timestamp: Date.now(),
                   isStreaming: true,
