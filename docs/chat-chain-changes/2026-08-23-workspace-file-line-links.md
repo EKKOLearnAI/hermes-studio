@@ -1,6 +1,6 @@
 ---
 date: 2026-08-23
-pr: pending
+pr: 2702
 feature: Workspace file links with source locations
 impact: Chat file previews now remove trailing line and column locations before reading local workspace files.
 ---
