@@ -9,7 +9,10 @@ const groupChatAuthMock = vi.hoisted(() => ({
   user: null as any,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => groupChatDbMock.current }))
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: () => groupChatDbMock.current,
+  isSqliteAvailable: () => groupChatDbMock.current !== null,
+}))
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   isAuthEnabled: vi.fn(async () => groupChatAuthMock.enabled),
   authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
