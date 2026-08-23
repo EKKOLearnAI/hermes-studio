@@ -19,6 +19,12 @@ export const streamMetrics = reactive({
   active: false,
 })
 
+/** Session the current metrics belong to (for multi-session UI gating). */
+let metricsSession: string | null = null
+export function activeStreamSession(): string | null {
+  return streamMetrics.active ? metricsSession : null
+}
+
 const WINDOW_MS = 2000
 
 let currentSession: string | null = null
@@ -32,16 +38,17 @@ function ensureSampler(): void {
   samplerId = setInterval(() => {
     if (!streamMetrics.active) return
     const now = performance.now()
-    const cutoff = now - WINDOW_MS * 2 // keep two windows of history
-    deltaTimestamps = deltaTimestamps.filter(t => t >= cutoff)
-    const recent = deltaTimestamps.filter(t => now - t <= WINDOW_MS)
+    const windowStart = now - WINDOW_MS
+    // Drop stale samples beyond a few windows to bound memory.
+    deltaTimestamps = deltaTimestamps.filter(t => t >= now - WINDOW_MS * 5)
+    const recent = deltaTimestamps.filter(t => t >= windowStart)
     if (recent.length === 0 || startedAt === null) {
       streamMetrics.tokensPerSec = null
       return
     }
-    // Span from window start (or first delta, whichever is later) to now,
-    // clamped so short bursts don't produce absurd rates.
-    const spanMs = Math.max(500, now - Math.max(cutoff, startedAt))
+    // Count deltas inside the SAME window used for filtering, starting no
+    // earlier than the run itself so short streams ramp up correctly.
+    const spanMs = Math.max(500, now - Math.max(windowStart, startedAt))
     streamMetrics.tokensPerSec = Math.round((recent.length / spanMs) * 1000)
   }, WINDOW_MS)
 }
@@ -50,6 +57,7 @@ function ensureSampler(): void {
 export function noteStreamStart(sessionId: string): void {
   if (!sessionId) return
   currentSession = sessionId
+  metricsSession = sessionId
   startedAt = performance.now()
   firstDeltaAt = null
   deltaTimestamps = []
@@ -71,7 +79,11 @@ export function noteStreamDelta(sessionId: string): void {
   deltaTimestamps.push(now)
 }
 
-/** Stop tracking (run completed / failed / aborted). Last values stay frozen. */
+/** Stop tracking (run completed / failed / aborted). Chip hides immediately. */
 export function endStreamMetrics(): void {
   streamMetrics.active = false
+  if (samplerId !== null) {
+    clearInterval(samplerId)
+    samplerId = null
+  }
 }

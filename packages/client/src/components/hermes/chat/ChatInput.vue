@@ -107,7 +107,7 @@ const compactModelLabel = computed(() => {
 const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
 type DraftMap = Record<string, string>
 const inputText = ref('')
-import { streamMetrics } from '@/utils/hermes/stream-metrics'
+import { activeStreamSession, streamMetrics } from '@/utils/hermes/stream-metrics'
 
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -1119,7 +1119,7 @@ function isImage(type: string): boolean {
           />
         </div>
       </div>
-      <div v-if="streamMetrics.active" class="stream-speed-chip" :title="t('chat.streamSpeedTitle')">
+      <div v-if="streamMetrics.active && activeStreamSession() === chatStore.activeSessionId" class="stream-speed-chip" :title="t('chat.streamSpeedTitle')">
         {{ t('chat.streamSpeed', { ttft: streamMetrics.ttftMs ?? '-', tps: streamMetrics.tokensPerSec ?? '-' }) }}
       </div>
       <textarea
