@@ -484,6 +484,7 @@ export async function handleEkkoAgentRun(
       id: sessionId,
       profile,
       source: sessionSource,
+      user_id: socket.data?.user?.id == null ? null : String(socket.data.user.id),
       agent: 'ekko-agent',
       agent_mode: 'scoped',
       model: modelConfig.model,

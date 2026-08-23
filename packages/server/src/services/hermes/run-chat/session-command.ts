@@ -714,7 +714,7 @@ export async function handleSessionCommand(
       }
       const title = command.args.slice(0, 120)
       if (!getSession(sessionId)) {
-        createSession({ id: sessionId, profile: ctx.profile, source: 'cli', model: ctx.model, title })
+        createSession({ id: sessionId, profile: ctx.profile, source: 'cli', user_id: sessionUserId(ctx), model: ctx.model, title })
       }
       const updated = renameSession(sessionId, title)
       emitCommand({
@@ -1160,6 +1160,7 @@ function ensureCommandSession(sessionId: string, command: ParsedSessionCommand, 
     id: sessionId,
     profile: ctx.profile,
     source: 'cli',
+    user_id: sessionUserId(ctx),
     model: ctx.model,
     title: buildCommandSessionTitle(command),
   })
@@ -1211,6 +1212,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     agent_mode: parent.agent_mode || '',
     agent_session_id: parent.agent_session_id || '',
     agent_native_session_id: parent.agent_native_session_id || '',
+    user_id: parent.user_id ?? sessionUserId(ctx),
     model: parent.model || ctx.model || '',
     provider: parent.provider || ctx.provider || '',
     api_mode: parent.api_mode || '',
@@ -1258,6 +1260,10 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
   }
 }
 
+function sessionUserId(ctx: SessionCommandContext): string | null {
+  const userId = (ctx.socket.data as { user?: { id?: unknown } } | undefined)?.user?.id
+  return userId == null ? null : String(userId)
+}
 
 function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
   return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'pi' || session?.agent === 'ekko-agent'

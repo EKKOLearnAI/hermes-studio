@@ -247,6 +247,23 @@ describe('session conversations controller', () => {
     codingAgentRunManagerMock.stop.mockReset()
   })
 
+  it('isolates shared-profile session lists and details by authenticated user id', async () => {
+    const aliceSession = { id: 'alice-session', profile: 'default', user_id: '1', source: 'api_server', is_archived: 0 }
+    const bobSession = { id: 'bob-session', profile: 'default', user_id: '2', source: 'api_server', is_archived: 0 }
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }])
+    localListSessionsMock.mockReturnValue([aliceSession, bobSession])
+    localGetSessionDetailMock.mockReturnValue({ ...aliceSession, messages: [{ id: 1, role: 'user', content: 'private' }] })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const listCtx: any = { query: {}, state: { user: { id: 2, role: 'admin' } }, body: null }
+    await mod.list(listCtx)
+    expect(listCtx.body.sessions).toEqual([bobSession])
+
+    const detailCtx: any = { params: { id: 'alice-session' }, state: { user: { id: 2, role: 'admin' } }, body: null }
+    await mod.get(detailCtx)
+    expect(detailCtx).toMatchObject({ status: 404, body: { error: 'Session not found' } })
+  })
+
   it('lists conversations from the local session store', async () => {
     localListSessionsMock.mockReturnValue([{
       id: 'local-conversation',
@@ -1093,6 +1110,18 @@ describe('session conversations controller', () => {
     ])
   })
 
+  it('hides an imported shared-profile history session owned by another user', async () => {
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'travel' }])
+    localListSessionsMock.mockReturnValue([{ id: 'alice-history', profile: 'travel', source: 'cli', user_id: '1' }])
+    listSessionSummariesMock.mockResolvedValue([{ id: 'alice-history', source: 'cli', title: 'Private history', started_at: 1, last_active: 1 }])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { profile: 'travel' }, state: { user: { id: 2, role: 'admin' } }, body: null }
+    await mod.listHermesSessions(ctx)
+
+    expect(ctx.body.sessions).toEqual([])
+  })
+
   it('returns the first page of every Hermes history source group', async () => {
     localListSessionsMock.mockReturnValue([])
     listSessionSummaryGroupsMock.mockResolvedValue({
@@ -1930,6 +1959,7 @@ describe('session conversations controller', () => {
   })
 
   it('imports a Hermes session into the local Web UI store', async () => {
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'travel' }])
     const hermesDetail = {
       id: 'cli-1',
       source: 'cli',
@@ -1966,7 +1996,7 @@ describe('session conversations controller', () => {
     getSessionDetailFromDbWithProfileMock.mockResolvedValue(hermesDetail)
 
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
-    const ctx: any = { params: { id: 'cli-1' }, query: { profile: 'travel' }, state: {}, body: null }
+    const ctx: any = { params: { id: 'cli-1' }, query: { profile: 'travel' }, state: { user: { id: 1, role: 'admin' } }, body: null }
 
     await mod.importHermesSession(ctx)
 
@@ -1975,12 +2005,14 @@ describe('session conversations controller', () => {
       id: 'cli-1',
       profile: 'travel',
       source: 'cli',
+      user_id: '1',
       model: 'gpt-default',
       provider: 'openai',
       title: 'CLI run',
     }))
     expect(localUpdateSessionMock).toHaveBeenCalledWith('cli-1', expect.objectContaining({
       source: 'cli',
+      user_id: '1',
       model: 'gpt-default',
       provider: 'openai',
     }))

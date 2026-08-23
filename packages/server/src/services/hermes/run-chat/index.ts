@@ -332,6 +332,9 @@ export class ChatRunSocket {
       if (socketUser && !this.canAccessProfile(socketUser, sessionProfile)) {
         throw new Error(`Profile "${sessionProfile}" is not available for this user`)
       }
+      if (socketUser && session.user_id && String(session.user_id) !== String(socketUser.id)) {
+        throw new Error('Session not found')
+      }
       return sessionProfile
     }
 
@@ -371,6 +374,19 @@ export class ChatRunSocket {
       // Local patch (reasoning-effort): per-session reasoning effort override.
       reasoning_effort?: string
     }) => {
+      if (data.session_id && getSession(data.session_id)) {
+        try {
+          requireSocketSessionAccess(data.session_id)
+        } catch (err) {
+          socket.emit('run.failed', {
+            event: 'run.failed',
+            session_id: data.session_id,
+            queue_id: data.queue_id,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          return
+        }
+      }
       let runProfile: string
       try {
         runProfile = resolveRunProfile(data.session_id, data.profile)
