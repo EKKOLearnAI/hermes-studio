@@ -648,7 +648,7 @@ test.describe('group chat room deep links', () => {
     expect(toolNames.at(-1)).toBe('live_tool_1')
   })
 
-  test('keeps persistent room Agent grids stable while exact runs activate only matching cells', async ({ page }) => {
+  test('keeps persistent room Agent grids stable while active runs glow the complete room avatar', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     const activity = (overrides: Record<string, unknown> = {}) => ({
@@ -673,6 +673,7 @@ test.describe('group chat room deep links', () => {
     await expect(alphaGrid).toHaveAttribute('data-agent-count', '1')
     await expect(betaGrid).toHaveAttribute('data-agent-count', '1')
     await expect(emptyGrid).toHaveAttribute('data-agent-count', '0')
+    await expect(alphaGrid).not.toHaveClass(/is-active/)
     await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(0)
     await expect(emptyGrid.locator('.room-agent-grid-neutral')).toHaveCount(1)
     await expect(alphaGrid).toHaveCSS('width', '36px')
@@ -685,8 +686,10 @@ test.describe('group chat room deep links', () => {
     await triggerGroupSocket(page, 'room_agent_activity', activity({ runId: 'run-live-tools-2' }))
     const activeAlphaAgent = alphaGrid.locator('[data-agent-id="agent-row-1"]')
     const activeRunAvatar = page.locator('.group-agent-run[data-run-id="run-live-tools"] .run-avatar')
-    await expect(activeAlphaAgent).toHaveClass(/is-active/)
-    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(1)
+    await expect(alphaGrid).toHaveClass(/is-active/)
+    await expect(alphaGrid).toHaveAttribute('aria-busy', 'true')
+    await expect(activeAlphaAgent).not.toHaveClass(/is-active/)
+    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(0)
     await expect(activeRunAvatar).toHaveClass(/run-avatar-active/)
     await expect(page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-avatar')).not.toHaveClass(/run-avatar-active/)
     if (evidenceDir) {
@@ -694,7 +697,7 @@ test.describe('group chat room deep links', () => {
       await activeRunAvatar.scrollIntoViewIfNeeded()
       await page.screenshot({ path: `${evidenceDir}/active-message-rainbow.png` })
     }
-    await expect.poll(() => activeAlphaAgent.evaluate((element) => {
+    await expect.poll(() => alphaGrid.evaluate((element) => {
       const glow = getComputedStyle(element, '::after')
       return {
         inset: glow.top,
@@ -704,8 +707,8 @@ test.describe('group chat room deep links', () => {
       }
     })).toMatchObject({
       inset: '-4px',
-      animation: expect.stringContaining('room-agent-rainbow-glow'),
-      radius: '8px',
+      animation: expect.stringContaining('room-avatar-rainbow-glow'),
+      radius: '12px',
       shadow: expect.not.stringMatching(/^none$/),
     })
     await expect.poll(() => activeRunAvatar.evaluate((element) => {
@@ -727,7 +730,7 @@ test.describe('group chat room deep links', () => {
     })
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expect.poll(() => Promise.all([
-      activeAlphaAgent.evaluate(element => getComputedStyle(element, '::after').animationName),
+      alphaGrid.evaluate(element => getComputedStyle(element, '::after').animationName),
       activeRunAvatar.evaluate(element => getComputedStyle(element, '::before').animationName),
       activeRunAvatar.evaluate(element => getComputedStyle(element, '::before').boxShadow),
     ])).toEqual(['none', 'none', expect.stringContaining('rgb(255, 107, 107)')])
@@ -742,14 +745,15 @@ test.describe('group chat room deep links', () => {
 
     await expect(alphaRoom.locator(':scope > .room-icon')).toHaveCount(0)
     await expect(alphaRoom.locator(':scope > .room-agent-grid + .room-info')).toHaveCount(1)
-    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).toHaveClass(/is-active/)
+    await expect(betaGrid).toHaveClass(/is-active/)
+    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).not.toHaveClass(/is-active/)
     await expect.poll(() => alphaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(alphaInfoX)
     await expect.poll(() => betaRoom.locator('.room-info').evaluate(element => element.getBoundingClientRect().x)).toBe(betaInfoX)
 
     await triggerGroupSocket(page, 'room_agent_activity', activity({ status: 'ready' }))
-    await expect(alphaGrid.locator('[data-agent-id="agent-row-1"]')).toHaveClass(/is-active/)
+    await expect(alphaGrid).toHaveClass(/is-active/)
     await triggerGroupSocket(page, 'room_agent_activity', activity({ runId: 'run-live-tools-2', status: 'ready' }))
-    await expect(alphaGrid.locator('.room-agent-grid-cell.is-active')).toHaveCount(0)
+    await expect(alphaGrid).not.toHaveClass(/is-active/)
 
     await triggerGroupSocket(page, 'agents_updated', {
       roomId: 'room-alpha',
@@ -779,7 +783,8 @@ test.describe('group chat room deep links', () => {
     await betaRoom.click()
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
     await expect(alphaGrid).toHaveAttribute('data-agent-count', '2')
-    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).toHaveClass(/is-active/)
+    await expect(betaGrid).toHaveClass(/is-active/)
+    await expect(betaGrid.locator('[data-agent-id="agent-row-runtime"]')).not.toHaveClass(/is-active/)
   })
 
   test('removes an interrupted run approval from the room approval surface', async ({ page }) => {

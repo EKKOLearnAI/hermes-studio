@@ -27,8 +27,8 @@ const avatarSize = computed(() => {
     if (visibleCount.value === 2) return 17
     return 15
 })
-const overflowActive = computed(() => (
-    hiddenAgents.value.some(agent => activeAgentIds.value.has(agent.id))
+const hasActiveAgent = computed(() => (
+    props.agents.some(agent => activeAgentIds.value.has(agent.id))
 ))
 const rosterNames = computed(() => props.agents.map(agent => agent.name).join(', '))
 const runningNames = computed(() => (
@@ -58,10 +58,12 @@ const accessibleSummary = computed(() => {
 <template>
     <div
         class="room-agent-grid"
+        :class="{ 'is-active': hasActiveAgent }"
         :data-agent-count="visibleCount"
         role="img"
         :aria-label="accessibleSummary"
         :title="accessibleSummary"
+        :aria-busy="hasActiveAgent"
     >
         <span
             v-if="agents.length === 0"
@@ -78,11 +80,9 @@ const accessibleSummary = computed(() => {
             v-else
             :key="agent.id"
             class="room-agent-grid-cell agent"
-            :class="{ 'is-active': activeAgentIds.has(agent.id) }"
             :data-agent-id="agent.id"
             :title="agent.name"
             :aria-label="agent.name"
-            :aria-busy="activeAgentIds.has(agent.id)"
         >
             <ProfileAvatar
                 :name="agent.agent || agent.name"
@@ -93,10 +93,8 @@ const accessibleSummary = computed(() => {
         <span
             v-if="hiddenAgents.length"
             class="room-agent-grid-cell room-agent-grid-overflow"
-            :class="{ 'is-active': overflowActive }"
             :title="hiddenAgents.map(agent => agent.name).join(', ')"
             :aria-label="hiddenAgents.map(agent => agent.name).join(', ')"
-            :aria-busy="overflowActive"
         >
             +{{ hiddenAgents.length }}
         </span>
@@ -117,6 +115,20 @@ const accessibleSummary = computed(() => {
     border: 1px solid $border-color;
     border-radius: 8px;
     background: $bg-secondary;
+
+    &.is-active::after {
+        position: absolute;
+        z-index: 2;
+        inset: -4px;
+        border-radius: 12px;
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+        content: '';
+        animation: room-avatar-rainbow-glow 4s linear infinite;
+        pointer-events: none;
+    }
 }
 
 .room-agent-grid-cell {
@@ -132,19 +144,6 @@ const accessibleSummary = computed(() => {
         border-radius: 4px;
     }
 
-    &.is-active::after {
-        position: absolute;
-        z-index: 2;
-        inset: -4px;
-        border-radius: 8px;
-        box-shadow:
-            0 0 0 2px #ff6b6b,
-            0 0 10px rgba(255, 107, 107, 0.4),
-            0 0 20px rgba(255, 107, 107, 0.2);
-        content: '';
-        animation: room-agent-rainbow-glow 4s linear infinite;
-        pointer-events: none;
-    }
 }
 
 .room-agent-grid[data-agent-count='0'] .room-agent-grid-cell,
@@ -241,7 +240,7 @@ const accessibleSummary = computed(() => {
     }
 }
 
-@keyframes room-agent-rainbow-glow {
+@keyframes room-avatar-rainbow-glow {
     0% {
         box-shadow:
             0 0 0 2px #ff6b6b,
@@ -293,7 +292,7 @@ const accessibleSummary = computed(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .room-agent-grid-cell.is-active::after {
+    .room-agent-grid.is-active::after {
         animation: none;
     }
 }
