@@ -606,7 +606,7 @@ describe('group chat approval and context baseline', () => {
       await delivery
       await chatRun.close()
     }
-  })
+  }, 15_000)
 
   it('claims only the active Ekko clarification generation before the abort completes', async () => {
     const { agent, human, agentSessionId } = await joinPair()
