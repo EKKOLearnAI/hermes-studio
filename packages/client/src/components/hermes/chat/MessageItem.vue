@@ -1197,13 +1197,6 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <div class="message-meta">
-            <span
-              v-if="message.role === 'assistant' && message.ttftMs != null"
-              class="thinking-meta ttft-meta"
-              :title="t('chat.ttftTitle')"
-            >
-              {{ t('chat.ttft', { ms: message.ttftMs }) }}
-            </span>
             <button
               v-if="canPlaySpeech"
               class="speech-bubble-btn"
@@ -1662,12 +1655,6 @@ onBeforeUnmount(() => {
   .thinking-label {
     font-weight: 500;
     flex-shrink: 0;
-  }
-
-  .ttft-meta {
-    font-size: 11px;
-    opacity: 0.65;
-    white-space: nowrap;
   }
 
   .thinking-meta {
