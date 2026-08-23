@@ -1,6 +1,6 @@
 ---
 date: 2026-08-23
-pr: pending
+pr: 2701
 feature: Group room avatar active-glow geometry
 impact: Running rooms glow the complete rounded-square composite avatar while in-conversation running Agent avatars retain the matching circular rainbow treatment.
 ---
