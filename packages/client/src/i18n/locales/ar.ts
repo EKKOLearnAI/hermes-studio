@@ -903,6 +903,8 @@ export default {
     thinkingShow: 'إظهار التفكير',
     thinkingHide: 'إخفاء التفكير',
     thinkingDuration: 'المدة المرصودة {duration}',
+    ttft: 'أول رمز {ms}ms',
+    ttftTitle: 'الزمن حتى أول رمز',
     thinkingChars: '{count} حرفاً',
     copyBubble: 'نسخ الرسالة',
     copiedBubble: 'تم نسخ الرسالة',

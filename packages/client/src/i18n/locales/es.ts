@@ -823,6 +823,8 @@ export default {
     thinkingShow: 'Mostrar pensamiento',
     thinkingHide: 'Ocultar pensamiento',
     thinkingDuration: 'Observado {duration}',
+    ttft: 'Primer token {ms}ms',
+    ttftTitle: 'Tiempo hasta el primer token',
     thinkingChars: '{count} caracteres',
     copyBubble: 'Copiar mensaje',
     copiedBubble: 'Mensaje copiado',

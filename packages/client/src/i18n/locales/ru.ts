@@ -781,6 +781,8 @@ export default {
     thinkingShow: 'Развернуть процесс размышления',
     thinkingHide: 'Свернуть процесс размышления',
     thinkingDuration: 'Наблюдается {duration}',
+    ttft: 'Первый токен {ms}мс',
+    ttftTitle: 'Время до первого токена',
     thinkingChars: '{count} зн.',
     copyBubble: 'Копировать сообщение',
     copiedBubble: 'Скопировано',

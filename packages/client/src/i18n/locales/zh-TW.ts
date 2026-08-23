@@ -892,6 +892,8 @@ export default {
     thinkingShow: '展開思考過程',
     thinkingHide: '收起思考過程',
     thinkingDuration: '已觀察 {duration}',
+    ttft: '首 Token 耗時 {ms}ms',
+    ttftTitle: '首 Token 到達耗時',
     thinkingChars: '{count} 字',
     copyBubble: '複製訊息',
     copiedBubble: '已複製',

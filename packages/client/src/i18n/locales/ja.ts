@@ -823,6 +823,8 @@ export default {
     thinkingShow: '思考過程を表示',
     thinkingHide: '思考過程を隠す',
     thinkingDuration: '観測 {duration}',
+    ttft: '最初のトークン {ms}ms',
+    ttftTitle: '初回トークンまでの時間',
     thinkingChars: '{count} 文字',
     copyBubble: 'メッセージをコピー',
     copiedBubble: 'コピーしました',
