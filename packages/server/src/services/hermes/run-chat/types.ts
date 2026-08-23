@@ -126,6 +126,12 @@ export interface SessionState {
   messageStateBaselineCount?: number
   hasMoreBefore?: boolean
   isWorking: boolean
+  /**
+   * When the current run began, so a client that joins late shows how long
+   * the agent has really been working rather than counting from its own
+   * first render.
+   */
+  runStartedAt?: number
   events: Array<{ event: string; data: any }>
   abortController?: AbortController
   runId?: string

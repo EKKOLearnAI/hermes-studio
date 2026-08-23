@@ -546,8 +546,13 @@ watch(
       thinkingElapsedMs.value = 0;
       return;
     }
-    thinkingStartedAt = Date.now();
-    thinkingElapsedMs.value = 0;
+    // Prefer when the run actually began. Opening the page mid-run used to
+    // start this clock at zero, so the same run read differently on two
+    // devices and restarted every time you navigated away and back.
+    const sid = chatStore.activeSessionId;
+    const reportedStart = sid ? chatStore.runStartedAt.get(sid) || 0 : 0;
+    thinkingStartedAt = reportedStart > 0 ? reportedStart : Date.now();
+    thinkingElapsedMs.value = Math.max(0, Date.now() - thinkingStartedAt);
     thinkingTimer = setInterval(() => {
       thinkingElapsedMs.value = Date.now() - thinkingStartedAt;
     }, 1000);

@@ -1265,6 +1265,12 @@ export const useChatStore = defineStore('chat', () => {
       : null,
   )
   /** sessionId → queued message count */
+  /**
+   * When the run showing in each session began, as the server reported it.
+   * A client that opens the page mid-run needs this: without it the thinking
+   * timer counts from its own first render and restarts on every navigation.
+   */
+  const runStartedAt = ref<Map<string, number>>(new Map())
   const queueLengths = ref<Map<string, number>>(new Map())
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
@@ -1901,6 +1907,14 @@ export const useChatStore = defineStore('chat', () => {
             replaceQueuedUserMessages(sessionId, [])
           }
           replaceQueueInsertionState(sessionId, data.queueInsertion)
+          const resumedRunStartedAt = Number((data as any).runStartedAt) || 0
+          if (data.isWorking && resumedRunStartedAt > 0) {
+            runStartedAt.value = new Map(runStartedAt.value).set(sessionId, resumedRunStartedAt)
+          } else if (!data.isWorking) {
+            const next = new Map(runStartedAt.value)
+            next.delete(sessionId)
+            runStartedAt.value = next
+          }
           if ((data as any).isAborting) {
             setAbortState(sessionId, { aborting: true, synced: null })
           } else if (!data.isWorking) {
@@ -5261,6 +5275,7 @@ export const useChatStore = defineStore('chat', () => {
     isForkPending,
     isRunActive,
     isSessionLive,
+    runStartedAt,
     isSessionCompletedUnread,
     clearSessionCompletedUnread,
     sessionProfileFilter,

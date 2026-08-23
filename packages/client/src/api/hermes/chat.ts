@@ -166,6 +166,8 @@ export interface ResumeSessionPayload {
   hasMoreBefore?: boolean
   isWorking: boolean
   isAborting?: boolean
+  /** Epoch ms the active run began; absent on servers that predate it. */
+  runStartedAt?: number
   events: Array<{ event: string; data: RunEvent }>
   inputTokens?: number
   outputTokens?: number

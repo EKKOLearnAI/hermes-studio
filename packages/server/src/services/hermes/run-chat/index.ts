@@ -496,6 +496,7 @@ export class ChatRunSocket {
         }
         state.events = []
         state.isWorking = !isCodingAgentExecution(source, data)
+        state.runStartedAt = Date.now()
         state.profile = runProfile
         state.source = source
       }
@@ -1292,6 +1293,7 @@ export class ChatRunSocket {
       reasoning_effort: sessionDetail?.reasoning_effort || '',
       push_enabled: Number(sessionDetail?.push_enabled || 0) !== 0,
       isWorking: state.isWorking,
+      runStartedAt: state.runStartedAt,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents),
       inputTokens: state.inputTokens,
@@ -1716,6 +1718,7 @@ export class ChatRunSocket {
     const state = getOrCreateSession(this.sessionMap, sessionId)
     state.events = []
     state.isWorking = !isCodingAgentExecution(source, data)
+    state.runStartedAt = Date.now()
     state.profile = profile
     state.source = source
 
