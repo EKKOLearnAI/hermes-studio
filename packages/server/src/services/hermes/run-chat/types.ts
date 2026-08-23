@@ -123,6 +123,7 @@ export interface SessionState {
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
+  messageStateBaselineCount?: number
   hasMoreBefore?: boolean
   isWorking: boolean
   events: Array<{ event: string; data: any }>

@@ -688,6 +688,10 @@ export async function handleSessionCommand(
         }
         const deleted = clearSessionMessages(sessionId)
         state.messages = []
+        state.messageTotal = 0
+        state.messageLoadedCount = 0
+        state.messageStateBaselineCount = 0
+        state.hasMoreBefore = false
         state.backgroundContinuationContexts = undefined
         clearTransientRunState(state)
         await calcAndUpdateUsage(sessionId, state, (event, payload) => {
