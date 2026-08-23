@@ -1,4 +1,5 @@
 // Shared Anthropic payload translation for Coding Agent provider proxies.
+import { normalizeReasoningEffortForModel } from '../../../hermes/reasoning-effort'
 import { anthropicImageSourceToUrl } from './multimodal'
 
 export interface AnthropicAdapterTarget {
@@ -9,7 +10,8 @@ export interface AnthropicAdapterTarget {
 
 export function targetReasoningEffort(target: any): string {
   const effort = String(target?.reasoningEffort || '').trim()
-  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort) ? effort : ''
+  if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) return ''
+  return normalizeReasoningEffortForModel(target?.model, effort)
 }
 
 function stringifyContent(value: unknown): string {

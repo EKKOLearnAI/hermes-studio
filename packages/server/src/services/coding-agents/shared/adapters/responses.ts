@@ -1,4 +1,5 @@
 // Shared Responses payload translation for Coding Agent provider proxies.
+import { normalizeReasoningEffortForModel } from '../../../hermes/reasoning-effort'
 import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
 import { shouldPreserveReasoningContent } from './anthropic'
 
@@ -478,7 +479,8 @@ export function normalizeResponseFunctionCall(name: unknown, argumentsValue: unk
 
 export function targetReasoningEffort(target: any): string {
   const effort = String(target?.reasoningEffort || '').trim()
-  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort) ? effort : ''
+  if (!['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) return ''
+  return normalizeReasoningEffortForModel(target?.model, effort)
 }
 
 function stringifyContent(value: unknown): string {
