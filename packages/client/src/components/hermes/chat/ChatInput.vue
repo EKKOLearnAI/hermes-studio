@@ -31,9 +31,12 @@ const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const props = withDefaults(defineProps<{
   modelLabel?: string
   modelDisabled?: boolean
+  /** Additive: opt-in live TTFT / tok/s chip (only meaningful in single-chat). */
+  showStreamSpeed?: boolean
 }>(), {
   modelLabel: '',
   modelDisabled: false,
+  showStreamSpeed: false,
 })
 
 const emit = defineEmits<{
@@ -1119,7 +1122,7 @@ function isImage(type: string): boolean {
           />
         </div>
       </div>
-      <div v-if="streamMetrics.active && activeStreamSession() === chatStore.activeSessionId" class="stream-speed-chip" :title="t('chat.streamSpeedTitle')">
+      <div v-if="showStreamSpeed && streamMetrics.active && activeStreamSession() === chatStore.activeSessionId" class="stream-speed-chip" :title="t('chat.streamSpeedTitle')">
         {{ t('chat.streamSpeed', { ttft: streamMetrics.ttftMs ?? '-', tps: streamMetrics.tokensPerSec ?? '-' }) }}
       </div>
       <textarea
@@ -2496,7 +2499,7 @@ function isImage(type: string): boolean {
 .stream-speed-chip {
   position: absolute;
   top: 6px;
-  right: 14px;
+  inset-inline-end: 14px;
   z-index: 2;
   font-size: 11px;
   line-height: 1;

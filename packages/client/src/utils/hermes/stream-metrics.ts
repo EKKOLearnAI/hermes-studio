@@ -53,7 +53,13 @@ function ensureSampler(): void {
   }, WINDOW_MS)
 }
 
-/** Record the moment a run is issued for a session. */
+/**
+ * Record the moment a run is issued for a session.
+ *
+ * Known limitation: resumed streams (page reload mid-run) are not timed —
+ * they have no local run-start moment. Metrics simply stay absent there.
+ */
+/**
 export function noteStreamStart(sessionId: string): void {
   if (!sessionId) return
   currentSession = sessionId

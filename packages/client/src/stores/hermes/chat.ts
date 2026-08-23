@@ -3994,6 +3994,7 @@ export const useChatStore = defineStore('chat', () => {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
               settleRunningTools(sid, 'done')
+              endStreamMetrics()
               // Server-computed usage (local countTokens, snapshot-aware)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
@@ -4155,6 +4156,7 @@ export const useChatStore = defineStore('chat', () => {
                   if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
                 }
               }
+              if (!queueInsertionInterruption) endStreamMetrics()
               if (queueInsertionInterruption) {
                 if (failedAssistant?.isStreaming) updateMessage(sid, failedAssistant.id, { isStreaming: false })
                 settleRunningTools(sid, 'done')
@@ -4192,6 +4194,7 @@ export const useChatStore = defineStore('chat', () => {
             updateMessage(sid, last.id, { isStreaming: false })
           }
           cleanup()
+          endStreamMetrics()
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
           activeRunMarker = null
@@ -4208,6 +4211,7 @@ export const useChatStore = defineStore('chat', () => {
             }
           })
           cleanup()
+          endStreamMetrics()
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
           activeRunMarker = null
