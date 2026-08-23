@@ -155,6 +155,7 @@ describe('AppRelayClient', () => {
       headers: {
         authorization: 'Bearer local-user-token',
         'content-type': 'application/json',
+        'if-match': '"revision-1"',
         host: 'untrusted.example.com',
       },
       body: { title: 'App session' },
@@ -171,6 +172,7 @@ describe('AppRelayClient', () => {
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
     expect(headers.get('authorization')).toBe('Bearer local-user-token')
+    expect(headers.get('if-match')).toBe('"revision-1"')
     expect(headers.has('host')).toBe(false)
 
     const binaryAck = vi.fn()

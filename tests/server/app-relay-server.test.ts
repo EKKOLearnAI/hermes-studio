@@ -508,6 +508,7 @@ describe('LocalAppRelayServer', () => {
       id: 'http-1',
       method: 'GET',
       path: '/api/hermes/sessions?profile=default',
+      headers: { 'if-match': '"revision-1"' },
     }, ack)
 
     await vi.waitFor(() => expect(ack).toHaveBeenCalledWith(expect.objectContaining({
@@ -521,6 +522,7 @@ describe('LocalAppRelayServer', () => {
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
     expect(headers.get('authorization')).toBe('Bearer local-user-token')
+    expect(headers.get('if-match')).toBe('"revision-1"')
     expect(clientSocketMocks.io).not.toHaveBeenCalled()
 
     fetchImpl.mockResolvedValueOnce(new Response(Uint8Array.from([7, 8, 9]), {
