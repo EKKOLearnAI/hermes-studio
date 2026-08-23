@@ -1,6 +1,6 @@
 ---
 date: 2026-08-23
-pr: pending
+pr: 2706
 feature: GLM-5.3 reasoning effort compatibility
 impact: Main chats and delegated subagents map reasoning to GLM-5.3's low/high/max contract without stale session refreshes restoring medium.
 ---
