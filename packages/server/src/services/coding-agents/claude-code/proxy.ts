@@ -14,6 +14,7 @@ import {
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
+  targetReasoningEffort,
 } from '../shared/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
@@ -30,6 +31,7 @@ import { agentRunGateway, ProviderApiError } from '../shared/gateway'
 import { teeAsyncIterable } from '../shared/stream-tee'
 import { codingAgentRunManager } from '../runtime/run-manager'
 import { logger } from '../../logger'
+import { isGlm53Model } from '../../hermes/reasoning-effort'
 
 export type { ApiMode } from '../shared/types'
 
@@ -88,9 +90,14 @@ function anthropicMessagesUrl(target: ClaudeCodeProxyTarget): string {
 }
 
 function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
+  const reasoningEffort = targetReasoningEffort({
+    ...target,
+    reasoningEffort: target.reasoningEffort || body?.reasoning_effort,
+  })
   return {
     ...body,
     model: target.model,
+    ...(isGlm53Model(target.model) && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
   }
 }
 
