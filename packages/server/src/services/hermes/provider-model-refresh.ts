@@ -253,7 +253,10 @@ async function fetchFullRemoteModels(
   proxy?: string,
 ): Promise<string[]> {
   if (target.credential_kind === 'api_key' || target.credential_kind === 'none') {
-    return fetchProviderCatalogForTest(target.base_url, target.api_key, apiMode, proxy || target.proxy)
+    const resolvedProxy = proxy || target.proxy
+    return resolvedProxy
+      ? fetchProviderCatalogForTest(target.base_url, target.api_key, apiMode, resolvedProxy)
+      : fetchProviderCatalogForTest(target.base_url, target.api_key, apiMode)
   }
   return fetchProviderCatalogRefreshTargetModels(target)
 }

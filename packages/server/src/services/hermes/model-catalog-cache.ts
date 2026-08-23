@@ -421,7 +421,10 @@ export async function fetchProviderCatalogRefreshTargetModels(
   if (target.provider === 'claude-oauth') {
     return fetchClaudeOAuthModels(target.base_url, target.api_key)
   }
-  return fetchProviderModels(target.base_url, target.api_key, target.free_only === true, target.proxy)
+  const freeOnly = target.free_only === true
+  return target.proxy
+    ? fetchProviderModels(target.base_url, target.api_key, freeOnly, target.proxy)
+    : fetchProviderModels(target.base_url, target.api_key, freeOnly)
 }
 
 function hasOAuthCredential(value: any): boolean {

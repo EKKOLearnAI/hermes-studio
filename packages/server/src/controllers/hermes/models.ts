@@ -797,7 +797,12 @@ export async function getAvailable(ctx: any) {
         const configuredModels = cp.models ? Object.keys(cp.models) : []
         let models = [...new Set([cp.model, ...configuredModels].filter(Boolean) as string[])]
         if (cp.api_key) {
-          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key, false, cp.proxy || ''); if (fetched.length > 0) models = [...new Set([...models, ...fetched])] } catch { }
+          try {
+            const fetched = cp.proxy
+              ? await fetchProviderModels(baseUrl, cp.api_key, false, cp.proxy)
+              : await fetchProviderModels(baseUrl, cp.api_key, false)
+            if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
+          } catch { }
         }
         return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
       }),
