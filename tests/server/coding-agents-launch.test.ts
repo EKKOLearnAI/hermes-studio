@@ -1892,46 +1892,6 @@ describe('coding agent launch preparation', () => {
     expect(sse).toContain('"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}')
   })
 
-  it.each([false, true])('normalizes GLM-5.3 effort in native Responses wire payloads (stream=%s)', async (stream) => {
-    const target = registerCodexProxyTarget({
-      profile: 'default',
-      provider: `custom:glm-native-responses-${stream}`,
-      model: 'glm-5.3',
-      baseUrl: `https://glm-responses-${stream}.example/v1`,
-      apiKey: 'sk-upstream',
-      apiMode: 'codex_responses',
-      reasoningEffort: 'none',
-      agentSessionId: `glm-native-responses-${stream}`,
-    })
-    const encoder = new TextEncoder()
-    const fetchMock = vi.fn(async () => stream
-      ? new Response(new ReadableStream({
-          start(controller) {
-            controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_glm","status":"completed"}}\n\n'))
-            controller.close()
-          },
-        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
-      : new Response(JSON.stringify({
-          id: 'resp_glm',
-          status: 'completed',
-          output: [],
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const ctx = makeProxyContext(target.routeKey, target.token, {
-      stream,
-      reasoning: { effort: 'none', summary: 'auto' },
-      input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
-    })
-    await codexProxyResponses(ctx)
-
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-      model: 'glm-5.3',
-      stream,
-      reasoning: { effort: 'low', summary: 'auto' },
-    })
-  })
-
   it('exposes Codex proxy models with route-token authentication', async () => {
     makeHome()
     const launch = await prepareCodingAgentLaunch('codex', {
@@ -2202,55 +2162,7 @@ describe('coding agent launch preparation', () => {
     }))
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(requestBody.model).toBe('claude-sonnet-4-6')
-    expect(requestBody).not.toHaveProperty('reasoning_effort')
     expect(ctx.body.content[0].text).toBe('hi')
-  })
-
-  it.each([false, true])('normalizes GLM-5.3 effort in native Anthropic Messages wire payloads (stream=%s)', async (stream) => {
-    const target = registerClaudeCodeProxyTarget({
-      provider: `custom:glm-native-messages-${stream}`,
-      model: 'glm-5.3',
-      baseUrl: `https://glm-messages-${stream}.example`,
-      apiKey: 'sk-upstream',
-      apiMode: 'anthropic_messages',
-      reasoningEffort: 'minimal',
-      agentSessionId: `glm-native-messages-${stream}`,
-    })
-    const encoder = new TextEncoder()
-    const fetchMock = vi.fn(async () => stream
-      ? new Response(new ReadableStream({
-          start(controller) {
-            controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_glm","type":"message","role":"assistant","content":[],"model":"glm-5.3","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}\n\n'))
-            controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'))
-            controller.close()
-          },
-        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
-      : new Response(JSON.stringify({
-          id: 'msg_glm',
-          type: 'message',
-          role: 'assistant',
-          model: 'glm-5.3',
-          content: [{ type: 'text', text: 'ok' }],
-          stop_reason: 'end_turn',
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const ctx = makeProxyContext(target.routeKey, target.token, {
-      stream,
-      model: 'client-model',
-      max_tokens: 32,
-      messages: [{ role: 'user', content: 'hello' }],
-    })
-    await claudeProxyMessages(ctx)
-
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(requestBody).toMatchObject({
-      model: 'glm-5.3',
-      stream,
-      output_config: { effort: 'low' },
-    })
-    expect(requestBody).not.toHaveProperty('reasoning_effort')
   })
 
   it('keeps Claude proxy routes separate for the same model with different protocols', () => {

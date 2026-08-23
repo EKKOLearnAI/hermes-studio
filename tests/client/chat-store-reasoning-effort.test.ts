@@ -204,58 +204,6 @@ describe('chat store per-session reasoning effort', () => {
     expect(session.reasoningEffort).toBe('max')
   })
 
-  it('keeps a pending selection through a stale list refresh and uses it for an immediate run', async () => {
-    let finishWrite: ((value: boolean) => void) | undefined
-    sessionsApi.setSessionReasoningEffort.mockImplementationOnce(
-      () => new Promise<boolean>((resolve) => { finishWrite = resolve }),
-    )
-    sessionsApi.fetchSessions.mockImplementation(async (source?: string) => source === 'global_agent'
-      ? []
-      : [{
-          id: 'pending-run',
-          source: 'cli',
-          model: 'glm-5.3',
-          provider: 'volcengine-coding',
-          title: 'pending run',
-          started_at: 1,
-          ended_at: null,
-          message_count: 1,
-          tool_call_count: 0,
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_read_tokens: 0,
-          cache_write_tokens: 0,
-          reasoning_tokens: 0,
-          billing_provider: null,
-          estimated_cost_usd: 0,
-          actual_cost_usd: null,
-          cost_status: '',
-          reasoning_effort: 'medium',
-        }])
-    const store = useChatStore()
-    const session = makeSession('pending-run')
-    session.model = 'glm-5.3'
-    session.provider = 'volcengine-coding'
-    session.reasoningEffort = 'medium'
-    session.messageCount = 1
-    store.sessions = [session]
-    store.activeSessionId = session.id
-    store.activeSession = session
-
-    const write = store.setSessionReasoningEffort(session.id, 'max')
-    await store.refreshSessionListOnly('default')
-    await store.sendMessage('run now')
-
-    expect(session.reasoningEffort).toBe('max')
-    expect(chatApi.startRunViaSocket.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-      session_id: session.id,
-      reasoning_effort: 'max',
-    }))
-
-    finishWrite?.(true)
-    await write
-  })
-
   it('waits for pending reasoning writes before resetting to default on model switch', async () => {
     let finishWrite: ((value: boolean) => void) | undefined
     sessionsApi.setSessionReasoningEffort.mockImplementationOnce(

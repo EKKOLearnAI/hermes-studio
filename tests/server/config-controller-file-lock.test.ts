@@ -786,45 +786,6 @@ describe('config controller locked file updates', () => {
     })
   })
 
-  it('normalizes GLM-5.3 delegation effort to the three supported wire levels', async () => {
-    const researchDir = join(hermesHome, 'profiles', 'research')
-    await mkdir(researchDir, { recursive: true })
-    await writeFile(join(researchDir, 'config.yaml'), '', 'utf-8')
-
-    const { updateDelegationModel } = await loadController()
-    const mappings = [
-      ['minimal', 'low'],
-      ['medium', 'high'],
-      ['xhigh', 'max'],
-    ] as const
-
-    for (const [input, expected] of mappings) {
-      const ctx = makeCtx({
-        delegation: {
-          provider: 'volcengine-coding',
-          model: 'glm-5.3',
-          reasoning_effort: input,
-        },
-      }, 'research')
-      await updateDelegationModel(ctx)
-      expect(ctx.body).toEqual({
-        success: true,
-        delegation: {
-          provider: 'volcengine-coding',
-          model: 'glm-5.3',
-          reasoning_effort: expected,
-        },
-      })
-    }
-
-    const updatedConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
-    expect(updatedConfig.delegation).toEqual({
-      provider: 'volcengine-coding',
-      model: 'glm-5.3',
-      reasoning_effort: 'max',
-    })
-  })
-
   it('clears only allowlisted channel credentials and keeps access controls and endpoints', async () => {
     await writeFile(join(hermesHome, 'config.yaml'), [
       'platforms:',

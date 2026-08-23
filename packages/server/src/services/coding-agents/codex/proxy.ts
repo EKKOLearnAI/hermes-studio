@@ -14,7 +14,6 @@ import {
   openAiChatToResponses,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
-  targetReasoningEffort,
   truncateResponsesToolOutputs,
 } from '../shared/adapters/responses'
 import {
@@ -142,32 +141,11 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
     ;(err as any).status = 501
     throw err
   }
-  const responsesBody = openAiResponsesRequestBody(body, target)
+  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model })
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
     body: responsesBody,
-  })
-}
-
-function openAiResponsesRequestBody(body: any, target: CodexProxyTarget, stream?: boolean): any {
-  const reasoningEffort = targetReasoningEffort({
-    ...target,
-    reasoningEffort: target.reasoningEffort || body?.reasoning?.effort,
-  })
-  const reasoning = reasoningEffort
-    ? {
-        ...(body?.reasoning && typeof body.reasoning === 'object' && !Array.isArray(body.reasoning)
-          ? body.reasoning
-          : {}),
-        effort: reasoningEffort,
-      }
-    : body?.reasoning
-  return truncateResponsesToolOutputs({
-    ...body,
-    model: target.model,
-    ...(reasoning ? { reasoning } : {}),
-    ...(typeof stream === 'boolean' ? { stream } : {}),
   })
 }
 
@@ -255,7 +233,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
     throw err
   }
 
-  const responsesBody = openAiResponsesRequestBody(body, target, true)
+  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model, stream: true })
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,

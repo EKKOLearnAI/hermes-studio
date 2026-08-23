@@ -31,43 +31,6 @@ const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }
 const anthropicTarget = { provider: 'deepseek', model: 'deepseek-reasoner', baseUrl: 'https://api.deepseek.com/v1' }
 
 describe('agent runner Responses adapters', () => {
-  it.each([
-    ['none', 'low'],
-    ['minimal', 'low'],
-    ['medium', 'high'],
-    ['xhigh', 'max'],
-  ])('maps GLM-5.3 reasoning effort %s to %s in final OpenAI payloads', (reasoningEffort, expected) => {
-    const glmTarget = { ...target, model: 'glm-5.3', reasoningEffort }
-
-    expect(responsesToOpenAiChat({ input: [] }, glmTarget)).toMatchObject({
-      model: 'glm-5.3',
-      reasoning_effort: expected,
-    })
-    expect(anthropicToOpenAiChat({ messages: [] }, glmTarget)).toMatchObject({
-      model: 'glm-5.3',
-      reasoning_effort: expected,
-    })
-    const anthropicMessagesBody = responsesToAnthropicMessages({ input: [] }, glmTarget)
-    expect(anthropicMessagesBody).toMatchObject({
-      model: 'glm-5.3',
-      output_config: { effort: expected },
-    })
-    expect(anthropicMessagesBody).not.toHaveProperty('reasoning_effort')
-  })
-
-  it.each(['none', 'minimal'])('keeps non-GLM reasoning effort %s unchanged', (reasoningEffort) => {
-    const nonGlmTarget = { ...target, model: 'gpt-5', reasoningEffort }
-
-    expect(responsesToOpenAiChat({ input: [] }, nonGlmTarget)).toMatchObject({
-      model: 'gpt-5',
-      reasoning_effort: reasoningEffort,
-    })
-    expect(anthropicToOpenAiChat({ messages: [] }, nonGlmTarget)).toMatchObject({
-      model: 'gpt-5',
-      reasoning_effort: reasoningEffort,
-    })
-  })
-
   it('forwards maximum reasoning effort to Chat and Anthropic payloads', () => {
     const maxTarget = { ...target, reasoningEffort: 'max' }
 
