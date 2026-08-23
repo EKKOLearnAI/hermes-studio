@@ -2242,11 +2242,13 @@ describe('coding agent launch preparation', () => {
     })
     await claudeProxyMessages(ctx)
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(requestBody).toMatchObject({
       model: 'glm-5.3',
       stream,
-      reasoning_effort: 'low',
+      output_config: { effort: 'low' },
     })
+    expect(requestBody).not.toHaveProperty('reasoning_effort')
   })
 
   it('keeps Claude proxy routes separate for the same model with different protocols', () => {

@@ -92,12 +92,24 @@ function anthropicMessagesUrl(target: ClaudeCodeProxyTarget): string {
 function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
   const reasoningEffort = targetReasoningEffort({
     ...target,
-    reasoningEffort: target.reasoningEffort || body?.reasoning_effort,
+    reasoningEffort: target.reasoningEffort || body?.output_config?.effort || body?.reasoning_effort,
   })
+  if (isGlm53Model(target.model) && reasoningEffort) {
+    const { reasoning_effort: _ignoredReasoningEffort, ...anthropicBody } = body
+    return {
+      ...anthropicBody,
+      model: target.model,
+      output_config: {
+        ...(body?.output_config && typeof body.output_config === 'object' && !Array.isArray(body.output_config)
+          ? body.output_config
+          : {}),
+        effort: reasoningEffort,
+      },
+    }
+  }
   return {
     ...body,
     model: target.model,
-    ...(isGlm53Model(target.model) && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
   }
 }
 

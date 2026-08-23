@@ -47,6 +47,12 @@ describe('agent runner Responses adapters', () => {
       model: 'glm-5.3',
       reasoning_effort: expected,
     })
+    const anthropicMessagesBody = responsesToAnthropicMessages({ input: [] }, glmTarget)
+    expect(anthropicMessagesBody).toMatchObject({
+      model: 'glm-5.3',
+      output_config: { effort: expected },
+    })
+    expect(anthropicMessagesBody).not.toHaveProperty('reasoning_effort')
   })
 
   it.each(['none', 'minimal'])('keeps non-GLM reasoning effort %s unchanged', (reasoningEffort) => {
