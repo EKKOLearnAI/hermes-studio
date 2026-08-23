@@ -43,6 +43,7 @@ resolved_configs = {
     "gpt-5.6-luna": {"enabled": True, "effort": "max"},
     "gpt-5.6-sol": {"enabled": True, "effort": "xhigh"},
     "gpt-5.6-orbit": {"enabled": True, "effort": "xhigh"},
+    "glm-5.3": {"enabled": True, "effort": "medium"},
 }
 resolver_calls = []
 
@@ -96,9 +97,11 @@ class FakeAIAgent:
         self.model = kwargs.get("model")
         self.provider = kwargs.get("provider")
         self.reasoning_config = kwargs.get("reasoning_config")
+        self.request_overrides = dict(kwargs.get("request_overrides") or {})
         self.tools = []
         self.raise_on_run = False
         self.run_reasoning_configs = []
+        self.run_request_overrides = []
 
     def switch_model(self, **kwargs):
         self.model = kwargs["new_model"]
@@ -106,6 +109,7 @@ class FakeAIAgent:
 
     def run_conversation(self, _message, **_kwargs):
         self.run_reasoning_configs.append(dict(self.reasoning_config or {}))
+        self.run_request_overrides.append(dict(self.request_overrides or {}))
         if self.raise_on_run:
             raise RuntimeError("run failed")
         return {"final_response": "ok", "messages": []}
@@ -242,6 +246,97 @@ print(json.dumps({
     expect(result.after_failure.effort).toBe('max')
     expect(result.statuses).toEqual(['complete', 'error'])
     expect(result.failure_error).toBe('run failed')
+  })
+
+  it('maps GLM-5.3 reasoning to low/high/max and sends the top-level wire override', () => {
+    const result = runPython(`${reasoningHarness}
+session = pool.get_or_create("glm", model="glm-5.3", provider="volcengine-coding")
+pool._enter_exec_ask_scope = lambda: None
+pool._exit_exec_ask_scope = lambda: None
+pool._install_approval_dispatcher_for_current_thread = lambda *_args: None
+pool._approval_callback = lambda *_args: None
+pool._prepersist_user_message = lambda *_args: None
+pool._session_db_message_count = lambda *_args: None
+pool._prepend_pending_model_switch_note = lambda _session, message: message
+pool._sync_result_tail_to_session_db = lambda *_args: None
+pool._result_from_agent_messages_for_sync = lambda *_args: None
+pool._apply_pending_session_model_switch = lambda *_args: None
+
+seen = []
+for effort in ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]:
+    session.running = True
+    record = bridge_pool.RunRecord(effort, session.session_id)
+    pool._run_chat(session, record, "hello", reasoning_effort=effort)
+    seen.append({
+        "reasoning": session.agent.run_reasoning_configs[-1],
+        "wire": session.agent.run_request_overrides[-1],
+    })
+print(json.dumps(seen))
+`)
+
+    expect(result).toEqual([
+      {
+        reasoning: { enabled: true, effort: 'low' },
+        wire: { reasoning_effort: 'low' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'low' },
+        wire: { reasoning_effort: 'low' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'low' },
+        wire: { reasoning_effort: 'low' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'high' },
+        wire: { reasoning_effort: 'high' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'high' },
+        wire: { reasoning_effort: 'high' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'max' },
+        wire: { reasoning_effort: 'max' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'max' },
+        wire: { reasoning_effort: 'max' },
+      },
+      {
+        reasoning: { enabled: true, effort: 'max' },
+        wire: { reasoning_effort: 'max' },
+      },
+    ])
+  })
+
+  it('removes the injected GLM-5.3 wire override after switching to another model', () => {
+    const result = runPython(`${reasoningHarness}
+session = pool.get_or_create("glm-switch", model="glm-5.3", provider="volcengine-coding")
+before = {
+    "reasoning": dict(session.agent.reasoning_config),
+    "wire": dict(session.agent.request_overrides),
+}
+pool.switch_session_model("glm-switch", "gpt-5.6-sol", "openai", "default")
+print(json.dumps({
+    "before": before,
+    "after": {
+        "reasoning": session.agent.reasoning_config,
+        "wire": session.agent.request_overrides,
+    },
+}))
+`)
+
+    expect(result).toEqual({
+      before: {
+        reasoning: { enabled: true, effort: 'high' },
+        wire: { reasoning_effort: 'high' },
+      },
+      after: {
+        reasoning: { enabled: true, effort: 'xhigh' },
+        wire: {},
+      },
+    })
   })
 
   it('forwards maximum reasoning_effort when provided in options', async () => {

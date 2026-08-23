@@ -7,6 +7,7 @@ import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 import { EXCLUSIVE_PLATFORM_CREDENTIAL_KEYS } from '../../services/hermes/profile-credentials'
+import { normalizeReasoningEffortForModel } from '../../services/hermes/reasoning-effort'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
@@ -243,6 +244,13 @@ function normalizeDelegationModelConfig(value: unknown): Record<string, string> 
     if (!trimmed) continue
     if (field === 'reasoning_effort' && !DELEGATION_REASONING_EFFORTS.has(trimmed)) continue
     normalized[field] = trimmed
+  }
+
+  if (normalized.reasoning_effort) {
+    normalized.reasoning_effort = normalizeReasoningEffortForModel(
+      normalized.model,
+      normalized.reasoning_effort,
+    )
   }
 
   return normalized

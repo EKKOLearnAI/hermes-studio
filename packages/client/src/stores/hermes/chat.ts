@@ -1569,6 +1569,7 @@ export const useChatStore = defineStore('chat', () => {
   function ensureSessionLoaded(summary: SessionSummary): Session {
     const existing = sessions.value.find(session => session.id === summary.id)
     const mapped = mapHermesSession(summary)
+    mapped.reasoningEffort = effectiveSessionReasoningEffort(summary.id, mapped.reasoningEffort)
     if (existing) {
       Object.assign(existing, {
         ...mapped,
@@ -1592,6 +1593,9 @@ export const useChatStore = defineStore('chat', () => {
       const list = await fetchRuntimeSessions(profile)
       if (requestSequence !== loadSessionsRequestSequence) return
       const fresh = list.map(mapHermesSession)
+      for (const session of fresh) {
+        session.reasoningEffort = effectiveSessionReasoningEffort(session.id, session.reasoningEffort)
+      }
       const selectionChanged = selectionSequence !== activeSelectionSequence
       const explicitlySelectedSession = selectionChanged && activeSessionId.value
         ? sessions.value.find(session => session.id === activeSessionId.value) || activeSession.value
@@ -1703,7 +1707,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.model = fresh.model
           existing.provider = fresh.provider
           existing.apiMode = fresh.apiMode || existing.apiMode
-          existing.reasoningEffort = fresh.reasoningEffort
+          existing.reasoningEffort = effectiveSessionReasoningEffort(existing.id, fresh.reasoningEffort)
           existing.messageCount = fresh.messageCount
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
@@ -3151,6 +3155,12 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function effectiveSessionReasoningEffort(sessionId: string, fallback?: string): string | undefined {
+    return reasoningEffortWriteTargets.has(sessionId)
+      ? reasoningEffortWriteTargets.get(sessionId)
+      : fallback || undefined
+  }
+
   function applyResumedSessionSettings(data: ResumeSessionPayload) {
     applySessionSettingsUpdate({
       event: 'session.settings.updated',
@@ -3400,7 +3410,7 @@ export const useChatStore = defineStore('chat', () => {
         // injecting a per-session override there.
         reasoning_effort: isCodingAgentExecution && codingAgentMode === 'global'
           ? undefined
-          : activeSession.value?.reasoningEffort || undefined,
+          : effectiveSessionReasoningEffort(sid, activeSession.value?.reasoningEffort),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)

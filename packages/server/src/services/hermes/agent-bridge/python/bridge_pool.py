@@ -45,6 +45,72 @@ from bridge_runtime import (
 )
 
 
+def _is_glm53_model(model: str = "") -> bool:
+    import re
+
+    normalized = str(model or "").strip().lower()
+    return bool(re.search(r"(^|[/_:.-])glm[-_.]?5[.-]3($|[/_:.-])", normalized))
+
+
+def _normalize_reasoning_effort_for_model(model: str, effort: Any) -> str:
+    normalized = str(effort or "").strip().lower()
+    if not normalized or not _is_glm53_model(model):
+        return normalized
+    return {
+        "none": "low",
+        "minimal": "low",
+        "low": "low",
+        "medium": "high",
+        "high": "high",
+        "xhigh": "max",
+        "max": "max",
+        "ultra": "max",
+    }.get(normalized, "high")
+
+
+def _apply_glm53_reasoning_contract(agent: Any) -> None:
+    model = str(getattr(agent, "model", "") or "")
+    if not _is_glm53_model(model):
+        original_overrides = getattr(
+            agent,
+            "_hermes_studio_glm53_original_request_overrides",
+            None,
+        )
+        if isinstance(original_overrides, dict):
+            agent.request_overrides = dict(original_overrides)
+            delattr(agent, "_hermes_studio_glm53_original_request_overrides")
+        return
+    reasoning_config = getattr(agent, "reasoning_config", None)
+    if not isinstance(reasoning_config, dict):
+        return
+    raw_effort = "none" if reasoning_config.get("enabled") is False else reasoning_config.get("effort")
+    effort = _normalize_reasoning_effort_for_model(model, raw_effort)
+    if not effort:
+        return
+    agent.reasoning_config = {"enabled": True, "effort": effort}
+    overrides = dict(getattr(agent, "request_overrides", {}) or {})
+    if not hasattr(agent, "_hermes_studio_glm53_original_request_overrides"):
+        agent._hermes_studio_glm53_original_request_overrides = dict(overrides)
+    overrides["reasoning_effort"] = effort
+    agent.request_overrides = overrides
+
+
+def _install_glm53_reasoning_patch() -> None:
+    _ensure_agent_imports()
+    from run_agent import AIAgent
+
+    original_init = getattr(AIAgent, "__init__")
+    if getattr(original_init, "_hermes_studio_glm53_reasoning_patch", False):
+        return
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        _apply_glm53_reasoning_contract(self)
+
+    patched_init._hermes_studio_glm53_reasoning_patch = True
+    AIAgent.__init__ = patched_init
+
+
 def _bind_session_workspace_cwd(session_id: str, workspace: str | None) -> bool:
     workspace_cwd = str(workspace or "").strip()
     if not workspace_cwd:
@@ -443,6 +509,7 @@ class AgentPool:
                     return existing
 
             _ensure_agent_imports()
+            _install_glm53_reasoning_patch()
             _suppress_bridge_platform_hint()
             from run_agent import AIAgent
 
@@ -631,6 +698,7 @@ class AgentPool:
             api_mode=runtime.get("api_mode") or "",
         )
         session.agent.reasoning_config = reasoning_config
+        _apply_glm53_reasoning_contract(session.agent)
         if resolved_provider.lower() == "moa":
             self._install_moa_reference_callback(session)
         session.config.update({
@@ -1782,16 +1850,33 @@ class AgentPool:
                 # Local patch (reasoning-effort): per-run reasoning effort override (Web UI brain button).
                 # Mutates session.agent.reasoning_config in place — restored after run.
                 _saved_reasoning_config = None
+                _saved_request_overrides = None
                 _did_override_reasoning = False
                 if reasoning_effort:
                     try:
                         from hermes_constants import parse_reasoning_effort
-                        override_cfg = parse_reasoning_effort(str(reasoning_effort).strip())
+                        active_model = str(
+                            session.config.get("model")
+                            or getattr(session.agent, "model", "")
+                            or ""
+                        )
+                        effective_effort = _normalize_reasoning_effort_for_model(
+                            active_model,
+                            reasoning_effort,
+                        )
+                        override_cfg = parse_reasoning_effort(effective_effort)
                         # parse_reasoning_effort returns None for invalid input; only
                         # override when we got a recognized value.
                         if override_cfg is not None:
                             _saved_reasoning_config = getattr(session.agent, "reasoning_config", None)
                             session.agent.reasoning_config = override_cfg
+                            if _is_glm53_model(active_model):
+                                _saved_request_overrides = dict(
+                                    getattr(session.agent, "request_overrides", {}) or {}
+                                )
+                                next_overrides = dict(_saved_request_overrides)
+                                next_overrides["reasoning_effort"] = effective_effort
+                                session.agent.request_overrides = next_overrides
                             _did_override_reasoning = True
                     except Exception:
                         # Non-fatal: fall through to default reasoning_config
@@ -1804,6 +1889,8 @@ class AgentPool:
                 finally:
                     if _did_override_reasoning:
                         session.agent.reasoning_config = _saved_reasoning_config
+                        if _saved_request_overrides is not None:
+                            session.agent.request_overrides = _saved_request_overrides
                 result = _jsonable(result if isinstance(result, dict) else {"value": result})
                 with session.lock:
                     boundary_interrupted = self._boundary_result_for_run(session, record.run_id)
