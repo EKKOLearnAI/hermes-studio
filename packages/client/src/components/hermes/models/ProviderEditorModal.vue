@@ -45,6 +45,7 @@ const testing = ref(false)
 const clearingCredential = ref(false)
 const label = ref('')
 const baseUrl = ref('')
+const proxy = ref('')
 const apiMode = ref<ProviderApiMode>('chat_completions')
 const preferredModel = ref('')
 const newApiKey = ref('')
@@ -69,6 +70,12 @@ const providerBaseUrlInputProps = {
 }
 const providerModelInputProps = {
   name: 'provider-preferred-model',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-form-type': 'other',
+}
+const providerProxyInputProps = {
+  name: 'provider-proxy',
   autocomplete: 'off',
   spellcheck: false,
   'data-form-type': 'other',
@@ -110,6 +117,7 @@ function resetDraft(next: ProviderEditorDetail) {
   detail.value = next
   label.value = next.label
   baseUrl.value = next.base_url
+  proxy.value = next.proxy || ''
   apiMode.value = next.api_mode || 'chat_completions'
   preferredModel.value = next.preferred_model || props.provider.models[0] || ''
   newApiKey.value = ''
@@ -158,6 +166,7 @@ function buildPatch(): ProviderEditorPatch {
   const patch: ProviderEditorPatch = {}
   if (can('label')) patch.label = label.value.trim()
   if (can('base_url')) patch.base_url = baseUrl.value.trim()
+  if (can('proxy')) patch.proxy = proxy.value.trim()
   if (can('api_mode')) patch.api_mode = apiMode.value
   if (can('preferred_model')) patch.preferred_model = preferredModel.value.trim()
   if (can('api_key')) {
@@ -342,6 +351,17 @@ async function clearCredentialNow() {
             :input-props="providerBaseUrlInputProps"
             placeholder="https://api.example.com/v1"
           />
+        </label>
+
+        <label v-if="can('proxy')" class="field">
+          <span>{{ t('models.providerProxy') }}</span>
+          <NInput
+            v-model:value="proxy"
+            :input-props="providerProxyInputProps"
+            :placeholder="t('models.providerProxyPlaceholder')"
+            clearable
+          />
+          <small>{{ t('models.providerProxyHint') }}</small>
         </label>
 
         <label v-if="can('api_mode')" class="field">

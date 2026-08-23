@@ -32,7 +32,7 @@ export interface CodexProxyTargetInput extends AgentTargetInput {
 type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput>
 
 const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
-  input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
+  input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.proxy || '', input.agentSessionId || '', input.chatSessionId || ''],
 )
 
 function localProxyBaseUrl(routeKey: string): string {
@@ -113,6 +113,7 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any>
   return agentRunGateway.completeJson({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     body: chatBody,
   })
 }
@@ -127,6 +128,7 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
   return agentRunGateway.completeJson({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
@@ -145,6 +147,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     body: responsesBody,
   })
 }
@@ -195,6 +198,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   const stream = await agentRunGateway.streamBytes({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     body: chatBody,
   })
   return responsesEventStream(observableResponsesEvents(target, openAiChatSseToResponsesEvents(stream, {
@@ -214,6 +218,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
   const stream = await agentRunGateway.streamBytes({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
@@ -237,6 +242,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
+    proxy: target.proxy,
     body: responsesBody,
   })
   return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream)))

@@ -250,9 +250,10 @@ export async function refreshProviderModels(
 async function fetchFullRemoteModels(
   target: ProviderCatalogRefreshTarget,
   apiMode: ProviderApiMode | undefined,
+  proxy?: string,
 ): Promise<string[]> {
   if (target.credential_kind === 'api_key' || target.credential_kind === 'none') {
-    return fetchProviderCatalogForTest(target.base_url, target.api_key, apiMode)
+    return fetchProviderCatalogForTest(target.base_url, target.api_key, apiMode, proxy || target.proxy)
   }
   return fetchProviderCatalogRefreshTargetModels(target)
 }
