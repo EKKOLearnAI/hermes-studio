@@ -13,8 +13,8 @@ const historySessions = [
     started_at: 1_790_000_000,
     ended_at: null,
     last_active: 1_790_000_100,
-    message_count: 2,
-    tool_call_count: 0,
+    message_count: 4,
+    tool_call_count: 2,
     input_tokens: 10,
     output_tokens: 20,
     cache_read_tokens: 0,
@@ -79,36 +79,56 @@ const historySessions = [
 function detailFor(id: string, sessions = historySessions) {
   const session = sessions.find(s => s.id === id)
   if (!session) return null
+  const toolMessages = id === 'hist-alpha'
+    ? [
+        { id: 2, tool_call_id: 'history-tool-1', tool_name: 'read_file', content: '{"path":"README.md"}' },
+        { id: 3, tool_call_id: 'history-tool-2', tool_name: 'search', content: '{"matches":2}' },
+      ].map(tool => ({
+        ...tool,
+        session_id: id,
+        role: 'tool',
+        tool_calls: null,
+        run_marker: 'history-run-1',
+        timestamp: session.started_at + tool.id - 1,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      }))
+    : []
+  const messages = [
+    {
+      id: 1,
+      session_id: id,
+      role: 'user',
+      content: `Question for ${session.title}`,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      run_marker: null,
+      timestamp: session.started_at,
+      token_count: null,
+      finish_reason: null,
+      reasoning: null,
+    },
+    ...toolMessages,
+    {
+      id: id === 'hist-alpha' ? 4 : 2,
+      session_id: id,
+      role: 'assistant',
+      content: `Answer from ${session.title}`,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      run_marker: id === 'hist-alpha' ? 'history-run-1' : null,
+      timestamp: session.started_at + (id === 'hist-alpha' ? 3 : 1),
+      token_count: null,
+      finish_reason: null,
+      reasoning: null,
+    },
+  ]
   return {
     ...session,
-    messages: [
-      {
-        id: 1,
-        session_id: id,
-        role: 'user',
-        content: `Question for ${session.title}`,
-        tool_call_id: null,
-        tool_calls: null,
-        tool_name: null,
-        timestamp: session.started_at,
-        token_count: null,
-        finish_reason: null,
-        reasoning: null,
-      },
-      {
-        id: 2,
-        session_id: id,
-        role: 'assistant',
-        content: `Answer from ${session.title}`,
-        tool_call_id: null,
-        tool_calls: null,
-        tool_name: null,
-        timestamp: session.started_at + 1,
-        token_count: null,
-        finish_reason: null,
-        reasoning: null,
-      },
-    ],
+    messages,
   }
 }
 
@@ -217,6 +237,24 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('Beta History Session').first()).toBeVisible()
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
     await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta$/)
+  })
+
+  test('completed tool runs can expand and collapse in history', async ({ page }) => {
+    await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const card = page.locator('.tool-run-card[data-run-id="history-run-1"]')
+    const toggle = card.locator('.tool-run-header')
+    await expect(card).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(card.locator('.message.tool')).toHaveCount(0)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(card.locator('.message.tool')).toHaveCount(2)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(card.locator('.message.tool')).toHaveCount(0)
   })
 
   test('API Server sessions are available as a History source', async ({ page }) => {

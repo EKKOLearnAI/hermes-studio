@@ -177,6 +177,7 @@ function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
       timestamp: m.timestamp * 1000,
       reasoning: m.reasoning || undefined,
       systemType: displayRole === 'command' ? 'command' : undefined,
+      runMarker: m.run_marker,
     }
 
     if (m.role === 'tool' || isHistoryMoaToolDisplay(m)) {
