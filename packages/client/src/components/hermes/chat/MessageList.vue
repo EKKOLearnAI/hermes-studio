@@ -538,8 +538,15 @@ watch(
 );
 
 watch(
-  isRunIndicatorActive,
-  (visible) => {
+  // Switching between two sessions that are both already working leaves
+  // isRunIndicatorActive true, so the session and its reported start have to be
+  // watched too or the timer keeps the previous session's origin.
+  () => [
+    isRunIndicatorActive.value,
+    chatStore.activeSessionId,
+    chatStore.activeSessionId ? chatStore.runStartedAt.get(chatStore.activeSessionId) || 0 : 0,
+  ] as const,
+  ([visible]) => {
     stopThinkingTimer();
     if (!visible) {
       thinkingStartedAt = 0;
