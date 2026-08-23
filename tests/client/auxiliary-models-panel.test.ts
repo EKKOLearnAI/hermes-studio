@@ -18,6 +18,11 @@ const modelsStore = vi.hoisted(() => ({
   providers: [
     { provider: 'openrouter', label: 'OpenRouter', models: ['old-model'] },
     { provider: 'anthropic', label: 'Anthropic', models: ['claude-sonnet'] },
+    {
+      provider: 'custom:studio-images',
+      label: 'Studio Images',
+      models: ['seedream-4', 'qwen-image-edit'],
+    },
   ],
 }))
 
@@ -94,7 +99,7 @@ vi.mock('naive-ui', async () => {
 
 import AuxiliaryModelsPanel from '@/components/hermes/models/AuxiliaryModelsPanel.vue'
 
-describe('AuxiliaryModelsPanel delegation model', () => {
+describe('AuxiliaryModelsPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     apiMocks.fetchAuxiliaryModels.mockResolvedValue({ tasks: [], auxiliary: {} })
@@ -141,5 +146,76 @@ describe('AuxiliaryModelsPanel delegation model', () => {
     expect(apiMocks.saveDelegationModel).toHaveBeenNthCalledWith(2, {})
     expect(wrapper.text()).toContain('models.delegationInheritMain')
     expect(messageMock.success).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps Studio image routes to configured custom provider options', async () => {
+    apiMocks.fetchAuxiliaryModels.mockResolvedValueOnce({
+      tasks: [{ key: 'image_edit', label: 'Image edit', default_timeout: 600 }],
+      auxiliary: {
+        image_edit: { provider: 'Studio Images', model: 'qwen-image-edit', timeout: 600 },
+      },
+    })
+    apiMocks.saveAuxiliaryModels.mockResolvedValueOnce({
+      success: true,
+      auxiliary: {
+        image_edit: {
+          provider: 'custom:studio-images',
+          model: 'qwen-image-edit',
+          timeout: 600,
+        },
+      },
+    })
+
+    const wrapper = mount(AuxiliaryModelsPanel)
+    await flushPromises()
+
+    const rows = wrapper.findAll('.auxiliary-row')
+    await rows[1].get('button').trigger('click')
+
+    const providerSelect = wrapper.getComponent('[data-testid="auxiliary-provider"]')
+    expect(providerSelect.props('value')).toBe('custom:studio-images')
+    expect(providerSelect.props('options')).toEqual([
+      { label: 'models.auxiliaryProviderStudioDefault', value: 'auto' },
+      { label: 'Studio Images', value: 'custom:studio-images' },
+    ])
+
+    await wrapper.get('[data-testid="auxiliary-save"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.saveAuxiliaryModels).toHaveBeenCalledWith({
+      image_edit: {
+        provider: 'custom:studio-images',
+        model: 'qwen-image-edit',
+        timeout: 600,
+      },
+    })
+  })
+
+  it('normalizes the unsupported main provider to auto for Studio image routes', async () => {
+    apiMocks.fetchAuxiliaryModels.mockResolvedValueOnce({
+      tasks: [{ key: 'image_generation', label: 'Image generation', default_timeout: 600 }],
+      auxiliary: {
+        image_generation: { provider: 'main', model: 'old-model', timeout: 600 },
+      },
+    })
+
+    const wrapper = mount(AuxiliaryModelsPanel)
+    await flushPromises()
+
+    await wrapper.findAll('.auxiliary-row')[1].get('button').trigger('click')
+
+    expect(wrapper.getComponent('[data-testid="auxiliary-provider"]').props('value')).toBe('auto')
+  })
+
+  it('labels an unconfigured Studio image route as the Studio default', async () => {
+    apiMocks.fetchAuxiliaryModels.mockResolvedValueOnce({
+      tasks: [{ key: 'image_generation', label: 'Image generation', default_timeout: 600 }],
+      auxiliary: {},
+    })
+
+    const wrapper = mount(AuxiliaryModelsPanel)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('models.auxiliaryProviderStudioDefault')
   })
 })
