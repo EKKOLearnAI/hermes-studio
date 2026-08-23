@@ -139,6 +139,8 @@ export interface StartAppRelayClientOptions {
   relayUrl?: string
   machineId: string
   publicKey: string
+  replaceExistingHost?: boolean
+  signChallenge?: (nonce: string, timestamp: number) => Promise<string>
   machineInfo?: Record<string, unknown>
   localBaseUrl?: string
   fetchImpl?: typeof fetch
@@ -200,7 +202,7 @@ export class AppRelayClient {
       auth: async (callback) => {
         const nonce = randomUUID()
         const timestamp = Date.now()
-        const signature = await createDeviceSignature(nonce, timestamp)
+        const signature = await this.options.signChallenge(nonce, timestamp)
         callback({
           role: 'host',
           machineId: this.options.machineId,
@@ -209,6 +211,7 @@ export class AppRelayClient {
           nonce,
           timestamp,
           signature,
+          replaceExistingHost: this.options.replaceExistingHost,
           machine: this.options.machineInfo,
         })
       },
@@ -296,6 +299,14 @@ export class AppRelayClient {
 
   isPreconnectionExpired(): boolean {
     return this.preconnectionExpired
+  }
+
+  usesRelayUrl(relayUrl: string): boolean {
+    try {
+      return this.relayUrl === resolveAppRelayUrl(relayUrl)
+    } catch {
+      return false
+    }
   }
 
   status(): { connected: boolean; machineId: string; pairingCode: string; pairingExpiresAt: number } {
@@ -750,6 +761,8 @@ export function startAppRelayClient(options: StartAppRelayClientOptions): AppRel
     relayUrl,
     machineId,
     publicKey,
+    replaceExistingHost: options.replaceExistingHost ?? true,
+    signChallenge: options.signChallenge || createDeviceSignature,
     machineInfo: options.machineInfo,
     localBaseUrl: options.localBaseUrl || `http://127.0.0.1:${config.port}`,
     fetchImpl: options.fetchImpl || fetch,

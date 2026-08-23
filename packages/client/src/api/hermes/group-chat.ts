@@ -542,9 +542,11 @@ export async function updateRoomSummary(roomId: string, summary: string): Promis
 }
 
 export async function listGroupWorkspaceFiles(roomId: string, path = ''): Promise<{
-    entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>
+    entries: import('./files').FileEntry[]
     path: string
     absolutePath?: string
+    gitStatus?: import('./files').GitFileStatus
+    gitStatusCount?: number
 }> {
     const params = new URLSearchParams()
     if (path) params.set('path', path)
@@ -555,6 +557,14 @@ export async function listGroupWorkspaceFiles(roomId: string, path = ''): Promis
 export async function readGroupWorkspaceFile(roomId: string, path: string): Promise<{ content: string; path: string; size: number }> {
     const params = new URLSearchParams({ path })
     return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/read?${params}`)
+}
+
+export async function fetchGroupWorkspaceFileDiff(
+    roomId: string,
+    path: string,
+): Promise<import('./files').WorkspaceFileDiff> {
+    const params = new URLSearchParams({ path })
+    return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/diff?${params}`)
 }
 
 export async function fetchGroupWorkspaceFileBlob(roomId: string, path: string, signal?: AbortSignal): Promise<Blob> {

@@ -8,6 +8,28 @@ export interface FileEntry {
   isDir: boolean
   size: number
   modTime: string
+  gitStatus?: GitFileStatus
+  gitStatusCount?: number
+}
+
+export type GitFileStatus = 'modified' | 'added' | 'untracked' | 'deleted' | 'renamed' | 'conflicted'
+
+export interface FileListResult {
+  entries: FileEntry[]
+  path: string
+  absolutePath?: string
+  gitStatus?: GitFileStatus
+  gitStatusCount?: number
+}
+
+export interface WorkspaceFileDiff {
+  path: string
+  gitStatus?: GitFileStatus
+  patch: string
+  additions: number
+  deletions: number
+  binary: boolean
+  truncated: boolean
 }
 
 export interface FileStat {
@@ -30,7 +52,7 @@ function appendProfile(params: URLSearchParams, profile?: string | null): void {
   if (value) params.set('profile', value)
 }
 
-export async function listFiles(path: string = '', profile?: string | null): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
+export async function listFiles(path: string = '', profile?: string | null): Promise<FileListResult> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   appendProfile(params, profile)

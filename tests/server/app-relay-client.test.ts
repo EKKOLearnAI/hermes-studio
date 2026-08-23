@@ -78,10 +78,35 @@ describe('AppRelayClient', () => {
       machineId: 'hwui_machine_1234567890',
       publicKey,
       signature: 'machine-signature',
+      replaceExistingHost: true,
       machine: { computer_name: 'Studio Mac' },
     })
     expect(auth.nonce).toEqual(expect.any(String))
     expect(auth.timestamp).toEqual(expect.any(Number))
+  })
+
+  it('marks development Web UI relay hosts as non-preemptive', async () => {
+    const { shouldReplaceExistingAppRelayHost } = await import(
+      '../../packages/server/src/services/app-relay/connection'
+    )
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+
+    expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'development' })).toBe(false)
+    expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'test' })).toBe(false)
+    expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'production' })).toBe(true)
+
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      replaceExistingHost: false,
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })
+    const options = mockIo.mock.calls[0][1]
+    const auth = await new Promise<Record<string, unknown>>(resolve => options.auth(resolve))
+
+    expect(auth.replaceExistingHost).toBe(false)
   })
 
   it('keeps waiting across transient connect errors while Socket.IO retries', async () => {

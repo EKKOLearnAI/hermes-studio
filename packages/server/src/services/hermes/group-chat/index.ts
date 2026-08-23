@@ -108,6 +108,8 @@ interface PendingGroupClarifyRoute {
     roomId: string
     agentName: string
     agentSessionId: string
+    runId: string
+    runtimeRunId: string
     clarifyId: string
     question: string
     choices: string[] | null
@@ -3275,7 +3277,7 @@ export class GroupChatServer {
             this.agentClients.getAgent(roomId, agentId)?.connected === true
         )
         this.agentClients.setRoomSummaryService(this.roomSummaryService)
-        this.agentClients.setActivityBroadcaster((roomId, agentName, status, runId) => {
+        this.agentClients.setActivityBroadcaster((roomId, agentName, status, runId, agentSessionId) => {
             let roomStatuses = this.contextStatusState.get(roomId)
             if (status === 'ready') {
                 roomStatuses?.delete(agentName)
@@ -3285,10 +3287,15 @@ export class GroupChatServer {
                     roomStatuses = new Map()
                     this.contextStatusState.set(roomId, roomStatuses)
                 }
-                roomStatuses.set(agentName, { agentName, status })
+                roomStatuses.set(agentName, {
+                    agentName,
+                    status,
+                    ...(agentSessionId ? { agentSessionId } : {}),
+                    ...(runId ? { runId } : {}),
+                })
             }
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status })
-            if (runId) this.updateRoomAgentActivity(roomId, agentName, status, runId)
+            if (runId) this.updateRoomAgentActivity(roomId, agentName, status, runId, agentSessionId)
         })
         this.agentClients.setExecutionQueueBroadcaster((roomId) => {
             this.broadcastExecutionQueue(roomId)
@@ -3914,7 +3921,7 @@ export class GroupChatServer {
         socket.on('approval.requested', (data: { roomId?: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; agentSessionId?: string; runId?: string }) => this.handleApprovalRequested(socket, data))
         socket.on('approval.resolved', (data: { roomId?: string; agentName?: string; approval_id?: string; choice?: string; agentSessionId?: string }) => this.handleApprovalResolved(socket, data))
         socket.on('approval.respond', (data: { roomId?: string; approval_id?: string; choice?: string }, ack?: (response?: unknown) => void) => this.handleApprovalRespond(socket, data, ack))
-        socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }) => this.handleClarifyRequested(socket, data))
+        socket.on('clarify.requested', (data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string; runId?: string; runtimeRunId?: string }) => this.handleClarifyRequested(socket, data))
         socket.on('clarify.resolved', (data: { roomId?: string; agentName?: string; clarify_id?: string; resolved?: boolean; reason?: string; agentSessionId?: string }) => this.handleClarifyResolved(socket, data))
         socket.on('clarify.respond', (data: { roomId?: string; clarify_id?: string; response?: string }, ack?: (response?: unknown) => void) => this.handleClarifyRespond(socket, data, ack))
         socket.on('disconnect', () => this.handleDisconnect(socket))
@@ -4876,9 +4883,18 @@ export class GroupChatServer {
             activeGeneration?.agentSessionId || '',
             activeGeneration?.runId || '',
         )
+        const interruptedClarifications = this.takePendingEkkoClarificationsForGeneration(
+            roomId,
+            agentName,
+            activeGeneration?.agentSessionId || '',
+            activeGeneration?.runId || '',
+        )
         try {
             await this.agentClients.interruptAgent(roomId, agentName)
-            await this.settleInterruptedApprovals(interruptedApprovals)
+            await Promise.all([
+                this.settleInterruptedApprovals(interruptedApprovals),
+                this.settleInterruptedEkkoClarifications(interruptedClarifications),
+            ])
             const roomStatuses = this.contextStatusState.get(roomId)
             roomStatuses?.delete(agentName)
             if (roomStatuses?.size === 0) this.contextStatusState.delete(roomId)
@@ -4889,7 +4905,10 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('context_status', { roomId, agentName, status: 'ready' })
             ack?.({ ok: true })
         } catch (err: any) {
-            await this.settleInterruptedApprovals(interruptedApprovals)
+            await Promise.all([
+                this.settleInterruptedApprovals(interruptedApprovals),
+                this.settleInterruptedEkkoClarifications(interruptedClarifications),
+            ])
             logger.warn(`[GroupChat] failed to interrupt agent ${agentName} in room ${roomId}: ${err.message}`)
             ack?.({ error: err.message || 'interrupt failed' })
         }
@@ -5189,7 +5208,63 @@ export class GroupChatServer {
         }
     }
 
-    private handleClarifyRequested(socket: Socket, data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string }): void {
+    private takePendingEkkoClarificationsForGeneration(
+        roomId: string,
+        agentName: string,
+        agentSessionId: string,
+        runId: string,
+    ): PendingGroupClarifyRoute[] {
+        if (!agentSessionId || !runId) return []
+        const ekkoExecutor = this.agentClients.getAgents(roomId).find(agent =>
+            agent.name === agentName && agent.agent === 'ekko' && typeof agent.cancelClarify === 'function'
+        )
+        if (!ekkoExecutor) return []
+
+        const routes: PendingGroupClarifyRoute[] = []
+        for (const [routeKey, route] of this.pendingClarifyRoutes) {
+            if (
+                route.roomId !== roomId
+                || route.agentName !== agentName
+                || route.agentSessionId !== agentSessionId
+                || route.runId !== runId
+                || !route.runtimeRunId
+            ) {
+                continue
+            }
+            const claimed = this.takePendingClarifyRoute(routeKey)
+            if (claimed) routes.push(claimed)
+        }
+        return routes
+    }
+
+    private async settleInterruptedEkkoClarifications(routes: PendingGroupClarifyRoute[]): Promise<void> {
+        for (const route of routes) {
+            const executor = this.agentClients.getAgents(route.roomId).find(agent =>
+                agent.name === route.agentName && agent.agent === 'ekko' && typeof agent.cancelClarify === 'function'
+            )
+            let runtimeResolved = false
+            try {
+                runtimeResolved = Boolean(await executor?.cancelClarify?.(
+                    route.clarifyId,
+                    route.agentSessionId,
+                    route.runtimeRunId,
+                ))
+            } catch (err: any) {
+                logger.warn(`[GroupChat] failed to cancel interrupted Ekko clarification ${route.clarifyId}: ${err?.message || err}`)
+            }
+            this.emitToRoomManagers(route.roomId, 'clarify.resolved', {
+                event: 'clarify.resolved',
+                roomId: route.roomId,
+                agentName: route.agentName,
+                clarify_id: route.clarifyId,
+                resolved: false,
+                reason: 'Agent run interrupted',
+                runtime_resolved: runtimeResolved,
+            })
+        }
+    }
+
+    private handleClarifyRequested(socket: Socket, data: { roomId?: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; agentSessionId?: string; runId?: string; runtimeRunId?: string }): void {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.clarify_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
@@ -5200,6 +5275,8 @@ export class GroupChatServer {
             roomId,
             agentName,
             agentSessionId: String(data.agentSessionId || '').trim(),
+            runId: String(data.runId || '').trim(),
+            runtimeRunId: String(data.runtimeRunId || '').trim(),
             clarifyId: data.clarify_id,
             question: data.question || '',
             choices: Array.isArray(data.choices) ? data.choices.map(String) : null,
@@ -5229,7 +5306,8 @@ export class GroupChatServer {
         const roomId = data.roomId
         const agentName = data.agentName || ''
         if (!roomId || !data.clarify_id || !this.getCurrentAgentEventMember(socket, roomId, agentName, data.agentSessionId)) return
-        this.takePendingClarifyRoute(this.pendingClarifyRouteKey(roomId, data.clarify_id))
+        const route = this.takePendingClarifyRoute(this.pendingClarifyRouteKey(roomId, data.clarify_id))
+        if (!route || route.agentName !== agentName) return
         this.emitToRoomManagers(roomId, 'clarify.resolved', {
             event: 'clarify.resolved',
             roomId,

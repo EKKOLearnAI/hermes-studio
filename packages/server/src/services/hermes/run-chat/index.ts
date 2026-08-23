@@ -33,7 +33,7 @@ import {
   parseCodingAgentSessionCommand,
 } from '../../coding-agents/session-command'
 import { contentBlocksToString } from './content-blocks'
-import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessages } from './resume-payload'
+import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessagePage } from './resume-payload'
 import type {
   BackgroundContinuationContext,
   ChatCodingAgentId,
@@ -1231,13 +1231,14 @@ export class ChatRunSocket {
       ? state.events
       : (state.events || []).filter(evt => evt?.event === 'run.reattach_failed')
     const sessionDetail = getSessionMetadata(sid)
+    const messagePage = buildResumeMessagePage(state.messages, {
+      limit: state.messagePageLimit,
+      messageTotal: state.messageTotal,
+      messageStateBaselineCount: state.messageStateBaselineCount,
+    })
     socket.emit('resumed', {
       session_id: sid,
-      messages: buildResumeMessages(state.messages),
-      messageTotal: state.messageTotal,
-      messageLoadedCount: state.messageLoadedCount,
-      messagePageLimit: state.messagePageLimit,
-      hasMoreBefore: state.hasMoreBefore,
+      ...messagePage,
       parentSessionId: sessionDetail?.parent_session_id || null,
       forkPointMessageId: sessionDetail?.fork_point_message_id || null,
       parentTitle: sessionDetail?.parent_title || null,
@@ -1922,6 +1923,7 @@ export class ChatRunSocket {
       state.messages = []
       state.messageTotal = 0
       state.messageLoadedCount = 0
+      state.messageStateBaselineCount = 0
       state.hasMoreBefore = false
       state.inputTokens = 0
       state.outputTokens = 0

@@ -59,6 +59,10 @@ import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from "@/utils/desktop-browser";
+import {
+  createBrowserAnnotationAttachment,
+  type BrowserAnnotationSubmission,
+} from "@/utils/browser-annotation-submit";
 
 const props = withDefaults(defineProps<{
   standalone?: boolean;
@@ -70,7 +74,6 @@ const props = withDefaults(defineProps<{
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const ConnectionsPanel = defineAsyncComponent(async () => (await import('@/components/hermes/connections/ConnectionsPanel.vue')).default);
-const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default);
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('./DesktopBrowserPanel.vue')).default);
 
@@ -90,7 +93,6 @@ const showRealtimeVoice = ref(false);
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
   addFiles?: (files: File[]) => void;
-  addBrowserAttachment?: (file: File, context: string) => void;
   focusComposer?: () => void;
 }) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
@@ -320,8 +322,10 @@ function handleWorkspaceFileAttach(file: File) {
   chatInputRef.value?.addFiles?.([file]);
 }
 
-function handleBrowserAttachment(payload: { file: File; context: string }) {
-  chatInputRef.value?.addBrowserAttachment?.(payload.file, payload.context);
+async function submitBrowserAnnotations(payload: BrowserAnnotationSubmission): Promise<boolean> {
+  const attachment = createBrowserAnnotationAttachment(payload);
+  await chatStore.sendMessage("", [attachment]);
+  return true;
 }
 
 async function handleSessionClick(sessionId: string) {
@@ -500,6 +504,7 @@ watch(
   (previewFile) => {
     if (previewFile) {
       selectedSubagent.value = null;
+      activeToolPanel.value = "files";
       showToolPanel.value = true;
     }
   },
@@ -2891,10 +2896,6 @@ async function handleSessionModelCustomSubmit() {
                   v-if="toolPanelStore.workspaceDiff"
                   :custom-close="closeToolPanelOverlay"
                 />
-                <FilePreview
-                  v-else-if="filesStore.previewFile"
-                  :custom-close="closeToolPanelOverlay"
-                />
                 <SubagentStreamPanel
                   v-else-if="selectedSubagent"
                   :stream="selectedSubagentStream"
@@ -2964,7 +2965,7 @@ async function handleSessionModelCustomSubmit() {
                     <DesktopBrowserPanel
                       v-if="desktopBrowserAvailable && activeToolPanel === 'browser'"
                       :visible="toolPanelTransitionReady"
-                      @attach="handleBrowserAttachment"
+                      :submit="submitBrowserAnnotations"
                     />
                   </div>
                 </template>
