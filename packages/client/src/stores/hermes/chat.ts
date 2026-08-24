@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -1266,6 +1266,36 @@ export const useChatStore = defineStore('chat', () => {
       : null,
   )
   /** sessionId → queued message count */
+  /**
+   * When the run showing in each session began, as the server reported it.
+   * A client that opens the page mid-run needs this: without it the thinking
+   * timer counts from its own first render and restarts on every navigation.
+   */
+  const runStartedAt = ref<Map<string, number>>(new Map())
+
+  function setRunStartedAt(sessionId: string, startedAt: number) {
+    if (!sessionId || !(startedAt > 0)) return
+    if (runStartedAt.value.get(sessionId) === startedAt) return
+    runStartedAt.value = new Map(runStartedAt.value).set(sessionId, startedAt)
+  }
+
+  function clearRunStartedAt(sessionId: string) {
+    if (!sessionId || !runStartedAt.value.has(sessionId)) return
+    const next = new Map(runStartedAt.value)
+    next.delete(sessionId)
+    runStartedAt.value = next
+  }
+
+  /**
+   * Every resume path has to agree about the run clock, and every terminal path
+   * has to forget it — otherwise the next run in the same session inherits the
+   * previous run's start and reports a far larger elapsed time.
+   */
+  function applyResumedRunStartedAt(sessionId: string, data: { isWorking?: boolean; runStartedAt?: number }) {
+    const startedAt = Number(data?.runStartedAt) || 0
+    if (data?.isWorking && startedAt > 0) setRunStartedAt(sessionId, startedAt)
+    else clearRunStartedAt(sessionId)
+  }
   const queueLengths = ref<Map<string, number>>(new Map())
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
@@ -1432,7 +1462,6 @@ export const useChatStore = defineStore('chat', () => {
   const activeSession = ref<Session | null>(null)
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
   const workspaceRunChangesBySession = ref<Map<string, Map<string, WorkspaceRunChangeSummary>>>(new Map())
-  const workspaceRunChangeLoadRequests = new Set<string>()
 
   function isSessionLive(sessionId: string): boolean {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
@@ -1517,6 +1546,17 @@ export const useChatStore = defineStore('chat', () => {
     attachWorkspaceChangesToMessages(sessionId)
   }
 
+  function mergeWorkspaceRunChanges(sessionId: string, changes: WorkspaceRunChangeSummary[]) {
+    const next = new Map(workspaceRunChangesBySession.value)
+    const byChangeId = new Map(next.get(sessionId) || [])
+    for (const change of changes) {
+      if (change?.change_id) byChangeId.set(change.change_id, change)
+    }
+    next.set(sessionId, byChangeId)
+    workspaceRunChangesBySession.value = next
+    attachWorkspaceChangesToMessages(sessionId)
+  }
+
   function upsertWorkspaceRunChange(sessionId: string, change: WorkspaceRunChangeSummary | null | undefined) {
     if (!change?.change_id) return
     const next = new Map(workspaceRunChangesBySession.value)
@@ -1550,22 +1590,6 @@ export const useChatStore = defineStore('chat', () => {
     const target = sessions.value.find(session => session.id === sessionId)
     if (target) alignWorkspaceChangeAssistantMessage(target.messages, change, assistantMessageId)
     upsertWorkspaceRunChange(sessionId, change)
-  }
-
-  function restoreWorkspaceRunChangeMessages(sessionId: string) {
-    attachWorkspaceChangesToMessages(sessionId)
-    if (workspaceRunChangesBySession.value.has(sessionId) || workspaceRunChangeLoadRequests.has(sessionId)) return
-    workspaceRunChangeLoadRequests.add(sessionId)
-    void loadWorkspaceRunChangesForSession(sessionId)
-      .catch(err => console.warn('Failed to load workspace run changes:', err))
-      .finally(() => {
-        workspaceRunChangeLoadRequests.delete(sessionId)
-      })
-  }
-
-  async function loadWorkspaceRunChangesForSession(sessionId: string) {
-    const changes = await fetchWorkspaceRunChangesForSession(sessionId)
-    setWorkspaceRunChanges(sessionId, changes)
   }
 
   async function loadWorkspaceRunChangeFile(sessionId: string, toolCallId: string, fileId: number): Promise<WorkspaceRunChangeFileDetail | null> {
@@ -1766,6 +1790,7 @@ export const useChatStore = defineStore('chat', () => {
       const mapped = mapHermesMessages(detail.messages || [])
       target.messages = mapped
       restorePersistedSubagentStreams(sid)
+      setWorkspaceRunChanges(sid, detail.workspaceRunChanges || [])
       target.loadedMessageCount = detail.messages.length
       target.messageTotal = detail.total
       target.messageCount = detail.total
@@ -1780,7 +1805,6 @@ export const useChatStore = defineStore('chat', () => {
       target.parentTitle = detail.session.parent_title || target.parentTitle || null
       target.parentLastMessage = detail.session.parent_last_message || target.parentLastMessage || null
       target.parentLastMessageRole = detail.session.parent_last_message_role || target.parentLastMessageRole || null
-      restoreWorkspaceRunChangeMessages(sid)
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -1908,6 +1932,7 @@ export const useChatStore = defineStore('chat', () => {
             replaceQueuedUserMessages(sessionId, [])
           }
           replaceQueueInsertionState(sessionId, data.queueInsertion)
+          applyResumedRunStartedAt(sessionId, data as any)
           if ((data as any).isAborting) {
             setAbortState(sessionId, { aborting: true, synced: null })
           } else if (!data.isWorking) {
@@ -1930,7 +1955,7 @@ export const useChatStore = defineStore('chat', () => {
           if (data.messages?.length) {
             target.messages = mapHermesMessages(data.messages as any[])
             restorePersistedSubagentStreams(sessionId)
-            restoreWorkspaceRunChangeMessages(sessionId)
+            setWorkspaceRunChanges(sessionId, data.workspaceRunChanges || [])
             target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
             target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
             target.messageCount = target.messageTotal
@@ -2089,9 +2114,6 @@ export const useChatStore = defineStore('chat', () => {
           resolve()
         }, activeSession.value?.profile, runtimeTransport())
       })
-      if (activeSessionId.value === sessionId && requestSequence === switchSessionRequestSequence) {
-        await loadWorkspaceRunChangesForSession(sessionId)
-      }
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
     } finally {
@@ -2123,7 +2145,7 @@ export const useChatStore = defineStore('chat', () => {
       const olderMessages = mapHermesMessages(page.messages).filter(message => !existingIds.has(message.id))
       target.messages = [...olderMessages, ...target.messages]
       restorePersistedSubagentStreams(sessionId)
-      attachWorkspaceChangesToMessages(sessionId)
+      mergeWorkspaceRunChanges(sessionId, page.workspaceRunChanges || [])
       target.loadedMessageCount = offset + page.messages.length
       target.messageTotal = page.total
       target.messageCount = page.total
@@ -2631,10 +2653,12 @@ export const useChatStore = defineStore('chat', () => {
     const command = String((evt as any).command || '').toLowerCase()
     if ((evt as any).started === true && (evt as any).terminal === false) {
       serverWorking.value.add(sid)
+      setRunStartedAt(sid, Date.now())
     }
     if ((evt as any).terminal === true) {
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
       pendingForkCommands.value.delete(sid)
       const msgs = getSessionMsgs(sid)
       msgs.forEach((m, i) => {
@@ -2682,6 +2706,7 @@ export const useChatStore = defineStore('chat', () => {
     if (action === 'destroy') {
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
       queueLengths.value.delete(sid)
       queuedUserMessages.value.delete(sid)
       queueInsertionStates.value.delete(sid)
@@ -3299,7 +3324,10 @@ export const useChatStore = defineStore('chat', () => {
     } else {
       addMessage(sid, userMsg)
       updateSessionTitle(sid)
-      if (shouldOptimisticallyShowRunStatus) serverWorking.value.add(sid)
+      if (shouldOptimisticallyShowRunStatus) {
+        setRunStartedAt(sid, Date.now())
+        serverWorking.value.add(sid)
+      }
     }
     clearMessageReference(sid)
 
@@ -3426,6 +3454,8 @@ export const useChatStore = defineStore('chat', () => {
       const cleanup = () => {
         streamStates.value.delete(sid)
         serverWorking.value.delete(sid)
+        // The run is over: its start must not leak into the next one.
+        clearRunStartedAt(sid)
       }
 
       // Per-active-run flags used to detect silently-swallowed errors at run.completed.
@@ -3461,6 +3491,7 @@ export const useChatStore = defineStore('chat', () => {
 
         if (data.isWorking) serverWorking.value.add(sid)
         else serverWorking.value.delete(sid)
+        applyResumedRunStartedAt(sid, data as any)
 
         if (data.queueLength && data.queueLength > 0) {
           queueLengths.value.set(sid, data.queueLength)
@@ -3493,12 +3524,11 @@ export const useChatStore = defineStore('chat', () => {
           const replayRunMarker = getReplayRunMarker(data.events) ?? activeRunMarker
           target.messages = mapHermesMessages(data.messages as any[])
           restorePersistedSubagentStreams(sid)
+          setWorkspaceRunChanges(sid, data.workspaceRunChanges || [])
           target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
           target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
           target.messageCount = target.messageTotal
           target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
-          restoreWorkspaceRunChangeMessages(sid)
-
           const resumedAssistantState = data.isWorking
             ? resolveResumedAssistantState(target.messages, {
                 previousActiveAssistantMessageId,
@@ -3614,6 +3644,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'run.started':
               clearSessionCompletedUnread(sid)
               serverWorking.value.add(sid)
+              setRunStartedAt(sid, Date.now())
               clearAgentEventMessages(sid)
               setAbortState(sid, null)
               setCompressionState(sid, null)
@@ -3997,6 +4028,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.completed': {
+              clearRunStartedAt(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -4155,6 +4187,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              clearRunStartedAt(sid)
               clearPendingInteractions(sid)
               const failedMessages = getSessionMsgs(sid)
               const failedAssistant = activeAssistantMessageId
@@ -4287,6 +4320,7 @@ export const useChatStore = defineStore('chat', () => {
       closed = true
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
       // Unregister from global session handlers
       unregisterSessionHandlers(sid)
     }
@@ -4294,6 +4328,7 @@ export const useChatStore = defineStore('chat', () => {
     const markIdleKeepingBackgroundListener = () => {
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
     }
 
     const ensureAbortHandle = () => {
@@ -4382,6 +4417,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'run.started':
           clearSessionCompletedUnread(sid)
           serverWorking.value.add(sid)
+          setRunStartedAt(sid, Date.now())
           ensureAbortHandle()
           clearAgentEventMessages(sid)
           setAbortState(sid, null)
@@ -4719,6 +4755,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.completed': {
+          clearRunStartedAt(sid)
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
           const hasBackground = (evt.background_pending || 0) > 0
@@ -4874,6 +4911,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          clearRunStartedAt(sid)
           clearPendingInteractions(sid)
           const failedMessages = getSessionMsgs(sid)
           const failedAssistant = activeAssistantMessageId
@@ -5089,6 +5127,7 @@ export const useChatStore = defineStore('chat', () => {
             } else {
               serverWorking.value.delete(sid)
             }
+            applyResumedRunStartedAt(sid, data as any)
             if (data.isAborting) {
               setAbortState(sid, { aborting: true, synced: null })
             } else if (!data.isWorking) {
@@ -5103,11 +5142,11 @@ export const useChatStore = defineStore('chat', () => {
               }
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
               restorePersistedSubagentStreams(sid)
+              setWorkspaceRunChanges(sid, data.workspaceRunChanges || [])
               activeSession.value.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
               activeSession.value.messageTotal = data.messageTotal ?? activeSession.value.messageCount ?? activeSession.value.loadedMessageCount
               activeSession.value.messageCount = activeSession.value.messageTotal
               activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
-              restoreWorkspaceRunChangeMessages(sid)
             }
             resumeServerWorkingRun(sid)
           }, activeSession.value?.profile, runtimeTransport())
@@ -5283,6 +5322,7 @@ export const useChatStore = defineStore('chat', () => {
     isForkPending,
     isRunActive,
     isSessionLive,
+    runStartedAt,
     isSessionCompletedUnread,
     clearSessionCompletedUnread,
     sessionProfileFilter,

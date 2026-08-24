@@ -159,12 +159,15 @@ export interface RunEvent {
 export interface ResumeSessionPayload {
   session_id: string
   messages: any[]
+  workspaceRunChanges?: import('./sessions').WorkspaceRunChangeSummary[]
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
   hasMoreBefore?: boolean
   isWorking: boolean
   isAborting?: boolean
+  /** Epoch ms the active run began; absent on servers that predate it. */
+  runStartedAt?: number
   events: Array<{ event: string; data: RunEvent }>
   inputTokens?: number
   outputTokens?: number

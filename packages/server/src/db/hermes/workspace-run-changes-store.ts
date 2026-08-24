@@ -231,14 +231,46 @@ export function listWorkspaceRunChangesForSession(sessionId: string): WorkspaceR
   const rows = db.prepare(
     `SELECT * FROM ${WORKSPACE_RUN_CHANGES_TABLE} WHERE session_id = ? ORDER BY created_at ASC`,
   ).all(sessionId) as Record<string, unknown>[]
+  return readWorkspaceRunChangeRows(db, sessionId, rows)
+}
+
+export function listWorkspaceRunChangesForAssistantMessages(
+  sessionId: string,
+  assistantMessageIds: Array<string | number>,
+): WorkspaceRunChangeSummary[] {
+  if (!isSqliteAvailable()) return []
+  const db = getDb()
+  if (!db) return []
+  const ids = [...new Set(
+    assistantMessageIds
+      .map(id => String(id).trim())
+      .filter(Boolean),
+  )]
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = db.prepare(
+    `SELECT * FROM ${WORKSPACE_RUN_CHANGES_TABLE}
+     WHERE session_id = ? AND assistant_message_id IN (${placeholders})
+     ORDER BY created_at ASC, change_id ASC`,
+  ).all(sessionId, ...ids) as Record<string, unknown>[]
+  return readWorkspaceRunChangeRows(db, sessionId, rows)
+}
+
+function readWorkspaceRunChangeRows(
+  db: HermesDb,
+  sessionId: string,
+  rows: Record<string, unknown>[],
+): WorkspaceRunChangeSummary[] {
   if (rows.length === 0) return []
+  const changeIds = rows.map(row => String(row.change_id || '')).filter(Boolean)
+  const placeholders = changeIds.map(() => '?').join(',')
   const fileRows = db.prepare(
     `SELECT id, change_id, session_id, path, old_path, change_type, additions, deletions,
       size_before, size_after, patch_bytes, truncated, binary, created_at
      FROM ${WORKSPACE_RUN_CHANGE_FILES_TABLE}
-     WHERE session_id = ?
+     WHERE session_id = ? AND change_id IN (${placeholders})
      ORDER BY path COLLATE NOCASE ASC`,
-  ).all(sessionId) as Record<string, unknown>[]
+  ).all(sessionId, ...changeIds) as Record<string, unknown>[]
   const byChangeId = new Map<string, WorkspaceRunChangeFileSummary[]>()
   for (const row of fileRows) {
     const file = mapFileSummary(row)

@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
+import { listWorkspaceRunChangesForAssistantMessages } from '../../../db/hermes/workspace-run-changes-store'
 import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
@@ -495,6 +496,7 @@ export class ChatRunSocket {
         }
         state.events = []
         state.isWorking = !isCodingAgentExecution(source, data)
+        state.runStartedAt = Date.now()
         state.profile = runProfile
         state.source = source
       }
@@ -1265,10 +1267,17 @@ export class ChatRunSocket {
       messageTotal: state.messageTotal,
       messageStateBaselineCount: state.messageStateBaselineCount,
     })
+    const workspaceRunChanges = listWorkspaceRunChangesForAssistantMessages(
+      sid,
+      messagePage.messages
+        .filter(message => String(message.display_role || message.role || '') === 'assistant')
+        .map(message => message.id),
+    )
+    const resumePage = { ...messagePage, workspaceRunChanges }
     const appMessagePage = options
-      ? buildAppResumeMessagePage(messagePage, options.cachedId)
+      ? buildAppResumeMessagePage(resumePage, options.cachedId)
       : null
-    const outboundMessagePage = appMessagePage || messagePage
+    const outboundMessagePage = appMessagePage || resumePage
     socket.emit(options?.event || 'resumed', {
       session_id: sid,
       ...outboundMessagePage,
@@ -1284,6 +1293,7 @@ export class ChatRunSocket {
       reasoning_effort: sessionDetail?.reasoning_effort || '',
       push_enabled: Number(sessionDetail?.push_enabled || 0) !== 0,
       isWorking: state.isWorking,
+      runStartedAt: state.runStartedAt,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents),
       inputTokens: state.inputTokens,
@@ -1324,6 +1334,12 @@ export class ChatRunSocket {
       pollKey = `${sid}:${runId}`
       if (this.bridgeResumePolls.has(pollKey)) return
       this.bridgeResumePolls.add(pollKey)
+      if (!state.isWorking || !(state.runStartedAt && state.runStartedAt > 0)) {
+        // The bridge does not expose the original start in its lightweight
+        // status response. Use one shared server-side fallback for every
+        // client attaching after this Web UI process discovers the run.
+        state.runStartedAt = Date.now()
+      }
       state.isWorking = true
       state.isAborting = state.isAborting === true
       state.runId = runId
@@ -1605,6 +1621,8 @@ export class ChatRunSocket {
   }
 
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
+    const state = this.sessionMap.get(sessionId)
+    if (state) state.runStartedAt = Date.now()
     const skipUserMessage = next.displayInput === null
     const backgroundContinuationContext = next.backgroundContinuationContext
       || (next.backgroundDelegationId
@@ -1708,6 +1726,7 @@ export class ChatRunSocket {
     const state = getOrCreateSession(this.sessionMap, sessionId)
     state.events = []
     state.isWorking = !isCodingAgentExecution(source, data)
+    state.runStartedAt = Date.now()
     state.profile = profile
     state.source = source
 

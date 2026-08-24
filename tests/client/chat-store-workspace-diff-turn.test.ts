@@ -5,7 +5,7 @@ import { alignWorkspaceChangeAssistantMessage, attachWorkspaceChangesToExactTurn
 
 const sessionApi = vi.hoisted(() => ({
   fetchSessions: vi.fn(),
-  fetchWorkspaceRunChangesForSession: vi.fn(),
+  fetchSessionMessagesPage: vi.fn(),
 }))
 
 const chatApi = vi.hoisted(() => ({
@@ -20,9 +20,8 @@ const chatApi = vi.hoisted(() => ({
 vi.mock('@/api/hermes/sessions', () => ({
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
-  fetchSessionMessagesPage: vi.fn(),
+  fetchSessionMessagesPage: sessionApi.fetchSessionMessagesPage,
   fetchSessions: sessionApi.fetchSessions,
-  fetchWorkspaceRunChangesForSession: sessionApi.fetchWorkspaceRunChangesForSession,
   fetchWorkspaceRunChangeFile: vi.fn(async () => null),
   setSessionModel: vi.fn(),
 }))
@@ -77,6 +76,7 @@ describe('chat workspace diff turn association', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     sessionApi.fetchSessions.mockResolvedValueOnce([summary()]).mockResolvedValueOnce([])
+    sessionApi.fetchSessionMessagesPage.mockReset()
     chatApi.resumePayload = {
       isWorking: false,
       messages: [
@@ -90,11 +90,11 @@ describe('chat workspace diff turn association', () => {
   })
 
   it('attaches each persisted change to its exact assistant turn without synthetic cards', async () => {
-    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([
+    chatApi.resumePayload.workspaceRunChanges = [
       change('change-1', '2'),
       change('change-2', '4'),
       change('change-3', '4'),
-    ])
+    ]
 
     const store = useChatStore()
     await store.loadSessions()
@@ -118,7 +118,7 @@ describe('chat workspace diff turn association', () => {
       tool_call_id: 'tool-change',
       timestamp: 3.5,
     })
-    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([change('tool-change')])
+    chatApi.resumePayload.workspaceRunChanges = [change('tool-change')]
 
     const store = useChatStore()
     await store.loadSessions()
@@ -128,10 +128,10 @@ describe('chat workspace diff turn association', () => {
   })
 
   it('does not render a standalone fallback for legacy changes without an assistant message id', async () => {
-    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([
+    chatApi.resumePayload.workspaceRunChanges = [
       change('legacy-change-1'),
       change('legacy-change-2'),
-    ])
+    ]
 
     const store = useChatStore()
     await store.loadSessions()
@@ -141,9 +141,9 @@ describe('chat workspace diff turn association', () => {
   })
 
   it('does not render a standalone card when an attributed assistant is not loaded', async () => {
-    sessionApi.fetchWorkspaceRunChangesForSession.mockResolvedValue([
+    chatApi.resumePayload.workspaceRunChanges = [
       change('unresolved-change', 'missing-assistant'),
-    ])
+    ]
 
     const store = useChatStore()
     await store.loadSessions()
@@ -202,5 +202,38 @@ describe('chat workspace diff turn association', () => {
     attachWorkspaceChangesToExactTurns(messages, [change('turn-change', 'tool-1')])
 
     expect(messages[0].workspaceChanges).toEqual([])
+  })
+
+  it('merges workspace changes only when their older message page is loaded', async () => {
+    chatApi.resumePayload = {
+      ...chatApi.resumePayload,
+      messages: chatApi.resumePayload.messages.slice(2),
+      workspaceRunChanges: [change('change-2', '4')],
+      messageLoadedCount: 2,
+      messageTotal: 4,
+      hasMoreBefore: true,
+    }
+    sessionApi.fetchSessionMessagesPage.mockResolvedValue({
+      session: summary(),
+      messages: [
+        { id: 1, session_id: 'session-1', role: 'user', content: 'first', timestamp: 1 },
+        { id: 2, session_id: 'session-1', role: 'assistant', content: 'first done', timestamp: 2 },
+      ],
+      workspaceRunChanges: [change('change-1', '2')],
+      total: 4,
+      offset: 2,
+      limit: 150,
+      hasMore: false,
+    })
+
+    const store = useChatStore()
+    await store.loadSessions()
+    expect(store.activeSession?.messages.find(message => message.id === '4')?.workspaceChanges?.[0]?.change_id).toBe('change-2')
+
+    await store.loadOlderMessages('session-1')
+
+    expect(store.activeSession?.messages.find(message => message.id === '2')?.workspaceChanges?.[0]?.change_id).toBe('change-1')
+    expect(store.activeSession?.messages.find(message => message.id === '4')?.workspaceChanges?.[0]?.change_id).toBe('change-2')
+    expect(sessionApi.fetchSessionMessagesPage).toHaveBeenCalledWith('session-1', 2, 150, 'default')
   })
 })
