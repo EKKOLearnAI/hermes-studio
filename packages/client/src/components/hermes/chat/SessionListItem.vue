@@ -8,6 +8,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatTimestampMs } from '@/shared/session-display'
 import { chatSessionAgentAvatar } from '@/utils/chat-agent-avatar'
+import { resolveSessionNavigation } from './session-list-item-navigation'
 
 const props = withDefaults(defineProps<{
   session: Session
@@ -19,6 +20,7 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
+  categoryLabel?: string
   to?: string
   interceptModifiedNavigation?: boolean
 }>(), {
@@ -79,21 +81,17 @@ function onTouchMove() {
   }
 }
 
-function isModifiedNavigation(event?: MouseEvent) {
-  return !!event && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
-}
-
 function onClick(event?: MouseEvent) {
   if (longPressTriggered.value) {
     longPressTriggered.value = false
     event?.preventDefault()
     return
   }
-  if (isModifiedNavigation(event)) {
-    if (props.interceptModifiedNavigation) {
-      event?.preventDefault()
-      emit('open-new')
-    }
+  const navigationAction = resolveSessionNavigation(event, !!props.interceptModifiedNavigation)
+  if (navigationAction === 'native') return
+  if (navigationAction === 'open-new') {
+    event?.preventDefault()
+    emit('open-new')
     return
   }
   if (props.to && !props.selectable) event?.preventDefault()
@@ -158,6 +156,13 @@ onUnmounted(() => {
         <span v-if="props.showProfile" class="session-item-profile">
           <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
           <span class="session-item-profile-name">{{ profileName }}</span>
+        </span>
+        <span
+          v-if="props.categoryLabel"
+          class="session-item-category-tag"
+          :title="props.categoryLabel"
+        >
+          {{ props.categoryLabel }}
         </span>
       </span>
     </div>
@@ -342,6 +347,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -357,6 +363,21 @@ onUnmounted(() => {
   font-size: 11px;
   line-height: 16px;
   color: var(--text-muted);
+}
+
+.session-item-category-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-item-warning {

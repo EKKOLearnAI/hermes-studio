@@ -4,8 +4,10 @@ App Relay lets the mobile App reach a Hermes Studio instance without exposing
 the Studio HTTP server to the Internet. It is independent from the MCU
 `/global-agent` connection.
 
-Development and production connect to `https://api.hermes-studio.ai`. The relay
-URL is application configuration and is never included in a QR code.
+Studio can use the official `https://api.hermes-studio.ai` route or the
+Cloudflare `https://cn.hermes-studio.ai` route. The selected route is persisted
+locally and included in cloud QR codes as informational metadata. The App keeps
+an independent route setting; scanning a cloud QR never changes it.
 
 ## LAN authorization
 
@@ -36,12 +38,13 @@ the cloud for a preconnection. The QR contains only:
   "m": "hwui_...",
   "p": "uuid",
   "k": "high-entropy secret",
-  "e": 0
+  "e": 0,
+  "r": "official"
 }
 ```
 
 The compact keys represent type, version, connection type, machine ID,
-preconnection ID, matching code, and expiry respectively. Compact encoding
+preconnection ID, matching code, expiry, and Studio network route respectively. Compact encoding
 reduces QR density without reducing matching-code entropy. The matching code
 expires after five minutes. Refresh has a ten-second
 cooldown and is limited to three times for a preconnection; every successful
@@ -103,6 +106,12 @@ If Studio has any active cloud App records, it connects to the cloud at startup.
 Socket.IO reconnects indefinitely after transient disconnects. The cloud
 restores the formal-connection snapshot; Studio reconciles it against local
 revocation tombstones so an offline cloud deletion is eventually propagated.
+Development Web UI hosts use a separate persistent Ed25519 identity and also
+register as non-preemptive. Starting `npm run dev` therefore creates a distinct
+Web endpoint instead of replacing the packaged desktop socket or overwriting its
+machine metadata. Packaged production builds keep the legacy machine identity,
+so existing desktop connections remain compatible. Production hosts retain the
+existing takeover behavior so a restarted desktop can recover stale connections.
 
 ## Forwarded protocols
 

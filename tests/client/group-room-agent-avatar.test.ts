@@ -95,7 +95,7 @@ describe('GroupRoomAgentAvatar', () => {
     )
   })
 
-  it('activates only the matching persistent Agent cell and deduplicates parallel runs', () => {
+  it('activates the complete room avatar when a visible Agent is running', () => {
     const wrapper = mount(GroupRoomAgentAvatar, {
       props: {
         agents: [agent(1), agent(2), agent(3)],
@@ -104,16 +104,16 @@ describe('GroupRoomAgentAvatar', () => {
       },
     })
 
-    expect(wrapper.findAll('.room-agent-grid-cell.is-active')).toHaveLength(1)
-    expect(wrapper.get('[data-agent-id="row-2"]').classes()).toContain('is-active')
-    expect(wrapper.get('[data-agent-id="row-2"]').attributes('aria-busy')).toBe('true')
-    expect(wrapper.get('[data-agent-id="row-1"]').attributes('aria-busy')).toBe('false')
+    expect(wrapper.get('.room-agent-grid').classes()).toContain('is-active')
+    expect(wrapper.get('.room-agent-grid').attributes('aria-busy')).toBe('true')
+    expect(wrapper.findAll('.room-agent-grid-cell.is-active')).toHaveLength(0)
+    expect(wrapper.get('[data-agent-id="row-2"]').attributes('aria-busy')).toBeUndefined()
     expect(wrapper.get('.room-agent-grid').attributes('aria-label')).toBe(
       'Room agents. Room Agents: Agent 1, Agent 2, Agent 3. Running Agents: Agent 2.',
     )
   })
 
-  it('marks the overflow cell when only a hidden Agent is running', () => {
+  it('activates the complete room avatar when only a hidden Agent is running', () => {
     const wrapper = mount(GroupRoomAgentAvatar, {
       props: {
         agents: Array.from({ length: 6 }, (_, index) => agent(index + 1)),
@@ -123,8 +123,10 @@ describe('GroupRoomAgentAvatar', () => {
     })
 
     expect(wrapper.get('.room-agent-grid-overflow').text()).toBe('+3')
-    expect(wrapper.get('.room-agent-grid-overflow').classes()).toContain('is-active')
-    expect(wrapper.findAll('.room-agent-grid-cell.agent.is-active')).toHaveLength(0)
+    expect(wrapper.get('.room-agent-grid').classes()).toContain('is-active')
+    expect(wrapper.get('.room-agent-grid').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('.room-agent-grid-overflow').classes()).not.toContain('is-active')
+    expect(wrapper.findAll('.room-agent-grid-cell.is-active')).toHaveLength(0)
     expect(wrapper.get('.room-agent-grid').attributes('aria-label')).toBe(
       'Room agents. Room Agents: Agent 1, Agent 2, Agent 3, Agent 4, Agent 5, Agent 6. Running Agents: Agent 6.',
     )
@@ -142,6 +144,7 @@ describe('GroupRoomAgentAvatar', () => {
 
     await wrapper.setProps({ activeAgentIds: ['row-1'] })
 
+    expect(wrapper.get('.room-agent-grid').classes()).toContain('is-active')
     expect(wrapper.get('.room-agent-grid').attributes('aria-label')).not.toBe(idleLabel)
     expect(wrapper.get('.room-agent-grid').attributes('aria-label')).toContain('Running Agents: Agent 1.')
   })

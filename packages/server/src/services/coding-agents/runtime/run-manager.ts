@@ -11,7 +11,6 @@ import { calcAndUpdateUsage, updateContextTokenUsage } from '../../hermes/run-ch
 import { extractResponseText } from '../../hermes/run-chat/response-utils'
 import type { SessionState } from '../../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from '../shared/adapters/responses-stream'
-import { mapCodingAgentResponseEvent } from './event-mapper'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../windows-command'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from '../../hermes/run-chat/workspace-diff-tracker'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
@@ -129,6 +128,10 @@ export interface PiNativeSessionState {
   messageCount: number
   pendingMessageCount: number
 }
+
+export type CodingAgentQueueInsertionInterruptResult =
+  | { status: 'interrupted'; runId: string; responseId: string }
+  | { status: 'not_found' | 'run_mismatch' | 'not_running' }
 
 interface PiRpcPendingRequest {
   command: string
@@ -517,6 +520,25 @@ function forceKillChildProcess(child?: ChildProcess) {
   }
 }
 
+function waitForChildProcessClose(child?: ChildProcess, timeoutMs = 2_500): Promise<void> {
+  if (!child || child.exitCode != null || child.signalCode != null || typeof child.once !== 'function') {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.off?.('close', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    timer.unref?.()
+    child.once('close', finish)
+  })
+}
+
 function claudeContentToText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) {
@@ -839,6 +861,55 @@ export class CodingAgentRunManager {
     return true
   }
 
+  async interruptForQueueInsertion(
+    sessionId: string,
+    expectedRunId?: string,
+  ): Promise<CodingAgentQueueInsertionInterruptResult> {
+    const run = this.getBySession(sessionId)
+    if (!run || run.exited) return { status: 'not_found' }
+    if (expectedRunId && run.id !== expectedRunId) return { status: 'run_mismatch' }
+    const isRunning = run.launch.agentId === 'pi'
+      ? run.turnActive === true
+      : childIsRunning(run.currentChild)
+    if (!isRunning) return { status: 'not_running' }
+
+    const responseId = String(run.printResponseId || run.runMarker || run.id)
+    // The current CLI invocation is intentionally disposable. Stop it before
+    // releasing the queued run so the next one can resume the native session
+    // without overlapping the old process.
+    run.stoppedByUser = true
+    const interruptedChild = run.currentChild
+    const childClosed = waitForChildProcessClose(interruptedChild)
+    this.cleanupRun(run, { kill: true, reportClosed: false })
+    await childClosed
+    for (const message of run.state.messages) {
+      if (
+        message.runMarker === run.runMarker
+        && message.role === 'assistant'
+        && message.finish_reason == null
+      ) {
+        message.finish_reason = 'interrupted'
+      }
+    }
+    run.assistantMessageId = this.persistTerminalResponse(run)
+    const workspaceRunChange = this.completeWorkspaceRunDiff(run)
+    const queueRemaining = run.state.queue.length
+    this.emitToChat(sessionId, 'run.failed', {
+      event: 'run.failed',
+      run_id: responseId,
+      response_id: responseId,
+      error: 'Interrupted to insert a queued message',
+      interrupted: true,
+      stop_reason: 'queue_insertion',
+      interruption_mode: 'immediate',
+      ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
+      ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
+      workspace_run_change: workspaceRunChange,
+    })
+    this.markChatRunCompleted(sessionId, 'run.failed')
+    return { status: 'interrupted', runId: run.id, responseId }
+  }
+
   stopMatching(
     predicate: (launch: CodingAgentRunLaunch) => boolean,
     options: { reportClosed?: boolean } = {},
@@ -1019,9 +1090,6 @@ export class CodingAgentRunManager {
         ? 'workflow'
         : 'coding_agent'
     run.state.runId = run.id
-    for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
-      this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
-    }
     const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
     if (mapped) {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
@@ -1161,6 +1229,7 @@ export class CodingAgentRunManager {
       model: run.launch.model,
       provider: run.launch.provider,
       api_mode: run.launch.apiMode || '',
+      reasoning_effort: run.launch.reasoningEffort || '',
       title: '',
       workspace: run.launch.workspaceDir,
     })
@@ -1176,7 +1245,13 @@ export class CodingAgentRunManager {
       content,
       timestamp,
     })
-    const id = addMessage({ session_id: run.launch.sessionId, role: 'user', content, timestamp })
+    const id = addMessage({
+      session_id: run.launch.sessionId,
+      role: 'user',
+      content,
+      run_marker: run.runMarker ?? null,
+      timestamp,
+    })
     logger.debug({ runId: run.id, sessionId: run.launch.sessionId, messageId: id }, '[coding-agent-run] recorded user message')
     return id
   }

@@ -20,6 +20,7 @@ import {
   notifyLocalAppConnectionDeleted,
 } from '../services/app-relay/server'
 import { getDeviceId } from '../services/system-info'
+import { getAppRelayRoute, isAppRelayRoute, type AppRelayRoute } from '../services/app-relay/route'
 
 const APP_CONNECTION_QR_TYPE = 'hermes-studio.app-connection'
 const APP_CONNECTION_QR_VERSION = 1
@@ -107,24 +108,32 @@ export async function createCloudAppAuthorizationCodeController(ctx: Context) {
     return
   }
 
-  let client = await ensureAppRelayHostClient()
+  const body = ctx.request.body as Record<string, unknown> | undefined
+  const requestedRoute = body?.route
+  if (requestedRoute != null && !isAppRelayRoute(requestedRoute)) {
+    ctx.status = 400
+    ctx.body = { error: 'invalid_app_relay_route' }
+    return
+  }
+  const route: AppRelayRoute = isAppRelayRoute(requestedRoute) ? requestedRoute : await getAppRelayRoute()
+  let client = await ensureAppRelayHostClient(route)
   if (!client || !await client.waitForConnected(8000)) {
     ctx.status = 502
     ctx.body = { error: 'app_relay_unavailable' }
     return
   }
   try {
-    const refresh = Boolean((ctx.request.body as Record<string, unknown> | undefined)?.refresh)
+    const refresh = Boolean(body?.refresh)
     const cached = refresh ? null : client.getCachedPreconnection(userId)
     if (cached) {
       ctx.status = 200
-      ctx.body = cloudAuthorizationPayload(cached)
+      ctx.body = cloudAuthorizationPayload(cached, route)
       return
     }
     const { authorizationCode } = createAppAuthorizationCode(userId)
     const preconnection = await client.requestPreconnection(authorizationCode, refresh, 8000, userId)
     ctx.status = 201
-    ctx.body = cloudAuthorizationPayload(preconnection)
+    ctx.body = cloudAuthorizationPayload(preconnection, route)
   } catch (error) {
     if (client.isPreconnectionExpired()) {
       stopAppRelayHostClient()
@@ -144,7 +153,10 @@ export async function createCloudAppAuthorizationCodeController(ctx: Context) {
   }
 }
 
-function cloudAuthorizationPayload(preconnection: import('../services/app-relay/client').CloudAppPreconnection) {
+function cloudAuthorizationPayload(
+  preconnection: import('../services/app-relay/client').CloudAppPreconnection,
+  relayRoute: AppRelayRoute,
+) {
   return {
     type: preconnection.type,
     version: preconnection.version,
@@ -155,6 +167,7 @@ function cloudAuthorizationPayload(preconnection: import('../services/app-relay/
     expires_at: preconnection.expiresAt,
     hard_expires_at: preconnection.hardExpiresAt,
     refresh_remaining: preconnection.refreshRemaining,
+    relay_route: relayRoute,
     qr_payload: JSON.stringify({
       t: 'hsac',
       v: 1,
@@ -163,6 +176,7 @@ function cloudAuthorizationPayload(preconnection: import('../services/app-relay/
       p: preconnection.preconnectId,
       k: preconnection.matchingCode,
       e: preconnection.expiresAt,
+      r: relayRoute,
     }),
   }
 }

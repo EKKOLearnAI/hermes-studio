@@ -399,6 +399,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `hermes-web-ui update` / `upgrade` | 更新到最新版本并重启 |
 | `hermes-web-ui version` / `-v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
+| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | 运行一个受管 Web UI MCP 工具集（等同于 `hermes-studio-mcp`） |
 
 如不希望自动打开浏览器，可在 `start` 或 `client` 后添加 `--no-open`。
 

@@ -16,12 +16,15 @@ import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import LiveReasoningStatus from "./LiveReasoningStatus.vue";
+import ToolRunCard from "./ToolRunCard.vue";
 import MessageQueueFloatPanel from "./MessageQueueFloatPanel.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, parseMessageReference, useChatStore, type Message } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
 import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
+import { parseThinking } from "@/utils/thinking-parser";
+import { groupCompletedToolsByRun } from "./tool-run-grouping";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -100,8 +103,13 @@ const currentToolCalls = computed(() => {
       break;
     }
   }
-  // Only tool calls after the last user input, newest on top.
-  const tools = msgs.filter((m, i) => m.role === "tool" && i > lastInputIdx);
+  // Keep only actively running tools in the live strip. Finalized tools move
+  // into the transcript immediately for every agent and launch mode.
+  const tools = msgs.filter((m, i) => (
+    m.role === "tool" &&
+    i > lastInputIdx &&
+    m.toolStatus === "running"
+  ));
   return [...tools].reverse();
 });
 
@@ -124,10 +132,22 @@ const liveReasoningDetail = computed<{
     }
   }
 
+  // A finalized tool owns the reasoning that led to it. Once the tool moves
+  // into the transcript, only reasoning produced after that boundary remains
+  // in the fixed live ticker.
+  let liveBoundaryIdx = lastInputIdx;
+  for (let i = messages.length - 1; i > lastInputIdx; i--) {
+    const message = messages[i];
+    if (message.role === "tool" && message.toolStatus !== "running") {
+      liveBoundaryIdx = i;
+      break;
+    }
+  }
+
   // Keep the newest assistant reasoning segment visible after it seals at a
   // tool boundary. A later reasoning segment replaces it only when its first
   // delta creates/updates a newer assistant message.
-  for (let i = messages.length - 1; i > lastInputIdx; i--) {
+  for (let i = messages.length - 1; i > liveBoundaryIdx; i--) {
     const message = messages[i];
     if (message.role === "assistant" && message.reasoning?.trim()) {
       return {
@@ -137,11 +157,11 @@ const liveReasoningDetail = computed<{
     }
   }
 
-  // Reattached runs can briefly expose the tool row before its assistant
-  // source is hydrated. Keep the persisted tool reasoning visible meanwhile.
-  for (let i = messages.length - 1; i > lastInputIdx; i--) {
+  // Running tools can briefly arrive before their assistant source is
+  // hydrated. Keep their persisted reasoning visible meanwhile.
+  for (let i = messages.length - 1; i > liveBoundaryIdx; i--) {
     const message = messages[i];
-    if (message.role === "tool" && message.reasoning?.trim()) {
+    if (message.role === "tool" && message.toolStatus === "running" && message.reasoning?.trim()) {
       return {
         messageId: message.id,
         reasoning: message.reasoning.trim(),
@@ -164,35 +184,27 @@ const emptyState = computed(() => {
   };
 });
 
+function assistantMessageBody(message: Message): string {
+  return parseThinking(message.content || "", { streaming: !!message.isStreaming }).body.trim();
+}
+
+function hasRenderableAssistantContent(message: Message): boolean {
+  return !!(
+    assistantMessageBody(message) ||
+    message.attachments?.length ||
+    message.workspaceChanges?.length
+  );
+}
+
 const displayMessages = computed(() => {
   const messages = chatStore.messages;
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return messages
-    .filter((m, index) => {
+  const renderedMessages = messages
+    .filter((m) => {
       if (m.role === "tool") {
-        return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
+        return toolTraceVisible.value && !!m.toolName && !(isRunIndicatorActive.value && currentToolIds.has(m.id));
       }
-      if (
-        m.role === "assistant" &&
-        m.id === liveReasoningDetail.value?.messageId &&
-        !m.content?.trim()
-      ) {
-        return false;
-      }
-      if (
-        m.role === "assistant" &&
-        !m.isStreaming &&
-        !m.content?.trim() &&
-        !!m.reasoning?.trim()
-      ) {
-        const next = messages[index + 1];
-        const reasoningMovedToTool =
-          toolTraceVisible.value &&
-          next?.role === "tool" &&
-          !!next.toolName &&
-          next.reasoning?.trim() === m.reasoning.trim();
-        return !reasoningMovedToTool;
-      }
+      if (m.role === "assistant" && !hasRenderableAssistantContent(m)) return false;
       return true;
     })
     .map((message) => {
@@ -206,6 +218,7 @@ const displayMessages = computed(() => {
       }
       return message;
     });
+  return groupCompletedToolsByRun(renderedMessages);
 });
 
 function forkDividerId(sessionId: string): string {
@@ -272,7 +285,7 @@ const canInsertQueuedMessages = computed(() => {
   if (agent === "ekko-agent") {
     return session.source === "coding_agent" || session.source === "global_agent";
   }
-  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return false;
+  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return true;
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);
@@ -625,7 +638,12 @@ defineExpose({
         </div>
       </template>
       <template #item="{ message: msg }">
-        <div v-if="msg.systemType === 'fork-divider' && forkLineage" class="fork-divider" role="separator">
+        <ToolRunCard
+          v-if="msg.systemType === 'tool-run' && msg.toolRunId && msg.toolMessages"
+          :run-id="msg.toolRunId"
+          :tools="msg.toolMessages"
+        />
+        <div v-else-if="msg.systemType === 'fork-divider' && forkLineage" class="fork-divider" role="separator">
           <div class="fork-divider-line" aria-hidden="true"></div>
           <div class="fork-divider-pill">
             <span class="fork-divider-icon" aria-hidden="true">
@@ -1589,22 +1607,33 @@ defineExpose({
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  flex: 0 0 120px;
   gap: 8px;
   width: 100%;
   max-width: 100%;
+  height: 120px;
+  min-height: 120px;
+  max-height: 120px;
   min-width: 0;
   padding: 4px;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .tool-calls-panel {
   display: flex;
-  flex-direction: column;
+  flex: 0 0 26px;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 4px;
-  width: 100%;
+  width: 520px;
   min-width: 0;
-  max-height: 180px;
-  overflow-y: auto;
+  max-width: 100%;
+  height: 26px;
+  min-height: 26px;
+  max-height: 26px;
+  overflow: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
   &::-webkit-scrollbar {
@@ -1614,12 +1643,17 @@ defineExpose({
 
 .tool-call-item {
   display: flex;
+  flex: 1 1 0;
   align-items: center;
   gap: 6px;
-  width: 520px;
+  width: auto;
   max-width: 100%;
+  height: 26px;
+  min-height: 26px;
+  max-height: 26px;
   min-width: 0;
   box-sizing: border-box;
+  overflow: hidden;
   font-size: 11px;
   color: $text-secondary;
   padding: 3px 8px;
@@ -1647,10 +1681,9 @@ defineExpose({
     .tool-call-name {
       flex: 1 1 auto;
       max-width: none;
-      white-space: normal;
-      overflow: visible;
-      text-overflow: clip;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
   }
 

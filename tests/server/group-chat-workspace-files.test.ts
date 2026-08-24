@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -89,6 +90,28 @@ describe('group chat workspace file routes', () => {
     expect(ctx.headers['Content-Type']).toBe('application/vnd.openxmlformats-officedocument.presentationml.presentation')
     expect(ctx.headers['X-Content-Type-Options']).toBe('nosniff')
     expect(ctx.headers['Cache-Control']).toContain('no-store')
+  })
+
+  it('returns a live Git diff for a workspace file', async () => {
+    await writeFile(join(workspace, 'notes.txt'), 'before\n')
+    execFileSync('git', ['init', '--quiet'], { cwd: workspace })
+    execFileSync('git', ['config', 'user.name', 'Hermes Test'], { cwd: workspace })
+    execFileSync('git', ['config', 'user.email', 'hermes@example.com'], { cwd: workspace })
+    execFileSync('git', ['add', '.'], { cwd: workspace })
+    execFileSync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: workspace })
+    await writeFile(join(workspace, 'notes.txt'), 'after\n')
+
+    const diff = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/diff', 'GET')
+    const ctx = createContext('notes.txt')
+    await diff(ctx)
+
+    expect(ctx.body).toMatchObject({
+      path: 'notes.txt',
+      gitStatus: 'modified',
+      additions: 1,
+      deletions: 1,
+    })
+    expect((ctx.body as any).patch).toContain('+after')
   })
 
   it('does not expose workspace files to room members without management access', async () => {

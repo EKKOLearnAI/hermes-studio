@@ -45,8 +45,10 @@ import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/coding-agents/runtime/run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 import { defaultHermesWorkspace, ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
+import { getChatRunServer } from '../../services/hermes/run-chat/server-registry'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE, validatePath } from '../../services/hermes/file-provider'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../../services/hermes/file-preview'
+import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../../services/hermes/workspace-git-status'
 import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
 import { relative, normalize as pathNormalize, resolve as pathResolve } from 'path'
 
@@ -830,7 +832,13 @@ export async function listWorkspaceFiles(ctx: any) {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
       return a.name.localeCompare(b.name)
     })
-    ctx.body = { entries: mapped, path: relativePath, absolutePath: fullPath }
+    const decorated = await decorateWorkspaceEntries(workspace, relativePath, mapped)
+    ctx.body = {
+      entries: decorated.entries,
+      path: relativePath,
+      absolutePath: fullPath,
+      ...decorated.directoryDecoration,
+    }
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }
@@ -852,6 +860,21 @@ export async function readWorkspaceFile(ctx: any) {
     }
     const data = await readFile(fullPath)
     ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function diffWorkspaceFile(ctx: any) {
+  try {
+    const { relativePath, fullPath, workspace } = await resolveSessionWorkspaceFile(ctx, ctx.query.path)
+    const info = await fsStat(fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    ctx.body = await getWorkspaceFileGitDiff(workspace, relativePath)
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }
@@ -1428,6 +1451,7 @@ export async function setCategory(ctx: any) {
 }
 
 type SessionProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+const SESSION_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
 function normalizeSessionApiMode(value: unknown): SessionProviderApiMode | undefined {
   const mode = typeof value === 'string' ? value.trim() : ''
@@ -1461,9 +1485,9 @@ export async function setModel(ctx: any) {
     ? await ensureHermesRunWorkspace(profile, existing?.workspace)
     : undefined
   if (!existing) {
-    createSession({ id, profile, title: '', model: cleanModel, provider: cleanProvider, api_mode: cleanApiMode || '', workspace })
+    createSession({ id, profile, title: '', model: cleanModel, provider: cleanProvider, api_mode: cleanApiMode || '', reasoning_effort: '', workspace })
   }
-  const updates: Record<string, string> = { model: cleanModel, provider: cleanProvider }
+  const updates: Record<string, string> = { model: cleanModel, provider: cleanProvider, reasoning_effort: '' }
   if (cleanApiMode) updates.api_mode = cleanApiMode
   else if (codingAgentSession && existing && existing.provider !== cleanProvider) updates.api_mode = ''
   if (!codingAgentSession && existing && !existing.workspace && workspace) updates.workspace = workspace
@@ -1475,10 +1499,47 @@ export async function setModel(ctx: any) {
     updates.agent_native_session_id = ''
   }
   updateSession(id, updates as any)
+  getChatRunServer()?.emitSessionSettingsUpdated(id, {
+    model: cleanModel,
+    provider: cleanProvider,
+    api_mode: updates.api_mode ?? existing?.api_mode ?? '',
+    reasoning_effort: '',
+  })
   if (!codingAgentSession) {
     await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
   }
   ctx.body = { ok: true }
+}
+
+export async function setReasoningEffort(ctx: any) {
+  const id = ctx.params.id
+  const existing = localGetSession(id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+
+  const body = (ctx.request.body || {}) as { reasoningEffort?: unknown; reasoning_effort?: unknown }
+  const rawEffort = body.reasoningEffort ?? body.reasoning_effort
+  if (typeof rawEffort !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'reasoningEffort must be a string' }
+    return
+  }
+  const reasoningEffort = rawEffort.trim()
+  if (!SESSION_REASONING_EFFORTS.has(reasoningEffort)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid reasoningEffort' }
+    return
+  }
+
+  localUpdateSession(id, { reasoning_effort: reasoningEffort })
+  getChatRunServer()?.emitSessionSettingsUpdated(id, {
+    reasoning_effort: reasoningEffort,
+  })
+  ctx.body = { ok: true, reasoning_effort: reasoningEffort }
 }
 
 export async function contextLength(ctx: any) {

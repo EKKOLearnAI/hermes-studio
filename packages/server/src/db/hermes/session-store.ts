@@ -20,6 +20,7 @@ export interface HermesSessionRow {
   model: string
   provider: string
   api_mode: string
+  reasoning_effort: string
   title: string | null
   parent_session_id: string | null
   fork_point_message_id: string | null
@@ -58,6 +59,7 @@ export interface HermesMessageRow {
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
+  run_marker: string | null
   timestamp: number
   token_count: number | null
   finish_reason: string | null
@@ -117,6 +119,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     model: String(row.model || ''),
     provider: String(row.provider || ''),
     api_mode: String(row.api_mode || ''),
+    reasoning_effort: String(row.reasoning_effort || ''),
     title,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
     fork_point_message_id: row.fork_point_message_id != null ? String(row.fork_point_message_id) : null,
@@ -157,6 +160,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     tool_call_id: row.tool_call_id != null ? String(row.tool_call_id) : null,
     tool_calls: parseToolCalls(row.tool_calls),
     tool_name: row.tool_name != null ? String(row.tool_name) : null,
+    run_marker: row.run_marker != null ? String(row.run_marker) : null,
     timestamp: Number(row.timestamp || 0),
     token_count: row.token_count != null ? Number(row.token_count) : null,
     finish_reason: row.finish_reason != null ? String(row.finish_reason) : null,
@@ -180,6 +184,7 @@ export function createSession(data: {
   model?: string
   provider?: string
   api_mode?: string
+  reasoning_effort?: string
   title?: string
   parent_session_id?: string | null
   workspace?: string
@@ -193,7 +198,7 @@ export function createSession(data: {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
-      user_id: null, model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', title: data.title || null,
+      user_id: null, model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
       fork_point_message_id: null,
       started_at: now, ended_at: null, end_reason: null,
@@ -207,8 +212,8 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, title, parent_session_id, started_at, last_active, workspace, category_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     data.id,
     data.profile || 'default',
@@ -220,6 +225,7 @@ export function createSession(data: {
     data.model || '',
     data.provider || '',
     data.api_mode || '',
+    data.reasoning_effort || '',
     data.title || null,
     data.parent_session_id || null,
     now,
@@ -242,6 +248,7 @@ export function createBranchedSession(data: {
   model?: string
   provider?: string
   api_mode?: string
+  reasoning_effort?: string
   title?: string
   workspace?: string | null
   category_id?: number | null
@@ -255,6 +262,7 @@ export function createBranchedSession(data: {
     tool_call_id?: string | null
     tool_calls?: any[] | null
     tool_name?: string | null
+    run_marker?: string | null
     timestamp?: number
     token_count?: number | null
     finish_reason?: string | null
@@ -268,8 +276,8 @@ export function createBranchedSession(data: {
   const source = data.source || 'api_server'
   const agent = data.agent || (source === 'cli' ? 'hermes' : '')
   const insertMessage = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   db.exec('BEGIN')
@@ -279,8 +287,8 @@ export function createBranchedSession(data: {
     ).run(data.ended_at, 'branched', data.parent_session_id)
 
     db.prepare(
-      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, title, parent_session_id, started_at, last_active, workspace, category_id, message_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, message_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       data.id,
       data.profile || 'default',
@@ -292,6 +300,7 @@ export function createBranchedSession(data: {
       data.model || '',
       data.provider || '',
       data.api_mode || '',
+      data.reasoning_effort || '',
       data.title || null,
       data.parent_session_id,
       data.ended_at,
@@ -312,6 +321,7 @@ export function createBranchedSession(data: {
         msg.tool_call_id ?? null,
         msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
         msg.tool_name ?? null,
+        msg.run_marker ?? null,
         msg.timestamp ?? data.last_active,
         msg.token_count ?? null,
         msg.finish_reason ?? null,
@@ -779,6 +789,7 @@ export function addMessage(msg: {
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
+  run_marker?: string | null
   timestamp?: number
   token_count?: number | null
   finish_reason?: string | null
@@ -790,12 +801,13 @@ export function addMessage(msg: {
   const db = getDb()!
   const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
   const result = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.session_id, msg.role, normalizeMessageContentForStorageRole(msg.role, msg.content),
     msg.display_role ?? null, msg.display_content ?? null,
     msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
+    msg.run_marker ?? null,
     msg.timestamp ?? Math.floor(Date.now() / 1000),
     msg.token_count ?? null, msg.finish_reason ?? null,
     msg.reasoning ?? null, msg.reasoning_details ?? null,
@@ -813,6 +825,7 @@ export function addMessages(msgs: Array<{
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
+  run_marker?: string | null
   timestamp?: number
   token_count?: number | null
   finish_reason?: string | null
@@ -823,8 +836,8 @@ export function addMessages(msgs: Array<{
   if (!isSqliteAvailable() || msgs.length === 0) return []
   const db = getDb()!
   const insert = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, tool_call_id, tool_calls, tool_name, run_marker, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   const ids: number[] = []
   db.exec('BEGIN')
@@ -835,6 +848,7 @@ export function addMessages(msgs: Array<{
         msg.session_id, msg.role, normalizeMessageContentForStorageRole(msg.role, msg.content),
         msg.display_role ?? null, msg.display_content ?? null,
         msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
+        msg.run_marker ?? null,
         msg.timestamp ?? Math.floor(Date.now() / 1000),
         msg.token_count ?? null, msg.finish_reason ?? null,
         msg.reasoning ?? null, msg.reasoning_details ?? null,

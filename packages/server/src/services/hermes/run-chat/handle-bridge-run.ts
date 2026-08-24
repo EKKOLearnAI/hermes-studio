@@ -458,6 +458,7 @@ export async function handleBridgeRun(
     || instructions
     || getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
+  const reasoningEffort = callbackContext?.reasoningEffort ?? data.reasoning_effort ?? sessionRow?.reasoning_effort
   const requestedWorkspace = callbackContext
     ? callbackContext.workspace
     : sessionRow?.workspace || data.workspace
@@ -547,13 +548,14 @@ export async function handleBridgeRun(
       content: storageInputStr,
       display_role: displayRoleForStorage,
       display_content: displayContentForStorage,
+      run_marker: runMarker,
       timestamp: now,
     })
 
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
       const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace, category_id: data.category_id })
+      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
     }
     messageId = addMessage({
       session_id,
@@ -575,7 +577,7 @@ export async function handleBridgeRun(
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace, category_id: data.category_id })
+    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
   }
 
   socket.join(`session:${session_id}`)
@@ -714,7 +716,7 @@ export async function handleBridgeRun(
         profile,
         instructions: fullInstructions,
         workspace,
-        reasoningEffort: callbackContext?.reasoningEffort || data.reasoning_effort,
+        reasoningEffort,
       },
     }
     const bridgeStorageInput = data.storage_message !== undefined

@@ -111,6 +111,7 @@ describe('createBranchedSession', () => {
       null,
       null,
       null,
+      null,
       100,
       null,
       null,

@@ -435,6 +435,38 @@ describe('MarkdownRenderer', () => {
     }
   })
 
+  it('removes line and column suffixes before previewing local workspace files', async () => {
+    const previewRequests: Array<{ path: string; fileName: string }> = []
+    const handlePreview = (event: Event) => {
+      const customEvent = event as CustomEvent<{ path: string; fileName: string }>
+      previewRequests.push(customEvent.detail)
+      customEvent.preventDefault()
+    }
+    window.addEventListener('hermes:preview-workspace-file', handlePreview)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: [
+          '[DesktopBrowserPanel.vue](/Users/ekko/workspace/DesktopBrowserPanel.vue:123)',
+          '[browser-manager.ts](C:/Users/Administrator/workspace/browser-manager.ts:950:12)',
+        ].join('\n'),
+      },
+    })
+
+    try {
+      const cards = wrapper.findAll('.markdown-file-card')
+      expect(cards).toHaveLength(2)
+      await cards[0].trigger('click')
+      await cards[1].trigger('click')
+      expect(previewRequests).toEqual([
+        { path: '/Users/ekko/workspace/DesktopBrowserPanel.vue', fileName: 'DesktopBrowserPanel.vue' },
+        { path: 'C:/Users/Administrator/workspace/browser-manager.ts', fileName: 'browser-manager.ts' },
+      ])
+    } finally {
+      wrapper.unmount()
+      window.removeEventListener('hermes:preview-workspace-file', handlePreview)
+    }
+  })
+
   it('unwraps existing download URLs before requesting a workspace preview', async () => {
     const previewRequests: Array<{ path: string; fileName: string }> = []
     const handlePreview = (event: Event) => {

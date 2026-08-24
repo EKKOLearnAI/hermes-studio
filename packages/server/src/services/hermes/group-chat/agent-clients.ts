@@ -21,6 +21,7 @@ import {
     stripMentionRoutingTokens,
 } from './mention-routing'
 import { buildAgentInstructions, buildNonOwnerRequestSecurityPrompt } from '../context-engine/prompt'
+import { cancelPendingEkkoClarification } from '../../ekko-agent/clarifications'
 
 export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
@@ -107,6 +108,7 @@ type AgentActivityBroadcaster = (
     agentName: string,
     status: 'compressing' | 'replying' | 'ready',
     runId?: string,
+    agentSessionId?: string,
 ) => void
 type ExecutionQueueBroadcaster = (roomId: string) => void
 
@@ -238,6 +240,7 @@ export interface GroupAgentExecutor {
     isActiveSession(roomId: string, sessionId: string): boolean
     respondApproval?(approvalId: string, choice: string): Promise<boolean>
     respondClarify?(clarifyId: string, response: string): Promise<boolean>
+    cancelClarify?(clarifyId: string, sessionId: string, runId: string): Promise<boolean>
     replyToMention(
         roomId: string,
         msg: MentionMessage,
@@ -462,6 +465,11 @@ export class AgentClient implements GroupAgentExecutor {
             if (this.chatRunService.respondCodingAgentClarification(sessionId, clarifyId, response)) return Promise.resolve(true)
         }
         return Promise.resolve(false)
+    }
+
+    async cancelClarify(clarifyId: string, sessionId: string, runId: string): Promise<boolean> {
+        if (this.agent !== 'ekko') return false
+        return cancelPendingEkkoClarification(sessionId, clarifyId, runId).resolved
     }
 
     async joinRoom(roomId: string): Promise<JoinResult> {
@@ -1150,11 +1158,22 @@ export class AgentClient implements GroupAgentExecutor {
                     } else if (event === 'tool.completed' || event === 'tool.failed') {
                         queueToolEventWrite(() => this.recordToolCompleted(roomId, sessionId, { ...payload, event }).then(() => undefined))
                     } else if (event === 'approval.requested') {
-                        this.emitApprovalRequested(roomId, { ...payload, agentSessionId: sessionId })
+                        const { run_id: _runtimeRunId, runId: _runtimeCamelRunId, ...approvalPayload } = payload
+                        this.emitApprovalRequested(roomId, {
+                            ...approvalPayload,
+                            agentSessionId: sessionId,
+                            runId: responseRunId,
+                        })
                     } else if (event === 'approval.resolved') {
                         this.emitApprovalResolved(roomId, { ...payload, agentSessionId: sessionId })
                     } else if (event === 'clarify.requested') {
-                        this.emitClarifyRequested(roomId, { ...payload, agentSessionId: sessionId })
+                        const { run_id: runtimeRunId, runId: runtimeCamelRunId, ...clarifyPayload } = payload
+                        this.emitClarifyRequested(roomId, {
+                            ...clarifyPayload,
+                            agentSessionId: sessionId,
+                            runId: responseRunId,
+                            runtimeRunId: String(runtimeRunId || runtimeCamelRunId || ''),
+                        })
                     } else if (event === 'clarify.resolved') {
                         this.emitClarifyResolved(roomId, { ...payload, agentSessionId: sessionId })
                     }
@@ -1555,6 +1574,7 @@ export class AgentClient implements GroupAgentExecutor {
                 this.emitApprovalRequested(roomId, {
                     event: 'approval.requested',
                     agentSessionId: sessionId,
+                    runId: responseRunId,
                     approval_id: (ev as any).approval_id,
                     command: (ev as any).command,
                     description: (ev as any).description,
@@ -2195,8 +2215,9 @@ export class AgentClients {
         agentName: string,
         status: 'compressing' | 'replying' | 'ready',
         runId?: string,
+        agentSessionId?: string,
     ): void {
-        this._activityBroadcaster?.(roomId, agentName, status, runId)
+        this._activityBroadcaster?.(roomId, agentName, status, runId, agentSessionId)
         logger.debug(`[AgentClients] room ${roomId} agent ${agentName} status: ${status}`)
     }
 
@@ -2615,7 +2636,10 @@ export class AgentClients {
                         const { agent } = runnableTarget
                         const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
                             const runId = typeof extra?.runId === 'string' ? extra.runId : undefined
-                            this.reportAgentActivity(roomId, agent.name, status, runId)
+                            const agentSessionId = typeof extra?.agentSessionId === 'string'
+                                ? extra.agentSessionId
+                                : undefined
+                            this.reportAgentActivity(roomId, agent.name, status, runId, agentSessionId)
                         }
                         if (next.msg.continuationAttemptId) {
                             if (!agent.connected) {

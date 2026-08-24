@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.44"
+    "version": "0.6.46"
   },
   "servers": [
     {
@@ -157,6 +157,10 @@
       "description": "Mobile App authorization and connection management"
     },
     {
+      "name": "App Relay",
+      "description": "Mobile App cloud relay route and connection management"
+    },
+    {
       "name": "Devices",
       "description": "Device pairing and LAN peer operations"
     },
@@ -299,6 +303,160 @@
             }
           }
         ]
+      }
+    },
+    "/api/app-relay/connect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create connect",
+        "description": "POST /api/app-relay/connect",
+        "operationId": "connectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/disconnect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create disconnect",
+        "description": "POST /api/app-relay/disconnect",
+        "operationId": "disconnectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/pairing-code": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create pairing-code",
+        "description": "POST /api/app-relay/pairing-code",
+        "operationId": "refreshAppRelayPairingController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/route": {
+      "put": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Update route",
+        "description": "PUT /api/app-relay/route",
+        "operationId": "updateAppRelayRouteController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/status": {
+      "get": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/app-relay/status",
+        "operationId": "getAppRelayStatusController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
       }
     },
     "/api/app/profiles": {
@@ -5278,6 +5436,160 @@
         }
       }
     },
+    "/api/hermes/group-chat/agent-presets": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "List agent-presets",
+        "description": "GET /api/hermes/group-chat/agent-presets",
+        "operationId": "list",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create agent-presets",
+        "description": "POST /api/hermes/group-chat/agent-presets",
+        "operationId": "create",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat/agent-presets/{presetId}": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update :presetId",
+        "description": "PUT /api/hermes/group-chat/agent-presets/:presetId",
+        "operationId": "update",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "presetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Delete :presetId",
+        "description": "DELETE /api/hermes/group-chat/agent-presets/:presetId",
+        "operationId": "remove",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "presetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/invites/{code}/agent-link-handoffs": {
       "post": {
         "tags": [
@@ -6141,41 +6453,8 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {
-                  "agent": {
-                    "type": "string"
-                  },
-                  "apiMode": {
-                    "type": "string"
-                  },
-                  "avatar": {
-                    "type": "string"
-                  },
-                  "description": {
-                    "type": "string"
-                  },
-                  "invited": {
-                    "type": "boolean"
-                  },
-                  "model": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "profile": {
-                    "type": "string"
-                  },
-                  "provider": {
-                    "type": "string"
-                  },
-                  "reasoningEffort": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "profile"
-                ]
+                "properties": {},
+                "additionalProperties": true
               }
             }
           }
@@ -7097,6 +7376,50 @@
             "name": "roomId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -12432,6 +12755,54 @@
         }
       }
     },
+    "/api/hermes/sessions/{id}/reasoning-effort": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create reasoning-effort",
+        "description": "POST /api/hermes/sessions/:id/reasoning-effort",
+        "operationId": "setReasoningEffort",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/sessions/{id}/rename": {
       "post": {
         "tags": [
@@ -12751,6 +13122,50 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/sessions/:id/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }

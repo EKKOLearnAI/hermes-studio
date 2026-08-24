@@ -1,6 +1,7 @@
 import type { SessionMessage } from './types'
 
 export const RESUME_TOOL_RESULT_DISPLAY_LIMIT = 1_000
+export const RESUME_MESSAGE_PAGE_LIMIT = 150
 
 const JSON_STRING_DISPLAY_LIMIT = 200
 const JSON_MAX_DEPTH = 6
@@ -23,6 +24,20 @@ export type OutboundToolMessage = Record<string, unknown> & {
 
 export interface OutboundToolMessageOptions {
   preserveToolNames?: readonly string[]
+}
+
+export interface ResumeMessagePageOptions {
+  limit?: number
+  messageTotal?: number
+  messageStateBaselineCount?: number
+}
+
+export interface ResumeMessagePage {
+  messages: SessionMessage[]
+  messageTotal: number
+  messageLoadedCount: number
+  messagePageLimit: number
+  hasMoreBefore: boolean
 }
 
 function stringifyLength(value: unknown): number {
@@ -171,6 +186,40 @@ export function buildOutboundToolMessage<T extends OutboundToolMessage>(
  */
 export function buildResumeMessages(messages: SessionMessage[]): SessionMessage[] {
   return messages.map(message => buildOutboundToolMessage(message as ResumeMessage) as SessionMessage)
+}
+
+/**
+ * Page the display-only resume snapshot without trimming runtime state. The
+ * persisted total can be larger than the in-memory window after a cold load,
+ * while the in-memory window can grow during a long-lived server process.
+ */
+export function buildResumeMessagePage(
+  messages: SessionMessage[],
+  options: ResumeMessagePageOptions = {},
+): ResumeMessagePage {
+  const requestedLimit = Number(options.limit)
+  const messagePageLimit = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? Math.floor(requestedLimit)
+    : RESUME_MESSAGE_PAGE_LIMIT
+  const persistedTotal = Number(options.messageTotal)
+  const stateBaselineCount = Number(options.messageStateBaselineCount)
+  const appendedCount = Number.isFinite(stateBaselineCount)
+    ? Math.max(0, messages.length - Math.floor(stateBaselineCount))
+    : 0
+  const messageTotal = Math.max(
+    messages.length,
+    Number.isFinite(persistedTotal) ? Math.floor(persistedTotal) + appendedCount : 0,
+  )
+  const page = messages.slice(-messagePageLimit)
+  const messageLoadedCount = Math.min(messageTotal, messagePageLimit)
+
+  return {
+    messages: buildResumeMessages(page),
+    messageTotal,
+    messageLoadedCount,
+    messagePageLimit,
+    hasMoreBefore: messageTotal > messageLoadedCount,
+  }
 }
 
 /**

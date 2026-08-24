@@ -6,7 +6,16 @@ import { getProfileUploadDir } from '../services/hermes/upload-paths'
 import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
 import { drainRejectedRequest, nonDestroyingRequestBody } from '../lib/request-body'
 
-const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+const DEFAULT_MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+
+// Operators can raise the limit for large-file workflows (e.g. media uploads)
+// via HERMES_MAX_UPLOAD_SIZE (bytes) without patching the bundle. The value is
+// read per request so tests can override it with vi.stubEnv.
+function getMaxUploadSize(): number {
+  const override = Number(process.env.HERMES_MAX_UPLOAD_SIZE)
+  if (Number.isFinite(override) && override > 0) return override
+  return DEFAULT_MAX_UPLOAD_SIZE
+}
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -24,12 +33,13 @@ export async function handleUpload(ctx: any) {
   let chunks: Buffer[] = []
   let totalSize = 0
   let oversize = false
+  const maxUploadSize = getMaxUploadSize()
   // Leave the stream alive when the loop ends early; the iterator would
   // otherwise destroy it and take the unsent response down with it.
   const body = nonDestroyingRequestBody(ctx.req)
   for await (const chunk of body) {
     totalSize += chunk.length
-    if (totalSize > MAX_UPLOAD_SIZE) {
+    if (totalSize > maxUploadSize) {
       oversize = true
       break
     }
@@ -39,7 +49,7 @@ export async function handleUpload(ctx: any) {
     chunks = []
     await drainRejectedRequest(ctx.req)
     ctx.status = 413
-    ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }
+    ctx.body = { error: `File too large (max ${Math.round(maxUploadSize / 1024 / 1024)}MB)` }
     return
   }
   const raw = Buffer.concat(chunks)

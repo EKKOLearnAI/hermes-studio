@@ -168,36 +168,83 @@ function handleToolListWheel(event: WheelEvent): void {
 }
 
 .run-avatar {
+    position: relative;
     width: 36px;
     height: 36px;
     flex: 0 0 36px;
     margin-top: 2px;
     overflow: visible;
-    border-radius: 8px;
+    border-radius: 50%;
 }
 
-.run-avatar-active {
-    animation: run-avatar-active-glow 4s linear infinite;
+.run-avatar-active::before {
+    position: absolute;
+    z-index: 0;
+    inset: -4px;
+    border-radius: 50%;
+    box-shadow:
+        0 0 0 2px #ff6b6b,
+        0 0 10px rgba(255, 107, 107, 0.4),
+        0 0 20px rgba(255, 107, 107, 0.2);
+    content: '';
+    animation: run-avatar-rainbow-glow 4s linear infinite;
+    pointer-events: none;
 }
 
-@keyframes run-avatar-active-glow {
+@keyframes run-avatar-rainbow-glow {
     0% {
-        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+    }
+
+    16.66% {
+        box-shadow:
+            0 0 0 2px #feca57,
+            0 0 10px rgba(254, 202, 87, 0.4),
+            0 0 20px rgba(254, 202, 87, 0.2);
+    }
+
+    33.33% {
+        box-shadow:
+            0 0 0 2px #48dbfb,
+            0 0 10px rgba(72, 219, 251, 0.4),
+            0 0 20px rgba(72, 219, 251, 0.2);
     }
 
     50% {
-        box-shadow: 0 0 0 2px rgba(185, 100, 255, 0.85), 0 0 12px rgba(185, 100, 255, 0.4);
+        box-shadow:
+            0 0 0 2px #ff9ff3,
+            0 0 10px rgba(255, 159, 243, 0.4),
+            0 0 20px rgba(255, 159, 243, 0.2);
+    }
+
+    66.66% {
+        box-shadow:
+            0 0 0 2px #54a0ff,
+            0 0 10px rgba(84, 160, 255, 0.4),
+            0 0 20px rgba(84, 160, 255, 0.2);
+    }
+
+    83.33% {
+        box-shadow:
+            0 0 0 2px #5f27cd,
+            0 0 10px rgba(95, 39, 205, 0.4),
+            0 0 20px rgba(95, 39, 205, 0.2);
     }
 
     100% {
-        box-shadow: 0 0 0 2px rgba(70, 190, 255, 0.8), 0 0 10px rgba(70, 190, 255, 0.35);
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .run-avatar-active {
+    .run-avatar-active::before {
         animation: none;
-        box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.75);
     }
 }
 

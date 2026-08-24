@@ -88,6 +88,7 @@ export async function handleCodingAgentRun(
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)
+  const launchReasoningEffort = data.reasoning_effort ?? (mode === 'scoped' ? storedSession?.reasoning_effort || undefined : undefined)
   const groupSystemPrompt = String(data.group_system_prompt || '').trim()
   const groupRoomId = String(data.group_room_id || '').trim()
   const groupAgentId = String(data.group_agent_id || '').trim()
@@ -100,7 +101,7 @@ export async function handleCodingAgentRun(
     provider: launchProvider,
     model: launchModel,
     apiMode: launchApiMode,
-    reasoningEffort: data.reasoning_effort,
+    reasoningEffort: launchReasoningEffort,
   })) {
     codingAgentRunManager.stop(sessionId, { reportClosed: false })
     runId = undefined
@@ -116,7 +117,7 @@ export async function handleCodingAgentRun(
       baseUrl: data.baseUrl || data.base_url,
       apiKey: data.apiKey || data.api_key,
       apiMode: launchApiMode,
-      reasoningEffort: data.reasoning_effort,
+      reasoningEffort: launchReasoningEffort,
       sessionSource: data.session_source,
       ...(groupSystemPrompt ? { groupSystemPrompt } : {}),
       ...(groupRoomId && groupAgentId

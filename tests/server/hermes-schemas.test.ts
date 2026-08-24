@@ -146,11 +146,11 @@ describe('Hermes schema initialization', () => {
     })
   })
 
-  it('adds the category column and index to an existing sessions table', async () => {
+  it('adds the category and reasoning effort columns to an existing sessions table', async () => {
     const { initAllHermesTables, SESSIONS_SCHEMA, SESSIONS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
     const legacyColumns = Object.entries(SESSIONS_SCHEMA)
-      .filter(([name]) => name !== 'category_id')
+      .filter(([name]) => name !== 'category_id' && name !== 'reasoning_effort')
       .map(([name, definition]) => `"${name}" ${definition}`)
       .join(', ')
     db.exec(`CREATE TABLE "${SESSIONS_TABLE}" (${legacyColumns})`)
@@ -159,6 +159,7 @@ describe('Hermes schema initialization', () => {
 
     const columns = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(columns.some(column => column.name === 'category_id')).toBe(true)
+    expect(columns.some(column => column.name === 'reasoning_effort')).toBe(true)
     const indexes = db.prepare(`PRAGMA index_list("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(indexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
   })

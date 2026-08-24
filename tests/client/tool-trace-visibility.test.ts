@@ -2,7 +2,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { defineComponent } from 'vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -19,13 +18,18 @@ import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 
-const MessageItemStub = defineComponent({
-  name: 'MessageItem',
-  props: {
-    message: { type: Object, required: true },
-    highlight: { type: Boolean, default: false },
-  },
-  template: '<div class="stub-message" :data-role="message.role" :data-id="message.id">{{ message.toolName || message.content }}</div>',
+vi.mock('@/components/hermes/chat/MessageItem.vue', async () => {
+  const { defineComponent } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'MessageItem',
+      props: {
+        message: { type: Object, required: true },
+        highlight: { type: Boolean, default: false },
+      },
+      template: '<div class="stub-message" :data-role="message.role" :data-id="message.id">{{ message.toolName || message.content }}</div>',
+    }),
+  }
 })
 
 function makeSession(messages: Message[]): Session {
@@ -55,17 +59,13 @@ describe('tool trace visibility', () => {
   function mountLiveList() {
     const chatStore = useChatStore()
     chatStore.activeSessionId = 'session-1'
-    chatStore.activeSession = makeSession(sampleMessages)
+    chatStore.activeSession = makeSession([
+      ...sampleMessages,
+      { id: 'tool-running', role: 'tool', content: '', timestamp: 5, toolName: 'search', toolStatus: 'running' },
+    ])
     chatStore.abortState = { aborting: true, synced: false }
 
-    return mount(MessageList, {
-      global: {
-        stubs: {
-          MessageItem: MessageItemStub,
-          Transition: false,
-        },
-      },
-    })
+    return mount(MessageList)
   }
 
   it('shows named transcript and live tool traces by default while keeping unnamed internal tools hidden', () => {
@@ -76,15 +76,12 @@ describe('tool trace visibility', () => {
       'tool-named',
       'assistant-1',
     ])
-    expect(wrapper.findAll('.tool-call-name').map(node => node.text())).toContain('read_file')
+    expect(wrapper.findAll('.tool-call-name').map(node => node.text())).toContain('search')
   })
 
   it('applies the same default-visible rule to history sessions', () => {
     const wrapper = mount(HistoryMessageList, {
       props: { session: makeSession(sampleMessages) },
-      global: {
-        stubs: { MessageItem: MessageItemStub },
-      },
     })
 
     expect(wrapper.findAll('.stub-message').map(node => node.attributes('data-id'))).toEqual([
@@ -94,15 +91,43 @@ describe('tool trace visibility', () => {
     ])
   })
 
+  it('groups and folds completed history tools from the same run', async () => {
+    const wrapper = mount(HistoryMessageList, {
+      props: {
+        session: makeSession([
+          { id: 'user-1', role: 'user', content: 'inspect repo', timestamp: 1 },
+          { id: 'tool-1', role: 'tool', content: '', timestamp: 2, toolName: 'read_file', toolResult: 'one', toolStatus: 'done', runMarker: 'history-run' },
+          { id: 'tool-2', role: 'tool', content: '', timestamp: 3, toolName: 'search', toolResult: 'two', toolStatus: 'done', runMarker: 'history-run' },
+          { id: 'assistant-1', role: 'assistant', content: 'done', timestamp: 4 },
+        ]),
+      },
+    })
+
+    const card = wrapper.get('.tool-run-card')
+    const toggle = card.get('.tool-run-header')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-id="tool-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-id="tool-2"]').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('[data-id="tool-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-id="tool-2"]').exists()).toBe(true)
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-id="tool-1"]').exists()).toBe(false)
+      expect(wrapper.find('[data-id="tool-2"]').exists()).toBe(false)
+    })
+  })
+
   it('does not fall back to the live chat session while history session data is loading', () => {
     const chatStore = useChatStore()
     chatStore.activeSessionId = 'session-1'
     chatStore.activeSession = makeSession(sampleMessages)
 
     const wrapper = mount(HistoryMessageList, {
-      global: {
-        stubs: { MessageItem: MessageItemStub },
-      },
     })
 
     expect(wrapper.findAll('.stub-message')).toHaveLength(0)
@@ -116,13 +141,10 @@ describe('tool trace visibility', () => {
       'user-1',
       'assistant-1',
     ])
-    expect(liveWrapper.findAll('.tool-call-name').map(node => node.text())).toContain('read_file')
+    expect(liveWrapper.findAll('.tool-call-name').map(node => node.text())).toContain('search')
 
     const historyWrapper = mount(HistoryMessageList, {
       props: { session: makeSession(sampleMessages) },
-      global: {
-        stubs: { MessageItem: MessageItemStub },
-      },
     })
     expect(historyWrapper.findAll('.stub-message').map(node => node.attributes('data-id'))).toEqual([
       'user-1',
@@ -140,14 +162,7 @@ describe('tool trace visibility', () => {
     ])
     chatStore.abortState = { aborting: true, synced: false }
 
-    const wrapper = mount(MessageList, {
-      global: {
-        stubs: {
-          MessageItem: MessageItemStub,
-          Transition: false,
-        },
-      },
-    })
+    const wrapper = mount(MessageList)
 
     expect(wrapper.findAll('.stub-message').map(node => node.attributes('data-id'))).toContain('tool-weather')
     expect(wrapper.findAll('.tool-call-name').map(node => node.text())).not.toContain('weather')

@@ -173,6 +173,17 @@ function responseErrorMessage(text: string, statusText: string): string {
   }
 }
 
+function responseErrorCode(text: string): string | undefined {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  try {
+    const parsed = JSON.parse(trimmed) as { code?: unknown }
+    return typeof parsed?.code === 'string' && parsed.code ? parsed.code : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   await ensureDesktopAuthReady()
   const base = getBaseUrl()
@@ -224,7 +235,10 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
         emitAuthNotice('forbidden')
       }
     }
-    throw new Error(`API Error ${res.status}: ${responseErrorMessage(text, res.statusText)}`)
+    throw Object.assign(
+      new Error(`API Error ${res.status}: ${responseErrorMessage(text, res.statusText)}`),
+      { status: res.status, code: responseErrorCode(text) },
+    )
   }
 
   return res.json()

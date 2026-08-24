@@ -52,6 +52,7 @@ export interface HermesMessageRow {
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
+  run_marker: string | null
   timestamp: number
   token_count: number | null
   finish_reason: string | null
@@ -379,6 +380,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     tool_call_id: normalizeNullableString(row.tool_call_id),
     tool_calls: parseToolCalls(row.tool_calls),
     tool_name: normalizeNullableString(row.tool_name),
+    run_marker: normalizeNullableString(row.run_marker),
     timestamp: normalizeNumber(row.timestamp),
     token_count: normalizeNullableNumber(row.token_count),
     finish_reason: normalizeNullableString(row.finish_reason),

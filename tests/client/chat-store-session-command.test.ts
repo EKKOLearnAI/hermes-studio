@@ -42,6 +42,7 @@ vi.mock('@/api/hermes/chat', () => ({
     chatApi.sessionWorkspaceUpdatedHandlers.push(handler)
     return vi.fn()
   }),
+  onSessionSettingsUpdated: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -123,7 +124,7 @@ describe('chat store session.command fanout', () => {
     ])
   })
 
-  it('requests safe insertion for a queued message and mirrors server state across windows', () => {
+  it('requests insertion for a queued message and mirrors boundary or immediate server state', () => {
     const store = useChatStore()
     const session = makeSession()
     session.source = 'cli'
@@ -181,10 +182,31 @@ describe('chat store session.command fanout', () => {
       event: 'run.queue_insertion.updated',
       session_id: 'session-1',
       generation: 'generation-1',
+      run_id: 'run-1',
       queue_id: 'queue-follow-up',
-      runtime: 'hermes',
+      runtime: 'codex',
+      phase: 'stopping_current_turn',
+      guarantee: 'immediate',
+      requested_at: 124,
+    })
+    expect(store.queueInsertionStates.get('session-1')).toEqual({
+      generation: 'generation-1',
+      runId: 'run-1',
+      queueId: 'queue-follow-up',
+      runtime: 'codex',
+      phase: 'stopping_current_turn',
+      guarantee: 'immediate',
+      requestedAt: 124,
+    })
+
+    handlers.onQueueInsertionUpdated({
+      event: 'run.queue_insertion.updated',
+      session_id: 'session-1',
+      generation: 'generation-1',
+      queue_id: 'queue-follow-up',
+      runtime: 'codex',
       phase: 'starting_queued_message',
-      guarantee: 'strict',
+      guarantee: 'immediate',
       requested_at: 123,
     })
     expect(store.queueInsertionStates.get('session-1')).toBeUndefined()

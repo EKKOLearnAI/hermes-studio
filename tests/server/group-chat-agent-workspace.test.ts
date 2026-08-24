@@ -678,6 +678,56 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runAndWait.mock.calls[0][0].session_id).toMatch(/^gc_run_/)
   })
 
+  it('normalizes non-Hermes approval events onto the authoritative group run generation', async () => {
+    const { AgentClients } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const runAndWait = vi.fn(async (_data: any, options: any) => {
+      options.onEvent?.('approval.requested', {
+        run_id: 'runtime-run-id',
+        approval_id: 'approval-1',
+        command: 'printf harmless',
+      })
+      return { ok: true, run_id: 'runtime-run-id', output: 'done' }
+    })
+    const clients = new AgentClients()
+    clients.setChatRunService({ runAndWait, abortSession: vi.fn(async () => {}) })
+    const client = await clients.createAgent({
+      agentId: 'agent-codex',
+      agent: 'codex',
+      profile: 'default',
+      name: 'Coder',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    } as any) as any
+    client.setStorage({
+      getRoom: vi.fn(() => ({ sessionSeed: 'seed-1', workspace: '', maxHistoryTokens: 32000 })),
+      getRoomAgents: vi.fn(() => []),
+      getMentionableRoomAgents: vi.fn(() => []),
+      getMessagesForContext: vi.fn(() => []),
+      getContextSnapshot: vi.fn(() => null),
+    })
+
+    await client.replyToMention('room-1', {
+      messageId: 'message-1',
+      content: '@Coder run safely',
+      senderName: 'Human',
+      senderId: 'human-1',
+      timestamp: 1,
+      role: 'user',
+    })
+
+    const streamStart = mockSocket.emit.mock.calls
+      .find(([event]) => event === 'message_stream_start')?.[1]
+    const approval = mockSocket.emit.mock.calls
+      .find(([event]) => event === 'approval.requested')?.[1]
+    expect(streamStart?.run_id).toBeTruthy()
+    expect(approval).toMatchObject({
+      approval_id: 'approval-1',
+      runId: streamStart.run_id,
+    })
+    expect(approval).not.toHaveProperty('run_id')
+  })
+
   it.each([
     ['ekko', 'ekko-agent'],
     ['claude', 'claude-code'],

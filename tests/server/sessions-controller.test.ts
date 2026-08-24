@@ -43,6 +43,8 @@ const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const bridgeSwitchSessionModelMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
+const emitSessionSettingsUpdatedMock = vi.fn()
+const getChatRunServerMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
@@ -153,6 +155,10 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/run-chat/server-registry', () => ({
+  getChatRunServer: getChatRunServerMock,
+}))
+
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
@@ -194,6 +200,9 @@ describe('session conversations controller', () => {
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
     localUpdateSessionStatsMock.mockReset()
+    emitSessionSettingsUpdatedMock.mockReset()
+    getChatRunServerMock.mockReset()
+    getChatRunServerMock.mockReturnValue({ emitSessionSettingsUpdated: emitSessionSettingsUpdatedMock })
     listSessionCategoriesMock.mockReset()
     createSessionCategoryMock.mockReset()
     deleteSessionCategoryMock.mockReset()
@@ -1713,7 +1722,14 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', {
       model: 'grok-4',
       provider: 'xai',
+      reasoning_effort: '',
       workspace: '/tmp/hermes-test/default/workspace',
+    })
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-1', {
+      model: 'grok-4',
+      provider: 'xai',
+      api_mode: '',
+      reasoning_effort: '',
     })
     expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
@@ -1742,6 +1758,7 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', {
       model: 'claude-sonnet-4-6',
       provider: 'claude-oauth',
+      reasoning_effort: '',
       workspace: '/tmp/hermes-test/travel/workspace',
     })
     expect(bridgeSwitchSessionModelMock).toHaveBeenCalledWith(
@@ -1778,12 +1795,33 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('codex-session', {
       model: 'gpt-5.5',
       provider: 'openai-codex',
+      reasoning_effort: '',
       api_mode: 'chat_completions',
       agent_native_session_id: '',
     })
     expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()
     expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('persists and broadcasts a session reasoning effort', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-reasoning', profile: 'default' })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-reasoning' },
+      request: { body: { reasoningEffort: 'high' } },
+      body: null,
+    }
+    await mod.setReasoningEffort(ctx)
+
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-reasoning', {
+      reasoning_effort: 'high',
+    })
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-reasoning', {
+      reasoning_effort: 'high',
+    })
+    expect(ctx.body).toEqual({ ok: true, reasoning_effort: 'high' })
   })
 
   it('deletes a current-profile Hermes history session even when no local Web UI session exists', async () => {

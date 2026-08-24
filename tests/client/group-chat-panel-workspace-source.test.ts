@@ -396,10 +396,27 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(panel).toContain(':active-agent-ids="store.activeAgentIdsForRoom(room.id)"')
     expect(roomAvatar).toContain('data-agent-count')
     expect(roomAvatar).toContain('room-agent-grid-neutral')
+    expect(roomAvatar).toContain(`:class="{ 'is-active': hasActiveAgent }"`)
+    expect(roomAvatar).toContain(':aria-busy="hasActiveAgent"')
+    expect(roomAvatar).not.toContain(`:class="{ 'is-active': activeAgentIds.has(agent.id) }"`)
+    expect(roomAvatar).not.toContain(`:class="{ 'is-active': overflowActive }"`)
+    expect(roomAvatar).toContain('animation: room-avatar-rainbow-glow 4s linear infinite')
+    expect(roomAvatar).toContain('@keyframes room-avatar-rainbow-glow')
+    expect(roomAvatar).toMatch(/\.room-agent-grid[\s\S]*?&\.is-active::after\s*\{[\s\S]*?border-radius: 12px;/)
+    expect(roomAvatar).toContain('0 0 0 2px #ff6b6b')
+    expect(roomAvatar).toContain('0 0 0 2px #48dbfb')
+    expect(roomAvatar).toContain('0 0 0 2px #5f27cd')
+    expect(roomAvatar).not.toContain('background: $success')
     expect(roomAvatar).toContain('@media (prefers-reduced-motion: reduce)')
     expect(list).toContain(':active="store.isAgentRunActive(')
     expect(runCard).toContain("'run-avatar-active': active")
     expect(runCard).toContain(':aria-busy="active"')
+    expect(runCard).toMatch(/\.run-avatar\s*\{[^}]*border-radius: 50%;/s)
+    expect(runCard).toContain('animation: run-avatar-rainbow-glow 4s linear infinite')
+    expect(runCard).toContain('@keyframes run-avatar-rainbow-glow')
+    expect(runCard).toContain('0 0 0 2px #ff6b6b')
+    expect(runCard).toContain('0 0 0 2px #48dbfb')
+    expect(runCard).toContain('0 0 0 2px #5f27cd')
     expect(runCard).toContain('@media (prefers-reduced-motion: reduce)')
   })
 
@@ -501,6 +518,7 @@ describe('GroupChatPanel workspace save handling', () => {
 
   it('creates room agents with the single-chat api mode rules and keeps Hermes profile-owned', () => {
     const source = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const linkView = readFileSync('packages/client/src/views/hermes/GroupChatLinkView.vue', 'utf8')
 
     expect(source).toContain("const selectedAgentProvider = ref('')")
     expect(source).toContain("const selectedAgentModel = ref('')")
@@ -510,6 +528,11 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('model: selectedAgentModel.value')
     expect(source).toContain("apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value")
     expect(source).toContain('reasoningEffort: selectedAgentReasoningEffort.value')
+    for (const modelSource of [source, linkView]) {
+      expect(modelSource).toContain('function handleAgentModelChange(model: string)')
+      expect(modelSource).toContain("selectedAgentReasoningEffort.value = ''")
+      expect(modelSource).toContain('@update:value="handleAgentModelChange"')
+    }
     expect(source).toContain('inferCodingAgentApiMode(')
     expect(source).toContain('normalizeCodingAgentApiMode(')
     expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")

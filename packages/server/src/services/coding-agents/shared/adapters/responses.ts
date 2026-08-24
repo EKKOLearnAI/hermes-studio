@@ -1,8 +1,11 @@
 // Shared Responses payload translation for Coding Agent provider proxies.
 import { imageUrlToAnthropicSource, openAiImageUrl } from './multimodal'
+import { shouldPreserveReasoningContent } from './anthropic'
 
 export interface ResponsesAdapterTarget {
   model: string
+  provider?: string
+  baseUrl?: string
 }
 
 const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
@@ -571,7 +574,25 @@ function chatRoleForResponsesRole(role: unknown): string {
   return 'user'
 }
 
-function responsesInputToChatMessages(body: any): any[] {
+function responsesReasoningText(item: any): string {
+  for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+    if (typeof item?.[field] === 'string' && item[field]) return item[field]
+  }
+
+  const textParts = (value: unknown): string[] => {
+    const entries = Array.isArray(value) ? value : [value]
+    return entries.flatMap((entry: any) => {
+      if (typeof entry === 'string') return entry ? [entry] : []
+      if (!entry || typeof entry !== 'object') return []
+      if (typeof entry.text === 'string' && entry.text) return [entry.text]
+      return textParts(entry.summary)
+    })
+  }
+
+  return [...textParts(item?.summary), ...textParts(item?.content)].join('')
+}
+
+function responsesInputToChatMessages(body: any, target: ResponsesAdapterTarget): any[] {
   const messages: any[] = []
   if (body?.instructions) {
     messages.push({ role: 'system', content: stringifyContent(body.instructions) })
@@ -585,6 +606,12 @@ function responsesInputToChatMessages(body: any): any[] {
 
   let pendingToolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = []
   let pendingToolOutputs = new Map<string, any>()
+  let pendingReasoning = ''
+  const preserveReasoningContent = shouldPreserveReasoningContent({
+    provider: String(target.provider || ''),
+    model: target.model,
+    baseUrl: String(target.baseUrl || ''),
+  })
   const flushCompletedToolCalls = () => {
     if (!pendingToolCalls.length) return
     const outputs = pendingToolCalls.map(call => pendingToolOutputs.get(call.id))
@@ -593,6 +620,9 @@ function responsesInputToChatMessages(body: any): any[] {
       messages.push({
         role: 'assistant',
         content: null,
+        ...(preserveReasoningContent && pendingReasoning
+          ? { reasoning_content: pendingReasoning }
+          : {}),
         tool_calls: pendingToolCalls,
       })
       for (let index = 0; index < pendingToolCalls.length; index += 1) {
@@ -618,10 +648,18 @@ function responsesInputToChatMessages(body: any): any[] {
     }
     pendingToolCalls = []
     pendingToolOutputs = new Map()
+    pendingReasoning = ''
   }
 
   for (const item of Array.isArray(input) ? input : []) {
     if (!item || typeof item !== 'object') continue
+    if (item.type === 'reasoning') {
+      flushCompletedToolCalls()
+      const reasoning = responsesReasoningText(item)
+      if (reasoning.startsWith(pendingReasoning)) pendingReasoning = reasoning
+      else if (reasoning && !pendingReasoning.endsWith(reasoning)) pendingReasoning += reasoning
+      continue
+    }
     if (item.type === 'function_call' || item.type === 'tool_search_call') {
       const callId = String(item.call_id || item.id || `call_${messages.length}`)
       pendingToolCalls.push({
@@ -650,15 +688,51 @@ function responsesInputToChatMessages(body: any): any[] {
     }
     flushCompletedToolCalls()
     if (item.role) {
+      const role = chatRoleForResponsesRole(item.role)
       messages.push({
-        role: chatRoleForResponsesRole(item.role),
+        role,
         content: responseContentToOpenAiChat(item.content),
+        ...(role === 'assistant' && preserveReasoningContent && pendingReasoning
+          ? { reasoning_content: pendingReasoning }
+          : {}),
       })
+      pendingReasoning = ''
     }
   }
   flushCompletedToolCalls()
 
-  return messages.length ? messages : [{ role: 'user', content: '' }]
+  const built = messages.length ? messages : [{ role: 'user', content: '' }]
+  return consolidateChatSystemMessages(built)
+}
+
+// Codex sends both a top-level `instructions` string and `developer` messages
+// inside `input`; converting each to a `system` message yields multiple system
+// messages with the later ones out of position. Some providers (notably vLLM)
+// reject that with "System message must be at the beginning" (400). Fix: keep
+// exactly one leading system message — merging any additional ones into it in
+// original order (top-level instructions first, then in-input developer
+// messages).
+function consolidateChatSystemMessages(messages: any[]): any[] {
+  const systemMessages: any[] = []
+  const rest: any[] = []
+  for (const message of messages) {
+    if (message?.role === 'system') systemMessages.push(message)
+    else rest.push(message)
+  }
+  if (systemMessages.length === 0) return messages
+  // Exactly one system message: keep its content verbatim (string or image
+  // parts) and only relocate it to the front if it was mid-conversation.
+  if (systemMessages.length === 1) {
+    const only = systemMessages[0]
+    if (messages[0] === only) return messages
+    return [only, ...rest]
+  }
+  // Multiple system messages (top-level instructions + in-input developer
+  // messages): merge their text into one leading system message.
+  const parts = systemMessages
+    .map(message => (typeof message.content === 'string' ? message.content : stringifyContent(message.content)))
+    .filter(Boolean)
+  return [{ role: 'system', content: parts.join('\n\n') }, ...rest]
 }
 
 function responsesToolsToChatTools(tools: unknown): any[] | undefined {
@@ -681,7 +755,7 @@ export function responsesToOpenAiChat(body: any, target: ResponsesAdapterTarget,
   const reasoningEffort = targetReasoningEffort(target)
   return {
     model: target.model,
-    messages: responsesInputToChatMessages(body),
+    messages: responsesInputToChatMessages(body, target),
     ...(typeof body?.max_output_tokens === 'number' ? { max_tokens: body.max_output_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(typeof body?.top_p === 'number' ? { top_p: body.top_p } : {}),

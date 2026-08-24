@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, computed, watch } from 'vue'
+import { ref, nextTick, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NInput, NButton, NSpace, NInputNumber, NSelect } from 'naive-ui'
 import { getStoredUsername } from '@/api/client'
@@ -9,7 +9,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
-import type { RoomSummaryConfig } from '@/api/hermes/group-chat'
+import type { RoomAgentInput, RoomSummaryConfig } from '@/api/hermes/group-chat'
 
 type InputLikeInstance = {
     focus: () => void
@@ -19,7 +19,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
 const emit = defineEmits<{
-    submit: [name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string]
+    submit: [name: string, inviteCode: string, userName: string, description: string, summary: RoomSummaryConfig, workspace: string, agents: RoomAgentInput[]]
     cancel: []
 }>()
 
@@ -58,7 +58,6 @@ const summaryApiModeOptions = computed(() => [
     { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
     { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
 ])
-
 function syncSummaryProvider() {
     const profileModels = appStore.profileModelGroups.find(entry => entry.profile === summaryProfile.value)
     const preferred = summaryModelGroups.value.find(group => group.provider === appStore.selectedProvider)
@@ -99,12 +98,19 @@ function handleCreate() {
         summaryModel: summaryModel.value,
         summaryApiMode: summaryApiMode.value,
         summaryEveryTurns: summaryEveryTurns.value,
-    }, workspace.value || '')
+    }, workspace.value || '', [])
 }
 
 function focusRoomInput() {
     nextTick(() => roomInput.value?.focus())
 }
+
+onMounted(() => {
+    void Promise.all([
+        profilesStore.fetchProfiles(),
+        appStore.loadModels(),
+    ])
+})
 </script>
 
 <template>
@@ -242,4 +248,5 @@ function focusRoomInput() {
 .summary-hint {
     margin: 4px 0 14px;
 }
+
 </style>

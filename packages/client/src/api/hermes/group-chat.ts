@@ -130,6 +130,7 @@ export interface GroupAgentActivity {
 }
 
 export interface RoomAgentInput {
+    presetId?: string
     agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
     profile: string
     provider?: string
@@ -140,6 +141,34 @@ export interface RoomAgentInput {
     description?: string
     avatar?: string
     invited?: boolean
+}
+
+export interface GroupAgentPreset extends Omit<RoomAgentInput, 'name' | 'description' | 'avatar'> {
+    id: string
+    name: string
+    description: string
+    avatar: string
+    available: boolean
+    validationError: string
+    createdAt: number
+    updatedAt: number
+}
+
+export type GroupAgentPresetInput = Omit<GroupAgentPreset, 'id' | 'available' | 'validationError' | 'createdAt' | 'updatedAt'>
+
+export function groupAgentPresetToRoomAgentInput(preset: GroupAgentPreset): RoomAgentInput {
+    return {
+        presetId: preset.id,
+        agent: preset.agent,
+        profile: preset.profile,
+        provider: preset.provider,
+        model: preset.model,
+        apiMode: preset.agent === 'hermes' ? undefined : preset.apiMode,
+        reasoningEffort: preset.reasoningEffort,
+        name: preset.name,
+        description: preset.description,
+        avatar: preset.avatar,
+    }
 }
 
 export interface AgentAddResult {
@@ -494,6 +523,33 @@ export async function addAgent(roomId: string, data: RoomAgentInput): Promise<{ 
     })
 }
 
+export async function listGroupAgentPresets(profile?: string): Promise<{ presets: GroupAgentPreset[] }> {
+    const query = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+    return request(`/api/hermes/group-chat/agent-presets${query}`)
+}
+
+export async function createGroupAgentPreset(data: GroupAgentPresetInput): Promise<{ preset: GroupAgentPreset }> {
+    return request('/api/hermes/group-chat/agent-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+}
+
+export async function updateGroupAgentPreset(id: string, data: GroupAgentPresetInput): Promise<{ preset: GroupAgentPreset }> {
+    return request(`/api/hermes/group-chat/agent-presets/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+}
+
+export async function deleteGroupAgentPreset(id: string): Promise<{ success: boolean }> {
+    return request(`/api/hermes/group-chat/agent-presets/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+    })
+}
+
 export async function updateAgent(roomId: string, agentId: string, data: RoomAgentInput): Promise<{ agent: RoomAgent; agents: RoomAgent[]; members: MemberInfo[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
         method: 'PUT',
@@ -573,9 +629,11 @@ export async function updateRoomSummary(roomId: string, summary: string): Promis
 }
 
 export async function listGroupWorkspaceFiles(roomId: string, path = ''): Promise<{
-    entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>
+    entries: import('./files').FileEntry[]
     path: string
     absolutePath?: string
+    gitStatus?: import('./files').GitFileStatus
+    gitStatusCount?: number
 }> {
     const params = new URLSearchParams()
     if (path) params.set('path', path)
@@ -586,6 +644,14 @@ export async function listGroupWorkspaceFiles(roomId: string, path = ''): Promis
 export async function readGroupWorkspaceFile(roomId: string, path: string): Promise<{ content: string; path: string; size: number }> {
     const params = new URLSearchParams({ path })
     return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/read?${params}`)
+}
+
+export async function fetchGroupWorkspaceFileDiff(
+    roomId: string,
+    path: string,
+): Promise<import('./files').WorkspaceFileDiff> {
+    const params = new URLSearchParams({ path })
+    return request(`/api/hermes/group-chat/rooms/${encodeURIComponent(roomId)}/workspace-file/diff?${params}`)
 }
 
 export async function fetchGroupWorkspaceFileBlob(roomId: string, path: string, signal?: AbortSignal): Promise<Blob> {

@@ -28,7 +28,7 @@ describe('ChatPanel session clicks', () => {
     expect(source).not.toContain(':key="chatStore.activeSessionId" class="chat-main-content"')
   })
 
-  it('allows session model switching for coding agent sessions', () => {
+  it('allows scoped coding-agent model switching but disables it for global agents', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 
     expect(source).toContain('contextSession.value?.source === "coding_agent"')
@@ -37,6 +37,13 @@ describe('ChatPanel session clicks', () => {
     expect(source).toContain('showSessionModelModeModal')
     expect(source).toContain('pendingSessionModelSwitch')
     expect(source).toContain('chatStore.switchSessionModel(model, provider, sessionModelSessionId.value, apiMode)')
+    expect(source).toContain('activeSessionUsesGlobalCodingAgentConfig')
+    expect(source).toContain(':model-disabled="activeSessionUsesGlobalCodingAgentConfig"')
+    expect(source).toContain('contextSession.value?.codingAgentMode !== "global"')
+    expect(source).toContain('requestedSession?.codingAgentMode === "global"')
+    expect(readFileSync('packages/client/src/stores/hermes/chat.ts', 'utf8')).toContain(
+      "session?.codingAgentMode === 'global' && isCodingAgentLikeSession(session)",
+    )
     expect(source).toContain('const sessionModelSwitching = ref(false)')
     expect(source).toContain('sessionModelSwitching.value = true')
     expect(source).toContain('sessionModelSwitching.value = false')

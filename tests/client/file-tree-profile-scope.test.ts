@@ -22,7 +22,19 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
-  NTree: { template: '<div class="n-tree-stub" />' },
+  NTree: {
+    props: ['data', 'nodeProps'],
+    template: `
+      <div class="n-tree-stub">
+        <button
+          v-for="item in data"
+          :key="item.key"
+          class="tree-node-stub"
+          @click="nodeProps({ option: item }).onClick()"
+        >{{ item.label }}</button>
+      </div>
+    `,
+  },
 }))
 
 describe('FileTree profile scope', () => {
@@ -66,5 +78,28 @@ describe('FileTree profile scope', () => {
     expect(mockSessionsApi.listSessionWorkspaceFiles).toHaveBeenNthCalledWith(1, 'session-1', '')
     expect(mockSessionsApi.listSessionWorkspaceFiles).toHaveBeenNthCalledWith(2, 'session-1', '')
     expect(mockFilesApi.listFiles).not.toHaveBeenCalled()
+  })
+
+  it('emits the entry from every workspace file click', async () => {
+    mockSessionsApi.listSessionWorkspaceFiles.mockResolvedValue({
+      entries: [
+        { name: 'first.ts', path: 'first.ts', isDir: false, size: 1, modTime: '2026-08-22T00:00:00.000Z' },
+        { name: 'second.ts', path: 'second.ts', isDir: false, size: 1, modTime: '2026-08-22T00:00:00.000Z' },
+      ],
+      path: '',
+    })
+    const store = useFilesStore()
+    store.currentWorkspaceSessionId = 'session-1'
+    const wrapper = mount(FileTree, { props: { workspaceKey: '/tmp/workspace' } })
+    await flushPromises()
+
+    const nodes = wrapper.findAll('.tree-node-stub')
+    await nodes[0].trigger('click')
+    await nodes[1].trigger('click')
+
+    expect(wrapper.emitted('open-entry')).toEqual([
+      [expect.objectContaining({ path: 'first.ts' })],
+      [expect.objectContaining({ path: 'second.ts' })],
+    ])
   })
 })

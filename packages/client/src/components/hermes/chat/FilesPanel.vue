@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref, onMounted, watch } from 'vue'
-import { useFilesStore } from '@/stores/hermes/files'
+import { defineAsyncComponent, ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import { isPreviewableFile, isTextFile, useFilesStore } from '@/stores/hermes/files'
 import { useI18n } from 'vue-i18n'
 import { NButton, useMessage } from 'naive-ui'
 import FileTree from '@/components/hermes/files/FileTree.vue'
-import FileBreadcrumb from '@/components/hermes/files/FileBreadcrumb.vue'
 import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
-import FileList from '@/components/hermes/files/FileList.vue'
 import FileContextMenu from '@/components/hermes/files/FileContextMenu.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
@@ -15,6 +13,8 @@ import { fetchSessionWorkspaceAttachmentBlob } from '@/api/hermes/sessions'
 import { fetchGroupWorkspaceAttachmentBlob } from '@/api/hermes/group-chat'
 
 const FileEditor = defineAsyncComponent(async () => (await import('@/components/hermes/files/FileEditor.vue')).default)
+const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
+const WorkspaceFileDiff = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceFileDiff.vue')).default)
 
 const filesStore = useFilesStore()
 const { t } = useI18n()
@@ -36,8 +36,52 @@ const showRenameModal = ref(false)
 const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
 const renameTargetPath = ref<string | null>(null)
-const showSidebar = ref(false)
 const lastStandardPath = ref('')
+const filesPanelRef = ref<HTMLElement | null>(null)
+const sidebarWidth = ref(260)
+const selectedDiffEntry = ref<FileEntry | null>(null)
+const mobileMediaQuery = window.matchMedia(`(max-width: 768px)`)
+const isMobileLayout = ref(mobileMediaQuery.matches)
+const mobileFileOpen = ref(false)
+let stopSidebarResize: (() => void) | null = null
+
+function startSidebarResize(event: PointerEvent) {
+  if (isMobileLayout.value) return
+  event.preventDefault()
+  const startX = event.clientX
+  const startWidth = sidebarWidth.value
+  const rtl = document.documentElement.dir === 'rtl'
+  const previousCursor = document.body.style.cursor
+  const previousUserSelect = document.body.style.userSelect
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  const handleMove = (moveEvent: PointerEvent) => {
+    const panelWidth = filesPanelRef.value?.clientWidth || window.innerWidth
+    const maxWidth = Math.max(220, Math.min(520, panelWidth - 280))
+    const delta = (moveEvent.clientX - startX) * (rtl ? -1 : 1)
+    sidebarWidth.value = Math.min(maxWidth, Math.max(180, startWidth + delta))
+  }
+  const handleUp = () => stopSidebarResize?.()
+  stopSidebarResize = () => {
+    window.removeEventListener('pointermove', handleMove)
+    window.removeEventListener('pointerup', handleUp)
+    window.removeEventListener('pointercancel', handleUp)
+    document.body.style.cursor = previousCursor
+    document.body.style.userSelect = previousUserSelect
+    stopSidebarResize = null
+  }
+  window.addEventListener('pointermove', handleMove)
+  window.addEventListener('pointerup', handleUp)
+  window.addEventListener('pointercancel', handleUp)
+}
+
+function handleMobileLayoutChange(event: MediaQueryListEvent): void {
+  isMobileLayout.value = event.matches
+  if (event.matches) {
+    mobileFileOpen.value = Boolean(selectedDiffEntry.value || filesStore.editingFile || filesStore.previewFile)
+  }
+}
 
 function handleContextMenu(e: MouseEvent, entry: FileEntry) {
   contextMenuRef.value?.show(e, entry)
@@ -89,9 +133,56 @@ async function handleAttach(entry: FileEntry) {
   }
 }
 
+async function handleOpenEntry(entry: FileEntry): Promise<void> {
+  if (entry.isDir) return
+  if (filesStore.hasUnsavedChanges) {
+    message.warning(t('files.unsavedChanges'))
+    return
+  }
+  if (isMobileLayout.value) mobileFileOpen.value = true
+
+  if (isTextFile(entry.name) || !isPreviewableFile(entry.name)) {
+    filesStore.closeEditor()
+    filesStore.closePreview()
+    selectedDiffEntry.value = entry
+    return
+  }
+
+  selectedDiffEntry.value = null
+  filesStore.closeEditor()
+  if (isPreviewableFile(entry.name)) {
+    try {
+      await filesStore.openPreview(entry)
+    } catch (openError) {
+      message.error(openError instanceof Error ? openError.message : t('files.previewFailed'))
+    }
+  } else {
+    filesStore.closePreview()
+  }
+}
+
+function handleMobileBack(): void {
+  if (filesStore.hasUnsavedChanges) {
+    message.warning(t('files.unsavedChanges'))
+    return
+  }
+  selectedDiffEntry.value = null
+  filesStore.closeEditor()
+  filesStore.closePreview()
+  mobileFileOpen.value = false
+}
+
+function handleDiffClose(): void {
+  if (isMobileLayout.value) handleMobileBack()
+  else selectedDiffEntry.value = null
+}
+
 watch(
   () => [props.workspaceSessionId, props.workspaceRoomId, props.workspace] as const,
   ([workspaceSessionId, workspaceRoomId, workspace]) => {
+    selectedDiffEntry.value = null
+    mobileFileOpen.value = false
+    filesStore.closePreview()
     if ((workspaceSessionId || workspaceRoomId) && workspace) {
       if (!filesStore.currentWorkspaceSessionId && !filesStore.currentWorkspaceRoomId) lastStandardPath.value = filesStore.currentPath
       void filesStore.fetchEntries('', { workspaceSessionId, workspaceRoomId })
@@ -103,7 +194,17 @@ watch(
   },
 )
 
+watch(() => filesStore.previewFile, previewFile => {
+  if (!previewFile || !isMobileLayout.value) return
+  const matchesSession = props.workspaceSessionId && previewFile.workspaceSessionId === props.workspaceSessionId
+  const matchesRoom = props.workspaceRoomId && previewFile.workspaceRoomId === props.workspaceRoomId
+  if (matchesSession || matchesRoom || (!props.workspaceSessionId && !props.workspaceRoomId)) {
+    mobileFileOpen.value = true
+  }
+})
+
 onMounted(() => {
+  mobileMediaQuery.addEventListener('change', handleMobileLayoutChange)
   if ((props.workspaceSessionId || props.workspaceRoomId) && props.workspace) {
     void filesStore.fetchEntries('', { workspaceSessionId: props.workspaceSessionId, workspaceRoomId: props.workspaceRoomId })
   } else if (filesStore.currentWorkspaceSessionId || filesStore.currentWorkspaceRoomId) {
@@ -112,51 +213,71 @@ onMounted(() => {
     void filesStore.fetchEntries('', { profile: null, workspaceSessionId: null, workspaceRoomId: null })
   }
 })
+
+onBeforeUnmount(() => {
+  stopSidebarResize?.()
+  mobileMediaQuery.removeEventListener('change', handleMobileLayoutChange)
+})
 </script>
 
 <template>
-  <div class="files-panel-drawer">
-    <div
-      v-if="showSidebar"
-      class="sidebar-overlay"
-      @click="showSidebar = false"
-    ></div>
+  <div
+    ref="filesPanelRef"
+    class="files-panel-drawer"
+    :class="{ 'mobile-file-open': mobileFileOpen }"
+  >
     <div
       class="files-tree-panel"
-      :class="{ 'mobile-visible': showSidebar }"
+      :style="{ width: `${sidebarWidth}px` }"
     >
-      <FileTree :workspace-key="workspace" />
+      <div class="explorer-header">
+        <span class="explorer-title">{{ t('files.fileTree') }}</span>
+        <FileToolbar
+          :allow-upload="false"
+          @show-new-file="handleShowNewFile"
+          @show-new-folder="handleShowNewFolder"
+        />
+      </div>
+      <FileTree
+        :workspace-key="workspace"
+        @contextmenu-entry="handleContextMenu"
+        @open-entry="handleOpenEntry"
+      />
     </div>
+    <div class="explorer-resize-handle" @pointerdown="startSidebarResize" />
     <div class="files-main-panel">
       <div class="main-toolbar">
         <NButton
           size="small"
-          @click="showSidebar = !showSidebar"
+          @click="handleMobileBack"
           class="sidebar-toggle"
         >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
+              <path d="m15 18-6-6 6-6" />
             </svg>
           </template>
           {{ t('files.fileTree') }}
         </NButton>
-        <FileToolbar
-          :allow-upload="!workspace"
-          @show-new-file="handleShowNewFile"
-          @show-new-folder="handleShowNewFolder"
-          @show-upload="showUpload = true"
-        />
       </div>
-      <div v-if="workspace" class="workspace-context" :title="workspace">
-        <span class="workspace-context-label">{{ t('chat.workspace') }}</span>
-        <span class="workspace-context-path">{{ workspace }}</span>
-      </div>
-      <FileBreadcrumb />
       <div class="files-content">
-        <FileEditor v-if="filesStore.editingFile" />
-        <FileList v-else @contextmenu-entry="handleContextMenu" />
+        <FileEditor
+          v-if="filesStore.editingFile"
+          :custom-close="isMobileLayout ? handleMobileBack : undefined"
+        />
+        <WorkspaceFileDiff
+          v-else-if="selectedDiffEntry"
+          :entry="selectedDiffEntry"
+          :workspace="workspace"
+          :workspace-session-id="workspaceSessionId"
+          :workspace-room-id="workspaceRoomId"
+          @close="handleDiffClose"
+        />
+        <FilePreview
+          v-else-if="filesStore.previewFile"
+          :custom-close="isMobileLayout ? handleMobileBack : undefined"
+        />
+        <div v-else class="workspace-empty-editor" />
       </div>
     </div>
     <FileContextMenu
@@ -188,24 +309,10 @@ onMounted(() => {
   background: inherit;
 }
 
-.sidebar-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 50;
-
-  @media (min-width: $breakpoint-mobile + 1) {
-    display: none;
-  }
-}
-
 .files-tree-panel {
-  width: 200px;
-  min-width: 150px;
-  max-width: 300px;
+  width: 260px;
+  min-width: 180px;
+  max-width: 520px;
   border-inline-end: 1px solid $border-color;
   overflow-y: auto;
   flex-shrink: 0;
@@ -214,27 +321,78 @@ onMounted(() => {
   background: inherit;
 
   @media (max-width: $breakpoint-mobile) {
-    position: fixed;
-    top: 0;
-    inset-inline-start: 0;
-    bottom: 0;
-    width: 80%;
-    max-width: 300px;
-    z-index: 51;
-    background: $bg-card;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
-    transform: translateX(-100%);
-    transition: transform 0.3s ease;
-
-    &:dir(rtl) {
-      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
-      transform: translateX(100%);
-    }
-
-    &.mobile-visible {
-      transform: translateX(0);
-    }
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    height: 100%;
+    border-inline-end: 0;
   }
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .files-panel-drawer:not(.mobile-file-open) .files-main-panel {
+    display: none;
+  }
+
+  .files-panel-drawer.mobile-file-open .files-tree-panel {
+    display: none;
+  }
+}
+
+.explorer-resize-handle {
+  position: relative;
+  z-index: 2;
+  width: 5px;
+  margin-inline-start: -3px;
+  margin-inline-end: -2px;
+  cursor: col-resize;
+  flex: 0 0 5px;
+  touch-action: none;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 2px;
+    width: 1px;
+    background: transparent;
+    transition: background-color $transition-fast;
+  }
+
+  &:hover::after,
+  &:active::after {
+    background: var(--accent-info);
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    display: none;
+  }
+}
+
+.explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid $border-color;
+
+  :deep(.file-toolbar) {
+    padding: 0;
+  }
+
+  :deep(.n-button) {
+    width: 26px;
+    height: 26px;
+  }
+}
+
+.explorer-title {
+  color: $text-secondary;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .files-main-panel {
@@ -255,8 +413,8 @@ onMounted(() => {
   flex-shrink: 0;
   background: inherit;
 
-  :deep(.file-toolbar) {
-    padding: 0;
+  @media (min-width: $breakpoint-mobile + 1) {
+    display: none;
   }
 
   @media (max-width: $breakpoint-mobile) {
@@ -264,30 +422,6 @@ onMounted(() => {
     padding: 4px 8px;
     flex-wrap: wrap;
   }
-}
-
-.workspace-context {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 16px 4px;
-  color: $text-secondary;
-  font-size: 12px;
-}
-
-.workspace-context-label {
-  flex-shrink: 0;
-  font-weight: 600;
-  color: $text-muted;
-}
-
-.workspace-context-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: $font-code;
 }
 
 .sidebar-toggle {
@@ -304,8 +438,15 @@ onMounted(() => {
 
 .files-content {
   flex: 1;
-  overflow-y: auto;
+  display: flex;
+  overflow: hidden;
   min-height: 0;
+  background: inherit;
+}
+
+.workspace-empty-editor {
+  width: 100%;
+  height: 100%;
   background: inherit;
 }
 </style>

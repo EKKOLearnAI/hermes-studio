@@ -27,11 +27,14 @@ describe('ChatPanel tool drawer resizing support', () => {
     expect(workflowSource).toMatch(/\.workflow-chat-resize-handle\s*\{[\s\S]*inset-inline-end: -7px;/)
   })
 
-  it('mirrors fixed mobile panels only when the document is RTL', () => {
+  it('uses a full-width mobile workspace tree and replaces it with the selected file', () => {
     const filesSource = readFileSync('packages/client/src/components/hermes/chat/FilesPanel.vue', 'utf8')
     const workflowSource = readFileSync('packages/client/src/views/hermes/WorkflowView.vue', 'utf8')
 
-    expect(filesSource).toMatch(/\.files-tree-panel\s*\{[\s\S]*inset-inline-start: 0;[\s\S]*&:dir\(rtl\)\s*\{[\s\S]*translateX\(100%\)/)
+    expect(filesSource).toContain("'mobile-file-open': mobileFileOpen")
+    expect(filesSource).toMatch(/\.files-tree-panel\s*\{[\s\S]*width: 100% !important;/)
+    expect(filesSource).toMatch(/\.files-panel-drawer\.mobile-file-open \.files-tree-panel\s*\{\s*display: none;/)
+    expect(filesSource).toContain('@click="handleMobileBack"')
     expect(workflowSource).toMatch(/\.workflow-runs-panel\s*\{[\s\S]*inset-inline-end: 0;[\s\S]*&:dir\(rtl\)\s*\{[\s\S]*box-shadow: 8px/)
   })
 

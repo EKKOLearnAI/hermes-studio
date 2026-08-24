@@ -194,7 +194,10 @@ test('freezes the current reasoning between the thinking animation and its tool 
   await expect(assistantBubble.locator('.thinking-block')).toHaveCount(1)
   await expect(assistantBubble).toContainText('Summarizing the tool result.')
 
-  const toolMessage = page.locator('.message.tool').filter({ hasText: 'read_file' })
+  const toolRunCard = page.locator('.tool-run-card[data-run-id="run-reasoning"]')
+  await expect(toolRunCard).toContainText('read_file')
+  await toolRunCard.locator('.tool-run-header').click()
+  const toolMessage = toolRunCard.locator('.message.tool').filter({ hasText: 'read_file' })
   await toolMessage.locator('.tool-line').click()
   await expect(toolMessage.locator('.tool-detail-reasoning')).toContainText('Inspecting the pending work.')
   expect(api.unexpectedRequests).toEqual([])
@@ -332,7 +335,7 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   expect(reasoningDetailStyle.background).not.toBe('rgba(0, 0, 0, 0)')
   expect(reasoningDetailStyle.borderInlineStartWidth).toBe('0px')
   expect(reasoningDetailStyle.borderLeftWidth).toBe('0px')
-  expect(reasoningDetailStyle.padding).toBe('7px 10px')
+  expect(reasoningDetailStyle.padding).toBe('5px 10px')
 
   for (const surface of [page.locator('.chat-tool-panel'), panel]) {
     const bounds = await surface.boundingBox()
@@ -555,7 +558,7 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   expect(second.run.input).toBe('Second queued contract')
   await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
 
-  const insertionArrow = page.getByRole('button', { name: 'Insert after the current safe boundary' })
+  const insertionArrow = page.getByRole('button', { name: 'Insert queued message' })
   await expect(insertionArrow).toBeVisible()
   await insertionArrow.click()
   const insertionRequest = await page.waitForFunction(() => {
@@ -677,7 +680,7 @@ test('does not report a safe queue insertion stop as an empty model response', a
 
   await sendChatMessage(page, 'Insert this next')
   const second = await waitForRun(page, 1)
-  await page.getByRole('button', { name: 'Insert after the current safe boundary' }).click()
+  await page.getByRole('button', { name: 'Insert queued message' }).click()
   await page.evaluate(({ sid, queueId }) => {
     const socket = (window as any).__PW_CHAT_SOCKET__.latest
     socket.__trigger('run.queue_insertion.updated', {
@@ -893,10 +896,13 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
     })
   }, run.session_id)
 
-  const persistedToolTrace = page.locator('.message.tool .tool-line').filter({ hasText: 'write_file' })
+  const toolRunCard = page.locator('.tool-run-card[data-run-id="run-approval"]')
+  await expect(toolRunCard).toContainText('write_file')
+  await toolRunCard.locator('.tool-run-header').click()
+  const persistedToolTrace = toolRunCard.locator('.message.tool .tool-line').filter({ hasText: 'write_file' })
   await expect(persistedToolTrace).toHaveCount(1)
   await persistedToolTrace.click()
-  const toolDetails = page.locator('.message.tool .tool-details')
+  const toolDetails = toolRunCard.locator('.message.tool .tool-details')
   await expect(toolDetails).toContainText('/tmp/approved.txt')
   await expect(toolDetails).toContainText('ok')
   await expect(page.getByText('Delta-only approved tool result.')).toBeVisible()
@@ -1042,8 +1048,8 @@ test('keeps prior tool trace visible while hiding only the active run tool trace
     })
   }, first.run.session_id)
 
-  const transcriptTools = page.locator('.message.tool .tool-line')
-  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  const firstRunCard = page.locator('.tool-run-card[data-run-id="run-history-1"]')
+  await expect(firstRunCard).toContainText('read_file')
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
 
   await sendChatMessage(page, 'Second tool trace')
@@ -1062,8 +1068,8 @@ test('keeps prior tool trace visible while hiding only the active run tool trace
     })
   }, second.run.session_id)
 
-  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
-  await expect(transcriptTools.filter({ hasText: 'write_file' })).toHaveCount(0)
+  await expect(firstRunCard).toContainText('read_file')
+  await expect(page.locator('.tool-run-card[data-run-id="run-history-2"]')).toHaveCount(0)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toHaveCount(1)
 
@@ -1092,16 +1098,20 @@ test('keeps prior tool trace visible while hiding only the active run tool trace
     })
   }, second.run.session_id)
 
-  await expect(transcriptTools).toHaveCount(2)
-  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
-  await expect(transcriptTools.filter({ hasText: 'write_file' })).toHaveCount(1)
+  const secondRunCard = page.locator('.tool-run-card[data-run-id="run-history-2"]')
+  await expect(firstRunCard).toContainText('read_file')
+  await expect(secondRunCard).toContainText('write_file')
+  await firstRunCard.locator('.tool-run-header').click()
+  await secondRunCard.locator('.tool-run-header').click()
+  await expect(firstRunCard.locator('.message.tool .tool-line').filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(secondRunCard.locator('.message.tool .tool-line').filter({ hasText: 'write_file' })).toHaveCount(1)
   await expect(page.getByText('First fallback should stay hidden.')).toHaveCount(0)
   await expect(page.getByText('Second fallback should stay hidden.')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
   expect(api.unexpectedRequests).toEqual([])
 })
 
-test('keeps completed same-run tool traces hidden until the run finishes', async ({ page }) => {
+test('moves completed same-run tools into the transcript while the remaining tools keep running', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
@@ -1149,6 +1159,15 @@ test('keeps completed same-run tool traces hidden until the run finishes', async
       output: JSON.stringify({ ok: true, path: '/tmp/config.json' }),
       duration: 11,
     })
+  }, run.session_id)
+
+  const toolRunCard = page.locator('.tool-run-card[data-run-id="run-multi-tool"]')
+  await expect(toolRunCard).toContainText('read_file')
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(1)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
     socket.__trigger('tool.completed', {
       event: 'tool.completed',
       session_id: sid,
@@ -1161,9 +1180,16 @@ test('keeps completed same-run tool traces hidden until the run finishes', async
     })
   }, run.session_id)
 
-  await expect(transcriptTools).toHaveCount(0)
-  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(1)
-  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(1)
+  await expect(toolRunCard).toContainText('read_file')
+  await expect(toolRunCard).toContainText('shell_exec')
+  await expect(page.locator('.tool-calls-panel .tool-call-name')).toHaveCount(0)
+  await toolRunCard.locator('.tool-run-header').click()
+  await expect(transcriptTools).toHaveCount(2)
+  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(transcriptTools.filter({ hasText: 'shell_exec' })).toHaveCount(1)
+  await expect(toolRunCard.locator('.tool-error-badge')).toHaveCount(1)
+  await transcriptTools.filter({ hasText: 'shell_exec' }).click()
+  await expect(toolRunCard.locator('.message.tool .tool-details')).toContainText('exit status 1')
 
   await page.evaluate((sid) => {
     const socket = (window as any).__PW_CHAT_SOCKET__.latest
@@ -1186,9 +1212,7 @@ test('keeps completed same-run tool traces hidden until the run finishes', async
   await expect(transcriptTools.filter({ hasText: 'shell_exec' })).toHaveCount(1)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(0)
-  await expect(page.locator('.message.tool .tool-error-badge')).toHaveCount(1)
-  await transcriptTools.filter({ hasText: 'shell_exec' }).click()
-  await expect(page.locator('.message.tool .tool-details')).toContainText('exit status 1')
+  await expect(toolRunCard.locator('.tool-error-badge')).toHaveCount(1)
   await expect(page.getByText('Multi-tool fallback should stay hidden.')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
   expect(api.unexpectedRequests).toEqual([])

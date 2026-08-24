@@ -97,9 +97,8 @@ describe('agent runner Responses adapters', () => {
       top_p: 0.9,
       stream: false,
       messages: [
-        { role: 'system', content: 'be terse' },
+        { role: 'system', content: 'be terse\n\nrules' },
         { role: 'user', content: 'hello' },
-        { role: 'system', content: 'rules' },
         {
           role: 'assistant',
           content: null,
@@ -116,6 +115,84 @@ describe('agent runner Responses adapters', () => {
         function: { name: 'search', description: 'Search', parameters: { type: 'object' } },
       }],
     })
+  })
+
+  it('keeps a single top-level instructions system message at the front', () => {
+    const body = {
+      instructions: 'core system prompt',
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, target).messages).toEqual([
+      { role: 'system', content: 'core system prompt' },
+      { role: 'user', content: 'hi' },
+    ])
+  })
+
+  it('merges multiple system messages into one leading message (vLLM compatibility)', () => {
+    // Codex 0.149 sends both a top-level `instructions` string and `developer`
+    // messages inside `input`. Both convert to `system`; vLLM rejects the
+    // second one ("System message must be at the beginning"), so they must be
+    // merged into a single leading system message.
+    const body = {
+      instructions: 'top-level instructions',
+      input: [
+        { role: 'developer', content: [{ type: 'input_text', text: 'developer message one' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        { role: 'developer', content: [{ type: 'input_text', text: 'developer message two' }] },
+      ],
+    }
+
+    const messages = responsesToOpenAiChat(body, target).messages
+    expect(messages).toEqual([
+      { role: 'system', content: 'top-level instructions\n\ndeveloper message one\n\ndeveloper message two' },
+      { role: 'user', content: 'hello' },
+    ])
+    const systemMessages = messages.filter((message: any) => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(messages[0].role).toBe('system')
+  })
+
+  it('replays Responses reasoning_content on DeepSeek tool-call continuations', () => {
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'inspect the repo' }] },
+        {
+          type: 'reasoning',
+          id: 'rs_deepseek',
+          summary: [{ type: 'summary_text', text: 'I should inspect the repository first.' }],
+        },
+        {
+          type: 'function_call',
+          call_id: 'call_read',
+          name: 'read_file',
+          arguments: '{"path":"README.md"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_read',
+          output: 'repository contents',
+        },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, anthropicTarget).messages).toEqual([
+      { role: 'user', content: 'inspect the repo' },
+      {
+        role: 'assistant',
+        content: null,
+        reasoning_content: 'I should inspect the repository first.',
+        tool_calls: [{
+          id: 'call_read',
+          type: 'function',
+          function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_read', content: 'repository contents' },
+    ])
+    expect(responsesToOpenAiChat(body, target).messages[1]).not.toHaveProperty('reasoning_content')
   })
 
   it('preserves Responses image inputs for Chat and Anthropic providers', () => {

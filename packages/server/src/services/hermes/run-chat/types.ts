@@ -36,6 +36,7 @@ export interface SessionMessage {
   display_role?: string | null
   display_content?: string | null
   runMarker?: string
+  run_marker?: string | null
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
@@ -99,7 +100,8 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
-export type QueueInsertionRuntime = 'hermes' | 'ekko'
+export type QueueInsertionRuntime = 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
+export type QueueInsertionGuarantee = 'strict' | 'immediate'
 export type QueueInsertionPhase =
   | 'requesting'
   | 'waiting_for_tool_batch'
@@ -112,7 +114,7 @@ export interface QueueInsertionControl {
   runId?: string
   runtime: QueueInsertionRuntime
   phase: QueueInsertionPhase
-  guarantee: 'strict'
+  guarantee: QueueInsertionGuarantee
   requestedAt: number
 }
 
@@ -121,6 +123,7 @@ export interface SessionState {
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
+  messageStateBaselineCount?: number
   hasMoreBefore?: boolean
   isWorking: boolean
   events: Array<{ event: string; data: any }>

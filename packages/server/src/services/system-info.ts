@@ -33,8 +33,10 @@ type DeviceIdentity = {
 }
 
 const DEVICE_IDENTITY_PATH = resolve(config.appHome, 'device-identity.json')
+const DEV_APP_RELAY_IDENTITY_PATH = resolve(config.appHome, 'device-identity-app-relay-dev.json')
 
 let identityPromise: Promise<DeviceIdentity> | null = null
+let devAppRelayIdentityPromise: Promise<DeviceIdentity> | null = null
 
 function readPackageInfo(): PackageInfo | null {
   const candidatePaths = [
@@ -87,9 +89,9 @@ export function deviceIdFromPublicKey(publicKey: string): string {
   return `hwui_${createHash('sha256').update(publicKey).digest('base64url').slice(0, 32)}`
 }
 
-async function readOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
+async function readOrCreateDeviceIdentity(identityPath = DEVICE_IDENTITY_PATH): Promise<DeviceIdentity> {
   try {
-    const existing = JSON.parse(await readFile(DEVICE_IDENTITY_PATH, 'utf-8'))
+    const existing = JSON.parse(await readFile(identityPath, 'utf-8'))
     if (isValidDeviceIdentity(existing)) return existing
   } catch {
     // Create a fresh identity below.
@@ -104,14 +106,30 @@ async function readOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
     device_public_key: keyPair.publicKey,
     device_private_key: keyPair.privateKey,
   }
-  await mkdir(dirname(DEVICE_IDENTITY_PATH), { recursive: true })
-  await writeFile(DEVICE_IDENTITY_PATH, JSON.stringify(identity, null, 2), { encoding: 'utf-8', mode: 0o600 })
+  await mkdir(dirname(identityPath), { recursive: true })
+  await writeFile(identityPath, JSON.stringify(identity, null, 2), { encoding: 'utf-8', mode: 0o600 })
   return identity
 }
 
 export function getDeviceIdentity(): Promise<DeviceIdentity> {
   if (!identityPromise) identityPromise = readOrCreateDeviceIdentity()
   return identityPromise
+}
+
+export function getAppRelayDeviceIdentity(
+  environment: Record<string, string | undefined> = process.env,
+): Promise<DeviceIdentity> {
+  if (!shouldUseDedicatedAppRelayIdentity(environment)) return getDeviceIdentity()
+  if (!devAppRelayIdentityPromise) {
+    devAppRelayIdentityPromise = readOrCreateDeviceIdentity(DEV_APP_RELAY_IDENTITY_PATH)
+  }
+  return devAppRelayIdentityPromise
+}
+
+export function shouldUseDedicatedAppRelayIdentity(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
+  return environment.NODE_ENV !== 'production'
 }
 
 export async function getDeviceId(): Promise<string> {
@@ -128,6 +146,19 @@ export function createDeviceSigningPayload(payload: {
 
 export async function createDeviceSignature(nonce: string, timestamp: number): Promise<string> {
   const identity = await getDeviceIdentity()
+  return createIdentitySignature(identity, nonce, timestamp)
+}
+
+export async function createAppRelayDeviceSignature(
+  nonce: string,
+  timestamp: number,
+  environment: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  const identity = await getAppRelayDeviceIdentity(environment)
+  return createIdentitySignature(identity, nonce, timestamp)
+}
+
+function createIdentitySignature(identity: DeviceIdentity, nonce: string, timestamp: number): string {
   return sign(null, Buffer.from(createDeviceSigningPayload({
     device_id: identity.device_id,
     nonce,

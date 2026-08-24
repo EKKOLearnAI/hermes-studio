@@ -3,23 +3,29 @@
  * track tool calls, manage assistant message lifecycle.
  */
 
-import { addMessage } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
+import { persistRunMessages } from './message-persistence'
 import type { SessionMessage, SessionState } from './types'
 
 export function flushBridgePendingToDb(state: SessionState, sessionId: string, runMarker?: string): string | undefined {
   const content = state.bridgePendingAssistantContent || ''
   const reasoning = state.bridgePendingReasoningContent || ''
   if (!content.trim()) return state.bridgeAssistantMessageId
-  const assistantMessage = runMarker ? findOpenBridgeAssistantMessage(state, runMarker) : undefined
+  const effectiveRunMarker = runMarker || state.activeRunMarker
+  const assistantMessage = effectiveRunMarker
+    ? findOpenBridgeAssistantMessage(state, effectiveRunMarker)
+    : undefined
   if (assistantMessage) syncBridgeReasoningToMessage(assistantMessage, reasoning)
-  const persistedId = addMessage({
-    session_id: sessionId,
-    role: 'assistant',
-    content,
-    reasoning: reasoning || null,
-    reasoning_content: reasoning || null,
-    timestamp: Math.floor(Date.now() / 1000),
+  const { ids: [persistedId] } = persistRunMessages(state, {
+    sessionId,
+    runMarker: effectiveRunMarker,
+    messages: [{
+      role: 'assistant',
+      content,
+      reasoning: reasoning || null,
+      reasoning_content: reasoning || null,
+      timestamp: Math.floor(Date.now() / 1000),
+    }],
   })
   state.bridgePendingAssistantContent = ''
   state.bridgePendingReasoningContent = ''
@@ -92,14 +98,16 @@ export function recordBridgeToolStarted(
   })
 
   const openMessage = findOpenBridgeAssistantMessage(state, runMarker)
+  let message: SessionMessage
   if (openMessage && !openMessage.content && !openMessage.tool_calls?.length) {
     openMessage.tool_calls = [toolCall]
     openMessage.finish_reason = 'tool_calls'
     openMessage.reasoning = reasoning || openMessage.reasoning || null
     openMessage.reasoning_content = reasoning || openMessage.reasoning_content || null
     openMessage.timestamp = timestamp
+    message = openMessage
   } else {
-    state.messages.push({
+    message = {
       id: state.messages.length + 1,
       session_id: sessionId,
       runMarker,
@@ -110,17 +118,13 @@ export function recordBridgeToolStarted(
       reasoning: reasoning || null,
       reasoning_content: reasoning || null,
       timestamp,
-    })
+    }
+    state.messages.push(message)
   }
-  addMessage({
-    session_id: sessionId,
-    role: 'assistant',
-    content: '',
-    tool_calls: [toolCall],
-    finish_reason: 'tool_calls',
-    reasoning: reasoning || null,
-    reasoning_content: reasoning || null,
-    timestamp,
+  persistRunMessages(state, {
+    sessionId,
+    runMarker,
+    messages: [message],
   })
   state.bridgePendingReasoningContent = ''
 
@@ -163,25 +167,18 @@ export function recordBridgeToolCompleted(
     Object.keys(ev).join(','),
   )
 
-  const message: SessionMessage = {
-    id: state.messages.length + 1,
-    session_id: sessionId,
+  const { ids: [persistedId], messages: [message] } = persistRunMessages(state, {
+    sessionId,
     runMarker,
-    role: 'tool',
-    content: output,
-    tool_call_id: id,
-    tool_name: toolName || pending?.name || null,
-    timestamp,
-  }
-  const persistedId = addMessage({
-    session_id: sessionId,
-    role: 'tool',
-    content: output,
-    tool_call_id: id,
-    tool_name: toolName || pending?.name || null,
-    timestamp,
+    appendToState: true,
+    messages: [{
+      role: 'tool',
+      content: output,
+      tool_call_id: id,
+      tool_name: toolName || pending?.name || null,
+      timestamp,
+    }],
   })
-  state.messages.push(message)
 
   const duration = pending?.startedAt
     ? Math.round((Date.now() - pending.startedAt) / 10) / 100
@@ -199,25 +196,18 @@ export function recordBridgeMoaDisplayTool(
   content: string,
 ) {
   const timestamp = Math.floor(Date.now() / 1000)
-  state.messages.push({
-    id: state.messages.length + 1,
-    session_id: sessionId,
+  persistRunMessages(state, {
+    sessionId,
     runMarker,
-    role: 'moa',
-    content,
-    display_role: 'tool',
-    tool_call_id: toolCallId,
-    tool_name: toolName,
-    timestamp,
-  })
-  addMessage({
-    session_id: sessionId,
-    role: 'moa',
-    content,
-    display_role: 'tool',
-    tool_call_id: toolCallId,
-    tool_name: toolName,
-    timestamp,
+    appendToState: true,
+    messages: [{
+      role: 'moa',
+      content,
+      display_role: 'tool',
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      timestamp,
+    }],
   })
 }
 

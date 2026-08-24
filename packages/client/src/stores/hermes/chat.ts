@@ -1,11 +1,11 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { ProviderApiMode } from '@/api/hermes/system'
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
@@ -82,11 +82,13 @@ export interface Message {
   // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
-  systemType?: 'command' | 'error' | 'fork-divider'
+  systemType?: 'command' | 'error' | 'fork-divider' | 'tool-run'
   commandAction?: string
   commandData?: Record<string, unknown>
   finishReason?: string | null
   runMarker?: string | null
+  toolRunId?: string
+  toolMessages?: Message[]
 }
 
 export type SubagentStreamStatus =
@@ -421,9 +423,9 @@ export interface QueueInsertionState {
   generation: string
   runId?: string
   queueId: string
-  runtime: 'hermes' | 'ekko'
+  runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
   phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn'
-  guarantee: 'strict'
+  guarantee: 'strict' | 'immediate'
   requestedAt: number
 }
 
@@ -776,6 +778,11 @@ function readRunMarker(value: unknown): string | null | undefined {
       ? record.run_marker as string | null
       : undefined
   }
+  if (Object.prototype.hasOwnProperty.call(record, 'run_id')) {
+    return typeof record.run_id === 'string' || record.run_id == null
+      ? record.run_id as string | null
+      : undefined
+  }
   return undefined
 }
 
@@ -1105,6 +1112,7 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     apiMode: s.api_mode,
+    reasoningEffort: s.reasoning_effort || undefined,
     messageCount: s.message_count,
     messageTotal: s.message_count,
     loadedMessageCount: 0,
@@ -1322,6 +1330,9 @@ export const useChatStore = defineStore('chat', () => {
   let loadSessionsRequestSequence = 0
   let switchSessionRequestSequence = 0
   let activeSelectionSequence = 0
+  const reasoningEffortWriteChains = new Map<string, Promise<boolean>>()
+  const reasoningEffortWriteTargets = new Map<string, string | undefined>()
+  const reasoningEffortConfirmedValues = new Map<string, string | undefined>()
 
   function beginMessageLoad(sessionId: string, requestSequence: number) {
     const next = new Map(messageLoadRequests.value)
@@ -1692,6 +1703,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.model = fresh.model
           existing.provider = fresh.provider
           existing.apiMode = fresh.apiMode || existing.apiMode
+          existing.reasoningEffort = fresh.reasoningEffort
           existing.messageCount = fresh.messageCount
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
@@ -1897,6 +1909,7 @@ export const useChatStore = defineStore('chat', () => {
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
+          applyResumedSessionSettings(data)
           if (typeof data.workspace === 'string') {
             target.workspace = data.workspace.trim() || null
             target.isLocalOnly = false
@@ -1984,6 +1997,7 @@ export const useChatStore = defineStore('chat', () => {
                 if (existingTool) {
                   updateMessage(sessionId, existingTool.id, {
                     toolName: e.tool || e.name,
+                    runMarker: existingTool.runMarker || readRunMarker(e),
                     toolArgs: hasRuntimeToolPayload((e as any).arguments) ? (e as any).arguments : existingTool.toolArgs,
                     toolPreview: e.preview || existingTool.toolPreview,
                     toolStatus: existingTool.toolStatus || 'running',
@@ -1996,6 +2010,7 @@ export const useChatStore = defineStore('chat', () => {
                     timestamp: Date.now(),
                     toolName: e.tool || e.name,
                     toolCallId,
+                    runMarker: readRunMarker(e),
                     toolPreview: e.preview,
                     toolArgs: runtimeToolPayloadOrUndefined((e as any).arguments),
                     toolStatus: 'running',
@@ -2028,7 +2043,9 @@ export const useChatStore = defineStore('chat', () => {
                   continue
                 }
                 if (toolMsgs.length > 0) {
-                  updateMessage(sessionId, toolMsgs[toolMsgs.length - 1].id, {
+                  const last = toolMsgs[toolMsgs.length - 1]
+                  updateMessage(sessionId, last.id, {
+                    runMarker: last.runMarker || readRunMarker(e),
                     toolStatus: e.event === 'tool.failed' || e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
                     toolDuration: e.duration,
                     toolResult: output,
@@ -2153,6 +2170,8 @@ export const useChatStore = defineStore('chat', () => {
     if (!targetId) return false
     const target = sessions.value.find(s => s.id === targetId)
     const activeTarget = activeSession.value?.id === targetId ? activeSession.value : null
+    const session = target || activeTarget
+    if (session?.codingAgentMode === 'global' && isCodingAgentLikeSession(session)) return false
     const previousProvider = String(target?.provider ?? activeTarget?.provider ?? '')
     const nextProvider = provider || ''
     const shouldClearRuntimeCredentials = previousProvider !== nextProvider && (
@@ -2164,6 +2183,7 @@ export const useChatStore = defineStore('chat', () => {
       : undefined)
     const isLocalOnly = target?.isLocalOnly === true || activeTarget?.isLocalOnly === true
     if (!isLocalOnly) {
+      await reasoningEffortWriteChains.get(targetId)?.catch(() => false)
       const ok = await setSessionModel(targetId, modelId, provider || '', preservedApiMode)
       if (!ok) return false
     }
@@ -2171,12 +2191,14 @@ export const useChatStore = defineStore('chat', () => {
       target.model = modelId
       target.provider = provider || ''
       target.apiMode = preservedApiMode
+      target.reasoningEffort = undefined
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(target)
     }
     if (activeTarget) {
       activeTarget.model = modelId
       activeTarget.provider = provider || ''
       activeTarget.apiMode = preservedApiMode
+      activeTarget.reasoningEffort = undefined
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
     return true
@@ -2509,6 +2531,7 @@ export const useChatStore = defineStore('chat', () => {
       const update: Partial<Message> = {
         toolName: 'moa_reference',
         toolCallId,
+        runMarker: readRunMarker(evt),
         toolPreview: label.slice(0, 220),
         toolStatus: 'done',
         toolResult: output,
@@ -2535,6 +2558,7 @@ export const useChatStore = defineStore('chat', () => {
     const update: Partial<Message> = {
       toolName: 'moa_aggregating',
       toolCallId,
+      runMarker: readRunMarker(evt),
       toolPreview: aggregator.slice(0, 220),
       toolStatus: 'running',
       toolArgs: { aggregator },
@@ -2807,9 +2831,14 @@ export const useChatStore = defineStore('chat', () => {
       generation,
       runId: typeof raw.run_id === 'string' ? raw.run_id : undefined,
       queueId,
-      runtime: raw.runtime === 'ekko' ? 'ekko' : 'hermes',
+      runtime: raw.runtime === 'ekko'
+        || raw.runtime === 'claude-code'
+        || raw.runtime === 'codex'
+        || raw.runtime === 'pi'
+        ? raw.runtime
+        : 'hermes',
       phase,
-      guarantee: 'strict',
+      guarantee: raw.guarantee === 'immediate' ? 'immediate' : 'strict',
       requestedAt: typeof raw.requested_at === 'number' ? raw.requested_at : Date.now(),
     })
     queueInsertionStates.value = nextMap
@@ -3101,6 +3130,36 @@ export const useChatStore = defineStore('chat', () => {
       activeSession.value.workspace = workspace
       activeSession.value.isLocalOnly = false
     }
+  }
+
+  function applySessionSettingsUpdate(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const targets = [sessions.value.find(s => s.id === sid), activeSession.value?.id === sid ? activeSession.value : null]
+      .filter((session): session is Session => Boolean(session))
+    for (const target of new Set(targets)) {
+      if (typeof evt.model === 'string') target.model = evt.model
+      if (typeof evt.provider === 'string') target.provider = evt.provider
+      if (typeof evt.api_mode === 'string') target.apiMode = evt.api_mode as ProviderApiMode || undefined
+      if (typeof evt.reasoning_effort === 'string') {
+        const incomingEffort = evt.reasoning_effort || undefined
+        const pendingEffort = reasoningEffortWriteTargets.get(sid)
+        if (!reasoningEffortWriteTargets.has(sid) || pendingEffort === incomingEffort) {
+          target.reasoningEffort = incomingEffort
+        }
+      }
+    }
+  }
+
+  function applyResumedSessionSettings(data: ResumeSessionPayload) {
+    applySessionSettingsUpdate({
+      event: 'session.settings.updated',
+      session_id: data.session_id,
+      ...(typeof data.model === 'string' ? { model: data.model } : {}),
+      ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
+      ...(typeof data.api_mode === 'string' ? { api_mode: data.api_mode || undefined } : {}),
+      ...(typeof data.reasoning_effort === 'string' ? { reasoning_effort: data.reasoning_effort } : {}),
+    })
   }
 
   function primeNotificationSoundIfEnabled() {
@@ -3409,6 +3468,7 @@ export const useChatStore = defineStore('chat', () => {
         if (data.inputTokens != null) target.inputTokens = data.inputTokens
         if (data.outputTokens != null) target.outputTokens = data.outputTokens
         if (data.contextTokens != null) target.contextTokens = data.contextTokens
+        applyResumedSessionSettings(data)
 
         if (Array.isArray(data.messages)) {
           const previousActiveAssistantMessageId = activeAssistantMessageId
@@ -3566,6 +3626,11 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'session.workspace.updated': {
               applySessionWorkspaceUpdate(evt)
+              break
+            }
+
+            case 'session.settings.updated': {
+              applySessionSettingsUpdate(evt)
               break
             }
 
@@ -3802,6 +3867,7 @@ export const useChatStore = defineStore('chat', () => {
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
                   toolName: evt.tool || evt.name,
+                  runMarker: existingTool.runMarker || readRunMarker(evt),
                   toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
                   toolPreview: evt.preview || existingTool.toolPreview,
                   reasoning: existingTool.reasoning || toolReasoning,
@@ -3816,6 +3882,7 @@ export const useChatStore = defineStore('chat', () => {
                 timestamp: Date.now(),
                 toolName: evt.tool || evt.name,
                 toolCallId,
+                runMarker: readRunMarker(evt),
                 toolPreview: evt.preview,
                 toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
                 reasoning: toolReasoning,
@@ -3860,6 +3927,7 @@ export const useChatStore = defineStore('chat', () => {
                 const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
+                  runMarker: last.runMarker || readRunMarker(evt),
                   toolStatus: hasError ? 'error' : 'done',
                   toolDuration: duration,
                   toolResult: output,
@@ -4269,6 +4337,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'session.settings.updated': {
+          applySessionSettingsUpdate(evt)
+          break
+        }
+
         case 'agent.event': {
           handleAgentEvent(evt)
           break
@@ -4512,6 +4585,7 @@ export const useChatStore = defineStore('chat', () => {
           if (existingTool) {
             updateMessage(sid, existingTool.id, {
               toolName: evt.tool || evt.name,
+              runMarker: existingTool.runMarker || readRunMarker(evt),
               toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
               toolPreview: evt.preview || existingTool.toolPreview,
               reasoning: existingTool.reasoning || toolReasoning,
@@ -4526,6 +4600,7 @@ export const useChatStore = defineStore('chat', () => {
             timestamp: Date.now(),
             toolName: evt.tool || evt.name,
             toolCallId,
+            runMarker: readRunMarker(evt),
             toolPreview: evt.preview,
             toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
             reasoning: toolReasoning,
@@ -4567,7 +4642,9 @@ export const useChatStore = defineStore('chat', () => {
           }
           if (toolMsgs.length > 0) {
             const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
-            updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
+            const last = toolMsgs[toolMsgs.length - 1]
+            updateMessage(sid, last.id, {
+              runMarker: last.runMarker || readRunMarker(evt),
               toolStatus: hasError ? 'error' : 'done',
               toolDuration: (evt as any).duration,
               toolResult: output,
@@ -4846,6 +4923,7 @@ export const useChatStore = defineStore('chat', () => {
       onAgentEvent: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onSessionWorkspaceUpdated: (evt) => handleEvent(evt),
+      onSessionSettingsUpdated: applySessionSettingsUpdate,
       onRunQueued: (evt) => handleEvent(evt),
       onQueueInsertionUpdated: (evt) => handleEvent(evt),
       onClarifyRequested: (evt) => handleEvent(evt),
@@ -4937,6 +5015,7 @@ export const useChatStore = defineStore('chat', () => {
 
   onSessionTitleUpdated(applyGeneratedSessionTitle)
   onSessionWorkspaceUpdated(applySessionWorkspaceUpdate)
+  onSessionSettingsUpdated(applySessionSettingsUpdate)
 
   function stopStreaming() {
     const sid = activeSessionId.value
@@ -4989,6 +5068,7 @@ export const useChatStore = defineStore('chat', () => {
               setAbortState(sid, null)
             }
             if (!data.isWorking) setCompressionState(sid, null)
+            applyResumedSessionSettings(data)
             if (data.messages?.length && activeSession.value) {
               if (typeof data.workspace === 'string') {
                 activeSession.value.workspace = data.workspace.trim() || null
@@ -5073,41 +5153,44 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Persisted in localStorage keyed by sessionId so the choice survives
-  // page reloads. Cleared on session deletion is NOT implemented (best-effort
-  // — orphan keys are tiny and never read again).
-  const REASONING_LS_PREFIX = 'hermes:reasoning_effort:'
-  function setSessionReasoningEffort(sessionId: string, effort: string) {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session) return
-    session.reasoningEffort = effort || undefined
-    try {
-      if (effort) {
-        localStorage.setItem(REASONING_LS_PREFIX + sessionId, effort)
-      } else {
-        localStorage.removeItem(REASONING_LS_PREFIX + sessionId)
-      }
-    } catch {
-      // localStorage may be unavailable (private mode); silently ignore
+  async function setSessionReasoningEffort(sessionId: string, effort: string): Promise<boolean> {
+    const target = sessions.value.find(s => s.id === sessionId)
+    const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
+    const session = target || activeTarget
+    if (!session) return false
+
+    const nextEffort = effort || undefined
+    const previousEffort = session.reasoningEffort
+    if (target) target.reasoningEffort = nextEffort
+    if (activeTarget) activeTarget.reasoningEffort = nextEffort
+    if (session.isLocalOnly) return true
+
+    if (!reasoningEffortWriteChains.has(sessionId)) {
+      reasoningEffortConfirmedValues.set(sessionId, previousEffort)
     }
+    reasoningEffortWriteTargets.set(sessionId, nextEffort)
+    const previousWrite = reasoningEffortWriteChains.get(sessionId) || Promise.resolve(true)
+    const write: Promise<boolean> = previousWrite
+      .catch(() => false)
+      .then(() => persistSessionReasoningEffort(sessionId, effort))
+      .then((ok) => {
+        if (ok) reasoningEffortConfirmedValues.set(sessionId, nextEffort)
+        if (!ok && reasoningEffortWriteTargets.get(sessionId) === nextEffort) {
+          const confirmedEffort = reasoningEffortConfirmedValues.get(sessionId)
+          if (target) target.reasoningEffort = confirmedEffort
+          if (activeTarget) activeTarget.reasoningEffort = confirmedEffort
+        }
+        return ok
+      })
+      .finally(() => {
+        if (reasoningEffortWriteChains.get(sessionId) !== write) return
+        reasoningEffortWriteChains.delete(sessionId)
+        reasoningEffortWriteTargets.delete(sessionId)
+        reasoningEffortConfirmedValues.delete(sessionId)
+      })
+    reasoningEffortWriteChains.set(sessionId, write)
+    return write
   }
-  function getStoredReasoningEffort(sessionId: string): string | undefined {
-    try {
-      return localStorage.getItem(REASONING_LS_PREFIX + sessionId) || undefined
-    } catch {
-      return undefined
-    }
-  }
-  // Hydrate reasoningEffort onto sessions whenever they come in fresh from
-  // the server (mapHermesSession doesn't carry this — it's client-only state).
-  watch(sessions, (list) => {
-    for (const s of list) {
-      if (s.reasoningEffort === undefined) {
-        const stored = getStoredReasoningEffort(s.id)
-        if (stored) s.reasoningEffort = stored
-      }
-    }
-  }, { deep: false })
 
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
