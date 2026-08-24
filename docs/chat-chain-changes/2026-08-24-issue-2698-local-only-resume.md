@@ -1,6 +1,6 @@
 ---
 date: 2026-08-24
-pr: pending
+pr: 2717
 feature: Defer local-only session resume
 impact: Newly created chats no longer request a server resume before their first run persists the session.
 ---
