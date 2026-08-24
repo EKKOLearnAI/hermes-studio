@@ -134,6 +134,30 @@ describe('chat-run socket reconnect handling', () => {
     expect(onDone).not.toHaveBeenCalled()
   })
 
+  it('defers reconnect resume until the session is persisted', async () => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
+    let persisted = false
+
+    startRunViaSocket(
+      { session_id: 'local-session', input: 'hello', profile: 'default', source: 'cli' },
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      { shouldResumeOnReconnect: () => persisted },
+    )
+
+    const socket = socketState.sockets[0]
+    socket.__trigger('disconnect', 'ping timeout')
+    socket.__trigger('connect')
+    expect(socket.emit).not.toHaveBeenCalledWith('resume', expect.anything())
+
+    persisted = true
+    socket.__trigger('disconnect', 'ping timeout')
+    socket.__trigger('connect')
+    expect(socket.emit).toHaveBeenCalledWith('resume', { session_id: 'local-session', profile: 'default' })
+  })
+
   it('keeps concurrent resume callbacks scoped to their requested session', async () => {
     const { resumeSession } = await import('../../packages/client/src/api/hermes/chat')
     const onSessionA = vi.fn()

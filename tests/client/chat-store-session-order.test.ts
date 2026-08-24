@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
-import { startRunViaSocket } from '@/api/hermes/chat'
+import { resumeSession, startRunViaSocket } from '@/api/hermes/chat'
 import { archiveSession, fetchSessions } from '@/api/hermes/sessions'
 
 vi.mock('@/api/hermes/sessions', () => ({
@@ -162,6 +162,59 @@ describe('chat session ordering', () => {
     expect(store.sessions.map(session => session.id)).toEqual(['session-b'])
     expect(store.activeSessionId).toBe('session-b')
     expect(store.activeSession?.id).toBe('session-b')
+  })
+
+  it('does not resume a local-only chat before its first run persists the session', async () => {
+    vi.mocked(fetchSessions).mockResolvedValue([])
+
+    const store = useChatStore()
+    const newSession = store.newChat()
+
+    await Promise.resolve()
+
+    expect(store.activeSessionId).toBe(newSession.id)
+    expect(newSession.isLocalOnly).toBe(true)
+    expect(resumeSession).not.toHaveBeenCalledWith(
+      newSession.id,
+      expect.any(Function),
+      expect.anything(),
+      expect.anything(),
+    )
+
+    vi.mocked(resumeSession).mockClear()
+    document.dispatchEvent(new Event('visibilitychange'))
+    await Promise.resolve()
+
+    expect(resumeSession).not.toHaveBeenCalledWith(
+      newSession.id,
+      expect.any(Function),
+      expect.anything(),
+      expect.anything(),
+    )
+
+    await store.sendMessage('first message')
+    const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
+    expect(runCall?.[0]).toEqual(expect.objectContaining({ session_id: newSession.id }))
+    const shouldResumeOnReconnect = runCall?.[5]?.shouldResumeOnReconnect
+    expect(shouldResumeOnReconnect?.()).toBe(false)
+
+    const onEvent = runCall?.[1]
+    onEvent?.({ event: 'run.started', session_id: newSession.id, run_id: 'run-1' })
+
+    expect(newSession.isLocalOnly).toBe(false)
+    expect(shouldResumeOnReconnect?.()).toBe(true)
+
+    runCall?.[2]?.()
+    vi.mocked(resumeSession).mockClear()
+    document.dispatchEvent(new Event('visibilitychange'))
+    await Promise.resolve()
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      newSession.id,
+      expect.any(Function),
+      'default',
+      'chat-run',
+    )
   })
 
   it('does not let an in-flight session load replace a newly created chat', async () => {

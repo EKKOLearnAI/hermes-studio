@@ -916,6 +916,7 @@ export function startRunViaSocket(
   onStarted?: (runId: string) => void,
   options?: {
     onReconnectResume?: (data: ResumeSessionPayload) => void
+    shouldResumeOnReconnect?: () => boolean
     transport?: ChatRunTransport
   },
 ): { abort: () => void } {
@@ -986,6 +987,7 @@ export function startRunViaSocket(
   const handleSocketReconnect = () => {
     if (closed || !sawTransientDisconnect) return
     sawTransientDisconnect = false
+    if (options?.shouldResumeOnReconnect && !options.shouldResumeOnReconnect()) return
     emitReconnectResume()
   }
   socket.on('connect', handleSocketReconnect)
