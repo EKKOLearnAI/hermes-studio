@@ -3289,6 +3289,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_47_1: 'This release covers all 13 PRs merged after v0.6.46, led by standalone social message delivery, configurable image models, more reliable chat handoffs, and focused frontend polish',
+    new_0_6_47_2: 'The new Social Messages workspace manages standalone Telegram, Feishu, and Weixin connections, per-channel notification languages, localized binding and status updates, and per-session message push controls (#2718)',
+    new_0_6_47_3: 'Image generation and editing can now use dedicated provider and model choices in Auxiliary Models, while explicit request selections and existing defaults retain precedence (#2691)',
+    new_0_6_47_4: 'Group Chat rooms now glow around the complete composite avatar when any Agent is running, and workspace links with line or column locations open the correct file preview (#2701, #2702)',
+    new_0_6_47_5: 'Gateway approvals now settle the exact interrupted or answered request, and App Relay preserves If-Match for safe conditional mutations (#2681, #2710)',
+    new_0_6_47_6: 'Codex and Claude Code proxies consolidate system instructions into one leading message, restoring compatibility with vLLM-backed providers that enforce message order (#2688, #2714)',
+    new_0_6_47_7: 'The upload limit is configurable with HERMES_MAX_UPLOAD_SIZE, and the READMEs now document the hermes-web-ui-mcp CLI alias (#2689, #2704)',
+    new_0_6_47_8: 'App chat resume can reuse unchanged cached message pages while refreshing run, queue, usage, and session metadata, reducing foreground restore payloads (#2719)',
+    new_0_6_47_9: 'The GLM-5.3 reasoning normalization and session-selection changes from #2706 were fully rolled back by #2708, preserving v0.6.46 behavior while the fix is reconsidered',
     new_0_6_46_1: 'This release covers all 13 PRs merged after v0.6.45, bringing clearer session and history navigation, reusable Group Chat Agents, Git-aware workspaces, safer App Relay routing, and more reliable resumable runs',
     new_0_6_46_2: 'Recent sessions can be collapsed and now show category state, while History folds completed tool calls into the same compact run groups used by live chat (#2642, #2697)',
     new_0_6_46_3: 'Group Chat adds reusable Agent presets with separate selection and management, localized duplicate-name errors, validation for disabled models, and restored rainbow activity glow (#2644, #2670, #2678)',
