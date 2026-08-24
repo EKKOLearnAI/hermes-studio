@@ -600,6 +600,22 @@ describe('LocalAppRelayServer', () => {
     })))
     expect(local.emit).toHaveBeenCalledWith('run', { session_id: 'session-1', input: 'hello' })
 
+    const resumeAck = vi.fn()
+    app.__handlers.get('socket.event')({
+      id: 'chat-1',
+      event: 'app.resume',
+      payload: { session_id: 'session-1', id: 'cache-1' },
+    }, resumeAck)
+    await vi.waitFor(() => expect(resumeAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'chat-1',
+      ok: true,
+      event: 'app.resume',
+    })))
+    expect(local.emit).toHaveBeenCalledWith('app.resume', {
+      session_id: 'session-1',
+      id: 'cache-1',
+    })
+
     const insertAck = vi.fn()
     app.__handlers.get('socket.event')({
       id: 'chat-1',

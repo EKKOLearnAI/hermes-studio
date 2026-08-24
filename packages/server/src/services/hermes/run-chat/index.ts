@@ -33,7 +33,12 @@ import {
   parseCodingAgentSessionCommand,
 } from '../../coding-agents/session-command'
 import { contentBlocksToString } from './content-blocks'
-import { buildOutboundRunEvent, buildResumeEvents, buildResumeMessagePage } from './resume-payload'
+import {
+  buildAppResumeMessagePage,
+  buildOutboundRunEvent,
+  buildResumeEvents,
+  buildResumeMessagePage,
+} from './resume-payload'
 import type {
   BackgroundContinuationContext,
   ChatCodingAgentId,
@@ -582,6 +587,23 @@ export class ChatRunSocket {
       }
       socket.join(`session:${sid}`)
       await this.resumeSession(socket, sid)
+    })
+
+    socket.on('app.resume', async (data: { session_id?: string; id?: string }) => {
+      if (!data.session_id || typeof data.id !== 'string' || data.id.length > 128) return
+      const sid = data.session_id
+      try {
+        requireSocketSessionAccess(sid)
+      } catch (err) {
+        socket.emit('run.failed', {
+          event: 'run.failed',
+          session_id: sid,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
+      socket.join(`session:${sid}`)
+      await this.resumeSession(socket, sid, { event: 'app.resumed', cachedId: data.id })
     })
 
     socket.on('abort', (data: { session_id?: string }) => {
@@ -1223,7 +1245,11 @@ export class ChatRunSocket {
 
   // --- Resume ---
 
-  private async resumeSession(socket: Socket, sid: string) {
+  private async resumeSession(
+    socket: Socket,
+    sid: string,
+    options?: { event: 'app.resumed'; cachedId: string },
+  ) {
     let state = this.sessionMap.get(sid)
     if (!state) {
       state = await loadSessionStateFromDb(sid, this.sessionMap)
@@ -1239,9 +1265,13 @@ export class ChatRunSocket {
       messageTotal: state.messageTotal,
       messageStateBaselineCount: state.messageStateBaselineCount,
     })
-    socket.emit('resumed', {
+    const appMessagePage = options
+      ? buildAppResumeMessagePage(messagePage, options.cachedId)
+      : null
+    const outboundMessagePage = appMessagePage || messagePage
+    socket.emit(options?.event || 'resumed', {
       session_id: sid,
-      ...messagePage,
+      ...outboundMessagePage,
       parentSessionId: sessionDetail?.parent_session_id || null,
       forkPointMessageId: sessionDetail?.fork_point_message_id || null,
       parentTitle: sessionDetail?.parent_title || null,
@@ -1274,8 +1304,9 @@ export class ChatRunSocket {
       backgroundPending: this.backgroundPendingCount(state),
     })
 
-    logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d)',
-      socket.id, sid, state.isWorking, state.messages.length)
+    logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d, app cache: %s)',
+      socket.id, sid, state.isWorking, state.messages.length,
+      appMessagePage ? (appMessagePage.messagesCached ? 'hit' : 'miss') : 'n/a')
   }
 
   private async reattachBridgeRun(socket: Socket, sid: string, state: SessionState) {

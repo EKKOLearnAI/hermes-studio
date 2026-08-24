@@ -32,6 +32,7 @@ const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat', '/workflo
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
+  'app.resume',
   'abort',
   'insert_queued_run',
   'cancel_queued_run',

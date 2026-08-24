@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import type { SessionMessage } from './types'
 
 export const RESUME_TOOL_RESULT_DISPLAY_LIMIT = 1_000
@@ -38,6 +39,12 @@ export interface ResumeMessagePage {
   messageLoadedCount: number
   messagePageLimit: number
   hasMoreBefore: boolean
+}
+
+export type AppResumeMessagePage = Omit<ResumeMessagePage, 'messages'> & {
+  id: string
+  messages?: SessionMessage[]
+  messagesCached: boolean
 }
 
 function stringifyLength(value: unknown): number {
@@ -220,6 +227,34 @@ export function buildResumeMessagePage(
     messagePageLimit,
     hasMoreBefore: messageTotal > messageLoadedCount,
   }
+}
+
+/**
+ * Build the App-only conditional message page. The App persists the last full
+ * page under this opaque id and sends the id with every `app.resume`. When the
+ * page is unchanged, only pagination metadata and live run state cross the
+ * relay; the App reuses its cached messages.
+ */
+export function buildAppResumeMessagePage(
+  page: ResumeMessagePage,
+  cachedIdInput: unknown,
+): AppResumeMessagePage {
+  const id = createHash('sha256')
+    .update(JSON.stringify(page))
+    .digest('hex')
+    .slice(0, 32)
+  const cachedId = typeof cachedIdInput === 'string' ? cachedIdInput.trim() : ''
+  if (cachedId && cachedId === id) {
+    return {
+      id,
+      messagesCached: true,
+      messageTotal: page.messageTotal,
+      messageLoadedCount: page.messageLoadedCount,
+      messagePageLimit: page.messagePageLimit,
+      hasMoreBefore: page.hasMoreBefore,
+    }
+  }
+  return { ...page, id, messagesCached: false }
 }
 
 /**
