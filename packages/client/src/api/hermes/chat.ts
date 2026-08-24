@@ -42,6 +42,8 @@ export interface StartRunRequest {
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  /** Whether completion messages from this session should be pushed. */
+  push_enabled?: boolean
 }
 
 export interface StartRunResponse {
@@ -108,6 +110,7 @@ export interface RunEvent {
   provider?: string
   api_mode?: ProviderApiMode
   reasoning_effort?: string
+  push_enabled?: boolean
   status?: string
   summary?: string
   arguments?: unknown
@@ -171,6 +174,7 @@ export interface ResumeSessionPayload {
   provider?: string
   api_mode?: ProviderApiMode | ''
   reasoning_effort?: string
+  push_enabled?: boolean
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
   queueInsertion?: {

@@ -79,6 +79,7 @@ export interface EkkoAgentRunSocketData {
   peerExcludeSocketId?: string
   queue_id?: string
   reasoning_effort?: string
+  push_enabled?: boolean
   background_delegation_enabled?: boolean
   background_delegation_id?: string
   autonomous?: boolean
@@ -402,6 +403,7 @@ export async function handleEkkoAgentRun(
     socket.emit('run.failed', { event: 'run.failed', session_id: sessionId, error: 'ekko-agent run requires coding_agent_id=ekko-agent' })
     return
   }
+  const authenticatedUserId = socket.data?.user?.id == null ? undefined : String(socket.data.user.id)
 
   socket.join(`session:${sessionId}`)
   const state = getOrCreateSession(sessionMap, sessionId)
@@ -418,6 +420,9 @@ export async function handleEkkoAgentRun(
   state.abortController = abortController
 
   const storedSession = getSession(sessionId)
+  if (storedSession && !storedSession.user_id && authenticatedUserId) {
+    updateSession(sessionId, { user_id: authenticatedUserId })
+  }
   const modelConfig = await resolveBridgeRunModelConfig({
     profile,
     sessionModel: storedSession?.model,
@@ -486,6 +491,7 @@ export async function handleEkkoAgentRun(
       source: sessionSource,
       agent: 'ekko-agent',
       agent_mode: 'scoped',
+      user_id: authenticatedUserId,
       model: modelConfig.model,
       provider: modelConfig.provider,
       api_mode: apiMode || '',
@@ -493,6 +499,7 @@ export async function handleEkkoAgentRun(
       title,
       workspace,
       category_id: data.category_id,
+      push_enabled: data.push_enabled,
     })
   } else if (
     storedSession.source !== sessionSource ||
@@ -1163,7 +1170,6 @@ export async function handleEkkoAgentRun(
 
   try {
     logger.info('[chat-run-socket] starting ekko-agent run for session %s', sessionId)
-    const authenticatedUserId = socket.data?.user?.id == null ? undefined : String(socket.data.user.id)
     const toolContext = {
       cwd: workspace,
       workspaceRoot: workspace,

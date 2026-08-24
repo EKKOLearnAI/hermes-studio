@@ -83,6 +83,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
     provider: 'openai',
     api_mode: 'responses',
     reasoning_effort: 'high',
+    push_enabled: 1,
   })),
   getSessionDetail: vi.fn(() => null),
 }))
@@ -670,6 +671,7 @@ describe('ChatRunSocket queued bridge runs', () => {
       provider: 'openai',
       api_mode: 'responses',
       reasoning_effort: 'high',
+      push_enabled: true,
     }))
   })
 

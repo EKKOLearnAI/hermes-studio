@@ -20,6 +20,7 @@ const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const archiveMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const unarchiveMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setPushEnabledMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -68,6 +69,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   rename: renameMock,
   archive: archiveMock,
   unarchive: unarchiveMock,
+  setPushEnabled: setPushEnabledMock,
   setWorkspace: setWorkspaceMock,
   setCategory: setCategoryMock,
   setModel: setModelMock,
@@ -117,6 +119,7 @@ describe('session routes', () => {
     renameMock.mockClear()
     archiveMock.mockClear()
     unarchiveMock.mockClear()
+    setPushEnabledMock.mockClear()
     setCategoryMock.mockClear()
     setModelMock.mockClear()
     setReasoningEffortMock.mockClear()
@@ -176,6 +179,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/:id/rename',
       '/api/hermes/sessions/:id/archive',
       '/api/hermes/sessions/:id/unarchive',
+      '/api/hermes/sessions/:id/push-enabled',
       '/api/hermes/sessions/:id/category',
       '/api/hermes/sessions/:id/model',
       '/api/hermes/sessions/:id/reasoning-effort',

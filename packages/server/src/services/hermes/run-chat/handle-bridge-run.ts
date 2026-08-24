@@ -424,7 +424,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; category_id?: number | null; source?: string; session_source?: 'global_agent' | 'workflow' | 'group_chat'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; background_delegation_enabled?: boolean; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; category_id?: number | null; source?: string; session_source?: 'global_agent' | 'workflow' | 'group_chat'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string; push_enabled?: boolean; background_delegation_enabled?: boolean; one_shot_model?: boolean; background_delegation_id?: string; background_claim_id?: string; autonomous?: boolean; onEvent?: (event: string, payload: any) => void },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -443,6 +443,7 @@ export async function handleBridgeRun(
     socket.emit('run.failed', { event: 'run.failed', queue_id: data.queue_id, error: 'session_id is required for cli source' })
     return
   }
+  const socketUser = socket.data.user as AuthenticatedUser | undefined
   const callbackContext = data.background_delegation_id
     && backgroundContinuationContext?.runtime === 'hermes'
     && backgroundContinuationContext.delegationId === data.background_delegation_id
@@ -458,6 +459,9 @@ export async function handleBridgeRun(
     || instructions
     || getSystemPrompt(undefined, { source: data.session_source || data.source })
   const sessionRow = getSession(session_id)
+  if (sessionRow && !sessionRow.user_id && socketUser?.id != null) {
+    updateSession(session_id, { user_id: String(socketUser.id) })
+  }
   const reasoningEffort = callbackContext?.reasoningEffort ?? data.reasoning_effort ?? sessionRow?.reasoning_effort
   const requestedWorkspace = callbackContext
     ? callbackContext.workspace
@@ -482,7 +486,6 @@ export async function handleBridgeRun(
     if (resolvedProvider && sessionRow.provider !== resolvedProvider) updates.provider = resolvedProvider
     if (Object.keys(updates).length > 0) updateSession(session_id, updates)
   }
-  const socketUser = socket.data.user as AuthenticatedUser | undefined
   await writeModelRunProfileToken(socketUser, profile)
   const runPrompt = [
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
@@ -555,7 +558,7 @@ export async function handleBridgeRun(
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
       const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
+      createSession({ id: session_id, profile, source: runSource, user_id: socketUser?.id, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id, push_enabled: data.push_enabled })
     }
     messageId = addMessage({
       session_id,
@@ -577,7 +580,7 @@ export async function handleBridgeRun(
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
+    createSession({ id: session_id, profile, source: runSource, user_id: socketUser?.id, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id, push_enabled: data.push_enabled })
   }
 
   socket.join(`session:${session_id}`)

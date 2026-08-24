@@ -72,6 +72,7 @@
   "dependencies": {
     "@audio/decode-mp3": "^1.1.0",
     "@audio/decode-wav": "^1.2.0",
+    "@larksuiteoapi/node-sdk": "^1.73.0",
     "@vscode/markdown-it-katex": "^1.1.2",
     "@vue-flow/background": "^1.3.2",
     "@vue-flow/controls": "^1.1.3",

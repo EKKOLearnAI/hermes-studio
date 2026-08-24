@@ -1,4 +1,7 @@
+import { socialMessagesKo } from '../social-messages-locales'
+
 export default {
+  socialMessages: socialMessagesKo,
   browser: {
     title: '브라우저', settings: '브라우저 설정', desktopOnly: '내장 브라우저는 Hermes Studio Desktop에서만 사용할 수 있습니다.', newTab: '새 탭',
     back: '뒤로', forward: '앞으로', reload: '새로고침', stop: '중지', addressPlaceholder: '검색 또는 주소 입력',
@@ -222,6 +225,7 @@ export default {
     journey: '학습 경로',
     skillsUsage: '스킬 사용량',
     channels: '채널',
+    socialMessages: '메시지 보내기',
     terminal: '터미널',
     browser: '브라우저',
     singleChat: '채팅',
@@ -392,6 +396,7 @@ export default {
       scanToAdd: '스캔하여 추가',
       viewList: '목록',
       viewDownload: '다운로드',
+      viewMessages: '메시지 전송',
       downloadTitle: '휴대폰에서 HStudio 사용하기',
       downloadDescription: '현재 비공개 베타 테스트 중이며 가입하려면 등록 코드가 필요합니다. 일부 등록 코드는 소셜 미디어를 통해 공개할 예정입니다.',
       downloadScan: '휴대폰으로 스캔',
@@ -702,6 +707,8 @@ export default {
       },
     },
     showToolCalls: '도구 호출 표시',
+    pushEnabled: '푸시 사용',
+    pushNotConfigured: '활성화하기 전에 Hermes Studio의 “기기 연결”에서 메시지 푸시를 설정하세요.',
     hideToolCalls: '도구 호출 숨기기',
     messageQueue: '메시지 대기열',
     removeQueuedMessage: '대기열 메시지 제거',

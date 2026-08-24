@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, fetchWorkspaceRunChangesForSession, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -463,6 +463,7 @@ export interface Session {
   parentLastMessageRole?: string | null
   lastActiveAt?: number
   isArchived?: boolean
+  pushEnabled?: boolean
   workspace?: string | null
   categoryId?: number | null
   isLocalOnly?: boolean
@@ -1127,6 +1128,7 @@ function mapHermesSession(s: SessionSummary): Session {
     parentLastMessageRole: s.parent_last_message_role || null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     isArchived: Boolean(s.is_archived),
+    pushEnabled: Boolean(s.push_enabled),
     workspace: s.workspace || null,
     categoryId: s.category_id ?? null,
   }
@@ -1333,6 +1335,9 @@ export const useChatStore = defineStore('chat', () => {
   const reasoningEffortWriteChains = new Map<string, Promise<boolean>>()
   const reasoningEffortWriteTargets = new Map<string, string | undefined>()
   const reasoningEffortConfirmedValues = new Map<string, string | undefined>()
+  const pushEnabledWriteChains = new Map<string, Promise<boolean>>()
+  const pushEnabledWriteTargets = new Map<string, boolean>()
+  const pushEnabledConfirmedValues = new Map<string, boolean>()
 
   function beginMessageLoad(sessionId: string, requestSequence: number) {
     const next = new Map(messageLoadRequests.value)
@@ -1704,6 +1709,7 @@ export const useChatStore = defineStore('chat', () => {
           existing.provider = fresh.provider
           existing.apiMode = fresh.apiMode || existing.apiMode
           existing.reasoningEffort = fresh.reasoningEffort
+          if (!pushEnabledWriteTargets.has(existing.id)) existing.pushEnabled = fresh.pushEnabled
           existing.messageCount = fresh.messageCount
           existing.inputTokens = fresh.inputTokens
           existing.outputTokens = fresh.outputTokens
@@ -1766,6 +1772,7 @@ export const useChatStore = defineStore('chat', () => {
       if (detail.session.title) target.title = detail.session.title
       target.workspace = detail.session.workspace || target.workspace || null
       target.categoryId = detail.session.category_id ?? null
+      if (!pushEnabledWriteTargets.has(sid)) target.pushEnabled = Boolean(detail.session.push_enabled)
       target.isLocalOnly = false
       target.parentSessionId = detail.session.parent_session_id || target.parentSessionId || null
       target.forkPointMessageId = (detail.session as any).fork_point_message_id != null ? String((detail.session as any).fork_point_message_id) : target.forkPointMessageId || null
@@ -3148,6 +3155,12 @@ export const useChatStore = defineStore('chat', () => {
           target.reasoningEffort = incomingEffort
         }
       }
+      if (typeof evt.push_enabled === 'boolean') {
+        const pendingEnabled = pushEnabledWriteTargets.get(sid)
+        if (!pushEnabledWriteTargets.has(sid) || pendingEnabled === evt.push_enabled) {
+          target.pushEnabled = evt.push_enabled
+        }
+      }
     }
   }
 
@@ -3159,6 +3172,7 @@ export const useChatStore = defineStore('chat', () => {
       ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
       ...(typeof data.api_mode === 'string' ? { api_mode: data.api_mode || undefined } : {}),
       ...(typeof data.reasoning_effort === 'string' ? { reasoning_effort: data.reasoning_effort } : {}),
+      ...(typeof data.push_enabled === 'boolean' ? { push_enabled: data.push_enabled } : {}),
     })
   }
 
@@ -3401,6 +3415,7 @@ export const useChatStore = defineStore('chat', () => {
         reasoning_effort: isCodingAgentExecution && codingAgentMode === 'global'
           ? undefined
           : activeSession.value?.reasoningEffort || undefined,
+        push_enabled: Boolean(activeSession.value?.pushEnabled),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -5192,6 +5207,44 @@ export const useChatStore = defineStore('chat', () => {
     return write
   }
 
+  async function setSessionPushEnabled(sessionId: string, enabled: boolean): Promise<boolean> {
+    const target = sessions.value.find(s => s.id === sessionId)
+    const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
+    const session = target || activeTarget
+    if (!session) return false
+
+    const previousEnabled = Boolean(session.pushEnabled)
+    if (target) target.pushEnabled = enabled
+    if (activeTarget) activeTarget.pushEnabled = enabled
+    if (session.isLocalOnly) return true
+
+    if (!pushEnabledWriteChains.has(sessionId)) {
+      pushEnabledConfirmedValues.set(sessionId, previousEnabled)
+    }
+    pushEnabledWriteTargets.set(sessionId, enabled)
+    const previousWrite = pushEnabledWriteChains.get(sessionId) || Promise.resolve(true)
+    const write: Promise<boolean> = previousWrite
+      .catch(() => false)
+      .then(() => persistSessionPushEnabled(sessionId, enabled))
+      .then((ok) => {
+        if (ok) pushEnabledConfirmedValues.set(sessionId, enabled)
+        if (!ok && pushEnabledWriteTargets.get(sessionId) === enabled) {
+          const confirmedEnabled = pushEnabledConfirmedValues.get(sessionId) || false
+          if (target) target.pushEnabled = confirmedEnabled
+          if (activeTarget) activeTarget.pushEnabled = confirmedEnabled
+        }
+        return ok
+      })
+      .finally(() => {
+        if (pushEnabledWriteChains.get(sessionId) !== write) return
+        pushEnabledWriteChains.delete(sessionId)
+        pushEnabledWriteTargets.delete(sessionId)
+        pushEnabledConfirmedValues.delete(sessionId)
+      })
+    pushEnabledWriteChains.set(sessionId, write)
+    return write
+  }
+
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
     // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
@@ -5272,6 +5325,7 @@ export const useChatStore = defineStore('chat', () => {
     playMessageSpeech,
     loadWorkspaceRunChangeFile,
     setSessionReasoningEffort,
+    setSessionPushEnabled,
     setRuntimeMode,
   }
 })

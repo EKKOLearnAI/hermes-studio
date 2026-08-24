@@ -38,6 +38,7 @@ export interface CodingAgentRunSocketData {
   apiMode?: any
   api_mode?: any
   reasoning_effort?: string
+  push_enabled?: boolean
   instructions?: string
   session_source?: 'global_agent' | 'workflow' | 'group_chat'
   group_system_prompt?: string
@@ -63,6 +64,7 @@ export async function handleCodingAgentRun(
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for coding agent runs' })
     return
   }
+  const socketUser = socket.data?.user as AuthenticatedUser | undefined
 
   socket.join(`session:${sessionId}`)
   const agentId = codingAgentId(data)
@@ -85,6 +87,9 @@ export async function handleCodingAgentRun(
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'
   const storedSession = getSession(sessionId)
+  if (storedSession && !storedSession.user_id && socketUser?.id != null) {
+    updateSession(sessionId, { user_id: String(socketUser.id) })
+  }
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)
@@ -126,9 +131,16 @@ export async function handleCodingAgentRun(
     }, state)
     runId = started.agentSessionId
   }
+  const persistedSession = getSession(sessionId)
+  if (persistedSession && !persistedSession.user_id && socketUser?.id != null) {
+    updateSession(sessionId, { user_id: String(socketUser.id) })
+  }
 
   if (data.category_id !== undefined) {
     updateSession(sessionId, { category_id: data.category_id })
+  }
+  if (data.push_enabled !== undefined) {
+    updateSession(sessionId, { push_enabled: data.push_enabled ? 1 : 0 })
   }
 
   state.isWorking = true
@@ -145,7 +157,6 @@ export async function handleCodingAgentRun(
 
   try {
     const codingInput = convertContentBlocksForCodingAgent(data.input)
-    const socketUser = socket.data?.user as AuthenticatedUser | undefined
     await writeModelRunProfileToken(socketUser, profile)
     const includeBaseSystemPrompt = agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi'
     const runPrompt = [

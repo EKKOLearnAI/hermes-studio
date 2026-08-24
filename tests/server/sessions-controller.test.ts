@@ -21,6 +21,7 @@ const localSearchSessionsMock = vi.fn()
 const localDeleteSessionMock = vi.fn()
 const localRenameSessionMock = vi.fn()
 const localSetSessionArchivedMock = vi.fn()
+const localSetSessionPushEnabledMock = vi.fn()
 const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
 const localAddMessagesMock = vi.fn()
@@ -91,6 +92,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   deleteSession: localDeleteSessionMock,
   renameSession: localRenameSessionMock,
   setSessionArchived: localSetSessionArchivedMock,
+  setSessionPushEnabled: localSetSessionPushEnabledMock,
   createSession: localCreateSessionMock,
   addMessages: localAddMessagesMock,
   getSession: getSessionMock,
@@ -196,6 +198,7 @@ describe('session conversations controller', () => {
     localDeleteSessionMock.mockReset()
     localRenameSessionMock.mockReset()
     localSetSessionArchivedMock.mockReset()
+    localSetSessionPushEnabledMock.mockReset()
     localCreateSessionMock.mockReset()
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
@@ -1223,6 +1226,45 @@ describe('session conversations controller', () => {
 
     expect(localSetSessionArchivedMock).toHaveBeenCalledWith('session-1', true)
     expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('updates whether an accessible session should be pushed', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+    localSetSessionPushEnabledMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: true } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).toHaveBeenCalledWith('session-1', true)
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-1', {
+      push_enabled: true,
+    })
+    expect(ctx.body).toEqual({ ok: true, push_enabled: true })
+  })
+
+  it('rejects a non-boolean session push setting', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: 1 } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'pushEnabled must be a boolean' })
   })
 
   it('lists and creates normalized global session categories', async () => {

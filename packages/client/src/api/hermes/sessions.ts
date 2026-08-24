@@ -25,6 +25,7 @@ export interface SessionSummary {
   ended_at: number | null
   last_active?: number
   is_archived?: number | boolean
+  push_enabled?: number | boolean
   message_count: number
   tool_call_count: number
   input_tokens: number
@@ -529,6 +530,18 @@ export async function archiveSession(id: string): Promise<boolean> {
 export async function unarchiveSession(id: string): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/unarchive`, { method: 'POST' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function setSessionPushEnabled(id: string, pushEnabled: boolean): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/push-enabled`, {
+      method: 'POST',
+      body: JSON.stringify({ pushEnabled }),
+    })
     return true
   } catch {
     return false

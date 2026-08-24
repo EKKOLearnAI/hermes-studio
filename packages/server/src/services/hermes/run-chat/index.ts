@@ -235,6 +235,7 @@ export class ChatRunSocket {
     provider?: string
     api_mode?: string
     reasoning_effort?: string
+    push_enabled?: boolean
   }): void {
     this.nsp.to(`session:${sessionId}`).emit('session.settings.updated', {
       event: 'session.settings.updated',
@@ -370,6 +371,7 @@ export class ChatRunSocket {
       allow_command_passthrough?: boolean
       // Local patch (reasoning-effort): per-session reasoning effort override.
       reasoning_effort?: string
+      push_enabled?: boolean
     }) => {
       let runProfile: string
       try {
@@ -790,6 +792,7 @@ export class ChatRunSocket {
       one_shot_model?: boolean
       allow_command_passthrough?: boolean
       reasoning_effort?: string
+      push_enabled?: boolean
       background_delegation_enabled?: boolean
       context_compression_enabled?: boolean
       background_delegation_id?: string
@@ -1249,6 +1252,7 @@ export class ChatRunSocket {
       provider: sessionDetail?.provider || '',
       api_mode: sessionDetail?.api_mode || '',
       reasoning_effort: sessionDetail?.reasoning_effort || '',
+      push_enabled: Number(sessionDetail?.push_enabled || 0) !== 0,
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents),
