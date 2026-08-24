@@ -41,6 +41,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
+  'app.resume',
   'abort',
   'insert_queued_run',
   'cancel_queued_run',

@@ -1025,6 +1025,49 @@ describe('agent runner Anthropic adapters', () => {
     })
   })
 
+  it('merges multiple system messages into one leading message (vLLM compatibility)', () => {
+    // Claude Code sends its primary prompt as the top-level `system` field and
+    // injects additional `role: 'system'` messages mid-conversation (e.g. the
+    // ToolSearch deferred-tools notice). A second system message mid-conversation
+    // is rejected by vLLM with "System message must be at the beginning." (400),
+    // so the adapter must keep exactly one leading system message.
+    const body = {
+      system: [
+        { type: 'text', text: 'claude code system prompt' },
+        { type: 'text', text: 'appended rules' },
+      ],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'system', content: [{ type: 'text', text: 'deferred tools are now available' }] },
+      ],
+    }
+
+    const messages = anthropicToOpenAiChat(body, anthropicTarget).messages
+    expect(messages).toEqual([
+      {
+        role: 'system',
+        content: 'claude code system prompt\nappended rules\n\ndeferred tools are now available',
+      },
+      { role: 'user', content: 'hello' },
+    ])
+    expect(messages.filter((message: any) => message.role === 'system')).toHaveLength(1)
+    expect(messages[0].role).toBe('system')
+  })
+
+  it('keeps a single in-message system prompt at the front', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: 'rules' },
+        { role: 'user', content: 'hi' },
+      ],
+    }
+
+    expect(anthropicToOpenAiChat(body, anthropicTarget).messages).toEqual([
+      { role: 'system', content: 'rules' },
+      { role: 'user', content: 'hi' },
+    ])
+  })
+
   it('preserves Anthropic image inputs for Chat and Responses providers', () => {
     const body = {
       messages: [{

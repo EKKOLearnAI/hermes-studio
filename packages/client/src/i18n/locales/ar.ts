@@ -1,4 +1,7 @@
+import { socialMessagesAr } from '../social-messages-locales'
+
 export default {
+  socialMessages: socialMessagesAr,
   browser: {
     title: 'المتصفح', settings: 'إعدادات المتصفح', desktopOnly: 'المتصفح المدمج متوفر فقط في Hermes Studio Desktop.', newTab: 'تبويب جديد',
     back: 'رجوع', forward: 'تقدّم', reload: 'إعادة تحميل', stop: 'إيقاف', addressPlaceholder: 'ابحث أو أدخل عنوانًا',
@@ -212,6 +215,7 @@ export default {
     journey: 'الرحلة',
     skillsUsage: 'استخدام المهارات',
     channels: 'القنوات',
+    socialMessages: 'إرسال الرسائل',
     gateways: 'البوابات',
     terminal: 'الطرفية',
     browser: 'المتصفح',
@@ -380,6 +384,7 @@ export default {
       scanToAdd: 'إضافة عبر المسح',
       viewList: 'القائمة',
       viewDownload: 'تنزيل',
+      viewMessages: 'إرسال الرسائل',
       downloadTitle: 'HStudio على هاتفك',
       downloadDescription: 'نحن حاليًا في مرحلة اختبار تجريبي مغلق. يلزم رمز تسجيل لإنشاء حساب، وسننشر عددًا محدودًا من الرموز عبر حساباتنا على وسائل التواصل الاجتماعي.',
       downloadScan: 'امسح بهاتفك',
@@ -743,6 +748,8 @@ export default {
       microphoneRecordingFailed: 'فشل التسجيل من الميكروفون.',
     },
     showToolCalls: 'إظهار نداءات الأدوات',
+    pushEnabled: 'تفعيل الإرسال',
+    pushNotConfigured: 'أعِدّ دفع الرسائل في «اتصالات الأجهزة» ضمن Hermes Studio قبل تفعيله.',
     hideToolCalls: 'إخفاء نداءات الأدوات',
     messageQueue: 'طابور الرسائل',
     removeQueuedMessage: 'إزالة الرسالة من الطابور',

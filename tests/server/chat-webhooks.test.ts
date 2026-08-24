@@ -33,6 +33,7 @@ describe('chat run webhooks', () => {
     db = null
     vi.doUnmock('../../packages/server/src/db/index')
     vi.doUnmock('../../packages/server/src/services/auth')
+    vi.doUnmock('../../packages/server/src/services/social-messages/session-push')
     vi.resetModules()
   })
 
@@ -238,6 +239,66 @@ describe('chat run webhooks', () => {
       }),
       summary: expect.objectContaining({ input_tokens: 11, output_tokens: 7 }),
     }))
+    enqueue.mockRestore()
+  })
+
+  it('fans session notifications out from the unified webhook observer', async () => {
+    const notifySessionPush = vi.fn(async () => 1)
+    vi.doMock('../../packages/server/src/services/social-messages/session-push', () => ({
+      notifySessionPush,
+    }))
+    const webhookService = await import('../../packages/server/src/services/hermes/chat-webhooks')
+    const enqueue = vi.spyOn(webhookService.getChatWebhookDispatcher(), 'enqueue').mockReturnValue(true)
+    const base = {
+      sessionId: 'session-push',
+      profile: 'default',
+      source: 'chat',
+      agent: 'bridge' as const,
+    }
+
+    webhookService.observeChatRunWebhookEvent({
+      ...base,
+      event: 'run.completed',
+      payload: { run_id: 'run-1', output: 'done' },
+    })
+    webhookService.observeChatRunWebhookEvent({
+      ...base,
+      event: 'approval.requested',
+      payload: { approval_id: 'approval-1', command: 'npm test' },
+    })
+    webhookService.observeChatRunWebhookEvent({
+      ...base,
+      event: 'clarify.requested',
+      payload: { clarify_id: 'clarify-1', question: 'Continue?' },
+    })
+    webhookService.observeChatRunWebhookEvent({
+      ...base,
+      event: 'tool.started',
+      payload: { tool_call_id: 'tool-1' },
+    })
+
+    await vi.waitFor(() => expect(notifySessionPush).toHaveBeenCalledTimes(3))
+    expect(notifySessionPush).toHaveBeenNthCalledWith(
+      1,
+      'session-push',
+      'run.completed',
+      { run_id: 'run-1', output: 'done' },
+      'bridge',
+    )
+    expect(notifySessionPush).toHaveBeenNthCalledWith(
+      2,
+      'session-push',
+      'approval.requested',
+      { approval_id: 'approval-1', command: 'npm test' },
+      'bridge',
+    )
+    expect(notifySessionPush).toHaveBeenNthCalledWith(
+      3,
+      'session-push',
+      'clarify.requested',
+      { clarify_id: 'clarify-1', question: 'Continue?' },
+      'bridge',
+    )
     enqueue.mockRestore()
   })
 

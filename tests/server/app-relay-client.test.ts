@@ -439,6 +439,22 @@ describe('AppRelayClient', () => {
       event: 'run',
     })))
 
+    const resumeAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-chat-1',
+      event: 'app.resume',
+      payload: { session_id: 'session-1', id: 'cache-1' },
+    }, resumeAck)
+    expect(local.emit).toHaveBeenCalledWith('app.resume', {
+      session_id: 'session-1',
+      id: 'cache-1',
+    })
+    await vi.waitFor(() => expect(resumeAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'app.resume',
+    })))
+
     const insertAck = vi.fn()
     remote.__handlers.get('app.socket.event')({
       id: 'relay-chat-1',

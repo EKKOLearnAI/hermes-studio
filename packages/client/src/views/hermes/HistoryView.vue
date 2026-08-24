@@ -232,6 +232,7 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages,
   }
@@ -445,6 +446,7 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages: [],
   }

@@ -1,4 +1,7 @@
+import { socialMessagesZhTw } from '../social-messages'
+
 export default {
+  socialMessages: socialMessagesZhTw,
   browser: {
     title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',
     back: '上一頁', forward: '下一頁', reload: '重新整理', stop: '停止', addressPlaceholder: '搜尋或輸入網址',
@@ -212,6 +215,7 @@ export default {
     journey: '學習軌跡',
     skillsUsage: '技能用量',
     channels: '頻道',
+    socialMessages: '傳送訊息',
     gateways: '閘道',
     terminal: '終端機',
     browser: '瀏覽器',
@@ -380,6 +384,7 @@ export default {
       scanToAdd: '掃碼新增',
       viewList: '列表',
       viewDownload: '下載',
+      viewMessages: '訊息推送',
       downloadTitle: '在手機上使用 HStudio',
       downloadDescription: '我們目前正處於封閉測試階段，必須使用註冊碼才能註冊；我們會在社群媒體上釋出部分註冊碼。',
       downloadScan: '用手機掃碼下載',
@@ -741,6 +746,8 @@ export default {
       microphoneRecordingFailed: '麥克風錄音失敗。',
     },
     showToolCalls: '顯示工具呼叫',
+    pushEnabled: '是否推送',
+    pushNotConfigured: '請先到 Hermes Studio「裝置互聯」中設定訊息推送。',
     hideToolCalls: '隱藏工具呼叫',
     messageQueue: '訊息佇列',
     removeQueuedMessage: '移除佇列訊息',

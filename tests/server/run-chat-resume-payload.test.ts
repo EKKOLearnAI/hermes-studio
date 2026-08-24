@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildAppResumeMessagePage,
   buildOutboundToolMessage,
   buildOutboundRunEvent,
   buildResumeEvents,
@@ -77,6 +78,43 @@ describe('buildResumeMessages', () => {
     expect(page.messageTotal).toBe(1_000)
     expect(page.messageLoadedCount).toBe(150)
     expect(page.hasMoreBefore).toBe(true)
+  })
+
+  it('omits App messages when the supplied cache id still matches', () => {
+    const page = buildResumeMessagePage([
+      message({ id: 1, role: 'user', content: 'hello' }),
+      message({ id: 2, role: 'assistant', content: 'world' }),
+    ])
+
+    const initial = buildAppResumeMessagePage(page, '')
+    const cached = buildAppResumeMessagePage(page, initial.id)
+
+    expect(initial).toMatchObject({
+      messages: page.messages,
+      messagesCached: false,
+    })
+    expect(initial.id).toMatch(/^[a-f0-9]{32}$/)
+    expect(cached).toEqual({
+      id: initial.id,
+      messagesCached: true,
+      messageTotal: 2,
+      messageLoadedCount: 2,
+      messagePageLimit: RESUME_MESSAGE_PAGE_LIMIT,
+      hasMoreBefore: false,
+    })
+  })
+
+  it('returns a new App page when cached message content changed under the same message id', () => {
+    const before = buildAppResumeMessagePage(buildResumeMessagePage([
+      message({ id: 7, role: 'assistant', content: 'partial' }),
+    ]), '')
+    const after = buildAppResumeMessagePage(buildResumeMessagePage([
+      message({ id: 7, role: 'assistant', content: 'complete' }),
+    ]), before.id)
+
+    expect(after.messagesCached).toBe(false)
+    expect(after.id).not.toBe(before.id)
+    expect(after.messages?.[0].content).toBe('complete')
   })
 
   it('truncates only the outbound tool result without mutating session history', () => {

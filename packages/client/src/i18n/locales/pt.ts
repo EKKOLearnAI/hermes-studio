@@ -1,4 +1,7 @@
+import { socialMessagesPt } from '../social-messages-locales'
+
 export default {
+  socialMessages: socialMessagesPt,
   browser: {
     title: 'Navegador', settings: 'Configurações do navegador', desktopOnly: 'O navegador integrado está disponível apenas no Hermes Studio Desktop.', newTab: 'Nova aba',
     back: 'Voltar', forward: 'Avançar', reload: 'Recarregar', stop: 'Parar', addressPlaceholder: 'Pesquisar ou inserir endereço',
@@ -222,6 +225,7 @@ export default {
     journey: 'Jornada',
     skillsUsage: 'Uso de habilidades',
     channels: 'Canais',
+    socialMessages: 'Enviar mensagens',
     terminal: 'Terminal',
     browser: 'Navegador',
     singleChat: 'Chat',
@@ -392,6 +396,7 @@ export default {
       scanToAdd: 'Escanear para adicionar',
       viewList: 'Lista',
       viewDownload: 'Download',
+      viewMessages: 'Envio de mensagens',
       downloadTitle: 'HStudio no seu celular',
       downloadDescription: 'Estamos em fase beta fechada. É necessário um código de registro para criar uma conta, e divulgaremos alguns códigos em nossas redes sociais.',
       downloadScan: 'Escaneie com o celular',
@@ -702,6 +707,8 @@ export default {
       },
     },
     showToolCalls: 'Mostrar chamadas de ferramentas',
+    pushEnabled: 'Ativar envio',
+    pushNotConfigured: 'Configure as notificações em “Conexões de dispositivos” no Hermes Studio antes de ativá-las.',
     hideToolCalls: 'Ocultar chamadas de ferramentas',
     messageQueue: 'Fila de mensagens',
     removeQueuedMessage: 'Remover mensagem da fila',

@@ -154,6 +154,13 @@ const router = createRouter({
       component: () => import('@/views/hermes/ChannelsView.vue'),
     },
     {
+      path: '/social-messages',
+      redirect: {
+        name: 'hermes.connections',
+        query: { view: 'messages' },
+      },
+    },
+    {
       path: '/hermes/terminal',
       name: 'hermes.terminal',
       component: () => import('@/views/hermes/TerminalView.vue'),

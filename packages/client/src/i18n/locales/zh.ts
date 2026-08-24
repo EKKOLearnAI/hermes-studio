@@ -1,4 +1,7 @@
+import { socialMessagesZh } from '../social-messages'
+
 export default {
+  socialMessages: socialMessagesZh,
   browser: {
     title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
     back: '后退', forward: '前进', reload: '刷新', stop: '停止', addressPlaceholder: '搜索或输入网址',
@@ -212,6 +215,7 @@ export default {
     journey: '学习轨迹',
     skillsUsage: '技能用量',
     channels: '频道',
+    socialMessages: '发消息',
     gateways: '网关',
     terminal: '终端',
     browser: '浏览器',
@@ -380,6 +384,7 @@ export default {
       scanToAdd: '扫码添加',
       viewList: '列表',
       viewDownload: '下载',
+      viewMessages: '消息推送',
       downloadTitle: '在手机上使用 HStudio',
       downloadDescription: '我们正在内测阶段，需要注册码才有办法注册，我们会在社交媒体放出一部分注册码。',
       downloadScan: '手机扫码下载',
@@ -770,6 +775,8 @@ export default {
       microphoneRecordingFailed: '麦克风录音失败。',
     },
     showToolCalls: '显示工具调用',
+    pushEnabled: '是否推送',
+    pushNotConfigured: '请先到 Hermes Studio「设备互联」中配置消息推送。',
     hideToolCalls: '隐藏工具调用',
     messageQueue: '消息队列',
     removeQueuedMessage: '移除队列消息',

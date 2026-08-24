@@ -157,7 +157,7 @@ function boolValue(value: unknown) {
   return value === true || value === 'true'
 }
 
-// Weixin QR code login state
+// This QR login belongs only to the Hermes channel credentials.
 const wxQrUrl = ref('')
 const wxQrId = ref('')
 const wxQrStatus = ref<'idle' | 'loading' | 'waiting' | 'scaned' | 'confirmed' | 'error' | 'expired'>('idle')
@@ -187,7 +187,7 @@ function pollWeixinStatus() {
   wxPollTimer = setTimeout(async () => {
     try {
       const data = await pollWeixinQrStatus(wxQrId.value)
-      if (data.status === 'wait') {
+      if (data.status === 'wait' || data.status === 'scaned_but_redirect') {
         pollWeixinStatus()
       } else if (data.status === 'scaned') {
         wxQrStatus.value = 'scaned'

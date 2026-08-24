@@ -3,6 +3,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NAlert, NButton, NDataTable, NEmpty, NModal, NPopconfirm, NSpin, NTabPane, NTabs, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import {
   createLanAppAuthorization,
@@ -20,6 +21,14 @@ import {
   type AppRelayRoute,
 } from '@/api/hermes/app-relay'
 import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio-versions'
+import SocialMessagesView from '@/views/social-messages/SocialMessagesView.vue'
+
+type AppPanelView = 'list' | 'download' | 'messages'
+
+function normalizePanelView(value: unknown): AppPanelView {
+  if (value === 'list' || value === 'messages') return value
+  return 'download'
+}
 
 const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
 const DEFAULT_MOBILE_RELEASE: StudioMobileRelease = {
@@ -37,9 +46,11 @@ const DEFAULT_MOBILE_RELEASE: StudioMobileRelease = {
 }
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const message = useMessage()
 const loading = ref(false)
-const panelView = ref<'list' | 'download'>('download')
+const panelView = ref<AppPanelView>(normalizePanelView(route.query.view))
 const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')
 const mobileRelease = ref<StudioMobileRelease>(DEFAULT_MOBILE_RELEASE)
 const connections = ref<AppConnection[]>([])
@@ -449,6 +460,23 @@ function openScanModal() {
   ensureCurrentAuthorization('lan')
 }
 
+function updatePanelView(view: AppPanelView): void {
+  panelView.value = view
+  void router.replace({
+    query: {
+      ...route.query,
+      view: view === 'download' ? undefined : view,
+    },
+  })
+}
+
+watch(
+  () => route.query.view,
+  value => {
+    panelView.value = normalizePanelView(value)
+  },
+)
+
 watch(connectionTab, (type) => {
   ensureCurrentAuthorization(type, type === 'cloud')
 })
@@ -492,7 +520,7 @@ onUnmounted(() => {
             class="view-switch-button"
             :class="{ 'view-switch-button--active': panelView === 'list' }"
             :aria-selected="panelView === 'list'"
-            @click="panelView = 'list'"
+            @click="updatePanelView('list')"
           >
             {{ t('connections.app.viewList') }}
           </button>
@@ -501,9 +529,18 @@ onUnmounted(() => {
             class="view-switch-button"
             :class="{ 'view-switch-button--active': panelView === 'download' }"
             :aria-selected="panelView === 'download'"
-            @click="panelView = 'download'"
+            @click="updatePanelView('download')"
           >
             {{ t('connections.app.viewDownload') }}
+          </button>
+          <button
+            type="button"
+            class="view-switch-button"
+            :class="{ 'view-switch-button--active': panelView === 'messages' }"
+            :aria-selected="panelView === 'messages'"
+            @click="updatePanelView('messages')"
+          >
+            {{ t('connections.app.viewMessages') }}
           </button>
         </div>
         <NButton size="small" type="primary" @click="openScanModal">
@@ -573,7 +610,7 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <div v-else class="app-downloads">
+    <div v-else-if="panelView === 'download'" class="app-downloads">
       <div class="app-download-layout">
         <section class="app-download-hero">
           <div class="app-download-intro">
@@ -781,6 +818,8 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <SocialMessagesView v-else embedded class="app-message-push" />
   </section>
 
   <NModal
@@ -1081,6 +1120,11 @@ onUnmounted(() => {
   padding: 20px;
   overflow: auto;
   background: linear-gradient(180deg, rgba(var(--accent-primary-rgb), 0.025), transparent 52%);
+}
+
+.app-message-push {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .app-download-layout {

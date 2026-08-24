@@ -11,6 +11,7 @@ import { mcuDeviceRoutes } from './mcu-devices'
 import { codingAgentRoutes } from './coding-agents'
 import { appRelayRoutes } from './app-relay'
 import { appConnectionRoutes } from './app-connections'
+import { socialMessageRoutes } from './social-messages'
 import { apiDocsRoutes } from './api-docs'
 import { themeRoutes } from './theme'
 import { claudeCodeProxyRoutes } from './claude-code-proxy'
@@ -87,6 +88,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(codingAgentRoutes.routes())
   app.use(themeRoutes.routes())
   app.use(appRelayRoutes.routes())
+  app.use(socialMessageRoutes.routes())
   app.use(sessionRoutes.routes())
   app.use(profileRoutes.routes())
   app.use(skillRoutes.routes())
