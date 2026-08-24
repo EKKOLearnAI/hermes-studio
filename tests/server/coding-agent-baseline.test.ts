@@ -11,6 +11,7 @@ const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
 const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefined))
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
+const createSessionMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
@@ -26,6 +27,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
 }))
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+  createSession: createSessionMock,
   getSession: getSessionMock,
 }))
 
@@ -58,6 +60,7 @@ describe('coding-agent dispatch baseline', () => {
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')
     getSessionMock.mockReturnValue(null)
+    createSessionMock.mockReturnValue(undefined)
   })
 
   it('dispatches an explicit coding_agent_id and passes local proxy fields through', async () => {
