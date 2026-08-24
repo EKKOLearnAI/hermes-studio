@@ -3827,7 +3827,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'message.delta': {
               // TTFT (additive): consume once per run on the first content delta.
-              noteStreamDelta(sid)
+              noteStreamDelta(sid, evt.delta)
               if (evt.delta) {
                 runProducedAssistantText = true
                 runProducedAssistantContent = true

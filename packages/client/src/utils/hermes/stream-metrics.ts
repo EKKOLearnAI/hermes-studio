@@ -30,8 +30,27 @@ const WINDOW_MS = 2000
 let currentSession: string | null = null
 let startedAt: number | null = null
 let firstDeltaAt: number | null = null
-let deltaTimestamps: number[] = []
+interface DeltaSample { t: number; tokens: number }
+let deltaSamples: DeltaSample[] = []
 let samplerId: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Estimate token count for a delta text chunk.
+ *
+ * The stream carries raw text, not token ids, and exact client-side encoding
+ * is too heavy for every delta. ASCII text averages ~4 chars/token for most
+ * BPE vocabularies; CJK characters tokenize at roughly one per character.
+ */
+function estimateTokens(text: string): number {
+  if (!text) return 0
+  let cjk = 0
+  let other = 0
+  for (const ch of text) {
+    if (/[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch)) cjk++
+    else other++
+  }
+  return Math.max(1, Math.ceil(other / 4) + cjk)
+}
 
 function ensureSampler(): void {
   if (samplerId !== null) return
@@ -40,16 +59,17 @@ function ensureSampler(): void {
     const now = performance.now()
     const windowStart = now - WINDOW_MS
     // Drop stale samples beyond a few windows to bound memory.
-    deltaTimestamps = deltaTimestamps.filter(t => t >= now - WINDOW_MS * 5)
-    const recent = deltaTimestamps.filter(t => t >= windowStart)
+    deltaSamples = deltaSamples.filter(s => s.t >= now - WINDOW_MS * 5)
+    const recent = deltaSamples.filter(s => s.t >= windowStart)
     if (recent.length === 0 || startedAt === null) {
       streamMetrics.tokensPerSec = null
       return
     }
-    // Count deltas inside the SAME window used for filtering, starting no
-    // earlier than the run itself so short streams ramp up correctly.
+    // Sum estimated tokens inside the SAME window used for filtering,
+    // starting no earlier than the run itself so short streams ramp up correctly.
     const spanMs = Math.max(500, now - Math.max(windowStart, startedAt))
-    streamMetrics.tokensPerSec = Math.round((recent.length / spanMs) * 1000)
+    const tokens = recent.reduce((sum, s) => sum + s.tokens, 0)
+    streamMetrics.tokensPerSec = Math.round((tokens / spanMs) * 1000)
   }, WINDOW_MS)
 }
 
@@ -65,15 +85,20 @@ export function noteStreamStart(sessionId: string): void {
   metricsSession = sessionId
   startedAt = performance.now()
   firstDeltaAt = null
-  deltaTimestamps = []
+  deltaSamples = []
   streamMetrics.ttftMs = null
   streamMetrics.tokensPerSec = null
   streamMetrics.active = false
   ensureSampler()
 }
 
-/** Record one content delta; the first one also captures TTFT. */
-export function noteStreamDelta(sessionId: string): void {
+/**
+ * Record one content delta; the first one also captures TTFT.
+ *
+ * `deltaText` is the raw chunk from the server: it carries no token counts,
+ * so the rate is based on a per-chunk token estimate.
+ */
+export function noteStreamDelta(sessionId: string, deltaText?: string): void {
   if (!sessionId || sessionId !== currentSession || startedAt === null) return
   const now = performance.now()
   if (firstDeltaAt === null) {
@@ -81,7 +106,8 @@ export function noteStreamDelta(sessionId: string): void {
     streamMetrics.ttftMs = Math.max(0, Math.round(now - startedAt))
     streamMetrics.active = true
   }
-  deltaTimestamps.push(now)
+  const tokens = estimateTokens(deltaText ?? '')
+  if (tokens > 0) deltaSamples.push({ t: now, tokens })
 }
 
 /** Stop tracking (run completed / failed / aborted). Chip hides immediately. */
