@@ -11,6 +11,7 @@ const sendCodingAgentRunInputMock = vi.hoisted(() => vi.fn())
 const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefined))
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
+const createSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionMock = vi.hoisted(() => vi.fn())
 const handleCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn(async () => undefined))
 const parseCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn())
@@ -33,6 +34,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+  createSession: createSessionMock,
   getSession: getSessionMock,
   updateSession: updateSessionMock,
 }))
@@ -50,6 +52,7 @@ describe('handleCodingAgentRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getSessionMock.mockReturnValue(null)
+    createSessionMock.mockReturnValue(undefined)
     managerMock.isSessionProcessing.mockReturnValue(false)
     writeModelRunProfileTokenMock.mockResolvedValue(undefined)
     getSystemPromptMock.mockReturnValue('system prompt')

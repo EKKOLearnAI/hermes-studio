@@ -8,7 +8,9 @@ function requestedProfile(ctx: any): string {
 }
 
 function requestProfileDir(ctx: any): string {
-  return getProfileDir(requestedProfile(ctx))
+  const profileDir = getProfileDir(requestedProfile(ctx))
+  const userId = ctx.state?.user?.id
+  return userId == null ? profileDir : join(profileDir, 'webui-users', String(userId))
 }
 
 export async function get(ctx: any) {

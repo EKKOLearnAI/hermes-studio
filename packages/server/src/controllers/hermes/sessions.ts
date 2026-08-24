@@ -122,16 +122,27 @@ function canAccessProfile(ctx: any, profile: string | null | undefined): boolean
   return !allowed || allowed.has(profile || 'default')
 }
 
+function authenticatedUserId(ctx: any): string | null {
+  const id = ctx.state?.user?.id
+  return id == null ? null : String(id)
+}
+
+function canAccessSession(ctx: any, session: any | null | undefined): boolean {
+  if (!session || !canAccessProfile(ctx, session.profile)) return false
+  const userId = authenticatedUserId(ctx)
+  return userId == null || !session.user_id || String(session.user_id) === userId
+}
+
 function filterByAllowedProfiles<T>(ctx: any, items: T[]): T[] {
-  const allowed = allowedProfileSet(ctx)
-  if (!allowed) return items
-  return items.filter(item => allowed.has(((item as any).profile as string | null | undefined) || 'default'))
+  return items.filter(item => canAccessSession(ctx, item))
 }
 
 function denySessionAccess(ctx: any, session: any | null | undefined): boolean {
-  if (!session || canAccessProfile(ctx, session.profile)) return false
-  ctx.status = 403
-  ctx.body = { error: `Profile "${session.profile || 'default'}" is not available for this user` }
+  if (!session || canAccessSession(ctx, session)) return false
+  ctx.status = session && canAccessProfile(ctx, session.profile) ? 404 : 403
+  ctx.body = { error: session && canAccessProfile(ctx, session.profile)
+    ? 'Session not found'
+    : `Profile "${session?.profile || 'default'}" is not available for this user` }
   return true
 }
 
@@ -190,6 +201,7 @@ function mergeHermesHistorySessions(
   for (const [id, session] of historySessionsById) {
     const localSession = localSessionsById.get(id)
     if (localSession?.is_archived != null) session.is_archived = localSession.is_archived
+    if (localSession?.user_id != null) session.user_id = localSession.user_id
   }
 
   for (const session of localSessions) {
@@ -1135,6 +1147,7 @@ export async function importHermesSession(ctx: any) {
 
   const existing = localGetSessionDetail(sessionId)
   if (existing) {
+    if (denySessionAccess(ctx, existing)) return
     ctx.body = { ok: true, imported: false, session: existing }
     return
   }
@@ -1154,6 +1167,9 @@ export async function importHermesSession(ctx: any) {
     ctx.body = { error: 'Session not found' }
     return
   }
+  if (!canAccessSession(ctx, { ...detail, profile })) return
+
+  const ownerUserId = detail.user_id == null ? authenticatedUserId(ctx) : String(detail.user_id)
 
   const profileDefault = await getProfileDefaultModel(profile)
   const importTimestamp = Math.floor(Date.now() / 1000)
@@ -1162,6 +1178,7 @@ export async function importHermesSession(ctx: any) {
     id: detail.id,
     profile,
     source: 'cli',
+    user_id: ownerUserId,
     model: profileDefault.model,
     provider: profileDefault.provider,
     title: detail.title || undefined,
@@ -1169,7 +1186,7 @@ export async function importHermesSession(ctx: any) {
 
   localUpdateSession(detail.id, {
     source: 'cli',
-    user_id: detail.user_id,
+    user_id: ownerUserId,
     model: profileDefault.model,
     provider: profileDefault.provider,
     title: detail.title,
@@ -1275,6 +1292,11 @@ export async function batchRemove(ctx: any) {
   for (const target of targets) {
     const { id } = target
     const existing = localGetSession(id)
+    if (existing && !canAccessSession(ctx, existing)) {
+      results.failed++
+      results.errors.push({ id, error: 'Session not found' })
+      continue
+    }
     const targetProfile = target.profile || existing?.profile
     if (targetProfile && !canAccessProfile(ctx, targetProfile)) {
       results.failed++
@@ -1410,7 +1432,7 @@ export async function setWorkspace(ctx: any) {
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile: requestedProfile(ctx) || 'default', user_id: authenticatedUserId(ctx), title: '' })
   }
   updateSession(id, { workspace: workspace || null } as any)
   ctx.body = { ok: true }
@@ -1485,7 +1507,7 @@ export async function setModel(ctx: any) {
     ? await ensureHermesRunWorkspace(profile, existing?.workspace)
     : undefined
   if (!existing) {
-    createSession({ id, profile, title: '', model: cleanModel, provider: cleanProvider, api_mode: cleanApiMode || '', reasoning_effort: '', workspace })
+    createSession({ id, profile, user_id: authenticatedUserId(ctx), title: '', model: cleanModel, provider: cleanProvider, api_mode: cleanApiMode || '', reasoning_effort: '', workspace })
   }
   const updates: Record<string, string> = { model: cleanModel, provider: cleanProvider, reasoning_effort: '' }
   if (cleanApiMode) updates.api_mode = cleanApiMode

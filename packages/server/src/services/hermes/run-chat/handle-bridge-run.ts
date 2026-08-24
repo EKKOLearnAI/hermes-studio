@@ -483,6 +483,7 @@ export async function handleBridgeRun(
     if (Object.keys(updates).length > 0) updateSession(session_id, updates)
   }
   const socketUser = socket.data.user as AuthenticatedUser | undefined
+  const authenticatedUserId = socketUser?.id == null ? null : String(socketUser.id)
   await writeModelRunProfileToken(socketUser, profile)
   const runPrompt = [
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
@@ -555,7 +556,7 @@ export async function handleBridgeRun(
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
       const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
+      createSession({ id: session_id, profile, source: runSource, user_id: authenticatedUserId, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
     }
     messageId = addMessage({
       session_id,
@@ -577,7 +578,7 @@ export async function handleBridgeRun(
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
+    createSession({ id: session_id, profile, source: runSource, user_id: authenticatedUserId, model: resolvedModel, provider: resolvedProvider, reasoning_effort: reasoningEffort || '', title: preview, workspace, category_id: data.category_id })
   }
 
   socket.join(`session:${session_id}`)

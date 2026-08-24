@@ -16,7 +16,7 @@ import type { ChatCodingAgentId } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession, updateSession } from '../../../db/hermes/session-store'
+import { createSession, getSession, updateSession } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 
 export interface CodingAgentRunSocketData {
@@ -85,6 +85,18 @@ export async function handleCodingAgentRun(
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'
   const storedSession = getSession(sessionId)
+  if (!storedSession) {
+    createSession({
+      id: sessionId,
+      profile,
+      source: state.source,
+      user_id: socket.data?.user?.id == null ? null : String(socket.data.user.id),
+      agent: agentId === 'claude-code' ? 'claude' : agentId,
+      model: data.model,
+      provider: data.provider,
+      workspace: data.workspace || undefined,
+    })
+  }
   const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
   const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   const launchApiMode = data.apiMode || data.api_mode || (mode === 'scoped' ? storedSession?.api_mode || undefined : undefined)
