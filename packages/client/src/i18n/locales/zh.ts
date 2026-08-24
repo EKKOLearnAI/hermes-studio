@@ -2983,8 +2983,8 @@ export default {
   groupCollab: {
     title: '群协作',
     newRoom: '新建群协作',
-    roomKindHint: '@ 一位协调者并描述任务，系统会拆解为子任务并分派给各数字人并行执行',
-    emptyHint: '在下方 @ 一位协调者并描述复杂任务，即可开启一次多角色协作',
+    roomKindHint: '@ 一位协调者并描述任务；默认零 Token 模拟。设 HERMES_COLLAB_SIMULATE=0 走真实协作，聊天中同样展示拆解/分派/交接/汇总',
+    emptyHint: '在下方 @ 一位协调者并描述复杂任务；聊天会播报协调过程（模拟与真实模式均支持）',
     board: {
       title: '协作任务看板',
       workspace: '工作目录',
@@ -2994,6 +2994,7 @@ export default {
       progress: '{done}/{total} 个子任务已完成',
       noTasks: '正在等待协调者拆解子任务…',
       parallelHint: '同一层级的任务由不同数字人并行执行',
+      simulateBadge: '模拟 · 零 Token',
       laneTaskCount: '{count} 个任务',
       blockedReason: '阻塞原因：',
       viewLog: '执行日志',

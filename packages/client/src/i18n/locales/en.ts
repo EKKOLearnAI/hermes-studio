@@ -2935,8 +2935,8 @@ export default {
   groupCollab: {
     title: 'Group Collaboration',
     newRoom: 'New Collaboration',
-    roomKindHint: '@ a coordinator with a goal — it is split into subtasks and fanned out to specialist agents in parallel',
-    emptyHint: '@ a coordinator below and describe a complex goal to start a multi-agent run',
+    roomKindHint: '@ a coordinator with a goal — default is a zero-token simulation that narrates assign / handoff / summarise in chat',
+    emptyHint: '@ a coordinator below and describe a complex goal to start a multi-agent run (simulate by default — no tokens)',
     board: {
       title: 'Collaboration board',
       workspace: 'Workspace',
@@ -2946,6 +2946,7 @@ export default {
       progress: '{done}/{total} subtasks complete',
       noTasks: 'Waiting for the coordinator to split the goal…',
       parallelHint: 'Tasks at the same level run in parallel across agents',
+      simulateBadge: 'Simulate · zero tokens',
       laneTaskCount: '{count} tasks',
       blockedReason: 'Blocked: ',
       viewLog: 'Execution log',

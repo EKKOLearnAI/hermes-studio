@@ -32,6 +32,31 @@ import type {
   KanbanTaskLog,
   KanbanTaskStatus,
 } from '../hermes-kanban'
+import {
+  SIMULATE_PACE_MS,
+  buildLiveCallChain,
+  buildSimulatePlan,
+  formatAssignMessage,
+  formatHandoffMessage,
+  formatLiveAssignMessage,
+  formatLiveBlockedMessage,
+  formatLiveDecomposingMessage,
+  formatLiveFanoutMessage,
+  formatLiveHandoffMessage,
+  formatLiveSummaryMessage,
+  formatLiveThinkingMessage,
+  formatLiveWorkerDoneMessage,
+  formatLiveWorkerStartMessage,
+  formatSummaryMessage,
+  formatThinkingMessage,
+  formatWorkerDoneMessage,
+  formatWorkerStartMessage,
+  isCollabSimulateEnabled,
+  isSimulateTenant,
+  type LiveNarrativeChild,
+  type SimulateAgent,
+  type SimulatePlan,
+} from './collab-simulate'
 
 export type CollabSessionStatus = 'creating' | 'decomposing' | 'running' | 'done' | 'failed'
 
@@ -108,6 +133,8 @@ export interface CollabSessionSnapshot {
   /** Children only — the root is the coordinator's own summarising task. */
   totalChildren: number
   doneChildren: number
+  /** True when this run is a zero-token scripted demo (no Kanban / LLM). */
+  simulate: boolean
 }
 
 export interface CollabSessionStorage {
@@ -166,6 +193,17 @@ export interface CollabOrchestratorDeps {
   }): { id: string } | null
   /** Broadcast an event to everyone in the room. */
   emitToRoom(roomId: string, event: string, payload: unknown): void
+  /**
+   * Post a plain agent chat bubble into the transcript (simulate narratives).
+   * Live runs never need this — workers write to Kanban, not the chat.
+   */
+  postAgentMessage?(input: {
+    roomId: string
+    profile: string
+    content: string
+  }): { id: string } | null
+  /** Room members used to tailor the simulate fan-out roster. */
+  listRoomAgents?(roomId: string): SimulateAgent[]
   now?(): number
   /** Poll cadence while a run is in flight. */
   pollIntervalMs?: number
@@ -180,6 +218,11 @@ export interface StartCollabRunInput {
   coordinator: string
   workspace?: string
   board?: string
+  /**
+   * Force simulate / live. When omitted, `HERMES_COLLAB_SIMULATE` decides
+   * (default ON so demos do not burn tokens).
+   */
+  simulate?: boolean
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -208,6 +251,26 @@ export function splitGoalIntoTitleAndBody(goal: string): { title: string; body: 
 
 export function isCollabTenant(tenant: string | null | undefined): boolean {
   return typeof tenant === 'string' && tenant.startsWith(COLLAB_TENANT_PREFIX)
+}
+
+/**
+ * True when `kanban decompose` refused because another actor (usually the
+ * gateway auto-decomposer) already moved the root out of triage. That is a
+ * race, not a failure — the fan-out still happened.
+ *
+ * Real failures (LLM arrears, malformed JSON, missing auxiliary client) must
+ * NOT be treated as races: otherwise the UI sits forever on
+ * "waiting for the coordinator to split the goal" with an empty board.
+ */
+export function isBenignDecomposeRace(reason: string | null | undefined): boolean {
+  const text = String(reason || '').toLowerCase()
+  if (!text) return false
+  return (
+    text.includes('moved out of triage')
+    || text.includes('not in triage')
+    || text.includes('already decompos')
+    || text.includes('out of triage')
+  )
 }
 
 /**
@@ -276,6 +339,14 @@ export class CollabOrchestrator {
   private readonly inFlight = new Set<string>()
   /** sessionId → when the board last changed shape; see `stalledForMs`. */
   private readonly progressMarks = new Map<string, { digest: string; since: number }>()
+  /** In-memory boards for zero-token simulate runs (never touch Kanban CLI). */
+  private readonly simulateBoards = new Map<string, KanbanTask[]>()
+  /** Pending setTimeout handles so stop() can cancel a mid-flight demo. */
+  private readonly simulateTimers = new Map<string, NodeJS.Timeout[]>()
+  /** sessionId → narrated event keys (dedupe chat bubbles). */
+  private readonly narrativeMarks = new Map<string, Set<string>>()
+  /** sessionId → taskId → last observed status (for transition narration). */
+  private readonly lastTaskStatus = new Map<string, Map<string, string>>()
   private stopped = false
 
   constructor(deps: CollabOrchestratorDeps) {
@@ -291,35 +362,27 @@ export class CollabOrchestrator {
   }
 
   /**
-   * Open a collaboration run. Returns as soon as the anchor message exists so
-   * the socket handler is never blocked on the decomposer LLM; the rest of the
-   * pipeline advances in the background and streams snapshots to the room.
+   * Open a collaboration run.
+   *
+   * Order in the transcript matters: post the coordinator's opening narrative
+   * FIRST, then the board anchor. Users should read the thinking / assign story
+   * above the panel, not under it.
    */
   start(input: StartCollabRunInput): CollabSessionSnapshot | null {
     const goal = String(input.goal || '').trim()
     const coordinator = String(input.coordinator || '').trim()
     if (!goal || !coordinator) return null
 
+    const simulate = isCollabSimulateEnabled(input.simulate)
     const sessionId = randomBytes(8).toString('hex')
-    const anchor = this.deps.postAnchorMessage({
-      roomId: input.roomId,
-      sessionId,
-      coordinator,
-      goal,
-    })
-    if (!anchor?.id) {
-      logger.error('[Collab] failed to post anchor message; aborting run')
-      return null
-    }
-
     const now = this.now()
     const row: CollabSessionRow = {
       id: sessionId,
       roomId: input.roomId,
       triggerMessageId: input.triggerMessageId || '',
-      anchorMessageId: anchor.id,
+      anchorMessageId: '',
       rootTaskId: '',
-      tenant: `${COLLAB_TENANT_PREFIX}${sessionId}`,
+      tenant: simulate ? `collab-sim-${sessionId}` : `${COLLAB_TENANT_PREFIX}${sessionId}`,
       board: input.board || 'default',
       coordinator,
       goal,
@@ -330,9 +393,24 @@ export class CollabOrchestrator {
       updatedAt: now,
     }
     this.storage.createCollabSession(row)
-    this.broadcast(this.buildSnapshot(row, []))
 
-    void this.runPipeline(row)
+    // 1) Chat narrative first (before the board panel message).
+    if (simulate) {
+      const plan = buildSimulatePlan(goal, coordinator, this.deps.listRoomAgents?.(input.roomId) || [])
+      this.say(row, coordinator, formatThinkingMessage(coordinator, goal, plan))
+    } else {
+      this.say(row, coordinator, formatLiveThinkingMessage(coordinator, goal))
+    }
+    this.markNarrative(sessionId, 'thinking')
+
+    // The task-board anchor is posted later (ensureAnchorPosted) so the opening
+    // narrative always appears above the panel in the transcript.
+
+    if (simulate) {
+      void this.runSimulatePipeline(row)
+    } else {
+      void this.runPipeline(row)
+    }
     return this.buildSnapshot(row, [])
   }
 
@@ -357,7 +435,12 @@ export class CollabOrchestrator {
       })
       rootTaskId = String(created?.id || '')
       if (!rootTaskId) throw new Error('kanban create returned no task id')
-      this.patch(row, { rootTaskId, status: 'decomposing' })
+      this.say(row, row.coordinator, formatLiveDecomposingMessage(row.coordinator))
+      if (!this.ensureAnchorPosted(row, [created])) {
+        this.fail(row, '创建协作看板失败')
+        return
+      }
+      this.patch(row, { rootTaskId, status: 'decomposing' }, [created])
     } catch (err) {
       this.fail(row, `创建协作任务失败：${errorText(err)}`)
       return
@@ -371,13 +454,18 @@ export class CollabOrchestrator {
       if (!outcome.ok) {
         // The gateway's dispatcher also auto-decomposes triage tasks on its own
         // tick, so it regularly wins this race and our call is refused with
-        // "moved out of triage" — the fan-out happened, just not by us. Any
-        // other refusal still leaves a usable single task on the board. Either
-        // way the poll loop reports whatever the board actually holds, so the
-        // run stays alive.
+        // "moved out of triage" — the fan-out happened, just not by us.
+        // Real refusals (LLM arrears, malformed JSON, …) leave the root stuck
+        // in triage with zero children; surface those as failures instead of
+        // parking the UI on an empty "waiting for decompose" board forever.
+        if (!isBenignDecomposeRace(outcome.reason)) {
+          this.fail(row, `任务拆解失败：${outcome.reason || '协调者未能拆解子任务'}`)
+          return
+        }
         logger.info(`[Collab] decompose not performed by us for ${rootTaskId}: ${outcome.reason}`)
       }
       this.patch(row, { status: 'running' })
+      await this.narrateFanoutIfReady(row)
     } catch (err) {
       this.fail(row, `任务拆解失败：${errorText(err)}`)
       return
@@ -392,6 +480,182 @@ export class CollabOrchestrator {
     }
 
     this.watch(row.id)
+  }
+
+  /**
+   * Scripted zero-token demo: narrative chat bubbles + in-memory board updates.
+   * Never calls Kanban CLI or any LLM.
+   */
+  private async runSimulatePipeline(row: CollabSessionRow): Promise<void> {
+    const agents = this.deps.listRoomAgents?.(row.roomId) || []
+    const plan = buildSimulatePlan(row.goal, row.coordinator, agents)
+    const createdAt = Math.floor(this.now() / 1000)
+
+    const say = (profile: string, content: string) => {
+      try {
+        this.deps.postAgentMessage?.({ roomId: row.roomId, profile, content })
+      } catch (err) {
+        logger.warn(`[Collab] simulate narrative failed: ${errorText(err)}`)
+      }
+    }
+
+    const root: KanbanTask = {
+      id: plan.rootId,
+      title: plan.rootTitle,
+      body: row.goal,
+      assignee: row.coordinator,
+      status: 'triage',
+      priority: 0,
+      created_by: 'simulate',
+      created_at: createdAt,
+      started_at: null,
+      completed_at: null,
+      workspace_kind: row.workspace ? 'dir' : 'scratch',
+      workspace_path: row.workspace || null,
+      tenant: row.tenant,
+      result: null,
+      skills: null,
+    }
+
+    const board = () => this.simulateBoards.get(row.id) || []
+    const publish = (status?: CollabSessionStatus) => {
+      const tasks = board()
+      if (status) this.patch(row, { status }, tasks)
+      else this.broadcast(this.buildSnapshot(row, tasks), true)
+    }
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.clearOneSimulateTimer(row.id, timer)
+        resolve()
+      }, ms)
+      this.trackSimulateTimer(row.id, timer)
+    })
+
+    const stillActive = () => {
+      const current = this.storage.getCollabSession(row.id)
+      return Boolean(current && current.status !== 'done' && current.status !== 'failed' && !this.stopped)
+    }
+
+    try {
+      // Opening thinking was already posted in start(); pause so users can read
+      // it before the board anchor lands in the transcript.
+      await sleep(SIMULATE_PACE_MS.thinking)
+      if (!stillActive()) return
+
+      if (!this.ensureAnchorPosted(row, [root])) {
+        this.fail(row, '协作看板创建失败')
+        return
+      }
+
+      this.simulateBoards.set(row.id, [root])
+      this.patch(row, { rootTaskId: plan.rootId, status: 'decomposing' }, [root])
+
+      await sleep(SIMULATE_PACE_MS.afterPlan)
+      if (!stillActive()) return
+
+      const children: KanbanTask[] = plan.children.map((child, index) => ({
+        id: child.id,
+        title: child.title,
+        body: child.title,
+        assignee: child.assignee,
+        status: 'ready' as KanbanTaskStatus,
+        priority: 0,
+        created_by: 'simulate',
+        created_at: createdAt + index + 1,
+        started_at: null,
+        completed_at: null,
+        workspace_kind: root.workspace_kind,
+        workspace_path: root.workspace_path,
+        tenant: row.tenant,
+        result: null,
+        skills: null,
+      }))
+      root.status = 'todo'
+      this.simulateBoards.set(row.id, [root, ...children])
+      publish('running')
+
+      say(
+        row.coordinator,
+        [
+          '【模拟】拆解完成，开始按调用链分派：',
+          ...plan.chain.slice(0, Math.min(6, plan.chain.length)).map(
+            (step, i) => `${i + 1}. @${step.from} → @${step.to}：${step.action}`,
+          ),
+        ].join('\n'),
+      )
+
+      for (const childPlan of plan.children) {
+        if (!stillActive()) return
+        await sleep(SIMULATE_PACE_MS.betweenAssign)
+        if (!stillActive()) return
+
+        say(row.coordinator, formatAssignMessage(row.coordinator, childPlan))
+        const child = board().find(task => task.id === childPlan.id)
+        if (child) {
+          child.status = 'running'
+          child.started_at = Math.floor(this.now() / 1000)
+          publish()
+        }
+        say(childPlan.assignee, formatWorkerStartMessage(childPlan))
+
+        await sleep(SIMULATE_PACE_MS.workTick)
+        if (!stillActive()) return
+
+        const handoff = formatHandoffMessage(childPlan)
+        if (handoff) {
+          say(childPlan.assignee, handoff)
+          await sleep(SIMULATE_PACE_MS.handoff)
+          if (!stillActive()) return
+        }
+
+        const doneChild = board().find(task => task.id === childPlan.id)
+        if (doneChild) {
+          doneChild.status = 'done'
+          doneChild.completed_at = Math.floor(this.now() / 1000)
+          doneChild.result = childPlan.summary
+          const summaries = mapFor(this.summaries, row.id)
+          summaries.set(childPlan.id, childPlan.summary)
+          publish()
+        }
+        say(childPlan.assignee, formatWorkerDoneMessage(childPlan))
+      }
+
+      await sleep(SIMULATE_PACE_MS.summary)
+      if (!stillActive()) return
+
+      const summaryText = formatSummaryMessage(row.coordinator, row.goal, plan)
+      say(row.coordinator, summaryText)
+      root.status = 'done'
+      root.completed_at = Math.floor(this.now() / 1000)
+      root.result = '模拟验收通过：各角色交付已汇总。'
+      mapFor(this.summaries, row.id).set(root.id, root.result)
+      this.simulateBoards.set(row.id, board())
+      this.patch(row, { status: 'done', error: '' }, board())
+      this.clearSimulateTimers(row.id)
+    } catch (err) {
+      this.fail(row, `模拟协作失败：${errorText(err)}`)
+      this.clearSimulateTimers(row.id)
+    }
+  }
+
+  private trackSimulateTimer(sessionId: string, timer: NodeJS.Timeout): void {
+    const list = this.simulateTimers.get(sessionId) || []
+    list.push(timer)
+    this.simulateTimers.set(sessionId, list)
+  }
+
+  private clearOneSimulateTimer(sessionId: string, timer: NodeJS.Timeout): void {
+    const list = this.simulateTimers.get(sessionId)
+    if (!list) return
+    const next = list.filter(item => item !== timer)
+    if (next.length) this.simulateTimers.set(sessionId, next)
+    else this.simulateTimers.delete(sessionId)
+  }
+
+  private clearSimulateTimers(sessionId: string): void {
+    for (const timer of this.simulateTimers.get(sessionId) || []) clearTimeout(timer)
+    this.simulateTimers.delete(sessionId)
   }
 
   /** Begin (or resume) polling a run's task tree. */
@@ -433,6 +697,8 @@ export class CollabOrchestrator {
     this.watchers.delete(sessionId)
     this.lastDigest.delete(sessionId)
     this.progressMarks.delete(sessionId)
+    this.narrativeMarks.delete(sessionId)
+    this.lastTaskStatus.delete(sessionId)
   }
 
   /**
@@ -504,6 +770,13 @@ export class CollabOrchestrator {
       return
     }
 
+    // Simulate boards are driven by timers, not by Kanban polls.
+    if (isSimulateTenant(row.tenant)) {
+      const tasks = this.simulateBoards.get(sessionId) || []
+      this.broadcast(this.buildSnapshot(row, tasks))
+      return
+    }
+
     let tasks: KanbanTask[] = []
     try {
       tasks = await this.kanban.listTasks({
@@ -519,9 +792,12 @@ export class CollabOrchestrator {
     await this.hydrateTaskDetails(row, tasks)
 
     const snapshot = this.buildSnapshot(row, tasks)
+    this.narrateLiveProgress(row, tasks, snapshot)
+
     const outcome = settleOutcome(snapshot, this.stalledForMs(sessionId, snapshot))
 
     if (outcome && row.status === 'running') {
+      this.narrateLiveSettlement(row, snapshot, outcome)
       this.patch(row, outcome, tasks)
       this.stopWatching(sessionId)
       return
@@ -534,6 +810,189 @@ export class CollabOrchestrator {
     }
 
     this.broadcast(snapshot)
+  }
+
+  /** Post a transcript bubble; never throws into the Kanban poll loop. */
+  private say(row: CollabSessionRow, profile: string, content: string): void {
+    if (!content.trim()) return
+    try {
+      this.deps.postAgentMessage?.({ roomId: row.roomId, profile, content })
+    } catch (err) {
+      logger.warn(`[Collab] narrative post failed: ${errorText(err)}`)
+    }
+  }
+
+  /**
+   * Persist the task-board anchor once opening narrative is on the transcript.
+   * Idempotent — later calls only rebroadcast when tasks are supplied.
+   */
+  private ensureAnchorPosted(row: CollabSessionRow, tasks: KanbanTask[] = []): boolean {
+    if (row.anchorMessageId) {
+      if (tasks.length > 0) {
+        this.broadcast(this.buildSnapshot(row, tasks), true)
+      }
+      return true
+    }
+    const anchor = this.deps.postAnchorMessage({
+      roomId: row.roomId,
+      sessionId: row.id,
+      coordinator: row.coordinator,
+      goal: row.goal,
+    })
+    if (!anchor?.id) {
+      logger.error('[Collab] failed to post anchor message')
+      return false
+    }
+    this.patch(row, { anchorMessageId: anchor.id }, tasks)
+    return true
+  }
+
+  private markNarrative(sessionId: string, key: string): boolean {
+    let set = this.narrativeMarks.get(sessionId)
+    if (!set) {
+      set = new Set()
+      this.narrativeMarks.set(sessionId, set)
+    }
+    if (set.has(key)) return false
+    set.add(key)
+    return true
+  }
+
+  private toLiveChild(task: CollabTaskSnapshot | KanbanTask, summary = ''): LiveNarrativeChild {
+    const fromSnapshot = 'summary' in task ? String(task.summary || '') : ''
+    const fromKanban = 'result' in task ? String(task.result || '') : ''
+    return {
+      id: task.id,
+      title: task.title || task.id,
+      assignee: task.assignee || '',
+      summary: summary || fromSnapshot || fromKanban,
+    }
+  }
+
+  /** After decompose (or first poll), announce the fan-out once. */
+  private async narrateFanoutIfReady(row: CollabSessionRow): Promise<void> {
+    if (this.narrativeMarks.get(row.id)?.has('fanout')) return
+    try {
+      const tasks = await this.kanban.listTasks({
+        board: row.board,
+        tenant: row.tenant,
+        includeArchived: true,
+      })
+      const children = tasks
+        .filter(task => task.id !== row.rootTaskId)
+        .sort((a, b) => a.created_at - b.created_at)
+        .map(task => this.toLiveChild(task))
+      const root = tasks.find(task => task.id === row.rootTaskId)
+      // Decompose may still be racing via gateway — wait until children exist
+      // or the root has left triage (single-task / no-fanout path).
+      if (children.length === 0 && (!root || root.status === 'triage')) return
+      if (!this.markNarrative(row.id, 'fanout')) return
+      this.say(row, row.coordinator, formatLiveFanoutMessage(row.coordinator, children))
+      for (const child of children) {
+        if (!this.markNarrative(row.id, `assign:${child.id}`)) continue
+        this.say(row, row.coordinator, formatLiveAssignMessage(row.coordinator, child))
+      }
+      const statusMap = mapFor(this.lastTaskStatus, row.id)
+      for (const task of tasks) statusMap.set(task.id, task.status)
+    } catch (err) {
+      logger.warn(`[Collab] fan-out narrative failed: ${errorText(err)}`)
+    }
+  }
+
+  /**
+   * Emit assign / start / handoff / done / blocked bubbles from board deltas.
+   * Purely template-driven — no extra LLM calls.
+   */
+  private narrateLiveProgress(
+    row: CollabSessionRow,
+    tasks: KanbanTask[],
+    snapshot: CollabSessionSnapshot,
+  ): void {
+    if (isSimulateTenant(row.tenant)) return
+
+    const children = snapshot.tasks.filter(task => !task.isRoot)
+    if (children.length > 0) {
+      // Decompose may have been won by the gateway race; ensure fan-out is told.
+      if (this.markNarrative(row.id, 'fanout')) {
+        this.say(
+          row,
+          row.coordinator,
+          formatLiveFanoutMessage(
+            row.coordinator,
+            children.map(task => this.toLiveChild(task, task.summary)),
+          ),
+        )
+        for (const child of children) {
+          if (!this.markNarrative(row.id, `assign:${child.id}`)) continue
+          this.say(row, row.coordinator, formatLiveAssignMessage(row.coordinator, child))
+        }
+      }
+    }
+
+    const prev = mapFor(this.lastTaskStatus, row.id)
+    const ordered = [...children].sort((a, b) => a.createdAt - b.createdAt)
+
+    for (const task of ordered) {
+      const before = prev.get(task.id)
+      const after = task.status
+      if (before === after) continue
+
+      if (after === 'running' && this.markNarrative(row.id, `start:${task.id}`)) {
+        this.say(row, task.assignee || row.coordinator, formatLiveWorkerStartMessage(this.toLiveChild(task)))
+      }
+
+      if (TERMINAL_TASK_STATUSES.has(after) && this.markNarrative(row.id, `done:${task.id}`)) {
+        const live = this.toLiveChild(task, task.summary)
+        this.say(row, task.assignee || row.coordinator, formatLiveWorkerDoneMessage(live))
+        const next = ordered.find(candidate =>
+          candidate.id !== task.id
+          && !TERMINAL_TASK_STATUSES.has(candidate.status)
+          && candidate.assignee
+          && candidate.assignee !== task.assignee)
+        if (next && this.markNarrative(row.id, `handoff:${task.id}->${next.id}`)) {
+          this.say(
+            row,
+            task.assignee || row.coordinator,
+            formatLiveHandoffMessage(live, this.toLiveChild(next, next.summary)),
+          )
+        }
+      }
+
+      if (STALLED_TASK_STATUSES.has(after) && this.markNarrative(row.id, `blocked:${task.id}`)) {
+        this.say(
+          row,
+          task.assignee || row.coordinator,
+          formatLiveBlockedMessage(this.toLiveChild(task), task.blockedReason),
+        )
+      }
+
+      prev.set(task.id, after)
+    }
+
+    // Keep root status tracked too (used by settlement).
+    const root = snapshot.tasks.find(task => task.isRoot)
+    if (root) prev.set(root.id, root.status)
+  }
+
+  private narrateLiveSettlement(
+    row: CollabSessionRow,
+    snapshot: CollabSessionSnapshot,
+    outcome: { status: CollabSessionStatus; error: string },
+  ): void {
+    if (isSimulateTenant(row.tenant)) return
+    if (!this.markNarrative(row.id, `settle:${outcome.status}`)) return
+    if (outcome.status !== 'done' && outcome.status !== 'failed') return
+
+    const children = snapshot.tasks
+      .filter(task => !task.isRoot)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(task => this.toLiveChild(task, task.summary))
+    const chain = buildLiveCallChain(row.coordinator, children)
+    const body = formatLiveSummaryMessage(row.coordinator, row.goal, children, chain)
+    const suffix = outcome.status === 'failed'
+      ? `\n\n⚠ 结束状态：失败 — ${outcome.error || snapshot.error || '需要人工介入'}`
+      : ''
+    this.say(row, row.coordinator, body + suffix)
   }
 
   private patch(
@@ -607,6 +1066,7 @@ export class CollabOrchestrator {
       counts,
       totalChildren: children.length,
       doneChildren: children.filter(task => TERMINAL_TASK_STATUSES.has(task.status)).length,
+      simulate: isSimulateTenant(row.tenant),
     }
   }
 
@@ -615,6 +1075,9 @@ export class CollabOrchestrator {
     const row = this.storage.getCollabSession(sessionId)
     if (!row) return null
     if (!row.rootTaskId) return this.buildSnapshot(row, [])
+    if (isSimulateTenant(row.tenant)) {
+      return this.buildSnapshot(row, this.simulateBoards.get(sessionId) || [])
+    }
     try {
       const tasks = await this.kanban.listTasks({
         board: row.board,
@@ -649,6 +1112,22 @@ export class CollabOrchestrator {
     const row = this.storage.getCollabSession(sessionId)
     if (!row) return null
 
+    if (isSimulateTenant(row.tenant)) {
+      const tasks = this.simulateBoards.get(sessionId) || []
+      const task = tasks.find(candidate => candidate.id === taskId)
+      if (!task) return null
+      const summary = this.summaries.get(sessionId)?.get(taskId) || task.result || ''
+      const content = [
+        `【模拟日志】任务 ${task.id} · ${task.title}`,
+        `负责人：${task.assignee || '-'}`,
+        `状态：${task.status}`,
+        summary ? `摘要：${summary}` : '尚无摘要',
+        '',
+        '（零 Token 模拟：无真实 worker stdout）',
+      ].join('\n')
+      return { taskId, content, truncated: false, exists: true }
+    }
+
     const tasks = await this.kanban.listTasks({
       board: row.board,
       tenant: row.tenant,
@@ -669,6 +1148,19 @@ export class CollabOrchestrator {
   async taskDetail(sessionId: string, taskId: string): Promise<KanbanTaskDetail | null> {
     const row = this.storage.getCollabSession(sessionId)
     if (!row) return null
+    if (isSimulateTenant(row.tenant)) {
+      const task = (this.simulateBoards.get(sessionId) || []).find(candidate => candidate.id === taskId)
+      if (!task) return null
+      return {
+        task,
+        parents: [],
+        children: [],
+        comments: [],
+        events: [],
+        runs: [],
+        latest_summary: this.summaries.get(sessionId)?.get(taskId) || task.result || null,
+      }
+    }
     const tasks = await this.kanban.listTasks({
       board: row.board,
       tenant: row.tenant,
@@ -698,9 +1190,18 @@ export class CollabOrchestrator {
     }
 
     this.stopWatching(sessionId)
+    this.clearSimulateTimers(sessionId)
 
     let tasks: KanbanTask[] = []
-    if (row.rootTaskId) {
+    if (isSimulateTenant(row.tenant)) {
+      tasks = this.simulateBoards.get(sessionId) || []
+      for (const task of tasks) {
+        if (!TERMINAL_TASK_STATUSES.has(task.status) && !STALLED_TASK_STATUSES.has(task.status)) {
+          task.status = 'blocked'
+        }
+      }
+      this.simulateBoards.set(sessionId, tasks)
+    } else if (row.rootTaskId) {
       try {
         tasks = await this.kanban.listTasks({
           board: row.board,
@@ -766,6 +1267,15 @@ export class CollabOrchestrator {
     let resumed = 0
     for (const row of this.storage.listUnfinishedCollabSessions()) {
       if (!row.rootTaskId) continue
+      // Simulate boards live only in process memory — a restart cannot continue
+      // the script, so mark them failed rather than polling an empty Kanban tenant.
+      if (isSimulateTenant(row.tenant)) {
+        this.patch(row, {
+          status: 'failed',
+          error: '模拟会话在服务重启后已中断（零 Token 演示不会跨进程恢复）',
+        })
+        continue
+      }
       this.watch(row.id)
       resumed += 1
     }
@@ -778,6 +1288,10 @@ export class CollabOrchestrator {
     this.watchers.clear()
     this.lastDigest.clear()
     this.summaries.clear()
+    this.narrativeMarks.clear()
+    this.lastTaskStatus.clear()
+    for (const sessionId of [...this.simulateTimers.keys()]) this.clearSimulateTimers(sessionId)
+    this.simulateBoards.clear()
   }
 }
 
@@ -810,8 +1324,17 @@ export function settleOutcome(
   if (snapshot.tasks.length === 0) return null
 
   // `fanout: false` — the goal stayed a single task, so the root IS the work.
+  // Also covers a stuck triage root whose decompose never succeeded (e.g. LLM
+  // arrears): after the grace window, report failure instead of polling forever.
   if (children.length === 0) {
-    if (!root || !isSettled(root.status)) return null
+    if (!root) return null
+    if (root.status === 'triage' && stalledForMs >= STALL_GRACE_MS) {
+      return {
+        status: 'failed',
+        error: '协调者未能拆解子任务（根任务仍停留在 triage）。请检查模型 API 是否可用后重试。',
+      }
+    }
+    if (!isSettled(root.status)) return null
     return STALLED_TASK_STATUSES.has(root.status)
       ? { status: 'failed', error: '任务被阻塞，需要人工介入' }
       : { status: 'done', error: '' }

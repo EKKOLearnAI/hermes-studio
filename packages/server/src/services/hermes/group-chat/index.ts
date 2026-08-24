@@ -3417,6 +3417,12 @@ export class GroupChatServer {
             storage: this.storage,
             kanban: kanbanCli,
             postAnchorMessage: (input) => this.postCollabAnchorMessage(input),
+            postAgentMessage: (input) => this.postCollabAgentMessage(input),
+            listRoomAgents: (roomId) => this.storage.getRoomAgents(roomId).map(agent => ({
+                profile: agent.profile || agent.name,
+                name: agent.name || agent.profile,
+                description: agent.description || '',
+            })),
             emitToRoom: (roomId, event, payload) => {
                 this.nsp.to(roomId).emit(event, payload)
             },
@@ -3483,6 +3489,54 @@ export class GroupChatServer {
             return { id: saved.message.id }
         } catch (err) {
             logger.error(`[Collab] failed to persist anchor message: ${err instanceof Error ? err.message : String(err)}`)
+            return null
+        }
+    }
+
+    /**
+     * Post a transcript bubble attributed to a room agent (or a synthetic
+     * collab profile). Used by the zero-token simulate narrative so users can
+     * read the assign / handoff / summarise story in chat.
+     */
+    private postCollabAgentMessage(input: {
+        roomId: string
+        profile: string
+        content: string
+    }): { id: string } | null {
+        const agent = this.storage.getRoomAgents(input.roomId)
+            .find(candidate => candidate.profile === input.profile
+                || candidate.name === input.profile)
+
+        const message: ChatMessage = {
+            id: this.generateId(),
+            roomId: input.roomId,
+            senderId: agent?.agentId || `collab:${input.profile}`,
+            senderName: agent?.name || input.profile,
+            senderType: 'agent',
+            senderAgentRecordId: agent?.id || '',
+            senderAvatar: agent?.avatar || '',
+            senderAgentType: agent?.agent,
+            senderAgentProfile: agent?.profile || input.profile,
+            senderAgentProvider: agent?.provider || '',
+            senderAgentModel: agent?.model || '',
+            senderAgentDescription: agent?.description || '',
+            senderOwnerMemberId: agent?.ownerMemberId || '',
+            content: String(input.content || ''),
+            timestamp: Date.now(),
+            persistedAt: Date.now(),
+            role: 'assistant',
+        }
+
+        try {
+            const saved = this.storage.saveMessageAndRefreshRoom(message)
+            this.nsp.to(input.roomId).emit('message', buildOutboundGroupMessage(saved.message))
+            this.nsp.to(input.roomId).emit('room_updated', {
+                roomId: input.roomId,
+                totalTokens: saved.totalTokens,
+            })
+            return { id: saved.message.id }
+        } catch (err) {
+            logger.error(`[Collab] failed to persist narrative message: ${err instanceof Error ? err.message : String(err)}`)
             return null
         }
     }

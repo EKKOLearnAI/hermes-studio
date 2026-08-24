@@ -402,6 +402,8 @@ export interface CollabSessionSnapshot {
     counts: Record<string, number>
     totalChildren: number
     doneChildren: number
+    /** Zero-token scripted demo — no Kanban workers / LLM. */
+    simulate?: boolean
 }
 
 export interface CollabTaskLog {

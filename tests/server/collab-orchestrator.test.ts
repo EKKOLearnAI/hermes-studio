@@ -15,6 +15,12 @@ import type {
     KanbanTaskDetail,
 } from '../../packages/server/src/services/hermes/hermes-kanban'
 
+beforeEach(() => {
+    // Existing tests cover the live Kanban path; keep simulate off unless a
+    // case opts in with `simulate: true`.
+    vi.stubEnv('HERMES_COLLAB_SIMULATE', '0')
+})
+
 function task(overrides: Partial<KanbanTask> & { id: string }): KanbanTask {
     return {
         id: overrides.id,
@@ -55,6 +61,9 @@ interface Harness {
     orchestrator: CollabOrchestrator
     storage: ReturnType<typeof makeStorage>
     snapshots: CollabSessionSnapshot[]
+    narratives: Array<{ profile: string; content: string }>
+    /** How many narrative bubbles existed when the board anchor was posted. */
+    anchorAtNarrativeCount: number
     board: Board
     decompose: ReturnType<typeof vi.fn>
     created: Array<{ title: string; opts?: Record<string, unknown> }>
@@ -77,6 +86,8 @@ interface Board {
 function makeHarness(options?: { decomposeOutcome?: KanbanDecomposeOutcome }): Harness {
     const storage = makeStorage()
     const snapshots: CollabSessionSnapshot[] = []
+    const narratives: Array<{ profile: string; content: string }> = []
+    let anchorAtNarrativeCount = -1
     const board: Board = {
         tasks: [],
         details: new Map<string, KanbanTaskDetail>(),
@@ -134,7 +145,14 @@ function makeHarness(options?: { decomposeOutcome?: KanbanDecomposeOutcome }): H
                 }
             },
         },
-        postAnchorMessage: () => ({ id: 'anchor-1' }),
+        postAnchorMessage: () => {
+            anchorAtNarrativeCount = narratives.length
+            return { id: 'anchor-1' }
+        },
+        postAgentMessage: ({ profile, content }) => {
+            narratives.push({ profile, content })
+            return { id: `n-${narratives.length}` }
+        },
         emitToRoom: (_roomId, event, payload) => {
             if (event !== 'collab_session_updated') return
             snapshots.push((payload as { session: CollabSessionSnapshot }).session)
@@ -148,6 +166,8 @@ function makeHarness(options?: { decomposeOutcome?: KanbanDecomposeOutcome }): H
         orchestrator,
         storage,
         snapshots,
+        narratives,
+        get anchorAtNarrativeCount() { return anchorAtNarrativeCount },
         board,
         decompose,
         created,
@@ -356,6 +376,92 @@ describe('CollabOrchestrator', () => {
         expect(harness.storage.rows.size).toBe(0)
     })
 
+    it('posts opening narrative before the task-board anchor', async () => {
+        harness.orchestrator.start({
+            roomId: 'r1',
+            triggerMessageId: 'm1',
+            goal: '开发登录与权限',
+            coordinator: 'mia',
+            simulate: false,
+        })
+        await flush()
+        expect(harness.narratives.length).toBeGreaterThanOrEqual(2)
+        expect(harness.narratives[0]?.content).toContain('【协作】')
+        expect(harness.anchorAtNarrativeCount).toBeGreaterThanOrEqual(2)
+    })
+
+    it('narrates thinking, fan-out, start/handoff/done in the live path', async () => {
+        harness.orchestrator.start({
+            roomId: 'r1',
+            triggerMessageId: 'm1',
+            goal: '开发登录与权限',
+            coordinator: 'mia',
+            simulate: false,
+        })
+        await flush()
+
+        expect(harness.narratives.some(item => item.content.includes('【协作】') && item.content.includes('拆解'))).toBe(true)
+
+        harness.board.tasks = [
+            task({ id: 'root', status: 'todo', assignee: 'mia', created_at: 1 }),
+            task({ id: 'c1', title: '后端 API', status: 'ready', assignee: 'kai', created_at: 2 }),
+            task({ id: 'c2', title: '前端 UI', status: 'ready', assignee: 'nina', created_at: 3 }),
+        ]
+        await harness.poll()
+        expect(harness.narratives.some(item => item.content.includes('开始分派'))).toBe(true)
+        expect(harness.narratives.some(item => item.content.includes('@kai'))).toBe(true)
+
+        harness.board.tasks = [
+            task({ id: 'root', status: 'todo', assignee: 'mia', created_at: 1 }),
+            task({ id: 'c1', title: '后端 API', status: 'running', assignee: 'kai', created_at: 2, started_at: 10 }),
+            task({ id: 'c2', title: '前端 UI', status: 'ready', assignee: 'nina', created_at: 3 }),
+        ]
+        await harness.poll()
+        expect(harness.narratives.some(item => item.profile === 'kai' && item.content.includes('已接单'))).toBe(true)
+
+        harness.board.tasks = [
+            task({ id: 'root', status: 'todo', assignee: 'mia', created_at: 1 }),
+            task({
+                id: 'c1', title: '后端 API', status: 'done', assignee: 'kai',
+                created_at: 2, started_at: 10, completed_at: 20, result: 'API 就绪',
+            }),
+            task({ id: 'c2', title: '前端 UI', status: 'ready', assignee: 'nina', created_at: 3 }),
+        ]
+        harness.board.details.set('c1', {
+            task: harness.board.tasks[1],
+            comments: [],
+            events: [],
+            runs: [],
+            latest_summary: 'API 就绪',
+        })
+        await harness.poll()
+        expect(harness.narratives.some(item => item.content.includes('完成') && item.content.includes('后端'))).toBe(true)
+        expect(harness.narratives.some(item => item.content.includes('→ 调用') && item.content.includes('@nina'))).toBe(true)
+
+        harness.board.tasks = [
+            task({ id: 'root', status: 'done', assignee: 'mia', created_at: 1, completed_at: 40 }),
+            task({
+                id: 'c1', title: '后端 API', status: 'done', assignee: 'kai',
+                created_at: 2, started_at: 10, completed_at: 20, result: 'API 就绪',
+            }),
+            task({
+                id: 'c2', title: '前端 UI', status: 'done', assignee: 'nina',
+                created_at: 3, started_at: 25, completed_at: 35, result: 'UI 完成',
+            }),
+        ]
+        harness.board.details.set('c2', {
+            task: harness.board.tasks[2],
+            comments: [],
+            events: [],
+            runs: [],
+            latest_summary: 'UI 完成',
+        })
+        await harness.poll()
+        expect(harness.narratives.some(item => item.content.includes('【协作 · 汇总】'))).toBe(true)
+        const [row] = [...harness.storage.rows.values()]
+        expect(row.status).toBe('done')
+    })
+
     it('creates a tenant-scoped triage root that carries the room workspace', async () => {
         harness.orchestrator.start({
             roomId: 'r1',
@@ -410,6 +516,27 @@ describe('CollabOrchestrator', () => {
         const [row] = [...harness.storage.rows.values()]
         expect(row.status).toBe('running')
         expect(row.error).toBe('')
+    })
+
+    it('fails the run when decompose refuses for a real LLM error', async () => {
+        // e.g. DashScope Arrearage — previously left the UI forever on
+        // "waiting for the coordinator to split the goal" with an empty board.
+        harness = makeHarness({
+            decomposeOutcome: {
+                task_id: 'root',
+                ok: false,
+                reason: 'LLM error: APIError',
+                fanout: false,
+                child_ids: null,
+                new_title: null,
+            },
+        })
+        harness.orchestrator.start({ roomId: 'r1', triggerMessageId: 'm1', goal: '任务', coordinator: 'shyam' })
+        await flush()
+
+        const [row] = [...harness.storage.rows.values()]
+        expect(row.status).toBe('failed')
+        expect(row.error).toContain('LLM error')
     })
 
     it('fails the run when the root task cannot be created', async () => {

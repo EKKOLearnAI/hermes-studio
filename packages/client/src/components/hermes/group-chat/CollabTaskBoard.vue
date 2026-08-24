@@ -156,6 +156,7 @@ onBeforeUnmount(() => {
     <div class="collab-header">
       <div class="collab-title-row">
         <span class="collab-title">{{ t('groupCollab.board.title') }}</span>
+        <span v-if="session.simulate" class="collab-sim-badge">{{ t('groupCollab.board.simulateBadge') }}</span>
         <span class="collab-status" :class="`collab-status--${session.status}`">
           <span v-if="session.status === 'creating' || session.status === 'decomposing' || session.status === 'running'" class="collab-pulse" />
           {{ statusLabel }}
@@ -284,6 +285,16 @@ onBeforeUnmount(() => {
   font-weight: 600;
   font-size: 13px;
   color: $text-primary;
+}
+
+.collab-sim-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.12);
+  border: 1px solid rgba(13, 148, 136, 0.28);
 }
 
 .collab-status {
