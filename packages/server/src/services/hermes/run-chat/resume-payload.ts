@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { WorkspaceRunChangeSummary } from '../../../db/hermes/workspace-run-changes-store'
 import type { SessionMessage } from './types'
 
 export const RESUME_TOOL_RESULT_DISPLAY_LIMIT = 1_000
@@ -35,6 +36,7 @@ export interface ResumeMessagePageOptions {
 
 export interface ResumeMessagePage {
   messages: SessionMessage[]
+  workspaceRunChanges?: WorkspaceRunChangeSummary[]
   messageTotal: number
   messageLoadedCount: number
   messagePageLimit: number

@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto'
 import { logger } from '../../logger'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../../../db/hermes/session-store'
+import { listWorkspaceRunChangesForAssistantMessages } from '../../../db/hermes/workspace-run-changes-store'
 import { getSessionCategory } from '../../../db/hermes/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import {
@@ -1265,10 +1266,17 @@ export class ChatRunSocket {
       messageTotal: state.messageTotal,
       messageStateBaselineCount: state.messageStateBaselineCount,
     })
+    const workspaceRunChanges = listWorkspaceRunChangesForAssistantMessages(
+      sid,
+      messagePage.messages
+        .filter(message => String(message.display_role || message.role || '') === 'assistant')
+        .map(message => message.id),
+    )
+    const resumePage = { ...messagePage, workspaceRunChanges }
     const appMessagePage = options
-      ? buildAppResumeMessagePage(messagePage, options.cachedId)
+      ? buildAppResumeMessagePage(resumePage, options.cachedId)
       : null
-    const outboundMessagePage = appMessagePage || messagePage
+    const outboundMessagePage = appMessagePage || resumePage
     socket.emit(options?.event || 'resumed', {
       session_id: sid,
       ...outboundMessagePage,

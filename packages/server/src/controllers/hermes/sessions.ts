@@ -28,7 +28,7 @@ import {
   setSessionCategory,
 } from '../../db/hermes/session-category-store'
 import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
-import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
+import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { isNearestExistingRealPathWithin, isPathWithin, relativePathFromBase } from '../../services/hermes/hermes-path'
@@ -2059,6 +2059,9 @@ export async function getConversationMessagesPaginated(ctx: any) {
   }
   const session = { ...result.session, profile: (result.session as any).profile || profile || 'default' }
   if (denySessionAccess(ctx, session)) return
+  const assistantMessageIds = result.messages
+    .filter(message => String(message.display_role || message.role || '') === 'assistant')
+    .map(message => message.id)
 
   ctx.body = {
     session: {
@@ -2081,6 +2084,7 @@ export async function getConversationMessagesPaginated(ctx: any) {
       output_tokens: session.output_tokens,
     },
     messages: result.messages,
+    workspaceRunChanges: listWorkspaceRunChangesForAssistantMessages(ctx.params.id, assistantMessageIds),
     total: result.total,
     offset: result.offset,
     limit: result.limit,

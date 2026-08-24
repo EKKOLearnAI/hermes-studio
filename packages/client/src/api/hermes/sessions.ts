@@ -74,6 +74,7 @@ export interface SessionContext {
 export interface PaginatedSessionMessages {
   session: SessionSummary
   messages: HermesMessage[]
+  workspaceRunChanges: WorkspaceRunChangeSummary[]
   total: number
   offset: number
   limit: number

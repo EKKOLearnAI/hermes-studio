@@ -192,6 +192,7 @@ export const WORKSPACE_RUN_CHANGE_FILES_SCHEMA: Record<string, string> = {
 
 export const WORKSPACE_RUN_CHANGES_INDEXES = {
   idx_workspace_run_changes_session: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_session ON workspace_run_changes(session_id, created_at)',
+  idx_workspace_run_changes_assistant_message: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_assistant_message ON workspace_run_changes(session_id, assistant_message_id, created_at)',
   idx_workspace_run_changes_run: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_run ON workspace_run_changes(run_id)',
   idx_workspace_run_changes_room: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_room ON workspace_run_changes(room_id, created_at)',
 }

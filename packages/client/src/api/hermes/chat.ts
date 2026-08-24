@@ -159,6 +159,7 @@ export interface RunEvent {
 export interface ResumeSessionPayload {
   session_id: string
   messages: any[]
+  workspaceRunChanges?: import('./sessions').WorkspaceRunChangeSummary[]
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number

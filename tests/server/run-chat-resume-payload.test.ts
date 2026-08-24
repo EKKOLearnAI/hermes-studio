@@ -117,6 +117,26 @@ describe('buildResumeMessages', () => {
     expect(after.messages?.[0].content).toBe('complete')
   })
 
+  it('invalidates the App page cache when only its workspace diff sidecar changes', () => {
+    const page = buildResumeMessagePage([
+      message({ id: 7, role: 'assistant', content: 'complete' }),
+    ])
+    const before = buildAppResumeMessagePage({
+      ...page,
+      workspaceRunChanges: [],
+    }, '')
+    const after = buildAppResumeMessagePage({
+      ...page,
+      workspaceRunChanges: [{ change_id: 'change-1', assistant_message_id: '7' } as any],
+    }, before.id)
+
+    expect(after.messagesCached).toBe(false)
+    expect(after.id).not.toBe(before.id)
+    expect(after.workspaceRunChanges).toEqual([
+      expect.objectContaining({ change_id: 'change-1', assistant_message_id: '7' }),
+    ])
+  })
+
   it('truncates only the outbound tool result without mutating session history', () => {
     const completeResult = 'x'.repeat(4_000)
     const persisted = message({ content: completeResult })
