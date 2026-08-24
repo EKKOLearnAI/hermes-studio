@@ -113,8 +113,10 @@ function makeServerHarness() {
  */
 describe('ChatRunSocket reports when the run started', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     ensureReadyMock.mockReset()
     getRuntimeStateMock.mockReset()
+    bridgeMock.statusIfLoaded.mockReset()
     ensureReadyMock.mockResolvedValue({
       reachable: true,
       status: 'ready',
@@ -156,5 +158,48 @@ describe('ChatRunSocket reports when the run started', () => {
     const resumed = socket.emit.mock.calls.find((call: any[]) => call[0] === 'resumed')
     expect(resumed![1].isWorking).toBe(false)
     expect(resumed![1].runStartedAt).toBeUndefined()
+  })
+
+  it('refreshes the start when a queued run becomes active', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    const previousStart = 1_787_000_000_000
+    const nextStart = previousStart + 60_000
+    const state = {
+      messages: [],
+      events: [],
+      queue: [{ queue_id: 'q2', input: 'second', profile: 'default', source: 'cli' }],
+      isWorking: false,
+      profile: 'default',
+      runStartedAt: previousStart,
+    }
+    ;(server as any).sessionMap.set('s3', state)
+    vi.spyOn(server as any, 'handleRun').mockResolvedValue(undefined)
+    vi.spyOn(Date, 'now').mockReturnValue(nextStart)
+
+    ;(server as any).dequeueNextQueuedRun(socket, 's3', 'default')
+
+    expect(state.runStartedAt).toBe(nextStart)
+  })
+
+  it('uses a new shared fallback when the server reattaches an existing bridge run', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
+    const server = new ChatRunSocket(io as any)
+    const previousStart = 1_787_000_000_000
+    const reattachedAt = previousStart + 60_000
+    ;(server as any).sessionMap.set('s4', {
+      messages: [], events: [], queue: [], isWorking: false, profile: 'default', runStartedAt: previousStart,
+    })
+    bridgeMock.statusIfLoaded.mockResolvedValue({ running: true, current_run_id: 'run-4' })
+    vi.spyOn(Date, 'now').mockReturnValue(reattachedAt)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('resume')?.({ session_id: 's4' })
+
+    const resumed = socket.emit.mock.calls.find((call: any[]) => call[0] === 'resumed')
+    expect(resumed![1]).toMatchObject({ isWorking: true, runStartedAt: reattachedAt })
   })
 })

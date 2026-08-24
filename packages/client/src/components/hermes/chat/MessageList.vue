@@ -561,7 +561,7 @@ watch(
     thinkingStartedAt = reportedStart > 0 ? reportedStart : Date.now();
     thinkingElapsedMs.value = Math.max(0, Date.now() - thinkingStartedAt);
     thinkingTimer = setInterval(() => {
-      thinkingElapsedMs.value = Date.now() - thinkingStartedAt;
+      thinkingElapsedMs.value = Math.max(0, Date.now() - thinkingStartedAt);
     }, 1000);
   },
   { immediate: true },

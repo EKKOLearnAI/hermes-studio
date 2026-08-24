@@ -1334,6 +1334,12 @@ export class ChatRunSocket {
       pollKey = `${sid}:${runId}`
       if (this.bridgeResumePolls.has(pollKey)) return
       this.bridgeResumePolls.add(pollKey)
+      if (!state.isWorking || !(state.runStartedAt && state.runStartedAt > 0)) {
+        // The bridge does not expose the original start in its lightweight
+        // status response. Use one shared server-side fallback for every
+        // client attaching after this Web UI process discovers the run.
+        state.runStartedAt = Date.now()
+      }
       state.isWorking = true
       state.isAborting = state.isAborting === true
       state.runId = runId
@@ -1615,6 +1621,8 @@ export class ChatRunSocket {
   }
 
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
+    const state = this.sessionMap.get(sessionId)
+    if (state) state.runStartedAt = Date.now()
     const skipUserMessage = next.displayInput === null
     const backgroundContinuationContext = next.backgroundContinuationContext
       || (next.backgroundDelegationId

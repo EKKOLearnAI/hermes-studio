@@ -1293,7 +1293,7 @@ export const useChatStore = defineStore('chat', () => {
   function applyResumedRunStartedAt(sessionId: string, data: { isWorking?: boolean; runStartedAt?: number }) {
     const startedAt = Number(data?.runStartedAt) || 0
     if (data?.isWorking && startedAt > 0) setRunStartedAt(sessionId, startedAt)
-    else if (!data?.isWorking) clearRunStartedAt(sessionId)
+    else clearRunStartedAt(sessionId)
   }
   const queueLengths = ref<Map<string, number>>(new Map())
   /** sessionId → queued user messages not yet visible in the transcript */
@@ -2652,6 +2652,7 @@ export const useChatStore = defineStore('chat', () => {
     const command = String((evt as any).command || '').toLowerCase()
     if ((evt as any).started === true && (evt as any).terminal === false) {
       serverWorking.value.add(sid)
+      setRunStartedAt(sid, Date.now())
     }
     if ((evt as any).terminal === true) {
       streamStates.value.delete(sid)
@@ -3322,7 +3323,10 @@ export const useChatStore = defineStore('chat', () => {
     } else {
       addMessage(sid, userMsg)
       updateSessionTitle(sid)
-      if (shouldOptimisticallyShowRunStatus) serverWorking.value.add(sid)
+      if (shouldOptimisticallyShowRunStatus) {
+        setRunStartedAt(sid, Date.now())
+        serverWorking.value.add(sid)
+      }
     }
     clearMessageReference(sid)
 
@@ -3635,6 +3639,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'run.started':
               clearSessionCompletedUnread(sid)
               serverWorking.value.add(sid)
+              setRunStartedAt(sid, Date.now())
               clearAgentEventMessages(sid)
               setAbortState(sid, null)
               setCompressionState(sid, null)
@@ -4016,6 +4021,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.completed': {
+              clearRunStartedAt(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -4173,6 +4179,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              clearRunStartedAt(sid)
               clearPendingInteractions(sid)
               const failedMessages = getSessionMsgs(sid)
               const failedAssistant = activeAssistantMessageId
@@ -4302,6 +4309,7 @@ export const useChatStore = defineStore('chat', () => {
       closed = true
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
       // Unregister from global session handlers
       unregisterSessionHandlers(sid)
     }
@@ -4309,6 +4317,7 @@ export const useChatStore = defineStore('chat', () => {
     const markIdleKeepingBackgroundListener = () => {
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      clearRunStartedAt(sid)
     }
 
     const ensureAbortHandle = () => {
@@ -4396,6 +4405,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'run.started':
           clearSessionCompletedUnread(sid)
           serverWorking.value.add(sid)
+          setRunStartedAt(sid, Date.now())
           ensureAbortHandle()
           clearAgentEventMessages(sid)
           setAbortState(sid, null)
@@ -4733,6 +4743,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.completed': {
+          clearRunStartedAt(sid)
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
           const hasBackground = (evt.background_pending || 0) > 0
@@ -4888,6 +4899,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          clearRunStartedAt(sid)
           clearPendingInteractions(sid)
           const failedMessages = getSessionMsgs(sid)
           const failedAssistant = activeAssistantMessageId

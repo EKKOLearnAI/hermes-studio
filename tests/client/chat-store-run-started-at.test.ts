@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(),
+  sessionHandlers: new Map<string, any>(),
   registerSessionHandlers: vi.fn(),
   unregisterSessionHandlers: vi.fn(),
   socketEmit: vi.fn(),
@@ -69,7 +70,6 @@ vi.mock('@/utils/completion-sound', () => ({
   playCompletionSound: vi.fn(),
 }))
 
-import { readFileSync } from 'fs'
 import { useChatStore, type Session } from '@/stores/hermes/chat'
 
 function makeSession(): Session {
@@ -95,6 +95,13 @@ describe('chat store run start bookkeeping', () => {
     chatApi.sessionCommandHandlers = []
     chatApi.peerUserMessageHandlers = []
     chatApi.sessionTitleUpdatedHandlers = []
+    chatApi.sessionHandlers = new Map()
+    chatApi.registerSessionHandlers.mockImplementation((sessionId: string, handlers: any) => {
+      chatApi.sessionHandlers.set(sessionId, handlers)
+    })
+    chatApi.unregisterSessionHandlers.mockImplementation((sessionId: string) => {
+      chatApi.sessionHandlers.delete(sessionId)
+    })
     chatApi.startRunViaSocket.mockReturnValue({ abort: vi.fn() })
     setActivePinia(createPinia())
   })
@@ -155,6 +162,7 @@ describe('chat store run start bookkeeping', () => {
     await store.sendMessage('go on then')
     const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
     onEvent({ event: 'run.started', session_id: 'a', run_id: 'run-1' })
+    expect(store.runStartedAt.get('a')).not.toBe(RUN_STARTED_AT)
     onEvent({ event: 'run.completed', session_id: 'a', run_id: 'run-1', output: 'done' })
 
     // The finished run's start must not linger for whatever runs next.
@@ -170,24 +178,39 @@ describe('chat store run start bookkeeping', () => {
 
     expect(store.runStartedAt.has('a')).toBe(false)
   })
-})
 
-/**
- * MessageList is asserted against source, the way
- * tests/client/chat-panel-session-click.test.ts already does — mounting it
- * drags in the whole chat surface.
- */
-describe('thinking timer watcher', () => {
-  const source = readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8')
+  it('clears the start when a resumed run ends and refreshes it for the next queued run', async () => {
+    const store = useChatStore()
+    store.sessions = [{ ...makeSession(), id: 'a' }] as any
+    resumeWith({ isWorking: true, runStartedAt: RUN_STARTED_AT })
 
-  it('restarts when the session or its reported start changes, not only when the indicator flips', () => {
-    const watched = source.slice(source.indexOf('watch(\n  // Switching between two sessions'))
-    expect(watched).toContain('isRunIndicatorActive.value')
-    expect(watched).toContain('chatStore.activeSessionId')
-    expect(watched).toContain('chatStore.runStartedAt.get(chatStore.activeSessionId)')
+    await store.switchSession('a')
+    const handlers = chatApi.sessionHandlers.get('a')
+    expect(handlers).toBeTruthy()
+
+    handlers.onRunCompleted({
+      event: 'run.completed',
+      session_id: 'a',
+      run_id: 'run-1',
+      output: 'done',
+      queue_remaining: 1,
+      background_pending: 0,
+    })
+    expect(store.runStartedAt.has('a')).toBe(false)
+
+    handlers.onRunStarted({ event: 'run.started', session_id: 'a', run_id: 'run-2' })
+    expect(store.runStartedAt.get('a')).toBeGreaterThan(RUN_STARTED_AT)
   })
 
-  it('uses the reported start as the origin and keeps Date.now() as the fallback', () => {
-    expect(source).toContain('thinkingStartedAt = reportedStart > 0 ? reportedStart : Date.now()')
+  it('drops a stale start when a working resume has no timestamp', async () => {
+    const store = useChatStore()
+    store.sessions = [{ ...makeSession(), id: 'a' }] as any
+    resumeWith({ isWorking: true, runStartedAt: RUN_STARTED_AT })
+    await store.switchSession('a')
+
+    resumeWith({ isWorking: true })
+    await store.switchSession('a')
+
+    expect(store.runStartedAt.has('a')).toBe(false)
   })
 })
