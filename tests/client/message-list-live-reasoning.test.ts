@@ -138,7 +138,7 @@ describe('MessageList live reasoning', () => {
     expect(wrapper.get('.live-reasoning-body').text().startsWith('…')).toBe(false)
   })
 
-  it('shows the safe-insert arrow for Hermes and hides it for unsupported coding agents', async () => {
+  it('shows the insert arrow for Hermes and one-shot coding agents', async () => {
     const chatStore = useChatStore()
     const session = makeSession([])
     session.source = 'cli'
@@ -162,7 +162,9 @@ describe('MessageList live reasoning', () => {
       codingAgentId: 'codex',
     }
     await nextTick()
-    expect(wrapper.find('.queue-insert').exists()).toBe(false)
+    expect(wrapper.get('.queue-insert').attributes('title')).toBe('chat.insertQueuedMessage')
+    await wrapper.get('.queue-insert').trigger('click')
+    expect(insertSpy).toHaveBeenLastCalledWith('session-1', 'queue-1')
   })
 
   it('keeps the standalone thinking status before assistant output starts', () => {

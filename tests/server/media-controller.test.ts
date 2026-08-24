@@ -102,7 +102,256 @@ describe('media controller', () => {
     }
   })
 
-  it('forces response storage off for reference-image generation', async () => {
+  it('takes the text-to-image route and timeout from the profile auxiliary settings', async () => {
+    vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'Studio Images',
+          base_url: 'https://images.example/v1',
+          api_key_env: 'STUDIO_IMG_KEY',
+        }],
+        auxiliary: {
+          image_generation: { provider: 'custom:studio-images', model: 'seedream-4', timeout: 42 },
+          image_edit: { provider: 'custom:studio-images', model: 'qwen-image-edit' },
+        },
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"data":[{"b64_json":"aW1hZ2UtYnl0ZXM="}]}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        // No provider and no model in the request: everything comes from config.
+        request: { body: { mode: 'text', prompt: 'make an icon', output_path: '/tmp/hermes-web-ui-configured.png' } },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ ok: true, provider: 'Studio Images' })
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://images.example/v1/images/generations')
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)))
+        .toMatchObject({ model: 'seedream-4' })
+      expect(timeoutSpy).toHaveBeenCalledWith(42_000)
+    } finally {
+      timeoutSpy.mockRestore()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('routes Studio image-to-image and multipart edits through their configured tasks', async () => {
+    vi.stubEnv('GENERATION_IMG_KEY', 'generation-secret')
+    vi.stubEnv('EDIT_IMG_KEY', 'edit-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [
+          {
+            name: 'Generation Images',
+            base_url: 'https://generation.example/v1',
+            api_key_env: 'GENERATION_IMG_KEY',
+          },
+          {
+            name: 'Edit Images',
+            base_url: 'https://edit.example/v1',
+            api_key_env: 'EDIT_IMG_KEY',
+          },
+        ],
+        auxiliary: {
+          image_generation: {
+            provider: 'custom:generation-images',
+            model: 'seedream-4',
+            timeout: 41,
+          },
+          image_edit: {
+            provider: 'custom:edit-images',
+            model: 'qwen-image-edit',
+            timeout: 73,
+          },
+        },
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"response":{"output":[{"result":"aW1hZ2UtYnl0ZXM="}]}}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: {
+          body: {
+            mode: 'image',
+            prompt: 'redraw this icon',
+            image_base64: 'aW1hZ2UtYnl0ZXM=',
+            mime_type: 'image/png',
+            output_path: '/tmp/hermes-web-ui-configured-edit.png',
+          },
+        },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ ok: true, provider: 'Edit Images', mode: 'image' })
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://edit.example/v1/responses')
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({
+        headers: expect.objectContaining({ Authorization: 'Bearer edit-secret' }),
+      })
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({
+        model: 'qwen-image-edit',
+        tools: [{ type: 'image_generation', model: 'seedream-4' }],
+      })
+      expect(timeoutSpy).toHaveBeenCalledWith(73_000)
+
+      const editCtx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: {
+          body: {
+            mode: 'edit',
+            prompt: 'change the background',
+            image_base64: 'aW1hZ2UtYnl0ZXM=',
+            mime_type: 'image/png',
+            output_path: '/tmp/hermes-web-ui-configured-multipart-edit.png',
+          },
+        },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(editCtx)
+
+      expect(editCtx.status).toBe(200)
+      expect(editCtx.body).toMatchObject({ ok: true, provider: 'Generation Images', mode: 'edit' })
+      expect(String(fetchMock.mock.calls[1][0])).toBe('https://generation.example/v1/images/edits')
+      expect(fetchMock.mock.calls[1][1]).toMatchObject({
+        headers: expect.objectContaining({ Authorization: 'Bearer generation-secret' }),
+      })
+      expect((fetchMock.mock.calls[1][1]?.body as FormData).get('model')).toBe('seedream-4')
+      expect(timeoutSpy).toHaveBeenNthCalledWith(2, 41_000)
+    } finally {
+      timeoutSpy.mockRestore()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('reports the configured provider when it cannot be resolved', async () => {
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [],
+        auxiliary: {
+          image_generation: { provider: 'custom:missing-images', model: 'seedream-4' },
+        },
+      })),
+    }))
+    const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+    const ctx: any = {
+      state: { serverTokenAuth: true },
+      query: {},
+      request: { body: { mode: 'text', prompt: 'make an icon' } },
+      get: vi.fn(() => ''),
+      status: 200,
+      body: undefined,
+    }
+
+    await apiKeyImageGenerate(ctx)
+
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({
+      error: 'Missing missing-images provider in profile "default" config.yaml.',
+      code: 'missing_apikey_image_provider',
+    })
+  })
+
+  it('lets the request override the configured image model', async () => {
+    vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
+    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+      getActiveProfileName: () => 'default',
+      getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+      readConfigYamlForProfile: vi.fn(async () => ({
+        custom_providers: [{
+          name: 'studio-images',
+          base_url: 'https://images.example/v1',
+          api_key_env: 'STUDIO_IMG_KEY',
+        }],
+        auxiliary: { image_generation: { provider: 'studio-images', model: 'seedream-4', timeout: 42 } },
+      })),
+    }))
+    const fetchMock = vi.fn(async () => new Response(
+      'data: {"data":[{"b64_json":"aW1hZ2UtYnl0ZXM="}]}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    const originalFetch = globalThis.fetch
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
+    globalThis.fetch = fetchMock as any
+    try {
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const ctx: any = {
+        state: { serverTokenAuth: true },
+        query: {},
+        request: {
+          body: {
+            mode: 'text',
+            prompt: 'x',
+            model: 'explicit-model',
+            timeout_ms: 1_234,
+            output_path: '/tmp/hermes-web-ui-override.png',
+          },
+        },
+        get: vi.fn(() => ''),
+        status: 200,
+        body: undefined,
+      }
+
+      await apiKeyImageGenerate(ctx)
+
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)))
+        .toMatchObject({ model: 'explicit-model' })
+      expect(timeoutSpy).toHaveBeenCalledWith(1_234)
+    } finally {
+      timeoutSpy.mockRestore()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('forces response storage off for Studio image-to-image', async () => {
     vi.stubEnv('AGNES_API_KEY', 'agnes-secret')
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
       getActiveProfileName: () => 'default',
@@ -138,7 +387,7 @@ describe('media controller', () => {
             image_base64: 'aW1hZ2UtYnl0ZXM=',
             mime_type: 'image/png',
             store: true,
-            output_path: '/tmp/hermes-web-ui-agnes-reference-image.png',
+            output_path: '/tmp/hermes-web-ui-agnes-image-edit.png',
           },
         },
         get: vi.fn(() => ''),

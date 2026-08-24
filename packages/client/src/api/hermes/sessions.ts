@@ -13,6 +13,7 @@ export interface SessionSummary {
   model: string
   provider?: string
   api_mode?: ProviderApiMode
+  reasoning_effort?: string
   title: string | null
   parent_session_id?: string | null
   fork_point_message_id?: string | null
@@ -24,6 +25,7 @@ export interface SessionSummary {
   ended_at: number | null
   last_active?: number
   is_archived?: number | boolean
+  push_enabled?: number | boolean
   message_count: number
   tool_call_count: number
   input_tokens: number
@@ -237,6 +239,16 @@ export async function readSessionWorkspaceFile(
   )
 }
 
+export async function fetchSessionWorkspaceFileDiff(
+  sessionId: string,
+  path: string,
+): Promise<import('./files').WorkspaceFileDiff> {
+  const params = new URLSearchParams({ path })
+  return request(
+    `/api/hermes/sessions/${encodeURIComponent(sessionId)}/workspace-file/diff?${params}`,
+  )
+}
+
 export async function fetchSessionWorkspaceFileBlob(
   sessionId: string,
   path: string,
@@ -287,7 +299,7 @@ export async function downloadSessionWorkspaceFile(
 export async function listSessionWorkspaceFiles(
   sessionId: string,
   path: string = '',
-): Promise<{ entries: Array<{ name: string; path: string; absolutePath?: string; isDir: boolean; size: number; modTime: string }>; path: string; absolutePath?: string }> {
+): Promise<import('./files').FileListResult> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()
@@ -524,6 +536,18 @@ export async function unarchiveSession(id: string): Promise<boolean> {
   }
 }
 
+export async function setSessionPushEnabled(id: string, pushEnabled: boolean): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/push-enabled`, {
+      method: 'POST',
+      body: JSON.stringify({ pushEnabled }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/workspace`, {
@@ -548,6 +572,18 @@ export async function setSessionModel(id: string, model: string, provider: strin
     await request(`/api/hermes/sessions/${id}/model`, {
       method: 'POST',
       body: JSON.stringify({ model, provider, apiMode }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function setSessionReasoningEffort(id: string, reasoningEffort: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/reasoning-effort`, {
+      method: 'POST',
+      body: JSON.stringify({ reasoningEffort }),
     })
     return true
   } catch {

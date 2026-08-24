@@ -397,6 +397,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `hermes-web-ui update` / `upgrade` | Update to the latest version and restart |
 | `hermes-web-ui version` / `-v` | Show the version |
 | `hermes-web-ui -h` | Show help |
+| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Web UI MCP toolset (same as `hermes-studio-mcp`) |
 
 Add `--no-open` to `start` or `client` when no browser should open.
 

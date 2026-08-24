@@ -5,6 +5,7 @@ const {
   startAppRelayClient,
   stopAppRelayClient,
   getDeviceIdentity,
+  createAppRelayDeviceSignature,
   getPublicSystemInfo,
 } = vi.hoisted(() => ({
   getAppRelayClient: vi.fn(),
@@ -15,6 +16,7 @@ const {
     device_public_key: 'public-key',
     device_private_key: 'private-key',
   })),
+  createAppRelayDeviceSignature: vi.fn(async () => 'app-relay-signature'),
   getPublicSystemInfo: vi.fn(async () => ({
     device_id: 'hwui_machine_1234567890',
     device_public_key: 'public-key',
@@ -30,7 +32,12 @@ vi.mock('../../packages/server/src/services/app-relay/client', () => ({
   startAppRelayClient,
   stopAppRelayClient,
 }))
-vi.mock('../../packages/server/src/services/system-info', () => ({ getDeviceIdentity, getPublicSystemInfo }))
+vi.mock('../../packages/server/src/services/system-info', () => ({
+  getDeviceIdentity,
+  getAppRelayDeviceIdentity: getDeviceIdentity,
+  createAppRelayDeviceSignature,
+  getPublicSystemInfo,
+}))
 
 describe('app relay controller', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -65,6 +72,8 @@ describe('app relay controller', () => {
         pairingCode: 'ABCD2345',
         pairingExpiresAt: 12345,
         expiresAt: 12345,
+        route: 'official',
+        relayUrl: 'https://api.hermes-studio.ai',
       },
     })
   })
@@ -83,6 +92,7 @@ describe('app relay controller', () => {
     const client = {
       waitForConnected: vi.fn(async () => false),
       isPreconnectionExpired: vi.fn(() => false),
+      usesRelayUrl: vi.fn(() => true),
     }
     getAppRelayClient.mockReturnValue(client)
     const { connectAppRelayController } = await import('../../packages/server/src/controllers/app-relay')

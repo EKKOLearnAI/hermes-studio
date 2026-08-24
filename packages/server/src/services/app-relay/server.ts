@@ -32,6 +32,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'accept-language',
   'authorization',
   'content-type',
+  'if-match',
   'if-none-match',
   'range',
   'x-hermes-profile',

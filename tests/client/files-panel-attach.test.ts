@@ -22,7 +22,13 @@ vi.mock('naive-ui', () => ({
   NButton: defineComponent({ template: '<button><slot /><slot name="icon" /></button>' }),
   useMessage: () => message,
 }))
-vi.mock('@/components/hermes/files/FileTree.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
+vi.mock('@/components/hermes/files/FileTree.vue', () => ({
+  default: defineComponent({
+    name: 'FileTreeStub',
+    emits: ['open-entry', 'contextmenu-entry'],
+    template: '<div />',
+  }),
+}))
 vi.mock('@/components/hermes/files/FileBreadcrumb.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
 vi.mock('@/components/hermes/files/FileToolbar.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
 vi.mock('@/components/hermes/files/FileList.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
@@ -50,6 +56,16 @@ const entry: FileEntry = {
 describe('FilesPanel workspace attachments', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: false,
+      media: '(max-width: 768px)',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })
   })
 
   it('loads a session workspace file and emits it as a browser File', async () => {
@@ -80,5 +96,30 @@ describe('FilesPanel workspace attachments', () => {
 
     expect(fetchGroupAttachment).toHaveBeenCalledWith('room-1', 'reports/report.pdf')
     expect(wrapper.emitted('attach')).toHaveLength(1)
+  })
+
+  it('replaces the mobile tree with a selected file and returns to the same tree', async () => {
+    vi.mocked(window.matchMedia).mockReturnValue({
+      matches: true,
+      media: '(max-width: 768px)',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })
+    const wrapper = mount(FilesPanel, {
+      props: { workspaceSessionId: 'session-1', workspace: '/tmp/workspace' },
+      global: { plugins: [createTestingPinia({ createSpy: vi.fn })] },
+    })
+
+    wrapper.getComponent({ name: 'FileTreeStub' }).vm.$emit('open-entry', entry)
+    await flushPromises()
+    expect(wrapper.classes()).toContain('mobile-file-open')
+
+    await wrapper.get('.sidebar-toggle').trigger('click')
+    expect(wrapper.classes()).not.toContain('mobile-file-open')
+    expect(wrapper.findComponent({ name: 'FileTreeStub' }).exists()).toBe(true)
   })
 })

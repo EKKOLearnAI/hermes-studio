@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  cancelPendingEkkoClarification,
   cancelPendingEkkoClarifications,
   respondToEkkoClarification,
   waitForEkkoClarification,
@@ -61,6 +62,77 @@ describe('Ekko clarification broker', () => {
       resolved: true,
     })
     await expect(result).resolves.toBe('B')
+  })
+
+  it('cancels only the matching session and run generation', async () => {
+    const result = waitForEkkoClarification(request(), {
+      sessionId: 'session-1',
+      runId: 'run-current',
+      onRequested: vi.fn(),
+    })
+
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', 'run-stale')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-2', 'clarify-1', 'run-current')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', '')).toEqual({
+      handled: true,
+      resolved: false,
+    })
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', 'run-current')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    expect(cancelPendingEkkoClarification('session-1', 'clarify-1', 'run-current')).toEqual({
+      handled: false,
+      resolved: false,
+    })
+    await expect(result).resolves.toBe('[clarification cancelled because the run was aborted]')
+    expect(respondToEkkoClarification('session-1', 'clarify-1', 'late')).toEqual({
+      handled: false,
+      resolved: false,
+    })
+  })
+
+  it('keeps response and timeout terminal when a stop arrives later', async () => {
+    const responded = waitForEkkoClarification(request(), {
+      sessionId: 'session-response',
+      runId: 'run-response',
+      onRequested: vi.fn(),
+    })
+    expect(respondToEkkoClarification('session-response', 'clarify-1', 'A')).toEqual({
+      handled: true,
+      resolved: true,
+    })
+    expect(cancelPendingEkkoClarification('session-response', 'clarify-1', 'run-response')).toEqual({
+      handled: false,
+      resolved: false,
+    })
+    await expect(responded).resolves.toBe('A')
+
+    vi.useFakeTimers()
+    const timedOut = waitForEkkoClarification(request({
+      clarifyId: 'clarify-timeout-before-stop',
+      timeoutMs: 25,
+    }), {
+      sessionId: 'session-timeout',
+      runId: 'run-timeout',
+      onRequested: vi.fn(),
+    })
+    await vi.advanceTimersByTimeAsync(25)
+    expect(cancelPendingEkkoClarification(
+      'session-timeout',
+      'clarify-timeout-before-stop',
+      'run-timeout',
+    )).toEqual({
+      handled: false,
+      resolved: false,
+    })
+    await expect(timedOut).resolves.toBe('[user did not respond within 5m]')
   })
 
   it('returns a bounded result when another clarification is already pending', async () => {

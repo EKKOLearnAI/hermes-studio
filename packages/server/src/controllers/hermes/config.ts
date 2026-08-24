@@ -165,6 +165,8 @@ const AUXILIARY_TASKS = [
   { key: 'curator', label: 'Curator', default_timeout: 600 },
   { key: 'session_search', label: 'Session search', default_timeout: 30 },
   { key: 'flush_memories', label: 'Flush memories', default_timeout: 30 },
+  { key: 'image_generation', label: 'Studio image generation', default_timeout: 600 },
+  { key: 'image_edit', label: 'Studio image-to-image', default_timeout: 600 },
 ] as const
 
 const AUX_STRING_FIELDS = new Set(['provider', 'model', 'base_url', 'api_key'])

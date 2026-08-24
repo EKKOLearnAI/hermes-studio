@@ -81,6 +81,8 @@ approval = types.ModuleType("tools.approval")
 approval._session_key = contextvars.ContextVar("approval_session_key", default="")
 approval._notify = {}
 approval._resolved_gateway = []
+approval._resolved_gateway_requests = []
+approval._gateway_waiters = {}
 approval._session_approved = {}
 approval._session_yolo = set()
 approval._permanent_approved = set()
@@ -102,9 +104,21 @@ def register_gateway_notify(session_key, callback):
 def unregister_gateway_notify(session_key):
     approval._notify.pop(session_key, None)
 
-def resolve_gateway_approval(session_key, choice):
+def queue_gateway_approval(session_key, request_id):
+    approval._gateway_waiters.setdefault(session_key, []).append(request_id)
+
+def resolve_gateway_approval(session_key, choice, request_id=None):
+    waiters = approval._gateway_waiters.get(session_key, [])
+    if request_id is None:
+        resolved_request_id = waiters.pop(0) if waiters else None
+    elif request_id in waiters:
+        waiters.remove(request_id)
+        resolved_request_id = request_id
+    else:
+        resolved_request_id = None
     approval._resolved_gateway.append((session_key, choice))
-    return 1
+    approval._resolved_gateway_requests.append((session_key, choice, request_id, resolved_request_id))
+    return 1 if resolved_request_id else 0
 
 def is_approved(session_key, pattern_key):
     return (
@@ -144,6 +158,7 @@ approval.get_current_session_key = get_current_session_key
 approval.register_gateway_notify = register_gateway_notify
 approval.unregister_gateway_notify = unregister_gateway_notify
 approval.resolve_gateway_approval = resolve_gateway_approval
+approval.queue_gateway_approval = queue_gateway_approval
 approval.is_approved = is_approved
 approval.approve_session = approve_session
 approval.enable_session_yolo = enable_session_yolo
@@ -227,6 +242,121 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('denies only the interrupted session run generation approval queues', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+
+class InterruptibleAgent:
+    def __init__(self):
+        self.session = None
+
+    def interrupt(self, _message=None):
+        self.session.running = False
+
+agents = {sid: InterruptibleAgent() for sid in ("session-a", "session-b")}
+for sid, agent in agents.items():
+    session = bridge.AgentSession(session_id=sid, agent=agent, current_run_id="run-current")
+    session.running = True
+    agent.session = session
+    with pool._lock:
+        pool._sessions[sid] = session
+
+choices = {}
+threads = []
+for sid, run_id in (("session-a", "run-previous"), ("session-a", "run-current"), ("session-b", "run-current")):
+    with pool._lock:
+        pool._sessions[sid].current_run_id = run_id
+    thread = threading.Thread(
+        target=lambda current=sid, generation=run_id: choices.__setitem__(
+            f"{current}:{generation}",
+            pool._approval_callback(current)(
+                f"printf harmless {current} {generation}",
+                "harmless test command",
+                allow_permanent=False,
+            ),
+        ),
+        daemon=True,
+    )
+    thread.start()
+    threads.append(thread)
+    assert wait_for(lambda current=sid, generation=run_id: (
+        current,
+        generation,
+    ) in set(pool._approval_request_generations.values()))
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-previous"
+approval.queue_gateway_approval("session-a", "request-previous")
+pool._gateway_approval_notify("session-a")({
+    "request_id": "request-previous",
+    "command": "printf harmless previous gateway",
+    "description": "harmless test command",
+})
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-current"
+approval.queue_gateway_approval("session-a", "request-current")
+pool._gateway_approval_notify("session-a")({
+    "request_id": "request-current",
+    "command": "printf harmless current gateway",
+    "description": "harmless test command",
+})
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-later"
+approval.queue_gateway_approval("session-a", "request-later")
+pool._gateway_approval_notify("session-a")({
+    "request_id": "request-later",
+    "command": "printf harmless later gateway",
+    "description": "harmless test command",
+})
+with pool._lock:
+    pool._sessions["session-a"].current_run_id = "run-current"
+approval.queue_gateway_approval("session-b", "request-other-session")
+pool._gateway_approval_notify("session-b")({
+    "request_id": "request-other-session",
+    "command": "printf harmless other session gateway",
+    "description": "harmless test command",
+})
+
+result = pool.interrupt("session-a", "test interrupt")
+assert result["status"] == "interrupted"
+threads[1].join(timeout=5)
+assert not threads[1].is_alive()
+assert choices["session-a:run-current"] == "deny"
+assert threads[0].is_alive()
+with pool._lock:
+    assert set(pool._approval_request_generations.values()) == {
+        ("session-a", "run-previous"),
+        ("session-b", "run-current"),
+    }
+    remaining = dict(pool._approval_request_generations)
+    previous_id = next(key for key, value in remaining.items() if value == ("session-a", "run-previous"))
+    other_session_id = next(key for key, value in remaining.items() if value == ("session-b", "run-current"))
+    assert set(pool._gateway_approval_requests.values()) == {
+        ("session-a", "run-previous", "request-previous"),
+        ("session-a", "run-later", "request-later"),
+        ("session-b", "run-current", "request-other-session"),
+    }
+assert approval._resolved_gateway_requests == [
+    ("session-a", "deny", "request-current", "request-current"),
+]
+assert approval._gateway_waiters == {
+    "session-a": ["request-previous", "request-later"],
+    "session-b": ["request-other-session"],
+}
+
+assert pool.respond_approval(previous_id, "deny")["resolved"] is True
+assert pool.respond_approval(other_session_id, "deny")["resolved"] is True
+threads[0].join(timeout=5)
+threads[2].join(timeout=5)
+assert not threads[0].is_alive()
+assert not threads[2].is_alive()
+assert choices["session-a:run-previous"] == "deny"
+assert choices["session-b:run-current"] == "deny"
+assert pool.respond_approval(other_session_id, "once")["resolved"] is False
+`)
+  })
+
   it('toggles YOLO for a session before its first Agent session exists', () => {
     runPython(String.raw`
 ${harness}
@@ -1237,7 +1367,9 @@ ${harness}
 pool, _fake_db = make_pool()
 
 notify = pool._gateway_approval_notify("session-a")
+approval.queue_gateway_approval("session-a", "request-session-a")
 notify({
+    "request_id": "request-session-a",
     "command": "execute_code <<'PY'\nprint(1)\nPY",
     "description": "execute_code script execution",
     "pattern_key": "execute_code",
@@ -1250,7 +1382,9 @@ assert approval.is_approved("session-a", "execute_code") is True
 assert approval._saved_permanent == set()
 
 notify = pool._gateway_approval_notify("session-b")
+approval.queue_gateway_approval("session-b", "request-session-b")
 notify({
+    "request_id": "request-session-b",
     "command": "execute_code <<'PY'\nprint(2)\nPY",
     "description": "execute_code script execution",
     "pattern_key": "execute_code",
@@ -1295,7 +1429,10 @@ class FakeAgent:
         notify = approval._notify.get(self.session_id)
         if notify is None:
             raise RuntimeError(f"missing gateway notify for {self.session_id}")
+        request_id = f"request:{self.session_id}"
+        approval.queue_gateway_approval(self.session_id, request_id)
         notify({
+            "request_id": request_id,
             "command": f"gateway:{self.session_id}",
             "description": f"gateway-desc:{self.session_id}",
         })

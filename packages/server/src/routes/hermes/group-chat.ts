@@ -633,6 +633,7 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
 })
 
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', workspaceCtrl.listWorkspaceFiles)
+groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/diff', workspaceCtrl.diffWorkspaceFile)
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', workspaceCtrl.readWorkspaceFile)
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/content', workspaceCtrl.readWorkspaceFileContent)
 groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', workspaceCtrl.writeWorkspaceFile)

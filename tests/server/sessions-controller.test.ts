@@ -21,6 +21,7 @@ const localSearchSessionsMock = vi.fn()
 const localDeleteSessionMock = vi.fn()
 const localRenameSessionMock = vi.fn()
 const localSetSessionArchivedMock = vi.fn()
+const localSetSessionPushEnabledMock = vi.fn()
 const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
 const localAddMessagesMock = vi.fn()
@@ -43,6 +44,8 @@ const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const bridgeSwitchSessionModelMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
+const emitSessionSettingsUpdatedMock = vi.fn()
+const getChatRunServerMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
@@ -89,6 +92,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   deleteSession: localDeleteSessionMock,
   renameSession: localRenameSessionMock,
   setSessionArchived: localSetSessionArchivedMock,
+  setSessionPushEnabled: localSetSessionPushEnabledMock,
   createSession: localCreateSessionMock,
   addMessages: localAddMessagesMock,
   getSession: getSessionMock,
@@ -153,6 +157,10 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/run-chat/server-registry', () => ({
+  getChatRunServer: getChatRunServerMock,
+}))
+
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
@@ -190,10 +198,14 @@ describe('session conversations controller', () => {
     localDeleteSessionMock.mockReset()
     localRenameSessionMock.mockReset()
     localSetSessionArchivedMock.mockReset()
+    localSetSessionPushEnabledMock.mockReset()
     localCreateSessionMock.mockReset()
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
     localUpdateSessionStatsMock.mockReset()
+    emitSessionSettingsUpdatedMock.mockReset()
+    getChatRunServerMock.mockReset()
+    getChatRunServerMock.mockReturnValue({ emitSessionSettingsUpdated: emitSessionSettingsUpdatedMock })
     listSessionCategoriesMock.mockReset()
     createSessionCategoryMock.mockReset()
     deleteSessionCategoryMock.mockReset()
@@ -1216,6 +1228,45 @@ describe('session conversations controller', () => {
     expect(ctx.body).toEqual({ ok: true })
   })
 
+  it('updates whether an accessible session should be pushed', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+    localSetSessionPushEnabledMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: true } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).toHaveBeenCalledWith('session-1', true)
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-1', {
+      push_enabled: true,
+    })
+    expect(ctx.body).toEqual({ ok: true, push_enabled: true })
+  })
+
+  it('rejects a non-boolean session push setting', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: 1 } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'pushEnabled must be a boolean' })
+  })
+
   it('lists and creates normalized global session categories', async () => {
     const category = { id: 1, name: 'Client Work', created_at: 1, updated_at: 1 }
     listSessionCategoriesMock.mockReturnValue([category])
@@ -1713,7 +1764,14 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', {
       model: 'grok-4',
       provider: 'xai',
+      reasoning_effort: '',
       workspace: '/tmp/hermes-test/default/workspace',
+    })
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-1', {
+      model: 'grok-4',
+      provider: 'xai',
+      api_mode: '',
+      reasoning_effort: '',
     })
     expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
@@ -1742,6 +1800,7 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', {
       model: 'claude-sonnet-4-6',
       provider: 'claude-oauth',
+      reasoning_effort: '',
       workspace: '/tmp/hermes-test/travel/workspace',
     })
     expect(bridgeSwitchSessionModelMock).toHaveBeenCalledWith(
@@ -1778,12 +1837,33 @@ describe('session conversations controller', () => {
     expect(localUpdateSessionMock).toHaveBeenCalledWith('codex-session', {
       model: 'gpt-5.5',
       provider: 'openai-codex',
+      reasoning_effort: '',
       api_mode: 'chat_completions',
       agent_native_session_id: '',
     })
     expect(codingAgentRunManagerMock.stop).not.toHaveBeenCalled()
     expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('persists and broadcasts a session reasoning effort', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-reasoning', profile: 'default' })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-reasoning' },
+      request: { body: { reasoningEffort: 'high' } },
+      body: null,
+    }
+    await mod.setReasoningEffort(ctx)
+
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-reasoning', {
+      reasoning_effort: 'high',
+    })
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-reasoning', {
+      reasoning_effort: 'high',
+    })
+    expect(ctx.body).toEqual({ ok: true, reasoning_effort: 'high' })
   })
 
   it('deletes a current-profile Hermes history session even when no local Web UI session exists', async () => {

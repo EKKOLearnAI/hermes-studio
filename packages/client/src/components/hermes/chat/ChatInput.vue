@@ -6,6 +6,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
+import { fetchSocialMessagePlatforms } from '@/api/social-messages'
 import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 import { deleteSkillBundleApi, fetchSkillBundles, type SkillBundleInfo } from '@/api/hermes/skill-bundles'
 import { NButton, NTooltip, NModal, NInputNumber, NPopover, NSlider, NDropdown, useDialog, useMessage, type DropdownOption } from 'naive-ui'
@@ -456,6 +457,15 @@ const inputSettingsOptions = computed<DropdownOption[]>(() => [
       'aria-hidden': 'true',
     }, toolTraceVisible.value ? '✓' : ''),
   },
+  {
+    label: t('chat.pushEnabled'),
+    key: 'pushEnabled',
+    disabled: !chatStore.activeSessionId,
+    icon: () => h('span', {
+      class: ['settings-check', { active: Boolean(chatStore.activeSession?.pushEnabled) }],
+      'aria-hidden': 'true',
+    }, chatStore.activeSession?.pushEnabled ? '✓' : ''),
+  },
 ])
 
 function readDraftMap(): DraftMap {
@@ -502,7 +512,7 @@ onMounted(() => {
   })
 })
 
-function handleInputSettingsSelect(key: string | number) {
+async function handleInputSettingsSelect(key: string | number) {
   if (key === 'voiceMode') {
     if (chatStore.activeSessionId) emit('voiceClick')
     return
@@ -510,6 +520,29 @@ function handleInputSettingsSelect(key: string | number) {
 
   if (key === 'toolTrace') {
     toggleToolTraceVisible()
+    return
+  }
+
+  if (key === 'pushEnabled') {
+    const sessionId = chatStore.activeSessionId
+    if (!sessionId) return
+    const nextEnabled = !Boolean(chatStore.activeSession?.pushEnabled)
+    if (nextEnabled) {
+      try {
+        const platforms = await fetchSocialMessagePlatforms()
+        const pushReady = platforms.some(platform => (
+          platform.active && platform.configured && platform.pushReady
+        ))
+        if (!pushReady) {
+          message.warning(t('chat.pushNotConfigured'))
+          return
+        }
+      } catch {
+        message.warning(t('chat.pushNotConfigured'))
+        return
+      }
+    }
+    await chatStore.setSessionPushEnabled(sessionId, nextEnabled)
   }
 }
 
@@ -816,7 +849,7 @@ function formatTokens(n: number): string {
 
 // --- File attachment helpers ---
 
-function addFile(file: File, context?: string) {
+function addFile(file: File) {
   if (attachments.value.find(a => a.name === file.name)) return
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
   const url = URL.createObjectURL(file)
@@ -827,18 +860,12 @@ function addFile(file: File, context?: string) {
     size: file.size,
     url,
     file,
-    ...(context?.trim() ? { context: context.trim() } : {}),
   })
 }
 
 function addFiles(files: File[]) {
   for (const file of files) addFile(file)
   if (files.length > 0) textareaRef.value?.focus()
-}
-
-function addBrowserAttachment(file: File, context: string) {
-  addFile(file, context)
-  textareaRef.value?.focus()
 }
 
 function handleAttachClick() {
@@ -902,7 +929,7 @@ function focusComposer() {
   nextTick(() => textareaRef.value?.focus())
 }
 
-defineExpose({ addFiles, addBrowserAttachment, focusComposer })
+defineExpose({ addFiles, focusComposer })
 
 // --- Send ---
 

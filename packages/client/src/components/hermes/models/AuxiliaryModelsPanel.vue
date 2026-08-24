@@ -45,20 +45,6 @@ const delegationForm = ref({
   reasoning_effort: null as string | null,
 })
 
-const providerOptions = computed(() => {
-  const seen = new Set<string>()
-  const options = [
-    { label: t('models.auxiliaryProviderAuto'), value: 'auto' },
-    { label: t('models.auxiliaryProviderMain'), value: 'main' },
-  ]
-  for (const group of modelsStore.providers) {
-    if (!group.provider || seen.has(group.provider)) continue
-    seen.add(group.provider)
-    options.push({ label: group.label || group.provider, value: group.provider })
-  }
-  return options
-})
-
 const modelOptions = computed(() => {
   const provider = form.value.provider.trim()
   if (!provider || provider === 'auto' || provider === 'main') return []
@@ -116,15 +102,51 @@ const hasDelegationOverride = computed(() => !!(
 ))
 
 const isEditingVision = computed(() => editingTask.value?.key === 'vision')
+const isEditingStudioImage = computed(() => (
+  editingTask.value?.key === 'image_generation' || editingTask.value?.key === 'image_edit'
+))
+
+const providerOptions = computed(() => {
+  const seen = new Set<string>()
+  const options = [{
+    label: isEditingStudioImage.value
+      ? t('models.auxiliaryProviderStudioDefault')
+      : t('models.auxiliaryProviderAuto'),
+    value: 'auto',
+  }]
+  if (!isEditingStudioImage.value) {
+    options.push({ label: t('models.auxiliaryProviderMain'), value: 'main' })
+  }
+  for (const group of modelsStore.providers) {
+    if (!group.provider) continue
+    if (isEditingStudioImage.value && !group.provider.startsWith('custom:')) continue
+    if (seen.has(group.provider)) continue
+    seen.add(group.provider)
+    options.push({ label: group.label || group.provider, value: group.provider })
+  }
+  return options
+})
+
+function canonicalProviderValue(value: string): string {
+  const normalized = value.startsWith('custom:') ? value.slice('custom:'.length) : value
+  return normalized.trim().toLowerCase().replace(/ /g, '-')
+}
+
+function selectableProviderValue(provider: string, customOnly = false): string {
+  if (!provider || provider === 'auto') return provider
+  if (provider === 'main') return customOnly ? '' : provider
+  const direct = modelsStore.providers.find(group => group.provider === provider)
+  if (direct && (!customOnly || direct.provider.startsWith('custom:'))) return direct.provider
+  const canonical = canonicalProviderValue(provider)
+  return modelsStore.providers.find(group => (
+    (!customOnly || group.provider.startsWith('custom:')) &&
+    canonicalProviderValue(group.provider) === canonical
+  ))?.provider || ''
+}
 
 function modelsForProvider(provider: string): string[] {
   const group = modelsStore.providers.find(item => item.provider === provider)
   return group?.models || []
-}
-
-function isSelectableProvider(provider: string): boolean {
-  if (!provider || provider === 'auto' || provider === 'main') return true
-  return modelsStore.providers.some(group => group.provider === provider)
 }
 
 function taskLabel(task: AuxiliaryModelTask): string {
@@ -142,13 +164,20 @@ function taskLabel(task: AuxiliaryModelTask): string {
     case 'curator': return t('models.auxiliaryTaskCurator')
     case 'session_search': return t('models.auxiliaryTaskSessionSearch')
     case 'flush_memories': return t('models.auxiliaryTaskFlushMemories')
+    case 'image_generation': return t('models.auxiliaryTaskImageGeneration')
+    case 'image_edit': return t('models.auxiliaryTaskImageEdit')
     default: return task.label || task.key
   }
 }
 
-function configuredLabel(settings?: AuxiliaryModelSettings): string {
-  if (!settings || Object.keys(settings).length === 0) return t('models.auxiliaryProviderAuto')
-  const provider = settings.provider || (settings.base_url ? t('models.auxiliaryCustomEndpoint') : t('models.auxiliaryDefault'))
+function configuredLabel(task: AuxiliaryModelTask, settings?: AuxiliaryModelSettings): string {
+  const defaultProviderLabel = task.key === 'image_generation' || task.key === 'image_edit'
+    ? t('models.auxiliaryProviderStudioDefault')
+    : t('models.auxiliaryProviderAuto')
+  if (!settings || Object.keys(settings).length === 0) return defaultProviderLabel
+  const provider = !settings.provider || settings.provider === 'auto'
+    ? (settings.base_url ? t('models.auxiliaryCustomEndpoint') : defaultProviderLabel)
+    : settings.provider
   return settings.model ? `${provider} / ${settings.model}` : provider
 }
 
@@ -232,7 +261,8 @@ async function clearDelegation() {
 
 function openEditor(task: AuxiliaryModelTask) {
   const current = auxiliary.value[task.key] || {}
-  const provider = isSelectableProvider(current.provider || '') ? (current.provider || 'auto') : 'auto'
+  const isStudioImage = task.key === 'image_generation' || task.key === 'image_edit'
+  const provider = selectableProviderValue(current.provider || '', isStudioImage) || 'auto'
   const model = provider === 'auto' || provider === 'main' || modelsForProvider(provider).includes(current.model || '')
     ? (current.model || '')
     : ''
@@ -422,7 +452,7 @@ watch(() => delegationForm.value.provider, (provider) => {
           </div>
           <div v-for="task in tasks" :key="task.key" class="auxiliary-row">
             <span class="task-name">{{ taskLabel(task) }}</span>
-            <span class="task-config">{{ configuredLabel(auxiliary[task.key]) }}</span>
+            <span class="task-config">{{ configuredLabel(task, auxiliary[task.key]) }}</span>
             <span class="task-timeout">{{ timeoutLabel(task, auxiliary[task.key]) }}</span>
             <span class="task-actions">
               <NButton size="tiny" quaternary @click="openEditor(task)">
@@ -506,6 +536,7 @@ watch(() => delegationForm.value.provider, (provider) => {
         <label>
           <span>{{ t('models.provider') }}</span>
           <NSelect
+            data-testid="auxiliary-provider"
             v-model:value="form.provider"
             :options="providerOptions"
             :placeholder="t('models.chooseProvider')"
@@ -515,6 +546,7 @@ watch(() => delegationForm.value.provider, (provider) => {
         <label>
           <span>{{ t('models.defaultModel') }}</span>
           <NSelect
+            data-testid="auxiliary-model"
             v-model:value="form.model"
             :options="modelOptions"
             :placeholder="t('models.selectModel')"
@@ -524,7 +556,12 @@ watch(() => delegationForm.value.provider, (provider) => {
         </label>
         <label>
           <span>{{ t('models.auxiliaryTimeout') }}</span>
-          <NInputNumber v-model:value="form.timeout" :min="1" :precision="0" />
+          <NInputNumber
+            data-testid="auxiliary-timeout"
+            v-model:value="form.timeout"
+            :min="1"
+            :precision="0"
+          />
         </label>
         <label v-if="isEditingVision">
           <span>{{ t('models.auxiliaryDownloadTimeout') }}</span>
@@ -538,7 +575,9 @@ watch(() => delegationForm.value.provider, (provider) => {
       <template #footer>
         <div class="auxiliary-modal-actions">
           <NButton :disabled="saving" @click="showEditor = false">{{ t('common.cancel') }}</NButton>
-          <NButton type="primary" :loading="saving" @click="saveTask">{{ t('common.save') }}</NButton>
+          <NButton data-testid="auxiliary-save" type="primary" :loading="saving" @click="saveTask">
+            {{ t('common.save') }}
+          </NButton>
         </div>
       </template>
     </NModal>

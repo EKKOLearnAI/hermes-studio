@@ -21,7 +21,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('initializes all tables with correct schemas', async () => {
-    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, SOCIAL_MESSAGE_ACCOUNTS_TABLE, SOCIAL_MESSAGE_RUNTIME_STATES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -37,6 +37,8 @@ describe('Hermes schema initialization', () => {
     expect(tables.map(t => t.name)).toContain(GC_ROOM_AGENTS_TABLE)
     expect(tables.map(t => t.name)).toContain(USERS_TABLE)
     expect(tables.map(t => t.name)).toContain(USER_PROFILES_TABLE)
+    expect(tables.map(t => t.name)).toContain(SOCIAL_MESSAGE_ACCOUNTS_TABLE)
+    expect(tables.map(t => t.name)).toContain(SOCIAL_MESSAGE_RUNTIME_STATES_TABLE)
     expect(tables.map(t => t.name)).toContain(DEVICES_TABLE)
     expect(tables.map(t => t.name)).toContain(MCU_DEVICES_TABLE)
 
@@ -51,6 +53,7 @@ describe('Hermes schema initialization', () => {
     expect(sessionCols.some(c => c.name === 'source')).toBe(true)
     expect(sessionCols.some(c => c.name === 'agent')).toBe(true)
     expect(sessionCols.some(c => c.name === 'category_id')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'push_enabled')).toBe(true)
     const sessionIndexes = db.prepare(`PRAGMA index_list("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(sessionIndexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
 
@@ -64,6 +67,18 @@ describe('Hermes schema initialization', () => {
     expect(profileCols.some(c => c.name === 'user_id')).toBe(true)
     expect(profileCols.some(c => c.name === 'profile_name')).toBe(true)
     expect(profileCols.some(c => c.name === 'is_default')).toBe(true)
+
+    const socialAccountCols = db.prepare(`PRAGMA table_info("${SOCIAL_MESSAGE_ACCOUNTS_TABLE}")`).all() as Array<{ name: string }>
+    expect(socialAccountCols.some(c => c.name === 'credentials_json')).toBe(true)
+    expect(socialAccountCols.some(c => c.name === 'active')).toBe(true)
+    expect(socialAccountCols.some(c => c.name === 'recipient')).toBe(true)
+    expect(socialAccountCols.some(c => c.name === 'binding_locale')).toBe(true)
+    expect(socialAccountCols.some(c => c.name === 'binding_notified')).toBe(true)
+    const socialAccountIndexes = db.prepare(`PRAGMA index_list("${SOCIAL_MESSAGE_ACCOUNTS_TABLE}")`).all() as Array<{ name: string; unique: number }>
+    expect(socialAccountIndexes).toContainEqual(expect.objectContaining({
+      name: 'uniq_social_message_accounts_active_user',
+      unique: 1,
+    }))
 
     const roomAgentCols = db.prepare(`PRAGMA table_info("${GC_ROOM_AGENTS_TABLE}")`).all() as Array<{ name: string }>
     expect(roomAgentCols.some(c => c.name === 'agent')).toBe(true)
@@ -146,19 +161,25 @@ describe('Hermes schema initialization', () => {
     })
   })
 
-  it('adds the category column and index to an existing sessions table', async () => {
+  it('adds category, reasoning effort, and push setting columns to an existing sessions table', async () => {
     const { initAllHermesTables, SESSIONS_SCHEMA, SESSIONS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
     const legacyColumns = Object.entries(SESSIONS_SCHEMA)
-      .filter(([name]) => name !== 'category_id')
+      .filter(([name]) => name !== 'category_id' && name !== 'reasoning_effort' && name !== 'push_enabled')
       .map(([name, definition]) => `"${name}" ${definition}`)
       .join(', ')
     db.exec(`CREATE TABLE "${SESSIONS_TABLE}" (${legacyColumns})`)
+    db.prepare(`INSERT INTO "${SESSIONS_TABLE}" (id, started_at, last_active) VALUES (?, ?, ?)`)
+      .run('legacy-session', 1, 1)
 
     expect(() => initAllHermesTables()).not.toThrow()
 
     const columns = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(columns.some(column => column.name === 'category_id')).toBe(true)
+    expect(columns.some(column => column.name === 'reasoning_effort')).toBe(true)
+    expect(columns.some(column => column.name === 'push_enabled')).toBe(true)
+    expect(db.prepare(`SELECT push_enabled FROM "${SESSIONS_TABLE}" WHERE id = ?`).get('legacy-session'))
+      .toEqual({ push_enabled: 0 })
     const indexes = db.prepare(`PRAGMA index_list("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
     expect(indexes.some(index => index.name === 'idx_sessions_category_id')).toBe(true)
   })

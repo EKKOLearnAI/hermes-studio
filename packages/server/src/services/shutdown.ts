@@ -8,6 +8,7 @@ import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopAppRelayClient } from './app-relay/client'
 import { closeGlobalEkkoAgent } from './ekko-agent/manager'
 import { stopChatWebhookDispatcher } from './hermes/chat-webhooks'
+import { shutdownSocialMessageRuntimes } from './social-messages'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -83,6 +84,13 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         logger.info('Local STT runtime stopped')
       } catch (err) {
         logger.warn(err, 'Failed to stop local STT runtime (non-fatal)')
+      }
+
+      try {
+        await shutdownSocialMessageRuntimes()
+        logger.info('Social message runtimes stopped')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop social message runtimes (non-fatal)')
       }
 
       if (shouldStopManagedGatewaysOnShutdown()) {

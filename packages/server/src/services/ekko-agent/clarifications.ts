@@ -14,6 +14,7 @@ export interface EkkoClarificationResolution {
 
 interface PendingEkkoClarification {
   sessionId: string
+  runId: string
   resolve: (response: string) => void
   timer: NodeJS.Timeout
   signal?: AbortSignal
@@ -23,6 +24,7 @@ interface PendingEkkoClarification {
 
 export interface WaitForEkkoClarificationOptions {
   sessionId: string
+  runId?: string
   signal?: AbortSignal
   onRequested: (request: AgentClarificationRequest) => void
   onResolved?: (resolution: EkkoClarificationResolution) => void
@@ -72,6 +74,7 @@ export function waitForEkkoClarification(
     })
     pendingClarifications.set(request.clarifyId, {
       sessionId: options.sessionId,
+      runId: String(options.runId || ''),
       resolve,
       timer,
       signal: options.signal,
@@ -110,6 +113,35 @@ export function respondToEkkoClarification(
     reason: 'response',
   })
   pending.resolve(normalizedResponse)
+  return { handled: true, resolved: true }
+}
+
+export function cancelPendingEkkoClarification(
+  sessionId: string,
+  clarifyId: string,
+  runId: string,
+): EkkoClarificationResponse {
+  const pending = pendingClarifications.get(clarifyId)
+  if (!pending) return { handled: false, resolved: false }
+  if (
+    pending.sessionId !== sessionId
+    || !runId
+    || pending.runId !== runId
+  ) {
+    return { handled: true, resolved: false }
+  }
+
+  pendingClarifications.delete(clarifyId)
+  clearTimeout(pending.timer)
+  if (pending.signal && pending.onAbort) {
+    pending.signal.removeEventListener('abort', pending.onAbort)
+  }
+  const resolution: EkkoClarificationResolution = {
+    response: '[clarification cancelled because the run was aborted]',
+    reason: 'aborted',
+  }
+  pending.onResolved?.(resolution)
+  pending.resolve(resolution.response)
   return { handled: true, resolved: true }
 }
 

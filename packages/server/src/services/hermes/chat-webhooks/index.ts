@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getChatWebhookDispatcher } from './dispatcher'
+import { logger } from '../../logger'
+import { notifySessionPush } from '../../social-messages/session-push'
 import {
   stableChatWebhookEventId,
   truncateChatWebhookContent,
@@ -64,6 +66,12 @@ const EVENT_MAPPING: Record<string, { type: ChatWebhookEventType; status: ChatWe
   'run.completed': { type: 'chat.run.completed', status: 'completed' },
   'run.failed': { type: 'chat.run.failed', status: 'failed' },
 }
+
+const SESSION_PUSH_EVENTS = new Set([
+  'run.completed',
+  'approval.requested',
+  'clarify.requested',
+])
 
 function messageRole(value: unknown): ChatWebhookMessageRole {
   return value === 'command' ? 'command' : value === 'assistant' ? 'assistant' : 'user'
@@ -150,6 +158,11 @@ export function observeChatRunWebhookEvent(input: ObserveChatRunWebhookEventInpu
     content: content.text,
     content_truncated: content.truncated,
     content_role: input.event === 'message.created' ? role : input.event === 'run.completed' ? 'assistant' : undefined,
+  }
+  if (SESSION_PUSH_EVENTS.has(input.event)) {
+    void notifySessionPush(sessionId, input.event, payload, input.agent).catch(error => {
+      logger.warn({ error, sessionId, event: input.event }, '[chat-webhooks] failed to dispatch session push')
+    })
   }
   return getChatWebhookDispatcher().enqueue(event)
 }

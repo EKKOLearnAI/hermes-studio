@@ -3,6 +3,7 @@ import { getDb } from '../index'
 import { GC_AGENT_PRESETS_TABLE } from './schemas'
 
 export type GroupAgentPresetAgent = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+export const GROUP_AGENT_PRESET_NAME_CONFLICT = 'GROUP_AGENT_PRESET_NAME_CONFLICT'
 
 export interface GroupAgentPresetRecord {
   id: string
@@ -21,6 +22,21 @@ export interface GroupAgentPresetRecord {
 }
 
 export type GroupAgentPresetDefinition = Omit<GroupAgentPresetRecord, 'id' | 'createdAt' | 'updatedAt'>
+
+function rethrowGroupAgentPresetWriteError(error: any): never {
+  const message = String(error?.message || '')
+  const isNameConflict = (
+    error?.code === 'SQLITE_CONSTRAINT_UNIQUE'
+    || error?.code === 'ERR_SQLITE_ERROR'
+  ) && message.includes(`UNIQUE constraint failed: ${GC_AGENT_PRESETS_TABLE}.ownerUserId, ${GC_AGENT_PRESETS_TABLE}.name`)
+  if (isNameConflict) {
+    throw Object.assign(new Error('Agent preset already exists'), {
+      status: 409,
+      code: GROUP_AGENT_PRESET_NAME_CONFLICT,
+    })
+  }
+  throw error
+}
 
 function row(value: any): GroupAgentPresetRecord {
   return {
@@ -67,15 +83,19 @@ export function createGroupAgentPreset(input: GroupAgentPresetDefinition): Group
     createdAt: now,
     updatedAt: now,
   }
-  db.prepare(
-    `INSERT INTO ${GC_AGENT_PRESETS_TABLE}
-      (id, ownerUserId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    value.id, value.ownerUserId, value.agent, value.profile, value.provider, value.model,
-    value.apiMode, value.reasoningEffort, value.name, value.description, value.avatar,
-    value.createdAt, value.updatedAt,
-  )
+  try {
+    db.prepare(
+      `INSERT INTO ${GC_AGENT_PRESETS_TABLE}
+        (id, ownerUserId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      value.id, value.ownerUserId, value.agent, value.profile, value.provider, value.model,
+      value.apiMode, value.reasoningEffort, value.name, value.description, value.avatar,
+      value.createdAt, value.updatedAt,
+    )
+  } catch (error) {
+    rethrowGroupAgentPresetWriteError(error)
+  }
   return value
 }
 
@@ -87,16 +107,20 @@ export function updateGroupAgentPreset(
   const db = getDb()
   if (!db || !getGroupAgentPreset(id, ownerUserId)) return null
   const updatedAt = Date.now()
-  db.prepare(
-    `UPDATE ${GC_AGENT_PRESETS_TABLE}
-     SET agent = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?,
-         name = ?, description = ?, avatar = ?, updatedAt = ?
-     WHERE id = ? AND ownerUserId = ?`,
-  ).run(
-    input.agent, input.profile, input.provider, input.model, input.apiMode,
-    input.reasoningEffort, input.name, input.description, input.avatar, updatedAt,
-    id, ownerUserId,
-  )
+  try {
+    db.prepare(
+      `UPDATE ${GC_AGENT_PRESETS_TABLE}
+       SET agent = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?,
+           name = ?, description = ?, avatar = ?, updatedAt = ?
+       WHERE id = ? AND ownerUserId = ?`,
+    ).run(
+      input.agent, input.profile, input.provider, input.model, input.apiMode,
+      input.reasoningEffort, input.name, input.description, input.avatar, updatedAt,
+      id, ownerUserId,
+    )
+  } catch (error) {
+    rethrowGroupAgentPresetWriteError(error)
+  }
   return getGroupAgentPreset(id, ownerUserId)
 }
 

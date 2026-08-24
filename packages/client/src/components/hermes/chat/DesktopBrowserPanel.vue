@@ -3,16 +3,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, NInput, NPopover, NSelect, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { desktopBridge, type DesktopBrowserDownload, type DesktopBrowserSelection, type DesktopBrowserState } from '@/utils/desktop-bridge'
+import type { BrowserAnnotationSubmission } from '@/utils/browser-annotation-submit'
 
 const props = withDefaults(defineProps<{
   visible?: boolean
+  submit: (submission: BrowserAnnotationSubmission) => boolean | void | Promise<boolean | void>
 }>(), {
   visible: true,
 })
-
-const emit = defineEmits<{
-  attach: [payload: { file: File; context: string }]
-}>()
 
 const { t } = useI18n()
 const message = useMessage()
@@ -67,6 +65,7 @@ const annotationCapture = ref<{
   viewport: DesktopBrowserSelection['viewport']
 } | null>(null)
 const annotationTabId = ref<string | null>(null)
+const annotationSubmitting = ref(false)
 const pendingAnnotation = ref<{
   marker: number
   mode: 'element' | 'region'
@@ -297,6 +296,7 @@ async function commitPendingAnnotation(restoreViewport = true): Promise<void> {
 }
 
 async function clearAnnotationSession(): Promise<void> {
+  if (annotationSubmitting.value) return
   const tabId = annotationTabId.value
   resetAnnotationSession()
   if (bridge && tabId) await bridge.clearAnnotations(tabId).catch(() => undefined)
@@ -304,40 +304,42 @@ async function clearAnnotationSession(): Promise<void> {
 }
 
 async function sendAnnotations(): Promise<void> {
-  await commitPendingAnnotation(false)
-  await annotationNoteUpdate
-  const capture = annotationCapture.value
-  const tabId = annotationTabId.value
-  if (!capture || annotations.value.length === 0) return
-  let file = capture.file
-  if (bridge && tabId) {
-    const screenshot = await bridge.captureAnnotations(tabId).catch(() => null)
-    if (screenshot) {
-      const bytes = Uint8Array.from(atob(screenshot.data), character => character.charCodeAt(0))
-      file = new File([bytes], `browser-annotations-${Date.now()}.png`, { type: screenshot.mediaType })
+  if (annotationSubmitting.value) return
+  annotationSubmitting.value = true
+  try {
+    await commitPendingAnnotation(false)
+    await annotationNoteUpdate
+    const capture = annotationCapture.value
+    const tabId = annotationTabId.value
+    if (!capture || annotations.value.length === 0) return
+    let file = capture.file
+    if (bridge && tabId) {
+      const screenshot = await bridge.captureAnnotations(tabId).catch(() => null)
+      if (screenshot) {
+        const bytes = Uint8Array.from(atob(screenshot.data), character => character.charCodeAt(0))
+        file = new File([bytes], `browser-annotations-${Date.now()}.png`, { type: screenshot.mediaType })
+      }
     }
-  }
-  emit('attach', {
-    file,
-    context: JSON.stringify({
-      browser_selection: {
-        tab_id: capture.tabId,
-        url: capture.url,
-        title: capture.title,
-        viewport: capture.viewport,
-        annotations: annotations.value,
-      },
-    }, null, 2),
-  })
-  annotations.value = []
-  annotationCapture.value = null
-  annotationTabId.value = null
-  annotationNote.value = ''
-  message.success(t('browser.annotationAdded'))
-  void (async () => {
+    const submission: BrowserAnnotationSubmission = {
+      file,
+      context: JSON.stringify({
+        browser_selection: {
+          tab_id: capture.tabId,
+          url: capture.url,
+          title: capture.title,
+          viewport: capture.viewport,
+          annotations: annotations.value,
+        },
+      }, null, 2),
+    }
+    const submitted = await props.submit(submission)
+    if (submitted === false) return
+    resetAnnotationSession()
     if (bridge && tabId) await bridge.clearAnnotations(tabId).catch(() => undefined)
     await nextTick(syncViewport)
-  })()
+  } finally {
+    annotationSubmitting.value = false
+  }
 }
 
 function handleAnnotationFocusout(event: FocusEvent): void {
@@ -531,8 +533,8 @@ onUnmounted(() => {
       <div v-if="hasAnnotationSession" class="annotation-session-bar">
         <span>{{ t('browser.annotationCount', { count: annotationCount }) }}</span>
         <div>
-          <NButton size="tiny" @mousedown.prevent @click="clearAnnotationSession">{{ t('browser.clearAnnotations') }}</NButton>
-          <NButton size="tiny" type="primary" @mousedown.prevent @click="sendAnnotations">{{ t('chat.send') }}</NButton>
+          <NButton size="tiny" :disabled="annotationSubmitting" @mousedown.prevent @click="clearAnnotationSession">{{ t('browser.clearAnnotations') }}</NButton>
+          <NButton size="tiny" type="primary" :loading="annotationSubmitting" @mousedown.prevent @click="sendAnnotations">{{ t('chat.send') }}</NButton>
         </div>
       </div>
 
@@ -551,7 +553,7 @@ onUnmounted(() => {
               @keydown="handleAnnotationKeydown"
             />
             <div class="annotation-actions">
-              <NButton size="small" @mousedown.prevent @click="clearAnnotationSession">{{ t('browser.clearAnnotations') }}</NButton>
+              <NButton size="small" :disabled="annotationSubmitting" @mousedown.prevent @click="clearAnnotationSession">{{ t('browser.clearAnnotations') }}</NButton>
               <NButton size="small" type="primary" @mousedown.prevent @click="commitPendingAnnotation()">{{ t('browser.finishAnnotation') }}</NButton>
             </div>
           </div>

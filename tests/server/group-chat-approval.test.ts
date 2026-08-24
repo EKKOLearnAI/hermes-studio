@@ -7,6 +7,7 @@ import {
 } from './group-chat-test-helpers'
 import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
+import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
@@ -484,6 +485,230 @@ describe('group chat approval and context baseline', () => {
     await expect(clarification).resolves.toBe('staging')
   })
 
+  it('settles an Ekko clarification through the real GroupChat interrupt and ChatRun abort chain', async () => {
+    const human = await connectGroupChatClient(port, 'human-1', 'Human')
+    harness.sockets.push(human)
+    groupServer.getIO().of('/group-chat').sockets.get(human.id!)!.data.authUser = {
+      id: 1, role: 'user', profiles: ['default'],
+    }
+    await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+
+    const chatRun = new ChatRunSocket(groupServer.getIO())
+    const abortSession = vi.spyOn(chatRun, 'abortSession')
+    const agent = await groupServer.agentClients.createAgent({
+      agentId: 'agent-1',
+      agent: 'ekko',
+      profile: 'default',
+      name: 'Agent',
+      description: '',
+      invited: 0,
+      backgroundDelegationEnabled: false,
+    }, {}, port)
+    await groupServer.agentClients.addAgentToRoom('room-1', agent)
+    groupServer.agentClients.setChatRunService(chatRun)
+
+    let runtimeWaiterSettled = false
+    let runtimeSessionId = ''
+    let clarificationRegistered!: () => void
+    const clarificationRegisteredBarrier = new Promise<void>(resolve => {
+      clarificationRegistered = resolve
+    })
+    vi.spyOn(chatRun, 'runAndWait').mockImplementation(async (data, options) => {
+      const runtimeRunId = 'runtime-current'
+      runtimeSessionId = data.session_id
+      // Match the installed event ordering: ChatRun can abort its current
+      // controller while the Ekko clarification waiter belongs to the same
+      // Session/generation but is no longer attached to that controller.
+      ;(chatRun as any).sessionMap.set(data.session_id, {
+        messages: [],
+        isWorking: true,
+        events: [],
+        queue: [],
+        source: 'group_chat',
+        runId: runtimeRunId,
+        abortController: new AbortController(),
+        profile: 'default',
+      })
+      const response = await waitForEkkoClarification({
+        clarifyId: 'clarify-real-chain',
+        question: 'Which city?',
+        choices: null,
+        timeoutMs: 300_000,
+      }, {
+        sessionId: data.session_id,
+        runId: runtimeRunId,
+        onRequested: pending => {
+          clarificationRegistered()
+          options?.onEvent?.('clarify.requested', {
+            event: 'clarify.requested',
+            run_id: runtimeRunId,
+            clarify_id: pending.clarifyId,
+            question: pending.question,
+            choices: pending.choices,
+            timeout_ms: pending.timeoutMs,
+          })
+        },
+        onResolved: resolution => options?.onEvent?.('clarify.resolved', {
+          event: 'clarify.resolved',
+          run_id: runtimeRunId,
+          clarify_id: 'clarify-real-chain',
+          resolved: resolution.reason === 'response',
+          reason: resolution.reason,
+        }),
+      })
+      runtimeWaiterSettled = true
+      return { ok: false, error: response }
+    })
+
+    let delivery: Promise<unknown> | undefined
+    try {
+      const requested = new Promise<any>(resolve => human.once('clarify.requested', resolve))
+      delivery = groupServer.agentClients.processMentions('room-1', {
+        messageId: 'message-real-chain',
+        content: '@Agent check the weather',
+        senderName: 'Human',
+        senderId: 'human-1',
+        timestamp: Date.now(),
+        role: 'user',
+        mentions: [{ type: 'agent', participantId: 'agent-1', displayName: 'Agent' }],
+      })
+      await clarificationRegisteredBarrier
+      await expect(requested).resolves.toMatchObject({
+        clarify_id: 'clarify-real-chain',
+        agentName: 'Agent',
+      })
+
+      const resolved = new Promise<any>(resolve => human.once('clarify.resolved', resolve))
+      const interrupted = new Promise<any>(resolve => {
+        human.emit('interrupt_agent', {
+          roomId: 'room-1', agentName: 'Agent',
+        }, resolve)
+      })
+      await expect(interrupted).resolves.toEqual({ ok: true })
+      await new Promise<void>(resolve => setImmediate(resolve))
+
+      expect(abortSession).toHaveBeenCalledWith(
+        runtimeSessionId,
+        'Interrupted by group chat user',
+      )
+      expect(runtimeWaiterSettled).toBe(true)
+      await expect(resolved).resolves.toMatchObject({
+        clarify_id: 'clarify-real-chain',
+        resolved: false,
+      })
+      await expect(emitAck(human, 'clarify.respond', {
+        roomId: 'room-1', clarify_id: 'clarify-real-chain', response: 'late',
+      })).resolves.toEqual({ error: 'Clarification is not pending in this room' })
+      const joined = await emitAck<any>(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
+      expect(joined.pendingClarifies).toEqual([])
+    } finally {
+      cancelPendingEkkoClarifications()
+      await delivery
+      await chatRun.close()
+    }
+  }, 15_000)
+
+  it('claims only the active Ekko clarification generation before the abort completes', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    let finishAbort!: () => void
+    const abortPending = new Promise<void>(resolve => {
+      finishAbort = resolve
+    })
+    const cancelClarify = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      agent: 'ekko',
+      cancelClarify,
+    } as any])
+    vi.spyOn(groupServer.agentClients, 'interruptAgent').mockImplementation(async () => {
+      await abortPending
+    })
+
+    agent.emit('context_status', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      status: 'replying',
+      agentSessionId,
+      runId: 'run-current',
+    })
+    const currentRequested = new Promise<any>(resolve => human.once('clarify.requested', resolve))
+    agent.emit('clarify.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      runId: 'run-current',
+      runtimeRunId: 'runtime-current',
+      clarify_id: 'clarify-current',
+      question: 'Current question?',
+    })
+    await currentRequested
+    const laterRequested = new Promise<any>(resolve => human.once('clarify.requested', resolve))
+    agent.emit('clarify.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      runId: 'run-later',
+      runtimeRunId: 'runtime-later',
+      clarify_id: 'clarify-later',
+      question: 'Later question?',
+    })
+    await laterRequested
+    const unscopedRequested = new Promise<any>(resolve => human.once('clarify.requested', resolve))
+    agent.emit('clarify.requested', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+      agentSessionId,
+      clarify_id: 'clarify-unscoped',
+      question: 'Unscoped question?',
+    })
+    await unscopedRequested
+
+    const resolved = new Promise<any>(resolve => human.once('clarify.resolved', resolve))
+    const interrupted = new Promise<any>(resolve => {
+      human.emit('interrupt_agent', {
+        roomId: 'room-1',
+        agentName: 'Agent',
+      }, resolve)
+    })
+    await vi.waitFor(() => {
+      expect(groupServer.agentClients.interruptAgent).toHaveBeenCalledTimes(1)
+    })
+    await expect(emitAck(human, 'clarify.respond', {
+      roomId: 'room-1',
+      clarify_id: 'clarify-current',
+      response: 'late',
+    })).resolves.toEqual({ error: 'Clarification is not pending in this room' })
+
+    finishAbort()
+    await expect(interrupted).resolves.toEqual({ ok: true })
+    await expect(resolved).resolves.toMatchObject({
+      clarify_id: 'clarify-current',
+      resolved: false,
+      reason: 'Agent run interrupted',
+    })
+    expect(cancelClarify).toHaveBeenCalledTimes(1)
+    expect(cancelClarify).toHaveBeenCalledWith(
+      'clarify-current',
+      agentSessionId,
+      'runtime-current',
+    )
+
+    const joined = await emitAck<any>(human, 'join', {
+      roomId: 'room-1',
+      inviteCode: 'ROOM1',
+    })
+    expect(joined.pendingClarifies).toEqual([
+      expect.objectContaining({ clarify_id: 'clarify-later' }),
+      expect.objectContaining({ clarify_id: 'clarify-unscoped' }),
+    ])
+
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1',
+      agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+    expect(cancelClarify).toHaveBeenCalledTimes(1)
+  })
+
   it('routes a clarification response to the Hermes bridge', async () => {
     const { agent, human, agentSessionId } = await joinPair()
     const bridgeClarify = vi.spyOn(AgentBridgeClient.prototype, 'clarifyRespond')
@@ -724,6 +949,103 @@ describe('group chat approval and context baseline', () => {
       clarify_id: 'clarify-expired', resolved: false, reason: 'Remote Agent run timed out',
     })
     await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({ pendingApprovals: [] })
+  })
+
+  it('interrupts only the active run generation and denies its pending approvals', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    const respondApproval = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      respondApproval,
+    } as any])
+    vi.spyOn(groupServer.agentClients, 'interruptAgent').mockResolvedValue()
+
+    agent.emit('context_status', {
+      roomId: 'room-1', agentName: 'Agent', status: 'replying',
+      agentSessionId, runId: 'run-current',
+    })
+    const currentRequested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId, runId: 'run-current',
+      approval_id: 'approval-current', command: 'printf harmless',
+    })
+    await currentRequested
+    const nextRequested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId, runId: 'run-next',
+      approval_id: 'approval-next', command: 'printf harmless',
+    })
+    await nextRequested
+    const missingGenerationRequested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId,
+      approval_id: 'approval-missing-generation', command: 'printf harmless',
+    })
+    await missingGenerationRequested
+    const resolved = once<any>(human, 'approval.resolved')
+
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+
+    await expect(resolved).resolves.toMatchObject({
+      approval_id: 'approval-current', choice: 'deny', reason: 'Agent run interrupted',
+    })
+    expect(respondApproval).toHaveBeenCalledTimes(1)
+    expect(respondApproval).toHaveBeenCalledWith('approval-current', 'deny')
+    await expect(emitAck<any>(human, 'load_pending_approvals', {})).resolves.toEqual({
+      pendingApprovals: [
+        expect.objectContaining({ approval_id: 'approval-next' }),
+        expect.objectContaining({ approval_id: 'approval-missing-generation' }),
+      ],
+    })
+
+    await expect(emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })).resolves.toEqual({ ok: true })
+    expect(respondApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims the active approval before an interrupt can race with a user response', async () => {
+    const { agent, human, agentSessionId } = await joinPair()
+    let finishInterrupt!: () => void
+    const interruptPending = new Promise<void>(resolve => {
+      finishInterrupt = resolve
+    })
+    const respondApproval = vi.fn(async () => true)
+    vi.spyOn(groupServer.agentClients, 'getAgents').mockReturnValue([{
+      name: 'Agent',
+      respondApproval,
+    } as any])
+    vi.spyOn(groupServer.agentClients, 'interruptAgent').mockImplementation(async () => {
+      await interruptPending
+    })
+
+    agent.emit('context_status', {
+      roomId: 'room-1', agentName: 'Agent', status: 'replying',
+      agentSessionId, runId: 'run-current',
+    })
+    const requested = once<any>(human, 'approval.requested')
+    agent.emit('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', agentSessionId, runId: 'run-current',
+      approval_id: 'approval-race', command: 'printf harmless',
+    })
+    await requested
+
+    const interrupted = emitAck(human, 'interrupt_agent', {
+      roomId: 'room-1', agentName: 'Agent',
+    })
+    await vi.waitFor(() => {
+      expect(groupServer.agentClients.interruptAgent).toHaveBeenCalledTimes(1)
+    })
+    await expect(emitAck(human, 'approval.respond', {
+      roomId: 'room-1', approval_id: 'approval-race', choice: 'once',
+    })).resolves.toEqual({ error: 'Approval is not pending in this room' })
+
+    finishInterrupt()
+    await expect(interrupted).resolves.toEqual({ ok: true })
+    expect(respondApproval).toHaveBeenCalledTimes(1)
+    expect(respondApproval).toHaveBeenCalledWith('approval-race', 'deny')
   })
 
   it('keeps Hermes approval responses routed through the Agent Bridge', async () => {

@@ -26,6 +26,69 @@ afterAll(async () => {
 })
 
 describe('group Agent presets', () => {
+  it('returns an application conflict for owner-scoped duplicate names without leaking SQLite details', async () => {
+    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    initAllStores()
+    modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
+
+    const input = {
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Duplicate Reviewer',
+      description: '',
+      avatar: '',
+    }
+    const user = { id: 70, role: 'admin', profiles: ['research'] }
+    const firstCreateCtx: any = { state: { user }, request: { body: input } }
+    await controller.create(firstCreateCtx)
+    expect(firstCreateCtx.status).toBe(201)
+
+    const duplicateCreateCtx: any = { state: { user }, request: { body: input } }
+    await controller.create(duplicateCreateCtx)
+    expect(duplicateCreateCtx).toMatchObject({
+      status: 409,
+      body: {
+        code: 'GROUP_AGENT_PRESET_NAME_CONFLICT',
+        error: 'Agent preset already exists',
+      },
+    })
+    expect(JSON.stringify(duplicateCreateCtx.body)).not.toMatch(/sqlite|gc_agent_presets|ownerUserId/i)
+
+    const otherOwnerCtx: any = {
+      state: { user: { ...user, id: 71 } },
+      request: { body: input },
+    }
+    await controller.create(otherOwnerCtx)
+    expect(otherOwnerCtx.status).toBe(201)
+
+    const secondCreateCtx: any = {
+      state: { user },
+      request: { body: { ...input, name: 'Second Reviewer' } },
+    }
+    await controller.create(secondCreateCtx)
+    expect(secondCreateCtx.status).toBe(201)
+
+    const duplicateRenameCtx: any = {
+      state: { user },
+      params: { presetId: secondCreateCtx.body.preset.id },
+      request: { body: input },
+    }
+    await controller.update(duplicateRenameCtx)
+    expect(duplicateRenameCtx).toMatchObject({
+      status: 409,
+      body: {
+        code: 'GROUP_AGENT_PRESET_NAME_CONFLICT',
+        error: 'Agent preset already exists',
+      },
+    })
+    expect(JSON.stringify(duplicateRenameCtx.body)).not.toMatch(/sqlite|gc_agent_presets|ownerUserId/i)
+  })
+
   it('persists owner-scoped CRUD snapshots without secret fields', async () => {
     const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
     const {

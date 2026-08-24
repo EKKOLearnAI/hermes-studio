@@ -89,6 +89,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
       messageTotal: actualDetail?.total || messages.length,
       messageLoadedCount: actualDetail?.messages.length || messages.length,
       messagePageLimit: actualDetail?.limit,
+      messageStateBaselineCount: messages.length,
       hasMoreBefore: actualDetail?.hasMore || false,
       isWorking: false,
       events: [],

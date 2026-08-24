@@ -177,6 +177,7 @@ function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
       timestamp: m.timestamp * 1000,
       reasoning: m.reasoning || undefined,
       systemType: displayRole === 'command' ? 'command' : undefined,
+      runMarker: m.run_marker,
     }
 
     if (m.role === 'tool' || isHistoryMoaToolDisplay(m)) {
@@ -231,6 +232,7 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages,
   }
@@ -444,6 +446,7 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages: [],
   }
