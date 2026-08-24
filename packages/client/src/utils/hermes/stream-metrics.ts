@@ -59,7 +59,6 @@ function ensureSampler(): void {
  * Known limitation: resumed streams (page reload mid-run) are not timed —
  * they have no local run-start moment. Metrics simply stay absent there.
  */
-/**
 export function noteStreamStart(sessionId: string): void {
   if (!sessionId) return
   currentSession = sessionId

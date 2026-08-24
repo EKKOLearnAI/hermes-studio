@@ -9,6 +9,7 @@ import { setModelContext } from '@/api/hermes/model-context'
 import { fetchSocialMessagePlatforms } from '@/api/social-messages'
 import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 import { deleteSkillBundleApi, fetchSkillBundles, type SkillBundleInfo } from '@/api/hermes/skill-bundles'
+import { activeStreamSession, streamMetrics } from '@/utils/hermes/stream-metrics'
 import { NButton, NTooltip, NModal, NInputNumber, NPopover, NSlider, NDropdown, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -111,7 +112,6 @@ const compactModelLabel = computed(() => {
 const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
 type DraftMap = Record<string, string>
 const inputText = ref('')
-import { activeStreamSession, streamMetrics } from '@/utils/hermes/stream-metrics'
 
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
