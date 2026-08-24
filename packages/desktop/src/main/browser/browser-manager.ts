@@ -127,6 +127,9 @@ export class BrowserManager {
   private activeTabId: string | undefined
   private visible = false
   private bounds: BrowserBounds = { x: 0, y: 0, width: 800, height: 600 }
+  // 网页端上报的浏览器占位区域(CSS 布局坐标, 与主窗口 zoom 无关)。this.bounds
+  // 是它乘以当前 zoom 因子后的实际覆盖区, 用于 contentView 定位与 offscreen 避让。
+  private rawViewport: BrowserBounds = { x: 0, y: 0, width: 800, height: 600 }
 
   constructor(private readonly window: BrowserWindow, stateRoot: string, private readonly options?: BrowserManagerOptions) {
     this.profileStore = new BrowserProfileStore(stateRoot)
@@ -160,7 +163,7 @@ export class BrowserManager {
   }
 
   setViewport(bounds: BrowserBounds, visible: boolean): DesktopBrowserState {
-    this.bounds = {
+    this.rawViewport = {
       x: Math.max(0, Math.round(bounds.x)),
       y: Math.max(0, Math.round(bounds.y)),
       width: Math.max(1, Math.round(bounds.width)),
@@ -170,6 +173,23 @@ export class BrowserManager {
     this.syncViews()
     this.emitState()
     return this.state()
+  }
+
+  // 主窗口 zoom 变化时由主进程调用, 重算浏览器 view 的覆盖区与内容缩放, 消除
+  // 与放大后主 UI 的错位(zoom 不影响布局坐标, 网页端不会自动重报 viewport)。
+  applyDesktopZoom(): void {
+    this.syncViews()
+  }
+
+  private effectiveBounds(): BrowserBounds {
+    const factor = this.window.webContents.getZoomFactor()
+    const viewport = this.rawViewport
+    return {
+      x: Math.round(viewport.x * factor),
+      y: Math.round(viewport.y * factor),
+      width: Math.max(1, Math.round(viewport.width * factor)),
+      height: Math.max(1, Math.round(viewport.height * factor)),
+    }
   }
 
   async createTab(url = 'about:blank', activate = true): Promise<DesktopBrowserTab> {
@@ -948,7 +968,12 @@ export class BrowserManager {
   }
 
   private syncViews(): void {
+    this.bounds = this.effectiveBounds()
+    const browserZoomFactor = this.window.webContents.getZoomFactor()
     for (const [id, record] of this.records) {
+      if (record.view.webContents.getZoomFactor() !== browserZoomFactor) {
+        record.view.webContents.setZoomFactor(browserZoomFactor)
+      }
       const userVisible = this.visible && id === this.activeTabId
       if (userVisible) {
         record.view.setBounds(this.bounds)
