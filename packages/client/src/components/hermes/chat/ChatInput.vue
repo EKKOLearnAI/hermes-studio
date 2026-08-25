@@ -191,8 +191,8 @@ const voiceInput = useComposerVoiceInput({
 
 const CODING_AGENT_SLASH_COMMANDS = ['context', 'compact', 'usage', 'status']
 
-const bridgeCommands = computed<SlashCommandOption[]>(() =>
-  BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
+const bridgeCommands = computed<SlashCommandOption[]>(() => {
+  const builtin = BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
     key: command.key,
     name: command.name,
     args: command.argsKey ? t(command.argsKey) : command.args || '',
@@ -202,7 +202,32 @@ const bridgeCommands = computed<SlashCommandOption[]>(() =>
     opensBundlePicker: command.opensBundlePicker,
     opensBundleCreator: command.opensBundleCreator,
   }))
-)
+  const dynamic: SlashCommandOption[] = []
+
+  // Add bundles from server
+  for (const bundle of bundles.value) {
+    dynamic.push({
+      key: `bundle:${bundle.commandName}`,
+      name: bundle.commandName,
+      args: t('chat.slashCommandArgs.text'),
+      description: bundle.description || 'Skill bundle',
+    })
+  }
+
+  // Add individual skills (the bridge resolves /<skill-name> too)
+  for (const item of skillPickerItems.value) {
+    // Don't duplicate built-in commands that happen to match a skill name
+    if (builtin.some(c => c.name === item.commandName)) continue
+    dynamic.push({
+      key: item.key,
+      name: item.commandName,
+      args: t('chat.slashCommandArgs.text'),
+      description: item.description,
+    })
+  }
+
+  return [...builtin, ...dynamic]
+})
 
 const slashActive = ref(false)
 const slashQuery = ref('')
@@ -517,6 +542,8 @@ onMounted(() => {
   nextTick(() => {
     applyConfiguredTextareaHeight()
   })
+  loadBundles()
+  loadSkills()
 })
 
 async function handleInputSettingsSelect(key: string | number) {
@@ -562,6 +589,8 @@ watch(() => chatStore.activeSession?.id, () => {
   nextTick(() => {
     applyConfiguredTextareaHeight()
   })
+  loadBundles()
+  loadSkills()
 })
 
 watch(configuredTextareaHeight, () => {
