@@ -59,6 +59,8 @@ export interface Attachment {
   file?: File
   /** Structured context sent to the model but rendered collapsed in the UI. */
   context?: string
+  /** Original video attachment id when this file is a model-only representative frame. */
+  videoFrameFor?: string
 }
 
 export interface Message {
@@ -619,6 +621,7 @@ export async function buildContentBlocks(
           path: uploaded.path,
           media_type: attachment.type,
           ...(attachment.context?.trim() ? { context: attachment.context.trim() } : {}),
+          ...(attachment.videoFrameFor ? { video_frame: true } : {}),
         })
       } else {
         // Other files
@@ -3428,12 +3431,13 @@ export const useChatStore = defineStore('chat', () => {
       settleRuntimeDisplayForCommand(sid)
     }
 
+    const visibleAttachments = attachments?.filter(attachment => !attachment.videoFrameFor)
     const userMsg: Message = {
       id: uid(),
       role: isBridgeSlashCommand ? 'command' : 'user',
       content: submittedContent,
       timestamp: Date.now(),
-      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      attachments: visibleAttachments && visibleAttachments.length > 0 ? visibleAttachments : undefined,
       queued: shouldQueue,
       systemType: isBridgeSlashCommand ? 'command' : undefined,
     }

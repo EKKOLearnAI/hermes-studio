@@ -75,6 +75,7 @@ import { handoffErrorTranslationKey } from './handoff-presentation'
 import { clearGroupChatRoomDraft } from './group-chat-room-drafts'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
+const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default)
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/DesktopBrowserPanel.vue')).default)
 const TerminalPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/TerminalPanel.vue')).default)
@@ -828,6 +829,29 @@ function handleWorkspaceFilePreviewRequest(event: Event): void {
     })
 }
 
+function handleGroupAttachmentPreviewRequest(event: Event): void {
+    const customEvent = event as CustomEvent<{ sourceUrl?: string; fileName?: string; size?: number }>
+    const roomId = store.currentRoomId
+    const sourceUrl = String(customEvent.detail?.sourceUrl || '').trim()
+    const fileName = String(customEvent.detail?.fileName || '').trim()
+    if (!roomId || !sourceUrl || !fileName) return
+    customEvent.preventDefault()
+    toolPanelStore.closeWorkspaceDiff()
+    filesStore.closePreview()
+    void filesStore.openRemotePreview(
+        sourceUrl,
+        fileName,
+        Number(customEvent.detail?.size ?? -1),
+        { workspaceRoomId: roomId },
+    ).then(opened => {
+        if (!opened) return
+        activeWorkspacePanel.value = 'files'
+        showWorkspacePanel.value = true
+    }).catch(error => {
+        message.error(error instanceof Error ? error.message : t('files.previewFailed'))
+    })
+}
+
 function openPageSidebar() {
     if (props.standalone) return
     showSidebar.value = true
@@ -1456,6 +1480,7 @@ onMounted(() => {
     }
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.addEventListener('hermes:preview-group-attachment', handleGroupAttachmentPreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
     window.addEventListener('focus', handleWindowFocus)
@@ -1475,6 +1500,7 @@ onUnmounted(() => {
     hideInlineSummaryStatus()
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.removeEventListener('hermes:preview-group-attachment', handleGroupAttachmentPreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
     window.removeEventListener('focus', handleWindowFocus)
@@ -2577,6 +2603,10 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                             @attach="handleWorkspaceFileAttach"
                                         />
                                     </template>
+                                    <FilePreview
+                                        v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
+                                        :custom-close="closeWorkspacePanel"
+                                    />
                                     <div v-else-if="activeWorkspacePanel === 'files'" class="group-workspace-empty">
                                         <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
                                             <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />

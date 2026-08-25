@@ -32,7 +32,10 @@ export function convertContentBlocksForCodingAgent(input: string | ContentBlock[
       continue
     }
     if (block.type === 'image') {
-      textParts.push(`[Attached image: ${block.name || block.path}]\nLocal image path for tools: ${block.path}`)
+      const label = block.video_frame
+        ? `Representative frame extracted from the attached video: ${block.name || block.path}`
+        : `Attached image: ${block.name || block.path}`
+      textParts.push(`[${label}]\nLocal image path for tools: ${block.path}`)
       images.push({
         name: block.name || block.path,
         path: block.path,
@@ -78,6 +81,12 @@ export async function convertContentBlocks(blocks: ContentBlock[]): Promise<Resp
     } else if (block.type === 'image') {
       const dataUri = await imageBlockToDataUri(block)
       if (dataUri) {
+        if (block.video_frame) {
+          parts.push({
+            type: 'input_text',
+            text: `[Representative frame extracted from the attached video: ${block.name || block.path}]`,
+          })
+        }
         parts.push({ type: 'input_image', image_url: dataUri })
       } else {
         parts.push({ type: 'input_text', text: `[Image: ${block.path}]` })
@@ -100,9 +109,12 @@ export async function convertContentBlocksForAgent(blocks: ContentBlock[]): Prom
     if (block.type === 'text') {
       parts.push({ type: 'text', text: block.text || '' })
     } else if (block.type === 'image') {
+      const label = block.video_frame
+        ? `Representative frame extracted from the attached video: ${block.name || block.path}`
+        : `Attached image: ${block.name || block.path}`
       parts.push({
         type: 'text',
-        text: `[Attached image: ${block.name || block.path}]\nLocal image path for tools: ${block.path}`,
+        text: `[${label}]\nLocal image path for tools: ${block.path}`,
       })
       const dataUri = await imageBlockToDataUri(block)
       if (dataUri) {

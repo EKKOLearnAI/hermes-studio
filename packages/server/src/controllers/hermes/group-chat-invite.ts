@@ -68,7 +68,7 @@ function safeDisplayName(value: unknown, fallback = 'attachment'): string {
     return name || fallback
 }
 
-function consumeRoomUploadRate(roomId: string): boolean {
+export function consumeRoomUploadRate(roomId: string): boolean {
     const now = Date.now()
     for (const [key, entry] of roomUploadRates) {
         if (now - entry.windowStartedAt >= GROUP_CHAT_UPLOAD_WINDOW_MS) roomUploadRates.delete(key)

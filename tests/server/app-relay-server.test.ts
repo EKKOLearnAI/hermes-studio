@@ -548,6 +548,65 @@ describe('LocalAppRelayServer', () => {
     expect(Buffer.from(binaryResponse)).toEqual(Buffer.from([7, 8, 9]))
   })
 
+  it('streams opted-in LAN downloads in bounded chunks while preserving legacy responses', async () => {
+    const namespace = createMockNamespace()
+    const io = { of: vi.fn(() => namespace) }
+    const fetchImpl = vi.fn(async () => new Response(Uint8Array.from([1, 2, 3, 4, 5]), {
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': '5',
+      },
+    }))
+    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const server = new LocalAppRelayServer(io as any, {
+      machineId: 'hwui_local_machine_1234567890',
+      localBaseUrl: 'http://127.0.0.1:8748',
+      fetchImpl: fetchImpl as any,
+    })
+    server.init()
+
+    const app = createMockAppSocket('app-download', {
+      role: 'app',
+      token: 'local-user-token',
+      machineId: 'hwui_local_machine_1234567890',
+    })
+    await connectApp(namespace, app)
+    expect(app.emit).toHaveBeenCalledWith('relay.ready', expect.objectContaining({
+      capabilities: expect.arrayContaining(['http.download.chunked']),
+    }))
+
+    const openAck = vi.fn()
+    app.__handlers.get('http.request')({
+      id: 'download-open',
+      method: 'GET',
+      path: '/api/hermes/download?path=test.bin',
+      streamBinary: true,
+    }, openAck)
+    await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'download-open',
+      status: 200,
+      download: { id: expect.any(String), totalBytes: 5 },
+    })))
+    const downloadId = openAck.mock.calls[0][0].download.id
+
+    const firstAck = vi.fn()
+    app.__handlers.get('http.download.chunk')({ id: downloadId, maxBytes: 3 }, firstAck)
+    await vi.waitFor(() => expect(firstAck).toHaveBeenCalledWith(expect.objectContaining({
+      receivedBytes: 3,
+      done: false,
+    })))
+    expect(Array.from(firstAck.mock.calls[0][0].bodyBytes)).toEqual([1, 2, 3])
+
+    const secondAck = vi.fn()
+    app.__handlers.get('http.download.chunk')({ id: downloadId, maxBytes: 3 }, secondAck)
+    await vi.waitFor(() => expect(secondAck).toHaveBeenCalledWith(expect.objectContaining({
+      receivedBytes: 5,
+      done: true,
+    })))
+    expect(Array.from(secondAck.mock.calls[0][0].bodyBytes)).toEqual([4, 5])
+  })
+
   it('bridges /chat-run directly with the same App socket events as the cloud relay', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }

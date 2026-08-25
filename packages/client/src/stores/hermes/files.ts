@@ -344,7 +344,12 @@ export const useFilesStore = defineStore('files', () => {
     previewFile.value = common
   }
 
-  async function openRemotePreview(sourceUrl: string, fileName: string, size = -1): Promise<boolean> {
+  async function openRemotePreview(
+    sourceUrl: string,
+    fileName: string,
+    size = -1,
+    context: { workspaceSessionId?: string | null; workspaceRoomId?: string | null } = {},
+  ): Promise<boolean> {
     const type = getFilePreviewKind(fileName)
     if (!type) return false
     const common = {
@@ -354,6 +359,7 @@ export const useFilesStore = defineStore('files', () => {
       profile: null,
       sourceUrl,
       type,
+      ...context,
     }
     if (type === 'markdown' || type === 'text') {
       const blob = await fetchAuthenticatedBlob(sourceUrl, { profile: null })

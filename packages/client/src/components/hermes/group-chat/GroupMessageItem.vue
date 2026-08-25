@@ -595,6 +595,10 @@ function isImage(type: string): boolean {
     return type.startsWith('image/')
 }
 
+function isVideo(type: string, name: string): boolean {
+    return type.startsWith('video/') || /\.(?:mp4|mov|m4v|webm)$/i.test(name)
+}
+
 function attachmentPath(attachment: { path?: string; url?: string }): string | null {
     if (attachment.path) return attachment.path
     try {
@@ -604,8 +608,30 @@ function attachmentPath(attachment: { path?: string; url?: string }): string | n
     }
 }
 
-function handleAttachmentClick(event: MouseEvent, attachment: { name: string; path?: string; url?: string }): void {
+function isStoredGroupAttachment(attachment: { path?: string; url?: string }): boolean {
+    const rawPath = String(attachment.path || '').trim()
+    if (rawPath) {
+        const path = rawPath.split(/[?#]/, 1)[0].split(/[\\/]/).pop() || ''
+        return /^[a-f0-9]{32}(?:\.[a-z0-9]{1,12})?$/i.test(path)
+    }
+    return /\/api\/hermes\/group-chat\/(?:rooms|invites)\/[^/?#]+\/attachments\/[^/?#]+/i.test(String(attachment.url || ''))
+}
+
+function handleAttachmentClick(event: MouseEvent, attachment: { name: string; size?: number; path?: string; url?: string }): void {
     if (!isPreviewableFile(attachment.name)) return
+    if (isStoredGroupAttachment(attachment) && attachment.url) {
+        const previewEvent = new CustomEvent('hermes:preview-group-attachment', {
+            cancelable: true,
+            detail: {
+                sourceUrl: attachment.url,
+                fileName: attachment.name,
+                size: Number(attachment.size || 0),
+            },
+        })
+        window.dispatchEvent(previewEvent)
+        if (previewEvent.defaultPrevented) event.preventDefault()
+        return
+    }
     const path = attachmentPath(attachment)
     if (!path) return
     const previewEvent = new CustomEvent('hermes:preview-workspace-file', {
@@ -741,9 +767,25 @@ onBeforeUnmount(() => {
                         v-for="att in renderedAttachments"
                         :key="att.id"
                         class="msg-attachment"
-                        :class="{ image: isImage(att.type) }"
+                        :class="{
+                            image: isImage(att.type),
+                            video: message.role === 'user' && isVideo(att.type, att.name),
+                        }"
                     >
                         <img v-if="isImage(att.type)" :src="att.url" :alt="att.name" class="msg-attachment-thumb" @click="previewUrl = att.url" />
+                        <template v-else-if="message.role === 'user' && isVideo(att.type, att.name)">
+                            <video
+                                class="msg-attachment-video"
+                                :src="att.url"
+                                controls
+                                playsinline
+                                preload="metadata"
+                            ></video>
+                            <div class="msg-attachment-video-footer">
+                                <span class="att-name">{{ att.name }}</span>
+                                <span v-if="att.size" class="att-size">{{ formatSize(att.size) }}</span>
+                            </div>
+                        </template>
                         <a v-else class="msg-attachment-file" :href="att.url" :title="t('download.downloadFile')" @click="handleAttachmentClick($event, att)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -1295,6 +1337,11 @@ onBeforeUnmount(() => {
         width: 96px;
         height: 96px;
     }
+
+    &.video {
+        width: min(360px, 100%);
+        background: #000;
+    }
 }
 
 .msg-attachment-thumb {
@@ -1303,6 +1350,39 @@ onBeforeUnmount(() => {
     object-fit: cover;
     display: block;
     cursor: zoom-in;
+}
+
+.msg-attachment-video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 280px;
+    background: #000;
+    object-fit: contain;
+}
+
+.msg-attachment-video-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    color: $text-secondary;
+    background: $bg-secondary;
+    font-size: 12px;
+
+    .att-name {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .att-size {
+        flex-shrink: 0;
+        color: $text-muted;
+        font-size: 11px;
+    }
 }
 
 .msg-attachment-file {

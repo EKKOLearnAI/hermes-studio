@@ -194,6 +194,125 @@ describe('AppRelayClient', () => {
     expect(Buffer.from(binaryResponse)).toEqual(Buffer.from([7, 8, 9]))
   })
 
+  it('uses the cloud media limit for downloads and applies live limit updates before reading the body', async () => {
+    const apkBytes = new Uint8Array(23 * 1024 * 1024)
+    const fetchImpl = vi.fn(async () => new Response(apkBytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/vnd.android.package-archive',
+        'content-length': String(apkBytes.byteLength),
+      },
+    }))
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: fetchImpl as any,
+    })!
+    const remote = sockets[0]
+    remote.__handlers.get('relay.ready')?.({
+      limits: {
+        mediaMaxMegabytes: 30,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+
+    const allowed = await client.handleHttpRequest({
+      id: 'apk-allowed',
+      method: 'GET',
+      path: '/api/hermes/download?path=test.apk',
+    })
+    expect(allowed.error).toBeUndefined()
+    expect(allowed.bodyBytes?.byteLength).toBe(apkBytes.byteLength)
+
+    remote.__handlers.get('relay.limits.updated')?.({
+      limits: {
+        mediaMaxMegabytes: 20,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+    const rejected = await client.handleHttpRequest({
+      id: 'apk-rejected',
+      method: 'GET',
+      path: '/api/hermes/download?path=test.apk',
+    })
+    expect(rejected).toMatchObject({
+      id: 'apk-rejected',
+      status: 413,
+      error: {
+        code: 'download_too_large',
+        message: 'Cloud relay media files are limited to 20MB',
+      },
+    })
+    expect(rejected.bodyBytes).toBeUndefined()
+  })
+
+  it('streams opted-in binary downloads in bounded chunks when the cloud advertises support', async () => {
+    const fetchImpl = vi.fn(async () => new Response(Uint8Array.from([1, 2, 3, 4, 5]), {
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': '5',
+      },
+    }))
+    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: fetchImpl as any,
+    })
+    const remote = sockets[0]
+    remote.__handlers.get('relay.ready')?.({
+      capabilities: ['http.request', 'http.download.chunked'],
+      limits: {
+        mediaMaxMegabytes: 30,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+
+    const openAck = vi.fn()
+    remote.__handlers.get('app.http.request')({
+      id: 'chunked-open',
+      method: 'GET',
+      path: '/api/hermes/download?path=test.bin',
+      streamBinary: true,
+    }, openAck)
+    await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'chunked-open',
+      status: 200,
+      download: { id: expect.any(String), totalBytes: 5 },
+    })))
+    expect(openAck.mock.calls[0][0].bodyBytes).toBeUndefined()
+    const downloadId = openAck.mock.calls[0][0].download.id
+
+    const firstAck = vi.fn()
+    remote.__handlers.get('app.http.download.chunk')({ id: downloadId, maxBytes: 3 }, firstAck)
+    await vi.waitFor(() => expect(firstAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: downloadId,
+      receivedBytes: 3,
+      totalBytes: 5,
+      done: false,
+    })))
+    expect(Array.from(firstAck.mock.calls[0][0].bodyBytes)).toEqual([1, 2, 3])
+
+    const secondAck = vi.fn()
+    remote.__handlers.get('app.http.download.chunk')({ id: downloadId, maxBytes: 3 }, secondAck)
+    await vi.waitFor(() => expect(secondAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: downloadId,
+      receivedBytes: 5,
+      totalBytes: 5,
+      done: true,
+    })))
+    expect(Array.from(secondAck.mock.calls[0][0].bodyBytes)).toEqual([4, 5])
+  })
+
   it('marks App authorization-code login as a cloud connection', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ token: 'app-token' }), {
       status: 200,

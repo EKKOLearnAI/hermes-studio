@@ -25,7 +25,7 @@ export type BackgroundContinuationContext =
  */
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean }
   | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface SessionMessage {

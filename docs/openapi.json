@@ -6624,6 +6624,171 @@
         ]
       }
     },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create attachment-uploads",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/attachment-uploads",
+        "operationId": "createAttachment-uploads",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}": {
+      "delete": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id",
+        "operationId": "deleteAttachment-uploads",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}/chunks": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update chunks",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/chunks",
+        "operationId": "updateChunks",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}/complete": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create complete",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/complete",
+        "operationId": "createComplete",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms/{roomId}/attachments": {
       "post": {
         "tags": [

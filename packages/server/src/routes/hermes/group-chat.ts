@@ -17,6 +17,7 @@ import {
 } from '../../services/hermes/group-chat/access'
 import { setGroupChatRuntimeServer } from '../../services/hermes/group-chat/runtime'
 import * as inviteCtrl from '../../controllers/hermes/group-chat-invite'
+import * as uploadCtrl from '../../controllers/hermes/group-chat-upload'
 import * as workspaceCtrl from '../../controllers/hermes/group-chat-workspace'
 import * as agentLinkCtrl from '../../controllers/hermes/group-chat-agent-link'
 import * as remoteWorkspaceCtrl from '../../controllers/hermes/group-chat-remote-workspace'
@@ -105,6 +106,26 @@ async function authorizedAttachmentRoom(ctx: any): Promise<any | null> {
 groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachments', async (ctx) => {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await inviteCtrl.uploadRoomAttachment(ctx, room)
+})
+
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachment-uploads', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await uploadCtrl.open(ctx, room)
+})
+
+groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/chunks', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await uploadCtrl.appendChunk(ctx, room)
+})
+
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/complete', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await uploadCtrl.complete(ctx, room)
+})
+
+groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id', async (ctx) => {
+    const room = await authorizedAttachmentRoom(ctx)
+    if (room) await uploadCtrl.abort(ctx, room)
 })
 
 groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/attachments/:file', async (ctx) => {

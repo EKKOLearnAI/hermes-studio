@@ -11,6 +11,7 @@ const fetchSkillsMock = vi.hoisted(() => vi.fn())
 const fetchSkillBundlesMock = vi.hoisted(() => vi.fn())
 const deleteSkillBundleApiMock = vi.hoisted(() => vi.fn())
 const dialogWarningMock = vi.hoisted(() => vi.fn())
+const extractRepresentativeVideoFramesMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -76,6 +77,14 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: { value: true }, toggleToolTraceVisible: vi.fn() }),
 }))
 
+vi.mock('@/utils/video-frame-extraction', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/utils/video-frame-extraction')>()
+  return {
+    ...original,
+    extractRepresentativeVideoFrames: extractRepresentativeVideoFramesMock,
+  }
+})
+
 function mountForSession(
   sessionId: string,
   sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {},
@@ -104,6 +113,8 @@ describe('ChatInput draft persistence', () => {
     deleteSkillBundleApiMock.mockReset()
     deleteSkillBundleApiMock.mockResolvedValue(undefined)
     dialogWarningMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockResolvedValue([])
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn(() => 'blob:chat-attachment'),
@@ -130,6 +141,40 @@ describe('ChatInput draft persistence', () => {
 
     expect(paste.defaultPrevented).toBe(true)
     expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
+  })
+
+  it('sends extracted video frames to the model without showing them as separate attachments', async () => {
+    const wrapper = mountForSession('session-video')
+    const chatStore = useChatStore()
+    const sendMessage = vi.spyOn(chatStore, 'sendMessage').mockResolvedValue(undefined)
+    const video = new File(['video'], 'demo.mp4', { type: 'video/mp4' })
+    const frame = new File(['frame'], 'demo-video-frame-01.jpg', { type: 'image/jpeg' })
+    let resolveFrames!: (frames: File[]) => void
+    extractRepresentativeVideoFramesMock.mockReturnValue(new Promise<File[]>((resolve) => {
+      resolveFrames = resolve
+    }))
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [video] })
+
+    await input.trigger('change')
+    await nextTick()
+
+    expect(wrapper.findAll('.attachment-preview')).toHaveLength(1)
+    expect(wrapper.get('.attachment-preview').text()).toContain('demo.mp4')
+
+    await wrapper.get('.send-button').trigger('click')
+    expect(sendMessage).not.toHaveBeenCalled()
+    resolveFrames([frame])
+    await flushPromises()
+
+    expect(sendMessage).toHaveBeenCalledWith('', [
+      expect.objectContaining({ name: 'demo.mp4', type: 'video/mp4' }),
+      expect.objectContaining({
+        name: 'demo-video-frame-01.jpg',
+        type: 'image/jpeg',
+        videoFrameFor: expect.any(String),
+      }),
+    ])
   })
 
   it('restores unsent text for the active session after the chat view is remounted', async () => {
