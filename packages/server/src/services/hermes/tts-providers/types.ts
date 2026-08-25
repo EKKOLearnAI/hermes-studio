@@ -46,6 +46,9 @@ export interface CloudTtsProviderOptions {
   apiKey?: string
   model?: string
   voice?: string
+  voiceMode?: 'preset' | 'voiceClone'
+  voiceCloneDataUri?: string
+  voiceCloneFormat?: 'mp3' | 'wav'
   language?: string
   sampleRate?: string | number
   bitRate?: string | number
