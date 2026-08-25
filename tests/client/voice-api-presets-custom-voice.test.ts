@@ -23,4 +23,9 @@ describe('Custom TTS voice capability', () => {
     const missing = selectableTts.filter(entry => !entry.capabilities?.voices).map(entry => entry.id)
     expect(missing).toEqual([])
   })
+
+  it('exposes voice design for MiniMax TTS', () => {
+    const preset = VOICE_API_PRESETS.find(entry => entry.id === 'tts-minimax')
+    expect(preset?.capabilities?.voiceDesign).toBe(true)
+  })
 })

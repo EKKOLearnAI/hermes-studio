@@ -146,6 +146,8 @@ async function handleSave() {
         settings.voiceCloneFileName = mimoCloneFileName.value
         settings.voiceCloneFormat = mimoCloneFormat.value
       }
+    } else if (props.connection.provider === 'minimax') {
+      settings.voiceMode = stringField('voiceDesignDesc').trim() ? 'voiceDesign' : 'preset'
     }
     emit('save', props.connection, {
       settings,
@@ -342,6 +344,13 @@ function handleDoubaoVoiceUpdate(value: string) {
             </NSpace>
           </NFormItem>
         </template>
+
+        <NFormItem
+          v-if="connection.provider === 'minimax' && capabilities.voiceDesign"
+          :label="t('settings.voice.voiceDesignPrompt')"
+        >
+          <NInput :value="stringField('voiceDesignDesc')" type="textarea" :rows="3" @update:value="value => setField('voiceDesignDesc', value)" />
+        </NFormItem>
 
         <NFormItem
           v-if="connection.kind === 'tts' && capabilities.language"

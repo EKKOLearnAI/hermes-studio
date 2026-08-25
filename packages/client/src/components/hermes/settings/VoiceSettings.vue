@@ -176,6 +176,8 @@ function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
       ? hzToEdgePitch(edgePitch)
       : typeof options.pitch === 'string' ? options.pitch : undefined,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
+    voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceDesign' ? options.voiceMode : undefined,
+    voiceDesignDesc: typeof options.voiceDesignDesc === 'string' ? options.voiceDesignDesc : undefined,
     provider,
   }
 }

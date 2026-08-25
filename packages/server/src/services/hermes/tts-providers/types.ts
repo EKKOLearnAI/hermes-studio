@@ -55,6 +55,8 @@ export interface CloudTtsProviderOptions {
   emotion?: string
   groupId?: string
   format?: string
+  voiceMode?: 'preset' | 'voiceDesign'
+  voiceDesignDesc?: string
 }
 
 export type MimoAuthMode = 'api-key' | 'bearer' | 'both'
