@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 
-type ActiveSection = 'chat' | 'history' | 'connections' | 'group' | 'global' | 'workflow'
+type ActiveSection = 'chat' | 'history' | 'connections' | 'group' | 'collab' | 'global' | 'workflow'
 
 const props = defineProps<{
   active: ActiveSection
@@ -48,6 +48,11 @@ function openConnections() {
 function openGroupChat() {
   if (props.active === 'group') return
   void router.push({ name: 'hermes.groupChat' })
+}
+
+function openGroupCollab() {
+  if (props.active === 'collab') return
+  void router.push({ name: 'hermes.groupCollab' })
 }
 
 function openWorkflow() {
@@ -171,7 +176,7 @@ function openApiRelay() {
         <span>{{ t('sidebar.apiRelay') }}</span>
       </button>
     </div>
-    <div v-if="showModeSwitch" class="conversation-switch conversation-switch--three" role="tablist" aria-label="Conversation type">
+    <div v-if="showModeSwitch" class="conversation-switch conversation-switch--four" role="tablist" aria-label="Conversation type">
       <NTooltip trigger="hover" placement="top">
         <template #trigger>
           <button
@@ -210,6 +215,32 @@ function openApiRelay() {
           </button>
         </template>
         {{ t('sidebar.groupChat') }}
+      </NTooltip>
+      <NTooltip trigger="hover" placement="top">
+        <template #trigger>
+          <button
+            class="conversation-switch-tab"
+            :class="{ active: active === 'collab' }"
+            type="button"
+            role="tab"
+            :aria-label="t('sidebar.groupCollab')"
+            :aria-selected="active === 'collab'"
+            @click="openGroupCollab"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v4" />
+              <circle cx="12" cy="3" r="1.6" />
+              <circle cx="5" cy="14" r="2.4" />
+              <circle cx="12" cy="14" r="2.4" />
+              <circle cx="19" cy="14" r="2.4" />
+              <path d="M5 11.6V9h14v2.6" />
+              <path d="M5 16.4V21" />
+              <path d="M12 16.4V21" />
+              <path d="M19 16.4V21" />
+            </svg>
+          </button>
+        </template>
+        {{ t('sidebar.groupCollab') }}
       </NTooltip>
       <NTooltip trigger="hover" placement="top">
         <template #trigger>
@@ -304,6 +335,10 @@ function openApiRelay() {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.conversation-switch--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .conversation-switch-tab {
   width: 100%;
   min-width: 0;
@@ -335,6 +370,7 @@ function openApiRelay() {
   }
 }
 
+:global(.dark .conversation-switch--four .conversation-switch-tab.active),
 :global(.dark .conversation-switch--three .conversation-switch-tab.active) {
   background: $bg-card-hover;
   color: $accent-primary;

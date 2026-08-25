@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * 群协作 route shell. Deliberately a thin mirror of GroupChatView: the whole
+ * point of this surface is that it looks and behaves like group chat, so it
+ * reuses GroupChatPanel and only declares the room kind. The behavioural
+ * difference lives server-side, where an @mention in a 'collab' room opens a
+ * Kanban run instead of an agent turn.
+ */
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
@@ -23,6 +30,9 @@ const routeProfile = computed(() => {
     return typeof value === 'string' && value.trim() ? value : null
 })
 
+/** Rooms are shared storage, so this surface must only auto-select its own. */
+const collabRooms = computed(() => store.rooms.filter(room => room.roomKind === 'collab'))
+
 async function applyRouteProfile() {
     const profile = routeProfile.value
     if (!profile || profile === profilesStore.activeProfileName) return
@@ -30,26 +40,24 @@ async function applyRouteProfile() {
     await profilesStore.switchProfile(profile)
 }
 
-// Rooms are shared storage across both surfaces; 群协作 rooms must not be
-// auto-selected or opened here, or their @mentions would run plain agent turns.
-const chatRooms = computed(() => store.rooms.filter(room => (room.roomKind || 'chat') === 'chat'))
-
-const CHAT_ROUTE_NAMES = new Set(['hermes.groupChat', 'hermes.groupChatRoom'])
+const COLLAB_ROUTE_NAMES = new Set(['hermes.groupCollab', 'hermes.groupCollabRoom'])
 
 async function syncRouteRoom() {
     const decision = decideGroupRoomRoute({
-        onSurface: CHAT_ROUTE_NAMES.has(String(route.name || '')),
+        onSurface: COLLAB_ROUTE_NAMES.has(String(route.name || '')),
         roomId: routeRoomId.value,
-        availableRoomIds: chatRooms.value.map(room => room.id),
+        availableRoomIds: collabRooms.value.map(room => room.id),
         currentRoomId: store.currentRoomId,
     })
 
     switch (decision.kind) {
         case 'select':
-            await router.replace({ name: 'hermes.groupChatRoom', params: { roomId: decision.roomId } })
+            await router.replace({ name: 'hermes.groupCollabRoom', params: { roomId: decision.roomId } })
             return
         case 'reject':
-            await router.replace({ name: 'hermes.groupChat' })
+            // A group-chat room id must not open here, or its @mentions would
+            // silently run agent turns inside the collaboration surface.
+            await router.replace({ name: 'hermes.groupCollab' })
             return
         case 'join':
             await store.joinRoom(decision.roomId)
@@ -81,13 +89,13 @@ watch([routeRoomId, routeProfile], async () => {
 </script>
 
 <template>
-    <div class="group-chat-view">
-        <GroupChatPanel />
+    <div class="group-collab-view">
+        <GroupChatPanel room-kind="collab" />
     </div>
 </template>
 
 <style scoped lang="scss">
-.group-chat-view {
+.group-collab-view {
     height: calc(100 * var(--vh));
     display: flex;
     flex-direction: column;

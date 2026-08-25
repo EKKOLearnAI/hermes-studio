@@ -234,6 +234,7 @@ export default {
     devices: '기기',
     connections: '기기 연결',
     groupChat: '그룹 채팅',
+    groupCollab: '협업',
     groupConversation: '대화',
     groupConversationShort: '대화',
     groupAgent: '에이전트',

@@ -17,6 +17,7 @@ import {
     updateGroupAgentPreset,
     updateRoomConfig,
     updateRoomSummary,
+    type GroupRoomKind,
 } from '@/api/hermes/group-chat'
 import {
     decideGroupAgentPairing,
@@ -82,9 +83,24 @@ const TerminalPanel = defineAsyncComponent(async () => (await import('@/componen
 
 const props = withDefaults(defineProps<{
     standalone?: boolean
+    /**
+     * 'chat' is the classic group chat. 'collab' (群协作) keeps this entire UI
+     * and swaps only what an @mention does: instead of an agent turn it opens a
+     * Kanban run whose coordinator fans work out to specialist profiles. Rooms
+     * are partitioned by kind so the two surfaces never show each other's rooms.
+     */
+    roomKind?: GroupRoomKind
 }>(), {
     standalone: false,
+    roomKind: 'chat',
 })
+
+const isCollab = computed(() => props.roomKind === 'collab')
+/** Composer stop button while any collaboration run in this room is still open. */
+const collabStopMode = computed(() => isCollab.value && store.hasActiveCollabRun())
+/** Route names differ per surface so deep links land on the right tab. */
+const roomRouteName = computed(() => (isCollab.value ? 'hermes.groupCollabRoom' : 'hermes.groupChatRoom'))
+const indexRouteName = computed(() => (isCollab.value ? 'hermes.groupCollab' : 'hermes.groupChat'))
 const emit = defineEmits<{
     requestAgentLink: []
     requestAgentEdit: [agent: RoomAgent]
@@ -534,6 +550,14 @@ function handleAgentRailClick(agent: RoomAgent) {
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
+/**
+ * Rooms are shared storage but partitioned by kind, so each surface lists only
+ * its own. Rooms created before `roomKind` existed have no value and belong to
+ * group chat, which is why the comparison normalizes to 'chat'.
+ */
+const visibleRooms = computed(() =>
+    store.rooms.filter(room => (room.roomKind || 'chat') === props.roomKind),
+)
 const currentRoom = computed(() => store.rooms.find(room => room.id === store.currentRoomId) || null)
 const contextRoom = computed(() => store.rooms.find(room => room.id === contextRoomId.value) || null)
 function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): boolean {
@@ -980,12 +1004,13 @@ async function handleCreateRoom(
             summary,
             workspace,
             { name: userName, description },
+            props.roomKind,
         )
         showCreateModal.value = false
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
         else message.success(t('groupChat.roomCreated'))
-        await router.push({ name: 'hermes.groupChatRoom', params: { roomId: res.room.id } })
+        await router.push({ name: roomRouteName.value, params: { roomId: res.room.id } })
     } catch {
         message.error(t('common.saveFailed'))
     }
@@ -997,7 +1022,7 @@ async function handleDeleteRoom(roomId: string) {
     try {
         await store.deleteRoom(roomId)
         if (store.currentRoomId === roomId) {
-            await router.replace({ name: 'hermes.groupChat' })
+            await router.replace({ name: indexRouteName.value })
         }
         message.success(t('groupChat.roomDeleted'))
     } catch {
@@ -1166,7 +1191,7 @@ async function confirmCloneRoom() {
         cloneSourceRoomId.value = null
         cloneRoomName.value = ''
         cloneInviteCode.value = ''
-        await router.push({ name: 'hermes.groupChatRoom', params: { roomId: res.room.id } })
+        await router.push({ name: roomRouteName.value, params: { roomId: res.room.id } })
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
         else message.success(t('groupChat.roomCloned'))
@@ -1192,7 +1217,7 @@ async function handleClearRoomContext() {
 
 async function handleSelectRoom(roomId: string) {
     try {
-        await router.push({ name: 'hermes.groupChatRoom', params: { roomId } })
+        await router.push({ name: roomRouteName.value, params: { roomId } })
         if (window.innerWidth <= 768) showSidebar.value = false
     } catch {
         message.error(t('groupChat.joinFailed'))
@@ -1208,6 +1233,14 @@ async function handleSendMessage(content: string, attachments?: Attachment[], me
     } catch (err: any) {
         groupChatInputRef.value?.completeSend?.(false)
         message.error(err.message)
+    }
+}
+
+async function handleStopCollab() {
+    try {
+        await store.stopActiveCollabRuns()
+    } catch (err: any) {
+        message.error(err?.message || t('groupCollab.notice.stopFailed'))
     }
 }
 
@@ -1540,7 +1573,22 @@ watch(() => store.currentRoomId, (roomId, previousRoomId) => {
     if (filesStore.previewFile || toolPanelStore.workspaceDiff || showWorkspacePanel.value) closeWorkspacePanel()
     if (roomId && !props.standalone) void loadRoomSummaryState(roomId)
     if (!props.standalone) void refreshPendingAgentPairings()
+    // Hydrate task boards for runs started before this browser joined. Live
+    // updates then arrive over the socket.
+    if (roomId && isCollab.value) void store.loadCollabSessions(roomId)
 }, { immediate: true })
+
+// Surface why an @mention did not open a run (no coordinator, empty goal, …).
+watch(() => store.collabNotice, (notice) => {
+    if (!notice?.code || !isCollab.value) return
+    const key = notice.code === 'COLLAB_COORDINATOR_UNRESOLVED'
+        ? 'groupCollab.notice.coordinatorUnresolved'
+        : notice.code === 'COLLAB_GOAL_EMPTY'
+            ? 'groupCollab.notice.goalEmpty'
+            : 'groupCollab.notice.startFailed'
+    message.warning(t(key))
+    store.clearCollabNotice()
+})
 
 watch(() => store.agentPairingRevision, () => {
     if (!props.standalone) void refreshPendingAgentPairings()
@@ -1983,13 +2031,13 @@ function handleClarifyKeydown(event: KeyboardEvent) {
         <div v-if="!props.standalone && showSidebar" class="room-sidebar">
             <div class="sidebar-header">
                 <PageSidebarNav
-                    active="group"
-                    :primary-label="t('groupChat.createRoom')"
+                    :active="isCollab ? 'collab' : 'group'"
+                    :primary-label="isCollab ? t('groupCollab.newRoom') : t('groupChat.createRoom')"
                     @primary="showCreateModal = true"
                 />
             </div>
             <div class="room-list">
-                <section v-if="store.rooms.length" class="room-section">
+                <section v-if="visibleRooms.length" class="room-section">
                     <button
                         class="room-section-title"
                         type="button"
@@ -2003,7 +2051,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                     </button>
                     <div v-show="!localRoomsCollapsed" class="room-section-content">
                         <div
-                            v-for="room in store.rooms"
+                            v-for="room in visibleRooms"
                             :key="room.id"
                             class="room-item"
                             :class="{ active: store.currentRoomId === room.id }"
@@ -2515,8 +2563,11 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                         :allow-attachments="true"
                         :show-settings="!props.standalone"
                         :allow-all-mention="currentRoomCanMentionAll"
+                        :stop-mode="collabStopMode"
+                        :is-stopping="store.isStoppingCollab"
                         @send="handleSendMessage"
                         @send-blocked="handleSummaryConfigurationRequired"
+                        @stop="handleStopCollab"
                     />
                 </div>
                 <Transition
