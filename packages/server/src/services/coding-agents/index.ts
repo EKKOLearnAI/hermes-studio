@@ -1139,20 +1139,69 @@ function claudeMcpConfigJson(profile: string, ...existingContents: Array<string 
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
 
-function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefined>): string[] {
+/**
+ * Tables Studio writes itself on every launch. Anything else in the user's
+ * config.toml belongs to them and has to survive the rewrite.
+ */
+const CODEX_MANAGED_TABLE_PREFIXES = ['mcp_servers', 'model_providers']
+
+function isCodexManagedTable(header: string): boolean {
+  return CODEX_MANAGED_TABLE_PREFIXES.some(prefix => header === prefix || header.startsWith(`${prefix}.`))
+}
+
+/**
+ * Feature flags Studio decides for itself. A user's own value for these is
+ * replaced; every other flag under `[features]` is theirs and is kept.
+ */
+const CODEX_MANAGED_FEATURE_KEYS = new Set(['tool_search', 'tool_search_always_defer_mcp_tools'])
+
+interface CodexExternalConfig {
+  /** Foreign `[mcp_servers.*]` blocks, keyed by server name. */
+  mcpBlocks: string[]
+  /**
+   * Whole tables Studio does not manage — `[tui]`,
+   * `[shell_environment_policy]`, … — rewritten as the user left them.
+   */
+  otherSections: string[]
+  /**
+   * The user's own `[features]` entries, without the header. Studio writes a
+   * single `[features]` table of its own, and TOML rejects a table declared
+   * twice, so these are merged into it rather than emitted separately.
+   */
+  featureLines: string[]
+}
+
+function parseCodexExternalConfig(...contents: Array<string | null | undefined>): CodexExternalConfig {
   const blockByServer = new Map<string, string>()
+  const sectionByHeader = new Map<string, string>()
+  const featureLineByKey = new Map<string, string>()
 
   for (const content of contents) {
     if (!content?.trim()) continue
     let currentServer = ''
+    let currentHeader = ''
     let currentLines: string[] = []
+
     const flush = () => {
-      if (!currentServer || currentLines.length === 0) return
+      if (currentLines.length === 0) return
       const block = currentLines.join('\n').trim()
-      const isManaged = block.includes(`${HERMES_MCP_MANAGED_ENV_KEY}`)
-      if (!HERMES_MCP_SERVER_NAMES.has(currentServer) && !LEGACY_HERMES_MCP_SERVER_NAMES.has(currentServer) && !isManaged) {
-        blockByServer.set(currentServer, block)
+      if (!block) return
+      if (currentServer) {
+        const isManaged = block.includes(`${HERMES_MCP_MANAGED_ENV_KEY}`)
+        if (!HERMES_MCP_SERVER_NAMES.has(currentServer) && !LEGACY_HERMES_MCP_SERVER_NAMES.has(currentServer) && !isManaged) {
+          blockByServer.set(currentServer, block)
+        }
+        return
       }
+      if (!currentHeader || isCodexManagedTable(currentHeader)) return
+      if (currentHeader === 'features') {
+        for (const entry of currentLines.slice(1)) {
+          const key = entry.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)?.[1]
+          if (key && !CODEX_MANAGED_FEATURE_KEYS.has(key)) featureLineByKey.set(key, entry.trim())
+        }
+        return
+      }
+      sectionByHeader.set(currentHeader, block)
     }
 
     for (const line of content.split(/\r?\n/)) {
@@ -1166,25 +1215,45 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
         }
         flush()
         currentServer = nextServer
+        currentHeader = ''
         currentLines = [line]
         continue
       }
-      if (/^\s*\[/.test(line)) {
+      const headerMatch = line.match(/^\s*\[+([^\]]+)\]+\s*$/)
+      if (headerMatch) {
+        const nextHeader = headerMatch[1].trim()
+        // A subtable of the section we are already collecting stays with it.
+        if (currentHeader && (nextHeader === currentHeader || nextHeader.startsWith(`${currentHeader}.`))) {
+          currentLines.push(line)
+          continue
+        }
         flush()
         currentServer = ''
-        currentLines = []
+        currentHeader = nextHeader
+        currentLines = [line]
         continue
       }
-      if (currentServer) currentLines.push(line)
+      if (currentServer || currentHeader) currentLines.push(line)
+      // Bare top-level keys are Studio's own (model, model_provider,
+      // developer_instructions, …) and are rewritten from scratch each launch,
+      // so anything before the first table is deliberately dropped.
     }
     flush()
   }
 
-  return Array.from(blockByServer.values()).filter(Boolean)
+  return {
+    mcpBlocks: Array.from(blockByServer.values()).filter(Boolean),
+    otherSections: [...sectionByHeader.values()].filter(Boolean),
+    featureLines: [...featureLineByKey.values()].filter(Boolean),
+  }
 }
 
-function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
-  const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
+function codexMcpConfigToml(profile: string, external: CodexExternalConfig): string {
+  // Studio owns the `[mcp_servers.hermes-studio-*]` entries and nothing else;
+  // rewriting the file must not silently drop a user's own settings, such as
+  // the `[features] apps = false` that suppresses Codex's host-owned
+  // `codex_apps` server on networks that cannot reach chatgpt.com (#2379).
+  const blocks: string[] = [...external.otherSections, ...external.mcpBlocks]
   for (const item of HERMES_MCP_SERVERS) {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const lines = [
@@ -2522,14 +2591,18 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const providerId = 'custom'
     const catalogPath = join(rootDir, CODEX_MODEL_CATALOG_FILE)
     const toolSearchFeatures = await resolveCodexToolSearchConfig()
-    const featureConfig = toolSearchFeatures.toolSearch || toolSearchFeatures.alwaysDefer
-      ? [
-          '',
-          '[features]',
-          ...(toolSearchFeatures.toolSearch ? ['tool_search = true'] : []),
-          ...(toolSearchFeatures.alwaysDefer ? ['tool_search_always_defer_mcp_tools = true'] : []),
-        ]
-      : []
+    const externalCodexConfig = parseCodexExternalConfig(
+      await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
+      await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
+    )
+    // One `[features]` table, Studio's flags first: TOML rejects the header
+    // twice, and the user's other flags have to survive the rewrite (#2379).
+    const featureLines = [
+      ...(toolSearchFeatures.toolSearch ? ['tool_search = true'] : []),
+      ...(toolSearchFeatures.alwaysDefer ? ['tool_search_always_defer_mcp_tools = true'] : []),
+      ...externalCodexConfig.featureLines,
+    ]
+    const featureConfig = featureLines.length ? ['', '[features]', ...featureLines] : []
     const configToml = [
       `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
@@ -2546,11 +2619,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       'requires_openai_auth = false',
       ...(codexApiKey ? [`experimental_bearer_token = ${JSON.stringify(codexApiKey)}`] : []),
       '',
-      codexMcpConfigToml(
-        scope.profile,
-        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
-        await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
-      ),
+      codexMcpConfigToml(scope.profile, externalCodexConfig),
       ...featureConfig,
     ].join('\n')
     const catalog = buildCodexModelCatalog({
