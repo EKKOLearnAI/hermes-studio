@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process'
 import { createHash } from 'crypto'
 import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { get as httpGet } from 'http'
@@ -26,6 +27,10 @@ export interface ActiveVersionManifest {
   webUiDirectory?: string
   platform?: string
   updatedAt?: string
+  /** Warning about pip packages missing in the newly activated runtime. */
+  _pipMissingWarning?: string
+  /** Pip packages from a deleted runtime that may need reinstallation. */
+  _orphanedPipPackages?: string[]
 }
 
 export interface InstalledRuntimeVersion {
@@ -580,6 +585,72 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
   return { version: cleanVersion, directory: targetRoot, active: false }
 }
 
+interface PipPackageDiff {
+  missing: string[]
+}
+
+/**
+ * Normalize a pip package name per PEP 503: lowercase, replace runs of [-_.] with '-'.
+ * This ensures robust comparison between names returned by `pip list --format=json`
+ * (which preserves the metadata name, e.g. slack_sdk) and our BASE_PACKAGES entries.
+ */
+function normalizePkgName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, '-')
+}
+
+/**
+ * Set of "base" pip packages that ship with every Hermes runtime (known by name).
+ * All entries use the PEP 503 normalized form (lowercase, hyphens).
+ * Kept at module level so both diffUserInstalledPipPackages() and
+ * deleteInstalledRuntimeVersion() can reference it.
+ */
+const BASE_PACKAGES = new Set([
+  'hermes-agent', 'aiohttp', 'httpx', 'fastapi', 'uvicorn', 'pydantic',
+  'pyyaml', 'requests', 'certifi', 'urllib3', 'idna', 'charset-normalizer',
+  'click', 'colorama', 'jinja2', 'rich', 'typer', 'setuptools', 'pip',
+  'websockets', 'cryptography', 'pywin32', 'psutil', 'prompt-toolkit',
+  'python-telegram-bot', 'discord-py', 'slack-sdk', 'slack-bolt',
+  'lark-oapi', 'dingtalk-stream', 'edge-tts', 'pillow',
+])
+
+function diffUserInstalledPipPackages(
+  oldRuntimeDir: string,
+  newRuntimeDir: string,
+): PipPackageDiff {
+  const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+  const oldPython = join(oldRuntimeDir, 'python', pythonBin)
+  const newPython = join(newRuntimeDir, 'python', pythonBin)
+  if (!existsSync(oldPython) || !existsSync(newPython)) {
+    return { missing: [] }
+  }
+
+  try {
+    const result = execFileSync(oldPython, [
+      '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+    ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+    const oldPkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
+
+    const userPkgs = oldPkgs
+      .map(p => normalizePkgName(p.name))
+      .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
+
+    if (userPkgs.length === 0) return { missing: [] }
+
+    const newResult = execFileSync(newPython, [
+      '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+    ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+    const newPkgs = new Set(
+      (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => normalizePkgName(p.name))
+    )
+
+    const missing = userPkgs.filter(name => !newPkgs.has(name))
+    return { missing }
+  } catch (err) {
+    console.error('[runtime] Failed to diff pip packages:', err instanceof Error ? err.message : String(err))
+    return { missing: [] }
+  }
+}
+
 export function activateInstalledRuntimeVersion(version: string): ActiveVersionManifest {
   const cleanVersion = version.trim()
   if (!cleanVersion) throw new Error('Runtime version is required')
@@ -595,6 +666,60 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
     throw new Error(`Runtime ${cleanVersion} cannot be activated: ${detail}`)
   }
 
+  // Detect pip packages that existed in the previous runtime but are missing in the new one
+  let missingPackagesWarning: string | undefined
+  if (active?.runtimeDirectory) {
+    const diff = diffUserInstalledPipPackages(active.runtimeDirectory, target.directory)
+    if (diff.missing.length > 0) {
+      missingPackagesWarning = [
+        `The new Hermes runtime is missing ${diff.missing.length} pip package(s) that were installed in the previous runtime:`,
+        ...diff.missing.map(p => `  - ${p}`),
+        '',
+        'To install them, run:',
+        `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${diff.missing.join(' ')}`,
+      ].join('\n')
+      console.warn(`[runtime] ${missingPackagesWarning}`)
+    }
+  }
+
+  // Also surface orphaned packages from previously deleted runtimes.
+  // Validate against the new runtime's pip list to avoid false positives
+  // (e.g. the user already reinstalled them manually).
+  if (active?._orphanedPipPackages?.length) {
+    const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+    const newPythonPath = join(target.directory, 'python', pythonBin)
+    let stillMissing = active._orphanedPipPackages
+    if (existsSync(newPythonPath)) {
+      try {
+        const newResult = execFileSync(newPythonPath, [
+          '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+        ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+        const newPkgs = new Set(
+          (JSON.parse(newResult.trim()) as Array<{ name: string }>).map(p => normalizePkgName(p.name))
+        )
+        stillMissing = active._orphanedPipPackages.filter(name => !newPkgs.has(name))
+      } catch (err) {
+        console.error('[runtime] Failed to validate orphaned packages:',
+          err instanceof Error ? err.message : String(err))
+      }
+    }
+    if (stillMissing.length > 0) {
+      const orphanWarning = [
+        `The following pip package(s) were installed in a deleted runtime and are missing in the current one:`,
+        ...stillMissing.map(p => `  - ${p}`),
+        '',
+        'To install them, run:',
+        `  "${join(target.directory, 'python', process.platform === 'win32' ? 'python.exe' : 'bin', 'python3')}" -m pip install ${stillMissing.join(' ')}`,
+      ].join('\n')
+      if (missingPackagesWarning) {
+        missingPackagesWarning += '\n\n' + orphanWarning
+      } else {
+        missingPackagesWarning = orphanWarning
+      }
+      console.warn(`[runtime] ${orphanWarning}`)
+    }
+  }
+
   const next: ActiveVersionManifest = {
     schema: 1,
     desktopAppVersion: active?.desktopAppVersion || undefined,
@@ -607,6 +732,7 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
     runtimeActivationError: '',
     platform: target.platform,
     updatedAt: new Date().toISOString(),
+    _pipMissingWarning: missingPackagesWarning,
   }
 
   mkdirSync(dirname(activeVersionPath()), { recursive: true })
@@ -658,11 +784,37 @@ export function deleteInstalledRuntimeVersion(version: string): InstalledRuntime
   const cleanVersion = version.trim()
   if (!cleanVersion) throw new Error('Runtime version is required')
 
-  const active = readActiveVersionManifest()
-  const installed = listInstalledRuntimeVersions(active)
+  const activeManifest = readActiveVersionManifest()
+  const installed = listInstalledRuntimeVersions(activeManifest)
   const target = installed.find(item => item.version === cleanVersion && item.platform === runtimePlatformKey())
   if (!target) throw new Error(`Installed runtime version not found for this platform: ${cleanVersion}`)
   if (target.active) throw new Error('Active runtime version cannot be deleted')
+
+  // Before deleting, collect user-installed pip packages so they can be
+  // surfaced when the next runtime is activated.
+  const pythonBin = process.platform === 'win32' ? 'python.exe' : join('bin', 'python3')
+  const pythonPath = join(target.directory, 'python', pythonBin)
+  if (existsSync(pythonPath)) {
+    try {
+      const result = execFileSync(pythonPath, [
+        '-m', 'pip', 'list', '--format=json', '--disable-pip-version-check'
+      ], { encoding: 'utf-8', timeout: 15000, killSignal: 'SIGTERM', stdio: ['ignore', 'pipe', 'pipe'] })
+      const pkgs: Array<{ name: string; version: string }> = JSON.parse(result.trim())
+      const userPkgs = pkgs
+        .map(p => normalizePkgName(p.name))
+        .filter(name => !BASE_PACKAGES.has(name) && !name.startsWith('opentelemetry'))
+      if (userPkgs.length > 0 && activeManifest) {
+        // Merge with any existing orphans from previously deleted runtimes
+        // to avoid silent data loss when deleting multiple runtimes in sequence.
+        const existingOrphans = activeManifest._orphanedPipPackages || []
+        activeManifest._orphanedPipPackages = [...new Set([...existingOrphans, ...userPkgs])]
+        writeFileSync(activeVersionPath(), JSON.stringify(activeManifest, null, 2) + '\n', 'utf-8')
+      }
+    } catch (err) {
+      console.error('[runtime] Failed to collect pip packages before deletion:',
+        err instanceof Error ? err.message : String(err))
+    }
+  }
 
   rmSync(target.directory, { recursive: true, force: true })
   try {
