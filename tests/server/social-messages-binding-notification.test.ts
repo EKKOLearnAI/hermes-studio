@@ -87,7 +87,7 @@ describe('Social Messages first binding notification', () => {
     expect(store.getSocialMessageAccount(7, 'weixin')?.bindingNotified).toBe(false)
     await expect(notification.notifyFirstSocialMessageBinding(input)).resolves.toBe(true)
     expect(send).toHaveBeenLastCalledWith(7, expect.objectContaining({
-      content: '✅ Notification binding successful',
+      content: '✅ Weixin notifications are connected.\n\nDue to Weixin conversation limits, notifications may temporarily stop after a long period without interaction or several consecutive notifications. If that happens, send the bot any message to restore notifications.',
       contextToken: 'context',
     }))
   })
@@ -113,5 +113,11 @@ describe('Social Messages first binding notification', () => {
       Object.keys(expected).map(locale => [locale, formatBindingSuccessMessage(locale)]),
     )).toEqual(expected)
     expect(formatBindingSuccessMessage('unsupported')).toBe(expected.en)
+    expect(formatBindingSuccessMessage('zh', 'weixin')).toBe(
+      '✅ 微信推送已绑定成功。\n\n受微信会话机制限制，长时间未互动或连续推送多条消息后，推送可能暂时失效；如未收到后续通知，请主动给机器人发送任意消息以恢复推送。',
+    )
+    expect(formatBindingSuccessMessage('unsupported', 'weixin')).toBe(
+      '✅ Weixin notifications are connected.\n\nDue to Weixin conversation limits, notifications may temporarily stop after a long period without interaction or several consecutive notifications. If that happens, send the bot any message to restore notifications.',
+    )
   })
 })
