@@ -431,7 +431,7 @@ test('keeps the chat tool drawer unchanged in LTR and mirrors its resize seam in
   await expect.poll(async () => (await geometry()).panelWidth).toBeLessThan(rtlGeometry.panelWidth)
 })
 
-test('opens the mobile file tree from the inline start edge in LTR and RTL', async ({ page }) => {
+test('shows the mobile file tree from the inline start edge in LTR and RTL', async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 800 })
   await installDesktopBridge(page, 'darwin', true)
   await authenticate(page, TEST_ACCESS_KEY, 'research')
@@ -444,8 +444,8 @@ test('opens the mobile file tree from the inline start edge in LTR and RTL', asy
   await page.locator('.header-tool-toggle').click()
   const panel = page.locator('.chat-tool-panel')
   const tree = panel.locator('.files-tree-panel')
-  await panel.locator('.sidebar-toggle').click()
-  await expect(tree).toHaveClass(/mobile-visible/)
+  await expect(tree).toBeVisible()
+  await expect(panel.locator('.sidebar-toggle')).toBeHidden()
 
   await expect.poll(async () => {
     const box = await tree.boundingBox()
@@ -573,9 +573,11 @@ test('embeds the desktop browser beside workspace and terminal', async ({ page }
   await toolPanel.locator('.annotation-editor textarea').fill('Keep this card aligned with annotation one')
   await toolPanel.locator('.annotation-session-bar').getByRole('button', { name: 'Send' }).click()
   await expect(toolPanel.locator('.annotation-session-bar')).toHaveCount(0)
-  await expect(page.locator('.chat-input-area .attachment-preview.image')).toHaveCount(1)
+  await expect(page.locator('.chat-input-area .attachment-preview')).toHaveCount(0)
   await expect(page.locator('.chat-input-area textarea')).toHaveValue('')
-  const selectionData = page.locator('.chat-input-area .attachment-context')
+  const sentSelection = page.locator('.message.user .msg-attachment.image').last()
+  await expect(sentSelection).toBeVisible()
+  const selectionData = sentSelection.locator('.msg-attachment-context')
   await expect(selectionData).not.toHaveAttribute('open', '')
   await selectionData.locator('summary').click()
   await expect(selectionData).toHaveAttribute('open', '')

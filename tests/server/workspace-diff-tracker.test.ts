@@ -101,7 +101,7 @@ describe('workspace diff tracker', () => {
     })
     expect(change?.files[0].patch).toBeUndefined()
 
-    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
     const detail = getWorkspaceRunChangeFile('session-1', change!.change_id, change!.files[0].id)
     expect(detail?.patch).toContain('-old')
     expect(detail?.patch).toContain('+new')
@@ -128,6 +128,13 @@ describe('workspace diff tracker', () => {
       change!.change_id,
       secondChange!.change_id,
     ]))
+    expect(listWorkspaceRunChangesForAssistantMessages('session-1', ['42', 'missing', '42'])).toEqual([
+      expect.objectContaining({
+        change_id: change!.change_id,
+        assistant_message_id: '42',
+        files: [expect.objectContaining({ path: 'changed.txt' })],
+      }),
+    ])
   })
 
   it('persists the exact final assistant row id through the coding-agent completion path', async () => {

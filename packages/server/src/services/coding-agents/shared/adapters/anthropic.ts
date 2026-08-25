@@ -258,6 +258,37 @@ function anthropicContentToOpenAiMessages(
   return messages.length ? messages : [{ role: message.role || 'user', content: '' }]
 }
 
+// Claude Code (2.1.x) sends its primary prompt as the top-level `system` field
+// and additional system prompts (e.g. the ToolSearch deferred-tools notice,
+// injected mid-conversation) as `role: 'system'` messages inside `messages`.
+// Converting the top-level field to the leading system message and keeping the
+// rest in place leaves a second system message mid-conversation. Some providers
+// (notably vLLM) reject that with 400 "System message must be at the beginning."
+// Fix: keep exactly one leading system message — merging any additional ones
+// into it in original order (top-level field first, then in-message systems).
+function consolidateAnthropicChatSystemMessages(messages: any[]): any[] {
+  const systemMessages: any[] = []
+  const rest: any[] = []
+  for (const message of messages) {
+    if (message?.role === 'system') systemMessages.push(message)
+    else rest.push(message)
+  }
+  if (systemMessages.length === 0) return messages
+  // Exactly one system message: keep its content verbatim (string or image
+  // parts) and only relocate it to the front if it was mid-conversation.
+  if (systemMessages.length === 1) {
+    const only = systemMessages[0]
+    if (messages[0] === only) return messages
+    return [only, ...rest]
+  }
+  // Multiple system messages (top-level field + in-message systems): merge
+  // their text into one leading system message.
+  const parts = systemMessages
+    .map(message => (typeof message.content === 'string' ? message.content : stringifyContent(message.content)))
+    .filter(Boolean)
+  return [{ role: 'system', content: parts.join('\n\n') }, ...rest]
+}
+
 export function anthropicToOpenAiChat(body: any, target: AnthropicAdapterTarget, stream = false): any {
   const messages: any[] = []
   const preserveReasoningContent = shouldPreserveReasoningContent(target)
@@ -281,7 +312,7 @@ export function anthropicToOpenAiChat(body: any, target: AnthropicAdapterTarget,
 
   return {
     model: target.model,
-    messages,
+    messages: consolidateAnthropicChatSystemMessages(messages),
     ...(typeof body?.max_tokens === 'number' ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body?.temperature === 'number' ? { temperature: body.temperature } : {}),
     ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),

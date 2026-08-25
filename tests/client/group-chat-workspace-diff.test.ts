@@ -306,4 +306,111 @@ describe('group chat workspace diff client rendering', () => {
       window.removeEventListener('hermes:preview-workspace-file', handlePreview)
     }
   })
+
+  it('renders stored user videos inline through the authenticated group attachment route', async () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'video-1',
+          roomId: 'room-1',
+          senderId: 'user-1',
+          senderName: 'User',
+          content: JSON.stringify([{
+            type: 'file',
+            name: 'recording.mp4',
+            path: '3bcfe4f3a97cc6fa202849b0fed2fad8.mp4',
+            media_type: 'video/mp4',
+          }]),
+          timestamp: 1,
+          role: 'user',
+        },
+        agents: [],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    try {
+      const video = wrapper.get('video.msg-attachment-video')
+      expect(video.attributes('controls')).toBeDefined()
+      expect(video.attributes('src')).toContain('/api/hermes/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.mp4')
+      expect(wrapper.find('.msg-attachment-file').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps agent videos as file attachments', () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'agent-video-1',
+          roomId: 'room-1',
+          senderId: 'agent-1',
+          senderName: 'Worker',
+          content: JSON.stringify([{
+            type: 'file',
+            name: 'agent-recording.mp4',
+            path: '3bcfe4f3a97cc6fa202849b0fed2fad8.mp4',
+            media_type: 'video/mp4',
+          }]),
+          timestamp: 1,
+          role: 'assistant',
+        },
+        agents: [{ id: 'a1', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Worker', description: '', invited: 0 }],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('video.msg-attachment-video').exists()).toBe(false)
+    expect(wrapper.get('.msg-attachment-file').text()).toContain('agent-recording.mp4')
+    wrapper.unmount()
+  })
+
+  it('previews stored non-video files through the group attachment route', () => {
+    const previewRequests: Array<{ sourceUrl: string; fileName: string; size: number }> = []
+    const handlePreview = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sourceUrl: string; fileName: string; size: number }>
+      previewRequests.push(customEvent.detail)
+      customEvent.preventDefault()
+    }
+    window.addEventListener('hermes:preview-group-attachment', handlePreview)
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'xml-1',
+          roomId: 'room-1',
+          senderId: 'user-1',
+          senderName: 'User',
+          content: JSON.stringify([{
+            type: 'file',
+            name: 'report.xml',
+            path: '3bcfe4f3a97cc6fa202849b0fed2fad8.xml',
+            media_type: 'application/xml',
+          }]),
+          timestamp: 1,
+          role: 'user',
+        },
+        agents: [],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    try {
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+      wrapper.get('.msg-attachment-file').element.dispatchEvent(click)
+      expect(click.defaultPrevented).toBe(true)
+      expect(previewRequests).toHaveLength(1)
+      expect(previewRequests[0]).toMatchObject({ fileName: 'report.xml', size: 0 })
+      expect(previewRequests[0].sourceUrl).toContain('/api/hermes/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.xml')
+    } finally {
+      wrapper.unmount()
+      window.removeEventListener('hermes:preview-group-attachment', handlePreview)
+    }
+  })
 })

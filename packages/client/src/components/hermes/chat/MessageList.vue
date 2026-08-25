@@ -24,6 +24,7 @@ import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subag
 import { messageScrollPositionKey, rememberMessageScrollPosition } from "./message-scroll-position";
 import { chatSessionAgentAvatar } from "@/utils/chat-agent-avatar";
 import { parseThinking } from "@/utils/thinking-parser";
+import { groupCompletedToolsByRun } from "./tool-run-grouping";
 
 const props = withDefaults(defineProps<{
   approvalPortalToBody?: boolean
@@ -193,48 +194,6 @@ function hasRenderableAssistantContent(message: Message): boolean {
     message.attachments?.length ||
     message.workspaceChanges?.length
   );
-}
-
-function groupCompletedToolsByRun(messages: Message[]): Message[] {
-  const toolsByRun = new Map<string, Message[]>();
-  for (const message of messages) {
-    const runId = message.runMarker?.trim();
-    if (message.role !== "tool" || message.toolStatus === "running" || !runId) continue;
-    const tools = toolsByRun.get(runId) || [];
-    tools.push(message);
-    toolsByRun.set(runId, tools);
-  }
-  if (toolsByRun.size === 0) return messages;
-
-  const emittedRuns = new Set<string>();
-  const grouped: Message[] = [];
-  for (const message of messages) {
-    const runId = message.role === "tool" && message.toolStatus !== "running"
-      ? message.runMarker?.trim()
-      : undefined;
-    if (!runId) {
-      grouped.push(message);
-      continue;
-    }
-    if (emittedRuns.has(runId)) continue;
-    emittedRuns.add(runId);
-    const tools = toolsByRun.get(runId);
-    if (!tools?.length) {
-      grouped.push(message);
-      continue;
-    }
-    grouped.push({
-      id: `tool-run:${runId}`,
-      role: "system",
-      content: "",
-      timestamp: tools[0].timestamp,
-      systemType: "tool-run",
-      runMarker: runId,
-      toolRunId: runId,
-      toolMessages: tools,
-    });
-  }
-  return grouped;
 }
 
 const displayMessages = computed(() => {
@@ -584,18 +543,30 @@ watch(
 );
 
 watch(
-  isRunIndicatorActive,
-  (visible) => {
+  // Switching between two sessions that are both already working leaves
+  // isRunIndicatorActive true, so the session and its reported start have to be
+  // watched too or the timer keeps the previous session's origin.
+  () => [
+    isRunIndicatorActive.value,
+    chatStore.activeSessionId,
+    chatStore.activeSessionId ? chatStore.runStartedAt.get(chatStore.activeSessionId) || 0 : 0,
+  ] as const,
+  ([visible]) => {
     stopThinkingTimer();
     if (!visible) {
       thinkingStartedAt = 0;
       thinkingElapsedMs.value = 0;
       return;
     }
-    thinkingStartedAt = Date.now();
-    thinkingElapsedMs.value = 0;
+    // Prefer when the run actually began. Opening the page mid-run used to
+    // start this clock at zero, so the same run read differently on two
+    // devices and restarted every time you navigated away and back.
+    const sid = chatStore.activeSessionId;
+    const reportedStart = sid ? chatStore.runStartedAt.get(sid) || 0 : 0;
+    thinkingStartedAt = reportedStart > 0 ? reportedStart : Date.now();
+    thinkingElapsedMs.value = Math.max(0, Date.now() - thinkingStartedAt);
     thinkingTimer = setInterval(() => {
-      thinkingElapsedMs.value = Date.now() - thinkingStartedAt;
+      thinkingElapsedMs.value = Math.max(0, Date.now() - thinkingStartedAt);
     }, 1000);
   },
   { immediate: true },

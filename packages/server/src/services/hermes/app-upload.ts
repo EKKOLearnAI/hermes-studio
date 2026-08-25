@@ -5,7 +5,7 @@ import { getProfileUploadDir } from './upload-paths'
 
 export const APP_UPLOAD_MAX_BYTES = 50 * 1024 * 1024
 export const APP_UPLOAD_CHUNK_BYTES = 256 * 1024
-const APP_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000
+const APP_UPLOAD_SESSION_TTL_MS = 5 * 60 * 1000
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/
 
 interface AppUploadSession {

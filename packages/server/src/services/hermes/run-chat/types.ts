@@ -25,7 +25,7 @@ export type BackgroundContinuationContext =
  */
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean }
   | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface SessionMessage {
@@ -123,8 +123,15 @@ export interface SessionState {
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
+  messageStateBaselineCount?: number
   hasMoreBefore?: boolean
   isWorking: boolean
+  /**
+   * When the current run began, so a client that joins late shows how long
+   * the agent has really been working rather than counting from its own
+   * first render.
+   */
+  runStartedAt?: number
   events: Array<{ event: string; data: any }>
   abortController?: AbortController
   runId?: string

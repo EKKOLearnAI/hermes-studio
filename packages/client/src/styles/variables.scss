@@ -44,6 +44,14 @@
   --error: #c62828;
   --warning: #f57f17;
 
+  // Git explorer decorations (VS Code default light theme)
+  --git-decoration-added: #587c0c;
+  --git-decoration-modified: #895503;
+  --git-decoration-deleted: #ad0707;
+  --git-decoration-renamed: #007100;
+  --git-decoration-untracked: #007100;
+  --git-decoration-conflicting: #ad0707;
+
   // Message bubbles
   --msg-user-bg: #f5f5f5;
   --msg-assistant-bg: #f5f5f5;
@@ -102,6 +110,14 @@
   --success: #66bb6a;
   --error: #ef5350;
   --warning: #ffb74d;
+
+  // Git explorer decorations (VS Code default dark theme)
+  --git-decoration-added: #81b88b;
+  --git-decoration-modified: #e2c08d;
+  --git-decoration-deleted: #c74e39;
+  --git-decoration-renamed: #73c991;
+  --git-decoration-untracked: #73c991;
+  --git-decoration-conflicting: #e4676b;
 
   // Message bubbles
   --msg-user-bg: #292929;

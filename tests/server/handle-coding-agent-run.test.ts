@@ -81,6 +81,7 @@ describe('handleCodingAgentRun', () => {
       input: 'use global codex',
       coding_agent_id: 'codex',
       mode: 'global',
+      push_enabled: true,
     }, 'default', sessionMap as any)
 
     expect(managerMock.isSessionLaunchCompatible).toHaveBeenCalledWith('session-1', {
@@ -97,6 +98,7 @@ describe('handleCodingAgentRun', () => {
     }), state)
     expect(startCodingAgentRunMock.mock.calls[0][1]).not.toHaveProperty('groupRuntimeScope')
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'use global codex', 'system prompt')
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', { push_enabled: 1 })
   })
 
   it('restarts an existing scoped runner when the stored session model changed even if the socket payload omits it', async () => {

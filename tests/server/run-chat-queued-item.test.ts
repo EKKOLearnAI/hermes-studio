@@ -27,6 +27,7 @@ const bridgeMock = vi.hoisted(() => ({
 const sessionStoreMocks = vi.hoisted(() => ({
   clearSessionMessages: vi.fn(),
 }))
+const listWorkspaceRunChangesForAssistantMessagesMock = vi.hoisted(() => vi.fn(() => []))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
   handleBridgeRun: handleBridgeRunMock,
@@ -83,8 +84,13 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
     provider: 'openai',
     api_mode: 'responses',
     reasoning_effort: 'high',
+    push_enabled: 1,
   })),
   getSessionDetail: vi.fn(() => null),
+}))
+
+vi.mock('../../packages/server/src/db/hermes/workspace-run-changes-store', () => ({
+  listWorkspaceRunChangesForAssistantMessages: listWorkspaceRunChangesForAssistantMessagesMock,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -134,6 +140,8 @@ function makeServerHarness() {
 describe('ChatRunSocket queued bridge runs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    listWorkspaceRunChangesForAssistantMessagesMock.mockReset()
+    listWorkspaceRunChangesForAssistantMessagesMock.mockReturnValue([])
     ensureReadyMock.mockResolvedValue({
       reachable: true,
       status: 'ready',
@@ -670,7 +678,69 @@ describe('ChatRunSocket queued bridge runs', () => {
       provider: 'openai',
       api_mode: 'responses',
       reasoning_effort: 'high',
+      push_enabled: true,
     }))
+  })
+
+  it('serves App resume messages once and then accepts their cache id', async () => {
+    listWorkspaceRunChangesForAssistantMessagesMock.mockReturnValue([{
+      change_id: 'change-1',
+      assistant_message_id: '2',
+      files: [],
+    }])
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [
+        { id: 1, session_id: 'session-1', role: 'user', content: 'hello', timestamp: 1 },
+        { id: 2, session_id: 'session-1', role: 'assistant', content: 'world', timestamp: 2 },
+      ],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    })
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('app.resume')?.({ session_id: 'session-1', id: '' })
+    const initial = socket.emit.mock.calls.find(([event]) => event === 'app.resumed')?.[1]
+
+    expect(initial).toMatchObject({
+      session_id: 'session-1',
+      messages: expect.any(Array),
+      workspaceRunChanges: [expect.objectContaining({ change_id: 'change-1' })],
+      messagesCached: false,
+    })
+    expect(initial.id).toMatch(/^[a-f0-9]{32}$/)
+    expect(socket.join).toHaveBeenCalledWith('session:session-1')
+
+    socket.emit.mockClear()
+    await handlers.get('app.resume')?.({ session_id: 'session-1', id: initial.id })
+
+    expect(socket.emit).toHaveBeenCalledWith('app.resumed', expect.objectContaining({
+      session_id: 'session-1',
+      id: initial.id,
+      messagesCached: true,
+    }))
+    const cached = socket.emit.mock.calls.find(([event]) => event === 'app.resumed')?.[1]
+    expect(cached).not.toHaveProperty('messages')
+    expect(cached).not.toHaveProperty('workspaceRunChanges')
+
+    listWorkspaceRunChangesForAssistantMessagesMock.mockReturnValue([{
+      change_id: 'change-2',
+      assistant_message_id: '2',
+      files: [],
+    }])
+    socket.emit.mockClear()
+    await handlers.get('app.resume')?.({ session_id: 'session-1', id: initial.id })
+
+    const changedDiff = socket.emit.mock.calls.find(([event]) => event === 'app.resumed')?.[1]
+    expect(changedDiff).toMatchObject({
+      messagesCached: false,
+      workspaceRunChanges: [expect.objectContaining({ change_id: 'change-2' })],
+    })
+    expect(changedDiff.id).not.toBe(initial.id)
   })
 
   it('reattaches a loaded running bridge run during resume', async () => {

@@ -11,7 +11,7 @@ import {
   renameSessionWorkspaceFile,
   writeSessionWorkspaceFile,
 } from '@/api/hermes/sessions'
-import type { FileEntry } from '@/api/hermes/files'
+import type { FileEntry, FileListResult } from '@/api/hermes/files'
 import {
   copyGroupWorkspaceFile,
   deleteGroupWorkspaceFile,
@@ -115,7 +115,7 @@ export const useFilesStore = defineStore('files', () => {
     return roomId === undefined ? currentWorkspaceRoomId.value : normalizeProfile(roomId)
   }
 
-  async function listEntries(path = currentPath.value): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
+  async function listEntries(path = currentPath.value): Promise<FileListResult> {
     const workspaceSessionId = currentWorkspaceSessionId.value
     const workspaceRoomId = currentWorkspaceRoomId.value
     if (workspaceRoomId) return listGroupWorkspaceFiles(workspaceRoomId, path)
@@ -180,6 +180,7 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function openEditor(filePath: string, options: { profile?: string | null } = {}) {
+    previewFile.value = null
     if (currentWorkspaceRoomId.value) {
       await openGroupWorkspaceEditor(currentWorkspaceRoomId.value, filePath)
       return
@@ -200,6 +201,7 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function openSessionWorkspaceEditor(sessionId: string, filePath: string) {
+    previewFile.value = null
     const result = await readSessionWorkspaceFile(sessionId, filePath)
     editingFile.value = {
       path: result.path,
@@ -212,6 +214,7 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function openGroupWorkspaceEditor(roomId: string, filePath: string) {
+    previewFile.value = null
     const result = await readGroupWorkspaceFile(roomId, filePath)
     editingFile.value = {
       path: result.path,
@@ -250,6 +253,7 @@ export const useFilesStore = defineStore('files', () => {
     currentProfile.value = profile
     const type = getFilePreviewKind(entry.name)
     if (!type) return
+    editingFile.value = null
     const common = {
       path: entry.path,
       name: entry.name,
@@ -340,7 +344,12 @@ export const useFilesStore = defineStore('files', () => {
     previewFile.value = common
   }
 
-  async function openRemotePreview(sourceUrl: string, fileName: string, size = -1): Promise<boolean> {
+  async function openRemotePreview(
+    sourceUrl: string,
+    fileName: string,
+    size = -1,
+    context: { workspaceSessionId?: string | null; workspaceRoomId?: string | null } = {},
+  ): Promise<boolean> {
     const type = getFilePreviewKind(fileName)
     if (!type) return false
     const common = {
@@ -350,6 +359,7 @@ export const useFilesStore = defineStore('files', () => {
       profile: null,
       sourceUrl,
       type,
+      ...context,
     }
     if (type === 'markdown' || type === 'text') {
       const blob = await fetchAuthenticatedBlob(sourceUrl, { profile: null })
@@ -364,6 +374,8 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   function closePreview() { previewFile.value = null }
+
+  function selectDirectory(path: string) { currentPath.value = path }
 
   async function createDir(name: string, targetPath = currentPath.value) {
     const path = targetPath ? `${targetPath}/${name}` : name
@@ -449,7 +461,7 @@ export const useFilesStore = defineStore('files', () => {
     currentPath, currentProfile, currentWorkspaceSessionId, currentWorkspaceRoomId, entries, loading, sortBy, sortOrder,
     editingFile, previewFile,
     pathSegments, sortedEntries, hasUnsavedChanges,
-    fetchEntries, listEntries, fetchDirectory, navigateTo, navigateUp,
+    fetchEntries, listEntries, fetchDirectory, navigateTo, navigateUp, selectDirectory,
     openEditor, openSessionWorkspaceEditor, openGroupWorkspaceEditor, saveEditor, closeEditor,
     openPreview, openSessionWorkspacePreview, openGroupWorkspacePreview, openRemotePreview, closePreview,
     createDir, createFile, deleteEntry, renameEntry, copyEntry,

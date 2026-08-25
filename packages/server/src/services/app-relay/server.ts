@@ -13,16 +13,24 @@ import {
 } from '../app-entitlement'
 import type {
   AppRelayHttpRequest,
+  AppRelayHttpDownloadRequest,
+  AppRelayHttpDownloadResponse,
   AppRelayHttpResponse,
   AppRelaySocketCloseRequest,
   AppRelaySocketEventRequest,
   AppRelaySocketOpenRequest,
   AppRelaySocketResponse,
 } from './client'
+import {
+  RELAY_DOWNLOAD_CHUNK_BYTES,
+  RelayDownloadSessionError,
+  RelayDownloadSessions,
+} from './download-session'
 
 const APP_RELAY_NAMESPACE = '/app-relay'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
+const MAX_MEDIA_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
 const MAX_RESPONSE_BODY_BYTES = 20 * 1024 * 1024
 
@@ -32,6 +40,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'accept-language',
   'authorization',
   'content-type',
+  'if-match',
   'if-none-match',
   'range',
   'x-hermes-profile',
@@ -40,6 +49,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
+  'app.resume',
   'abort',
   'insert_queued_run',
   'cancel_queued_run',
@@ -128,6 +138,7 @@ export class LocalAppRelayServer {
   private readonly namespace: ReturnType<SocketIoServer['of']>
   private readonly bridges = new Map<string, LocalSocketBridge>()
   private readonly appSockets = new Map<string, Socket>()
+  private readonly downloadSessions = new RelayDownloadSessions()
   private readonly localBaseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly configuredMachineId: string
@@ -293,13 +304,27 @@ export class LocalAppRelayServer {
       role: 'app',
       machineId,
       hostConnected: true,
-      capabilities: ['http.request', 'socket.chat-run', 'socket.group-chat', 'socket.workflow', 'app.entitlement'],
+      capabilities: ['http.request', 'http.download.chunked', 'socket.chat-run', 'socket.group-chat', 'socket.workflow', 'app.entitlement'],
     })
     if (socket.data.localUserToken) this.scheduleTokenExpiry(socket)
     if (socket.data.appEntitlement) this.scheduleEntitlementExpiry(socket)
 
     socket.on('http.request', (request: AppRelayHttpRequest = {}, ack?: (response: AppRelayHttpResponse) => void) => {
       void this.handleHttpRequest(socket, request).then(response => ack?.(response))
+    })
+    socket.on('http.download.chunk', (
+      request: AppRelayHttpDownloadRequest = {},
+      ack?: (response: AppRelayHttpDownloadResponse) => void,
+    ) => {
+      void this.readHttpDownloadChunk(socket, request).then(response => ack?.(response))
+    })
+    socket.on('http.download.cancel', (
+      request: AppRelayHttpDownloadRequest = {},
+      ack?: (response: AppRelayHttpDownloadResponse) => void,
+    ) => {
+      const id = normalizeBridgeId(request.id)
+      const cancelled = id ? this.downloadSessions.cancel(socket.id, id) : false
+      ack?.(cancelled ? { id, done: true } : downloadError(request.id, 'download_not_found', 'Download session was not found'))
     })
     socket.on('socket.open', (request: AppRelaySocketOpenRequest = {}, ack?: (response: AppRelaySocketResponse) => void) => {
       void this.openSocket(socket, request).then(response => ack?.(response))
@@ -312,6 +337,7 @@ export class LocalAppRelayServer {
     })
     socket.on('disconnect', () => {
       this.appSockets.delete(socket.id)
+      this.downloadSessions.cancelOwner(socket.id)
       this.closeOwnerBridges(socket.id)
     })
   }
@@ -348,7 +374,7 @@ export class LocalAppRelayServer {
     if (isHttpErrorResponse(normalizedBody)) return normalizedBody
     if (normalizedBody.contentType) headers.set('content-type', normalizedBody.contentType)
 
-    const timeoutMs = normalizeTimeout(request.timeoutMs)
+    const timeoutMs = normalizeHttpTimeout(request)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -358,6 +384,19 @@ export class LocalAppRelayServer {
         body: normalizedBody.body,
         signal: controller.signal,
       })
+      if (
+        request.streamBinary === true
+        && !isTextualResponse(response)
+        && response.ok
+        && response.body
+      ) {
+        return {
+          id: request.id,
+          status: response.status,
+          headers: responseHeaders(response),
+          download: this.downloadSessions.create(socket.id, response),
+        }
+      }
       const responseBody = await readResponseBody(response)
       if (loginRequest && response.ok && typeof responseBody.body === 'string') {
         await this.promoteLogin(socket, responseBody.body)
@@ -378,6 +417,36 @@ export class LocalAppRelayServer {
       )
     } finally {
       clearTimeout(timer)
+    }
+  }
+
+  private async readHttpDownloadChunk(
+    socket: Socket,
+    request: AppRelayHttpDownloadRequest,
+  ): Promise<AppRelayHttpDownloadResponse> {
+    if (!await this.authorized(socket)) {
+      return downloadError(request.id, 'app_relay_unauthorized', 'The App relay session is no longer authorized', 401)
+    }
+    const id = normalizeBridgeId(request.id)
+    if (!id) return downloadError(request.id, 'invalid_download_id', 'Download session id is required')
+    try {
+      return await this.downloadSessions.read(
+        socket.id,
+        id,
+        Number(request.maxBytes) || RELAY_DOWNLOAD_CHUNK_BYTES,
+      )
+    } catch (error) {
+      const code = error instanceof RelayDownloadSessionError ? error.code : 'download_failed'
+      logger.warn({
+        err: error,
+        errorCode: code,
+        downloadId: id,
+        ...(error instanceof RelayDownloadSessionError ? error.diagnostic : {}),
+        ...(error instanceof RelayDownloadSessionError && error.causeMessage
+          ? { causeMessage: error.causeMessage }
+          : {}),
+      }, '[app-relay:lan] download chunk read failed')
+      return downloadError(id, code, 'Unable to read the next download chunk')
     }
   }
 
@@ -838,13 +907,16 @@ async function readResponseBody(
     total += chunk.byteLength
   }
   const buffer = Buffer.concat(chunks)
-  const contentType = response.headers.get('content-type') || ''
-  const textual = TEXTUAL_RESPONSE_TYPES.some(prefix => (
-    contentType.toLowerCase().startsWith(prefix) || contentType.toLowerCase().includes(prefix)
-  ))
+  const textual = isTextualResponse(response)
   return textual
     ? { body: buffer.toString('utf8'), truncated }
     : { bodyBytes: buffer, truncated }
+}
+
+function isTextualResponse(response: Response): boolean {
+  if ((response.headers.get('content-disposition') || '').toLowerCase().includes('attachment')) return false
+  const contentType = (response.headers.get('content-type') || '').toLowerCase()
+  return TEXTUAL_RESPONSE_TYPES.some(prefix => contentType.startsWith(prefix) || contentType.includes(prefix))
 }
 
 function relayByteBuffer(value: unknown): Buffer | null {
@@ -875,6 +947,23 @@ function normalizeTimeout(value: unknown): number {
   const timeout = Number(value)
   if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
   return Math.min(Math.floor(timeout), MAX_REQUEST_TIMEOUT_MS)
+}
+
+function normalizeHttpTimeout(request: AppRelayHttpRequest): number {
+  const timeout = Number(request.timeoutMs)
+  if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
+  const maxTimeout = isMediaHttpRequest(request)
+    ? MAX_MEDIA_REQUEST_TIMEOUT_MS
+    : MAX_REQUEST_TIMEOUT_MS
+  return Math.min(Math.floor(timeout), maxTimeout)
+}
+
+function isMediaHttpRequest(request: AppRelayHttpRequest): boolean {
+  if (request.streamBinary === true || request.bodyBytes != null || request.bodyBase64 != null) return true
+  const path = String(request.path || '').split('?', 1)[0]
+  return path === '/api/hermes/app-uploads'
+    || path.startsWith('/api/hermes/app-uploads/')
+    || /^\/api\/hermes\/group-chat\/rooms\/[^/]+\/attachment-uploads(?:\/|$)/.test(path)
 }
 
 function isAllowedSocketEvent(namespace: string, event: string): boolean {
@@ -911,6 +1000,15 @@ function httpError(
   message: string,
   status?: number,
 ): AppRelayHttpResponse {
+  return { id, ...(status ? { status } : {}), error: { code, message } }
+}
+
+function downloadError(
+  id: string | undefined,
+  code: string,
+  message: string,
+  status?: number,
+): AppRelayHttpDownloadResponse {
   return { id, ...(status ? { status } : {}), error: { code, message } }
 }
 

@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.45"
+    "version": "0.6.47"
   },
   "servers": [
     {
@@ -126,7 +126,7 @@
     },
     {
       "name": "Weixin",
-      "description": "WeChat QR code login"
+      "description": "Hermes WeChat QR code login"
     },
     {
       "name": "Write Gate",
@@ -135,6 +135,10 @@
     {
       "name": "xAI Auth",
       "description": "xAI OAuth"
+    },
+    {
+      "name": "Social Messages",
+      "description": "Unified outbound messaging for configured social platforms"
     },
     {
       "name": "Health",
@@ -155,6 +159,10 @@
     {
       "name": "App Connections",
       "description": "Mobile App authorization and connection management"
+    },
+    {
+      "name": "App Relay",
+      "description": "Mobile App cloud relay route and connection management"
     },
     {
       "name": "Devices",
@@ -299,6 +307,160 @@
             }
           }
         ]
+      }
+    },
+    "/api/app-relay/connect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create connect",
+        "description": "POST /api/app-relay/connect",
+        "operationId": "connectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/disconnect": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create disconnect",
+        "description": "POST /api/app-relay/disconnect",
+        "operationId": "disconnectAppRelayController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/pairing-code": {
+      "post": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Create pairing-code",
+        "description": "POST /api/app-relay/pairing-code",
+        "operationId": "refreshAppRelayPairingController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/app-relay/route": {
+      "put": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Update route",
+        "description": "PUT /api/app-relay/route",
+        "operationId": "updateAppRelayRouteController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/app-relay/status": {
+      "get": {
+        "tags": [
+          "App Relay"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/app-relay/status",
+        "operationId": "getAppRelayStatusController",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
       }
     },
     "/api/app/profiles": {
@@ -6462,6 +6624,171 @@
         ]
       }
     },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create attachment-uploads",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/attachment-uploads",
+        "operationId": "createAttachment-uploads",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}": {
+      "delete": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Delete :id",
+        "description": "DELETE /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id",
+        "operationId": "deleteAttachment-uploads",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}/chunks": {
+      "put": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Update chunks",
+        "description": "PUT /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/chunks",
+        "operationId": "updateChunks",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/attachment-uploads/{id}/complete": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create complete",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/complete",
+        "operationId": "createComplete",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/hermes/group-chat/rooms/{roomId}/attachments": {
       "post": {
         "tags": [
@@ -7218,6 +7545,50 @@
             "name": "roomId",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/group-chat/rooms/:roomId/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "roomId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -12553,6 +12924,54 @@
         }
       }
     },
+    "/api/hermes/sessions/{id}/push-enabled": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create push-enabled",
+        "description": "POST /api/hermes/sessions/:id/push-enabled",
+        "operationId": "setPushEnabled",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/sessions/{id}/reasoning-effort": {
       "post": {
         "tags": [
@@ -12920,6 +13339,50 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/workspace-file/diff": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get diff",
+        "description": "GET /api/hermes/sessions/:id/workspace-file/diff",
+        "operationId": "diffWorkspaceFile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -15612,6 +16075,547 @@
         "summary": "Get openapi.json",
         "description": "GET /api/openapi.json",
         "operationId": "openapi",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/social-messages/active/{platform}": {
+      "put": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Update :platform",
+        "description": "PUT /api/social-messages/active/:platform",
+        "operationId": "setActivePlatform",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/social-messages/credentials/{platform}": {
+      "put": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Update :platform",
+        "description": "PUT /api/social-messages/credentials/:platform",
+        "operationId": "savePlatformCredentials",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Delete :platform",
+        "description": "DELETE /api/social-messages/credentials/:platform",
+        "operationId": "clearPlatformCredentials",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/social-messages/feishu/qrcode": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get qrcode",
+        "description": "GET /api/social-messages/feishu/qrcode",
+        "operationId": "getFeishuQrcode",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/social-messages/feishu/qrcode/status": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/social-messages/feishu/qrcode/status",
+        "operationId": "pollFeishuQrcodeStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/social-messages/feishu/recipients": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get recipients",
+        "description": "GET /api/social-messages/feishu/recipients",
+        "operationId": "getFeishuRecipients",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/social-messages/locale/{platform}": {
+      "put": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Update :platform",
+        "description": "PUT /api/social-messages/locale/:platform",
+        "operationId": "updatePlatformLocale",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "locale": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/social-messages/platforms": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get platforms",
+        "description": "GET /api/social-messages/platforms",
+        "operationId": "listPlatforms",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/social-messages/send": {
+      "post": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Create send",
+        "description": "POST /api/social-messages/send",
+        "operationId": "sendMessage",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  },
+                  "contextToken": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "recipient": {
+                    "type": "string"
+                  },
+                  "recipientType": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content",
+                  "platform",
+                  "recipient"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/social-messages/telegram/recipients": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get recipients",
+        "description": "GET /api/social-messages/telegram/recipients",
+        "operationId": "getTelegramRecipients",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/social-messages/weixin/credentials": {
+      "post": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Create credentials",
+        "description": "POST /api/social-messages/weixin/credentials",
+        "operationId": "saveWeixinCredentials",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "account_id": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "base_url": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "locale": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "token": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "user_id": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/social-messages/weixin/qrcode": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get qrcode",
+        "description": "GET /api/social-messages/weixin/qrcode",
+        "operationId": "getWeixinQrcode",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/social-messages/weixin/qrcode/status": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/social-messages/weixin/qrcode/status",
+        "operationId": "pollWeixinQrcodeStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "qrcode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/social-messages/weixin/recipients": {
+      "get": {
+        "tags": [
+          "Social Messages"
+        ],
+        "summary": "Get recipients",
+        "description": "GET /api/social-messages/weixin/recipients",
+        "operationId": "getWeixinRecipients",
         "security": [
           {
             "BearerAuth": []

@@ -28,19 +28,19 @@ const downloading = ref(false)
 const previewError = ref('')
 const previewText = ref('')
 const previewBuffer = shallowRef<ArrayBuffer | null>(null)
-const imageUrl = ref('')
+const mediaUrl = ref('')
 let requestController: AbortController | null = null
 let requestGeneration = 0
 
-function revokeImageUrl(): void {
-  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
-  imageUrl.value = ''
+function revokeMediaUrl(): void {
+  if (mediaUrl.value) URL.revokeObjectURL(mediaUrl.value)
+  mediaUrl.value = ''
 }
 
 function resetLoadedPreview(): void {
   requestController?.abort()
   requestController = null
-  revokeImageUrl()
+  revokeMediaUrl()
   previewText.value = ''
   previewBuffer.value = null
   previewError.value = ''
@@ -66,8 +66,8 @@ async function loadPreview(): Promise<void> {
     if (!previewMimeMatches(file.type, blob.type)) {
       throw new Error(t('files.previewMimeMismatch'))
     }
-    if (file.type === 'image') {
-      imageUrl.value = URL.createObjectURL(blob)
+    if (file.type === 'image' || file.type === 'video') {
+      mediaUrl.value = URL.createObjectURL(blob)
     } else if (file.type === 'html' || file.type === 'csv') {
       const text = await blob.text()
       if (generation !== requestGeneration) return
@@ -89,6 +89,10 @@ async function loadPreview(): Promise<void> {
 
 function handleRendererError(error: Error): void {
   previewError.value = error.message || t('files.previewFailed')
+}
+
+function handleVideoError(): void {
+  previewError.value = t('files.previewFailed')
 }
 
 async function handleDownload(): Promise<void> {
@@ -182,10 +186,19 @@ onBeforeUnmount(() => {
         </div>
       </NAlert>
       <img
-        v-else-if="filesStore.previewFile.type === 'image' && imageUrl"
-        :src="imageUrl"
+        v-else-if="filesStore.previewFile.type === 'image' && mediaUrl"
+        :src="mediaUrl"
         class="preview-image"
         :alt="filesStore.previewFile.path"
+      />
+      <video
+        v-else-if="filesStore.previewFile.type === 'video' && mediaUrl"
+        :src="mediaUrl"
+        class="preview-video"
+        controls
+        playsinline
+        preload="metadata"
+        @error="handleVideoError"
       />
       <div v-else-if="filesStore.previewFile.type === 'markdown'" class="preview-markdown">
         <MarkdownRenderer :content="filesStore.previewFile.content || ''" />
@@ -283,6 +296,11 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .preview-error { width: min(680px, 100%); align-self: flex-start; }
@@ -295,16 +313,49 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
+.preview-video {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  object-fit: contain;
+}
+
 .preview-markdown {
   max-width: 800px;
   width: 100%;
 }
 
 .preview-code {
+  height: 100%;
   width: 100%;
+  overflow: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 
   :deep(.hljs-code-block) {
+    width: 100%;
+    min-height: 100%;
     margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :deep(.hljs-code-block .code-header) {
+    display: none;
+  }
+
+  :deep(.hljs-code-block code.hljs) {
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
 }
 </style>

@@ -11,6 +11,7 @@ const fetchSkillsMock = vi.hoisted(() => vi.fn())
 const fetchSkillBundlesMock = vi.hoisted(() => vi.fn())
 const deleteSkillBundleApiMock = vi.hoisted(() => vi.fn())
 const dialogWarningMock = vi.hoisted(() => vi.fn())
+const extractRepresentativeVideoFramesMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -76,6 +77,14 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: { value: true }, toggleToolTraceVisible: vi.fn() }),
 }))
 
+vi.mock('@/utils/video-frame-extraction', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/utils/video-frame-extraction')>()
+  return {
+    ...original,
+    extractRepresentativeVideoFrames: extractRepresentativeVideoFramesMock,
+  }
+})
+
 function mountForSession(
   sessionId: string,
   sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {},
@@ -104,6 +113,8 @@ describe('ChatInput draft persistence', () => {
     deleteSkillBundleApiMock.mockReset()
     deleteSkillBundleApiMock.mockResolvedValue(undefined)
     dialogWarningMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockResolvedValue([])
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn(() => 'blob:chat-attachment'),
@@ -132,18 +143,38 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
   })
 
-  it('accepts a browser selection directly into the current composer', async () => {
-    const wrapper = mountForSession('session-browser-selection')
-    const image = new File(['png'], 'browser-element.png', { type: 'image/png' })
-    const context = '{"browser_selection":{"annotations":[{"marker":1,"mode":"element","note":"Make this element clearer"}]}}'
+  it('sends extracted video frames to the model without showing them as separate attachments', async () => {
+    const wrapper = mountForSession('session-video')
+    const chatStore = useChatStore()
+    const sendMessage = vi.spyOn(chatStore, 'sendMessage').mockResolvedValue(undefined)
+    const video = new File(['video'], 'demo.mp4', { type: 'video/mp4' })
+    const frame = new File(['frame'], 'demo-video-frame-01.jpg', { type: 'image/jpeg' })
+    let resolveFrames!: (frames: File[]) => void
+    extractRepresentativeVideoFramesMock.mockReturnValue(new Promise<File[]>((resolve) => {
+      resolveFrames = resolve
+    }))
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [video] })
 
-    ;(wrapper.vm as unknown as { addBrowserAttachment: (file: File, context: string) => void }).addBrowserAttachment(image, context)
+    await input.trigger('change')
     await nextTick()
 
-    expect(wrapper.get('.attachment-thumb').attributes('alt')).toBe('browser-element.png')
-    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
-    expect(wrapper.get('.attachment-context').attributes('open')).toBeUndefined()
-    expect(wrapper.get('.attachment-context pre').text()).toBe(context)
+    expect(wrapper.findAll('.attachment-preview')).toHaveLength(1)
+    expect(wrapper.get('.attachment-preview').text()).toContain('demo.mp4')
+
+    await wrapper.get('.send-button').trigger('click')
+    expect(sendMessage).not.toHaveBeenCalled()
+    resolveFrames([frame])
+    await flushPromises()
+
+    expect(sendMessage).toHaveBeenCalledWith('', [
+      expect.objectContaining({ name: 'demo.mp4', type: 'video/mp4' }),
+      expect.objectContaining({
+        name: 'demo-video-frame-01.jpg',
+        type: 'image/jpeg',
+        videoFrameFor: expect.any(String),
+      }),
+    ])
   })
 
   it('restores unsent text for the active session after the chat view is remounted', async () => {
@@ -259,6 +290,7 @@ describe('ChatInput draft persistence', () => {
       source: 'coding_agent',
       agent: 'codex',
       codingAgentId: 'codex',
+      codingAgentMode: 'scoped',
     })
     await nextTick()
 
@@ -266,6 +298,19 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.find('.n-slider-stub').exists()).toBe(true)
     expect(wrapper.get('.n-slider-stub').attributes('min')).toBe('0')
     expect(wrapper.get('.n-slider-stub').attributes('max')).toBe('7')
+  })
+
+  it('hides the reasoning effort selector for global coding-agent sessions', async () => {
+    const wrapper = mountForSession('session-global-codex', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      codingAgentMode: 'global',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.reasoning-effort-button').exists()).toBe(false)
+    expect(wrapper.find('.n-slider-stub').exists()).toBe(false)
   })
 
   it('hides the reasoning effort selector for MoA sessions', async () => {

@@ -72,6 +72,13 @@ interface MockHermesApiOptions {
     [key: string]: unknown
   }>
   theme?: Partial<MockThemePayload>
+  socialMessagePlatforms?: unknown[]
+  socialMessageResult?: Record<string, unknown>
+  socialMessageFeishuQrCode?: Record<string, unknown>
+  socialMessageFeishuQrStatus?: Record<string, unknown>
+  socialMessageFeishuRecipients?: Record<string, unknown>
+  socialMessageTelegramRecipients?: Record<string, unknown>
+  socialMessageWeixinRecipients?: Record<string, unknown>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -514,6 +521,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (/^\/api\/hermes\/sessions\/[^/]+\/workspace-files\/list$/.test(pathname)) {
+      await route.fulfill(jsonResponse({ entries: [], path: '', absolutePath: '' }))
+      return
+    }
+
     if (pathname === '/api/hermes/files/list') {
       await route.fulfill(jsonResponse({ entries: [], path: '' }))
       return
@@ -707,6 +719,100 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           telegram: channelCredentialsPresent,
         },
       }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/platforms' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        platforms: options.socialMessagePlatforms ?? [],
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/qrcode' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuQrCode ?? {
+        session_id: 'feishu-session',
+        qrcode_url: 'https://accounts.feishu.cn/device?code=playwright',
+        poll_interval_ms: 1_000,
+        expires_in_ms: 600_000,
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/qrcode/status' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuQrStatus ?? { status: 'pending' }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/telegram/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageTelegramRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/weixin/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageWeixinRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/app-connections' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ connections: [], access_failure: null }))
+      return
+    }
+
+    if (pathname === '/api/app-relay/status' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        relay: {
+          connected: false,
+          machineId: 'playwright-machine',
+          pairingCode: '',
+          pairingExpiresAt: 0,
+          route: 'official',
+          relayUrl: '',
+        },
+      }))
+      return
+    }
+
+    if (pathname === '/api/studio/versions' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        schema: 1,
+        hermes: [],
+        mobile: {
+          version: '1.0.0',
+          channels: {
+            androidApk: { githubUrl: '', cloudflareUrl: '', online: false },
+            googlePlay: { url: '', online: false },
+            apple: { testFlightUrl: '', appStoreUrl: '', online: false },
+            harmony: { url: '', online: false },
+          },
+        },
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/send' && request.method() === 'POST') {
+      await route.fulfill(jsonResponse({
+        result: options.socialMessageResult ?? {
+          platform: 'telegram',
+          recipient: '1234',
+          messageId: '42',
+          sentAt: '2026-08-23T00:00:00.000Z',
+        },
+      }, 201))
       return
     }
 

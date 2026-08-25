@@ -1366,9 +1366,11 @@ describe('coding agent launch preparation', () => {
     expect(requestBody).toMatchObject({
       model: 'deepseek-v4-pro',
       max_tokens: 16,
+      // The in-input `developer` message converts to `system` and is relocated
+      // to the front (vLLM et al. reject a system message mid-conversation).
       messages: [
-        { role: 'user', content: 'hello' },
         { role: 'system', content: 'be terse' },
+        { role: 'user', content: 'hello' },
       ],
     })
     expect(ctx.body.output[0].content[0].text).toBe('ok')

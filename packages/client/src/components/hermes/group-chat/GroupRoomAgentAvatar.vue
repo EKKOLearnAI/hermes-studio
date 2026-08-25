@@ -27,8 +27,8 @@ const avatarSize = computed(() => {
     if (visibleCount.value === 2) return 17
     return 15
 })
-const overflowActive = computed(() => (
-    hiddenAgents.value.some(agent => activeAgentIds.value.has(agent.id))
+const hasActiveAgent = computed(() => (
+    props.agents.some(agent => activeAgentIds.value.has(agent.id))
 ))
 const rosterNames = computed(() => props.agents.map(agent => agent.name).join(', '))
 const runningNames = computed(() => (
@@ -58,10 +58,12 @@ const accessibleSummary = computed(() => {
 <template>
     <div
         class="room-agent-grid"
+        :class="{ 'is-active': hasActiveAgent }"
         :data-agent-count="visibleCount"
         role="img"
         :aria-label="accessibleSummary"
         :title="accessibleSummary"
+        :aria-busy="hasActiveAgent"
     >
         <span
             v-if="agents.length === 0"
@@ -78,11 +80,9 @@ const accessibleSummary = computed(() => {
             v-else
             :key="agent.id"
             class="room-agent-grid-cell agent"
-            :class="{ 'is-active': activeAgentIds.has(agent.id) }"
             :data-agent-id="agent.id"
             :title="agent.name"
             :aria-label="agent.name"
-            :aria-busy="activeAgentIds.has(agent.id)"
         >
             <ProfileAvatar
                 :name="agent.agent || agent.name"
@@ -93,10 +93,8 @@ const accessibleSummary = computed(() => {
         <span
             v-if="hiddenAgents.length"
             class="room-agent-grid-cell room-agent-grid-overflow"
-            :class="{ 'is-active': overflowActive }"
             :title="hiddenAgents.map(agent => agent.name).join(', ')"
             :aria-label="hiddenAgents.map(agent => agent.name).join(', ')"
-            :aria-busy="overflowActive"
         >
             +{{ hiddenAgents.length }}
         </span>
@@ -112,11 +110,25 @@ const accessibleSummary = computed(() => {
     flex: 0 0 36px;
     width: 36px;
     height: 36px;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
     border: 1px solid $border-color;
     border-radius: 8px;
     background: $bg-secondary;
+
+    &.is-active::after {
+        position: absolute;
+        z-index: 2;
+        inset: -4px;
+        border-radius: 12px;
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+        content: '';
+        animation: room-avatar-rainbow-glow 4s linear infinite;
+        pointer-events: none;
+    }
 }
 
 .room-agent-grid-cell {
@@ -132,28 +144,6 @@ const accessibleSummary = computed(() => {
         border-radius: 4px;
     }
 
-    &.is-active::before {
-        position: absolute;
-        z-index: 2;
-        right: -1px;
-        bottom: -1px;
-        width: 5px;
-        height: 5px;
-        border: 1px solid var(--bg-sidebar);
-        border-radius: 50%;
-        background: $success;
-        content: '';
-    }
-
-    &.is-active::after {
-        position: absolute;
-        inset: -2px;
-        border: 1px solid rgba(var(--accent-primary-rgb), 0.8);
-        border-radius: 6px;
-        content: '';
-        animation: room-agent-grid-pulse 2.4s ease-in-out infinite;
-        pointer-events: none;
-    }
 }
 
 .room-agent-grid[data-agent-count='0'] .room-agent-grid-cell,
@@ -250,19 +240,59 @@ const accessibleSummary = computed(() => {
     }
 }
 
-@keyframes room-agent-grid-pulse {
-    0%, 100% {
-        opacity: 0.45;
+@keyframes room-avatar-rainbow-glow {
+    0% {
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
+    }
+
+    16.66% {
+        box-shadow:
+            0 0 0 2px #feca57,
+            0 0 10px rgba(254, 202, 87, 0.4),
+            0 0 20px rgba(254, 202, 87, 0.2);
+    }
+
+    33.33% {
+        box-shadow:
+            0 0 0 2px #48dbfb,
+            0 0 10px rgba(72, 219, 251, 0.4),
+            0 0 20px rgba(72, 219, 251, 0.2);
     }
 
     50% {
-        opacity: 1;
+        box-shadow:
+            0 0 0 2px #ff9ff3,
+            0 0 10px rgba(255, 159, 243, 0.4),
+            0 0 20px rgba(255, 159, 243, 0.2);
+    }
+
+    66.66% {
+        box-shadow:
+            0 0 0 2px #54a0ff,
+            0 0 10px rgba(84, 160, 255, 0.4),
+            0 0 20px rgba(84, 160, 255, 0.2);
+    }
+
+    83.33% {
+        box-shadow:
+            0 0 0 2px #5f27cd,
+            0 0 10px rgba(95, 39, 205, 0.4),
+            0 0 20px rgba(95, 39, 205, 0.2);
+    }
+
+    100% {
+        box-shadow:
+            0 0 0 2px #ff6b6b,
+            0 0 10px rgba(255, 107, 107, 0.4),
+            0 0 20px rgba(255, 107, 107, 0.2);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .room-agent-grid-cell.is-active::after {
-        opacity: 0.9;
+    .room-agent-grid.is-active::after {
         animation: none;
     }
 }

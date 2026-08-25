@@ -8,6 +8,7 @@ import {
   deleteSession as localDeleteSession,
   renameSession as localRenameSession,
   setSessionArchived as localSetSessionArchived,
+  setSessionPushEnabled as localSetSessionPushEnabled,
   createSession as localCreateSession,
   addMessages as localAddMessages,
   updateSession as localUpdateSession,
@@ -27,7 +28,7 @@ import {
   setSessionCategory,
 } from '../../db/hermes/session-category-store'
 import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
-import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
+import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } from '../../db/hermes/workspace-run-changes-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { isNearestExistingRealPathWithin, isPathWithin, relativePathFromBase } from '../../services/hermes/hermes-path'
@@ -49,6 +50,7 @@ import { defaultHermesWorkspace, ensureHermesRunWorkspace } from '../../services
 import { getChatRunServer } from '../../services/hermes/run-chat/server-registry'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE, validatePath } from '../../services/hermes/file-provider'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../../services/hermes/file-preview'
+import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../../services/hermes/workspace-git-status'
 import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
 import { relative, normalize as pathNormalize, resolve as pathResolve } from 'path'
 
@@ -192,6 +194,7 @@ function mergeHermesHistorySessions(
   for (const [id, session] of historySessionsById) {
     const localSession = localSessionsById.get(id)
     if (localSession?.is_archived != null) session.is_archived = localSession.is_archived
+    session.push_enabled = Number(localSession?.push_enabled || 0) !== 0 ? 1 : 0
   }
 
   for (const session of localSessions) {
@@ -837,7 +840,13 @@ export async function listWorkspaceFiles(ctx: any) {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
       return a.name.localeCompare(b.name)
     })
-    ctx.body = { entries: mapped, path: relativePath, absolutePath: fullPath }
+    const decorated = await decorateWorkspaceEntries(workspace, relativePath, mapped)
+    ctx.body = {
+      entries: decorated.entries,
+      path: relativePath,
+      absolutePath: fullPath,
+      ...decorated.directoryDecoration,
+    }
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }
@@ -859,6 +868,21 @@ export async function readWorkspaceFile(ctx: any) {
     }
     const data = await readFile(fullPath)
     ctx.body = { content: data.toString('utf-8'), path: relativePath, size: data.length }
+  } catch (err: any) {
+    handleWorkspaceFileError(ctx, err)
+  }
+}
+
+export async function diffWorkspaceFile(ctx: any) {
+  try {
+    const { relativePath, fullPath, workspace } = await resolveSessionWorkspaceFile(ctx, ctx.query.path)
+    const info = await fsStat(fullPath)
+    if (!info.isFile()) {
+      ctx.status = 400
+      ctx.body = { error: 'Not a file', code: 'not_a_file' }
+      return
+    }
+    ctx.body = await getWorkspaceFileGitDiff(workspace, relativePath)
   } catch (err: any) {
     handleWorkspaceFileError(ctx, err)
   }
@@ -1083,7 +1107,14 @@ export async function getHermesSession(ctx: any) {
       ? await getSessionDetailFromDbWithProfile(ctx.params.id, profile)
       : await getSessionDetailFromDb(ctx.params.id)
     if (session && isHermesHistorySessionSource(session.source)) {
-      const sessionWithProfile = profile ? { ...session, profile } : session
+      const matchingLocalSession = localSession && (!profile || localSessionProfile === profile)
+        ? localSession
+        : null
+      const sessionWithProfile = {
+        ...session,
+        ...(profile ? { profile } : {}),
+        push_enabled: Number(matchingLocalSession?.push_enabled || 0) !== 0 ? 1 : 0,
+      }
       if (denySessionAccess(ctx, sessionWithProfile)) return
       ctx.body = { session: sessionWithProfile }
       return
@@ -1106,7 +1137,7 @@ export async function getHermesSession(ctx: any) {
     return
   }
   if (denySessionAccess(ctx, session)) return
-  ctx.body = { session }
+  ctx.body = { session: { ...session, push_enabled: 0 } }
 }
 
 export async function importHermesSession(ctx: any) {
@@ -1381,6 +1412,33 @@ export async function unarchive(ctx: any) {
     return
   }
   ctx.body = { ok: true }
+}
+
+export async function setPushEnabled(ctx: any) {
+  const existing = localGetSession(ctx.params.id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+
+  const body = (ctx.request.body || {}) as { pushEnabled?: unknown; push_enabled?: unknown }
+  const rawEnabled = body.pushEnabled ?? body.push_enabled
+  if (typeof rawEnabled !== 'boolean') {
+    ctx.status = 400
+    ctx.body = { error: 'pushEnabled must be a boolean' }
+    return
+  }
+  if (!localSetSessionPushEnabled(ctx.params.id, rawEnabled)) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to update session push setting' }
+    return
+  }
+  getChatRunServer()?.emitSessionSettingsUpdated(ctx.params.id, {
+    push_enabled: rawEnabled,
+  })
+  ctx.body = { ok: true, push_enabled: rawEnabled }
 }
 
 export async function setWorkspace(ctx: any) {
@@ -2008,6 +2066,9 @@ export async function getConversationMessagesPaginated(ctx: any) {
   }
   const session = { ...result.session, profile: (result.session as any).profile || profile || 'default' }
   if (denySessionAccess(ctx, session)) return
+  const assistantMessageIds = result.messages
+    .filter(message => String(message.display_role || message.role || '') === 'assistant')
+    .map(message => message.id)
 
   ctx.body = {
     session: {
@@ -2030,6 +2091,7 @@ export async function getConversationMessagesPaginated(ctx: any) {
       output_tokens: session.output_tokens,
     },
     messages: result.messages,
+    workspaceRunChanges: listWorkspaceRunChangesForAssistantMessages(ctx.params.id, assistantMessageIds),
     total: result.total,
     offset: result.offset,
     limit: result.limit,

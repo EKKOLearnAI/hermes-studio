@@ -74,4 +74,34 @@ describe('run chat content blocks', () => {
       }],
     })
   })
+
+  it('labels representative video frames for API, bridge, and coding-agent inputs', async () => {
+    const framePath = join(tempDir, 'clip-video-frame-01.jpg')
+    await writeFile(framePath, Buffer.from([1, 2, 3]))
+    const block = {
+      type: 'image' as const,
+      name: 'clip-video-frame-01.jpg',
+      path: framePath,
+      media_type: 'image/jpeg',
+      video_frame: true,
+    }
+    const label = '[Representative frame extracted from the attached video: clip-video-frame-01.jpg]'
+
+    const apiParts = await convertContentBlocks([block])
+    expect(apiParts).toHaveLength(2)
+    expect(apiParts[0]).toEqual({ type: 'input_text', text: label })
+    expect(apiParts[1].type).toBe('input_image')
+
+    const agentParts = await convertContentBlocksForAgent([block])
+    expect(agentParts[0]).toEqual({
+      type: 'text',
+      text: `${label}\nLocal image path for tools: ${framePath}`,
+    })
+    expect(agentParts[1].type).toBe('image_url')
+
+    expect(convertContentBlocksForCodingAgent([block])).toMatchObject({
+      text: `${label}\nLocal image path for tools: ${framePath}`,
+      images: [{ path: framePath, mediaType: 'image/jpeg' }],
+    })
+  })
 })

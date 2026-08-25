@@ -151,6 +151,13 @@ function normalizeLocalFilePath(path: string): string {
   return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
 }
 
+function localFilePathWithoutLocation(path: string): string {
+  const normalizedPath = normalizeLocalFilePath(path)
+  const locationMatch = normalizedPath.match(/^(.*?):(\d+)(?::\d+)?$/)
+  if (!locationMatch || !isLocalFilePath(locationMatch[1])) return normalizedPath
+  return locationMatch[1]
+}
+
 function requestWorkspaceFilePreview(path: string, fileName: string): boolean {
   const event = new CustomEvent('hermes:preview-workspace-file', {
     cancelable: true,
@@ -213,7 +220,7 @@ const renderedHtml = computed(() => {
   html = html.replace(/<a href="([^"]+)">([^<]+)<\/a>/g, (match, rawPath, filename) => {
     if (!isLocalFilePath(rawPath)) return match
 
-    const path = normalizeLocalFilePath(downloadPathFromUrl(rawPath) || rawPath)
+    const path = localFilePathWithoutLocation(downloadPathFromUrl(rawPath) || rawPath)
     const fileName = filename.trim()
     const downloadName = inferDownloadFileName(path, fileName)
 
@@ -506,7 +513,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const linkText = link.textContent || ''
     const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
-    const path = normalizeLocalFilePath(href)
+    const path = localFilePathWithoutLocation(href)
     message.info(t('download.downloading'))
     downloadFile(path, inferDownloadFileName(path, fileName || undefined)).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))

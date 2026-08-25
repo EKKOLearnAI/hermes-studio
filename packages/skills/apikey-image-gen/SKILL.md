@@ -1,6 +1,6 @@
 ---
 name: apikey-image-gen
-description: "Generate or edit images through Hermes Web UI using the selected/requested profile's configured API-key image provider from config.yaml."
+description: "Generate or edit images through Hermes Studio using the selected/requested profile's configured Studio image provider from config.yaml."
 version: 1.0.0
 author: Ekko
 license: MIT
@@ -12,11 +12,16 @@ prerequisites:
   commands: [curl]
 ---
 
-# APIKEY Image Generation
+# Studio Image Generation
 
-Use this skill when the user wants to generate an image, generate an image from a reference image, or edit an existing image.
+Use this skill when the user wants to generate an image or edit an existing image.
 
-Always call Hermes Web UI's media endpoint. Do not call an upstream image API directly, and do not ask the user for an API key. The server reads the selected/requested profile's `config.yaml` and uses a configured custom provider. By default it uses the provider named `fun-codex`, but callers may request another configured provider by sending `provider`, `provider_name`, or `custom_provider`.
+Always call Hermes Studio's media endpoint. Do not call an upstream image API directly, and do not ask the user for an API key. The server reads the selected/requested profile's `config.yaml` and uses a configured custom provider. By default it uses the provider named `fun-codex`, but callers may request another configured provider by sending `provider`, `provider_name`, or `custom_provider`.
+
+This skill is separate from Hermes Agent's native `image_generate` tool. The
+native tool reads `image_gen` from `config.yaml`; this Studio-managed endpoint
+reads the `auxiliary.image_generation` and `auxiliary.image_edit` routes below.
+Changing one does not change the other.
 
 Do not use any built-in image generation tool as a fallback. If the Hermes Web UI endpoint returns `401`, `403`, connection failure, or any other error, stop and report the Hermes Web UI error to the user.
 
@@ -37,7 +42,22 @@ custom_providers:
     base_url: https://agnes.example/v1
     api_key_env: AGNES_API_KEY
     model: agnes-image-2.1-flash
+
+auxiliary:
+  image_generation:
+    provider: agnes
+    model: gpt-image-2
+    timeout: 600
+  image_edit:
+    provider: agnes
+    model: gpt-5.4-mini
+    timeout: 600
 ```
+
+`image_generation` supplies the route for text-to-image and multipart image
+edits. `image_edit` supplies the route and primary model for image-to-image
+through the Responses API. If the active route has no provider, the
+server falls back to the other image route and then to `fun-codex`.
 
 Endpoint:
 
@@ -100,12 +120,13 @@ Use when there is no input image.
 }
 ```
 
-The server calls `POST /v1/images/generations` against the `fun-codex` base URL.
+The server calls `POST /v1/images/generations` against the configured
+`auxiliary.image_generation` provider, then falls back to `fun-codex`.
 If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ### Image To Image
 
-Use when the user provides a reference image and wants a new image based on it.
+Use when the user provides an existing image and wants the model to modify or redraw it.
 
 ```json
 {
@@ -117,7 +138,9 @@ Use when the user provides a reference image and wants a new image based on it.
 }
 ```
 
-The server calls `POST /v1/responses` against the `fun-codex` base URL.
+The server calls `POST /v1/responses` against the configured
+`auxiliary.image_edit` provider, then the image-generation provider, then
+`fun-codex`.
 If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ### Image Edit
@@ -134,7 +157,8 @@ Use when the user wants to modify an existing image while preserving parts of it
 }
 ```
 
-The server calls `POST /v1/images/edits` against the `fun-codex` base URL.
+The server calls `POST /v1/images/edits` against the configured
+`auxiliary.image_generation` provider, then falls back to `fun-codex`.
 If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ## Request Fields
@@ -150,10 +174,10 @@ If `provider`, `provider_name`, or `custom_provider` is present, the server call
 - `n`: number of images. Defaults to `1`.
 - `size`: defaults to `1024x1024`. Common values: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`, `2160x3840`, `auto`.
 - `quality`: defaults to `auto`.
-- `model`: optional override. If omitted, text/edit modes use `gpt-image-2`; image mode uses the selected provider's `model` when configured, then falls back to `gpt-5.4-mini`.
-- `image_model`: optional image tool model for image mode. Defaults to `gpt-image-2`.
+- `model`: optional override. If omitted, text/edit modes use `auxiliary.image_generation.model`, then `gpt-image-2`; image mode uses `auxiliary.image_edit.model`, then the selected provider's model, then `gpt-5.4-mini`.
+- `image_model`: optional image tool model for image mode. If omitted, uses `auxiliary.image_generation.model`, then `gpt-image-2`.
 - `output_path`: optional absolute output file path. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/*.png`.
-- `timeout_ms`: defaults to `600000`.
+- `timeout_ms`: overrides the active auxiliary route's `timeout` (seconds). If neither is configured, defaults to `600000` milliseconds.
 
 ## Curl Template
 

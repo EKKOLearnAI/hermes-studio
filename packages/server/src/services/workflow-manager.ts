@@ -845,12 +845,24 @@ export function compileWorkflowGraphPreflight(
   return { nodes, edges, loops, startNodeIds }
 }
 
-function imageMediaType(path: string): string {
-  const lower = path.toLowerCase()
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
-  if (lower.endsWith('.gif')) return 'image/gif'
-  if (lower.endsWith('.webp')) return 'image/webp'
-  return 'image/png'
+function workflowAttachmentBlock(path: string): ContentBlock {
+  const name = path.split(/[\\/]/).pop() || path
+  const extension = name.split('.').pop()?.toLowerCase() || ''
+  const mediaTypes: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    pdf: 'application/pdf', json: 'application/json', txt: 'text/plain', md: 'text/markdown',
+    csv: 'text/csv', zip: 'application/zip', doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/x-m4v', webm: 'video/webm',
+  }
+  const mediaType = mediaTypes[extension] || 'application/octet-stream'
+  return mediaType.startsWith('image/')
+    ? { type: 'image', name, path, media_type: mediaType }
+    : { type: 'file', name, path, media_type: mediaType }
 }
 
 function lastAssistantOutput(sessionId: string, fallback?: string | null): string {
@@ -2415,12 +2427,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     if (args.node.data.images.length === 0) return text
     return [
       { type: 'text', text },
-      ...args.node.data.images.map(path => ({
-        type: 'image' as const,
-        name: path.split(/[\\/]/).pop() || path,
-        path,
-        media_type: imageMediaType(path),
-      })),
+      ...args.node.data.images.map(workflowAttachmentBlock),
     ]
   }
 }

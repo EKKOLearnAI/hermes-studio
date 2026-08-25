@@ -5,7 +5,7 @@ import type { ProviderApiMode } from './system'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean }
   | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface ChatMessage {
@@ -42,6 +42,8 @@ export interface StartRunRequest {
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  /** Whether completion messages from this session should be pushed. */
+  push_enabled?: boolean
 }
 
 export interface StartRunResponse {
@@ -108,6 +110,7 @@ export interface RunEvent {
   provider?: string
   api_mode?: ProviderApiMode
   reasoning_effort?: string
+  push_enabled?: boolean
   status?: string
   summary?: string
   arguments?: unknown
@@ -156,12 +159,15 @@ export interface RunEvent {
 export interface ResumeSessionPayload {
   session_id: string
   messages: any[]
+  workspaceRunChanges?: import('./sessions').WorkspaceRunChangeSummary[]
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
   hasMoreBefore?: boolean
   isWorking: boolean
   isAborting?: boolean
+  /** Epoch ms the active run began; absent on servers that predate it. */
+  runStartedAt?: number
   events: Array<{ event: string; data: RunEvent }>
   inputTokens?: number
   outputTokens?: number
@@ -171,6 +177,7 @@ export interface ResumeSessionPayload {
   provider?: string
   api_mode?: ProviderApiMode | ''
   reasoning_effort?: string
+  push_enabled?: boolean
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
   queueInsertion?: {

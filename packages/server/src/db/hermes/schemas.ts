@@ -85,6 +85,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   preview: 'TEXT NOT NULL DEFAULT \'\'',
   last_active: 'INTEGER NOT NULL',
   is_archived: 'INTEGER NOT NULL DEFAULT 0',
+  push_enabled: 'INTEGER NOT NULL DEFAULT 0',
   workspace: 'TEXT',
   category_id: 'INTEGER',
   history_revision: 'INTEGER NOT NULL DEFAULT 0',
@@ -191,6 +192,7 @@ export const WORKSPACE_RUN_CHANGE_FILES_SCHEMA: Record<string, string> = {
 
 export const WORKSPACE_RUN_CHANGES_INDEXES = {
   idx_workspace_run_changes_session: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_session ON workspace_run_changes(session_id, created_at)',
+  idx_workspace_run_changes_assistant_message: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_assistant_message ON workspace_run_changes(session_id, assistant_message_id, created_at)',
   idx_workspace_run_changes_run: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_run ON workspace_run_changes(run_id)',
   idx_workspace_run_changes_room: 'CREATE INDEX IF NOT EXISTS idx_workspace_run_changes_room ON workspace_run_changes(room_id, created_at)',
 }
@@ -430,6 +432,44 @@ export const USER_THEMES_SCHEMA: Record<string, string> = {
   background_mime: 'TEXT',
   created_at: 'INTEGER NOT NULL',
   updated_at: 'INTEGER NOT NULL',
+}
+
+// ============================================================================
+// Social Messages
+// ============================================================================
+
+export const SOCIAL_MESSAGE_ACCOUNTS_TABLE = 'social_message_accounts'
+
+export const SOCIAL_MESSAGE_ACCOUNTS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER NOT NULL',
+  platform: 'TEXT NOT NULL',
+  credentials_json: "TEXT NOT NULL DEFAULT '{}'",
+  active: 'INTEGER NOT NULL DEFAULT 0',
+  recipient: "TEXT NOT NULL DEFAULT ''",
+  recipient_type: "TEXT NOT NULL DEFAULT ''",
+  binding_locale: "TEXT NOT NULL DEFAULT 'en'",
+  binding_notified: 'INTEGER NOT NULL DEFAULT 0',
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const SOCIAL_MESSAGE_ACCOUNTS_INDEXES = {
+  idx_social_message_accounts_user: 'CREATE INDEX IF NOT EXISTS idx_social_message_accounts_user ON social_message_accounts(user_id)',
+  uniq_social_message_accounts_active_user: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_social_message_accounts_active_user ON social_message_accounts(user_id) WHERE active = 1',
+}
+
+export const SOCIAL_MESSAGE_RUNTIME_STATES_TABLE = 'social_message_runtime_states'
+
+export const SOCIAL_MESSAGE_RUNTIME_STATES_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER NOT NULL',
+  platform: 'TEXT NOT NULL',
+  account_key: 'TEXT NOT NULL',
+  state_json: "TEXT NOT NULL DEFAULT '{}'",
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const SOCIAL_MESSAGE_RUNTIME_STATES_INDEXES = {
+  idx_social_message_runtime_states_user: 'CREATE INDEX IF NOT EXISTS idx_social_message_runtime_states_user ON social_message_runtime_states(user_id)',
 }
 
 // ============================================================================
@@ -1486,6 +1526,18 @@ export function initAllHermesTables(): void {
       indexes: USER_PROFILES_INDEXES,
     })
     syncTable(USER_THEMES_TABLE, USER_THEMES_SCHEMA)
+
+    // User-scoped Social Messages accounts. Only one account per user may be active.
+    syncTable(SOCIAL_MESSAGE_ACCOUNTS_TABLE, SOCIAL_MESSAGE_ACCOUNTS_SCHEMA, {
+      primaryKey: 'user_id, platform',
+      indexes: SOCIAL_MESSAGE_ACCOUNTS_INDEXES,
+    })
+    syncTable(SOCIAL_MESSAGE_RUNTIME_STATES_TABLE, SOCIAL_MESSAGE_RUNTIME_STATES_SCHEMA, {
+      primaryKey: 'user_id, platform',
+      indexes: SOCIAL_MESSAGE_RUNTIME_STATES_INDEXES,
+    })
+    createIndexes(db, SOCIAL_MESSAGE_ACCOUNTS_INDEXES)
+    createIndexes(db, SOCIAL_MESSAGE_RUNTIME_STATES_INDEXES)
 
     // LAN devices and link request status
     syncTable(DEVICES_TABLE, DEVICES_SCHEMA, {

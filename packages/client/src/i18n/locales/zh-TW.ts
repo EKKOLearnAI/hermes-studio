@@ -1,4 +1,7 @@
+import { socialMessagesZhTw } from '../social-messages'
+
 export default {
+  socialMessages: socialMessagesZhTw,
   browser: {
     title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',
     back: '上一頁', forward: '下一頁', reload: '重新整理', stop: '停止', addressPlaceholder: '搜尋或輸入網址',
@@ -212,6 +215,7 @@ export default {
     journey: '學習軌跡',
     skillsUsage: '技能用量',
     channels: '頻道',
+    socialMessages: '傳送訊息',
     gateways: '閘道',
     terminal: '終端機',
     browser: '瀏覽器',
@@ -380,6 +384,7 @@ export default {
       scanToAdd: '掃碼新增',
       viewList: '列表',
       viewDownload: '下載',
+      viewMessages: '訊息推送',
       downloadTitle: '在手機上使用 HStudio',
       downloadDescription: '我們目前正處於封閉測試階段，必須使用註冊碼才能註冊；我們會在社群媒體上釋出部分註冊碼。',
       downloadScan: '用手機掃碼下載',
@@ -741,6 +746,8 @@ export default {
       microphoneRecordingFailed: '麥克風錄音失敗。',
     },
     showToolCalls: '顯示工具呼叫',
+    pushEnabled: '是否推送',
+    pushNotConfigured: '請先到 Hermes Studio「裝置互聯」中設定訊息推送。',
     hideToolCalls: '隱藏工具呼叫',
     messageQueue: '訊息佇列',
     removeQueuedMessage: '移除佇列訊息',
@@ -1820,6 +1827,7 @@ export default {
     auxiliaryDefault: '預設',
     auxiliaryCustomEndpoint: '自訂端點',
     auxiliaryProviderAuto: '自動',
+    auxiliaryProviderStudioDefault: 'Studio 預設',
     auxiliaryProviderMain: '主模型',
     auxiliaryProviderPlaceholder: 'auto、main 或 provider key',
     auxiliaryDownloadShort: '下載',
@@ -1842,6 +1850,8 @@ export default {
     auxiliaryTaskCurator: '策展',
     auxiliaryTaskSessionSearch: '會話搜尋',
     auxiliaryTaskFlushMemories: '寫入記憶',
+    auxiliaryTaskImageGeneration: 'Studio 圖片生成',
+    auxiliaryTaskImageEdit: 'Studio 圖生圖',
     currentDefault: '目前預設',
     defaultShort: '預設',
     setDefaultProvider: '設為預設 Provider',
@@ -3204,6 +3214,23 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_47_1: '本版本涵蓋 v0.6.46 之後合併的全部 13 個 PR，重點帶來獨立社交訊息推送、可設定的影像模型、更可靠的聊天銜接及多項前端體驗改善',
+    new_0_6_47_2: '新增「社交訊息」工作區，可獨立管理 Telegram、飛書和微信連線，為各管道設定通知語言，傳送在地化綁定與狀態通知，並依工作階段控制訊息推送（#2718）',
+    new_0_6_47_3: '「輔助模型」現在可分別選擇影像生成與影像編輯使用的供應商及模型；請求中明確指定的選項與既有預設值仍依原有優先順序生效（#2691）',
+    new_0_6_47_4: '任一 Agent 執行時，群聊房間會在完整組合頭像周圍顯示光效；含行號或欄號的工作區檔案連結也能正確開啟對應檔案預覽（#2701、#2702）',
+    new_0_6_47_5: 'Gateway 核准現在會精確結算被中斷或已回覆的請求；App Relay 也會保留 If-Match，確保條件式寫入安全執行（#2681、#2710）',
+    new_0_6_47_6: 'Codex 與 Claude Proxy 會將多則 system 指令合併為唯一的前置訊息，恢復與嚴格檢查訊息順序的 vLLM 類供應商相容（#2688、#2714）',
+    new_0_6_47_7: '可透過 HERMES_MAX_UPLOAD_SIZE 設定上傳上限，README 也新增 hermes-web-ui-mcp CLI 別名說明（#2689、#2704）',
+    new_0_6_47_8: 'App 聊天續接可重複使用未變更的快取訊息分頁，同時重新整理執行、佇列、用量及工作階段中繼資料，減少回到前景時的傳輸量（#2719）',
+    new_0_6_47_9: '#2706 導入的 GLM-5.3 推理強度正規化與工作階段選擇變更已由 #2708 完整回復；重新評估修正方案期間繼續維持 v0.6.46 行為',
+    new_0_6_46_1: '本版本涵蓋 v0.6.45 之後合併的全部 13 個 PR，重點改善工作階段與歷史導覽、可重複使用的群聊 Agent、Git 工作區、App Relay 路由及可恢復執行的可靠性',
+    new_0_6_46_2: '最近工作階段現在可收合並顯示分類狀態；歷史記錄會將已完成的工具呼叫收合為與即時聊天一致的精簡執行群組（#2642、#2697）',
+    new_0_6_46_3: '群聊新增可重複使用的 Agent 預設，並將選擇與管理分開；同時在地化重名錯誤、阻止使用已停用模型，並恢復活躍 Agent 的彩虹光效（#2644、#2670、#2678）',
+    new_0_6_46_4: 'Coding Agent 佇列可在安全的模型或工具邊界插入下一項任務；每個工作階段的推理強度也會跨重新整理、裝置與執行類型持久化並同步（#2667、#2671）',
+    new_0_6_46_5: '工作區檔案瀏覽器現在支援 Git 狀態：檔案樹會標示變更，修改過的檔案可直接查看 Diff，預覽與編輯流程也會保留儲存庫上下文（#2674）',
+    new_0_6_46_6: '瀏覽器標註現在會以結構化截圖上下文直接傳送，不再暫存於輸入框，讓單聊與群聊中的標註交接更加可靠（#2679）',
+    new_0_6_46_7: 'App Relay 在本機開發時不再覆蓋桌面 Relay，可選擇自動、直連或 Relay 路由；單聊續接快照也會限制大小，讓長對話重新連線更有效率（#2682、#2683、#2696）',
+    new_0_6_46_8: '停止群聊執行時會確定性地結算待處理的 Ekko 澄清要求，避免已停止的鏈路卡住或意外恢復（#2694）',
     new_0_6_45_1: '本版本涵蓋 v0.6.44 之後合併的全部 16 個 PR，重點改善推理與工具軌跡、模型和下載管理、聊天連續性、群聊草稿及整體可靠性',
     new_0_6_45_2: '即時推理和執行中工具現會維持穩定的單行顯示；完成的工具會進入帶有明確狀態和動畫的執行卡片。續聊後卡片不會消失，DeepSeek 工具續接會回傳推理內容，全域 Codex、Claude 和 Pi 則繼續由 CLI 管理模型設定（#2662）',
     new_0_6_45_3: '模型頁面新增備用鏈分頁，可為新工作階段加入、拖曳或使用鍵盤排序、移除並儲存最多 10 組備用 Provider 與模型（#2627）',

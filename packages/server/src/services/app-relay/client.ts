@@ -9,12 +9,21 @@ import {
 } from '../../db/hermes/app-connections-store'
 import { logger } from '../logger'
 import { createDeviceSignature } from '../system-info'
+import {
+  RELAY_DOWNLOAD_CHUNK_BYTES,
+  RelayDownloadSessionError,
+  RelayDownloadSessions,
+  type RelayDownloadDescriptor,
+} from './download-session'
 
 const APP_RELAY_NAMESPACE = '/app-relay'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
-const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
-const MAX_RESPONSE_BODY_BYTES = 20 * 1024 * 1024
+const MAX_MEDIA_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
+const BYTES_PER_MEGABYTE = 1024 * 1024
+const DEFAULT_CLOUD_MEDIA_MAX_BYTES = 30 * BYTES_PER_MEGABYTE
+const MAX_CONTROL_REQUEST_BODY_BYTES = 20 * BYTES_PER_MEGABYTE
+const MAX_CONTROL_RESPONSE_BODY_BYTES = 20 * BYTES_PER_MEGABYTE
 
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'])
 const ALLOWED_REQUEST_HEADERS = new Set([
@@ -22,6 +31,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'accept-language',
   'authorization',
   'content-type',
+  'if-match',
   'if-none-match',
   'range',
   'x-hermes-profile',
@@ -31,6 +41,7 @@ const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat', '/workflo
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
   'resume',
+  'app.resume',
   'abort',
   'insert_queued_run',
   'cancel_queued_run',
@@ -90,6 +101,7 @@ export interface AppRelayHttpRequest {
   bodyBytes?: ArrayBuffer | ArrayBufferView
   bodyBase64?: string
   timeoutMs?: number
+  streamBinary?: boolean
 }
 
 export interface AppRelayHttpResponse {
@@ -100,6 +112,22 @@ export interface AppRelayHttpResponse {
   bodyBytes?: Uint8Array
   bodyBase64?: string
   truncated?: boolean
+  download?: RelayDownloadDescriptor
+  error?: { code: string; message: string }
+}
+
+export interface AppRelayHttpDownloadRequest {
+  id?: string
+  maxBytes?: number
+}
+
+export interface AppRelayHttpDownloadResponse {
+  id?: string
+  status?: number
+  bodyBytes?: Uint8Array
+  receivedBytes?: number
+  totalBytes?: number
+  done?: boolean
   error?: { code: string; message: string }
 }
 
@@ -139,6 +167,8 @@ export interface StartAppRelayClientOptions {
   relayUrl?: string
   machineId: string
   publicKey: string
+  replaceExistingHost?: boolean
+  signChallenge?: (nonce: string, timestamp: number) => Promise<string>
   machineInfo?: Record<string, unknown>
   localBaseUrl?: string
   fetchImpl?: typeof fetch
@@ -184,7 +214,10 @@ export class AppRelayClient {
     preconnection: CloudAppPreconnection
   }>()
   private readonly cloudConnectionOnline = new Map<string, boolean>()
+  private readonly downloadSessions = new RelayDownloadSessions()
   private preconnectionExpired = false
+  private cloudMediaMaxBytes = DEFAULT_CLOUD_MEDIA_MAX_BYTES
+  private cloudSupportsChunkedDownloads = false
 
   constructor(private readonly options: Required<Omit<StartAppRelayClientOptions, 'connectionId' | 'machineInfo'>> & {
     machineInfo?: Record<string, unknown>
@@ -200,7 +233,7 @@ export class AppRelayClient {
       auth: async (callback) => {
         const nonce = randomUUID()
         const timestamp = Date.now()
-        const signature = await createDeviceSignature(nonce, timestamp)
+        const signature = await this.options.signChallenge(nonce, timestamp)
         callback({
           role: 'host',
           machineId: this.options.machineId,
@@ -209,6 +242,7 @@ export class AppRelayClient {
           nonce,
           timestamp,
           signature,
+          replaceExistingHost: this.options.replaceExistingHost,
           machine: this.options.machineInfo,
         })
       },
@@ -239,6 +273,11 @@ export class AppRelayClient {
     this.socket.on('relay.replaced', () => this.stop())
     this.socket.on('relay.ready', (payload: Record<string, unknown> = {}) => {
       this.rememberPairing(payload)
+      this.applyRelayLimits(payload)
+      this.applyRelayCapabilities(payload)
+    })
+    this.socket.on('relay.limits.updated', (payload: Record<string, unknown> = {}) => {
+      this.applyRelayLimits(payload)
     })
     this.socket.on('connection.authorize', (
       request: Record<string, unknown> = {},
@@ -272,6 +311,20 @@ export class AppRelayClient {
         .then(response => ack?.(response))
         .catch(err => ack?.(httpError(request?.id, 'relay_internal_error', err instanceof Error ? err.message : String(err), 500)))
     })
+    this.socket.on('app.http.download.chunk', (
+      request: AppRelayHttpDownloadRequest = {},
+      ack?: (response: AppRelayHttpDownloadResponse) => void,
+    ) => {
+      void this.readHttpDownloadChunk(request).then(response => ack?.(response))
+    })
+    this.socket.on('app.http.download.cancel', (
+      request: AppRelayHttpDownloadRequest = {},
+      ack?: (response: AppRelayHttpDownloadResponse) => void,
+    ) => {
+      const id = normalizeBridgeId(request.id)
+      const cancelled = id ? this.downloadSessions.cancel(this.options.machineId, id) : false
+      ack?.(cancelled ? { id, done: true } : downloadError(request.id, 'download_not_found', 'Download session was not found'))
+    })
     this.socket.on('app.socket.open', (request: AppRelaySocketOpenRequest, ack?: (response: AppRelaySocketResponse) => void) => {
       ack?.(this.openLocalSocket(request))
     })
@@ -296,6 +349,14 @@ export class AppRelayClient {
 
   isPreconnectionExpired(): boolean {
     return this.preconnectionExpired
+  }
+
+  usesRelayUrl(relayUrl: string): boolean {
+    try {
+      return this.relayUrl === resolveAppRelayUrl(relayUrl)
+    } catch {
+      return false
+    }
   }
 
   status(): { connected: boolean; machineId: string; pairingCode: string; pairingExpiresAt: number } {
@@ -438,11 +499,11 @@ export class AppRelayClient {
       headers.delete('authorization')
       headers.set('x-hermes-app-connection', 'cloud')
     }
-    const normalizedBody = normalizeRequestBody(request, method, headers)
+    const normalizedBody = normalizeRequestBody(request, method, headers, this.cloudMediaMaxBytes)
     if (isHttpErrorResponse(normalizedBody)) return normalizedBody
     if (normalizedBody.contentType) headers.set('content-type', normalizedBody.contentType)
 
-    const timeoutMs = normalizeTimeout(request.timeoutMs)
+    const timeoutMs = normalizeHttpTimeout(request)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -452,11 +513,39 @@ export class AppRelayClient {
         body: normalizedBody.body,
         signal: controller.signal,
       })
+      const textual = isTextualResponse(response)
+      if (!textual && declaredResponseBodyBytes(response) > this.cloudMediaMaxBytes) {
+        await response.body?.cancel()
+        return cloudMediaTooLarge(request.id, this.cloudMediaMaxBytes, 'download')
+      }
+      if (
+        request.streamBinary === true
+        && this.cloudSupportsChunkedDownloads
+        && !textual
+        && response.ok
+        && response.body
+      ) {
+        const download = this.downloadSessions.create(this.options.machineId, response)
+        return {
+          id: request.id,
+          status: response.status,
+          headers: responseHeaders(response),
+          download,
+        }
+      }
+      const responseBody = await readResponseBody(
+        response,
+        textual ? MAX_CONTROL_RESPONSE_BODY_BYTES : this.cloudMediaMaxBytes,
+        textual,
+      )
+      if (!textual && responseBody.truncated) {
+        return cloudMediaTooLarge(request.id, this.cloudMediaMaxBytes, 'download')
+      }
       return {
         id: request.id,
         status: response.status,
         headers: responseHeaders(response),
-        ...(await readResponseBody(response)),
+        ...responseBody,
       }
     } catch (err) {
       const aborted = controller.signal.aborted
@@ -585,10 +674,54 @@ export class AppRelayClient {
   }
 
   private clearRelaySessionState(): void {
+    this.downloadSessions.cancelAll()
+    this.cloudSupportsChunkedDownloads = false
     this.pendingPreconnections.clear()
     this.cloudConnectionOnline.clear()
     this.pairingCode = ''
     this.pairingExpiresAt = 0
+  }
+
+  private applyRelayLimits(payload: Record<string, unknown>): void {
+    const limits = isRecord(payload.limits) ? payload.limits : null
+    const mediaMaxMegabytes = Number(limits?.mediaMaxMegabytes)
+    if (!Number.isSafeInteger(mediaMaxMegabytes) || mediaMaxMegabytes < 1 || mediaMaxMegabytes > 1024) return
+    this.cloudMediaMaxBytes = mediaMaxMegabytes * BYTES_PER_MEGABYTE
+  }
+
+  private applyRelayCapabilities(payload: Record<string, unknown>): void {
+    const capabilities = Array.isArray(payload.capabilities) ? payload.capabilities : []
+    this.cloudSupportsChunkedDownloads = capabilities.includes('http.download.chunked')
+  }
+
+  private async readHttpDownloadChunk(
+    request: AppRelayHttpDownloadRequest,
+  ): Promise<AppRelayHttpDownloadResponse> {
+    const id = normalizeBridgeId(request.id)
+    if (!id) return downloadError(request.id, 'invalid_download_id', 'Download session id is required')
+    try {
+      return await this.downloadSessions.read(
+        this.options.machineId,
+        id,
+        Number(request.maxBytes) || RELAY_DOWNLOAD_CHUNK_BYTES,
+        this.cloudMediaMaxBytes,
+      )
+    } catch (error) {
+      const code = error instanceof RelayDownloadSessionError ? error.code : 'download_failed'
+      logger.warn({
+        err: error,
+        errorCode: code,
+        downloadId: id,
+        machineId: this.options.machineId,
+        ...(error instanceof RelayDownloadSessionError ? error.diagnostic : {}),
+        ...(error instanceof RelayDownloadSessionError && error.causeMessage
+          ? { causeMessage: error.causeMessage }
+          : {}),
+      }, '[app-relay] cloud download chunk read failed')
+      return code === 'download_too_large'
+        ? { ...cloudMediaTooLarge(id, this.cloudMediaMaxBytes, 'download'), done: true }
+        : downloadError(id, code, 'Unable to read the next download chunk')
+    }
   }
 
   private async authorizeCloudConnection(request: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -750,6 +883,8 @@ export function startAppRelayClient(options: StartAppRelayClientOptions): AppRel
     relayUrl,
     machineId,
     publicKey,
+    replaceExistingHost: options.replaceExistingHost ?? true,
+    signChallenge: options.signChallenge || createDeviceSignature,
     machineInfo: options.machineInfo,
     localBaseUrl: options.localBaseUrl || `http://127.0.0.1:${config.port}`,
     fetchImpl: options.fetchImpl || fetch,
@@ -840,20 +975,36 @@ function normalizeHeaders(input: AppRelayHttpRequest['headers']): Headers {
   return headers
 }
 
-function normalizeRequestBody(request: AppRelayHttpRequest, method: string, headers: Headers): NormalizedBody | AppRelayHttpResponse {
+function normalizeRequestBody(
+  request: AppRelayHttpRequest,
+  method: string,
+  headers: Headers,
+  cloudMediaMaxBytes: number,
+): NormalizedBody | AppRelayHttpResponse {
   if (method === 'GET' || method === 'HEAD') return {}
   let body: BodyInit | undefined
+  let binary = false
   const byteBody = relayByteBuffer(request.bodyBytes)
-  if (byteBody) body = Uint8Array.from(byteBody)
+  if (byteBody) {
+    body = Uint8Array.from(byteBody)
+    binary = true
+  }
   else if (request.bodyBytes != null) return httpError(request.id, 'invalid_binary_body', 'Relay binary request body is invalid', 400)
-  else if (typeof request.bodyBase64 === 'string') body = Buffer.from(request.bodyBase64, 'base64')
+  else if (typeof request.bodyBase64 === 'string') {
+    body = Buffer.from(request.bodyBase64, 'base64')
+    binary = true
+  }
   else if (typeof request.body === 'string') body = request.body
   else if (request.body != null) {
     body = JSON.stringify(request.body)
     if (!headers.has('content-type')) headers.set('content-type', 'application/json')
   }
-  if (body != null && Buffer.byteLength(typeof body === 'string' ? body : Buffer.from(body as any)) > MAX_REQUEST_BODY_BYTES) {
-    return httpError(request.id, 'request_body_too_large', 'Relay request body exceeds the local size limit', 413)
+  const bodyBytes = body == null ? 0 : Buffer.byteLength(typeof body === 'string' ? body : Buffer.from(body as any))
+  if (binary && bodyBytes > cloudMediaMaxBytes) {
+    return cloudMediaTooLarge(request.id, cloudMediaMaxBytes, 'upload')
+  }
+  if (!binary && bodyBytes > MAX_CONTROL_REQUEST_BODY_BYTES) {
+    return httpError(request.id, 'request_body_too_large', 'Relay control request body exceeds the safety limit', 413)
   }
   return { body }
 }
@@ -871,7 +1022,11 @@ function responseHeaders(response: Response): Record<string, string> {
   return headers
 }
 
-async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBytes' | 'truncated'>> {
+async function readResponseBody(
+  response: Response,
+  maxBytes: number,
+  textual = isTextualResponse(response),
+): Promise<Pick<AppRelayHttpResponse, 'body' | 'bodyBytes' | 'truncated'>> {
   if (!response.body) return {}
   const reader = response.body.getReader()
   const chunks: Buffer[] = []
@@ -881,7 +1036,7 @@ async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpRe
     const { done, value } = await reader.read()
     if (done) break
     const chunk = Buffer.from(value)
-    const remaining = MAX_RESPONSE_BODY_BYTES - total
+    const remaining = maxBytes - total
     if (chunk.byteLength > remaining) {
       if (remaining > 0) chunks.push(chunk.subarray(0, remaining))
       truncated = true
@@ -892,9 +1047,35 @@ async function readResponseBody(response: Response): Promise<Pick<AppRelayHttpRe
     total += chunk.byteLength
   }
   const buffer = Buffer.concat(chunks)
-  const contentType = response.headers.get('content-type') || ''
-  const textual = TEXTUAL_RESPONSE_TYPES.some(prefix => contentType.toLowerCase().startsWith(prefix) || contentType.toLowerCase().includes(prefix))
   return textual ? { body: buffer.toString('utf8'), truncated } : { bodyBytes: buffer, truncated }
+}
+
+function isTextualResponse(response: Response): boolean {
+  if ((response.headers.get('content-disposition') || '').toLowerCase().includes('attachment')) return false
+  const contentType = (response.headers.get('content-type') || '').toLowerCase()
+  return TEXTUAL_RESPONSE_TYPES.some(prefix => contentType.startsWith(prefix) || contentType.includes(prefix))
+}
+
+function declaredResponseBodyBytes(response: Response): number {
+  const value = Number(response.headers.get('content-length'))
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function cloudMediaTooLarge(
+  id: string | undefined,
+  maxBytes: number,
+  direction: 'upload' | 'download',
+): AppRelayHttpResponse {
+  return httpError(
+    id,
+    `${direction}_too_large`,
+    `Cloud relay media files are limited to ${formatMegabytes(maxBytes)}MB`,
+    413,
+  )
+}
+
+function formatMegabytes(bytes: number): string {
+  return String(Math.max(1, Math.round(bytes / BYTES_PER_MEGABYTE)))
 }
 
 function relayByteBuffer(value: unknown): Buffer | null {
@@ -923,6 +1104,23 @@ function normalizeTimeout(value: unknown): number {
   return Math.min(Math.floor(timeout), MAX_REQUEST_TIMEOUT_MS)
 }
 
+function normalizeHttpTimeout(request: AppRelayHttpRequest): number {
+  const timeout = Number(request.timeoutMs)
+  if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
+  const maxTimeout = isMediaHttpRequest(request)
+    ? MAX_MEDIA_REQUEST_TIMEOUT_MS
+    : MAX_REQUEST_TIMEOUT_MS
+  return Math.min(Math.floor(timeout), maxTimeout)
+}
+
+function isMediaHttpRequest(request: AppRelayHttpRequest): boolean {
+  if (request.streamBinary === true || request.bodyBytes != null || request.bodyBase64 != null) return true
+  const path = String(request.path || '').split('?', 1)[0]
+  return path === '/api/hermes/app-uploads'
+    || path.startsWith('/api/hermes/app-uploads/')
+    || /^\/api\/hermes\/group-chat\/rooms\/[^/]+\/attachment-uploads(?:\/|$)/.test(path)
+}
+
 function isAllowedSocketEvent(namespace: string, event: string): boolean {
   if (namespace === '/chat-run') return ALLOWED_CHAT_RUN_CLIENT_EVENTS.has(event)
   if (namespace === '/group-chat') return ALLOWED_GROUP_CHAT_CLIENT_EVENTS.has(event)
@@ -949,6 +1147,10 @@ function emitLocalSocketWithAck(socket: Socket, event: string, payload: unknown,
 
 function httpError(id: string | undefined, code: string, message: string, status?: number): AppRelayHttpResponse {
   return { id, ...(status ? { status } : {}), error: { code, message } }
+}
+
+function downloadError(id: string | undefined, code: string, message: string): AppRelayHttpDownloadResponse {
+  return { id, error: { code, message } }
 }
 
 function socketError(id: string | undefined, code: string, message: string): AppRelaySocketResponse {
