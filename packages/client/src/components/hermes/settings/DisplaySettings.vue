@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NSwitch, NInputNumber, useMessage } from 'naive-ui'
+import { NButton, NSelect, NSwitch, NInputNumber, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { primeCompletionSound } from '@/utils/completion-sound'
@@ -12,6 +12,19 @@ const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
 const chatInputHeight = computed(() => clampChatInputHeight(settingsStore.display.chat_input_height))
+
+// Hermes' own display.busy_input_mode. Studio has always queued, so an unset
+// value stays on queue rather than adopting Hermes' interrupt default and
+// changing what an existing install does on upgrade.
+const busyInputMode = computed(() => {
+  const raw = String(settingsStore.display.busy_input_mode || '').trim().toLowerCase()
+  return raw === 'steer' || raw === 'interrupt' ? raw : 'queue'
+})
+const busyInputModeOptions = computed(() => [
+  { label: t('settings.display.busyInputModeQueue'), value: 'queue' },
+  { label: t('settings.display.busyInputModeSteer'), value: 'steer' },
+  { label: t('settings.display.busyInputModeInterrupt'), value: 'interrupt' },
+])
 
 async function save(values: Record<string, any>) {
   try {
@@ -122,6 +135,14 @@ async function testCompletionNotification() {
 
 <template>
   <section class="settings-section">
+    <SettingRow :label="t('settings.display.busyInputMode')" :hint="t('settings.display.busyInputModeHint')">
+      <NSelect
+        :value="busyInputMode"
+        :options="busyInputModeOptions"
+        style="width: 220px"
+        @update:value="v => save({ busy_input_mode: v })"
+      />
+    </SettingRow>
     <SettingRow :label="t('settings.display.streaming')" :hint="t('settings.display.streamingHint')">
       <NSwitch :value="settingsStore.display.streaming" @update:value="v => save({ streaming: v })" />
     </SettingRow>
