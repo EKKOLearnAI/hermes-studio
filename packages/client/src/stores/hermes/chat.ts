@@ -787,6 +787,29 @@ function readRunMarker(value: unknown): string | null | undefined {
   return undefined
 }
 
+function normalizedRunMarker(value: unknown): string | null {
+  const runMarker = readRunMarker(value)
+  return typeof runMarker === 'string' && runMarker.trim() !== '' ? runMarker.trim() : null
+}
+
+function toolInstanceKey(value: unknown, toolCallId: string): string {
+  return `${normalizedRunMarker(value) || 'legacy'}\u0000${toolCallId}`
+}
+
+function setToolMetadata<T>(map: Map<string, T>, message: unknown, toolCallId: string, value: T) {
+  const scopedKey = toolInstanceKey(message, toolCallId)
+  const legacyKey = toolInstanceKey(null, toolCallId)
+  map.set(scopedKey, value)
+  // Some older rows only persisted the run marker on the tool result. Keep a
+  // best-effort fallback without allowing it to override an exact scoped key.
+  if (!map.has(legacyKey)) map.set(legacyKey, value)
+}
+
+function getToolMetadata<T>(map: Map<string, T>, message: unknown, toolCallId: string): T | undefined {
+  return map.get(toolInstanceKey(message, toolCallId))
+    ?? map.get(toolInstanceKey(null, toolCallId))
+}
+
 function isQueueInsertionInterruption(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const event = value as Pick<RunEvent, 'interrupted' | 'stop_reason'>
@@ -865,9 +888,9 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (tc.id) {
-          if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-          if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
-          if (msg.reasoning?.trim()) toolReasoningMap.set(tc.id, msg.reasoning)
+          if (tc.function?.name) setToolMetadata(toolNameMap, msg, tc.id, tc.function.name)
+          if (hasRuntimeToolPayload(tc.function?.arguments)) setToolMetadata(toolArgsMap, msg, tc.id, tc.function.arguments)
+          if (msg.reasoning?.trim()) setToolMetadata(toolReasoningMap, msg, tc.id, msg.reasoning)
         }
       }
     }
@@ -900,9 +923,24 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     // so they can render as tool lines without becoming model-context tool results.
     if (msg.role === 'tool' || isPersistedMoaToolDisplay(msg)) {
       const tcId = msg.tool_call_id || ''
-      const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-      const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
-      const toolReasoning = toolReasoningMap.get(tcId)
+      const exactPlaceholderIdx = result.findIndex(m =>
+        m.role === 'tool'
+        && m.toolCallId === tcId
+        && !m.toolResult
+        && normalizedRunMarker(m) === normalizedRunMarker(msg),
+      )
+      const placeholderIdx = exactPlaceholderIdx !== -1
+        ? exactPlaceholderIdx
+        : result.findIndex(m =>
+            m.role === 'tool'
+            && m.toolCallId === tcId
+            && !m.toolResult
+            && normalizedRunMarker(m) === null,
+          )
+      const placeholder = placeholderIdx !== -1 ? result[placeholderIdx] : undefined
+      const toolName = msg.tool_name || getToolMetadata(toolNameMap, msg, tcId) || placeholder?.toolName || undefined
+      const toolArgs = getToolMetadata(toolArgsMap, msg, tcId) ?? placeholder?.toolArgs
+      const toolReasoning = getToolMetadata(toolReasoningMap, msg, tcId) || placeholder?.reasoning
       const moaPayload = parsePersistedMoaToolPayload(toolName, (msg as any).content)
       const backgroundDelegate = isBackgroundDelegateToolPayload(toolName, (msg as any).content)
       const delegatePayload = toolName === 'delegate_task'
@@ -921,10 +959,8 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           preview = contentText.slice(0, 80)
         }
       }
-      // Find and remove the matching placeholder from tool_calls above
-      const placeholderIdx = result.findIndex(
-        m => m.role === 'tool' && m.toolName === toolName && !m.toolResult && m.id.includes('_' + tcId)
-      )
+      // Remove only the placeholder belonging to this run. Coding-agent CLIs
+      // may reuse raw ids such as `item_2` on every resumed turn.
       if (placeholderIdx !== -1) {
         result.splice(placeholderIdx, 1)
       }
@@ -2016,73 +2052,9 @@ export const useChatStore = defineStore('chat', () => {
               } else if (e.event === 'workspace.diff.completed') {
                 handleWorkspaceRunChangeEvent(sessionId, e)
               } else if (e.event === 'tool.started') {
-                const startedToolName = e.tool || e.name
-                if (
-                  isBackgroundDelegateToolPayload(startedToolName, (e as any).arguments)
-                  || (isEkkoAgentSession(sessionId) && startedToolName === 'delegate_task')
-                ) continue
-                const msgs = getSessionMsgs(sessionId)
-                const toolCallId = e.tool_call_id as string | undefined
-                const existingTool = toolCallId
-                  ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
-                  : null
-                if (existingTool) {
-                  updateMessage(sessionId, existingTool.id, {
-                    toolName: e.tool || e.name,
-                    runMarker: existingTool.runMarker || readRunMarker(e),
-                    toolArgs: hasRuntimeToolPayload((e as any).arguments) ? (e as any).arguments : existingTool.toolArgs,
-                    toolPreview: e.preview || existingTool.toolPreview,
-                    toolStatus: existingTool.toolStatus || 'running',
-                  })
-                } else {
-                  addMessage(sessionId, {
-                    id: uid(),
-                    role: 'tool',
-                    content: '',
-                    timestamp: Date.now(),
-                    toolName: e.tool || e.name,
-                    toolCallId,
-                    runMarker: readRunMarker(e),
-                    toolPreview: e.preview,
-                    toolArgs: runtimeToolPayloadOrUndefined((e as any).arguments),
-                    toolStatus: 'running',
-                  })
-                }
+                handleToolStartedEvent(sessionId, e as RunEvent)
               } else if (e.event === 'tool.completed' || e.event === 'tool.failed') {
-                const msgs = getSessionMsgs(sessionId)
-                const toolCallId = e.tool_call_id as string | undefined
-                const toolMsgs = toolCallId
-                  ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
-                  : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
-                const output = runtimeToolOutputFromEvent(e)
-                const toolName = e.tool || e.name || toolMsgs[toolMsgs.length - 1]?.toolName
-                if (isBackgroundDelegateToolPayload(toolName, output)) {
-                  target.messages = target.messages.filter(message => !toolMsgs.includes(message))
-                  addHermesBackgroundDelegateAnchors(
-                    sessionId,
-                    toolCallId,
-                    output,
-                    toolMsgs[toolMsgs.length - 1]?.toolArgs,
-                  )
-                  continue
-                }
-                if (
-                  isEkkoAgentSession(sessionId)
-                  && toolName === 'delegate_task'
-                  && runtimeObjectPayload(output)?.runtime === 'ekko'
-                ) {
-                  target.messages = target.messages.filter(message => !toolMsgs.includes(message))
-                  continue
-                }
-                if (toolMsgs.length > 0) {
-                  const last = toolMsgs[toolMsgs.length - 1]
-                  updateMessage(sessionId, last.id, {
-                    runMarker: last.runMarker || readRunMarker(e),
-                    toolStatus: e.event === 'tool.failed' || e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
-                    toolDuration: e.duration,
-                    toolResult: output,
-                  })
-                }
+                handleToolCompletedEvent(sessionId, e as RunEvent)
               } else if (e.event === 'moa.reference' || e.event === 'moa.aggregating') {
                 handleMoaEvent(sessionId, e as RunEvent)
               } else if (String(e.event || '').startsWith('subagent.') || e.event === 'delegation.updated') {
@@ -2306,6 +2278,7 @@ export const useChatStore = defineStore('chat', () => {
     toolCallId: string | undefined,
     output: unknown,
     toolArgs: unknown,
+    runMarker?: string | null,
   ) {
     const payload = runtimeObjectPayload(output)
     if (!payload || payload.mode !== 'background' || payload.runtime === 'ekko') return
@@ -2313,7 +2286,10 @@ export const useChatStore = defineStore('chat', () => {
     const messages = getSessionMsgs(sessionId)
     for (const task of backgroundDelegateTaskDescriptors(payload, toolArgs)) {
       const anchorCallId = backgroundDelegateAnchorCallId(baseId, task.taskIndex)
-      if (messages.some(message => message.toolCallId === anchorCallId)) continue
+      if (messages.some(message =>
+        message.toolCallId === anchorCallId
+        && normalizedRunMarker(message) === (runMarker || null),
+      )) continue
       const label = `${task.taskIndex + 1}/${task.taskCount}`
       addMessage(sessionId, {
         id: uid(),
@@ -2332,6 +2308,7 @@ export const useChatStore = defineStore('chat', () => {
           goal: task.goal,
         },
         toolStatus: 'done',
+        runMarker,
       })
     }
   }
@@ -2369,6 +2346,149 @@ export const useChatStore = defineStore('chat', () => {
     if (idx !== -1) {
       s.messages[idx] = { ...s.messages[idx], ...update }
     }
+  }
+
+  function findToolMessageForEvent(
+    messages: Message[],
+    evt: RunEvent,
+    toolCallId?: string,
+  ): Message | undefined {
+    const eventRunMarker = normalizedRunMarker(evt)
+    const reversed = [...messages].reverse()
+    const hasMatchingId = (message: Message) => !toolCallId || message.toolCallId === toolCallId
+
+    if (eventRunMarker) {
+      const exact = reversed.find(message =>
+        message.role === 'tool'
+        && hasMatchingId(message)
+        && normalizedRunMarker(message) === eventRunMarker
+        && (toolCallId || message.toolStatus === 'running'),
+      )
+      if (exact) return exact
+
+      // A legacy started event may not have carried its run marker even when
+      // the corresponding completion does. Adopt only an unscoped running row.
+      return reversed.find(message =>
+        message.role === 'tool'
+        && hasMatchingId(message)
+        && normalizedRunMarker(message) === null
+        && message.toolStatus === 'running',
+      )
+    }
+
+    // Without a run marker, never revive a finalized historical row. The most
+    // recent running match is the only safe legacy fallback.
+    return reversed.find(message =>
+      message.role === 'tool'
+      && hasMatchingId(message)
+      && message.toolStatus === 'running',
+    )
+  }
+
+  function handleToolStartedEvent(sessionId: string, evt: RunEvent, reasoning?: string) {
+    const toolName = evt.tool || evt.name
+    if (
+      isBackgroundDelegateToolPayload(toolName, evt.arguments)
+      || (isEkkoAgentSession(sessionId) && toolName === 'delegate_task')
+    ) return
+
+    const toolCallId = typeof (evt as any).tool_call_id === 'string'
+      ? String((evt as any).tool_call_id)
+      : undefined
+    const messages = getSessionMsgs(sessionId)
+    const existing = toolCallId ? findToolMessageForEvent(messages, evt, toolCallId) : undefined
+    const eventRunMarker = normalizedRunMarker(evt)
+    if (existing) {
+      const isSettled = existing.toolStatus === 'done'
+        || existing.toolStatus === 'error'
+        || existing.toolResult !== undefined
+      updateMessage(sessionId, existing.id, {
+        toolName: toolName || existing.toolName,
+        runMarker: existing.runMarker || eventRunMarker,
+        toolArgs: hasRuntimeToolPayload(evt.arguments) ? evt.arguments : existing.toolArgs,
+        toolPreview: evt.preview || existing.toolPreview,
+        reasoning: existing.reasoning || reasoning,
+        toolStatus: isSettled ? existing.toolStatus : 'running',
+      })
+      return
+    }
+
+    addMessage(sessionId, {
+      id: uid(),
+      role: 'tool',
+      content: '',
+      timestamp: Date.now(),
+      toolName,
+      toolCallId,
+      runMarker: eventRunMarker,
+      toolPreview: evt.preview,
+      toolArgs: runtimeToolPayloadOrUndefined(evt.arguments),
+      reasoning,
+      toolStatus: 'running',
+    })
+  }
+
+  function handleToolCompletedEvent(sessionId: string, evt: RunEvent) {
+    const toolCallId = typeof (evt as any).tool_call_id === 'string'
+      ? String((evt as any).tool_call_id)
+      : undefined
+    const messages = getSessionMsgs(sessionId)
+    const existing = findToolMessageForEvent(messages, evt, toolCallId)
+    const output = runtimeToolOutputFromEvent(evt)
+    const toolName = evt.tool || evt.name || existing?.toolName
+    const eventRunMarker = normalizedRunMarker(evt)
+
+    if (isBackgroundDelegateToolPayload(toolName, output)) {
+      const session = sessions.value.find(item => item.id === sessionId)
+      if (session && existing) session.messages = session.messages.filter(message => message !== existing)
+      addHermesBackgroundDelegateAnchors(
+        sessionId,
+        toolCallId,
+        output,
+        existing?.toolArgs,
+        eventRunMarker,
+      )
+      return
+    }
+    if (
+      isEkkoAgentSession(sessionId)
+      && toolName === 'delegate_task'
+      && runtimeObjectPayload(output)?.runtime === 'ekko'
+    ) {
+      const session = sessions.value.find(item => item.id === sessionId)
+      if (session && existing) session.messages = session.messages.filter(message => message !== existing)
+      return
+    }
+
+    const hasError = evt.event === 'tool.failed'
+      || (evt as any).error === true
+      || runtimeToolOutputHasError(output)
+    if (existing) {
+      updateMessage(sessionId, existing.id, {
+        toolName: toolName || existing.toolName,
+        runMarker: existing.runMarker || eventRunMarker,
+        toolStatus: hasError ? 'error' : 'done',
+        toolDuration: (evt as any).duration,
+        toolResult: output,
+      })
+      return
+    }
+
+    // Completion can arrive after a reconnect even when the start event was
+    // not replayed. Preserve the call instead of silently dropping it.
+    addMessage(sessionId, {
+      id: uid(),
+      role: 'tool',
+      content: '',
+      timestamp: Date.now(),
+      toolName,
+      toolCallId,
+      runMarker: eventRunMarker,
+      toolPreview: evt.preview,
+      toolResult: output,
+      toolStatus: hasError ? 'error' : 'done',
+      toolDuration: (evt as any).duration,
+    })
   }
 
   function settleRunningTools(sessionId: string, status: 'done' | 'error') {
@@ -3890,11 +4010,10 @@ export const useChatStore = defineStore('chat', () => {
               runHadToolActivity = true
               const startedToolName = evt.tool || evt.name
               if (
-                isBackgroundDelegateToolPayload(startedToolName, (evt as any).arguments)
+                isBackgroundDelegateToolPayload(startedToolName, evt.arguments)
                 || (isEkkoAgentSession(sid) && startedToolName === 'delegate_task')
               ) break
               const msgs = getSessionMsgs(sid)
-              const toolCallId = (evt as any).tool_call_id as string | undefined
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : msgs[msgs.length - 1]
@@ -3907,33 +4026,7 @@ export const useChatStore = defineStore('chat', () => {
               }
               activeAssistantMessageId = null
               reasoningAssistantMessageId = null
-              const existingTool = toolCallId
-                ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
-                : null
-              if (existingTool) {
-                updateMessage(sid, existingTool.id, {
-                  toolName: evt.tool || evt.name,
-                  runMarker: existingTool.runMarker || readRunMarker(evt),
-                  toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
-                  toolPreview: evt.preview || existingTool.toolPreview,
-                  reasoning: existingTool.reasoning || toolReasoning,
-                  toolStatus: existingTool.toolStatus || 'running',
-                })
-                break
-              }
-              addMessage(sid, {
-                id: uid(),
-                role: 'tool',
-                content: '',
-                timestamp: Date.now(),
-                toolName: evt.tool || evt.name,
-                toolCallId,
-                runMarker: readRunMarker(evt),
-                toolPreview: evt.preview,
-                toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
-                reasoning: toolReasoning,
-                toolStatus: 'running',
-              })
+              handleToolStartedEvent(sid, evt, toolReasoning)
 
               break
             }
@@ -3941,44 +4034,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'tool.completed':
             case 'tool.failed': {
               runHadToolActivity = true
-              const msgs = getSessionMsgs(sid)
-              const toolCallId = (evt as any).tool_call_id as string | undefined
-              const toolMsgs = toolCallId
-                ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
-                : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
-              const output = runtimeToolOutputFromEvent(evt)
-              const toolName = evt.tool || evt.name || toolMsgs[toolMsgs.length - 1]?.toolName
-              if (isBackgroundDelegateToolPayload(toolName, output)) {
-                const session = sessions.value.find(item => item.id === sid)
-                if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
-                addHermesBackgroundDelegateAnchors(
-                  sid,
-                  toolCallId,
-                  output,
-                  toolMsgs[toolMsgs.length - 1]?.toolArgs,
-                )
-                break
-              }
-              if (
-                isEkkoAgentSession(sid)
-                && toolName === 'delegate_task'
-                && runtimeObjectPayload(output)?.runtime === 'ekko'
-              ) {
-                const session = sessions.value.find(item => item.id === sid)
-                if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
-                break
-              }
-              if (toolMsgs.length > 0) {
-                const last = toolMsgs[toolMsgs.length - 1]
-                const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
-                const duration = (evt as any).duration
-                updateMessage(sid, last.id, {
-                  runMarker: last.runMarker || readRunMarker(evt),
-                  toolStatus: hasError ? 'error' : 'done',
-                  toolDuration: duration,
-                  toolResult: output,
-                })
-              }
+              handleToolCompletedEvent(sid, evt)
 
               break
             }
@@ -4613,11 +4669,10 @@ export const useChatStore = defineStore('chat', () => {
           runHadToolActivity = true
           const startedToolName = evt.tool || evt.name
           if (
-            isBackgroundDelegateToolPayload(startedToolName, (evt as any).arguments)
+            isBackgroundDelegateToolPayload(startedToolName, evt.arguments)
             || (isEkkoAgentSession(sid) && startedToolName === 'delegate_task')
           ) break
           const msgs = getSessionMsgs(sid)
-          const toolCallId = (evt as any).tool_call_id as string | undefined
           const last = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
             : msgs[msgs.length - 1]
@@ -4630,33 +4685,7 @@ export const useChatStore = defineStore('chat', () => {
           }
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
-          const existingTool = toolCallId
-            ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
-            : null
-          if (existingTool) {
-            updateMessage(sid, existingTool.id, {
-              toolName: evt.tool || evt.name,
-              runMarker: existingTool.runMarker || readRunMarker(evt),
-              toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
-              toolPreview: evt.preview || existingTool.toolPreview,
-              reasoning: existingTool.reasoning || toolReasoning,
-              toolStatus: existingTool.toolStatus || 'running',
-            })
-            break
-          }
-          addMessage(sid, {
-            id: uid(),
-            role: 'tool',
-            content: '',
-            timestamp: Date.now(),
-            toolName: evt.tool || evt.name,
-            toolCallId,
-            runMarker: readRunMarker(evt),
-            toolPreview: evt.preview,
-            toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
-            reasoning: toolReasoning,
-            toolStatus: 'running',
-          })
+          handleToolStartedEvent(sid, evt, toolReasoning)
 
           break
         }
@@ -4664,43 +4693,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'tool.completed':
         case 'tool.failed': {
           runHadToolActivity = true
-          const msgs = getSessionMsgs(sid)
-          const toolCallId = (evt as any).tool_call_id as string | undefined
-          const toolMsgs = toolCallId
-            ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
-            : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
-          const output = runtimeToolOutputFromEvent(evt)
-          const toolName = evt.tool || evt.name || toolMsgs[toolMsgs.length - 1]?.toolName
-          if (isBackgroundDelegateToolPayload(toolName, output)) {
-            const session = sessions.value.find(item => item.id === sid)
-            if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
-            addHermesBackgroundDelegateAnchors(
-              sid,
-              toolCallId,
-              output,
-              toolMsgs[toolMsgs.length - 1]?.toolArgs,
-            )
-            break
-          }
-          if (
-            isEkkoAgentSession(sid)
-            && toolName === 'delegate_task'
-            && runtimeObjectPayload(output)?.runtime === 'ekko'
-          ) {
-            const session = sessions.value.find(item => item.id === sid)
-            if (session) session.messages = session.messages.filter(message => !toolMsgs.includes(message))
-            break
-          }
-          if (toolMsgs.length > 0) {
-            const hasError = evt.event === 'tool.failed' || (evt as any).error === true || runtimeToolOutputHasError(output)
-            const last = toolMsgs[toolMsgs.length - 1]
-            updateMessage(sid, last.id, {
-              runMarker: last.runMarker || readRunMarker(evt),
-              toolStatus: hasError ? 'error' : 'done',
-              toolDuration: (evt as any).duration,
-              toolResult: output,
-            })
-          }
+          handleToolCompletedEvent(sid, evt)
 
           break
         }

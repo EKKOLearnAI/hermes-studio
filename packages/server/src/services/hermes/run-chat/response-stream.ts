@@ -327,6 +327,7 @@ export function applyResponseStreamEvent(
         })
       } else if (toolReasoning) {
         const toolCallMessage = state.messages.find(message =>
+          message.runMarker === runMarker &&
           message.role === 'assistant' &&
           message.tool_calls?.some(tool => tool.id === callId),
         )

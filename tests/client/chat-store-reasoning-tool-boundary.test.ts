@@ -210,6 +210,205 @@ describe('chat store reasoning/tool boundaries', () => {
     ])
   })
 
+  it('restores repeated tool ids with metadata from their own runs', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+    sessionsApi.fetchSessionMessagesPage.mockResolvedValue({
+      session: { id: 'session-1', title: 'session' },
+      messages: [
+        {
+          id: 1,
+          role: 'assistant',
+          content: '',
+          reasoning: 'reasoning for run A',
+          run_marker: 'run-a',
+          tool_calls: [{
+            id: 'item_2',
+            type: 'function',
+            function: { name: 'Command', arguments: '{"command":"pwd"}' },
+          }],
+          timestamp: 1,
+          finish_reason: 'tool_calls',
+        },
+        {
+          id: 2,
+          role: 'tool',
+          content: 'result A',
+          tool_call_id: 'item_2',
+          run_marker: 'run-a',
+          timestamp: 2,
+        },
+        {
+          id: 3,
+          role: 'assistant',
+          content: '',
+          reasoning: 'reasoning for run B',
+          run_marker: 'run-b',
+          tool_calls: [{
+            id: 'item_2',
+            type: 'function',
+            function: { name: 'Web Search', arguments: '{"query":"Hermes"}' },
+          }],
+          timestamp: 3,
+          finish_reason: 'tool_calls',
+        },
+        {
+          id: 4,
+          role: 'tool',
+          content: 'result B',
+          tool_call_id: 'item_2',
+          run_marker: 'run-b',
+          timestamp: 4,
+        },
+      ],
+      total: 4,
+      hasMore: false,
+    })
+
+    await store.refreshActiveSession()
+
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'item_2',
+        runMarker: 'run-a',
+        toolName: 'Command',
+        toolArgs: '{"command":"pwd"}',
+        reasoning: 'reasoning for run A',
+        toolResult: 'result A',
+      }),
+      expect.objectContaining({
+        role: 'tool',
+        toolCallId: 'item_2',
+        runMarker: 'run-b',
+        toolName: 'Web Search',
+        toolArgs: '{"query":"Hermes"}',
+        reasoning: 'reasoning for run B',
+        toolResult: 'result B',
+      }),
+    ])
+  })
+
+  it('keeps repeated coding-agent tool ids separate across live runs', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'codex'
+    session.codingAgentId = 'codex'
+    session.messages = [{
+      id: 'old-tool',
+      role: 'tool',
+      content: '',
+      timestamp: Date.now() - 1_000,
+      toolName: 'Command',
+      toolCallId: 'item_2',
+      toolArgs: '{"command":"pwd"}',
+      toolResult: 'old result',
+      toolStatus: 'done',
+      runMarker: 'run-a',
+    }]
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('run another command')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({ event: 'run.started', session_id: 'session-1', run_marker: 'run-b' })
+    onEvent({
+      event: 'tool.started',
+      session_id: 'session-1',
+      run_marker: 'run-b',
+      tool_call_id: 'item_2',
+      tool: 'Command',
+      arguments: '{"command":"ls"}',
+    } as RunEvent)
+
+    expect(store.messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({
+        id: 'old-tool',
+        runMarker: 'run-a',
+        toolStatus: 'done',
+        toolResult: 'old result',
+      }),
+      expect.objectContaining({
+        runMarker: 'run-b',
+        toolStatus: 'running',
+        toolArgs: '{"command":"ls"}',
+      }),
+    ])
+
+    onEvent({
+      event: 'tool.completed',
+      session_id: 'session-1',
+      run_marker: 'run-b',
+      tool_call_id: 'item_2',
+      tool: 'Command',
+      output: 'new result',
+    } as RunEvent)
+
+    expect(store.messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({
+        id: 'old-tool',
+        runMarker: 'run-a',
+        toolStatus: 'done',
+        toolResult: 'old result',
+      }),
+      expect.objectContaining({
+        runMarker: 'run-b',
+        toolStatus: 'done',
+        toolResult: 'new result',
+      }),
+    ])
+  })
+
+  it('creates a scoped tool row when completion arrives without a start event', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.messages = [{
+      id: 'old-tool',
+      role: 'tool',
+      content: '',
+      timestamp: Date.now() - 1_000,
+      toolName: 'Command',
+      toolCallId: 'item_2',
+      toolResult: 'old result',
+      toolStatus: 'done',
+      runMarker: 'run-a',
+    }]
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('resume the run')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({
+      event: 'tool.completed',
+      session_id: 'session-1',
+      run_marker: 'run-b',
+      tool_call_id: 'item_2',
+      tool: 'Command',
+      output: 'replayed result',
+    } as RunEvent)
+
+    expect(store.messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({
+        id: 'old-tool',
+        runMarker: 'run-a',
+        toolResult: 'old result',
+      }),
+      expect.objectContaining({
+        runMarker: 'run-b',
+        toolStatus: 'done',
+        toolResult: 'replayed result',
+      }),
+    ])
+  })
+
   it('attaches completion output to post-tool reasoning when no body delta arrived', async () => {
     const store = useChatStore()
     const session = makeSession()
