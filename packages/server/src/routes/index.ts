@@ -48,6 +48,7 @@ import { mediaRoutes } from './hermes/media'
 import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { chatRunRoutes } from './hermes/chat-run'
 import { chatWebhookPublicRoutes, chatWebhookRoutes } from './hermes/chat-webhooks'
+import { incomingWebhookRoutes } from './hermes/incoming-webhooks'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
 import { journeyRoutes } from './hermes/journey'
 import { mcpRoutes } from './hermes/mcp'
@@ -108,6 +109,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(weixinRoutes.routes())
   app.use(chatRunRoutes.routes())
   app.use(chatWebhookRoutes.routes())
+  app.use(incomingWebhookRoutes.routes())
   app.use(groupChatRoutes.routes())
   app.use(fileRoutes.routes())
   app.use(downloadRoutes.routes())
