@@ -2724,9 +2724,11 @@ export async function startCodingAgentRun(
   const canResumeNativeSession = existingSession
     ? storedCodingAgentMode(existingSession) === requestedMode &&
       (existingSession.agent === persistedAgentId(id) || !existingSession.agent) &&
-      String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
-      String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim() &&
-      (!String(existingSession.api_mode || '').trim() || String(existingSession.api_mode || '').trim() === String(resolvedInput.apiMode || '').trim())
+      (requestedMode === 'global' || (
+        String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
+        String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim() &&
+        (!String(existingSession.api_mode || '').trim() || String(existingSession.api_mode || '').trim() === String(resolvedInput.apiMode || '').trim())
+      ))
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
   const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' || id === 'pi' ? randomUUID() : '')

@@ -243,6 +243,38 @@ describe('coding agent resumed session config', () => {
     }))
   })
 
+  it('resumes a global Codex native thread after the active runner is stopped', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_mode: 'global',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'global-codex-thread-1',
+      provider: 'global',
+      model: '',
+      api_mode: '',
+      workspace: '/tmp/existing-workspace',
+    })
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      mode: 'global',
+      workspace: '/tmp/existing-workspace',
+    })
+
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      agentNativeSessionId: 'global-codex-thread-1',
+      nativeResume: true,
+    }))
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      agent_native_session_id: 'global-codex-thread-1',
+    }))
+  })
+
   it('passes the stored native session id to Pi so its RPC process resumes after restart', async () => {
     const home = makeHome()
     installPiMcpAdapter(home)
