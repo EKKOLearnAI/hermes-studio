@@ -13,7 +13,7 @@ import {
 } from './attachments'
 
 export const GROUP_CHAT_UPLOAD_CHUNK_BYTES = 256 * 1024
-const GROUP_CHAT_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000
+const GROUP_CHAT_UPLOAD_SESSION_TTL_MS = 5 * 60 * 1000
 const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/
 
 interface GroupChatUploadSession {

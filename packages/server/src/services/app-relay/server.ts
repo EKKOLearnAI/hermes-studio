@@ -30,6 +30,7 @@ import {
 const APP_RELAY_NAMESPACE = '/app-relay'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000
+const MAX_MEDIA_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
 const MAX_RESPONSE_BODY_BYTES = 20 * 1024 * 1024
 
@@ -373,7 +374,7 @@ export class LocalAppRelayServer {
     if (isHttpErrorResponse(normalizedBody)) return normalizedBody
     if (normalizedBody.contentType) headers.set('content-type', normalizedBody.contentType)
 
-    const timeoutMs = normalizeTimeout(request.timeoutMs)
+    const timeoutMs = normalizeHttpTimeout(request)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -436,6 +437,15 @@ export class LocalAppRelayServer {
       )
     } catch (error) {
       const code = error instanceof RelayDownloadSessionError ? error.code : 'download_failed'
+      logger.warn({
+        err: error,
+        errorCode: code,
+        downloadId: id,
+        ...(error instanceof RelayDownloadSessionError ? error.diagnostic : {}),
+        ...(error instanceof RelayDownloadSessionError && error.causeMessage
+          ? { causeMessage: error.causeMessage }
+          : {}),
+      }, '[app-relay:lan] download chunk read failed')
       return downloadError(id, code, 'Unable to read the next download chunk')
     }
   }
@@ -937,6 +947,23 @@ function normalizeTimeout(value: unknown): number {
   const timeout = Number(value)
   if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
   return Math.min(Math.floor(timeout), MAX_REQUEST_TIMEOUT_MS)
+}
+
+function normalizeHttpTimeout(request: AppRelayHttpRequest): number {
+  const timeout = Number(request.timeoutMs)
+  if (!Number.isFinite(timeout) || timeout <= 0) return DEFAULT_REQUEST_TIMEOUT_MS
+  const maxTimeout = isMediaHttpRequest(request)
+    ? MAX_MEDIA_REQUEST_TIMEOUT_MS
+    : MAX_REQUEST_TIMEOUT_MS
+  return Math.min(Math.floor(timeout), maxTimeout)
+}
+
+function isMediaHttpRequest(request: AppRelayHttpRequest): boolean {
+  if (request.streamBinary === true || request.bodyBytes != null || request.bodyBase64 != null) return true
+  const path = String(request.path || '').split('?', 1)[0]
+  return path === '/api/hermes/app-uploads'
+    || path.startsWith('/api/hermes/app-uploads/')
+    || /^\/api\/hermes\/group-chat\/rooms\/[^/]+\/attachment-uploads(?:\/|$)/.test(path)
 }
 
 function isAllowedSocketEvent(namespace: string, event: string): boolean {
