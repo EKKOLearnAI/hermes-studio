@@ -12067,6 +12067,44 @@
         ]
       }
     },
+    "/api/hermes/sessions/batch-archive": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create batch-archive",
+        "description": "POST /api/hermes/sessions/batch-archive",
+        "operationId": "batchArchive",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/sessions/batch-delete": {
       "post": {
         "tags": [
