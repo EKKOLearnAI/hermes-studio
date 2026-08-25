@@ -1,6 +1,6 @@
 ---
 date: 2026-08-25
-pr: pending
+pr: 2728
 feature: Hide global Coding Agent reasoning effort
 impact: Global Coding Agent chats no longer show a per-session reasoning effort control that the runtime intentionally ignores.
 ---
