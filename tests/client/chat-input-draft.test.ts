@@ -245,6 +245,7 @@ describe('ChatInput draft persistence', () => {
       source: 'coding_agent',
       agent: 'codex',
       codingAgentId: 'codex',
+      codingAgentMode: 'scoped',
     })
     await nextTick()
 
@@ -252,6 +253,19 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.find('.n-slider-stub').exists()).toBe(true)
     expect(wrapper.get('.n-slider-stub').attributes('min')).toBe('0')
     expect(wrapper.get('.n-slider-stub').attributes('max')).toBe('7')
+  })
+
+  it('hides the reasoning effort selector for global coding-agent sessions', async () => {
+    const wrapper = mountForSession('session-global-codex', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      codingAgentMode: 'global',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.reasoning-effort-button').exists()).toBe(false)
+    expect(wrapper.find('.n-slider-stub').exists()).toBe(false)
   })
 
   it('hides the reasoning effort selector for MoA sessions', async () => {
