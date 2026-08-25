@@ -1,6 +1,6 @@
 ---
 date: 2026-08-25
-pr: pending
+pr: 2735
 feature: Global Coding Agent stop and resume continuity
 impact: Stopping a global Claude, Codex, or Pi run and then continuing the same Studio chat now resumes its stored native agent session instead of starting a context-free thread.
 ---
