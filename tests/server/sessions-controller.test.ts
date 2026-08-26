@@ -140,6 +140,14 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
 
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getActiveProfileName: getActiveProfileNameMock,
+  getActiveProfileDir: () => '/tmp/hermes-test/default',
+  getProfileDir: (name: string) => `/tmp/hermes-test/${name || 'default'}`,
+  listProfileNamesFromDisk: () => ['default', 'travel'],
+  readConfigYamlForProfile: readConfigYamlForProfileMock,
+}))
+
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn().mockImplementation(() => ({
     switchSessionModel: bridgeSwitchSessionModelMock,

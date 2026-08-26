@@ -151,8 +151,8 @@ describe('compression cursor persistence', () => {
   it('reads only protected head and post-cursor context for a 15,000-row session', async () => {
     const { addMessages, createSession, getSessionContextMessages } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/modules/studio/repositories/compression-snapshot')
-    const { readCursorSnapshotParts } = await import('../../packages/server/src/services/hermes/run-chat/context-history')
-    const { buildDbExportHistory } = await import('../../packages/server/src/lib/context-compressor/export-compressor')
+    const { readCursorSnapshotParts } = await import('../../packages/server/src/modules/studio/services/chat-run/context-history')
+    const { buildDbExportHistory } = await import('../../packages/server/src/modules/studio/services/context-compressor/export-compressor')
     createSession({ id: 'large', source: 'cli' })
     addMessages(Array.from({ length: 15_000 }, (_, index) => ({
       session_id: 'large',

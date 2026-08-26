@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionState } from '../../packages/server/src/services/hermes/run-chat/types'
+import type { SessionState } from '../../packages/server/src/modules/studio/services/chat-run/types'
 
 const { addMessageMock, addMessagesMock } = vi.hoisted(() => ({
   addMessageMock: vi.fn(),
@@ -20,7 +20,7 @@ describe('run message persistence', () => {
     addMessagesMock.mockReturnValue([40, 41])
     const state: SessionState = { messages: [], isWorking: true, events: [], queue: [] }
     const { persistRunMessages } = await import(
-      '../../packages/server/src/services/hermes/run-chat/message-persistence'
+      '../../packages/server/src/modules/studio/services/chat-run/message-persistence'
     )
 
     const result = persistRunMessages(state, {
@@ -86,7 +86,7 @@ describe('run message persistence', () => {
       queue: [],
     }
     const { persistRunMessages } = await import(
-      '../../packages/server/src/services/hermes/run-chat/message-persistence'
+      '../../packages/server/src/modules/studio/services/chat-run/message-persistence'
     )
 
     persistRunMessages(state, {

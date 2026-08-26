@@ -84,6 +84,7 @@ packages/server/src/
         app-connections.ts
         app-relay.ts
         social-messages.ts
+        chat-run.ts
         chat-webhooks.ts            # cross-agent event delivery; legacy URL remains /api/hermes/webhooks
         workflows.ts
         group-chat.ts
@@ -104,6 +105,7 @@ packages/server/src/
         app-connections.ts
         app-relay.ts
         social-messages.ts
+        chat-run.ts
         chat-webhooks.ts
         workflows.ts
         group-chat.ts
@@ -125,6 +127,8 @@ packages/server/src/
         providers/
         sessions/
         social-messages/
+        chat-run/                    # shared single-chat lifecycle and persistence
+        context-compressor/
         webhooks/                    # aggregates events from every AgentFamily and RunSurface
         update/
           studio-updater.ts        # upgrades hermes-web-ui
@@ -153,6 +157,7 @@ packages/server/src/
         network/
         processes/
       sockets/
+        chat-run.ts
         group-chat.ts
         global-agent.ts
         pets.ts
@@ -163,7 +168,6 @@ packages/server/src/
         runner.ts
       contracts/
       routes/
-        chat.ts
         profiles.ts
         providers.ts
         models.ts
@@ -181,7 +185,6 @@ packages/server/src/
         channels.ts
         runtime.ts
       controllers/
-        chat.ts
         profiles.ts
         providers.ts
         models.ts
@@ -225,7 +228,6 @@ packages/server/src/
           weixin.ts
         runtime/                   # Hermes runtime download/activation/version
       sockets/
-        chat.ts
         terminal.ts
         kanban-events.ts
 

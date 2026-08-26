@@ -1,6 +1,7 @@
 export {
   authenticateUserToken,
   isAuthEnabled,
+  issueModelRunJwt,
   requireAdmin,
   requireSuperAdmin,
   requireUserProfile,

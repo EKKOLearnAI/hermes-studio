@@ -304,9 +304,9 @@ print(json.dumps({
   it('keeps Agent Bridge on profile defaults without Workflow execution-policy plumbing', () => {
     const sources = [
       'packages/server/src/modules/hermes/services/bridge/client.ts',
-      'packages/server/src/services/hermes/run-chat/types.ts',
-      'packages/server/src/services/hermes/run-chat/index.ts',
-      'packages/server/src/services/hermes/run-chat/handle-bridge-run.ts',
+      'packages/server/src/modules/studio/services/chat-run/types.ts',
+      'packages/server/src/modules/studio/sockets/chat-run.ts',
+      'packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts',
       'packages/server/src/modules/hermes/services/bridge/python/bridge_server.py',
       'packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py',
       'packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py',
@@ -320,7 +320,7 @@ print(json.dumps({
 
   it('does not expose a caller-controlled api mode through Agent Bridge', () => {
     const client = readFileSync('packages/server/src/modules/hermes/services/bridge/client.ts', 'utf8')
-    const bridgeRun = readFileSync('packages/server/src/services/hermes/run-chat/handle-bridge-run.ts', 'utf8')
+    const bridgeRun = readFileSync('packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts', 'utf8')
     const server = readFileSync('packages/server/src/modules/hermes/services/bridge/python/bridge_server.py', 'utf8')
     const pool = readFileSync('packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py', 'utf8')
     expect(client).not.toContain('options.apiMode')
@@ -375,7 +375,7 @@ print(json.dumps({
   })
 
   it('preserves reasoning and api mode across the run queue', () => {
-    const source = readFileSync('packages/server/src/services/hermes/run-chat/index.ts', 'utf8')
+    const source = readFileSync('packages/server/src/modules/studio/sockets/chat-run.ts', 'utf8')
     expect(source).toContain('reasoningEffort: data.reasoning_effort')
     expect(source).toContain('apiMode: data.apiMode')
     expect(source).toContain('reasoning_effort: next.reasoningEffort')

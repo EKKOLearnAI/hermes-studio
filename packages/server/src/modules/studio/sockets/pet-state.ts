@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../public/auth'
 import { userCanAccessProfile } from '../public/users'
 import { logger } from '../public/logging'
+import { configureRunChatPetObserver } from '../public/pet-events'
 
 const PET_STATE_NAMESPACE = '/pet-state'
 const DEFAULT_PROFILE = 'default'
@@ -226,6 +227,8 @@ export function observeRunChatPetEvent(profile: string | null | undefined, event
   activeServer?.broadcast(snapshot)
   return snapshot
 }
+
+configureRunChatPetObserver(observeRunChatPetEvent)
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''

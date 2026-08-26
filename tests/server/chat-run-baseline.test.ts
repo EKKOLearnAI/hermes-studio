@@ -51,7 +51,7 @@ describe('chat-run action/event baseline', () => {
       emitNative('approval.requested', { run_id: 'run-1', approval_id: 'approval-1', command: 'touch file' })
     })
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = makeCtx({ session_id: 'session-1', input: 'needs approval', include_events: true })
     const pending = runOnce(ctx as any)
     socket.emitNative('connect')
@@ -77,7 +77,7 @@ describe('chat-run action/event baseline', () => {
       emitNative('clarify.requested', { run_id: 'run-1', question: 'Which room?' })
     })
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = makeCtx({ session_id: 'session-1', input: 'needs clarify', include_events: true })
     const pending = runOnce(ctx as any)
     socket.emitNative('connect')
@@ -104,7 +104,7 @@ describe('chat-run action/event baseline', () => {
       emitNative('run.completed', { run_id: 'run-1' })
     })
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = makeCtx({ session_id: 'session-1', input: 'hello', include_events: true })
     const pending = runOnce(ctx as any)
     socket.emitNative('connect')

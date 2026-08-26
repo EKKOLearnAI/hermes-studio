@@ -13,14 +13,15 @@ import { setupTerminalWebSocket } from './modules/hermes/sockets/terminal'
 import { setupKanbanEventsWebSocket } from './modules/hermes/sockets/kanban-events'
 import { startVersionCheck } from './bootstrap/health'
 import { registerRoutes } from './bootstrap/routes'
+import './bootstrap/chat-agent-runtime-adapter'
 import { setGroupChatServer } from './routes/hermes/group-chat'
-import { setChatRunServer } from './routes/hermes/chat-run'
+import { setChatRunServer } from './modules/studio/public/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
 import {
   getGroupAgentOutboundRelayManager,
   GroupAgentRelayServer,
 } from './services/hermes/group-chat/agent-relay'
-import { ChatRunSocket } from './services/hermes/run-chat'
+import { ChatRunSocket } from './modules/studio/sockets/chat-run'
 import { startChatWebhookDispatcher } from './modules/studio/services/webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './modules/hermes/services/bridge'
 import { HermesSkillInjector } from './modules/hermes/services/skills/injector'

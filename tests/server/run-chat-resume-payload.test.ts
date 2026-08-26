@@ -8,7 +8,7 @@ import {
   buildResumeMessages,
   RESUME_MESSAGE_PAGE_LIMIT,
   RESUME_TOOL_RESULT_DISPLAY_LIMIT,
-} from '../../packages/server/src/services/hermes/run-chat/resume-payload'
+} from '../../packages/server/src/modules/studio/services/chat-run/resume-payload'
 
 function message(overrides: Record<string, unknown>) {
   return {

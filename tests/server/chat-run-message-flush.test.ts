@@ -15,7 +15,7 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor', () => ({
   ChatContextCompressor: class {},
   countTokens: vi.fn(() => 1),
   SUMMARY_PREFIX: '[Summary] ',
@@ -245,7 +245,7 @@ describe('chat-run message flush', () => {
   })
 
   it('records MoA display rows without creating model-context tool messages', async () => {
-    const { recordBridgeMoaDisplayTool } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
+    const { recordBridgeMoaDisplayTool } = await import('../../packages/server/src/modules/studio/services/chat-run/bridge-message')
     const state = createSessionState()
 
     recordBridgeMoaDisplayTool(

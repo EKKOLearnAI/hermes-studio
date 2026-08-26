@@ -1,4 +1,4 @@
-import { getChatRunServer } from '../services/hermes/run-chat/server-registry'
+import { getChatRunServer } from '../modules/studio/public/chat-run'
 import { codingAgentRunManager } from '../modules/coding-agents/services/runtime/run-manager'
 import { getExactSessionDetailFromDbWithProfile } from '../modules/hermes/services/history/sessions-db'
 import { deleteSessionForProfile } from '../modules/hermes/services/runtime/cli'

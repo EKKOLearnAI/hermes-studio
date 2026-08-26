@@ -43,6 +43,10 @@ const openapi = {
 
 // Tag mappings based on route directories
 const tagMappings = {
+  'Chat Run': {
+    route: 'packages/server/src/modules/studio/routes/chat-run.ts',
+    controller: 'packages/server/src/modules/studio/controllers/chat-run.ts',
+  },
   'modules/studio/routes/workflows.ts': { name: 'Workflows', description: 'Cross-agent workflow orchestration' },
   'routes/hermes/sessions.ts': { name: 'Sessions', description: 'Chat session management' },
   'modules/hermes/routes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },

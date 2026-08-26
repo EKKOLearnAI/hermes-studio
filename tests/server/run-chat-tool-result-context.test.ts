@@ -40,10 +40,10 @@ describe('Bridge tool result context projection', () => {
       }],
     }
     const { recordBridgeToolCompleted } = await import(
-      '../../packages/server/src/services/hermes/run-chat/bridge-message'
+      '../../packages/server/src/modules/studio/services/chat-run/bridge-message'
     )
     const { truncateToolResultForContext } = await import(
-      '../../packages/server/src/lib/tool-result-context'
+      '../../packages/server/src/modules/studio/services/chat-run/tool-result-context'
     )
 
     const completed = recordBridgeToolCompleted(
@@ -71,12 +71,12 @@ describe('Bridge tool result context projection', () => {
     getSessionDetailMock.mockReturnValue({
       messages: [{ role: 'tool', content: completeToolResult }],
     })
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const { truncateToolResultForContext } = await import(
-      '../../packages/server/src/lib/tool-result-context'
+      '../../packages/server/src/modules/studio/services/chat-run/tool-result-context'
     )
     const { calcAndUpdateUsage } = await import(
-      '../../packages/server/src/services/hermes/run-chat/usage'
+      '../../packages/server/src/modules/studio/services/chat-run/usage'
     )
     const makeState = () => ({ messages: [], isWorking: false, events: [], queue: [] }) as any
 

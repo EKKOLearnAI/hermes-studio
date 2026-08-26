@@ -20,23 +20,23 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', (
   updateSessionStats: updateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/bridge-message', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/bridge-message', () => ({
   flushBridgePendingToDb: flushBridgePendingToDbMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/response-stream', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/response-stream', () => ({
   flushResponseRunToDb: flushResponseRunToDbMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression', () => ({
   replaceState: replaceStateMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
 }))
 
@@ -47,6 +47,12 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
 vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
   hasGlobalEkkoBackgroundTasks: ekkoBackgroundMock.has,
   abortGlobalEkkoBackgroundTasks: ekkoBackgroundMock.abort,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  chatCodingAgentRunManager: codingAgentRunManagerMock,
+  hasChatEkkoBackgroundTasks: ekkoBackgroundMock.has,
+  abortChatEkkoBackgroundTasks: ekkoBackgroundMock.abort,
 }))
 
 function makeHarness() {
@@ -75,7 +81,7 @@ describe('run chat abort goal handling', () => {
   it('aborts detached Ekko background tasks after the parent run has finished', async () => {
     ekkoBackgroundMock.has.mockReturnValue(true)
     ekkoBackgroundMock.abort.mockResolvedValue(1)
-    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { handleAbort } = await import('../../packages/server/src/modules/studio/services/chat-run/abort')
     const { emit, nsp, socket } = makeHarness()
     const state = {
       messages: [],
@@ -121,7 +127,7 @@ describe('run chat abort goal handling', () => {
   })
 
   it('pauses an active goal and clears hidden goal continuations when aborting a CLI run', async () => {
-    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { handleAbort } = await import('../../packages/server/src/modules/studio/services/chat-run/abort')
     const { emit, nsp, socket } = makeHarness()
     const state = {
       messages: [],
@@ -201,7 +207,7 @@ describe('run chat abort goal handling', () => {
   })
 
   it('releases local working state when a CLI interrupt does not sync before timeout', async () => {
-    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { handleAbort } = await import('../../packages/server/src/modules/studio/services/chat-run/abort')
     const { emit, nsp, socket } = makeHarness()
     const state = {
       messages: [],
@@ -251,7 +257,7 @@ describe('run chat abort goal handling', () => {
 
 
   it('stops a workflow-scoped coding-agent run instead of misrouting abort through the bridge', async () => {
-    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { handleAbort } = await import('../../packages/server/src/modules/studio/services/chat-run/abort')
     const { emit, nsp, socket } = makeHarness()
     codingAgentRunManagerMock.hasSession.mockReturnValue(true)
     codingAgentRunManagerMock.stop.mockReturnValue(true)
@@ -296,7 +302,7 @@ describe('run chat abort goal handling', () => {
   })
 
   it('stops a coding-agent run even when chat-run state was not marked working', async () => {
-    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { handleAbort } = await import('../../packages/server/src/modules/studio/services/chat-run/abort')
     const { emit, nsp, socket } = makeHarness()
     const sessionMap = new Map()
     codingAgentRunManagerMock.hasSession.mockReturnValue(true)

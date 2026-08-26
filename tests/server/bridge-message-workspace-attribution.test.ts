@@ -32,7 +32,7 @@ describe('bridge assistant workspace attribution', () => {
       bridgePendingAssistantContent: 'Finished the workspace update.',
       bridgePendingReasoningContent: '',
     }
-    const { flushBridgePendingToDb } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
+    const { flushBridgePendingToDb } = await import('../../packages/server/src/modules/studio/services/chat-run/bridge-message')
 
     const persistedId = flushBridgePendingToDb(state, 'session-hermes', 'run-hermes')
 

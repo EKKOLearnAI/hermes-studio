@@ -1,1 +1,1 @@
-export * from '../../../modules/studio/contracts/runs/session'
+export * from '../../../modules/studio/services/chat-run/types'

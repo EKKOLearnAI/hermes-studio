@@ -8,6 +8,7 @@ import {
 import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
 import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
 import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
+import '../../packages/server/src/bootstrap/chat-agent-runtime-adapter'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
@@ -494,6 +495,8 @@ describe('group chat approval and context baseline', () => {
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     const chatRun = new ChatRunSocket(groupServer.getIO())
+    ;(chatRun as any).bridge.interrupt = vi.fn(async () => ({ ok: true, synced: true }))
+    ;(chatRun as any).bridge.goalPause = vi.fn(async () => ({ ok: true }))
     const abortSession = vi.spyOn(chatRun, 'abortSession')
     const agent = await groupServer.agentClients.createAgent({
       agentId: 'agent-1',

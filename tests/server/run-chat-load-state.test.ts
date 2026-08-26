@@ -27,7 +27,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor', () => ({
   SUMMARY_PREFIX: '[Previous context summary]',
   countTokens: vi.fn(() => 0),
 }))
@@ -36,23 +36,23 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression', () => ({
   buildCompressedHistory: vi.fn(),
   buildDbHistory: buildDbHistoryMock,
   buildSnapshotAwareHistory: buildSnapshotAwareHistoryMock,
   getOrCreateSession: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: vi.fn(),
   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/message-format', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/message-format', () => ({
   handleMessage: vi.fn((messages: any[]) => messages),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/content-blocks', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/content-blocks', () => ({
   contentBlocksToString: vi.fn((value: any) => String(value || '')),
   extractTextForPreview: vi.fn((value: any) => String(value || '')),
   isContentBlockArray: vi.fn(() => false),
@@ -63,15 +63,15 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/sse-utils', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/sse-utils', () => ({
   readSseFrames: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/response-utils', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/response-utils', () => ({
   extractResponseText: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/response-stream', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/response-stream', () => ({
   applyResponseStreamEvent: vi.fn(),
   flushResponseRunToDb: vi.fn(),
 }))
@@ -125,7 +125,7 @@ describe('loadSessionStateFromDb', () => {
   })
 
   it('hydrates persisted usage without reconstructing complete history on resume', async () => {
-    const { loadSessionStateFromDb } = await import('../../packages/server/src/services/hermes/run-chat/load-state')
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
 
     const state = await loadSessionStateFromDb('session-1', new Map())
 
@@ -152,7 +152,7 @@ describe('loadSessionStateFromDb', () => {
         timestamp: 100,
       }],
     })
-    const { loadSessionStateFromDb } = await import('../../packages/server/src/services/hermes/run-chat/load-state')
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
 
     const state = await loadSessionStateFromDb('session-1', new Map())
 

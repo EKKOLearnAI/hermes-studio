@@ -29,7 +29,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor', () => ({
   countTokens: vi.fn(() => 1),
   SUMMARY_PREFIX: '[Summary] ',
 }))
@@ -38,8 +38,8 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   getCompressionSnapshot: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', async () => {
-  const actual = await vi.importActual<any>('../../packages/server/src/services/hermes/run-chat/compression')
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression', async () => {
+  const actual = await vi.importActual<any>('../../packages/server/src/modules/studio/services/chat-run/compression')
   return {
     ...actual,
     buildDbHistory: buildDbHistoryMock,
@@ -49,7 +49,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/compression', async 
   }
 })
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
   contextTokensWithCachedOverhead: vi.fn((_state, tokens) => tokens),
   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
@@ -90,7 +90,7 @@ describe('resumeBridgeRun', () => {
   })
 
   it('continues polling a resumed workflow run without judging goals when a cli continuation is queued', async () => {
-    const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     const { nsp, emitted } = createNamespace()
     const socket = { id: 'socket-1', connected: true, emit: vi.fn() }
     const sessionMap = new Map<string, any>()
@@ -220,7 +220,7 @@ describe('resumeBridgeRun', () => {
   it.each(['cli', 'global_agent'] as const)(
     'preserves standing-goal evaluation and continuation source for a resumed %s run when a workflow continuation is queued',
     async (runSource) => {
-      const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
       const { nsp } = createNamespace()
       const socket = { id: 'socket-1', connected: true, emit: vi.fn() }
       const sessionMap = new Map<string, any>()
@@ -320,7 +320,7 @@ describe('resumeBridgeRun', () => {
   )
 
   it('completes a timed-out abort when the resumed bridge run reaches a terminal state', async () => {
-    const { resumeBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     const { nsp, emitted } = createNamespace()
     const socket = { id: 'socket-1', connected: true, emit: vi.fn() }
     const sessionMap = new Map<string, any>()

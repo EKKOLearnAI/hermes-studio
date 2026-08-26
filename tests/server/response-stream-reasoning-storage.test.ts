@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { applyResponseStreamEvent, flushResponseRunToDb } from '../../packages/server/src/services/hermes/run-chat/response-stream'
-import type { SessionState } from '../../packages/server/src/services/hermes/run-chat/types'
+import { applyResponseStreamEvent, flushResponseRunToDb } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
+import type { SessionState } from '../../packages/server/src/modules/studio/services/chat-run/types'
 
 const { addMessageMock } = vi.hoisted(() => ({
   addMessageMock: vi.fn(),
