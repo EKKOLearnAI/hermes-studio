@@ -5,7 +5,7 @@ import {
   emitAck,
 } from './group-chat-test-helpers'
 import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/middleware/user-auth'
+import { authenticateUserToken, isAuthEnabled } from '../../packages/server/src/modules/studio/middleware/auth'
 import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 describe('group chat structured agent mentions', () => {

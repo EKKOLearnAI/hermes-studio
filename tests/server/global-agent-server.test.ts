@@ -50,7 +50,7 @@ const chatRunMocks = vi.hoisted(() => ({
   clearSessionHistory: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   authenticateUserToken: authMocks.authenticateUserToken,
 }))
 

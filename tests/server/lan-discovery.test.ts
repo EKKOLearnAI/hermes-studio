@@ -232,7 +232,7 @@ describe('LAN discovery', () => {
   })
 
   it('registers device request routes before auth and device management routes behind super admin auth', () => {
-    const source = readFileSync('packages/server/src/routes/index.ts', 'utf8')
+    const source = readFileSync('packages/server/src/bootstrap/routes.ts', 'utf8')
     const deviceRoutesSource = readFileSync('packages/server/src/routes/devices.ts', 'utf8')
     const mcuDeviceRoutesSource = readFileSync('packages/server/src/routes/mcu-devices.ts', 'utf8')
     const bootstrapSource = readFileSync('packages/server/src/index.ts', 'utf8')

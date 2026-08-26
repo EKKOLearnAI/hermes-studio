@@ -9,7 +9,7 @@ import { GroupChatServer } from '../../packages/server/src/services/hermes/group
 
 const dbState = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
 vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => dbState.current }))
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
     isAuthEnabled: vi.fn(async () => false),
     authenticateUserToken: vi.fn(async () => null),
 }))

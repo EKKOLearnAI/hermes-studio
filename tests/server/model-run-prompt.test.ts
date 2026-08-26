@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const issueModelRunJwtMock = vi.hoisted(() => vi.fn(async () => 'model-run-token'))
 const homes: string[] = []
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   issueModelRunJwt: issueModelRunJwtMock,
 }))
 

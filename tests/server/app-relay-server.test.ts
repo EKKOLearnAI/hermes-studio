@@ -37,12 +37,12 @@ const clientSocketMocks = vi.hoisted(() => {
   return { io, sockets }
 })
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   authenticateUserToken: authMocks.authenticateUserToken,
   inspectAppUserToken: authMocks.inspectAppUserToken,
 }))
 
-vi.mock('../../packages/server/src/services/system-info', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   getDeviceId: authMocks.getDeviceId,
 }))
 
@@ -50,7 +50,7 @@ vi.mock('socket.io-client', () => ({
   io: clientSocketMocks.io,
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     port: 8648,
     appRelay: { entitlementRequired: false },
@@ -120,7 +120,7 @@ describe('LocalAppRelayServer', () => {
   it('accepts the selected machine with a valid token or in login-only mode', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any)
     server.init()
 
@@ -169,7 +169,7 @@ describe('LocalAppRelayServer', () => {
       tokenId: 'entitlement-001',
     }
     const verifyEntitlementToken = vi.fn((token: string) => token === 'signed-entitlement' ? entitlement : null)
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       entitlementRequired: true,
@@ -226,7 +226,7 @@ describe('LocalAppRelayServer', () => {
   it('records the signed mode and token lifetime when an entitlement has expired', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       entitlementRequired: true,
@@ -271,7 +271,7 @@ describe('LocalAppRelayServer', () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
     const fetchImpl = vi.fn()
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       fetchImpl: fetchImpl as any,
@@ -320,7 +320,7 @@ describe('LocalAppRelayServer', () => {
   it('tracks an authenticated App as online, notifies it when deleted, and rejects its next connection', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, { machineId: 'hwui_local_machine_1234567890' })
     server.init()
     authMocks.inspectAppUserToken.mockResolvedValue({
@@ -378,7 +378,7 @@ describe('LocalAppRelayServer', () => {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }))
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -446,7 +446,7 @@ describe('LocalAppRelayServer', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -489,7 +489,7 @@ describe('LocalAppRelayServer', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -558,7 +558,7 @@ describe('LocalAppRelayServer', () => {
         'content-length': '5',
       },
     }))
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -610,7 +610,7 @@ describe('LocalAppRelayServer', () => {
   it('bridges /chat-run directly with the same App socket events as the cloud relay', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -703,7 +703,7 @@ describe('LocalAppRelayServer', () => {
   it('bridges /group-chat with authenticated Socket.IO acknowledgements', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',
@@ -759,7 +759,7 @@ describe('LocalAppRelayServer', () => {
   it('bridges workflow status subscriptions with the authenticated Studio token', async () => {
     const namespace = createMockNamespace()
     const io = { of: vi.fn(() => namespace) }
-    const { LocalAppRelayServer } = await import('../../packages/server/src/services/app-relay/server')
+    const { LocalAppRelayServer } = await import('../../packages/server/src/modules/studio/services/app-relay/server')
     const server = new LocalAppRelayServer(io as any, {
       machineId: 'hwui_local_machine_1234567890',
       localBaseUrl: 'http://127.0.0.1:8748',

@@ -114,7 +114,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getProfileDir: (profile: string) => `/tmp/hermes-bridge-final-context/${profile || 'default'}`,
 }))
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   issueModelRunJwt: issueModelRunJwtMock,
 }))
 

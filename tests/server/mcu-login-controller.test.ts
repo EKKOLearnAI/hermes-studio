@@ -35,7 +35,7 @@ describe('MCU login controller', () => {
     return {
       ctrl: await import('../../packages/server/src/controllers/auth'),
       users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
-      auth: await import('../../packages/server/src/middleware/user-auth'),
+      auth: await import('../../packages/server/src/modules/studio/middleware/auth'),
     }
   }
 

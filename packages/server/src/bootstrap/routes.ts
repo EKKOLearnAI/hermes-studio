@@ -3,6 +3,7 @@ import { apiDocsRoutes } from '../modules/studio'
 import { healthRoutes } from './health'
 import { updateRoutes } from './update'
 import { themeRoutes } from '../modules/studio/routes/theme'
+import { appConnectionRoutes, appRelayRoutes } from './app-relay'
 
 // Shared legacy route modules. Move these imports into their owning module as
 // each vertical slice is migrated.
@@ -12,8 +13,6 @@ import { authPublicRoutes, authProtectedRoutes } from '../routes/auth'
 import { devicePublicRoutes, deviceRoutes } from '../routes/devices'
 import { mcuDeviceRoutes } from '../routes/mcu-devices'
 import { codingAgentRoutes } from '../routes/coding-agents'
-import { appRelayRoutes } from '../routes/app-relay'
-import { appConnectionRoutes } from '../routes/app-connections'
 import { socialMessageRoutes } from '../routes/social-messages'
 import { claudeCodeProxyRoutes } from '../routes/claude-code-proxy'
 import { codexProxyRoutes } from '../routes/codex-proxy'

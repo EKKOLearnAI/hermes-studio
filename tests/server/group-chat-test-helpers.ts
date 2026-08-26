@@ -13,7 +13,7 @@ vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index'
   getDb: () => groupChatDbMock.current,
   isSqliteAvailable: () => groupChatDbMock.current !== null,
 }))
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   isAuthEnabled: vi.fn(async () => groupChatAuthMock.enabled),
   authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
 }))

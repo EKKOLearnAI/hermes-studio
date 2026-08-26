@@ -20,8 +20,8 @@ describe('App connection authorization', () => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/services/lan-discovery')
-    vi.doUnmock('../../packages/server/src/services/system-info')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/network/lan-discovery')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/system-info')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -33,17 +33,17 @@ describe('App connection authorization', () => {
   it('records the authorizing user and exchanges once for that user\'s 30-day device token', async () => {
     const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    vi.doMock('../../packages/server/src/services/lan-discovery', async importOriginal => ({
-      ...await importOriginal<typeof import('../../packages/server/src/services/lan-discovery')>(),
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async importOriginal => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(),
       getLanBackendUrlForRequest: () => 'http://192.168.1.20:8648',
     }))
-    vi.doMock('../../packages/server/src/services/system-info', async importOriginal => ({
-      ...await importOriginal<typeof import('../../packages/server/src/services/system-info')>(),
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async importOriginal => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/public/system-info')>(),
       getDeviceId: async () => 'hwui_local_machine_1234567890',
     }))
-    const appConnectionsController = await import('../../packages/server/src/controllers/app-connections')
+    const appConnectionsController = await import('../../packages/server/src/modules/studio/controllers/app-connections')
     const authController = await import('../../packages/server/src/controllers/auth')
-    const authMiddleware = await import('../../packages/server/src/middleware/user-auth')
+    const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
     const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
 
     const authorizationCtx = {
@@ -212,7 +212,7 @@ describe('App connection authorization', () => {
       defaultProfile: 'default',
     })
     const authController = await import('../../packages/server/src/controllers/auth')
-    const authMiddleware = await import('../../packages/server/src/middleware/user-auth')
+    const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
     const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
     const ctx = {
       request: {

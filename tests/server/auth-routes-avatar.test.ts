@@ -22,7 +22,7 @@ vi.mock('../../packages/server/src/controllers/auth', () => ({
 }))
 
 const requireSuperAdminMock = vi.fn(async (_ctx: any, next: any) => { await next() })
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   requireSuperAdmin: requireSuperAdminMock,
   issueUserJwt: vi.fn(async () => 'jwt'),
 }))

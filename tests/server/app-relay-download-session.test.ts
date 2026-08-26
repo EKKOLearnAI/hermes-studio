@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   RelayDownloadSessionError,
   RelayDownloadSessions,
-} from '../../packages/server/src/services/app-relay/download-session'
+} from '../../packages/server/src/modules/studio/services/app-relay/download-session'
 
 describe('RelayDownloadSessions diagnostics', () => {
   it('finishes at the declared byte length without requiring an extra EOF read', async () => {
