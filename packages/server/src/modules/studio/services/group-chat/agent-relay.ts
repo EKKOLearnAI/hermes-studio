@@ -1808,7 +1808,7 @@ class OutboundRelayConnection {
           ...(request.workspaceApi
             ? {
                 remoteWorkspaceApi: {
-                  endpoint: `${this.link.cloudOrigin}/api/hermes/group-chat/remote-workspace/v1`,
+                  endpoint: `${this.link.cloudOrigin}/api/studio/group-chat/remote-workspace/v1`,
                   token: request.workspaceApi.token,
                   access: request.workspaceApi.access,
                 },

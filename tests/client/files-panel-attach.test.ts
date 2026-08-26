@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { defineComponent } from 'vue'
-import type { FileEntry } from '@/api/hermes/files'
+import type { FileEntry } from '@/api/studio/files'
 
 const fetchSessionAttachment = vi.hoisted(() => vi.fn())
 const fetchGroupAttachment = vi.hoisted(() => vi.fn())
 const message = vi.hoisted(() => ({ error: vi.fn() }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchSessionWorkspaceAttachmentBlob: fetchSessionAttachment,
 }))
-vi.mock('@/api/hermes/group-chat', () => ({
+vi.mock('@/api/studio/group-chat', () => ({
   fetchGroupWorkspaceAttachmentBlob: fetchGroupAttachment,
 }))
 vi.mock('vue-i18n', () => ({

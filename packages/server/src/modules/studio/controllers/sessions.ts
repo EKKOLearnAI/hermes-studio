@@ -556,7 +556,7 @@ export async function count(ctx: any) {
 
 /**
  * List Hermes History sessions, including Web UI/API Server sessions.
- * GET /api/hermes/sessions/hermes?source=&limit=
+ * GET /api/studio/sessions/hermes?source=&limit=
  */
 export async function listHermesSessions(ctx: any) {
   const source = (ctx.query.source as string) || undefined
@@ -590,7 +590,7 @@ export async function listHermesSessions(ctx: any) {
 
 /**
  * List the first page of each Hermes History source group.
- * GET /api/hermes/sessions/hermes/groups?limit=&include=&profile=
+ * GET /api/studio/sessions/hermes/groups?limit=&include=&profile=
  */
 export async function listHermesSessionGroups(ctx: any) {
   const requestedLimit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 20
@@ -1082,7 +1082,7 @@ export async function getContext(ctx: any) {
 
 /**
  * Get Hermes History session detail, including Web UI/API Server sessions.
- * GET /api/hermes/sessions/hermes/:id
+ * GET /api/studio/sessions/hermes/:id
  */
 export async function getHermesSession(ctx: any) {
   const profile = requestedProfile(ctx)
@@ -1718,7 +1718,7 @@ async function isSafeWorkspaceFolderEntry(entry: any, fullPath: string, basePath
 
 /**
  * List folders for the workspace folder picker.
- * GET /api/hermes/workspace/folders?path=<path>
+ * GET /api/studio/workspace/folders?path=<path>
  *
  * By default this is rooted at the current user's home directory, or at
  * WORKSPACE_BASE when configured. On native Windows without WORKSPACE_BASE, the

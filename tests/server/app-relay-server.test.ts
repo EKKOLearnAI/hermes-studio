@@ -396,7 +396,7 @@ describe('LocalAppRelayServer', () => {
     app.__handlers.get('http.request')({
       id: 'protected-before-login',
       method: 'GET',
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
     }, deniedAck)
     await vi.waitFor(() => expect(deniedAck).toHaveBeenCalledWith(expect.objectContaining({
       status: 401,
@@ -428,7 +428,7 @@ describe('LocalAppRelayServer', () => {
     app.__handlers.get('http.request')({
       id: 'protected-after-login',
       method: 'GET',
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
     }, protectedAck)
     await vi.waitFor(() => expect(protectedAck).toHaveBeenCalledWith(expect.objectContaining({ status: 200 })))
     const protectedHeaders = fetchImpl.mock.calls[1][1]?.headers as Headers
@@ -507,7 +507,7 @@ describe('LocalAppRelayServer', () => {
     app.__handlers.get('http.request')({
       id: 'http-1',
       method: 'GET',
-      path: '/api/hermes/sessions?profile=default',
+      path: '/api/studio/sessions?profile=default',
       headers: { 'if-match': '"revision-1"' },
     }, ack)
 
@@ -517,7 +517,7 @@ describe('LocalAppRelayServer', () => {
       body: '{"sessions":[]}',
     })))
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://127.0.0.1:8748/api/hermes/sessions?profile=default',
+      'http://127.0.0.1:8748/api/studio/sessions?profile=default',
       expect.objectContaining({ method: 'GET' }),
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
@@ -533,7 +533,7 @@ describe('LocalAppRelayServer', () => {
     app.__handlers.get('http.request')({
       id: 'binary-1',
       method: 'POST',
-      path: '/api/hermes/tts/synthesize',
+      path: '/api/studio/tts/synthesize',
       headers: { 'content-type': 'application/octet-stream' },
       bodyBytes: Uint8Array.from([1, 2, 3]),
     }, binaryAck)
@@ -580,7 +580,7 @@ describe('LocalAppRelayServer', () => {
     app.__handlers.get('http.request')({
       id: 'download-open',
       method: 'GET',
-      path: '/api/hermes/download?path=test.bin',
+      path: '/api/studio/files/download?path=test.bin',
       streamBinary: true,
     }, openAck)
     await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({

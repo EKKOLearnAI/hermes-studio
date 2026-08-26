@@ -50,17 +50,17 @@ const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
   getConversationDetailFromDb: getConversationDetailFromDbMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/conversations', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/conversations', () => ({
   listConversationSummaries: listConversationSummariesMock,
   getConversationDetail: getConversationDetailMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     warn: loggerWarnMock,
     error: vi.fn(),
@@ -74,7 +74,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   listSessions: vi.fn(),
   getSession: getSessionMock,
   deleteSession: vi.fn(),
@@ -82,7 +82,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   renameSession: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
   listSessionSummaries: listSessionSummariesMock,
   listSessionSummaryGroups: listSessionSummaryGroupsMock,
   searchSessionSummaries: vi.fn(),
@@ -140,11 +140,11 @@ vi.mock('../../packages/server/src/modules/studio/controllers/group-chat', () =>
   getGroupChatServer: getGroupChatServerMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/models/context', () => ({
   getModelContextLength: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: getActiveProfileNameMock,
   getActiveProfileDir: () => '/tmp/hermes-test/default',
   getProfileDir: (name: string) => `/tmp/hermes-test/${name || 'default'}`,
@@ -159,7 +159,7 @@ vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => 
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn().mockImplementation(() => ({
     switchSessionModel: bridgeSwitchSessionModelMock,
   })),
@@ -168,15 +168,15 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   })),
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/config', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/server-registry', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/server-registry', () => ({
   getChatRunServer: getChatRunServerMock,
 }))
 
@@ -188,7 +188,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor/export-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor/export-compressor', () => ({
   buildDbExportHistory: buildDbExportHistoryMock,
   ExportCompressor: class {
     async compress(messages: any[]) {

@@ -116,7 +116,7 @@ describe('group chat Agent handoff security limits', () => {
     expect(ctx.status).toBe(202)
     expect(ctx.body).toEqual({ ok: true, accepted: true })
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^http:\/\/47\.243\.215\.84:8088\/api\/hermes\/group-chat\/invites\/ROOMCODE\/agent-links\//),
+      expect.stringMatching(/^http:\/\/47\.243\.215\.84:8088\/api\/studio\/group-chat\/invites\/ROOMCODE\/agent-links\//),
       expect.objectContaining({ method: 'POST' }),
     )
   })

@@ -154,7 +154,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
     if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
-    if (pathname === '/api/hermes/group-chat/rooms') {
+    if (pathname === '/api/studio/group-chat/rooms') {
       const offset = Number(url.searchParams.get('offset') || 0)
       const limit = Number(url.searchParams.get('limit') || 50)
       return json({
@@ -165,7 +165,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         hasMore: offset + limit < groupRooms.length,
       })
     }
-    const groupRoomMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)$/)
+    const groupRoomMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)$/)
     if (groupRoomMatch) {
       const roomId = decodeURIComponent(groupRoomMatch[1])
       const room = groupRooms.find(item => item.id === roomId)
@@ -181,7 +181,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         hasMore: false,
       })
     }
-    if (pathname === '/api/hermes/sessions/hermes/groups') {
+    if (pathname === '/api/studio/sessions/hermes/groups') {
       const limit = Number(url.searchParams.get('limit') || 20)
       const includedIds = new Set(url.searchParams.getAll('include'))
       const bySource = new Map<string, typeof sessions>()
@@ -199,7 +199,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         included: sessions.filter(session => includedIds.has(session.id)),
       })
     }
-    if (pathname === '/api/hermes/sessions/hermes') {
+    if (pathname === '/api/studio/sessions/hermes') {
       const source = url.searchParams.get('source')
       if (!source) return json({ sessions })
       const offset = Number(url.searchParams.get('offset') || 0)
@@ -215,7 +215,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
       })
     }
 
-    const detailMatch = pathname.match(/^\/api\/hermes\/sessions\/hermes\/([^/]+)$/)
+    const detailMatch = pathname.match(/^\/api\/studio\/sessions\/hermes\/([^/]+)$/)
     if (detailMatch) {
       const detail = detailFor(decodeURIComponent(detailMatch[1]), sessions)
       return detail ? json({ session: detail }) : json({ error: 'Session not found' }, 404)

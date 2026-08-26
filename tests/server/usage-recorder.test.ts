@@ -6,7 +6,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () 
   updateUsage: updateUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn() },
 }))
 

@@ -492,7 +492,7 @@ describe('group chat baseline behavior', () => {
     )).toBeNull()
     expect(storage.getRoomAgents('room-1')).toEqual([])
 
-    const { getDb } = await import('../../packages/server/src/db')
+    const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
     getDb()!.prepare('UPDATE gc_room_agents SET removedAt = 0 WHERE id = ?').run(roomAgent.id)
     expect(storage.getRoomAgents('room-1')).toHaveLength(1)
     storage.init()

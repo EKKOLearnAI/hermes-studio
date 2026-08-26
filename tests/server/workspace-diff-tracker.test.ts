@@ -19,7 +19,7 @@ vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index'
   jsonSet: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     appHome: state.appHome,
   },
@@ -38,6 +38,7 @@ describe('workspace diff tracker', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workspace-diff-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'diffs.db'))
+    await import('../../packages/server/src/bootstrap/coding-agent-adapters')
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
@@ -139,7 +140,7 @@ describe('workspace diff tracker', () => {
 
   it('persists the exact final assistant row id through the coding-agent completion path', async () => {
     const { startWorkspaceRunCheckpoint } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
-    const { CodingAgentRunManager } = await import('../../packages/server/src/services/coding-agents/runtime/run-manager')
+    const { CodingAgentRunManager } = await import('../../packages/server/src/modules/coding-agents/services/runtime/run-manager')
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {

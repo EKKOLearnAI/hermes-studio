@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { respondToEkkoToolApproval } from '../../packages/server/src/services/ekko-agent/approvals'
-import { respondToEkkoClarification } from '../../packages/server/src/services/ekko-agent/clarifications'
+import { respondToEkkoToolApproval } from '../../packages/server/src/modules/ekko/services/approvals'
+import { respondToEkkoClarification } from '../../packages/server/src/modules/ekko/services/clarifications'
 
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
@@ -51,15 +51,15 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
   }
 })
 
-vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/manager', () => ({
   getGlobalEkkoAgent: getGlobalEkkoAgentMock,
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/mcp', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/mcp', () => ({
   resolveEkkoMcpServers: vi.fn(() => undefined),
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/provider-runtime', () => ({
   resolveEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
 }))
 
@@ -80,8 +80,8 @@ vi.mock('../../packages/ekko-agent/src', () => ({
 }))
 
 vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', async () => {
-  const approvals = await import('../../packages/server/src/services/ekko-agent/approvals')
-  const clarifications = await import('../../packages/server/src/services/ekko-agent/clarifications')
+  const approvals = await import('../../packages/server/src/modules/ekko/services/approvals')
+  const clarifications = await import('../../packages/server/src/modules/ekko/services/clarifications')
   const reasoning = await import('../../packages/ekko-agent/src/model/messages')
   return {
     getChatEkkoAgent: getGlobalEkkoAgentMock,

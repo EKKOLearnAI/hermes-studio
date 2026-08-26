@@ -32,7 +32,7 @@ vi.mock('../../packages/server/src/modules/studio/services/context-compressor', 
   countTokens: vi.fn(() => 0),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
@@ -59,7 +59,7 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/content-bloc
   convertContentBlocks: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 

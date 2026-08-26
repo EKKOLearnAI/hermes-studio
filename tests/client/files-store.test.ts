@@ -13,7 +13,7 @@ const mockFilesApi = vi.hoisted(() => ({
   uploadFiles: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/files', () => mockFilesApi)
+vi.mock('@/api/studio/files', () => mockFilesApi)
 
 const mockSessionsApi = vi.hoisted(() => ({
   copySessionWorkspaceFile: vi.fn(),
@@ -26,7 +26,7 @@ const mockSessionsApi = vi.hoisted(() => ({
   writeSessionWorkspaceFile: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/sessions', () => mockSessionsApi)
+vi.mock('@/api/studio/sessions', () => mockSessionsApi)
 
 const mockGroupApi = vi.hoisted(() => ({
   copyGroupWorkspaceFile: vi.fn(),
@@ -39,10 +39,10 @@ const mockGroupApi = vi.hoisted(() => ({
   writeGroupWorkspaceFile: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/group-chat', () => mockGroupApi)
+vi.mock('@/api/studio/group-chat', () => mockGroupApi)
 
 import { getLanguageFromPath, isPreviewableFile, isTextFile, useFilesStore } from '@/stores/hermes/files'
-import type { FileEntry } from '@/api/hermes/files'
+import type { FileEntry } from '@/api/studio/files'
 
 function deferred<T>() {
   let resolve!: (value: T) => void

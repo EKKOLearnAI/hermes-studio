@@ -1,6 +1,6 @@
 # Coding Agent services
 
-`packages/server/src/services/coding-agents/` is the implementation home for
+`packages/server/src/modules/coding-agents/` is the implementation home for
 managed Claude Code, Codex, and Pi runs. The services share one canonical event
 pipeline, one stream subscription model, and one persistence path while keeping
 agent-specific process and protocol behavior in named subdirectories.

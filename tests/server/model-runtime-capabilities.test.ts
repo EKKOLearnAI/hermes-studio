@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { getModelRuntimeCapabilities } from '../../packages/server/src/services/hermes/model-context'
+import { getModelRuntimeCapabilities } from '../../packages/server/src/modules/hermes/services/models/context'
 
 const homes: string[] = []
 

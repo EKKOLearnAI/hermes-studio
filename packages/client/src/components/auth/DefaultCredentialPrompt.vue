@@ -3,7 +3,7 @@ import { ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { NButton, NModal } from "naive-ui";
-import { fetchCurrentUser } from "@/api/auth";
+import { fetchCurrentUser } from "@/api/studio/auth";
 import { getApiKey } from "@/api/client";
 
 const { t } = useI18n();

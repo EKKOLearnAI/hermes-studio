@@ -185,17 +185,17 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
         model_visibility: {},
       })
     }
-    if (pathname === '/api/hermes/group-chat/agent-presets' && request.method() === 'GET') {
+    if (pathname === '/api/studio/group-chat/agent-presets' && request.method() === 'GET') {
       return json({ presets: agentPresets })
     }
-    if (pathname === '/api/hermes/group-chat/agent-presets' && request.method() === 'POST') {
+    if (pathname === '/api/studio/group-chat/agent-presets' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() || '{}')
       presetOperations.push({ method: 'POST', body })
       const preset = { ...body, id: `preset-${agentPresets.length + 1}`, available: true, validationError: '', createdAt: 2, updatedAt: 2 }
       agentPresets = [preset, ...agentPresets]
       return json({ preset }, 201)
     }
-    const presetMatch = pathname.match(/^\/api\/hermes\/group-chat\/agent-presets\/([^/]+)$/)
+    const presetMatch = pathname.match(/^\/api\/studio\/group-chat\/agent-presets\/([^/]+)$/)
     if (presetMatch && request.method() === 'PUT') {
       const body = JSON.parse(request.postData() || '{}')
       presetOperations.push({ method: 'PUT', id: presetMatch[1], body })
@@ -209,13 +209,13 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       agentPresets = agentPresets.filter(item => item.id !== presetMatch[1])
       return json({ success: true })
     }
-    if (pathname === '/api/hermes/group-chat/rooms' && request.method() === 'POST') {
+    if (pathname === '/api/studio/group-chat/rooms' && request.method() === 'POST') {
       const body = JSON.parse(request.postData() || '{}')
       createdRooms.push(body)
       const room = { ...baseRooms[0], id: 'room-created', name: body.name, inviteCode: body.inviteCode }
       return json({ room, agents: [], agentResults: [] })
     }
-    if (pathname === '/api/hermes/group-chat/rooms') {
+    if (pathname === '/api/studio/group-chat/rooms') {
       return json({
         rooms: rooms.map(room => ({
           ...room,
@@ -231,7 +231,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       })
     }
 
-    const addAgentMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/agents$/)
+    const addAgentMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/agents$/)
     if (addAgentMatch && request.method() === 'POST') {
       const roomId = decodeURIComponent(addAgentMatch[1])
       const body = JSON.parse(request.postData() || '{}')
@@ -239,7 +239,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return json({ agent: { ...body, id: 'agent-from-preset', roomId, agentId: 'runtime-from-preset', invited: 0 } })
     }
 
-    const handoffContinueMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs\/([^/]+)\/continue$/)
+    const handoffContinueMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/handoffs\/([^/]+)\/continue$/)
     if (handoffContinueMatch && request.method() === 'POST') {
       const chain = handoffChains.find(item => item.roomId === decodeURIComponent(handoffContinueMatch[1])
         && item.chainId === decodeURIComponent(handoffContinueMatch[2]))
@@ -252,7 +252,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return json({ success: true, attemptId: chain.attemptId, status: 'continuing', chain }, 202)
     }
 
-    const handoffListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/handoffs$/)
+    const handoffListMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/handoffs$/)
     if (handoffListMatch && request.method() === 'GET') {
       const roomId = decodeURIComponent(handoffListMatch[1])
       const room = rooms.find(item => item.id === roomId)
@@ -266,7 +266,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       })
     }
 
-    const configMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/config$/)
+    const configMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/config$/)
     if (configMatch && request.method() === 'PUT') {
       const roomId = decodeURIComponent(configMatch[1])
       const body = JSON.parse(request.postData() || '{}')
@@ -281,7 +281,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return json({ room })
     }
 
-    const inviteCodeMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/invite-code$/)
+    const inviteCodeMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/invite-code$/)
     if (inviteCodeMatch && request.method() === 'PUT') {
       const roomId = decodeURIComponent(inviteCodeMatch[1])
       const body = JSON.parse(request.postData() || '{}')
@@ -293,7 +293,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return json({ success: true })
     }
 
-    const guestAgentPolicyMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/guest-agent-policy$/)
+    const guestAgentPolicyMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/guest-agent-policy$/)
     if (guestAgentPolicyMatch && request.method() === 'PUT') {
       const roomId = decodeURIComponent(guestAgentPolicyMatch[1])
       const body = JSON.parse(request.postData() || '{}')
@@ -310,7 +310,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return json({ policy })
     }
 
-    const workspaceListMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
+    const workspaceListMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/workspace-files\/list$/)
     if (workspaceListMatch) {
       return json({
         entries: [{ name: 'package.json', path: 'package.json', absolutePath: '/tmp/alpha/package.json', isDir: false, size: 25, modTime: '2026-07-17T00:00:00.000Z' }],
@@ -319,7 +319,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       })
     }
 
-    const contentMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)\/workspace-file\/content$/)
+    const contentMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)\/workspace-file\/content$/)
     if (contentMatch) {
       return route.fulfill({
         status: 200,
@@ -328,7 +328,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       })
     }
 
-    const detailMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)$/)
+    const detailMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)$/)
     if (detailMatch) {
       const roomId = decodeURIComponent(detailMatch[1])
       const room = rooms.find(r => r.id === roomId)
@@ -1175,7 +1175,7 @@ test.describe('group chat room deep links', () => {
 
     const response = page.waitForResponse(item =>
       item.request().method() === 'POST'
-      && item.url().endsWith('/api/hermes/group-chat/rooms/room-alpha/agents'))
+      && item.url().endsWith('/api/studio/group-chat/rooms/room-alpha/agents'))
     await modal.getByRole('button', { name: 'Add', exact: true }).click()
     await expect((await response).status()).toBe(200)
     expect(api.addedAgents).toEqual([{
@@ -1215,7 +1215,7 @@ test.describe('group chat room deep links', () => {
 
     const response = page.waitForResponse(item =>
       item.request().method() === 'POST'
-      && item.url().endsWith('/api/hermes/group-chat/rooms'))
+      && item.url().endsWith('/api/studio/group-chat/rooms'))
     await drawer.getByRole('button', { name: 'Create', exact: true }).click()
     await expect((await response).status()).toBe(200)
     expect(api.createdRooms).toEqual([
@@ -1309,7 +1309,7 @@ test.describe('group chat room deep links', () => {
     await expect(updateButton).toBeDisabled()
 
     await inviteInput.fill(' NEW456 ')
-    const successResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/invite-code'))
+    const successResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/studio/group-chat/rooms/room-alpha/invite-code'))
     await updateButton.click()
     await expect((await successResponse).status()).toBe(200)
     expect(api.inviteCodeUpdates.at(-1)).toEqual({ roomId: 'room-alpha', body: { inviteCode: 'NEW456' } })
@@ -1317,7 +1317,7 @@ test.describe('group chat room deep links', () => {
     await expect(updateButton).toBeDisabled()
 
     await inviteInput.fill('FAILCODE')
-    const failureResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/invite-code'))
+    const failureResponse = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/api/studio/group-chat/rooms/room-alpha/invite-code'))
     await updateButton.click()
     await expect((await failureResponse).status()).toBe(409)
 
@@ -1341,7 +1341,7 @@ test.describe('group chat room deep links', () => {
 
     const response = page.waitForResponse(item =>
       item.request().method() === 'PUT'
-      && item.url().includes('/api/hermes/group-chat/rooms/room-alpha/guest-agent-policy'))
+      && item.url().includes('/api/studio/group-chat/rooms/room-alpha/guest-agent-policy'))
     await section.getByRole('button', { name: 'Save' }).click()
     await expect((await response).status()).toBe(200)
     expect(api.guestAgentPolicyUpdates.at(-1)).toEqual({
@@ -1368,7 +1368,7 @@ test.describe('group chat room deep links', () => {
     await section.locator('.n-input-number input').fill('6')
     const configResponse = page.waitForResponse(response =>
       response.request().method() === 'PUT'
-      && response.url().includes('/api/hermes/group-chat/rooms/room-alpha/config'))
+      && response.url().includes('/api/studio/group-chat/rooms/room-alpha/config'))
     await section.getByRole('button', { name: 'Save' }).click()
     await expect((await configResponse).status()).toBe(200)
     expect(api.roomConfigUpdates.at(-1)).toMatchObject({
@@ -1507,7 +1507,7 @@ test.describe('group chat room deep links', () => {
     await installMockVoiceCapture(page)
     let transcriptions = 0
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
-    await page.route('**/api/hermes/stt/transcribe', async (route) => {
+    await page.route('**/api/studio/stt/transcribe', async (route) => {
       transcriptions += 1
       await route.fulfill({
         status: 200,

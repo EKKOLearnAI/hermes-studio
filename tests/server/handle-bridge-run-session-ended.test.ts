@@ -35,7 +35,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () 
   updateUsage: mocks.updateUsage,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   bridgeLogger: mocks.bridgeLogger,
 }))

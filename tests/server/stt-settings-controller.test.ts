@@ -404,26 +404,26 @@ describe('stt routes', () => {
     const protectedPaths = sttProtectedRoutes.stack.map((entry: any) => entry.path)
 
     expect(protectedPaths).toEqual(expect.arrayContaining([
-      '/api/hermes/stt/settings',
-      '/api/hermes/stt/local-model',
-      '/api/hermes/stt/local-model/download',
-      '/api/hermes/voice/proxy/:profile/v1/audio/transcriptions',
-      '/api/hermes/stt/profile-status',
-      '/api/hermes/stt/profile-status/missing-audio',
-      '/api/hermes/mcu/voice-turn',
-      '/api/hermes/stt/settings/active',
-      '/api/hermes/stt/settings/:provider',
-      '/api/hermes/stt/settings/:provider',
-      '/api/hermes/stt/settings/:provider/base-url-preset',
-      '/api/hermes/stt/settings/:provider/secret/:secretName',
-      '/api/hermes/stt/local-stream',
-      '/api/hermes/stt/local-stream/:sessionId/chunk',
-      '/api/hermes/stt/local-stream/:sessionId/finish',
-      '/api/hermes/stt/local-stream/:sessionId',
-      '/api/hermes/stt/transcribe',
+      '/api/studio/stt/settings',
+      '/api/studio/stt/local-model',
+      '/api/studio/stt/local-model/download',
+      '/api/studio/voice/proxy/:profile/v1/audio/transcriptions',
+      '/api/studio/stt/profile-status',
+      '/api/studio/stt/profile-status/missing-audio',
+      '/api/studio/mcu/voice-turn',
+      '/api/studio/stt/settings/active',
+      '/api/studio/stt/settings/:provider',
+      '/api/studio/stt/settings/:provider',
+      '/api/studio/stt/settings/:provider/base-url-preset',
+      '/api/studio/stt/settings/:provider/secret/:secretName',
+      '/api/studio/stt/local-stream',
+      '/api/studio/stt/local-stream/:sessionId/chunk',
+      '/api/studio/stt/local-stream/:sessionId/finish',
+      '/api/studio/stt/local-stream/:sessionId',
+      '/api/studio/stt/transcribe',
     ]))
 
-    const transcribeLayer: any = sttProtectedRoutes.stack.find((entry: any) => entry.path === '/api/hermes/stt/transcribe')
+    const transcribeLayer: any = sttProtectedRoutes.stack.find((entry: any) => entry.path === '/api/studio/stt/transcribe')
     const ctx: any = { request: { body: {} }, body: null }
 
     await transcribeLayer.stack[0](ctx, undefined)

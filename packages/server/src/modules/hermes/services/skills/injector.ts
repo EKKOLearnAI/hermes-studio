@@ -52,7 +52,7 @@ export class HermesSkillInjector {
     const candidates = [
       // Production bundle: dist/server/index.js with dist/skills copied by build.
       resolve(baseDir, '../skills'),
-      // Development/test: packages/server/src/services/hermes -> packages/skills.
+      // Development/test: packages/server/src/modules/hermes/services/skills -> packages/skills.
       resolve(baseDir, '../../../../skills'),
       // Development: packages/server/src/modules/hermes/services/skills -> packages/skills.
       resolve(baseDir, '../../../../../../skills'),

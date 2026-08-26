@@ -8,7 +8,7 @@ import {
   isCompressibleContentType,
   selectStaticCompressionEncoding,
   type StaticCompressionOptions,
-} from '../../packages/server/src/middleware/static-compression'
+} from '../../packages/server/src/modules/studio/middleware/static-compression'
 
 interface RawResponse {
   status: number

@@ -7,9 +7,9 @@ const stopOutboundRelayClientMock = vi.hoisted(() => vi.fn())
 const codingAgentShutdownMock = vi.hoisted(() => vi.fn())
 const shutdownLocalSttRuntimeMock = vi.hoisted(() => vi.fn(async () => {}))
 
-vi.mock('../../packages/server/src/db', () => ({ closeDb: closeDbMock }))
-vi.mock('../../packages/server/src/controllers/update', () => ({ stopPreviewRuntime: stopPreviewRuntimeMock }))
-vi.mock('../../packages/server/src/services/hermes/gateway-runner', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ closeDb: closeDbMock }))
+vi.mock('../../packages/server/src/bootstrap/update', () => ({ stopPreviewRuntime: stopPreviewRuntimeMock }))
+vi.mock('../../packages/server/src/modules/hermes/services/gateway/runner', () => ({
   shutdownManagedGateways: shutdownManagedGatewaysMock,
 }))
 vi.mock('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager', () => ({
@@ -18,10 +18,10 @@ vi.mock('../../packages/server/src/modules/studio/services/voice/stt/local-model
 vi.mock('../../packages/server/src/modules/studio/public/global-agent', () => ({
   stopOutboundRelayClient: stopOutboundRelayClientMock,
 }))
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: { shutdown: codingAgentShutdownMock },
 }))
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
@@ -89,7 +89,7 @@ describe('graceful shutdown background delivery ordering', () => {
       }),
     }
     vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
-    const { createShutdownHandler } = await import('../../packages/server/src/services/shutdown')
+    const { createShutdownHandler } = await import('../../packages/server/src/bootstrap/lifecycle')
 
     await createShutdownHandler(httpServer, groupChatServer, chatRunServer, agentBridgeManager)('desktop-request')
 
@@ -113,7 +113,7 @@ describe('graceful shutdown background delivery ordering', () => {
     }
     const httpServer = { close: vi.fn() }
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
-    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/services/shutdown')
+    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/bootstrap/lifecycle')
 
     void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
     await Promise.resolve()
@@ -132,7 +132,7 @@ describe('graceful shutdown background delivery ordering', () => {
     }
     const httpServer = { close: vi.fn() }
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
-    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/services/shutdown')
+    const { createShutdownHandler, getShutdownForceExitMs } = await import('../../packages/server/src/bootstrap/lifecycle')
 
     void createShutdownHandler(httpServer, undefined, undefined, agentBridgeManager)('desktop-request')
     await Promise.resolve()

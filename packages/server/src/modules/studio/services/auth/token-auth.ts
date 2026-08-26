@@ -49,7 +49,7 @@ export function requireAuth(token: string | null) {
     if (!provided || provided !== token) {
       // Skip auth for non-API paths (SPA static files)
       const lowerPath = ctx.path.toLowerCase()
-      if (!lowerPath.startsWith('/api') && !lowerPath.startsWith('/v1') && !lowerPath.startsWith('/upload')) {
+      if (!lowerPath.startsWith('/api') && !lowerPath.startsWith('/v1')) {
         await next()
         return
       }

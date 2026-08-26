@@ -35,7 +35,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 export function voiceProxyBaseUrl(profile: string): string {
-  return `http://127.0.0.1:${config.port}/api/hermes/voice/proxy/${encodeURIComponent(profile)}/v1`
+  return `http://127.0.0.1:${config.port}/api/studio/voice/proxy/${encodeURIComponent(profile)}/v1`
 }
 
 function quoteCommandArgument(value: string): string {

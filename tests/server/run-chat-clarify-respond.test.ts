@@ -6,11 +6,11 @@ const bridgeMock = vi.hoisted(() => ({
 }))
 const respondToEkkoClarificationMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/clarifications', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/clarifications', () => ({
   respondToEkkoClarification: respondToEkkoClarificationMock,
   waitForEkkoClarification: vi.fn(),
 }))

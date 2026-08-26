@@ -17,7 +17,7 @@ import {
     updateGroupAgentPreset,
     updateRoomConfig,
     updateRoomSummary,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import {
     decideGroupAgentPairing,
     leaveLocalGroupAgentRoom,
@@ -27,7 +27,7 @@ import {
     updateGuestAgentPolicy,
     type GroupAgentPairingRequest,
     type LocalGroupAgentConnection,
-} from '@/api/hermes/group-chat-agent-link'
+} from '@/api/studio/group-chat-agent-link'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import GroupRoomAgentAvatar from './GroupRoomAgentAvatar.vue'
@@ -48,7 +48,7 @@ import type {
     RoomSummaryAnchor,
     RoomSummaryConfig,
     RoomSummaryState,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'

@@ -39,7 +39,7 @@ vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () 
 
 import { countTokens } from '../../packages/server/src/modules/studio/services/context-compressor'
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
-import { healthRoutes } from '../../packages/server/src/routes/health'
+import { healthRoutes } from '../../packages/server/src/bootstrap/health'
 import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 import { sortGroupMessagesCanonical } from '../../packages/server/src/modules/studio/services/group-chat/group-message-ordering'

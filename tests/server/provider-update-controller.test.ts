@@ -6,7 +6,7 @@ import YAML from 'js-yaml'
 
 const mockInvalidateProviderRuntime = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({

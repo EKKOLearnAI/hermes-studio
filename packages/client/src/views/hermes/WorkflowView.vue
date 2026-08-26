@@ -73,7 +73,7 @@ import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { uploadRuntimeFiles } from '@/api/hermes/files'
+import { uploadRuntimeFiles } from '@/api/studio/files'
 import {
   approveWorkflowNode,
   batchDeleteWorkflows,
@@ -100,7 +100,7 @@ import {
   type WorkflowRunRecord,
   type WorkflowRecord,
   type WorkflowViewport,
-} from '@/api/hermes/workflows'
+} from '@/api/studio/workflows'
 import {
   listWorkflowsSocket,
   onWorkflowStatusError,
@@ -108,9 +108,9 @@ import {
   subscribeWorkflowStatuses,
   type WorkflowRuntimeState,
   type WorkflowRuntimeStatus,
-} from '@/api/hermes/workflow-socket'
+} from '@/api/studio/workflow-socket'
 import { fetchSkills } from '@/api/hermes/skills'
-import { fetchSession } from '@/api/hermes/sessions'
+import { fetchSession } from '@/api/studio/sessions'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { buildWorkflowSkillOptions, workflowAgentToSkillTarget } from '@/utils/hermes/workflow-skills'
 import type {

@@ -21,15 +21,15 @@ import {
     type GroupWorkspaceDiffPayload,
     type RoomAgent,
     type MemberInfo,
-} from '@/api/hermes/group-chat'
-import { getGroupChatAttachmentUrl } from '@/api/hermes/group-chat-attachments'
+} from '@/api/studio/group-chat'
+import { getGroupChatAttachmentUrl } from '@/api/studio/group-chat-attachments'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { formatReferencedContentForDisplay, parseMessageReference } from '@/stores/hermes/chat'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import ToolChangeCard from '@/components/hermes/chat/ToolChangeCard.vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
-import { isServerTtsProvider } from '@/api/hermes/tts'
+import { isServerTtsProvider } from '@/api/studio/tts'
 import { groupAgentAvatar, groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
@@ -614,7 +614,7 @@ function isStoredGroupAttachment(attachment: { path?: string; url?: string }): b
         const path = rawPath.split(/[?#]/, 1)[0].split(/[\\/]/).pop() || ''
         return /^[a-f0-9]{32}(?:\.[a-z0-9]{1,12})?$/i.test(path)
     }
-    return /\/api\/hermes\/group-chat\/(?:rooms|invites)\/[^/?#]+\/attachments\/[^/?#]+/i.test(String(attachment.url || ''))
+    return /\/api\/studio\/group-chat\/(?:rooms|invites)\/[^/?#]+\/attachments\/[^/?#]+/i.test(String(attachment.url || ''))
 }
 
 function handleAttachmentClick(event: MouseEvent, attachment: { name: string; size?: number; path?: string; url?: string }): void {

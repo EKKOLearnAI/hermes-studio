@@ -44,7 +44,7 @@ export function mcuPromptFileName(id: McuPromptId): string {
 }
 
 export function mcuPromptUrl(id: McuPromptId): string {
-  return `/api/hermes/mcu/audio/${mcuPromptFileName(id)}`
+  return `/api/studio/mcu/audio/${mcuPromptFileName(id)}`
 }
 
 export function isValidMcuAudioFileName(file: string): boolean {

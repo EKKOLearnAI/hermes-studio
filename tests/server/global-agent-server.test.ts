@@ -351,7 +351,7 @@ describe('GlobalAgentServer', () => {
     agentSocket.__handlers.get('http.request')?.({
       id: 'req-1',
       method: 'POST',
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
       headers: {
         authorization: 'Bearer attacker',
         'content-type': 'application/json',
@@ -360,7 +360,7 @@ describe('GlobalAgentServer', () => {
     }, httpAck)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:8648/api/hermes/sessions', expect.objectContaining({
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:8648/api/studio/sessions', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ title: 'hello' }),
     }))
@@ -826,7 +826,7 @@ describe('GlobalAgentServer', () => {
     server.init()
 
     const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
-    expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
+    expect(audio.url).toMatch(/^\/api\/studio\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
     expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
       'X-Hermes-Profile': 'research',
     })
@@ -891,7 +891,7 @@ describe('GlobalAgentServer', () => {
 
     const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
 
-    expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
+    expect(audio.url).toMatch(/^\/api\/studio\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
       'X-Hermes-Profile': 'research',
@@ -934,7 +934,7 @@ describe('GlobalAgentServer', () => {
 
     const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
 
-    expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
+    expect(audio.url).toMatch(/^\/api\/studio\/mcu\/audio\/[a-f0-9-]+\.adpcm$/)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
       'X-Hermes-Profile': 'research',
@@ -1051,7 +1051,7 @@ describe('GlobalAgentServer', () => {
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-1',
       text: '好嘞，这就去查。',
-      url: expect.stringMatching(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
+      url: expect.stringMatching(/^\/api\/studio\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
       completionManagedByServer: true,
     }))
     expect(agentSocket.emit).toHaveBeenCalledWith('interaction.status', expect.objectContaining({
@@ -1095,7 +1095,7 @@ describe('GlobalAgentServer', () => {
       interactionId: 'voice-1',
       segmentId: 'voice-1-tts-2',
       text: '结果如下： 请确认。',
-      url: expect.stringMatching(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
+      url: expect.stringMatching(/^\/api\/studio\/mcu\/audio\/[a-f0-9-]+\.adpcm$/),
       completionManagedByServer: true,
     }))
     expect(agentSocket.emit).not.toHaveBeenCalledWith('interaction.status', expect.objectContaining({

@@ -1444,7 +1444,7 @@ export class GlobalAgentServer {
       'Content-Type': 'application/json',
       'X-Hermes-Profile': profile || 'default',
     }
-    const requestTts = (provider?: 'edge') => this.fetchImpl(`${this.localBaseUrl}/api/hermes/tts/synthesize`, {
+    const requestTts = (provider?: 'edge') => this.fetchImpl(`${this.localBaseUrl}/api/studio/tts/synthesize`, {
       method: 'POST',
       headers,
       signal,
@@ -1522,7 +1522,7 @@ export class GlobalAgentServer {
       adpcmBytes: encoded.length,
       ratio: audio.length > 0 ? Number((encoded.length / audio.length).toFixed(3)) : 0,
     }, '[global-agent] MCU TTS encoded to ADPCM')
-    return { url: `/api/hermes/mcu/audio/${file}`, mimeType: 'audio/x-ima-adpcm' }
+    return { url: `/api/studio/mcu/audio/${file}`, mimeType: 'audio/x-ima-adpcm' }
   }
 
   private async enqueueMcuSpeechSegment(
@@ -2021,7 +2021,7 @@ export class GlobalAgentServer {
     }
     const wav = this.wrapPcmAsWav(pcm, stream.sampleRate, stream.channels, stream.bitsPerSample)
     try {
-      const response = await this.fetchImpl(`${this.localBaseUrl}/api/hermes/mcu/voice-turn`, {
+      const response = await this.fetchImpl(`${this.localBaseUrl}/api/studio/mcu/voice-turn`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${stream.userToken}`,

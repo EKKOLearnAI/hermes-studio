@@ -18,7 +18,7 @@ type FirmwareContext = Context & { params?: Record<string, unknown> }
 
 const DEFAULT_FIRMWARE_VERSION: FirmwareVersion = 'v1'
 const SUPPORTED_FIRMWARE_VERSIONS = new Set<string>(['v1', 'v2'] satisfies FirmwareVersion[])
-const LEGACY_FIRMWARE_ROUTE = '/api/hermes/mcu/firmware.bin'
+const LEGACY_FIRMWARE_ROUTE = '/api/studio/mcu/firmware.bin'
 const LEGACY_DIST_FIRMWARE_PATH = resolve(process.cwd(), 'dist', 'mcu', 'firmware.bin')
 const DIST_FIRMWARE_PATHS: Record<FirmwareVersion, string> = {
   v1: resolve(process.cwd(), 'dist', 'mcu', 'v1', 'firmware.bin'),
@@ -35,7 +35,7 @@ function firmwareVersionFromContext(ctx: Context): FirmwareVersion | null {
 }
 
 function firmwareRoute(version: FirmwareVersion): string {
-  return `/api/hermes/mcu/firmware/${version}/firmware.bin`
+  return `/api/studio/mcu/firmware/${version}/firmware.bin`
 }
 
 function firmwareSource(version: FirmwareVersion): Pick<FirmwareInfo, 'path' | 'channel'> {

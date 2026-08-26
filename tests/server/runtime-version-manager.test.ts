@@ -91,7 +91,7 @@ describe('runtime version manager storage migration', () => {
       platform: 'test-platform',
     }))
 
-    const { scheduleRuntimeRootMigration } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { scheduleRuntimeRootMigration } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
     const active = scheduleRuntimeRootMigration(destination)
     const persisted = JSON.parse(readFileSync(activeVersionPath, 'utf-8'))
 
@@ -119,7 +119,7 @@ describe('runtime version manager storage migration', () => {
       }),
     }))
 
-    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
     const status = await getRuntimeVersionStatus()
 
     expect(status.hermes.activeVersion).toBe('0.19.1')
@@ -141,7 +141,7 @@ describe('runtime version manager storage migration', () => {
       })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
     const status = await getRuntimeVersionStatus()
 
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -163,7 +163,7 @@ describe('runtime version manager storage migration', () => {
       .mockResolvedValueOnce({ ok: false, status: 503 })
       .mockRejectedValueOnce(new Error('website unavailable')))
 
-    const { getRuntimeVersionStatus } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
     const status = await getRuntimeVersionStatus()
 
     expect(status.hermes.remoteVersions).toEqual([])
@@ -175,7 +175,7 @@ describe('runtime version manager storage migration', () => {
     const nestedDestination = join(state.appHome, 'desktop-runtime', 'nested')
     mkdirSync(nestedDestination, { recursive: true })
 
-    const { scheduleRuntimeRootMigration } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { scheduleRuntimeRootMigration } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
 
     expect(() => scheduleRuntimeRootMigration(nestedDestination))
       .toThrow('cannot be inside the current Runtime storage directory')
@@ -201,7 +201,7 @@ describe('runtime version manager storage migration', () => {
     const {
       activateDownloadedWebUiVersion,
       listInstalledWebUiVersions,
-    } = await import('../../packages/server/src/services/runtime-version-manager')
+    } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
 
     expect(listInstalledWebUiVersions()).toEqual([{
       version: '0.6.31',
@@ -234,7 +234,7 @@ describe('runtime version manager storage migration', () => {
     const {
       activateInstalledRuntimeVersion,
       listInstalledRuntimeVersions,
-    } = await import('../../packages/server/src/services/runtime-version-manager')
+    } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
 
     expect(listInstalledRuntimeVersions().map(runtime => runtime.version)).toEqual(['0.19.0'])
     expect(() => activateInstalledRuntimeVersion('0.20.0'))
@@ -254,7 +254,7 @@ describe('runtime version manager storage migration', () => {
       platform,
     }))
 
-    const { activateInstalledRuntimeVersion } = await import('../../packages/server/src/services/runtime-version-manager')
+    const { activateInstalledRuntimeVersion } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
     const active = activateInstalledRuntimeVersion('0.20.0')
 
     expect(active.runtimeDirectory).toBe(runtime)
@@ -273,7 +273,7 @@ describe('runtime version manager storage migration', () => {
     const {
       activateInstalledRuntimeVersion,
       listInstalledRuntimeVersions,
-    } = await import('../../packages/server/src/services/runtime-version-manager')
+    } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
 
     expect(listInstalledRuntimeVersions().map(item => item.version)).toContain('0.20.0')
     expect(activateInstalledRuntimeVersion('0.20.0').runtimeDirectory).toBe(runtime)

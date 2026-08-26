@@ -3,6 +3,6 @@ import * as ctrl from '../controllers/media'
 
 export const mediaRoutes = new Router()
 
-mediaRoutes.post('/api/hermes/media/grok-image-to-video', ctrl.grokImageToVideo)
-mediaRoutes.post('/api/hermes/media/apikey-image-generate', ctrl.apiKeyImageGenerate)
-mediaRoutes.post('/api/hermes/media/minimax-image-to-video', ctrl.miniMaxImageToVideo)
+mediaRoutes.post('/api/studio/media/grok-image-to-video', ctrl.grokImageToVideo)
+mediaRoutes.post('/api/studio/media/apikey-image-generate', ctrl.apiKeyImageGenerate)
+mediaRoutes.post('/api/studio/media/minimax-image-to-video', ctrl.miniMaxImageToVideo)

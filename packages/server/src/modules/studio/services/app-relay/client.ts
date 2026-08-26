@@ -958,7 +958,7 @@ function normalizeRelayPath(value: unknown): string | null {
   const raw = String(value || '').trim()
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null
   const parsed = new URL(raw, 'http://app-relay.local')
-  if (parsed.pathname === '/api' || parsed.pathname.startsWith('/api/') || parsed.pathname === '/upload' || parsed.pathname === '/health') {
+  if (parsed.pathname === '/api' || parsed.pathname.startsWith('/api/') || parsed.pathname === '/health') {
     return `${parsed.pathname}${parsed.search}`
   }
   return null
@@ -1116,9 +1116,9 @@ function normalizeHttpTimeout(request: AppRelayHttpRequest): number {
 function isMediaHttpRequest(request: AppRelayHttpRequest): boolean {
   if (request.streamBinary === true || request.bodyBytes != null || request.bodyBase64 != null) return true
   const path = String(request.path || '').split('?', 1)[0]
-  return path === '/api/hermes/app-uploads'
-    || path.startsWith('/api/hermes/app-uploads/')
-    || /^\/api\/hermes\/group-chat\/rooms\/[^/]+\/attachment-uploads(?:\/|$)/.test(path)
+  return path === '/api/studio/app-uploads'
+    || path.startsWith('/api/studio/app-uploads/')
+    || /^\/api\/studio\/group-chat\/rooms\/[^/]+\/attachment-uploads(?:\/|$)/.test(path)
 }
 
 function isAllowedSocketEvent(namespace: string, event: string): boolean {

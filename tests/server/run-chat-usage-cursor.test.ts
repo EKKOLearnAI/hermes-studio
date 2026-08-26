@@ -26,7 +26,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () 
   getUsage: getUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 

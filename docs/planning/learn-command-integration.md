@@ -41,7 +41,7 @@ the bridge command path before running the generated prompt.
 Add `/learn` to the Web UI session-command layer:
 
 - Extend `CommandName` in
-  `packages/server/src/services/hermes/run-chat/session-command.ts`.
+  `packages/server/src/modules/studio/services/chat-run/session-command.ts`.
 - Add `learn` to `COMMAND_ALIASES`.
 - Handle `command.name === "learn"` similarly to `/skill`:
   - call the bridge command endpoint with `/learn <args>`;

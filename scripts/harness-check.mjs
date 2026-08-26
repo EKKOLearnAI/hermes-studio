@@ -76,25 +76,25 @@ function changedFilesFromGit() {
 }
 
 function isChatSessionChainFile(file) {
-  return file === 'packages/client/src/api/hermes/chat.ts'
-    || file === 'packages/client/src/api/hermes/group-chat.ts'
-    || file === 'packages/client/src/api/hermes/sessions.ts'
+  return file === 'packages/client/src/api/studio/chat.ts'
+    || file === 'packages/client/src/api/studio/group-chat.ts'
+    || file === 'packages/client/src/api/studio/sessions.ts'
     || file === 'packages/client/src/stores/hermes/group-chat.ts'
     || file === 'packages/client/src/stores/hermes/chat.ts'
-    || file === 'packages/server/src/controllers/hermes/sessions.ts'
+    || file === 'packages/server/src/modules/studio/controllers/sessions'
     || file === 'packages/server/src/modules/studio/controllers/sessions.ts'
     || file === 'packages/server/src/modules/studio/routes/sessions.ts'
-    || file === 'packages/server/src/db/hermes/session-store.ts'
-    || file === 'packages/server/src/routes/hermes/group-chat.ts'
+    || file === 'packages/server/src/modules/studio/repositories/session-store'
+    || file === 'packages/server/src/modules/studio/routes/group-chat'
     || file === 'packages/server/src/modules/studio/routes/group-chat.ts'
     || file === 'packages/server/src/modules/studio/controllers/group-chat.ts'
     || file === 'packages/server/src/modules/studio/sockets/group-chat.ts'
     || file.startsWith('packages/client/src/components/hermes/group-chat/')
     || file.startsWith('packages/client/src/components/hermes/chat/')
-    || file.startsWith('packages/server/src/lib/context-compressor/')
-    || file.startsWith('packages/server/src/services/hermes/context-engine/')
-    || file.startsWith('packages/server/src/services/hermes/group-chat/')
-    || file.startsWith('packages/server/src/services/hermes/run-chat/')
+    || file.startsWith('packages/server/src/modules/studio/services/context-compressor/index')
+    || file.startsWith('packages/server/src/modules/studio/services/group-chat/context-engine/index')
+    || file.startsWith('packages/server/src/modules/studio/sockets/group-chat')
+    || file.startsWith('packages/server/src/modules/studio/sockets/chat-run')
     || file.startsWith('packages/server/src/modules/studio/controllers/group-chat')
     || file.startsWith('packages/server/src/modules/studio/services/group-chat/')
     || file.startsWith('packages/server/src/modules/studio/services/chat-run/')
@@ -118,7 +118,6 @@ for (const file of [
   'docs/harness/pr-review.md',
   'docs/harness/server-module-boundaries.md',
   'docs/chat-chain-changes/README.md',
-  'scripts/harness/server-module-boundary-baseline.json',
 ]) {
   requireFile(file)
 }

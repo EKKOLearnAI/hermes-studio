@@ -212,10 +212,10 @@ describe('user auth tables and middleware', () => {
   })
 
   it.each([
-    '/api/hermes/media/apikey-image-generate',
-    '/api/hermes/media/grok-image-to-video',
-    '/api/hermes/voice/proxy/default/v1/tts',
-    '/api/hermes/voice/proxy/work/v1/audio/transcriptions',
+    '/api/studio/media/apikey-image-generate',
+    '/api/studio/media/grok-image-to-video',
+    '/api/studio/voice/proxy/default/v1/tts',
+    '/api/studio/voice/proxy/work/v1/audio/transcriptions',
   ])('allows server token for an approved loopback agent endpoint %s', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')
     const { auth } = await initUsers()
@@ -239,10 +239,10 @@ describe('user auth tables and middleware', () => {
   })
 
   it.each([
-    '/api/hermes/media/apikey-image-generate',
-    '/api/hermes/media/grok-image-to-video',
-    '/api/hermes/voice/proxy/default/v1/tts',
-    '/api/hermes/voice/proxy/work/v1/audio/transcriptions',
+    '/api/studio/media/apikey-image-generate',
+    '/api/studio/media/grok-image-to-video',
+    '/api/studio/voice/proxy/default/v1/tts',
+    '/api/studio/voice/proxy/work/v1/audio/transcriptions',
     '/api/devices',
     '/api/devices/scan',
     '/api/devices/device-1/connect',
@@ -414,7 +414,7 @@ describe('user auth tables and middleware', () => {
     const user = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     const token = auth.signUserJwt(user, 'test-secret')
     const ctx = {
-      path: '/api/hermes/download',
+      path: '/api/studio/files/download',
       headers: {},
       query: { token },
       state: {},
@@ -453,7 +453,7 @@ describe('user auth tables and middleware', () => {
   it('still requires a JWT for protected API paths', async () => {
     const { auth } = await initUsers()
     const ctx = {
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
       headers: {},
       query: {},
       state: {},

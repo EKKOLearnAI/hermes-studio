@@ -40,11 +40,11 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () =
   calcAndUpdateUsage: calcAndUpdateUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/manager', () => ({
   hasGlobalEkkoBackgroundTasks: ekkoBackgroundMock.has,
   abortGlobalEkkoBackgroundTasks: ekkoBackgroundMock.abort,
 }))

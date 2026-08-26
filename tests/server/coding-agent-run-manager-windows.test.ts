@@ -33,6 +33,7 @@ const testState = vi.hoisted(() => {
 })
 
 vi.mock('child_process', () => ({
+  execFile: vi.fn(),
   spawn: vi.fn((command: string, args: string[], options: any) => {
     const child = new testState.TestEmitter() as any
     child.stdin = new testState.TestEmitter()
@@ -60,7 +61,8 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', a
 import {
   CodingAgentRunManager,
   isolatedCodingAgentChildEnv,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 

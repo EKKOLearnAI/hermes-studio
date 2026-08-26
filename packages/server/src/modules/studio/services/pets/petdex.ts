@@ -38,7 +38,7 @@ function normalizePet(value: unknown): PetdexPet | null {
     kind: asString(item.kind).trim() || 'pet',
     submittedBy: asString(item.submittedBy).trim(),
     spritesheetUrl,
-    previewUrl: `/api/hermes/petdex/asset?url=${encodeURIComponent(spritesheetUrl)}`,
+    previewUrl: `/api/studio/petdex/asset?url=${encodeURIComponent(spritesheetUrl)}`,
     petJsonUrl: asString(item.petJsonUrl).trim(),
     zipUrl: asString(item.zipUrl).trim(),
   }

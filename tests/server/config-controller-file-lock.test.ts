@@ -25,7 +25,7 @@ vi.mock('../../packages/server/src/modules/hermes/services/gateway/autostart', (
   }
 })
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: class {
     destroyProfile = mockDestroyProfile
   },
@@ -40,7 +40,8 @@ async function loadController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
   process.env.HERMES_WEB_UI_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/config')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/config')
 }
 
 function makeCtx(body: unknown, profile?: string): any {

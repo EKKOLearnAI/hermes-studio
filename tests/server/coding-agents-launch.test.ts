@@ -10,8 +10,8 @@ import {
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
   restorePersistedPiProxyTargets,
-} from '../../packages/server/src/services/coding-agents'
-import { getModelContextLength } from '../../packages/server/src/services/hermes/model-context'
+} from '../../packages/server/src/bootstrap/coding-agents'
+import { getModelContextLength } from '../../packages/server/src/modules/hermes/services/models/context'
 import {
   normalizePiThinkingLevel,
   piModelSupportsThinking,

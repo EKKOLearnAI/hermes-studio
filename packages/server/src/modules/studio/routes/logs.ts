@@ -3,5 +3,5 @@ import * as ctrl from '../controllers/logs'
 
 export const logRoutes = new Router()
 
-logRoutes.get('/api/hermes/logs', ctrl.list)
-logRoutes.get('/api/hermes/logs/:name', ctrl.read)
+logRoutes.get('/api/studio/logs', ctrl.list)
+logRoutes.get('/api/studio/logs/:name', ctrl.read)

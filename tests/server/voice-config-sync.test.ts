@@ -99,10 +99,10 @@ describe('Hermes voice config sync', () => {
       voice_compatible: true,
     })
     expect(config.stt.providers['hermes-studio'].command).toContain(
-      '/api/hermes/voice/proxy/default/v1/audio/transcriptions',
+      '/api/studio/voice/proxy/default/v1/audio/transcriptions',
     )
     expect(config.tts.providers['hermes-studio'].command).toContain(
-      '/api/hermes/voice/proxy/default/v1/tts',
+      '/api/studio/voice/proxy/default/v1/tts',
     )
     expect(JSON.stringify(config)).not.toContain('stt-secret')
     expect(JSON.stringify(config)).not.toContain('tts-secret')

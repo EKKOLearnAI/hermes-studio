@@ -158,7 +158,7 @@ function reserveLocalHandoffJob(jobKey: string, cloudOrigin: string, principal: 
 }
 
 function handoffCloudUrl(cloudOrigin: string, inviteCode: string, requestId: string, suffix = ''): string {
-  return `${cloudOrigin}/api/hermes/group-chat/invites/${encodeURIComponent(inviteCode)}/agent-links/${encodeURIComponent(requestId)}${suffix}`
+  return `${cloudOrigin}/api/studio/group-chat/invites/${encodeURIComponent(inviteCode)}/agent-links/${encodeURIComponent(requestId)}${suffix}`
 }
 
 function sanitizedHandoffFailure(reason: unknown): string {

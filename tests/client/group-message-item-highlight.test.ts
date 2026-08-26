@@ -19,12 +19,12 @@ vi.mock('naive-ui', () => ({
   NPopover: { template: '<div><slot name="trigger" /><slot /></div>' },
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   getDownloadUrl: (_path: string, name: string) => `/download/${name}`,
 }))
 
 import GroupMessageItem from '@/components/hermes/group-chat/GroupMessageItem.vue'
-import type { ChatMessage } from '@/api/hermes/group-chat'
+import type { ChatMessage } from '@/api/studio/group-chat'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 
 function mountToolMessage(message: Partial<ChatMessage>) {

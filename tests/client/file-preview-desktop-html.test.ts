@@ -20,8 +20,8 @@ vi.mock('naive-ui', () => ({
   useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
 }))
 
-vi.mock('@/api/hermes/files', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/hermes/files')>()
+vi.mock('@/api/studio/files', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/studio/files')>()
   return { ...actual, fetchFilePreviewBlob: previewMocks.fetchFilePreviewBlob }
 })
 

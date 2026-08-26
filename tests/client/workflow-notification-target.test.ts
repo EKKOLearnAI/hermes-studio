@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { workflowNodeSessionByExecution } from '@/utils/workflow-history'
-import type { WorkflowRunNodeSessionRecord } from '@/api/hermes/workflows'
+import type { WorkflowRunNodeSessionRecord } from '@/api/studio/workflows'
 
 function record(executionId: string, sequence: number): WorkflowRunNodeSessionRecord {
   return {

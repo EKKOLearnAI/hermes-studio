@@ -56,7 +56,7 @@ describe('Hermes logs controller Ekko source', () => {
       data: { error: 'timed out' },
     })
 
-    const controller = await import('../../packages/server/src/controllers/hermes/logs')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/logs')
     const listContext: any = {
       state: { profile: { name: 'work' } },
       query: {},

@@ -129,7 +129,7 @@ describe('AppRelayClient', () => {
   })
 
   it('forwards local API requests with safe headers and binary support', async () => {
-    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/hermes/tts/synthesize')
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/studio/tts/synthesize')
       ? new Response(Uint8Array.from([7, 8, 9]), {
           status: 200,
           headers: { 'content-type': 'audio/mpeg' },
@@ -151,7 +151,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'http-1',
       method: 'POST',
-      path: '/api/hermes/sessions?profile=default',
+      path: '/api/studio/sessions?profile=default',
       headers: {
         authorization: 'Bearer local-user-token',
         'content-type': 'application/json',
@@ -167,7 +167,7 @@ describe('AppRelayClient', () => {
       body: '{"ok":true}',
     })))
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://127.0.0.1:8648/api/hermes/sessions?profile=default',
+      'http://127.0.0.1:8648/api/studio/sessions?profile=default',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ title: 'App session' }) }),
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
@@ -179,7 +179,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'binary-1',
       method: 'POST',
-      path: '/api/hermes/tts/synthesize',
+      path: '/api/studio/tts/synthesize',
       headers: { 'content-type': 'application/octet-stream' },
       bodyBytes: Uint8Array.from([1, 2, 3]),
     }, binaryAck)
@@ -223,7 +223,7 @@ describe('AppRelayClient', () => {
     const allowed = await client.handleHttpRequest({
       id: 'apk-allowed',
       method: 'GET',
-      path: '/api/hermes/download?path=test.apk',
+      path: '/api/studio/files/download?path=test.apk',
     })
     expect(allowed.error).toBeUndefined()
     expect(allowed.bodyBytes?.byteLength).toBe(apkBytes.byteLength)
@@ -238,7 +238,7 @@ describe('AppRelayClient', () => {
     const rejected = await client.handleHttpRequest({
       id: 'apk-rejected',
       method: 'GET',
-      path: '/api/hermes/download?path=test.apk',
+      path: '/api/studio/files/download?path=test.apk',
     })
     expect(rejected).toMatchObject({
       id: 'apk-rejected',
@@ -281,7 +281,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'chunked-open',
       method: 'GET',
-      path: '/api/hermes/download?path=test.bin',
+      path: '/api/studio/files/download?path=test.bin',
       streamBinary: true,
     }, openAck)
     await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({

@@ -6,17 +6,17 @@ import {
   once,
 } from './group-chat-test-helpers'
 import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
-import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
+import { AgentBridgeClient } from '../../packages/server/src/modules/hermes/services/bridge/index'
 import { ChatRunSocket } from '../../packages/server/src/modules/studio/sockets/chat-run'
 import '../../packages/server/src/bootstrap/chat-agent-runtime-adapter'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
-} from '../../packages/server/src/services/ekko-agent/approvals'
+} from '../../packages/server/src/modules/ekko/services/approvals'
 import {
   cancelPendingEkkoClarifications,
   waitForEkkoClarification,
-} from '../../packages/server/src/services/ekko-agent/clarifications'
+} from '../../packages/server/src/modules/ekko/services/clarifications'
 import type { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 describe('group chat approval and context baseline', () => {

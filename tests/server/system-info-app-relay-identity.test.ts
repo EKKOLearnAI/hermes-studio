@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldUseDedicatedAppRelayIdentity } from '../../packages/server/src/services/system-info'
+import { shouldUseDedicatedAppRelayIdentity } from '../../packages/server/src/bootstrap/system-info'
 
 describe('App Relay device identity scope', () => {
   it('keeps legacy production identities and isolates development Web hosts', () => {

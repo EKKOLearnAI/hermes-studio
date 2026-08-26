@@ -19,7 +19,7 @@ describe('mcu prompts', () => {
     for (const id of Object.keys(MCU_PROMPTS) as McuPromptId[]) {
       const fileName = mcuPromptFileName(id)
       expect(fileName).toMatch(/-24k\.s16le\.pcm$/)
-      expect(mcuPromptUrl(id)).toBe(`/api/hermes/mcu/audio/${fileName}`)
+      expect(mcuPromptUrl(id)).toBe(`/api/studio/mcu/audio/${fileName}`)
       expect(mcuPromptText(id)).toBeTruthy()
       expect(isValidMcuAudioFileName(fileName)).toBe(true)
 

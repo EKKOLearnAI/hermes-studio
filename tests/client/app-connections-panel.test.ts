@@ -6,7 +6,7 @@ const source = readFileSync(
   'utf8',
 )
 const controllerSource = readFileSync(
-  'packages/server/src/controllers/app-connections.ts',
+  'packages/server/src/modules/studio/controllers/app-connections.ts',
   'utf8',
 )
 

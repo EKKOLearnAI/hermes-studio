@@ -12,7 +12,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   getCompressionSnapshot: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),

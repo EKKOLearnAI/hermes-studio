@@ -23,7 +23,7 @@
 ```text
 ChatPanel / ChatInput
   -> Pinia chat store
-  -> packages/client/src/api/hermes/chat.ts
+  -> packages/client/src/api/studio/chat.ts
   -> Socket.IO namespace /chat-run
   -> ChatRunSocket
   -> handleBridgeRun()
@@ -81,9 +81,9 @@ PR 号。
 | `packages/client/src/components/hermes/chat/MessageList.vue` / `VirtualMessageList.vue` | 消息列表渲染和虚拟滚动。 |
 | `packages/client/src/components/hermes/chat/MessageItem.vue` | 单条消息渲染，包含 assistant、tool、reasoning、附件等 UI。 |
 | `packages/client/src/stores/hermes/chat.ts` | Chat 核心状态机：session 列表、发送、resume、队列、流式事件、审批、澄清、abort、压缩状态。 |
-| `packages/client/src/api/hermes/chat.ts` | `/chat-run` Socket.IO 客户端，负责连接、全局事件分发、run/resume/abort/approval/clarify 协议。 |
-| `packages/client/src/api/hermes/sessions.ts` | HTTP session API：列表、详情分页、删除、重命名、模型更新。 |
-| `packages/client/src/api/hermes/group-chat.ts` | `/group-chat` Socket.IO 客户端和 group-chat HTTP room/agent/config API。 |
+| `packages/client/src/api/studio/chat.ts` | `/chat-run` Socket.IO 客户端，负责连接、全局事件分发、run/resume/abort/approval/clarify 协议。 |
+| `packages/client/src/api/studio/sessions.ts` | HTTP session API：列表、详情分页、删除、重命名、模型更新。 |
+| `packages/client/src/api/studio/group-chat.ts` | `/group-chat` Socket.IO 客户端和 group-chat HTTP room/agent/config API。 |
 | `packages/client/src/stores/hermes/group-chat.ts` | Group Chat 状态机：rooms、members、messages、agents、streaming、context/compression 状态。 |
 | `packages/client/src/components/hermes/group-chat/*` | Group Chat 页面、输入框、消息列表、成员/agent 展示和房间创建配置。 |
 
@@ -112,7 +112,7 @@ PR 号。
 ## 3. 数据模型
 
 普通 Chat 使用 Web UI 本地 SQLite，而不是直接把 Hermes CLI 历史当作唯一状态。
-核心表由 `packages/server/src/db/hermes/schemas.ts` 初始化。
+核心表由 `packages/server/src/modules/studio/infrastructure/database/schemas.ts` 初始化。
 
 ### sessions
 
@@ -235,7 +235,7 @@ sendMessage(content, attachments?)
    - 且不是可立即处理的 mid-run slash command；
    - 则 UI 先显示 queued 消息。
 5. 如果有附件：
-   - 先走 `/upload`；
+   - 先走 `/api/studio/uploads`；
    - 再组装 `ContentBlock[]`；
    - image block 包含 `type/name/path/media_type`；
    - file block 包含 `type/name/path/media_type?`。
@@ -824,7 +824,7 @@ context-compressor。
 ```text
 GroupChatPanel / GroupChatInput
   -> group-chat Pinia store
-  -> packages/client/src/api/hermes/group-chat.ts
+  -> packages/client/src/api/studio/group-chat.ts
   -> Socket.IO namespace /group-chat
   -> GroupChatServer
   -> AgentClients

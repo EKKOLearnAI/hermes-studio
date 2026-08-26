@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import YAML from 'js-yaml'
-import { SafeFileStore } from '../../packages/server/src/services/safe-file-store'
+import { SafeFileStore } from '../../packages/server/src/modules/studio/public/safe-file-store'
 
 const tempDirs: string[] = []
 

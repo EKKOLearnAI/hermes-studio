@@ -13,7 +13,7 @@ import ThemeSwitch from "@/components/layout/ThemeSwitch.vue";
 import VersionManagementModal from "@/components/layout/VersionManagementModal.vue";
 import { changelog } from "@/data/changelog";
 import { getStoredUserId, getStoredUsername, isStoredSuperAdmin } from "@/api/client";
-import { clearThemeBackgroundCache } from '@/api/theme'
+import { clearThemeBackgroundCache } from '@/api/studio/theme'
 
 const { t } = useI18n();
 const message = useMessage();

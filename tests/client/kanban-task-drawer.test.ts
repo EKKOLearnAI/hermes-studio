@@ -56,7 +56,7 @@ vi.mock('@/stores/hermes/files', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/binary-content', () => ({
+vi.mock('@/api/studio/binary-content', () => ({
   fetchAuthenticatedBlob: vi.fn(),
   saveBlob: vi.fn(),
 }))

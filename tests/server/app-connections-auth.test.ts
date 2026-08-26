@@ -125,7 +125,7 @@ describe('App connection authorization', () => {
     ])
 
     const protectedCtx = {
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
       headers: { authorization: `Bearer ${loginCtx.body.token}` },
       query: {},
       state: {},

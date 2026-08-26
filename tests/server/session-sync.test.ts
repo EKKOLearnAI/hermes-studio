@@ -14,7 +14,7 @@ describe('session-sync', () => {
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    vi.doMock('../../packages/server/src/db/hermes/sessions-db', () => ({
+    vi.doMock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
       listSessionSummaries: vi.fn().mockResolvedValue([]),
       getSessionDetailFromDbWithProfile: vi.fn(),
     }))
@@ -24,7 +24,7 @@ describe('session-sync', () => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/db/hermes/sessions-db')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/history/sessions-db')
     vi.resetModules()
   })
 
@@ -35,7 +35,7 @@ describe('session-sync', () => {
 
   it('does not import Hermes sessions when local DB is not empty', async () => {
     await initTestDb()
-    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/modules/hermes/services/history/session-sync')
 
     db.prepare(`
       INSERT INTO sessions (id, profile, source, model, title, started_at, last_active)
@@ -50,7 +50,7 @@ describe('session-sync', () => {
 
   it('does not import Hermes sessions when local DB is empty', async () => {
     await initTestDb()
-    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/modules/hermes/services/history/session-sync')
 
     await expect(syncAllHermesSessionsOnStartup()).resolves.toBeUndefined()
 

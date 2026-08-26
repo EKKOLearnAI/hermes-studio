@@ -15,11 +15,11 @@ const updateSessionMock = vi.hoisted(() => vi.fn())
 const handleCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn(async () => undefined))
 const parseCodingAgentSessionCommandMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents', () => ({
+vi.mock('../../packages/server/src/bootstrap/coding-agents', () => ({
   startCodingAgentRun: startCodingAgentRunMock,
   sendCodingAgentRunInput: sendCodingAgentRunInputMock,
 }))
@@ -41,7 +41,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/session-command', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/session-command', () => ({
   handleCodingAgentSessionCommand: handleCodingAgentSessionCommandMock,
   parseCodingAgentSessionCommand: parseCodingAgentSessionCommandMock,
 }))

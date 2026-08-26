@@ -7,8 +7,6 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 export const SERVER_SOURCE_ROOT = 'packages/server/src'
-export const LEGACY_CUTOFF_COMMIT = 'a513405354f6b038e220c587c3f729871c2b8b0d'
-export const DEBT_BASELINE_PATH = 'scripts/harness/server-module-boundary-baseline.json'
 export const TARGET_MODULES = Object.freeze([
   'studio',
   'hermes',
@@ -22,6 +20,11 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
 const RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 const STUDIO_AGENT_ENTRY_POINTS = new Set(['contracts', 'public'])
 const STUDIO_ROUTE_ENTRY_POINTS = new Set(['contracts', 'public', 'middleware', 'http'])
+const HERMES_STUDIO_FILE_PATTERNS = [
+  /^modules\/hermes\/routes\/(?:app-upload|download|files)(?:\/|\.ts$)/,
+  /^modules\/hermes\/controllers\/(?:app-upload|download|file-preview|files)(?:\/|\.ts$)/,
+  /^modules\/hermes\/services\/files(?:\/|\.ts$)/,
+]
 
 function normalizePath(value) {
   return value.replaceAll('\\', '/').replace(/^\.\//, '')
@@ -51,11 +54,9 @@ export function classifyServerFile(file) {
   const target = targetModuleInfo(normalized)
   if (target) return target
 
-  if (normalized === 'index.ts'
-    || normalized === 'routes/index.ts'
-    || normalized.startsWith('bootstrap/')) {
+  if (normalized === 'index.ts' || normalized.startsWith('bootstrap/')) {
     return {
-      architecture: normalized.startsWith('bootstrap/') ? 'target' : 'legacy',
+      architecture: 'target',
       domain: 'bootstrap',
       layer: 'bootstrap',
       moduleName: null,
@@ -63,43 +64,19 @@ export function classifyServerFile(file) {
     }
   }
 
-  if (normalized.startsWith('services/ekko-agent/')) {
-    return legacyInfo('ekko', 'services')
-  }
-
-  if (normalized.startsWith('services/coding-agents/')
-    || normalized === 'controllers/coding-agents.ts'
-    || normalized === 'routes/coding-agents.ts'
-    || normalized === 'routes/claude-code-proxy.ts'
-    || normalized === 'routes/codex-proxy.ts') {
-    return legacyInfo('coding-agents', legacyLayer(normalized))
-  }
-
-  if (normalized.startsWith('services/hermes/')
-    || normalized.startsWith('controllers/hermes/')
-    || normalized.startsWith('routes/hermes/')) {
-    return legacyInfo('hermes', legacyLayer(normalized))
-  }
-
-  return legacyInfo('studio', legacyLayer(normalized))
-}
-
-function legacyInfo(domain, layer) {
   return {
     architecture: 'legacy',
-    domain,
-    layer,
+    domain: 'unassigned',
+    layer: null,
     moduleName: null,
     validModule: true,
   }
 }
 
-function legacyLayer(file) {
-  const first = file.split('/')[0]
-  if (first === 'routes' || first === 'controllers' || first === 'services' || first === 'db') {
-    return first
-  }
-  return null
+export function studioOwnershipFailure(file) {
+  const normalized = normalizePath(file)
+  if (!HERMES_STUDIO_FILE_PATTERNS.some(pattern => pattern.test(normalized))) return null
+  return `${normalized} places Studio-owned file capability under Hermes`
 }
 
 export function collectModuleSpecifiers(source, fileName = 'source.ts') {
@@ -132,21 +109,6 @@ export function collectModuleSpecifiers(source, fileName = 'source.ts') {
 
   visit(sourceFile)
   return [...specifiers].sort()
-}
-
-export function isLegacyCompatibilityFacade(source, fileName = 'source.ts') {
-  const sourceFile = ts.createSourceFile(
-    fileName,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  )
-  return sourceFile.statements.every(statement => (
-    ts.isImportDeclaration(statement)
-    || ts.isExportDeclaration(statement)
-    || ts.isExportAssignment(statement)
-  ))
 }
 
 export function resolveServerImport(fromFile, specifier, allFiles) {
@@ -236,25 +198,6 @@ export function validateTargetDependency(fromFile, toFile) {
   return targetDependencyFailures(normalizePath(fromFile), normalizePath(toFile))
 }
 
-export function compareDebtBaseline(currentEdges, baselineEdges) {
-  const current = new Set(currentEdges.map(edgeKey))
-  const baseline = new Set(baselineEdges.map(edgeKey))
-  return {
-    added: [...current].filter(edge => !baseline.has(edge)).sort(),
-    stale: [...baseline].filter(edge => !current.has(edge)).sort(),
-  }
-}
-
-function edgeKey(edge) {
-  if (typeof edge === 'string') return edge
-  return `${normalizePath(edge.from)} -> ${normalizePath(edge.to)}`
-}
-
-function edgeFromKey(key) {
-  const [from, to] = key.split(' -> ')
-  return { from, to }
-}
-
 function gitOutput(root, args) {
   return execFileSync('git', args, {
     cwd: root,
@@ -281,24 +224,6 @@ function repositoryServerFiles(root) {
     .sort()
 }
 
-function legacyFilesAtCutoff(root) {
-  const output = gitOutput(root, [
-    'ls-tree',
-    '-r',
-    '--name-only',
-    LEGACY_CUTOFF_COMMIT,
-    '--',
-    SERVER_SOURCE_ROOT,
-  ])
-  return new Set(
-    output
-      .split(/\r?\n/)
-      .map(file => file.trim())
-      .filter(Boolean)
-      .map(file => normalizePath(path.posix.relative(SERVER_SOURCE_ROOT, file))),
-  )
-}
-
 async function collectDependencyEdges(sourceRoot, sourceFiles) {
   const allFiles = new Set(sourceFiles)
   const dependencies = []
@@ -310,10 +235,6 @@ async function collectDependencyEdges(sourceRoot, sourceFiles) {
     }
   }
   return dependencies
-}
-
-function uniqueSortedEdges(edges) {
-  return [...new Set(edges.map(edgeKey))].sort().map(edgeFromKey)
 }
 
 export async function inspectServerModuleBoundaries(root = process.cwd()) {
@@ -331,13 +252,12 @@ export async function inspectServerModuleBoundaries(root = process.cwd()) {
       )
     }
     if (isSourceFile(file) && info.architecture === 'legacy') {
-      const source = await readFile(path.join(sourceRoot, file), 'utf8')
-      if (!isLegacyCompatibilityFacade(source, file)) {
-        failures.push(
-          `${SERVER_SOURCE_ROOT}/${file} is a legacy implementation; legacy paths may contain only import/export compatibility facades`,
-        )
-      }
+      failures.push(
+        `${SERVER_SOURCE_ROOT}/${file} is outside modules/ and bootstrap/; legacy server source is not allowed`,
+      )
     }
+    const ownershipFailure = studioOwnershipFailure(file)
+    if (ownershipFailure) failures.push(`${SERVER_SOURCE_ROOT}/${ownershipFailure}`)
   }
 
   for (const dependency of dependencies) {
@@ -346,98 +266,16 @@ export async function inspectServerModuleBoundaries(root = process.cwd()) {
     }
   }
 
-  const forbiddenLegacyEdges = uniqueSortedEdges(dependencies.filter(({ from, to }) => {
-    const fromInfo = classifyServerFile(from)
-    const toInfo = classifyServerFile(to)
-    return fromInfo.architecture === 'legacy'
-      && toInfo.architecture === 'legacy'
-      && forbiddenDomainDependency(fromInfo.domain, toInfo.domain)
-  }))
-
-  return { dependencies, failures, forbiddenLegacyEdges, sourceFiles }
+  return { dependencies, failures, sourceFiles }
 }
 
 export async function checkServerModuleBoundaries(root = process.cwd()) {
   const inspection = await inspectServerModuleBoundaries(root)
-  const failures = [...inspection.failures]
-  let cutoffFiles
-  try {
-    cutoffFiles = legacyFilesAtCutoff(root)
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    failures.push(
-      `Cannot read server boundary cutoff commit ${LEGACY_CUTOFF_COMMIT}. `
-      + `Fetch full Git history before running the harness. ${detail}`,
-    )
-  }
-
-  if (cutoffFiles) {
-    const newLegacyFiles = inspection.sourceFiles.filter(file =>
-      !file.startsWith('modules/')
-      && !file.startsWith('bootstrap/')
-      && !cutoffFiles.has(file),
-    )
-    if (newLegacyFiles.length > 0) {
-      failures.push(
-        'New server files must be created under packages/server/src/modules/<module> or '
-        + `packages/server/src/bootstrap. Legacy additions: ${newLegacyFiles.join(', ')}`,
-      )
-    }
-  }
-
-  const baselineFile = path.join(root, DEBT_BASELINE_PATH)
-  if (!existsSync(baselineFile)) {
-    failures.push(`Missing server module boundary debt baseline: ${DEBT_BASELINE_PATH}`)
-    return failures
-  }
-
-  let baseline
-  try {
-    baseline = JSON.parse(await readFile(baselineFile, 'utf8'))
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    failures.push(`Cannot parse ${DEBT_BASELINE_PATH}: ${detail}`)
-    return failures
-  }
-
-  if (baseline.schema !== 1) failures.push(`${DEBT_BASELINE_PATH} must use schema 1`)
-  if (baseline.cutoffCommit !== LEGACY_CUTOFF_COMMIT) {
-    failures.push(`${DEBT_BASELINE_PATH} cutoffCommit must remain ${LEGACY_CUTOFF_COMMIT}`)
-  }
-  if (!Array.isArray(baseline.forbiddenImports)) {
-    failures.push(`${DEBT_BASELINE_PATH} must contain a forbiddenImports array`)
-    return failures
-  }
-
-  const debtDiff = compareDebtBaseline(inspection.forbiddenLegacyEdges, baseline.forbiddenImports)
-  if (debtDiff.added.length > 0) {
-    failures.push(
-      'Server module dependency debt increased. Move the shared dependency to Studio or inject it '
-      + `through a Studio contract. New edges: ${debtDiff.added.join(', ')}`,
-    )
-  }
-  if (debtDiff.stale.length > 0) {
-    failures.push(
-      `Server module dependency debt was removed; shrink ${DEBT_BASELINE_PATH}. `
-      + `Stale edges: ${debtDiff.stale.join(', ')}`,
-    )
-  }
-
-  return failures
+  return [...inspection.failures]
 }
 
 async function runCli() {
   const root = process.cwd()
-  if (process.argv.includes('--print-current-debt')) {
-    const inspection = await inspectServerModuleBoundaries(root)
-    process.stdout.write(`${JSON.stringify({
-      schema: 1,
-      cutoffCommit: LEGACY_CUTOFF_COMMIT,
-      forbiddenImports: inspection.forbiddenLegacyEdges.map(edgeKey),
-    }, null, 2)}\n`)
-    return
-  }
-
   const failures = await checkServerModuleBoundaries(root)
   if (failures.length > 0) {
     console.error('Server module boundary check failed:')

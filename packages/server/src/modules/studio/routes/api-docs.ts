@@ -4,4 +4,3 @@ import * as ctrl from '../controllers/api-docs'
 export const apiDocsRoutes = new Router()
 
 apiDocsRoutes.get('/api/openapi.json', ctrl.openapi)
-apiDocsRoutes.get('/api/hermes/openapi.json', ctrl.openapi)

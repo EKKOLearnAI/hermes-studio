@@ -89,12 +89,12 @@ async function main(): Promise<void> {
   const [{ default: Koa }, bodyParserModule, routesModule, chatRunModule, initModule, managerModule, runStoreModule, dbModule] = await Promise.all([
     import('koa'),
     import('@koa/bodyparser'),
-    import('../packages/server/src/routes/hermes/workflows'),
-    import('../packages/server/src/routes/hermes/chat-run'),
-    import('../packages/server/src/db/hermes/init'),
-    import('../packages/server/src/services/workflow-manager'),
-    import('../packages/server/src/db/hermes/workflow-run-store'),
-    import('../packages/server/src/db'),
+    import('../packages/server/src/modules/studio/routes/workflows'),
+    import('../packages/server/src/modules/studio/routes/chat-run'),
+    import('../packages/server/src/modules/studio/infrastructure/database/init'),
+    import('../packages/server/src/modules/studio/services/workflow/manager'),
+    import('../packages/server/src/modules/studio/repositories/workflow-run-store'),
+    import('../packages/server/src/modules/studio/infrastructure/database/index'),
   ])
   const bodyParser = bodyParserModule.default
   const manager = managerModule.getWorkflowManager()
@@ -154,13 +154,13 @@ async function main(): Promise<void> {
   }
 
   async function createWorkflow(name: string, nodes: unknown[], edges: unknown[]): Promise<any> {
-    const response = await api('POST', '/api/hermes/workflows', { name: `${prefix}-${name}`, profile: 'default', workspace: null, nodes, edges, viewport: null }, 201)
+    const response = await api('POST', '/api/studio/workflows', { name: `${prefix}-${name}`, profile: 'default', workspace: null, nodes, edges, viewport: null }, 201)
     createdWorkflowIds.push(response.body.workflow.id)
     return response.body.workflow
   }
 
   async function listRuns(workflowId: string): Promise<any[]> {
-    return (await api('GET', `/api/hermes/workflows/${workflowId}/runs`, undefined, 200)).body.runs
+    return (await api('GET', `/api/studio/workflows/${workflowId}/runs`, undefined, 200)).body.runs
   }
 
   async function waitForRun(workflowId: string, runId?: string, terminal = true): Promise<any> {
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
   }
 
   async function startAndWait(workflowId: string, body: Record<string, unknown> = {}): Promise<any> {
-    await api('POST', `/api/hermes/workflows/${workflowId}/run`, body, 202)
+    await api('POST', `/api/studio/workflows/${workflowId}/run`, body, 202)
     return waitForRun(workflowId)
   }
 
@@ -225,7 +225,7 @@ async function main(): Promise<void> {
     scenarios.loops = { defaultExecutions: defaultRun.node_sessions.length, defaultEpochs: defaultRun.loop_epochs.length, customExecutions: customRun.node_sessions.length, customEpochs: customRun.loop_epochs.length }
 
     // Rerun appends a separate execution scope to the same Run instead of overwriting history.
-    await api('POST', `/api/hermes/workflows/${customLoop.id}/runs/${customRun.id}/rerun-from-node`, { node_id: 'header' }, 202)
+    await api('POST', `/api/studio/workflows/${customLoop.id}/runs/${customRun.id}/rerun-from-node`, { node_id: 'header' }, 202)
     const rerun = await waitForRun(customLoop.id, customRun.id)
     assert.equal(rerun.status, 'completed')
     const rerunSessions = rerun.node_sessions.filter((item: any) => item.execution_id.includes('@rerun:'))
@@ -256,7 +256,7 @@ async function main(): Promise<void> {
     const budgetEdges = Array.from({ length: 10 }, (_, index) => ({ id: `e${index}`, source: `n${index}`, target: `n${index + 1}` }))
     budgetEdges.push(feedback('budget-retry', 'n10', 'n0', 100) as any)
     const budget = await createWorkflow('budget', budgetNodes, budgetEdges)
-    const budgetResponse = await api('POST', `/api/hermes/workflows/${budget.id}/run`, {}, 400)
+    const budgetResponse = await api('POST', `/api/studio/workflows/${budget.id}/run`, {}, 400)
     assert.match(budgetResponse.body.error, /execution bound 1100 exceeds run budget 1000/)
     assert.equal((await listRuns(budget.id)).length, 0)
     scenarios.budget = { status: budgetResponse.status, error: budgetResponse.body.error, persistedRuns: 0 }
@@ -271,10 +271,10 @@ async function main(): Promise<void> {
 
     // Stop persists canceled before abort; a late success cannot overwrite or dispatch target.
     const cancel = await createWorkflow('cancel', [agent('source', 'HOLD_SOURCE'), agent('target')], [{ id: 'next', source: 'source', target: 'target' }])
-    await api('POST', `/api/hermes/workflows/${cancel.id}/run`, {}, 202)
+    await api('POST', `/api/studio/workflows/${cancel.id}/run`, {}, 202)
     const running = await waitForRun(cancel.id, undefined, false)
     assert.equal(running.status, 'running')
-    const stop = await api('POST', `/api/hermes/workflows/${cancel.id}/runs/${running.id}/stop`, {}, 200)
+    const stop = await api('POST', `/api/studio/workflows/${cancel.id}/runs/${running.id}/stop`, {}, 200)
     assert.equal(stop.body.run.status, 'canceled')
     for (const release of held.values()) release({ ok: true, output: 'late success' })
     held.clear()
@@ -292,16 +292,16 @@ async function main(): Promise<void> {
     runStoreModule.createWorkflowRunNodeSession({ run_id: orphan.id, workflow_id: recovery.id, node_id: 'node', execution_id: 'node@orphan', session_id: `orphan-${randomUUID()}`, profile: 'default', agent: 'hermes', status: 'running', sequence: 0, started_at: Date.now() })
     const recovered = await manager.recoverActiveRuns(recovery.id)
     assert.deepEqual(recovered, { runs: 1, sessions: 1 })
-    const recoveredRun = (await api('GET', `/api/hermes/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 200)).body.run
+    const recoveredRun = (await api('GET', `/api/studio/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 200)).body.run
     assert.equal(recoveredRun.status, 'failed')
     assert.equal(recoveredRun.node_sessions[0].status, 'failed')
-    await api('DELETE', `/api/hermes/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 200)
-    await api('GET', `/api/hermes/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 404)
+    await api('DELETE', `/api/studio/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 200)
+    await api('GET', `/api/studio/workflows/${recovery.id}/runs/${orphan.id}`, undefined, 404)
     assert.equal(runStoreModule.getWorkflowRun(orphan.id), null)
     scenarios.recoveryDelete = { recovered, status: recoveredRun.status, nodeStatus: recoveredRun.node_sessions[0].status, deleted: true }
 
     // Delete a completed Run and verify Node/Edge/Loop history is removed together.
-    await api('DELETE', `/api/hermes/workflows/${nested.id}/runs/${nestedRun.id}`, undefined, 200)
+    await api('DELETE', `/api/studio/workflows/${nested.id}/runs/${nestedRun.id}`, undefined, 200)
     assert.equal(runStoreModule.getWorkflowRun(nestedRun.id), null)
     assert.deepEqual(runStoreModule.listWorkflowRunNodeSessions(nestedRun.id), [])
     assert.deepEqual(runStoreModule.listWorkflowRunEdgeEvaluations(nestedRun.id), [])
@@ -311,7 +311,7 @@ async function main(): Promise<void> {
     for (const release of held.values()) release({ ok: true, output: 'cleanup' })
     held.clear()
     for (const workflowId of [...createdWorkflowIds].reverse()) {
-      try { await api('DELETE', `/api/hermes/workflows/${workflowId}`, undefined) } catch {}
+      try { await api('DELETE', `/api/studio/workflows/${workflowId}`, undefined) } catch {}
     }
     await closeServer(server)
     chatRunModule.setChatRunServer(null as any)

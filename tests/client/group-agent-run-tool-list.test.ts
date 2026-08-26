@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createPinia } from 'pinia'
-import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgent } from '@/api/studio/group-chat'
 import GroupAgentRunCard from '@/components/hermes/group-chat/GroupAgentRunCard.vue'
 
 vi.mock('vue-i18n', () => ({

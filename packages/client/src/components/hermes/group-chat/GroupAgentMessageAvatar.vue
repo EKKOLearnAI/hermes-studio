@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NPopover } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import type { MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
+import type { MemberInfo, RoomAgent } from '@/api/studio/group-chat'
 import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
 
 const props = defineProps<{

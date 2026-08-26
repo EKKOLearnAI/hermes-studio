@@ -814,7 +814,7 @@ class McuSocketIoRelayClient {
 
     this.sendJson({ type: 'interaction.status', interactionId: voice.interactionId, status: 'transcribing' })
     try {
-      const response = await this.options.fetchImpl(`${this.options.localBaseUrl.replace(/\/$/, '')}/api/hermes/mcu/voice-turn`, {
+      const response = await this.options.fetchImpl(`${this.options.localBaseUrl.replace(/\/$/, '')}/api/studio/mcu/voice-turn`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.options.userToken}`,
@@ -1562,7 +1562,7 @@ class McuSocketIoRelayClient {
       'Content-Type': 'application/json',
       'X-Hermes-Profile': profile || 'default',
     }
-    const requestTts = (provider?: 'edge') => this.options.fetchImpl(`${baseUrl}/api/hermes/tts/synthesize`, {
+    const requestTts = (provider?: 'edge') => this.options.fetchImpl(`${baseUrl}/api/studio/tts/synthesize`, {
       method: 'POST',
       headers,
       signal,
@@ -1644,7 +1644,7 @@ class McuSocketIoRelayClient {
       adpcmBytes: encoded.length,
       ratio: audio.length > 0 ? Number((encoded.length / audio.length).toFixed(3)) : 0,
     }, '[outbound-relay-client] MCU TTS encoded to ADPCM')
-    const localUrl = `${baseUrl}/api/hermes/mcu/audio/${file}`
+    const localUrl = `${baseUrl}/api/studio/mcu/audio/${file}`
     const remoteUrl = await this.uploadMcuAudioToRelay(encoded, 'audio/x-ima-adpcm', signal).catch((err) => {
       logger.warn({
         err,

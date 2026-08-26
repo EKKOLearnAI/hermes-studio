@@ -29,7 +29,7 @@ describe('api docs controller', () => {
       ]),
     )
     expect(
-      ctx.body.paths['/api/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
+      ctx.body.paths['/api/studio/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
     ).toEqual(['cli', 'coding_agent', 'global_agent'])
   })
 })

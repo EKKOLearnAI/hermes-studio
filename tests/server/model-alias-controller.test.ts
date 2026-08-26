@@ -28,7 +28,7 @@ vi.mock('../../packages/server/src/modules/hermes/services/providers/copilot-mod
   resolveCopilotOAuthToken: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: vi.fn(),
 }))
 

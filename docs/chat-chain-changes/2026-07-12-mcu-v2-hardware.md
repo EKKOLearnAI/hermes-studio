@@ -9,7 +9,7 @@ Firmware v2 reuses the v1 application implementation and overrides its
 firmware version, v2 manifest path, and xmini-c3 hardware pin map: battery ADC
 GPIO2, shared OLED/ES8311 I2C on GPIO3/4, I2S on GPIO5/6/7/8/10, BOOT on GPIO9,
 and PA enable on GPIO11. Its
-OTA manifest and binary routes are isolated under `/api/hermes/mcu/firmware/v2`
+OTA manifest and binary routes are isolated under `/api/studio/mcu/firmware/v2`
 so v1 devices remain pinned to v1 firmware. Both firmware targets declare the
 hardware's 16MB physical flash while retaining the established 4MB dual-OTA
 partition layout. The v2 ES8311 DAC volume register uses `0xBF` (0dB), while v1

@@ -540,7 +540,7 @@ describe('group chat agent workspace bridge runs', () => {
         workspace: '',
         maxHistoryTokens: 32000,
         remoteWorkspaceApi: {
-          endpoint: 'https://group.example/api/hermes/group-chat/remote-workspace/v1',
+          endpoint: 'https://group.example/api/studio/group-chat/remote-workspace/v1',
           token: 'a'.repeat(43),
           access: 'read-write',
         },
@@ -613,12 +613,12 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runAndWait.mock.calls[0][0].instructions).toContain('- [AI Agent] Reviewer: Reviews changes')
     expect(runAndWait.mock.calls[0][0].instructions).not.toContain('Sleeping')
     expect(runAndWait.mock.calls[0][0].instructions).toContain(
-      'https://group.example/api/hermes/group-chat/remote-workspace/v1',
+      'https://group.example/api/studio/group-chat/remote-workspace/v1',
     )
     expect(runAndWait.mock.calls[0][0].instructions).toContain(`Bearer ${'a'.repeat(43)}`)
     expect(runAndWait.mock.calls[0][0].instructions).toContain('"action":"read"')
     expect(runAndWait.mock.calls[0][0].instructions).toContain(
-      'https://group.example/api/hermes/group-chat/remote-workspace/v1/file',
+      'https://group.example/api/studio/group-chat/remote-workspace/v1/file',
     )
     expect(runAndWait.mock.calls[0][0].instructions).toContain('X-Expected-SHA256')
     expect(runAndWait.mock.calls[0][0].group_system_prompt).toBe(runAndWait.mock.calls[0][0].instructions)

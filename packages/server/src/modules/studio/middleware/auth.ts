@@ -119,14 +119,14 @@ function requestToken(ctx: Context): string {
 }
 
 const SERVER_TOKEN_EXACT_PATHS = new Set([
-  '/api/hermes/media/apikey-image-generate',
-  '/api/hermes/media/grok-image-to-video',
-  '/api/hermes/media/minimax-image-to-video',
+  '/api/studio/media/apikey-image-generate',
+  '/api/studio/media/grok-image-to-video',
+  '/api/studio/media/minimax-image-to-video',
 ])
 
 function allowsServerTokenPath(path: string): boolean {
   return SERVER_TOKEN_EXACT_PATHS.has(path) ||
-    path.startsWith('/api/hermes/voice/proxy/')
+    path.startsWith('/api/studio/voice/proxy/')
 }
 
 function isLoopbackRequest(ctx: Context): boolean {
@@ -153,8 +153,7 @@ async function allowServerTokenForAgentEndpoint(ctx: Context, token: string): Pr
 function isProtectedHttpPath(path: string): boolean {
   const lowerPath = path.toLowerCase()
   return lowerPath.startsWith('/api') ||
-    lowerPath.startsWith('/v1') ||
-    lowerPath.startsWith('/upload')
+    lowerPath.startsWith('/v1')
 }
 
 export function signUserJwt(

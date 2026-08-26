@@ -3,7 +3,7 @@ import {
   getShutdownForceExitMs,
   shouldStopAgentBridgeOnShutdown,
   shouldStopManagedGatewaysOnShutdown,
-} from '../../packages/server/src/services/shutdown'
+} from '../../packages/server/src/bootstrap/lifecycle'
 
 describe('shutdown bridge policy', () => {
   const originalValue = process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN

@@ -4,7 +4,7 @@ import { NTree } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
 import { gitStatusBadge, gitStatusClass } from '@/utils/hermes/workspace-git-status'
-import type { FileEntry, GitFileStatus } from '@/api/hermes/files'
+import type { FileEntry, GitFileStatus } from '@/api/studio/files'
 import type { TreeOption } from 'naive-ui'
 
 const { t } = useI18n()

@@ -39,11 +39,11 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/session-comm
   parseSessionCommand: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/manager', () => ({
   getAgentBridgeManager: vi.fn(() => ({
     ensureReady: ensureReadyMock,
     getRuntimeState: getRuntimeStateMock,

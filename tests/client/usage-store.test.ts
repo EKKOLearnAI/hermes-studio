@@ -6,7 +6,7 @@ const usageApiMock = vi.hoisted(() => ({
   fetchUsageStats: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchUsageStats: usageApiMock.fetchUsageStats,
 }))
 

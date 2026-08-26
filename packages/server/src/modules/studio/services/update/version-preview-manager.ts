@@ -102,8 +102,6 @@ function readPackageInfo(): PackageInfo | null {
   const candidatePaths = [
     // ts-node dev: packages/server/src/modules/studio/services/update -> repo root
     resolve(__dirname, '../../../../../../../package.json'),
-    // compatibility with the former packages/server/src/controllers location
-    resolve(__dirname, '../../../../package.json'),
     // bundled server: dist/server -> repo root/package root
     resolve(__dirname, '../../package.json'),
     // fallback for processes started at the repo root

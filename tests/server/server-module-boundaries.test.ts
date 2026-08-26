@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyServerFile,
   collectModuleSpecifiers,
-  compareDebtBaseline,
   forbiddenDomainDependency,
-  isLegacyCompatibilityFacade,
+  studioOwnershipFailure,
   validateTargetDependency,
 } from '../../scripts/server-module-boundaries.mjs'
 
@@ -20,6 +19,14 @@ describe('server module boundary harness', () => {
       architecture: 'target',
       domain: 'other',
       validModule: false,
+    })
+    expect(classifyServerFile('index.ts')).toMatchObject({
+      architecture: 'target',
+      domain: 'bootstrap',
+    })
+    expect(classifyServerFile('services/legacy.ts')).toMatchObject({
+      architecture: 'legacy',
+      domain: 'unassigned',
     })
   })
 
@@ -53,6 +60,20 @@ describe('server module boundary harness', () => {
       'modules/hermes/controllers/chat.ts',
       'modules/coding-agents/public/runner.ts',
     )[0]).toContain('must not depend')
+  })
+
+  it('keeps file, download, preview, and upload capabilities in Studio', () => {
+    expect(studioOwnershipFailure('modules/hermes/routes/files.ts')).toContain(
+      'Studio-owned file capability under Hermes',
+    )
+    expect(studioOwnershipFailure('modules/hermes/controllers/app-upload.ts')).toContain(
+      'Studio-owned file capability under Hermes',
+    )
+    expect(studioOwnershipFailure('modules/hermes/services/files/file-provider.ts')).toContain(
+      'Studio-owned file capability under Hermes',
+    )
+    expect(studioOwnershipFailure('modules/studio/routes/files.ts')).toBeNull()
+    expect(studioOwnershipFailure('modules/hermes/services/profiles/app-profile-avatar.ts')).toBeNull()
   })
 
   it('keeps controllers and services pointed down the layer graph', () => {
@@ -89,23 +110,4 @@ describe('server module boundary harness', () => {
     expect(collectModuleSpecifiers(source)).toEqual(['./a', './b', './c', './d'])
   })
 
-  it('allows only import/export compatibility facades in legacy paths', () => {
-    expect(isLegacyCompatibilityFacade([
-      "import '../bootstrap/adapter'",
-      "export * from '../modules/studio/public/config'",
-    ].join('\n'))).toBe(true)
-    expect(isLegacyCompatibilityFacade(
-      "export function legacyBusinessLogic() { return true }",
-    )).toBe(false)
-  })
-
-  it('reports both increased and already removed legacy debt', () => {
-    expect(compareDebtBaseline(
-      [{ from: 'studio.ts', to: 'hermes.ts' }],
-      [{ from: 'studio.ts', to: 'ekko.ts' }],
-    )).toEqual({
-      added: ['studio.ts -> hermes.ts'],
-      stale: ['studio.ts -> ekko.ts'],
-    })
-  })
 })

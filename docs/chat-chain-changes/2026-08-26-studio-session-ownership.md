@@ -12,5 +12,5 @@ coordinate shared single-chat persistence, workspace files, usage, import and
 export, and settings across Agent runtimes. Hermes state database and CLI calls,
 bridge model updates, and Coding Agent cancellation still use their original
 implementations through an adapter installed by the bootstrap composition root.
-All `/api/hermes/sessions/*` routes, ordering, response shapes, and compatibility
+All `/api/studio/sessions/*` routes, ordering, response shapes, and compatibility
 imports are preserved.

@@ -19,15 +19,12 @@ import {
   codingAgentRoutes,
 } from './coding-agents'
 
-// Shared legacy route modules. Move these imports into their owning module as
-// each vertical slice is migrated.
+// Studio and agent route modules composed into one HTTP application.
 import { uploadRoutes } from '../modules/studio/routes/upload'
-import { appUploadRoutes } from '../modules/hermes/routes/app-upload'
+import { appUploadRoutes } from '../modules/studio/routes/app-upload'
 import { authPublicRoutes, authProtectedRoutes } from '../modules/studio/routes/auth'
 import { mcuDeviceRoutes } from '../modules/studio/routes/mcu-devices'
 
-// Legacy routes currently stored under routes/hermes. Their final ownership
-// may be Studio, Hermes, or another module as documented by the migration map.
 import { sessionRoutes } from '../modules/studio/routes/sessions'
 import { profileRoutes } from '../modules/hermes/routes/profiles'
 import { skillRoutes } from '../modules/hermes/routes/skills'
@@ -45,8 +42,8 @@ import { xaiAuthRoutes } from '../modules/hermes/routes/xai-auth'
 import { anthropicAuthRoutes } from '../modules/hermes/routes/anthropic-auth'
 import { minimaxAuthRoutes } from '../modules/hermes/routes/minimax-auth'
 import { weixinRoutes } from '../modules/hermes/routes/weixin'
-import { fileRoutes } from '../modules/hermes/routes/files'
-import { downloadRoutes } from '../modules/hermes/routes/download'
+import { fileRoutes } from '../modules/studio/routes/files'
+import { downloadRoutes } from '../modules/studio/routes/download'
 import { jobRoutes } from '../modules/hermes/routes/jobs'
 import { cronHistoryRoutes } from '../modules/hermes/routes/cron-history'
 import { kanbanRoutes } from '../modules/hermes/routes/kanban'

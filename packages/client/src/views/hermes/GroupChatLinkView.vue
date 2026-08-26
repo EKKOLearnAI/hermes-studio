@@ -25,7 +25,7 @@ import {
   updateLocalGroupAgent,
   type LocalGroupAgentConnection,
   type RemoteGroupAgentDescriptor,
-} from '@/api/hermes/group-chat-agent-link'
+} from '@/api/studio/group-chat-agent-link'
 
 const { t } = useI18n()
 const route = useRoute()

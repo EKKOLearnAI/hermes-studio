@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { serializeRoom } from '../../packages/server/src/modules/studio/routes/group-chat'
+import { serializeRoom } from '../../packages/server/src/modules/studio/controllers/group-chat'
 
 describe('group chat room serialization', () => {
   it('does not expose internal summary concurrency fields', () => {

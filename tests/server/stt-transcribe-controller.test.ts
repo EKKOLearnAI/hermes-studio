@@ -271,10 +271,10 @@ describe('stt transcribe controller', () => {
     await ctrl.missingProfileAudio(ctx)
 
     expect(ctx.status).toBe(302)
-    expect(ctx.headers.Location).toBe('/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm')
+    expect(ctx.headers.Location).toBe('/api/studio/mcu/audio/missing-stt-24k.s16le.pcm')
     expect(ctx.headers['X-Hermes-STT-Configured']).toBe('false')
     expect(ctx.body).toEqual({
-      url: '/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm',
+      url: '/api/studio/mcu/audio/missing-stt-24k.s16le.pcm',
     })
   })
 
@@ -594,7 +594,7 @@ describe('stt transcribe controller', () => {
       interactionId: 'voice-1',
       segmentId: 'voice-1-stt-failed',
       text: '当前语音转文字失败了，请配置下语音转文字再使用哦',
-      url: '/api/hermes/mcu/audio/stt-failed-24k.s16le.pcm',
+      url: '/api/studio/mcu/audio/stt-failed-24k.s16le.pcm',
       mimeType: 'audio/x-pcm',
       format: 's16le',
       sampleRate: 24000,
@@ -724,7 +724,7 @@ describe('route registration ordering', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    vi.doUnmock('../../packages/server/src/routes/index')
+    vi.doUnmock('../../packages/server/src/bootstrap/routes')
   })
 
   it('mounts protected STT routes after requireAuth', async () => {
@@ -740,7 +740,7 @@ describe('route registration ordering', () => {
       sttProtectedRoutes: { routes: vi.fn(() => sttProtectedMiddleware) },
     }))
 
-    const { registerRoutes } = await import('../../packages/server/src/routes/index')
+    const { registerRoutes } = await import('../../packages/server/src/bootstrap/routes')
     const use = vi.fn()
     const app = { use }
     const requireAuth = vi.fn(async () => {})

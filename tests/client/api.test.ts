@@ -13,10 +13,10 @@ vi.mock('@/router', () => ({
 }))
 
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
-import { downloadFile, getDownloadUrl } from '../../packages/client/src/api/hermes/download'
-import { uploadFiles } from '../../packages/client/src/api/hermes/files'
+import { downloadFile, getDownloadUrl } from '../../packages/client/src/api/studio/download'
+import { uploadFiles } from '../../packages/client/src/api/studio/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
-import { archiveSession, batchDeleteSessions, exportSession, fetchHermesSessionGroups, fetchHermesSessionPage, importHermesSession, unarchiveSession } from '../../packages/client/src/api/hermes/sessions'
+import { archiveSession, batchDeleteSessions, exportSession, fetchHermesSessionGroups, fetchHermesSessionPage, importHermesSession, unarchiveSession } from '../../packages/client/src/api/studio/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -70,7 +70,7 @@ describe('API Client', () => {
       setApiKey('secret-key')
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions')
+      await request('/api/studio/sessions')
 
       expect(mockFetch).toHaveBeenCalledOnce()
       const [, options] = mockFetch.mock.calls[0]
@@ -81,7 +81,7 @@ describe('API Client', () => {
       localStorage.setItem('hermes_active_profile_name', 'default')
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions/session-1')
+      await request('/api/studio/sessions/session-1')
 
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers['X-Hermes-Profile']).toBe('default')
@@ -91,7 +91,7 @@ describe('API Client', () => {
       localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions')
+      await request('/api/studio/sessions')
 
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers['X-Hermes-Profile']).toBeUndefined()
@@ -100,7 +100,7 @@ describe('API Client', () => {
     it('does not add Authorization header when no token', async () => {
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions')
+      await request('/api/studio/sessions')
 
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers.Authorization).toBeUndefined()
@@ -111,7 +111,7 @@ describe('API Client', () => {
       localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({ ok: false, status: 401 })
 
-      await expect(request('/api/hermes/sessions')).rejects.toThrow('Unauthorized')
+      await expect(request('/api/studio/sessions')).rejects.toThrow('Unauthorized')
       expect(hasApiKey()).toBe(false)
       expect(localStorage.getItem('hermes_active_profile_name')).toBeNull()
       expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
@@ -164,7 +164,7 @@ describe('API Client', () => {
         text: () => Promise.resolve('Internal Server Error'),
       })
 
-      await expect(request('/api/hermes/sessions')).rejects.toThrow('API Error 500: Internal Server Error')
+      await expect(request('/api/studio/sessions')).rejects.toThrow('API Error 500: Internal Server Error')
     })
 
     it('extracts nested JSON error messages instead of stringifying objects', async () => {
@@ -193,7 +193,7 @@ describe('API Client', () => {
         })),
       })
 
-      await expect(request('/api/hermes/group-chat/agent-presets')).rejects.toMatchObject({
+      await expect(request('/api/studio/group-chat/agent-presets')).rejects.toMatchObject({
         status: 409,
         code: 'GROUP_AGENT_PRESET_NAME_CONFLICT',
         message: 'API Error 409: Agent preset already exists',
@@ -204,7 +204,7 @@ describe('API Client', () => {
       const data = { sessions: [{ id: '1' }] }
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(data) })
 
-      const result = await request('/api/hermes/sessions')
+      const result = await request('/api/studio/sessions')
       expect(result).toEqual(data)
     })
   })
@@ -216,7 +216,7 @@ describe('API Client', () => {
 
       const url = new URL(getDownloadUrl('/tmp/report.txt', 'report.txt'), 'http://localhost')
 
-      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.pathname).toBe('/api/studio/files/download')
       expect(url.searchParams.get('path')).toBe('/tmp/report.txt')
       expect(url.searchParams.get('name')).toBe('report.txt')
       expect(url.searchParams.get('profile')).toBe('research')
@@ -238,7 +238,7 @@ describe('API Client', () => {
     it('handles raw percent signs in download paths and filenames', () => {
       const url = new URL(getDownloadUrl('/tmp/100% ready.txt', '100% ready.txt'), 'http://localhost')
 
-      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.pathname).toBe('/api/studio/files/download')
       expect(url.searchParams.get('path')).toBe('/tmp/100% ready.txt')
       expect(url.searchParams.get('name')).toBe('100% ready.txt')
     })
@@ -246,7 +246,7 @@ describe('API Client', () => {
     it('uses the target basename when a supplied download label has no extension', () => {
       const url = new URL(getDownloadUrl('/tmp/report.md', '下载报告'), 'http://localhost')
 
-      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.pathname).toBe('/api/studio/files/download')
       expect(url.searchParams.get('path')).toBe('/tmp/report.md')
       expect(url.searchParams.get('name')).toBe('report.md')
     })
@@ -342,7 +342,7 @@ describe('API Client', () => {
 
       expect(mockFetch).toHaveBeenCalledOnce()
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/files/upload?path=notes')
+      expect(url).toBe('/api/studio/files/upload?path=notes')
       expect(options.method).toBe('POST')
       expect(options.headers.Authorization).toBe('Bearer secret-key')
       expect(options.headers['X-Hermes-Profile']).toBe('research')
@@ -361,7 +361,7 @@ describe('API Client', () => {
       await uploadFiles('notes', [new File(['hello'], 'hello.txt', { type: 'text/plain' })], 'reviewer')
 
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/files/upload?path=notes&profile=reviewer')
+      expect(url).toBe('/api/studio/files/upload?path=notes&profile=reviewer')
       expect(options.headers.Authorization).toBe('Bearer secret-key')
       expect(options.headers['X-Hermes-Profile']).toBeUndefined()
     })
@@ -398,7 +398,7 @@ describe('API Client', () => {
       await fetchHermesSessionGroups(20, 'travel', ['pinned-1', 'route-1'])
 
       const [url] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/sessions/hermes/groups?limit=20&profile=travel&include=pinned-1&include=route-1')
+      expect(url).toBe('/api/studio/sessions/hermes/groups?limit=20&profile=travel&include=pinned-1&include=route-1')
     })
 
     it('requests the next page for one Hermes history source', async () => {
@@ -411,7 +411,7 @@ describe('API Client', () => {
       await fetchHermesSessionPage('cli', 20, 20, 'travel')
 
       const [url] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/sessions/hermes?source=cli&offset=20&limit=20&profile=travel')
+      expect(url).toBe('/api/studio/sessions/hermes?source=cli&offset=20&limit=20&profile=travel')
     })
 
     it('sends profile-qualified targets for batch deletes', async () => {
@@ -428,7 +428,7 @@ describe('API Client', () => {
       ])
 
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/sessions/batch-delete')
+      expect(url).toBe('/api/studio/sessions/batch-delete')
       expect(options.method).toBe('POST')
       expect(options.headers['X-Hermes-Profile']).toBeUndefined()
       expect(JSON.parse(options.body)).toEqual({
@@ -450,7 +450,7 @@ describe('API Client', () => {
       await importHermesSession('cli-1', 'travel')
 
       const [url, options] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/hermes/sessions/hermes/cli-1/import?profile=travel')
+      expect(url).toBe('/api/studio/sessions/hermes/cli-1/import?profile=travel')
       expect(options.method).toBe('POST')
     })
 
@@ -465,7 +465,7 @@ describe('API Client', () => {
 
       const [url, options] = mockFetch.mock.calls[0]
       expect(ok).toBe(true)
-      expect(url).toBe('/api/hermes/sessions/session-1/archive')
+      expect(url).toBe('/api/studio/sessions/session-1/archive')
       expect(options.method).toBe('POST')
     })
 
@@ -480,7 +480,7 @@ describe('API Client', () => {
 
       const [url, options] = mockFetch.mock.calls[0]
       expect(ok).toBe(true)
-      expect(url).toBe('/api/hermes/sessions/session-1/unarchive')
+      expect(url).toBe('/api/studio/sessions/session-1/unarchive')
       expect(options.method).toBe('POST')
     })
   })

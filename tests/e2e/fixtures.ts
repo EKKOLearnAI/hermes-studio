@@ -290,7 +290,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/preview' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/preview' && request.method() === 'POST') {
       if (options.workflowImportPreviewError) {
         await route.fulfill(jsonResponse({ error: options.workflowImportPreviewError }, 400))
         return
@@ -299,25 +299,25 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/cancel' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/cancel' && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true }))
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/confirm' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/confirm' && request.method() === 'POST') {
       const definition: any = options.workflowImportDocument || { name: 'Imported flow', nodes: [], edges: [], viewport: null }
       await route.fulfill(jsonResponse({ ok: true, workflow: { id: 'wf-imported', profile: 'research', workspace: null, created_at: 2, updated_at: 2, ...definition } }, 201))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/export$/.test(pathname) && request.method() === 'GET') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/export$/.test(pathname) && request.method() === 'GET') {
       const workflowId = pathname.split('/').at(-2)
       const workflow: any = (options.workflows || []).find((item: any) => item?.id === workflowId)
       await route.fulfill(workflow ? jsonResponse({ format: 'hermes-studio.workflow', version: 1, definition: { name: workflow.name, nodes: workflow.nodes, edges: workflow.edges, viewport: workflow.viewport } }) : jsonResponse({ error: 'workflow not found' }, 404))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/schedules(?:\/[^/]+)?$/.test(pathname)) {
+    if (/^\/api\/studio\/workflows\/[^/]+\/schedules(?:\/[^/]+)?$/.test(pathname)) {
       if (options.workflowScheduleError) {
         await route.fulfill(jsonResponse({ error: options.workflowScheduleError }, 500))
         return
@@ -364,24 +364,24 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true, status: 'accepted' }, 202))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/runs$/.test(pathname)) {
+    if (/^\/api\/studio\/workflows\/[^/]+\/runs$/.test(pathname)) {
       await route.fulfill(jsonResponse({ runs: options.workflowRuns ?? [] }))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname) && request.method() === 'GET') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname) && request.method() === 'GET') {
       const runId = pathname.split('/').at(-1)
       const run = (options.workflowRuns || []).find((item: any) => item?.id === runId)
       await route.fulfill(run ? jsonResponse({ run }) : jsonResponse({ error: 'workflow run not found' }, 404))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+$/.test(pathname) && request.method() === 'PATCH') {
+    if (/^\/api\/studio\/workflows\/[^/]+$/.test(pathname) && request.method() === 'PATCH') {
       const workflowId = pathname.split('/').at(-1)
       const workflow: any = (options.workflows || []).find((item: any) => item?.id === workflowId)
       let patch: Record<string, unknown> = {}
@@ -392,17 +392,17 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows') {
+    if (pathname === '/api/studio/workflows') {
       await route.fulfill(jsonResponse({ workflows: options.workflows ?? [] }, tokenValidationStatus))
       return
     }
 
-    if (pathname === '/api/hermes/sessions') {
+    if (pathname === '/api/studio/sessions') {
       await route.fulfill(jsonResponse({ sessions: options.sessions ?? [] }, tokenValidationStatus))
       return
     }
 
-    if (pathname === '/api/hermes/session-categories') {
+    if (pathname === '/api/studio/session-categories') {
       if (request.method() === 'GET') {
         await route.fulfill(jsonResponse({ categories: sessionCategories }))
         return
@@ -422,7 +422,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (/^\/api\/hermes\/session-categories\/\d+$/.test(pathname)) {
+    if (/^\/api\/studio\/session-categories\/\d+$/.test(pathname)) {
       const categoryId = Number(pathname.split('/').at(-1))
       const categoryIndex = sessionCategories.findIndex(item => item.id === categoryId)
       if (categoryIndex < 0) {
@@ -446,22 +446,22 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (pathname === '/api/hermes/sessions/hermes') {
+    if (pathname === '/api/studio/sessions/hermes') {
       await route.fulfill(jsonResponse({ sessions: [] }))
       return
     }
 
-    if (pathname === '/api/hermes/sessions/context-length') {
+    if (pathname === '/api/studio/sessions/context-length') {
       await route.fulfill(jsonResponse({ context_length: 256000 }))
       return
     }
 
-    if (pathname === '/api/hermes/workspace/folders' && request.method() === 'GET') {
+    if (pathname === '/api/studio/workspace/folders' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ base: '/workspace', current: '', folders: [] }))
       return
     }
 
-    if (/^\/api\/hermes\/sessions\/[^/]+\/category$/.test(pathname) && request.method() === 'POST') {
+    if (/^\/api\/studio\/sessions\/[^/]+\/category$/.test(pathname) && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true }))
       return
     }
@@ -516,17 +516,17 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (/^\/api\/hermes\/sessions\/[^/]+\/workspace-run-changes$/.test(pathname)) {
+    if (/^\/api\/studio\/sessions\/[^/]+\/workspace-run-changes$/.test(pathname)) {
       await route.fulfill(jsonResponse({ changes: [] }))
       return
     }
 
-    if (/^\/api\/hermes\/sessions\/[^/]+\/workspace-files\/list$/.test(pathname)) {
+    if (/^\/api\/studio\/sessions\/[^/]+\/workspace-files\/list$/.test(pathname)) {
       await route.fulfill(jsonResponse({ entries: [], path: '', absolutePath: '' }))
       return
     }
 
-    if (pathname === '/api/hermes/files/list') {
+    if (pathname === '/api/studio/files/list') {
       await route.fulfill(jsonResponse({ entries: [], path: '' }))
       return
     }
@@ -624,12 +624,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/pets/active') {
+    if (pathname === '/api/studio/pets/active') {
       await route.fulfill(jsonResponse({ pet: null }))
       return
     }
 
-    if (pathname === '/api/hermes/petdex/manifest') {
+    if (pathname === '/api/studio/petdex/manifest') {
       await route.fulfill(jsonResponse({
         generatedAt: '2026-07-28T00:00:00.000Z',
         total: 0,
@@ -846,12 +846,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/group-chat/rooms' && request.method() === 'GET') {
+    if (pathname === '/api/studio/group-chat/rooms' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ rooms: [] }))
       return
     }
 
-    if (pathname === '/api/hermes/group-chat-link/v1/connections' && request.method() === 'GET') {
+    if (pathname === '/api/studio/group-chat-link/v1/connections' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ connections: [] }))
       return
     }

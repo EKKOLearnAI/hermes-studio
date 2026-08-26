@@ -1,6 +1,5 @@
 export * from './routes/journey'
 export * from './routes/jobs'
-export * from './routes/app-upload'
 export * from './routes/kanban'
 export * from './routes/cron-history'
 export * from './routes/memory'

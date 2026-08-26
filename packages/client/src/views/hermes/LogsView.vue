@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { NSelect, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchLogFiles, fetchLogs, type LogEntry } from '@/api/hermes/logs'
+import { fetchLogFiles, fetchLogs, type LogEntry } from '@/api/studio/logs'
 
 const { t } = useI18n()
 const message = useMessage()

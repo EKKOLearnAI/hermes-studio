@@ -128,11 +128,11 @@ function shouldAttachProfileHeader(path: string, options: RequestInit): boolean 
 }
 
 function isProfileWideSessionCollection(pathname: string): boolean {
-  return pathname === '/api/hermes/sessions' ||
-    pathname === '/api/hermes/sessions/batch-delete' ||
-    pathname === '/api/hermes/search/sessions' ||
-    pathname === '/api/hermes/sessions/search' ||
-    pathname === '/api/hermes/sessions/conversations'
+  return pathname === '/api/studio/sessions' ||
+    pathname === '/api/studio/sessions/batch-delete' ||
+    pathname === '/api/studio/search/sessions' ||
+    pathname === '/api/studio/sessions/search' ||
+    pathname === '/api/studio/sessions/conversations'
 }
 
 function emitAuthNotice(kind: 'expired' | 'forbidden') {

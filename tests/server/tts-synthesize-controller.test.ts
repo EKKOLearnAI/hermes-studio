@@ -911,25 +911,25 @@ describe('tts routes', () => {
     const protectedPaths = ttsProtectedRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
-      '/api/hermes/tts',
+      '/api/studio/tts',
       '/api/tts/proxy/audio/speech',
-      '/api/hermes/mcu/audio/:file',
+      '/api/studio/mcu/audio/:file',
     ]))
-    expect(paths).not.toContain('/api/hermes/tts/synthesize')
+    expect(paths).not.toContain('/api/studio/tts/synthesize')
     expect(protectedPaths).toEqual(expect.arrayContaining([
-      '/api/hermes/tts/settings',
-      '/api/hermes/voice/proxy/:profile/v1/tts',
-      '/api/hermes/voice/proxy/:profile/v1/audio/speech',
-      '/api/hermes/tts/settings/active',
-      '/api/hermes/tts/settings/:provider',
-      '/api/hermes/tts/settings/:provider',
-      '/api/hermes/tts/settings/:provider/base-url-preset',
-      '/api/hermes/tts/settings/:provider/secret/:secretName',
+      '/api/studio/tts/settings',
+      '/api/studio/voice/proxy/:profile/v1/tts',
+      '/api/studio/voice/proxy/:profile/v1/audio/speech',
+      '/api/studio/tts/settings/active',
+      '/api/studio/tts/settings/:provider',
+      '/api/studio/tts/settings/:provider',
+      '/api/studio/tts/settings/:provider/base-url-preset',
+      '/api/studio/tts/settings/:provider/secret/:secretName',
       '/api/voice/providers/probe',
-      '/api/hermes/tts/synthesize',
+      '/api/studio/tts/synthesize',
     ]))
 
-    const synthLayer: any = ttsProtectedRoutes.stack.find((entry: any) => entry.path === '/api/hermes/tts/synthesize')
+    const synthLayer: any = ttsProtectedRoutes.stack.find((entry: any) => entry.path === '/api/studio/tts/synthesize')
     const ctx: any = { request: { body: {} }, body: null }
 
     await synthLayer.stack[0](ctx, undefined)
@@ -943,7 +943,7 @@ describe('route registration ordering', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    vi.doUnmock('../../packages/server/src/routes/index')
+    vi.doUnmock('../../packages/server/src/bootstrap/routes')
   })
 
   it('mounts protected synthesize routes after requireAuth', async () => {
@@ -955,7 +955,7 @@ describe('route registration ordering', () => {
       ttsProtectedRoutes: { routes: vi.fn(() => ttsProtectedMiddleware) },
     }))
 
-    const { registerRoutes } = await import('../../packages/server/src/routes/index')
+    const { registerRoutes } = await import('../../packages/server/src/bootstrap/routes')
     const use = vi.fn()
     const app = { use }
     const requireAuth = vi.fn(async () => {})

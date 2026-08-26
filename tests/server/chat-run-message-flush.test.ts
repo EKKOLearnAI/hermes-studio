@@ -11,7 +11,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', (
   updateSessionStats: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
@@ -25,13 +25,13 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   getCompressionSnapshot: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/lib/llm-json', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/llm-json', () => ({
   parseLLMJSON: vi.fn(),
   parseToolArguments: vi.fn(),
   parseAnthropicContentArray: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: vi.fn(() => ''),
 }))
 

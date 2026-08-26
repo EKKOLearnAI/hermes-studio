@@ -7,6 +7,6 @@ impact: Workspace folder browsing now includes dot-prefixed directories such as 
 
 # Dot-prefixed workspace folders
 
-Changed file: `packages/server/src/controllers/hermes/sessions.ts`
+Changed file: `packages/server/src/modules/studio/controllers/sessions.ts`
 
 The workspace folder picker no longer hides directories whose names start with a dot. Hidden or tool-owned directories can now be selected as valid workspaces when they are inside the configured workspace base. Existing directory type checks, symlink handling, and path containment validation remain in place.

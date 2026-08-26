@@ -30,7 +30,7 @@ async function loadNousAuthController() {
   vi.doMock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
     resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
   }))
-  return import('../../packages/server/src/controllers/hermes/nous-auth')
+  return import('../../packages/server/src/modules/hermes/controllers/nous-auth')
 }
 
 describe('Nous auth controller', () => {

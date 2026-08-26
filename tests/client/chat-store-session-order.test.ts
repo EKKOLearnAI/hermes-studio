@@ -2,10 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
-import { startRunViaSocket } from '@/api/hermes/chat'
-import { archiveSession, fetchSessions } from '@/api/hermes/sessions'
+import { startRunViaSocket } from '@/api/studio/chat'
+import { archiveSession, fetchSessions } from '@/api/studio/sessions'
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('@/api/hermes/sessions', () => ({
   setSessionModel: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/chat', () => ({
+vi.mock('@/api/studio/chat', () => ({
   startRunViaSocket: vi.fn(() => ({ abort: vi.fn() })),
   resumeSession: vi.fn((_sessionId: string, cb: (data: any) => void) => {
     cb({ session_id: _sessionId, isWorking: false, messages: [] })
@@ -37,7 +37,7 @@ vi.mock('@/api/client', () => ({
   hasApiKey: () => false,
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   getDownloadUrl: (_path: string, name: string) => `/download/${name}`,
 }))
 

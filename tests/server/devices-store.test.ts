@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { LanDeviceInfo } from '../../packages/server/src/services/lan-discovery'
+import type { LanDeviceInfo } from '../../packages/server/src/bootstrap/lan-discovery'
 
 describe('devices store', () => {
   let db: any = null

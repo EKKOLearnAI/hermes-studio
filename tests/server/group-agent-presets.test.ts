@@ -20,7 +20,7 @@ vi.mock('../../packages/server/src/modules/studio/public/group-chat-agent-runtim
 }))
 
 afterAll(async () => {
-  const { closeDb } = await import('../../packages/server/src/db')
+  const { closeDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
   closeDb()
   rmSync(root, { recursive: true, force: true })
 })

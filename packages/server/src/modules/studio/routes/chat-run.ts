@@ -4,4 +4,4 @@ export { getChatRunServer, setChatRunServer } from '../public/chat-run'
 
 export const chatRunRoutes = new Router()
 
-chatRunRoutes.post('/api/chat-run/runs', ctrl.runOnce)
+chatRunRoutes.post('/api/studio/chat-run/runs', ctrl.runOnce)

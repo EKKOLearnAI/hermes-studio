@@ -311,7 +311,7 @@ export async function bootstrap() {
 
   const app = new Koa()
   // Initialize all web-ui SQLite tables
-  const { initAllStores } = await import('../db/hermes/init')
+  const { initAllStores } = await import('../modules/studio/infrastructure/database/init')
   initAllStores()
   startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
@@ -341,8 +341,7 @@ export async function bootstrap() {
   app.use(async (ctx) => {
     if ((ctx.method === 'GET' || ctx.method === 'HEAD') &&
       !ctx.path.startsWith('/api') &&
-      ctx.path !== '/health' &&
-      ctx.path !== '/upload') {
+      ctx.path !== '/health') {
       ctx.set('Cache-Control', SPA_ENTRY_CACHE_CONTROL)
       await send(ctx, 'index.html', { root: distDir })
     }

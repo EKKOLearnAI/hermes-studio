@@ -21,7 +21,7 @@ vi.mock('../../packages/server/src/modules/hermes/services/bridge/client', () =>
   })),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 

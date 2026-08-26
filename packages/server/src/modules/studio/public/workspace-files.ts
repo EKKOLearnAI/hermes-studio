@@ -1,4 +1,7 @@
 export * from '../services/files/file-policy'
+export * from '../services/files/app-image-preview'
+export { getTerminalConfig, validatePath } from '../services/files/file-provider'
+export type { TerminalConfig } from '../services/files/file-provider'
 export * from '../services/files/file-preview'
 export * from '../services/files/path'
 export * from '../services/files/upload-paths'

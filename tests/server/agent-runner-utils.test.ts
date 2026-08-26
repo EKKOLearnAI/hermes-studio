@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 import {
   anthropicMessagesUrl,
   chatCompletionsUrl,
@@ -17,7 +18,7 @@ import {
   CodingAgentRunManager,
   codingAgentGatewayErrorMessage,
   sanitizeCodingAgentTerminalOutput,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 import { applyResponseStreamEvent } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/modules/studio/repositories/session-store'

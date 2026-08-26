@@ -27,18 +27,18 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: class {
     request = bridgeRequestMock
     destroy = bridgeDestroyMock
   },
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/provider-runtime', () => ({
   resolveEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/manager', () => ({
   getGlobalEkkoAgent: getGlobalEkkoAgentMock,
 }))
 

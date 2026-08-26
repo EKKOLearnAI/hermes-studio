@@ -20,7 +20,7 @@ describe('user theme storage', () => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/config')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/config')
     vi.resetModules()
   })
 
@@ -118,7 +118,7 @@ describe('user theme storage', () => {
 
   it('stores validated background files outside SQLite and removes them cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-theme-test-'))
-    vi.doMock('../../packages/server/src/config', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/config', () => ({
       config: { appHome: root },
     }))
 

@@ -52,7 +52,7 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/bridge-messa
   flushBridgePendingToDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 

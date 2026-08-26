@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchPetdexManifest, type PetdexManifest, type PetdexPet } from '@/api/hermes/petdex'
+import { fetchPetdexManifest, type PetdexManifest, type PetdexPet } from '@/api/studio/petdex'
 import { usePetsStore } from '@/stores/hermes/pets'
 import { desktopBridge } from '@/utils/desktop-bridge'
 

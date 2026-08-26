@@ -1,4 +1,3 @@
-import Router from '@koa/router'
 import { randomBytes } from 'node:crypto'
 import {
     GROUP_CHAT_MESSAGE_WINDOW,
@@ -18,13 +17,7 @@ import {
 import { setGroupChatRuntimeServer } from '../services/group-chat/runtime'
 import * as inviteCtrl from './group-chat-invite'
 import * as uploadCtrl from './group-chat-upload'
-import * as workspaceCtrl from './group-chat-workspace'
-import * as agentLinkCtrl from './group-chat-agent-link'
-import * as remoteWorkspaceCtrl from './group-chat-remote-workspace'
 import * as agentPresetCtrl from './group-agent-presets'
-
-export const groupChatPublicRoutes = new Router()
-export const groupChatRoutes = new Router()
 
 let chatServer: GroupChatServer | null = null
 const roomAgentUpdates = new Set<string>()
@@ -38,48 +31,6 @@ export function setGroupChatServer(server: GroupChatServer | null) {
 export function getGroupChatServer(): GroupChatServer | null {
     return chatServer
 }
-
-groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/attachments', inviteCtrl.uploadInviteAttachment)
-groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/attachments/:file', inviteCtrl.readInviteAttachment)
-groupChatPublicRoutes.options('/api/hermes/group-chat-link/v1/capabilities', agentLinkCtrl.capabilities)
-groupChatPublicRoutes.get('/api/hermes/group-chat-link/v1/capabilities', agentLinkCtrl.capabilities)
-groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-link-handoffs', agentLinkCtrl.createPairingHandoff)
-groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:requestId/submit', agentLinkCtrl.submitPairingHandoff)
-groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links/:requestId/failure', agentLinkCtrl.failPairingHandoff)
-groupChatPublicRoutes.post('/api/hermes/group-chat/invites/:code/agent-links', agentLinkCtrl.requestPairing)
-groupChatPublicRoutes.get('/api/hermes/group-chat/invites/:code/agent-links/:requestId', agentLinkCtrl.pairingStatus)
-/**
- * Perform a JSON action against the current Agent run's shared group workspace.
- * Supported actions are list, read, write, mkdir, and delete. JSON write actions
- * only update the workspace and do not publish an Agent attachment message.
- */
-groupChatPublicRoutes.post('/api/hermes/group-chat/remote-workspace/v1', remoteWorkspaceCtrl.remoteWorkspaceAction)
-groupChatPublicRoutes.get('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.downloadRemoteWorkspaceFile)
-/**
- * Upload a binary artifact to the current Agent run's shared group workspace.
- * Returns its workspace path, checksum, generated attachment block, and messageId.
- * A successful upload also publishes a separate Agent attachment message to the
- * room with the workspace-relative path as its text body and the image/file block
- * in the same attachment format used by the message composer.
- */
-groupChatPublicRoutes.put('/api/hermes/group-chat/remote-workspace/v1/file', remoteWorkspaceCtrl.uploadRemoteWorkspaceFileContent)
-
-groupChatRoutes.get('/api/hermes/group-chat-link/v1/agents', agentLinkCtrl.localAgents)
-groupChatRoutes.get('/api/hermes/group-chat-link/v1/connections', agentLinkCtrl.localConnections)
-groupChatRoutes.post('/api/hermes/group-chat-link/v1/connect', agentLinkCtrl.connectLocalAgent)
-groupChatRoutes.post('/api/hermes/group-chat-link/v1/connect-handoff', agentLinkCtrl.connectLocalAgentHandoff)
-groupChatRoutes.put('/api/hermes/group-chat-link/v1/connections/:connectorId', agentLinkCtrl.updateLocalAgent)
-groupChatRoutes.put('/api/hermes/group-chat-link/v1/connections/:connectorId/room-alias', agentLinkCtrl.renameLocalRoom)
-groupChatRoutes.post('/api/hermes/group-chat-link/v1/connections/:connectorId/leave-room', agentLinkCtrl.leaveLocalRoom)
-groupChatRoutes.post('/api/hermes/group-chat-link/v1/disconnect', agentLinkCtrl.disconnectLocalAgent)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agent-link-requests', agentLinkCtrl.pendingPairings)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agent-link-requests/:requestId/decision', agentLinkCtrl.decidePairing)
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/guest-agent-policy', agentLinkCtrl.updateGuestAgentPolicy)
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agent-connectors/:connectorId', agentLinkCtrl.revokeConnector)
-groupChatRoutes.get('/api/hermes/group-chat/agent-presets', agentPresetCtrl.list)
-groupChatRoutes.post('/api/hermes/group-chat/agent-presets', agentPresetCtrl.create)
-groupChatRoutes.put('/api/hermes/group-chat/agent-presets/:presetId', agentPresetCtrl.update)
-groupChatRoutes.delete('/api/hermes/group-chat/agent-presets/:presetId', agentPresetCtrl.remove)
 
 async function authorizedAttachmentRoom(ctx: any): Promise<any | null> {
     if (!chatServer) {
@@ -103,35 +54,35 @@ async function authorizedAttachmentRoom(ctx: any): Promise<any | null> {
     return room
 }
 
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachments', async (ctx) => {
+export async function uploadRoomAttachment(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await inviteCtrl.uploadRoomAttachment(ctx, room)
-})
+}
 
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachment-uploads', async (ctx) => {
+export async function openRoomAttachmentUpload(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await uploadCtrl.open(ctx, room)
-})
+}
 
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/chunks', async (ctx) => {
+export async function appendRoomAttachmentUploadChunk(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await uploadCtrl.appendChunk(ctx, room)
-})
+}
 
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id/complete', async (ctx) => {
+export async function completeRoomAttachmentUpload(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await uploadCtrl.complete(ctx, room)
-})
+}
 
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/attachment-uploads/:id', async (ctx) => {
+export async function abortRoomAttachmentUpload(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await uploadCtrl.abort(ctx, room)
-})
+}
 
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/attachments/:file', async (ctx) => {
+export async function readRoomAttachment(ctx: any) {
     const room = await authorizedAttachmentRoom(ctx)
     if (room) await inviteCtrl.readRoomAttachment(ctx, room)
-})
+}
 
 function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -273,11 +224,6 @@ export function serializeRoom(room: any, includeManageFields: boolean, canMentio
     return serialized
 }
 
-// Resolve an invite before the normal user-auth middleware. The response is
-// intentionally stripped of workspace and management fields; the invite is
-// validated again by Socket.IO before any room history is returned.
-groupChatPublicRoutes.get('/api/hermes/group-chat/rooms/join/:code', inviteCtrl.resolveInvite)
-
 function persistRoomCreator(
     storage: ReturnType<GroupChatServer['getStorage']>,
     roomId: string,
@@ -377,7 +323,7 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
 }
 
 // Create room
-groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
+export async function createRoom(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -524,10 +470,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         agents: addedAgents,
         agentResults,
     }
-})
+}
 
 // Clone room roles/config without copying the conversation context.
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) => {
+export async function cloneRoom(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -594,10 +540,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         agents: addedAgents,
         agentResults,
     }
-})
+}
 
 // Get room detail and messages
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
+export async function getRoom(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -651,20 +597,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         hasMore: historyPage?.hasMore ?? offset + messages.length < total,
         historyTruncated: storedTotal > GROUP_CHAT_MESSAGE_WINDOW,
     }
-})
-
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', workspaceCtrl.listWorkspaceFiles)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/diff', workspaceCtrl.diffWorkspaceFile)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', workspaceCtrl.readWorkspaceFile)
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/workspace-file/content', workspaceCtrl.readWorkspaceFileContent)
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace-file/write', workspaceCtrl.writeWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/mkdir', workspaceCtrl.mkdirWorkspaceFile)
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/workspace-file/delete', workspaceCtrl.deleteWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/rename', workspaceCtrl.renameWorkspaceFile)
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/workspace-file/copy', workspaceCtrl.copyWorkspaceFile)
+}
 
 // List rooms
-groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
+export async function listRooms(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -692,10 +628,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
         limit,
         hasMore: offset + rooms.length < visibleRooms.length,
     } : { rooms }
-})
+}
 
 // Update room invite code
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (ctx) => {
+export async function updateRoomInviteCode(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -725,10 +661,10 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (c
     storage.updateRoomInviteCode(ctx.params.roomId, inviteCode)
     chatServer.broadcastRoomMetadata(ctx.params.roomId)
     ctx.body = { success: true }
-})
+}
 
 // Add agent to room
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) => {
+export async function addRoomAgent(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -835,10 +771,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
     }
-})
+}
 
 // Update an agent and replace only its group-chat runtime client.
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', async (ctx) => {
+export async function updateRoomAgent(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1013,10 +949,10 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', asyn
     } finally {
         roomAgentUpdates.delete(updateKey)
     }
-})
+}
 
 // List agents in room
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) => {
+export async function listRoomAgents(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1040,10 +976,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) =
         canManageRoom(storage, ctx.params.roomId, ctx.state?.user),
     )
     ctx.body = { agents }
-})
+}
 
 // Remove a human member and any remote Agents that member brought into the room.
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/members/:userId', async (ctx) => {
+export async function removeRoomMember(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1101,10 +1037,10 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/members/:userId', a
         ? chatServer.broadcastRoomAgents(roomId)
         : chatServer.getRoomAgentViews(roomId, false)
     ctx.body = { success: true, members, agents }
-})
+}
 
 // Remove agent from room
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', async (ctx) => {
+export async function removeRoomAgent(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1148,10 +1084,10 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         agents,
         members: storage.getRoomMembers(roomId),
     }
-})
+}
 
 // Delete room
-groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
+export async function removeRoom(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1196,10 +1132,10 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         roomDeletions.delete(roomId)
     }
     ctx.body = { success: true }
-})
+}
 
 // Clear current room context while keeping members, agents, and room config.
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async (ctx) => {
+export async function clearRoomContext(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1237,10 +1173,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async
             isGroupChatRoomOwner(storage, roomId, ctx.state?.user),
         ),
     }
-})
+}
 
 // Update room name and rolling-summary config
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) => {
+export async function updateRoomConfig(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1351,9 +1287,9 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
             isGroupChatRoomOwner(storage, roomId, ctx.state?.user),
         ),
     }
-})
+}
 
-groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/continue', async (ctx) => {
+export async function continueRoomHandoff(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1421,9 +1357,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/handoffs/:chainId/con
         status: 'continuing',
         chain: storage.getHandoffChain(roomId, chainId),
     }
-})
+}
 
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs', async (ctx) => {
+export async function listRoomHandoffs(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1442,10 +1378,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/handoffs', async (ctx)
         return
     }
     ctx.body = { chains: storage.getStoppedHandoffChains(roomId) }
-})
+}
 
 // Update room workspace
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace', async (ctx) => {
+export async function updateRoomWorkspace(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1496,9 +1432,9 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/workspace', async (ctx
         ctx.status = Number(err?.status || 403)
         ctx.body = { error: err?.message || 'Workspace folder is not allowed' }
     }
-})
+}
 
-groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) => {
+export async function getRoomSummary(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1533,9 +1469,9 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) 
             content: contentPreview(anchorMessage.content),
         } : null,
     }
-})
+}
 
-groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) => {
+export async function updateRoomSummary(ctx: any) {
     if (!chatServer) {
         ctx.status = 503
         ctx.body = { error: 'Group chat not initialized' }
@@ -1561,4 +1497,4 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/summary', async (ctx) 
     }
     const summary = await chatServer.getRoomSummaryService().updateSummaryText(roomId, text.trim())
     ctx.body = { summary }
-})
+}

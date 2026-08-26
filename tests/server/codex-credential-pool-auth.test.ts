@@ -49,7 +49,8 @@ async function loadModelsController() {
     getCopilotModelsDetailed: vi.fn().mockResolvedValue([]),
     resolveCopilotOAuthToken: vi.fn().mockResolvedValue(''),
   }))
-  return import('../../packages/server/src/controllers/hermes/models')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/models')
 }
 
 async function loadCodexAuthController() {
@@ -60,7 +61,8 @@ async function loadCodexAuthController() {
   vi.doMock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
     resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
   }))
-  return import('../../packages/server/src/controllers/hermes/codex-auth')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/codex-auth')
 }
 
 describe('OpenAI Codex credential pool auth compatibility', () => {

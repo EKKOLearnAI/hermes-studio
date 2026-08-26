@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { getWebUiHome } from '../../../studio/public/config'
 import { logger } from '../../../studio/public/logging'
-import { createAppImagePreview } from '../files/app-image-preview'
+import { createAppImagePreview } from '../../../studio/public/workspace-files'
 
 const APP_PROFILE_AVATAR_MAX_EDGE = 128
 const APP_PROFILE_AVATAR_WEBP_QUALITY = 65

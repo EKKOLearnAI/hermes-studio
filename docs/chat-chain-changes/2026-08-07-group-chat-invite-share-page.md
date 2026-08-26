@@ -40,7 +40,7 @@ group-chat session. The standalone view also suppresses input settings,
 autoplay speech, and per-message speech controls.
 
 Both authenticated and invite-only group chat attachments use dedicated room
-endpoints instead of the system `/upload` and generic download APIs. Files are
+endpoints instead of the system `/api/studio/uploads` and generic download APIs. Files are
 stored under a hashed room directory in
 `HERMES_WEB_UI_HOME/group-chat/attachments`, with a 20 MB request limit, a
 500 MB per-room quota, serialized writes, random non-overwriting filenames,

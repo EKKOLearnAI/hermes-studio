@@ -24,7 +24,7 @@ describe('chat run webhooks', () => {
     for (const dispatcher of dispatchers.splice(0)) dispatcher.stop()
     try {
       const { stopChatWebhookDispatcher } = await import(
-        '../../packages/server/src/services/hermes/chat-webhooks/dispatcher'
+        '../../packages/server/src/modules/studio/services/webhooks/dispatcher'
       )
       stopChatWebhookDispatcher()
     } catch {}
@@ -83,7 +83,7 @@ describe('chat run webhooks', () => {
     ).all().map((row: { name: string }) => row.name)
     expect(tables).toEqual(['chat_webhook_endpoints'])
 
-    const controller = await import('../../packages/server/src/controllers/hermes/chat-webhooks')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/chat-webhooks')
     const ctx = { body: null } as any
     await controller.listEndpoints(ctx)
     expect(ctx.body.endpoints).toHaveLength(2)
@@ -98,7 +98,7 @@ describe('chat run webhooks', () => {
 
   it('rejects private targets unless explicitly enabled and returns the validated DNS address', async () => {
     const { normalizeSafeWebhookUrl, resolveSafeWebhookTarget } = await import(
-      '../../packages/server/src/services/hermes/chat-webhooks/url-safety'
+      '../../packages/server/src/modules/studio/services/webhooks/url-safety'
     )
 
     await expect(normalizeSafeWebhookUrl('http://127.0.0.1/hook', false)).rejects.toThrow(
@@ -124,7 +124,7 @@ describe('chat run webhooks', () => {
 
   it('builds metadata-only payloads by default and safely truncates optional final text', async () => {
     const { buildChatWebhookEnvelope, MAX_WEBHOOK_CONTENT_BYTES } = await import(
-      '../../packages/server/src/services/hermes/chat-webhooks/envelope'
+      '../../packages/server/src/modules/studio/services/webhooks/envelope'
     )
     const event = completedEvent('run-1')
     event.content = '🙂'.repeat(MAX_WEBHOOK_CONTENT_BYTES)
@@ -157,7 +157,7 @@ describe('chat run webhooks', () => {
       listLocalChatWebhookTestInbox,
       validateLocalChatWebhookTestDelivery,
     } = await import(
-      '../../packages/server/src/services/hermes/chat-webhooks/local-test-receiver'
+      '../../packages/server/src/modules/studio/services/webhooks/local-test-receiver'
     )
     const target = await getLocalChatWebhookTestTarget()
     const token = new URL(target.url).pathname.split('/').pop()!
@@ -204,7 +204,7 @@ describe('chat run webhooks', () => {
   })
 
   it('normalizes terminal Chat Run events before enqueueing them', async () => {
-    const webhookService = await import('../../packages/server/src/services/hermes/chat-webhooks')
+    const webhookService = await import('../../packages/server/src/modules/studio/services/webhooks/index')
     const dispatcher = webhookService.getChatWebhookDispatcher()
     const enqueue = vi.spyOn(dispatcher, 'enqueue').mockReturnValue(true)
 
@@ -247,7 +247,7 @@ describe('chat run webhooks', () => {
     vi.doMock('../../packages/server/src/modules/studio/services/social-messages/session-push', () => ({
       notifySessionPush,
     }))
-    const webhookService = await import('../../packages/server/src/services/hermes/chat-webhooks')
+    const webhookService = await import('../../packages/server/src/modules/studio/services/webhooks/index')
     const enqueue = vi.spyOn(webhookService.getChatWebhookDispatcher(), 'enqueue').mockReturnValue(true)
     const base = {
       sessionId: 'session-push',
@@ -303,7 +303,7 @@ describe('chat run webhooks', () => {
   })
 
   it('normalizes stable message, queue, run, tool, approval, and clarification lifecycle events', async () => {
-    const webhookService = await import('../../packages/server/src/services/hermes/chat-webhooks')
+    const webhookService = await import('../../packages/server/src/modules/studio/services/webhooks/index')
     const dispatcher = webhookService.getChatWebhookDispatcher()
     const enqueue = vi.spyOn(dispatcher, 'enqueue').mockReturnValue(true)
     const base = {
@@ -367,7 +367,7 @@ describe('chat run webhooks', () => {
     const {
       ChatWebhookDispatcher,
       SIGNATURE_HEADER,
-    } = await import('../../packages/server/src/services/hermes/chat-webhooks/dispatcher')
+    } = await import('../../packages/server/src/modules/studio/services/webhooks/dispatcher')
     const dispatcher = new ChatWebhookDispatcher({ fetchImpl })
     dispatchers.push(dispatcher)
 
@@ -401,7 +401,7 @@ describe('chat run webhooks', () => {
     }) as typeof fetch
 
     const { ChatWebhookDispatcher } = await import(
-      '../../packages/server/src/services/hermes/chat-webhooks/dispatcher'
+      '../../packages/server/src/modules/studio/services/webhooks/dispatcher'
     )
     const dispatcher = new ChatWebhookDispatcher({
       fetchImpl,

@@ -43,75 +43,63 @@ const openapi = {
 
 // Tag mappings based on route directories
 const tagMappings = {
-  'Chat Run': {
-    route: 'packages/server/src/modules/studio/routes/chat-run.ts',
-    controller: 'packages/server/src/modules/studio/controllers/chat-run.ts',
-  },
-  'modules/studio/routes/workflows.ts': { name: 'Workflows', description: 'Cross-agent workflow orchestration' },
-  'modules/studio/routes/sessions.ts': { name: 'Sessions', description: 'Chat session management' },
   'modules/hermes/routes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },
-  'routes/hermes/gateways.ts': { name: 'Gateways', description: 'Gateway process management' },
   'modules/hermes/routes/models.ts': { name: 'Models', description: 'Model configuration' },
   'modules/hermes/routes/providers.ts': { name: 'Providers', description: 'Model provider management' },
   'modules/hermes/routes/skills.ts': { name: 'Skills', description: 'Skill browsing and management' },
-  'routes/hermes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
+  'modules/hermes/routes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
   'modules/hermes/routes/plugins.ts': { name: 'Plugins', description: 'Plugin browsing and management' },
-  'routes/hermes/memory.ts': { name: 'Memory', description: 'Agent memory files' },
-  'modules/studio/routes/logs.ts': { name: 'Logs', description: 'Cross-agent log file access' },
-  'routes/hermes/jobs.ts': { name: 'Jobs', description: 'Scheduled job management' },
-  'routes/hermes/cron-history.ts': { name: 'Jobs', description: 'Cron job history' },
-  'routes/hermes/kanban.ts': { name: 'Kanban', description: 'Kanban board and task management' },
+  'modules/hermes/routes/memory.ts': { name: 'Memory', description: 'Agent memory files' },
+  'modules/hermes/routes/jobs.ts': { name: 'Jobs', description: 'Scheduled job management' },
+  'modules/hermes/routes/cron-history.ts': { name: 'Jobs', description: 'Cron job history' },
+  'modules/hermes/routes/kanban.ts': { name: 'Kanban', description: 'Kanban board and task management' },
   'modules/hermes/routes/weixin.ts': { name: 'Weixin', description: 'Hermes WeChat QR code login' },
-  'routes/social-messages.ts': { name: 'Social Messages', description: 'Unified outbound messaging for configured social platforms' },
   'modules/hermes/routes/codex-auth.ts': { name: 'Codex Auth', description: 'OpenAI Codex OAuth' },
   'modules/hermes/routes/nous-auth.ts': { name: 'Nous Auth', description: 'Nous Research OAuth' },
   'modules/hermes/routes/copilot-auth.ts': { name: 'Copilot Auth', description: 'GitHub Copilot OAuth' },
   'modules/hermes/routes/xai-auth.ts': { name: 'xAI Auth', description: 'xAI OAuth' },
   'modules/hermes/routes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
   'modules/hermes/routes/minimax-auth.ts': { name: 'MiniMax Auth', description: 'MiniMax OAuth' },
-  'modules/studio/controllers/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
-  'routes/hermes/chat-run.ts': { name: 'Chat Run', description: 'Chat run HTTP and Socket.IO bridge operations' },
-  'modules/studio/routes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Cross-agent Chat Run webhook endpoint management' },
   'modules/hermes/routes/config.ts': { name: 'Config', description: 'Configuration management' },
-  'modules/hermes/routes/files.ts': { name: 'Files', description: 'Hermes file browser' },
-  'modules/hermes/routes/download.ts': { name: 'Download', description: 'File download' },
-  'modules/studio/routes/tts.ts': { name: 'TTS', description: 'Text-to-speech generation and settings' },
-  'modules/studio/routes/stt.ts': { name: 'STT', description: 'Speech-to-text transcription and settings' },
-  'modules/studio/routes/media.ts': { name: 'Media', description: 'Media generation endpoints' },
+  'modules/studio/routes/files.ts': { name: 'Studio Files', description: 'Studio profile file browser and editor' },
+  'modules/studio/routes/app-upload.ts': { name: 'Studio Files', description: 'Studio App chunked uploads' },
+  'modules/studio/routes/download.ts': { name: 'Studio Files', description: 'Studio file download' },
   'modules/hermes/routes/mcp.ts': { name: 'MCP', description: 'MCP server and tool management' },
   'modules/hermes/routes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
   'modules/hermes/routes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
+  'modules/hermes/routes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
+  'modules/studio/routes/workflows.ts': { name: 'Workflows', description: 'Cross-agent workflow orchestration' },
+  'modules/studio/routes/sessions.ts': { name: 'Sessions', description: 'Cross-agent chat session management' },
+  'modules/studio/routes/logs.ts': { name: 'Logs', description: 'Cross-agent log file access' },
+  'modules/studio/routes/social-messages.ts': { name: 'Social Messages', description: 'Unified outbound messaging for configured social platforms' },
+  'modules/studio/routes/group-chat.ts': { name: 'Group Chat', description: 'Cross-agent group chat management' },
+  'modules/studio/routes/chat-run.ts': { name: 'Chat Run', description: 'Cross-agent chat run HTTP and Socket.IO bridge operations' },
+  'modules/studio/routes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Cross-agent Chat Run webhook endpoint management' },
+  'modules/studio/routes/tts.ts': { name: 'TTS', description: 'Text-to-speech generation and settings' },
+  'modules/studio/routes/stt.ts': { name: 'STT', description: 'Speech-to-text transcription and settings' },
+  'modules/studio/routes/media.ts': { name: 'Media', description: 'Media generation endpoints' },
   'modules/studio/routes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'modules/studio/routes/petdex.ts': { name: 'Petdex', description: 'Desktop pet catalog and assets' },
   'modules/studio/routes/pets.ts': { name: 'Pets', description: 'Per-profile desktop pet settings' },
-  'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
   'modules/studio/routes/health.ts': { name: 'Health', description: 'Health check' },
-  'routes/update.ts': { name: 'Update', description: 'Self-update management' },
-  'modules/studio/routes/upload.ts': { name: 'Upload', description: 'File upload' },
+  'modules/studio/routes/update.ts': { name: 'Update', description: 'Studio self-update management' },
+  'modules/studio/routes/upload.ts': { name: 'Studio Files', description: 'Studio runtime file upload' },
   'modules/studio/routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
-  'routes/app-connections.ts': { name: 'App Connections', description: 'Mobile App authorization and connection management' },
-  'routes/app-relay.ts': { name: 'App Relay', description: 'Mobile App cloud relay route and connection management' },
-  'routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
-  'routes/coding-agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
-  'routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
+  'modules/studio/routes/app-connections.ts': { name: 'App Connections', description: 'Mobile App authorization and connection management' },
+  'modules/studio/routes/app-relay.ts': { name: 'App Relay', description: 'Mobile App cloud relay route and connection management' },
+  'modules/studio/routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
+  'modules/studio/routes/mcu-devices.ts': { name: 'MCU Devices', description: 'Microcontroller device management' },
+  'modules/studio/routes/mcu-firmware.ts': { name: 'MCU Firmware', description: 'Microcontroller firmware distribution' },
+  'modules/studio/routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
   'modules/studio/routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
+  'modules/coding-agents/routes/agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
 }
 
 // Extract route definitions from route files
 function scanRoutes() {
   const paths = {}
 
-  // Mappings may point at legacy routes or at their migrated module path.
-  // Preserve the historical scan order: Hermes files alphabetically first,
-  // followed by all other mappings in declaration order.
-  const mappings = Object.entries(tagMappings)
-  const hermesMappings = mappings
-    .filter(([routeFile]) => routeFile.startsWith('routes/hermes/'))
-    .sort(([left], [right]) => left.localeCompare(right))
-  const sharedAndMigratedMappings = mappings
-    .filter(([routeFile]) => !routeFile.startsWith('routes/hermes/'))
-
-  for (const [routeFile, tagInfo] of [...hermesMappings, ...sharedAndMigratedMappings]) {
+  for (const [routeFile, tagInfo] of Object.entries(tagMappings)) {
     const filePath = join(serverSourceDir, routeFile)
     try {
       scanRouteFile(filePath, tagInfo, paths)
@@ -737,7 +725,7 @@ function generateResponses(path, method) {
     responses['400'] = { $ref: '#/components/responses/BadRequest' }
   }
 
-  if (path === '/api/hermes/group-chat/rooms/:roomId/workspace') {
+  if (path === '/api/studio/group-chat/rooms/:roomId/workspace') {
     responses['403'] = { description: 'Forbidden - Workspace folder is not allowed' }
     responses['404'] = { $ref: '#/components/responses/NotFound' }
   }
@@ -788,25 +776,6 @@ openapi.components.responses = {
   },
 }
 
-// Add WebSocket terminal endpoint
-openapi.paths['/api/hermes/terminal'] = {
-  'get': {
-    tags: ['Terminal'],
-    summary: 'WebSocket terminal connection',
-    description: 'Establish a WebSocket connection for interactive terminal access. Uses the `ws` or `wss` protocol with `?token=` for authentication.',
-    operationId: 'terminalWebSocket',
-    responses: {
-      '101': { description: 'Switching Protocols - WebSocket connection established' },
-      '401': { $ref: '#/components/responses/Unauthorized' },
-    },
-  },
-}
-
-// Add Terminal tag
-if (!openapi.tags.find(t => t.name === 'Terminal')) {
-  openapi.tags.push({ name: 'Terminal', description: 'WebSocket terminal access' })
-}
-
 // Run scanner
 console.log('Scanning routes...')
 openapi.paths = scanRoutes()
@@ -836,7 +805,7 @@ openapi.paths = sortedPaths
 
 // Add special endpoints after sorting
 // Add non-streaming Chat Run HTTP wrapper endpoint
-openapi.paths['/api/chat-run/runs'] = {
+openapi.paths['/api/studio/chat-run/runs'] = {
   post: {
     tags: ['Chat Run'],
     summary: 'Run chat and wait for completion',

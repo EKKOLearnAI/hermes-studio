@@ -1,14 +1,14 @@
 # Server Module Boundaries
 
-This document is the target architecture and migration contract for
-`packages/server/src`. It separates Studio-owned capabilities from the three
-agent families without changing public API paths or persisted data as part of
-the move.
+This document is the architecture contract for `packages/server/src`. It
+separates Studio-owned capabilities from the three agent families while
+preserving request/response semantics and persisted data. Studio-owned HTTP
+operations use `/api/studio/*`; Hermes-owned operations use `/api/hermes/*`.
+Old server source trees and old Studio URLs are not retained as aliases.
 
-Legacy paths outside `modules/` and `bootstrap/` are compatibility-only. They
-may contain imports and re-exports, but no functions, classes, variables, or
-business statements. The boundary harness enforces this so implementation
-cannot drift back into the legacy tree.
+All server TypeScript source lives under `modules/` or `bootstrap/`, except the
+package entrypoint `index.ts`. The boundary harness rejects any source file that
+reintroduces a legacy top-level tree.
 
 ## Domain Vocabulary
 
@@ -33,7 +33,7 @@ to this document and its mechanical checker.
 
 ```text
 packages/server/src/
-  index.ts                         # temporary process entry; delegates to bootstrap
+  index.ts                         # package entrypoint; delegates to bootstrap
   bootstrap/                       # only concrete composition root
     app.ts                         # Koa construction and middleware order
     http.ts                        # HTTP server lifecycle
@@ -85,16 +85,18 @@ packages/server/src/
         health.ts
         devices.ts
         mcu-devices.ts
-        upload.ts
-        files.ts
+        upload.ts                   # /api/studio/uploads
+        app-upload.ts               # /api/studio/app-uploads/*
+        files.ts                    # /api/studio/files/*
+        download.ts                 # /api/studio/files/download
         theme.ts
         api-docs.ts
         app-connections.ts
         app-relay.ts
         social-messages.ts
-        sessions.ts                 # cross-agent single-chat session management; legacy URLs remain /api/hermes/sessions/*
+        sessions.ts                 # cross-agent single-chat session management; /api/studio/sessions/*
         chat-run.ts
-        chat-webhooks.ts            # cross-agent event delivery; legacy URL remains /api/hermes/webhooks
+        chat-webhooks.ts            # cross-agent event delivery; /api/studio/webhooks/*
         workflows.ts
         group-chat.ts
         global-agent.ts
@@ -108,7 +110,10 @@ packages/server/src/
         devices.ts
         mcu-devices.ts
         upload.ts
+        app-upload.ts
         files.ts
+        file-preview.ts
+        download.ts
         theme.ts
         api-docs.ts
         app-connections.ts
@@ -132,6 +137,9 @@ packages/server/src/
         connections/
         credentials/
         files/
+          app-image-preview.ts
+          app-upload.ts
+          file-provider.ts
           path.ts
           file-policy.ts
           file-preview.ts
@@ -364,19 +372,18 @@ Additional layer rules:
 
 ## Migration Contract
 
-Migration is structural first. Preserve behavior while moving ownership:
+Preserve behavior while moving ownership:
 
-1. Do not rename existing `/api/...` paths merely because files move.
+1. Studio-owned HTTP operations use `/api/studio/*`; Hermes-owned operations
+   use `/api/hermes/*`. Client API modules must use the matching owner folder.
 2. Do not combine a module move with a database schema or state-location
    change. Studio state and Hermes Agent state remain physically separate.
-3. Introduce Studio contracts/public facades before removing a cross-module
+3. Introduce Studio contracts/public APIs before removing a cross-module
    import. `bootstrap` supplies concrete agent implementations.
-4. Move one vertical feature slice at a time: route, controller, service,
-   repository/adapter, socket, and focused tests.
-5. Temporary re-exports may preserve internal import compatibility during one
-   migration slice, but new module code may not import the legacy tree.
-6. Delete compatibility re-exports and shrink the debt baseline as soon as all
-   callers move.
+4. Move a complete vertical feature slice: route, controller, service,
+   repository/adapter, socket, Client API, and focused tests.
+5. Do not add compatibility re-exports, legacy source trees, or old HTTP URL
+   aliases. Callers migrate in the same change.
 
 ## Mechanical Harness
 
@@ -389,14 +396,14 @@ npm run harness:server-boundaries
 `scripts/server-module-boundaries.mjs` enforces:
 
 - only the four declared module roots under `modules/`;
+- no server TypeScript outside `modules/`, `bootstrap/`, and the package
+  entrypoint `index.ts`;
 - the dependency matrix and route/controller/service layer rules;
-- no imports from migrated modules back into legacy server source;
-- no new files in the legacy tree after cutoff commit
-  `a513405354f6b038e220c587c3f729871c2b8b0d`;
-- no increase in the existing forbidden-import debt recorded in
-  `scripts/harness/server-module-boundary-baseline.json`.
+- no imports from modules back into legacy server source;
+- no Studio dependency on concrete agent modules;
+- no direct dependency between concrete agent modules.
+- no file, download, preview, or App upload implementation under Hermes;
+  these capabilities are mechanically reserved for Studio.
 
-When a migration removes a forbidden legacy edge, the check intentionally
-fails until its stale baseline entry is deleted. Baseline additions are not a
-normal escape hatch: resolve a new dependency through Studio contracts/public
-facades instead.
+Resolve cross-module behavior through Studio contracts/public APIs and inject
+concrete runtime adapters from `bootstrap`.
