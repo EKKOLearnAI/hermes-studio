@@ -2,6 +2,7 @@ import { realpath } from 'fs/promises'
 import {
   dirname,
   isAbsolute,
+  normalize,
   relative,
   resolve,
   win32 as pathWin32,
@@ -38,6 +39,31 @@ function startsWithParentSegment(relativePath: string): boolean {
 
 function dirnameComparablePath(path: string, useWindows: boolean): string {
   return useWindows ? pathWin32.dirname(path) : dirname(path)
+}
+
+export function normalizePlatformPath(filePath: string, platform = process.platform): string {
+  if (platform !== 'win32') return filePath
+  const msysDrivePath = filePath.match(/^\/([a-zA-Z])(?:\/(.*))?$/)
+  if (!msysDrivePath) return filePath
+  const [, drive, rest = ''] = msysDrivePath
+  return `${drive.toUpperCase()}:\\${rest.replace(/\//g, '\\')}`
+}
+
+function hasTraversalSegment(filePath: string): boolean {
+  return filePath.replace(/\\/g, '/').split('/').some(part => part === '..')
+}
+
+export function validatePath(filePath: string): string {
+  if (!filePath) throw Object.assign(new Error('Missing file path'), { code: 'missing_path' })
+  const platformPath = normalizePlatformPath(filePath)
+  if (hasTraversalSegment(platformPath)) {
+    throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
+  }
+  const normalized = normalize(resolve(platformPath))
+  if (!isAbsolute(normalized)) {
+    throw Object.assign(new Error('Path must be absolute'), { code: 'invalid_path' })
+  }
+  return normalized
 }
 
 export function isPathWithin(targetPath: string, basePath: string): boolean {

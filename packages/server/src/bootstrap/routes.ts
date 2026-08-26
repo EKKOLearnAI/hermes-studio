@@ -5,6 +5,7 @@ import './mcu-voice-adapter'
 import './workflow-runtime-adapter'
 import './chat-agent-runtime-adapter'
 import './group-chat-agent-runtime-adapter'
+import './session-agent-runtime-adapter'
 import { apiDocsRoutes } from '../modules/studio'
 import { healthRoutes } from './health'
 import { updateRoutes } from './update'
@@ -27,7 +28,7 @@ import { mcuDeviceRoutes } from '../modules/studio/routes/mcu-devices'
 
 // Legacy routes currently stored under routes/hermes. Their final ownership
 // may be Studio, Hermes, or another module as documented by the migration map.
-import { sessionRoutes } from '../routes/hermes/sessions'
+import { sessionRoutes } from '../modules/studio/routes/sessions'
 import { profileRoutes } from '../modules/hermes/routes/profiles'
 import { skillRoutes } from '../modules/hermes/routes/skills'
 import { skillBundleRoutes } from '../modules/hermes/routes/skill-bundles'

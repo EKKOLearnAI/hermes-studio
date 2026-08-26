@@ -82,6 +82,8 @@ function isChatSessionChainFile(file) {
     || file === 'packages/client/src/stores/hermes/group-chat.ts'
     || file === 'packages/client/src/stores/hermes/chat.ts'
     || file === 'packages/server/src/controllers/hermes/sessions.ts'
+    || file === 'packages/server/src/modules/studio/controllers/sessions.ts'
+    || file === 'packages/server/src/modules/studio/routes/sessions.ts'
     || file === 'packages/server/src/db/hermes/session-store.ts'
     || file === 'packages/server/src/routes/hermes/group-chat.ts'
     || file === 'packages/server/src/modules/studio/routes/group-chat.ts'

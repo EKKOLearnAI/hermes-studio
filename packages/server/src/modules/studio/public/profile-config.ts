@@ -50,6 +50,10 @@ export function getActiveProfileName(): string {
   return configured().getActiveProfileName()
 }
 
+export function getActiveProfileDir(): string {
+  return getProfileDir(getActiveProfileName())
+}
+
 export function buildModelGroups(config: Record<string, any>): ModelGroupResult {
   return configured().buildModelGroups(config)
 }

@@ -106,8 +106,8 @@ PR 号。
 | `packages/server/src/modules/studio/services/group-chat/*` | Group Chat 编排、上下文投影、summary cache、relay、附件与共享工作区。 |
 | `packages/server/src/modules/studio/services/context-compressor/*` | 普通 Chat 和 Group Chat 共用的 token 估算、摘要压缩和 context message 处理。 |
 | `packages/server/src/modules/studio/routes/group-chat.ts` | Group Chat HTTP room/agent/config/compress/clear-context API。 |
-| `packages/server/src/db/hermes/session-store.ts` | Web UI 本地 session/message SQLite 存储。 |
-| `packages/server/src/controllers/hermes/sessions.ts` | HTTP session 列表、详情、分页、删除、导入/导出等控制器。 |
+| `packages/server/src/modules/studio/repositories/session-store.ts` | Web UI 本地 session/message SQLite 存储。 |
+| `packages/server/src/modules/studio/controllers/sessions.ts` | HTTP session 列表、详情、分页、删除、导入/导出等控制器。 |
 
 ## 3. 数据模型
 
@@ -804,7 +804,7 @@ Socket.IO `/chat-run` 负责 active run。HTTP API 负责静态数据读写：
 
 | 能力 | 路径/模块 |
 | --- | --- |
-| session list | `controllers/hermes/sessions.ts` + `session-store.ts` |
+| session list | `modules/studio/controllers/sessions.ts` + `modules/studio/repositories/session-store.ts` |
 | session detail/page | `fetchSessionMessagesPage()` 对应后端分页 detail |
 | delete session | 删除 Web UI DB session/messages，同时尝试删除对应 Hermes profile 历史（如果存在） |
 | rename session | `renameSession()` |

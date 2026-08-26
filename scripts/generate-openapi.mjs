@@ -48,7 +48,7 @@ const tagMappings = {
     controller: 'packages/server/src/modules/studio/controllers/chat-run.ts',
   },
   'modules/studio/routes/workflows.ts': { name: 'Workflows', description: 'Cross-agent workflow orchestration' },
-  'routes/hermes/sessions.ts': { name: 'Sessions', description: 'Chat session management' },
+  'modules/studio/routes/sessions.ts': { name: 'Sessions', description: 'Chat session management' },
   'modules/hermes/routes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },
   'routes/hermes/gateways.ts': { name: 'Gateways', description: 'Gateway process management' },
   'modules/hermes/routes/models.ts': { name: 'Models', description: 'Model configuration' },

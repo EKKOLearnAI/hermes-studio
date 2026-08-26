@@ -65,6 +65,7 @@ packages/server/src/
         workspace.ts
         workspace-files.ts          # shared path, preview, Git status, and file policy facade
         group-chat-agent-runtime.ts # injected concrete Agent adapters for Group Chat
+        session-agent-runtime.ts    # injected Hermes/Coding adapters used by Studio session orchestration
       middleware/
         auth.ts
         errors.ts
@@ -86,6 +87,7 @@ packages/server/src/
         app-connections.ts
         app-relay.ts
         social-messages.ts
+        sessions.ts                 # cross-agent single-chat session management; legacy URLs remain /api/hermes/sessions/*
         chat-run.ts
         chat-webhooks.ts            # cross-agent event delivery; legacy URL remains /api/hermes/webhooks
         workflows.ts
@@ -107,6 +109,7 @@ packages/server/src/
         app-connections.ts
         app-relay.ts
         social-messages.ts
+        sessions.ts                 # Studio session/history orchestration through injected Agent adapters
         chat-run.ts
         chat-webhooks.ts
         workflows.ts
@@ -178,7 +181,6 @@ packages/server/src/
         profiles.ts
         providers.ts
         models.ts
-        sessions.ts
         skills.ts
         skill-bundles.ts
         plugins.ts
@@ -195,7 +197,6 @@ packages/server/src/
         profiles.ts
         providers.ts
         models.ts
-        sessions.ts
         skills.ts
         skill-bundles.ts
         plugins.ts

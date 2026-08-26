@@ -47,7 +47,7 @@ const deleteWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: tru
 const renameWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const copyWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 
-vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
+vi.mock('../../packages/server/src/modules/studio/controllers/sessions', () => ({
   listConversations: listConversationsMock,
   getConversationMessages: getConversationMessagesMock,
   getConversationMessagesPaginated: getConversationMessagesPaginatedMock,
@@ -141,7 +141,7 @@ describe('session routes', () => {
   })
 
   it('registers conversations, session list, and search routes', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const paths = sessionRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
@@ -189,7 +189,7 @@ describe('session routes', () => {
   })
 
   it('delegates global category routes and session assignment', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const listLayer = sessionRoutes.stack.find((entry: any) =>
       entry.path === '/api/hermes/session-categories' && entry.methods.includes('HEAD'),
     )
@@ -228,7 +228,7 @@ describe('session routes', () => {
   })
 
   it('delegates session count route before the session id route', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const countLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/count')
     const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id')
     expect(sessionRoutes.stack.indexOf(countLayer)).toBeLessThan(sessionRoutes.stack.indexOf(idLayer))
@@ -242,7 +242,7 @@ describe('session routes', () => {
   })
 
   it('registers Hermes history groups before the Hermes session id route', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const groupsLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/groups')
     const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/:id')
 
@@ -257,7 +257,7 @@ describe('session routes', () => {
   })
 
   it('delegates session context route to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/context')
     const handler = layer.stack[0]
     const ctx: any = { query: {}, body: null, params: { id: 'session-1' } }
@@ -269,7 +269,7 @@ describe('session routes', () => {
   })
 
   it('delegates workspace folder routes to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('HEAD'))
     const createLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('POST'))
     const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders/rename')
@@ -293,7 +293,7 @@ describe('session routes', () => {
   })
 
   it('delegates session workspace file routes to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-files/list')
     const diffLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/diff')
     const readLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/read')
@@ -327,7 +327,7 @@ describe('session routes', () => {
   })
 
   it('delegates session search to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/search/sessions')
     const handler = layer.stack[0]
     const ctx: any = { query: { q: 'docker', limit: '8' }, body: null, params: {} }
@@ -339,7 +339,7 @@ describe('session routes', () => {
   })
 
   it('keeps the legacy search path wired to the same controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/search')
     const handler = layer.stack[0]
     const ctx: any = { query: { q: 'docker' }, body: null, params: {} }
@@ -351,7 +351,7 @@ describe('session routes', () => {
   })
 
   it('delegates conversations list and detail routes', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/conversations')
     const detailLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/conversations/:id/messages')
 
@@ -367,7 +367,7 @@ describe('session routes', () => {
   })
 
   it('delegates Hermes session import to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/:id/import')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'hermes-abc' }, query: {}, request: { body: { profile: 'default' } }, body: null }
@@ -379,7 +379,7 @@ describe('session routes', () => {
   })
 
   it('delegates session export to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/export')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null, set: vi.fn() }
@@ -390,7 +390,7 @@ describe('session routes', () => {
   })
 
   it('delegates session archive to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/archive')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
@@ -402,7 +402,7 @@ describe('session routes', () => {
   })
 
   it('delegates session unarchive to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/unarchive')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
