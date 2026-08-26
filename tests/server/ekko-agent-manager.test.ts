@@ -8,15 +8,15 @@ import {
   createGlobalEkkoAgent,
   GlobalEkkoAgent,
   setupGlobalEkkoAgent,
-} from '../../packages/server/src/services/ekko-agent/manager'
+} from '../../packages/server/src/modules/ekko/services/manager'
 import { EkkoFileLogReader, setupEkkoAgent } from '../../packages/ekko-agent/src'
 import type { EkkoAgentSetup, ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
 
 const getHermesBaseDirMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
-  getHermesBaseDir: getHermesBaseDirMock,
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getProfilesBaseDir: getHermesBaseDirMock,
+  listProfileNames: vi.fn(() => ['default']),
 }))
 
 let baseDirectory = ''

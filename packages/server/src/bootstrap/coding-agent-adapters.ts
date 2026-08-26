@@ -1,9 +1,4 @@
-import {
-  PROVIDER_ENV_MAP,
-  readConfigYamlForProfile,
-  safeReadFile,
-} from '../services/config-helpers'
-import { getProfileDir } from '../services/hermes/hermes-profile'
+import './agent-profile-adapter'
 import * as modelContext from '../services/hermes/model-context'
 import * as responseStream from '../services/hermes/run-chat/response-stream'
 import * as runUsage from '../services/hermes/run-chat/usage'
@@ -11,16 +6,9 @@ import * as responseUtils from '../services/hermes/run-chat/response-utils'
 import * as workspaceDiff from '../services/hermes/run-chat/workspace-diff-tracker'
 import { getChatRunServer } from '../services/hermes/run-chat/server-registry'
 import { getOrCreateSession } from '../services/hermes/run-chat/compression'
-import { configureProfileConfig } from '../modules/studio/public/profile-config'
 import { configureProviderRuntime } from '../modules/studio/public/provider-runtime'
 import { configureRunState } from '../modules/studio/public/run-state'
 
-configureProfileConfig({
-  getProfileDir,
-  providerEnvironmentMap: PROVIDER_ENV_MAP,
-  readConfigYamlForProfile,
-  safeReadFile,
-})
 configureProviderRuntime({
   getModelContextLength: modelContext.getModelContextLength,
   getModelRuntimeCapabilities: (...args: any[]) => {

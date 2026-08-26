@@ -1,7 +1,9 @@
 export type ProviderEnvironmentMap = Record<string, { api_key_env: string; base_url_env: string }>
 
 export interface ProfileConfigDependencies {
+  getProfilesBaseDir: () => string
   getProfileDir: (profile: string) => string
+  listProfileNames: () => string[]
   providerEnvironmentMap: ProviderEnvironmentMap
   readConfigYamlForProfile: (profile: string) => Promise<Record<string, any>>
   safeReadFile: (filePath: string) => Promise<string | null>
@@ -22,6 +24,14 @@ function configured(): ProfileConfigDependencies {
 
 export function getProfileDir(profile: string): string {
   return configured().getProfileDir(profile)
+}
+
+export function getProfilesBaseDir(): string {
+  return configured().getProfilesBaseDir()
+}
+
+export function listProfileNames(): string[] {
+  return configured().listProfileNames()
 }
 
 export function readConfigYamlForProfile(profile: string): Promise<Record<string, any>> {

@@ -36,7 +36,7 @@ import {
   listAppConnections,
 } from './db/hermes/app-connections-store'
 import { ensureAppRelayHostClient } from './services/app-relay/connection'
-import { setupGlobalEkkoAgent } from './services/ekko-agent/manager'
+import { setupGlobalEkkoAgent } from './bootstrap/ekko'
 import { WorkflowSocketServer } from './services/workflow-socket'
 import { PetStateSocketServer } from './services/hermes/pet-state-socket'
 import { logger } from './services/logger'

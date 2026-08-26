@@ -6,7 +6,7 @@ const configMock = vi.hoisted(() => ({
   appHome: '/Users/test/.hermes-web-ui',
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: configMock,
 }))
 
@@ -23,7 +23,7 @@ describe('Ekko MCP server context', () => {
   })
 
   it('builds managed MCP servers for the current Web UI port and profile', async () => {
-    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
+    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     const servers = buildManagedEkkoMcpServers('work')
 
@@ -68,7 +68,7 @@ describe('Ekko MCP server context', () => {
   })
 
   it('merges caller-provided MCP servers and lets explicit entries override managed defaults', async () => {
-    const { resolveEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
+    const { resolveEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     const servers = resolveEkkoMcpServers('default', {
       'hermes-studio-api': { command: 'custom-api' },
@@ -84,7 +84,7 @@ describe('Ekko MCP server context', () => {
 
   it('keeps the browser toolset available for the Electron desktop runtime', async () => {
     process.env.HERMES_DESKTOP = 'true'
-    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/services/ekko-agent/mcp')
+    const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
     const browser = buildManagedEkkoMcpServers('default')['hermes-studio-browser'] as any
     expect(browser.args).toEqual([join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'])
     expect(browser.env.HERMES_MCP_TOOLSET).toBe('browser')
@@ -92,7 +92,7 @@ describe('Ekko MCP server context', () => {
 
   it('does not add managed MCP servers when startup autoinject is disabled or skipped', async () => {
     process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT = '1'
-    let mod = await import('../../packages/server/src/services/ekko-agent/mcp')
+    let mod = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     expect(mod.resolveEkkoMcpServers('default')).toBeUndefined()
     expect(mod.resolveEkkoMcpServers('default', { custom: { command: 'custom-mcp' } })).toEqual({
@@ -102,13 +102,13 @@ describe('Ekko MCP server context', () => {
     vi.resetModules()
     delete process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT
     configMock.appHome = '/private/tmp/wui-preview-home'
-    mod = await import('../../packages/server/src/services/ekko-agent/mcp')
+    mod = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     expect(mod.resolveEkkoMcpServers('default')).toBeUndefined()
 
     vi.resetModules()
     process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT = '1'
-    mod = await import('../../packages/server/src/services/ekko-agent/mcp')
+    mod = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     expect(mod.resolveEkkoMcpServers('default')?.['hermes-studio-api']).toBeDefined()
   })

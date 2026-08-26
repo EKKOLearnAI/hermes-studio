@@ -3,7 +3,7 @@ import {
   denyPendingEkkoToolApprovals,
   respondToEkkoToolApproval,
   waitForEkkoToolApproval,
-} from '../../packages/server/src/services/ekko-agent/approvals'
+} from '../../packages/server/src/modules/ekko/services/approvals'
 import type { AgentToolApprovalRequest } from '../../packages/ekko-agent/src'
 
 afterEach(() => {

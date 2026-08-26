@@ -6,17 +6,16 @@ const mocks = vi.hoisted(() => ({
   resolveAuthorized: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../packages/server/src/services/config-helpers')>(),
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  PROVIDER_ENV_MAP: {
+    'openai-api': { api_key_env: 'OPENAI_API_KEY', base_url_env: 'OPENAI_BASE_URL' },
+  },
+  getProfileDir: (profile: string) => `/profiles/${profile}`,
   readConfigYamlForProfile: mocks.readConfigYamlForProfile,
   safeReadFile: mocks.safeReadFile,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
-  getProfileDir: (profile: string) => `/profiles/${profile}`,
-}))
-
-vi.mock('../../packages/server/src/services/ekko-agent/auth-providers', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/auth-providers', () => ({
   resolveEkkoAuthorizedProviderCredentials: mocks.resolveAuthorized,
 }))
 
@@ -36,7 +35,7 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
       'OPENAI_BASE_URL=https://gateway.example/v1',
     ].join('\n'))
     const { resolveEkkoProviderRuntimeConfig } = await import(
-      '../../packages/server/src/services/ekko-agent/provider-runtime'
+      '../../packages/server/src/modules/ekko/services/provider-runtime'
     )
 
     await expect(resolveEkkoProviderRuntimeConfig({
@@ -62,7 +61,7 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
     })
     mocks.safeReadFile.mockResolvedValue("SUMMARY_PROXY_KEY='custom-key'")
     const { resolveEkkoProviderRuntimeConfig } = await import(
-      '../../packages/server/src/services/ekko-agent/provider-runtime'
+      '../../packages/server/src/modules/ekko/services/provider-runtime'
     )
 
     await expect(resolveEkkoProviderRuntimeConfig({
@@ -82,7 +81,7 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
       apiKey: 'stored-key',
     })
     const { resolveEkkoProviderRuntimeConfig } = await import(
-      '../../packages/server/src/services/ekko-agent/provider-runtime'
+      '../../packages/server/src/modules/ekko/services/provider-runtime'
     )
 
     await expect(resolveEkkoProviderRuntimeConfig({
@@ -106,7 +105,7 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
       apiMode: 'anthropic_messages',
     })
     const { resolveEkkoProviderRuntimeConfig } = await import(
-      '../../packages/server/src/services/ekko-agent/provider-runtime'
+      '../../packages/server/src/modules/ekko/services/provider-runtime'
     )
 
     await expect(resolveEkkoProviderRuntimeConfig({
