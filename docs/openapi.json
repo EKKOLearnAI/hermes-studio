@@ -10889,6 +10889,9 @@
                   "clone": {
                     "type": "boolean"
                   },
+                  "cloneFrom": {
+                    "type": "string"
+                  },
                   "name": {
                     "type": "string"
                   }

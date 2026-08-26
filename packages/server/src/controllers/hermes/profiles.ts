@@ -12,7 +12,7 @@ import {
   restartGatewayForProfile as restartGatewayRuntimeForProfile,
 } from '../../services/hermes/gateway-autostart'
 import { logger } from '../../services/logger'
-import { smartCloneCleanup, copyModelProviderAuthForClone } from '../../services/hermes/profile-credentials'
+import { smartCloneCleanup, copyModelProviderAuthForClone, copyProfileContentsForClone } from '../../services/hermes/profile-credentials'
 import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
@@ -435,7 +435,11 @@ export async function listForApp(ctx: any) {
 }
 
 export async function create(ctx: any) {
-  const { name, clone } = ctx.request.body as { name?: string; clone?: boolean }
+  const { name, clone, cloneFrom } = ctx.request.body as {
+    name?: string
+    clone?: boolean
+    cloneFrom?: string
+  }
   if (!name) {
     ctx.status = 400
     ctx.body = { error: 'Missing profile name' }
@@ -446,10 +450,40 @@ export async function create(ctx: any) {
     ctx.body = { error: `Profile name '${name}' is reserved and cannot be created` }
     return
   }
-  try {
-    const output = await hermesCli.createProfile(name, clone)
 
-    // clone=true 时执行智能清理：
+  // 克隆源：显式 cloneFrom 优先，缺省沿用旧行为（当前激活 profile）。
+  // clone=false 时忽略 cloneFrom，保持"不克隆"的语义。
+  const activeName = normalizeProfileName(getActiveProfileName()) || 'default'
+  let cloneSource = ''
+  if (clone || cloneFrom) {
+    cloneSource = normalizeProfileName(cloneFrom || '') || activeName
+    if (!/^[a-z0-9_-]+$/.test(cloneSource)) {
+      ctx.status = 400
+      ctx.body = { error: `Invalid clone source '${cloneFrom}'` }
+      return
+    }
+    if (isForbiddenProfileName(cloneSource) || !profileDirectoryExists(cloneSource)) {
+      ctx.status = 400
+      ctx.body = { error: `Clone source profile '${cloneSource}' not found` }
+      return
+    }
+    if (!canAccessProfile(ctx, cloneSource)) {
+      ctx.status = 403
+      ctx.body = { error: `No access to profile '${cloneSource}'` }
+      return
+    }
+  }
+  // CLI 的 --clone 只会克隆当前激活 profile；换源时先建空 profile，再手工复制同一批文件。
+  const cloneViaCli = !!cloneSource && cloneSource === activeName
+
+  try {
+    const output = await hermesCli.createProfile(name, cloneViaCli)
+    if (cloneSource && !cloneViaCli) {
+      const copied = copyProfileContentsForClone(cloneSource, name)
+      logger.info('Cloned profile "%s" from "%s": copied %s', name, cloneSource, copied.join(',') || 'nothing')
+    }
+
+    // 克隆时执行智能清理：
     //   - 删除 .env 中的独占平台凭据（Weixin / Telegram / Slack / ...）
     //   - 禁用 config.yaml 中对应的平台节点
     // 避免新 profile 与源 profile 共享同一个 bot token 导致互斥冲突。
@@ -457,9 +491,9 @@ export async function create(ctx: any) {
     let disabledPlatforms: string[] = []
     let strippedConfigCredentials: string[] = []
     let copiedAuthProviders: string[] = []
-    if (clone) {
+    if (cloneSource) {
       try {
-        copiedAuthProviders = copyModelProviderAuthForClone(name)
+        copiedAuthProviders = copyModelProviderAuthForClone(name, cloneSource)
         const cleanup = smartCloneCleanup(name)
         strippedCredentials = cleanup.strippedCredentials
         disabledPlatforms = cleanup.disabledPlatforms
@@ -490,6 +524,7 @@ export async function create(ctx: any) {
     ctx.body = {
       success: true,
       message: output.trim(),
+      clonedFrom: cloneSource || undefined,
       strippedCredentials,
       disabledPlatforms,
       strippedConfigCredentials,
