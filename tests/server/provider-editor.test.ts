@@ -28,7 +28,8 @@ function readYaml(path: string): any {
 }
 
 async function loadEditor() {
-  return import('../../packages/server/src/services/hermes/provider-editor')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/services/providers/provider-editor')
 }
 
 beforeEach(() => {

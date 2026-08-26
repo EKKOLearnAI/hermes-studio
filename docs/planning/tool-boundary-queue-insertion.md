@@ -776,10 +776,10 @@ Likely implementation touchpoints:
 - `packages/server/src/services/hermes/run-chat/abort.ts`
 - `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts`
 - `packages/server/src/services/hermes/run-chat/handle-ekko-agent-run.ts`
-- `packages/server/src/services/hermes/agent-bridge/client.ts`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_server.py`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_broker.py`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py`
+- `packages/server/src/modules/hermes/services/bridge/client.ts`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_server.py`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_broker.py`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py`
 - `packages/ekko-agent/src/runtime/runtime.ts`
 - `packages/server/src/services/ekko-agent/manager.ts`
 - `packages/server/src/services/coding-agents/runtime/run-manager.ts`

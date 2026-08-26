@@ -9,7 +9,7 @@
 > 维护要求：后续 PR 如果修改本文列出的普通 Chat 链路核心文件，需要新增
 > `docs/chat-chain-changes/` 下的独立变更片段。每个 PR 一个变更片段，写清楚
 > 修改时间、PR/commit、动到的功能和行为影响，避免多个 PR 同时改本文产生冲突。
-> `packages/server/src/services/hermes/agent-bridge/` 是普通 Chat 的核心链路，
+> `packages/server/src/modules/hermes/services/bridge/` 是普通 Chat 的核心链路，
 > 该目录下任何改动都算 Chat 链路改动；即使只是启动、环境变量、日志或品牌
 > attribution，也要记录影响范围，必要时明确“运行行为无变化”。
 > `packages/server/src/services/hermes/group-chat/`、`/group-chat` Socket.IO、
@@ -99,9 +99,9 @@ PR 号。
 | `packages/server/src/services/hermes/run-chat/compression.ts` | DB history 构建、snapshot-aware history、上下文压缩。 |
 | `packages/server/src/services/hermes/run-chat/bridge-message.ts` | Bridge assistant/tool 消息的内存态与 DB flush。 |
 | `packages/server/src/services/hermes/run-chat/bridge-delta.ts` | 过滤 bridge 输出中的工具调用标记，避免 UI 文本重复或丢字符。 |
-| `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 到 Python bridge 的本地 socket 客户端。 |
-| `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge broker 子进程生命周期管理。 |
-| `packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py` | Python broker/worker entrypoint；实现拆分在同目录的 `bridge_*.py` 模块中，覆盖 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
+| `packages/server/src/modules/hermes/services/bridge/client.ts` | Node 到 Python bridge 的本地 socket 客户端。 |
+| `packages/server/src/modules/hermes/services/bridge/manager.ts` | Python bridge broker 子进程生命周期管理。 |
+| `packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py` | Python broker/worker entrypoint；实现拆分在同目录的 `bridge_*.py` 模块中，覆盖 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
 | `packages/server/src/services/hermes/group-chat/index.ts` | `/group-chat` Socket.IO server、room/member/message 存储、agent 恢复、mention 分发、approval/interrupt 入口。 |
 | `packages/server/src/services/hermes/group-chat/agent-clients.ts` | Group Chat agent socket client，调用 Agent Bridge 执行被 mention 的 agent，并同步 tool/reasoning/context 状态。 |
 | `packages/server/src/services/hermes/context-engine/*` | Group Chat 上下文压缩和 summary cache。 |

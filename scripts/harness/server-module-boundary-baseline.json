@@ -3,7 +3,6 @@
   "cutoffCommit": "a513405354f6b038e220c587c3f729871c2b8b0d",
   "forbiddenImports": [
     "controllers/auth.ts -> services/hermes/hermes-profile.ts",
-    "controllers/hermes/providers.ts -> services/coding-agents/index.ts",
     "controllers/hermes/sessions.ts -> services/coding-agents/runtime/run-manager.ts",
     "controllers/upload.ts -> services/hermes/hermes-profile.ts",
     "controllers/upload.ts -> services/hermes/upload-paths.ts",

@@ -2,8 +2,10 @@ import {
   PROVIDER_ENV_MAP,
   readConfigYamlForProfile,
   safeReadFile,
+  saveEnvValueForProfile,
+  updateConfigYamlForProfile,
 } from '../services/config-helpers'
-import * as hermesProfile from '../services/hermes/hermes-profile'
+import * as hermesProfile from '../modules/hermes/services/profiles/profile'
 import { configureProfileConfig } from '../modules/studio/public/profile-config'
 
 const hasProfileExport = (name: string): boolean => (
@@ -23,4 +25,6 @@ configureProfileConfig({
   providerEnvironmentMap: PROVIDER_ENV_MAP,
   readConfigYamlForProfile,
   safeReadFile,
+  saveEnvValueForProfile,
+  updateConfigYamlForProfile,
 })

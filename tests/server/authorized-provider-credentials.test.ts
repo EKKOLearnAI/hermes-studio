@@ -3,7 +3,7 @@ import {
   AuthorizedProviderCredentialError,
   isAuthorizedRuntimeProvider,
   resolveAuthorizedProviderRuntimeCredentials,
-} from '../../packages/server/src/services/hermes/authorized-provider-credentials'
+} from '../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials'
 
 describe('authorized provider runtime credentials', () => {
   it('maps the profile-scoped Bridge response without persisting credentials in Studio', async () => {

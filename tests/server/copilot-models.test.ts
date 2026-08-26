@@ -20,7 +20,7 @@ import {
   getCopilotModelsDetailed,
   COPILOT_FALLBACK_MODELS,
   __resetCopilotModelsCacheForTest,
-} from '../../packages/server/src/services/hermes/copilot-models'
+} from '../../packages/server/src/modules/hermes/services/providers/copilot-models'
 
 const ORIGINAL_ENV = { ...process.env }
 const ORIGINAL_FETCH = global.fetch

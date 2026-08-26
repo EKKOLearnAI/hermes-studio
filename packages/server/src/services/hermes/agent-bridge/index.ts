@@ -1,2 +1,1 @@
-export * from './client'
-export * from './manager'
+export * from '../../../modules/hermes/services/bridge'

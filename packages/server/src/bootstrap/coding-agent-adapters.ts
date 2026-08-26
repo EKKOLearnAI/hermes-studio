@@ -8,6 +8,7 @@ import { getChatRunServer } from '../services/hermes/run-chat/server-registry'
 import { getOrCreateSession } from '../services/hermes/run-chat/compression'
 import { configureProviderRuntime } from '../modules/studio/public/provider-runtime'
 import { configureRunState } from '../modules/studio/public/run-state'
+import { invalidateCodingAgentProviderRuntime } from '../modules/coding-agents/services'
 
 configureProviderRuntime({
   getModelContextLength: modelContext.getModelContextLength,
@@ -17,6 +18,7 @@ configureProviderRuntime({
       ? resolver(...args)
       : { contextWindow: modelContext.getModelContextLength(...args) }
   },
+  invalidateProviderRuntime: invalidateCodingAgentProviderRuntime,
 })
 const optional = (candidate: unknown, fallback: (...args: any[]) => any) => (
   typeof candidate === 'function' ? candidate as (...args: any[]) => any : fallback

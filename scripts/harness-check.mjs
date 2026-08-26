@@ -90,7 +90,7 @@ function isChatSessionChainFile(file) {
     || file.startsWith('packages/server/src/services/hermes/context-engine/')
     || file.startsWith('packages/server/src/services/hermes/group-chat/')
     || file.startsWith('packages/server/src/services/hermes/run-chat/')
-    || file.startsWith('packages/server/src/services/hermes/agent-bridge/')
+    || file.startsWith('packages/server/src/modules/hermes/services/bridge/')
 }
 
 function isChatChainChangeFragment(file) {
@@ -208,7 +208,7 @@ for (const phrase of [
   '最近链路变更记录',
   'docs/chat-chain-changes/',
   '每个 PR 一个变更片段',
-  'packages/server/src/services/hermes/agent-bridge/',
+  'packages/server/src/modules/hermes/services/bridge/',
   'packages/server/src/services/hermes/group-chat/',
   'packages/server/src/lib/context-compressor/',
   '任何改动都算 Chat 链路改动',

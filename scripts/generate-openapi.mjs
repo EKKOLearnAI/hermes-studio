@@ -47,7 +47,7 @@ const tagMappings = {
   'routes/hermes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },
   'routes/hermes/gateways.ts': { name: 'Gateways', description: 'Gateway process management' },
   'routes/hermes/models.ts': { name: 'Models', description: 'Model configuration' },
-  'routes/hermes/providers.ts': { name: 'Providers', description: 'Model provider management' },
+  'modules/hermes/routes/providers.ts': { name: 'Providers', description: 'Model provider management' },
   'routes/hermes/skills.ts': { name: 'Skills', description: 'Skill browsing and management' },
   'routes/hermes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
   'routes/hermes/plugins.ts': { name: 'Plugins', description: 'Plugin browsing and management' },

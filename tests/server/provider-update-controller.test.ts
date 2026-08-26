@@ -9,8 +9,8 @@ const mockInvalidateProviderRuntime = vi.hoisted(() => vi.fn())
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
 }))
-vi.mock('../../packages/server/src/services/coding-agents', () => ({
-  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
+vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({
+  invalidateProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
 let hermesHome = ''
@@ -18,7 +18,8 @@ let hermesHome = ''
 async function loadProvidersController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/providers')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/providers')
 }
 
 function makeCtx(poolKey: string, body: Record<string, any>, profile = 'research') {
@@ -64,7 +65,7 @@ describe('providers controller update', () => {
 
   afterEach(() => {
     delete process.env.HERMES_HOME
-    vi.doUnmock('../../packages/server/src/controllers/hermes/providers')
+    vi.doUnmock('../../packages/server/src/modules/hermes/controllers/providers')
     vi.clearAllMocks()
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''

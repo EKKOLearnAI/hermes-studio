@@ -52,7 +52,7 @@ Add `/learn` to the Web UI session-command layer:
 ### Python Bridge
 
 Add support in
-`packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py`:
+`packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py`:
 
 - In `dispatch_command()`, recognize `learn`.
 - Import `build_learn_prompt` from `agent.learn_prompt`.

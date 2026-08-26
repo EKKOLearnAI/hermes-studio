@@ -19,7 +19,7 @@ Python modules:
 - `bridge_broker.py` - broker-side profile worker routing.
 
 ```bash
-python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
+python packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py
 ```
 
 Default endpoint:
@@ -38,14 +38,14 @@ tcp://127.0.0.1:18765
 Override with:
 
 ```bash
-HERMES_AGENT_BRIDGE_ENDPOINT=tcp://127.0.0.1:8765 python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
+HERMES_AGENT_BRIDGE_ENDPOINT=tcp://127.0.0.1:8765 python packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py
 ```
 
 Profile workers use the same platform defaults: TCP on Windows and IPC on
 macOS/Linux. Override worker transport with:
 
 ```bash
-HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp HERMES_AGENT_BRIDGE_WORKER_PORT_BASE=18780 python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
+HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp HERMES_AGENT_BRIDGE_WORKER_PORT_BASE=18780 python packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py
 ```
 
 The service discovers Hermes Agent in this order:
@@ -68,7 +68,7 @@ Default agent root:
 You can pass both paths explicitly:
 
 ```bash
-python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py \
+python packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py \
   --agent-root ~/.hermes/hermes-agent \
   --hermes-home ~/.hermes
 ```
@@ -85,7 +85,7 @@ is required.
 ## Backend Usage
 
 ```ts
-import { AgentBridgeClient } from './services/hermes/agent-bridge'
+import { AgentBridgeClient } from './modules/hermes/services/bridge'
 
 const bridge = new AgentBridgeClient()
 // Select this policy when the cached Hermes AgentSession is first created.
@@ -152,5 +152,5 @@ matches CLI chat. Override it only if a caller intentionally needs a distinct
 platform identity:
 
 ```bash
-HERMES_AGENT_BRIDGE_PLATFORM=agent-bridge python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
+HERMES_AGENT_BRIDGE_PLATFORM=agent-bridge python packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py
 ```

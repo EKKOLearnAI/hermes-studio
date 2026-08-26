@@ -7,6 +7,11 @@ export interface ProfileConfigDependencies {
   providerEnvironmentMap: ProviderEnvironmentMap
   readConfigYamlForProfile: (profile: string) => Promise<Record<string, any>>
   safeReadFile: (filePath: string) => Promise<string | null>
+  saveEnvValueForProfile: (profile: string, key: string, value: string) => Promise<void>
+  updateConfigYamlForProfile: <T = void>(
+    profile: string,
+    updater: (config: Record<string, any>) => any,
+  ) => Promise<T | undefined>
 }
 
 let profileConfigDependencies: ProfileConfigDependencies | null = null
@@ -40,4 +45,15 @@ export function readConfigYamlForProfile(profile: string): Promise<Record<string
 
 export function safeReadFile(filePath: string): Promise<string | null> {
   return configured().safeReadFile(filePath)
+}
+
+export function saveEnvValueForProfile(profile: string, key: string, value: string): Promise<void> {
+  return configured().saveEnvValueForProfile(profile, key, value)
+}
+
+export function updateConfigYamlForProfile<T = void>(
+  profile: string,
+  updater: (config: Record<string, any>) => any,
+): Promise<T | undefined> {
+  return configured().updateConfigYamlForProfile<T>(profile, updater)
 }

@@ -29,7 +29,7 @@ await esbuild.build({
 })
 
 const bridgeOutDir = resolve(serverOutDir, 'agent-bridge', 'python')
-const bridgeSrcDir = resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/python')
+const bridgeSrcDir = resolve(rootDir, 'packages/server/src/modules/hermes/services/bridge/python')
 mkdirSync(bridgeOutDir, { recursive: true })
 for (const fileName of readdirSync(bridgeSrcDir)) {
   if (fileName.endsWith('.py')) {

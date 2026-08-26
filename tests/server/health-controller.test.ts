@@ -61,7 +61,7 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
     ? vi.fn(() => { throw options.managerError })
     : vi.fn(() => ({ checkReadiness, getRuntimeState }))
 
-  vi.doMock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/bridge/manager', () => ({
     getAgentBridgeManager,
   }))
   vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
