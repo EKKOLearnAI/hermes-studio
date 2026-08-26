@@ -1,1 +1,1 @@
-export * from '../../../modules/hermes/services/webhooks'
+export * from '../../../modules/studio/services/webhooks'

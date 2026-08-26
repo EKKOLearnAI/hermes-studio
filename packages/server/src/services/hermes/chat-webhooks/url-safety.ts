@@ -1,1 +1,1 @@
-export * from '../../../modules/hermes/services/webhooks/url-safety'
+export * from '../../../modules/studio/services/webhooks/url-safety'

@@ -1,7 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EkkoFileLogger } from '../../packages/ekko-agent/src'
+import { EkkoFileLogReader, EkkoFileLogger } from '../../packages/ekko-agent/src'
 
 const mocks = vi.hoisted(() => ({
   appHome: `/tmp/hermes-web-ui-logs-controller-${process.pid}`,
@@ -9,13 +9,17 @@ const mocks = vi.hoisted(() => ({
   readLogs: vi.fn(async () => ''),
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: { appHome: mocks.appHome },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
-  listLogFiles: mocks.listLogFiles,
-  readLogs: mocks.readLogs,
+vi.mock('../../packages/server/src/modules/studio/public/agent-logs', () => ({
+  listPrimaryAgentLogFiles: mocks.listLogFiles,
+  readPrimaryAgentLogs: mocks.readLogs,
+  getEkkoLogSource: (profile: string) => {
+    const directory = join(mocks.appHome, '.ekko', 'logs', profile)
+    return new EkkoFileLogReader({ directory })
+  },
 }))
 
 describe('Hermes logs controller Ekko source', () => {

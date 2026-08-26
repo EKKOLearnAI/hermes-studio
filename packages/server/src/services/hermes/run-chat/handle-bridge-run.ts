@@ -43,7 +43,7 @@ import { buildOutboundRunEvent } from './resume-payload'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { ensureHermesRunWorkspace } from './workspace'
-import { observeRunChatPetEvent } from '../pet-state-socket'
+import { observeRunChatPetEvent } from '../../../modules/studio/sockets/pet-state'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200

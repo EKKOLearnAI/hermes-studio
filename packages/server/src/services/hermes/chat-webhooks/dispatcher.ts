@@ -1,1 +1,1 @@
-export * from '../../../modules/hermes/services/webhooks/dispatcher'
+export * from '../../../modules/studio/services/webhooks/dispatcher'

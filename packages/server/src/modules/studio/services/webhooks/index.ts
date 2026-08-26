@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getChatWebhookDispatcher } from './dispatcher'
-import { logger } from '../../../studio/public/logging'
-import { notifySessionPush } from '../../../studio/public/social-messages'
+import { logger } from '../../public/logging'
+import { notifySessionPush } from '../../public/social-messages'
 import {
   stableChatWebhookEventId,
   truncateChatWebhookContent,
@@ -11,7 +11,7 @@ import {
   type ChatWebhookLifecycleStatus,
   type ChatWebhookMessageRole,
 } from './envelope'
-import type { ChatWebhookEventType } from '../../../studio/public/chat-webhooks'
+import type { ChatWebhookEventType } from '../../public/chat-webhooks'
 
 export interface ObserveChatRunWebhookEventInput {
   event: string

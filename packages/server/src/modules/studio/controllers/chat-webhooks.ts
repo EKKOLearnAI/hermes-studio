@@ -9,7 +9,7 @@ import {
   type ChatWebhookEndpointInput,
   type ChatWebhookEndpointRecord,
   type ChatWebhookEventType,
-} from '../../studio/public/chat-webhooks'
+} from '../public/chat-webhooks'
 import {
   DELIVERY_HEADER,
   EVENT_HEADER,

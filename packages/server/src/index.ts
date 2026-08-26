@@ -21,7 +21,7 @@ import {
   GroupAgentRelayServer,
 } from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
-import { startChatWebhookDispatcher } from './modules/hermes/services/webhooks'
+import { startChatWebhookDispatcher } from './modules/studio/services/webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './modules/hermes/services/bridge'
 import { HermesSkillInjector } from './modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from './modules/hermes/services/mcp/studio-autoinject'
@@ -38,7 +38,7 @@ import {
 import { ensureAppRelayHostClient } from './services/app-relay/connection'
 import { setupGlobalEkkoAgent } from './bootstrap/ekko'
 import { WorkflowSocketServer } from './services/workflow-socket'
-import { PetStateSocketServer } from './services/hermes/pet-state-socket'
+import { PetStateSocketServer } from './modules/studio/sockets/pet-state'
 import { logger } from './services/logger'
 import { createStaticCompressionMiddleware } from './middleware/static-compression'
 import { getStaticCacheControl, SPA_ENTRY_CACHE_CONTROL } from './middleware/static-cache'

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto'
-import { config } from '../../../studio/public/config'
-import { getToken } from '../../../studio/public/auth'
+import { config } from '../../public/config'
+import { getToken } from '../../public/auth'
 
 const LOCAL_TEST_TOKEN_PURPOSE = 'hermes-studio:chat-webhook-local-test:v1'
 const LOCAL_TEST_INBOX_LIMIT = 50

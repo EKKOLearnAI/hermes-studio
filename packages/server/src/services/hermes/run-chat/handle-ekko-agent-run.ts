@@ -39,7 +39,7 @@ import {
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { logger } from '../../logger'
 import { recordSessionUsage } from '../../usage-recorder'
-import { observeRunChatPetEvent } from '../pet-state-socket'
+import { observeRunChatPetEvent } from '../../../modules/studio/sockets/pet-state'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
 import { buildCompressedHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'

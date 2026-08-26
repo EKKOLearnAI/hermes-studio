@@ -1,1 +1,1 @@
-export * from '../../modules/hermes/controllers/chat-webhooks'
+export * from '../../modules/studio/controllers/chat-webhooks'

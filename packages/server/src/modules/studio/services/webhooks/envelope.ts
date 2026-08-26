@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import type { ChatWebhookEventType } from '../../../studio/public/chat-webhooks'
+import type { ChatWebhookEventType } from '../../public/chat-webhooks'
 
 export const CHAT_WEBHOOK_SCHEMA_VERSION = 1
 export const MAX_WEBHOOK_CONTENT_BYTES = 64 * 1024

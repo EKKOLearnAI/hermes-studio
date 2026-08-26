@@ -12,6 +12,7 @@ export interface ProfileConfigDependencies {
   buildModelGroups: (config: Record<string, any>) => ModelGroupResult
   getProfilesBaseDir: () => string
   getProfileDir: (profile: string) => string
+  getActiveProfileName: () => string
   listProfileNames: () => string[]
   providerEnvironmentMap: ProviderEnvironmentMap
   readConfigYaml: () => Promise<Record<string, any>>
@@ -43,6 +44,10 @@ function configured(): ProfileConfigDependencies {
 
 export function getProfileDir(profile: string): string {
   return configured().getProfileDir(profile)
+}
+
+export function getActiveProfileName(): string {
+  return configured().getActiveProfileName()
 }
 
 export function buildModelGroups(config: Record<string, any>): ModelGroupResult {

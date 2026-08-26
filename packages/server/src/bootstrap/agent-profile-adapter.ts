@@ -25,6 +25,7 @@ const listProfileNames = hasProfileExport('listProfileNamesFromDisk')
 configureProfileConfig({
   buildModelGroups,
   getProfilesBaseDir,
+  getActiveProfileName: hermesProfile.getActiveProfileName,
   getProfileDir: hermesProfile.getProfileDir,
   listProfileNames,
   providerEnvironmentMap: PROVIDER_ENV_MAP,

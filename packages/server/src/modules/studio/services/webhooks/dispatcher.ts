@@ -1,11 +1,11 @@
 import { createHmac, randomUUID } from 'crypto'
 import http from 'http'
 import https from 'https'
-import { logger } from '../../../studio/public/logging'
+import { logger } from '../../public/logging'
 import {
   listChatWebhookEndpoints,
   type ChatWebhookEndpointRecord,
-} from '../../../studio/public/chat-webhooks'
+} from '../../public/chat-webhooks'
 import { buildChatWebhookEnvelope, type ChatRunWebhookEvent } from './envelope'
 import { resolveSafeWebhookTarget } from './url-safety'
 

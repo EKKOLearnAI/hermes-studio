@@ -1,6 +1,6 @@
 import Router from '@koa/router'
 import * as ctrl from '../controllers/chat-webhooks'
-import { requireSuperAdmin } from '../../studio/public/auth'
+import { requireSuperAdmin } from '../public/auth'
 
 export const chatWebhookRoutes = new Router()
 export const chatWebhookPublicRoutes = new Router()
