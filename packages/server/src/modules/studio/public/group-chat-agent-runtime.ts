@@ -4,7 +4,7 @@ export type GroupPrimaryAgentBridgeMessage = any
 export type GroupPrimaryAgentBridgeOutput = any
 
 export interface GroupChatAgentRuntimeDependencies {
-  createPrimaryAgentBridge(): GroupPrimaryAgentBridge
+  createPrimaryAgentBridge(options?: Record<string, unknown>): GroupPrimaryAgentBridge
   cancelEkkoClarification(...args: any[]): any
   respondToEkkoToolApproval(...args: any[]): any
   respondToEkkoClarification(...args: any[]): any
@@ -27,7 +27,7 @@ function configured(): GroupChatAgentRuntimeDependencies {
   return dependencies
 }
 
-export const createGroupPrimaryAgentBridge = () => configured().createPrimaryAgentBridge()
+export const createGroupPrimaryAgentBridge = (options?: Record<string, unknown>) => configured().createPrimaryAgentBridge(options)
 export const cancelGroupEkkoClarification = (...args: any[]) => configured().cancelEkkoClarification(...args)
 export const respondToGroupEkkoToolApproval = (...args: any[]) => configured().respondToEkkoToolApproval(...args)
 export const respondToGroupEkkoClarification = (...args: any[]) => configured().respondToEkkoClarification(...args)

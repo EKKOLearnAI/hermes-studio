@@ -18,7 +18,7 @@ describe('user avatar storage and controller', () => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -29,7 +29,7 @@ describe('user avatar storage and controller', () => {
     return {
       schemas,
       users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
-      ctrl: await import('../../packages/server/src/controllers/auth'),
+      ctrl: await import('../../packages/server/src/modules/studio/controllers/auth'),
     }
   }
 

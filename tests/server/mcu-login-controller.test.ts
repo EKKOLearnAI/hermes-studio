@@ -33,7 +33,7 @@ describe('MCU login controller', () => {
 
   async function loadModules() {
     return {
-      ctrl: await import('../../packages/server/src/controllers/auth'),
+      ctrl: await import('../../packages/server/src/modules/studio/controllers/auth'),
       users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
       auth: await import('../../packages/server/src/modules/studio/middleware/auth'),
     }

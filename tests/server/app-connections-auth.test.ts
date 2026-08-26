@@ -12,6 +12,9 @@ describe('App connection authorization', () => {
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
@@ -22,6 +25,7 @@ describe('App connection authorization', () => {
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/modules/studio/services/network/lan-discovery')
     vi.doUnmock('../../packages/server/src/modules/studio/public/system-info')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -42,7 +46,7 @@ describe('App connection authorization', () => {
       getDeviceId: async () => 'hwui_local_machine_1234567890',
     }))
     const appConnectionsController = await import('../../packages/server/src/modules/studio/controllers/app-connections')
-    const authController = await import('../../packages/server/src/controllers/auth')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
     const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
     const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
 
@@ -155,7 +159,7 @@ describe('App connection authorization', () => {
   it('keeps one row per phone and connection type while refreshing repeated logins', async () => {
     const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    const authController = await import('../../packages/server/src/controllers/auth')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
     const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
 
     async function login(connectionType: 'lan' | 'cloud', deviceName: string) {
@@ -211,7 +215,7 @@ describe('App connection authorization', () => {
       profiles: ['default'],
       defaultProfile: 'default',
     })
-    const authController = await import('../../packages/server/src/controllers/auth')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
     const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
     const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
     const ctx = {

@@ -13,13 +13,16 @@ describe('user auth tables and middleware', () => {
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
   })
 
   afterEach(() => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -469,7 +472,7 @@ describe('user auth tables and middleware', () => {
 
   it('bootstraps the default super admin through password login and returns a user JWT', async () => {
     await initUsers()
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
     const ctx = {
       request: { body: { username: 'admin', password: '123456' } },
       headers: {},
@@ -497,7 +500,7 @@ describe('user auth tables and middleware', () => {
     vi.stubEnv('HERMES_DESKTOP', 'false')
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
 
     const defaultCtx = {
       state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
@@ -529,10 +532,10 @@ describe('user auth tables and middleware', () => {
 
   it('lets super admins create regular admins with profile bindings', async () => {
     const { users } = await initUsers()
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       listProfileNamesFromDisk: () => ['default', 'research'],
     }))
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
     const ctx = {
       state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
       request: {
@@ -559,10 +562,10 @@ describe('user auth tables and middleware', () => {
   it('does not allow disabling the last active super admin', async () => {
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       listProfileNamesFromDisk: () => ['default'],
     }))
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
     const ctx = {
       state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
       params: { id: String(admin.id) },

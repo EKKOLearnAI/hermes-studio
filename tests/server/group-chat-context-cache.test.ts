@@ -5,7 +5,7 @@ import {
   groupBridgeReasoningDeltaFromEvent,
   groupContextTokensWithFixedOverhead,
 } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
-import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
+import { ContextEngine } from '../../packages/server/src/modules/studio/services/group-chat/context-engine/compressor'
 import type {
   GatewayCaller,
   MessageFetcher,

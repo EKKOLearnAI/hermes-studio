@@ -20,10 +20,10 @@ import {
 
 // Shared legacy route modules. Move these imports into their owning module as
 // each vertical slice is migrated.
-import { uploadRoutes } from '../routes/upload'
+import { uploadRoutes } from '../modules/studio/routes/upload'
 import { appUploadRoutes } from '../modules/hermes/routes/app-upload'
-import { authPublicRoutes, authProtectedRoutes } from '../routes/auth'
-import { mcuDeviceRoutes } from '../routes/mcu-devices'
+import { authPublicRoutes, authProtectedRoutes } from '../modules/studio/routes/auth'
+import { mcuDeviceRoutes } from '../modules/studio/routes/mcu-devices'
 
 // Legacy routes currently stored under routes/hermes. Their final ownership
 // may be Studio, Hermes, or another module as documented by the migration map.

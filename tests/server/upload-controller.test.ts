@@ -13,11 +13,11 @@ vi.mock('fs/promises', async () => {
   }
 })
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/upload-paths', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/files/upload-paths', () => ({
   getProfileUploadDir: vi.fn((profile: string) => `/tmp/hermes-web-ui/upload/${profile}`),
 }))
 
@@ -51,7 +51,7 @@ describe('upload controller', () => {
 
   it('stores chat uploads under the request-scoped profile upload directory', async () => {
     const boundary = 'test-boundary'
-    const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+    const { handleUpload } = await import('../../packages/server/src/modules/studio/controllers/upload')
     const ctx: any = {
       get: vi.fn((header: string) => header === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
       req: Readable.from([multipartBody(boundary, { filename: 'note.txt', content: 'hello' })]),
@@ -72,7 +72,7 @@ describe('upload controller', () => {
 
   it('parses boundary parameters and RFC 5987 filenames for chat uploads', async () => {
     const boundary = 'test-boundary'
-    const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+    const { handleUpload } = await import('../../packages/server/src/modules/studio/controllers/upload')
     const ctx: any = {
       get: vi.fn((header: string) => header === 'content-type'
         ? `multipart/form-data; boundary=${boundary}; charset=utf-8`
@@ -94,7 +94,7 @@ describe('upload controller', () => {
 
   it('answers 413 and finishes reading the body when an upload is too large', async () => {
     const boundary = 'test-boundary'
-    const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+    const { handleUpload } = await import('../../packages/server/src/modules/studio/controllers/upload')
     // Three chunks: the limit is crossed on the second, and the third is what a
     // still-writing client would send after the server has made up its mind.
     const chunk = Buffer.alloc(30 * 1024 * 1024, 0x61)
@@ -132,7 +132,7 @@ describe('upload controller', () => {
     vi.useFakeTimers()
     try {
       const boundary = 'test-boundary'
-      const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+      const { handleUpload } = await import('../../packages/server/src/modules/studio/controllers/upload')
       const chunk = Buffer.alloc(30 * 1024 * 1024, 0x61)
       let reads = 0
       const req = new Readable({
@@ -170,7 +170,7 @@ describe('upload controller', () => {
 
   it('returns 400 for malformed RFC 5987 filenames', async () => {
     const boundary = 'test-boundary'
-    const { handleUpload } = await import('../../packages/server/src/controllers/upload')
+    const { handleUpload } = await import('../../packages/server/src/modules/studio/controllers/upload')
     const ctx: any = {
       get: vi.fn((header: string) => header === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
       req: Readable.from([multipartBody(boundary, { filenameStar: 'bad%ZZname.txt', content: 'hello' })]),

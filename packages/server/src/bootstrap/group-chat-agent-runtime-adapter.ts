@@ -12,7 +12,7 @@ import { configureGroupChatAgentRuntime } from '../modules/studio/public/group-c
 import { createModelClient, resolveModelProviderConfigs } from '../../../ekko-agent/src'
 
 configureGroupChatAgentRuntime({
-  createPrimaryAgentBridge: () => new AgentBridgeClient(),
+  createPrimaryAgentBridge: options => new AgentBridgeClient(options),
   cancelEkkoClarification: cancelPendingEkkoClarification,
   respondToEkkoToolApproval,
   respondToEkkoClarification,
