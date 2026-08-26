@@ -1,7 +1,9 @@
 import { socialMessagesFr } from '../social-messages-locales'
+import { incomingWebhooksEn } from '../incoming-webhooks'
 
 export default {
   socialMessages: socialMessagesFr,
+  incomingWebhooks: incomingWebhooksEn,
   browser: {
     title: 'Navigateur', settings: 'Paramètres du navigateur', desktopOnly: 'Le navigateur intégré est disponible uniquement dans Hermes Studio Desktop.', newTab: 'Nouvel onglet',
     back: 'Précédent', forward: 'Suivant', reload: 'Actualiser', stop: 'Arrêter', addressPlaceholder: 'Rechercher ou saisir une adresse',

@@ -1,7 +1,9 @@
 import { socialMessagesZhTw } from '../social-messages'
+import { incomingWebhooksEn } from '../incoming-webhooks'
 
 export default {
   socialMessages: socialMessagesZhTw,
+  incomingWebhooks: incomingWebhooksEn,
   browser: {
     title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',
     back: '上一頁', forward: '下一頁', reload: '重新整理', stop: '停止', addressPlaceholder: '搜尋或輸入網址',
