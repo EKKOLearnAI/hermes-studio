@@ -21,6 +21,7 @@ beforeEach(async () => {
   await mkdir(hermesHome, { recursive: true })
   await writeFile(join(hermesHome, 'config.yaml'), 'model:\n  default: keep/model\n', 'utf-8')
   await writeFile(join(hermesHome, '.env'), 'KEEP_SECRET=keep\n', 'utf-8')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
 
   const { DatabaseSync } = await import('node:sqlite')
   db = new DatabaseSync(':memory:')
@@ -37,7 +38,7 @@ afterEach(async () => {
   db?.close()
   db = null
   vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-  vi.doUnmock('../../packages/server/src/services/hermes/local-stt-model-manager')
+  vi.doUnmock('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
   vi.resetModules()
   if (originalHermesHome === undefined) delete process.env.HERMES_HOME
   else process.env.HERMES_HOME = originalHermesHome
@@ -78,7 +79,7 @@ describe('Hermes voice config sync', () => {
     })
     ttsStore.saveActiveTtsProvider('default', 'custom')
 
-    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/modules/studio/services/voice/config-sync')
     await expect(syncVoiceConfigToHermesProfile('default')).resolves.toEqual({
       stt: 'hermes-studio',
       tts: 'hermes-studio',
@@ -134,7 +135,7 @@ describe('Hermes voice config sync', () => {
     })
     ttsStore.saveActiveTtsProvider('default', 'edge')
 
-    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/modules/studio/services/voice/config-sync')
     await syncVoiceConfigToHermesProfile('default')
 
     const config = await readConfig()
@@ -148,7 +149,7 @@ describe('Hermes voice config sync', () => {
   })
 
   it('routes an available Studio local model through the non-streaming voice proxy', async () => {
-    vi.doMock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager', () => ({
       isLocalSttModelUsable: () => true,
     }))
     const sttStore = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
@@ -158,7 +159,7 @@ describe('Hermes voice config sync', () => {
     })
     sttStore.saveActiveSttProvider('default', 'local')
 
-    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/modules/studio/services/voice/config-sync')
     await expect(syncVoiceConfigToHermesProfile('default')).resolves.toMatchObject({ stt: 'hermes-studio' })
 
     const config = await readConfig()
@@ -186,7 +187,7 @@ describe('Hermes voice config sync', () => {
     })
     ttsStore.saveActiveTtsProvider('default', 'mimo')
 
-    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/modules/studio/services/voice/config-sync')
     await expect(syncVoiceConfigToHermesProfile('default')).resolves.toEqual({
       stt: 'hermes-studio',
       tts: 'hermes-studio',
@@ -211,7 +212,7 @@ describe('Hermes voice config sync', () => {
     })
     ttsStore.saveActiveTtsProvider('default', 'gemini')
 
-    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/services/hermes/voice-config-sync')
+    const { syncVoiceConfigToHermesProfile } = await import('../../packages/server/src/modules/studio/services/voice/config-sync')
     await syncVoiceConfigToHermesProfile('default')
 
     const config = await readConfig()

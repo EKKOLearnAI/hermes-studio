@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
-vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/voice/config-sync', () => ({
   syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'synced', tts: 'unchanged' })),
 }))
 
@@ -107,10 +107,10 @@ describe('stt transcribe controller', () => {
       tempDir = null
     }
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/config')
-    vi.doUnmock('../../packages/server/src/services/hermes/stt-providers/audio-convert')
-    vi.doUnmock('../../packages/server/src/services/hermes/stt-providers')
-    vi.doUnmock('../../packages/server/src/services/global-agent/server')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/config')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/voice/stt/audio-convert')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/voice/stt')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/mcu-voice')
     vi.resetModules()
   })
 
@@ -118,7 +118,7 @@ describe('stt transcribe controller', () => {
     const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     return {
-      ctrl: await import('../../packages/server/src/controllers/hermes/stt'),
+      ctrl: await import('../../packages/server/src/modules/studio/controllers/stt'),
       store: await import('../../packages/server/src/modules/studio/repositories/stt-settings-store'),
     }
   }
@@ -483,12 +483,13 @@ describe('stt transcribe controller', () => {
       })),
     }
     tempDir = mkdtempSync(join(tmpdir(), 'hermes-mcu-stt-test-'))
-    vi.doMock('../../packages/server/src/config', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/config', () => ({
       config: { appHome: tempDir },
     }))
-    vi.doMock('../../packages/server/src/services/hermes/stt-providers/audio-convert', () => audioConvertMock)
-    vi.doMock('../../packages/server/src/services/global-agent/server', () => ({
-      getActiveGlobalAgentServer: () => ({ emitMcuEvent: vi.fn(), startMcuVoiceChatTurn }),
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/stt/audio-convert', () => audioConvertMock)
+    vi.doMock('../../packages/server/src/modules/studio/public/mcu-voice', () => ({
+      emitMcuVoiceEvent: vi.fn(),
+      startMcuVoiceChatTurn,
     }))
 
     mockFetch
@@ -551,11 +552,12 @@ describe('stt transcribe controller', () => {
 
   it('queues a separate prompt audio when MCU STT transcription fails after upload', async () => {
     const emitMcuEvent = vi.fn()
-    vi.doMock('../../packages/server/src/services/global-agent/server', () => ({
-      getActiveGlobalAgentServer: () => ({ emitMcuEvent }),
+    vi.doMock('../../packages/server/src/modules/studio/public/mcu-voice', () => ({
+      emitMcuVoiceEvent: emitMcuEvent,
+      startMcuVoiceChatTurn: vi.fn(),
     }))
-    vi.doMock('../../packages/server/src/services/hermes/stt-providers', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/services/hermes/stt-providers')>(),
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/stt', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/services/voice/stt')>(),
       transcribeWithProvider: vi.fn(async () => {
         throw new Error('provider unavailable')
       }),
@@ -602,12 +604,13 @@ describe('stt transcribe controller', () => {
 
   it('silently completes an MCU turn when the provider detects no speech', async () => {
     const emitMcuEvent = vi.fn()
-    vi.doMock('../../packages/server/src/services/global-agent/server', () => ({
-      getActiveGlobalAgentServer: () => ({ emitMcuEvent }),
+    vi.doMock('../../packages/server/src/modules/studio/public/mcu-voice', () => ({
+      emitMcuVoiceEvent: emitMcuEvent,
+      startMcuVoiceChatTurn: vi.fn(),
     }))
-    vi.doMock('../../packages/server/src/services/hermes/stt-providers', async (importOriginal) => {
-      const original = await importOriginal<typeof import('../../packages/server/src/services/hermes/stt-providers')>()
-      const { SttNoSpeechDetectedError } = await import('../../packages/server/src/services/hermes/stt-providers/types')
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/stt', async (importOriginal) => {
+      const original = await importOriginal<typeof import('../../packages/server/src/modules/studio/services/voice/stt')>()
+      const { SttNoSpeechDetectedError } = await import('../../packages/server/src/modules/studio/services/voice/stt/types')
       return {
         ...original,
         transcribeWithProvider: vi.fn(async () => {
@@ -729,11 +732,11 @@ describe('route registration ordering', () => {
     const ttsProtectedMiddleware = async () => {}
     const sttProtectedMiddleware = async () => {}
 
-    vi.doMock('../../packages/server/src/routes/hermes/tts', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/routes/tts', () => ({
       ttsRoutes: { routes: vi.fn(() => ttsPublicMiddleware) },
       ttsProtectedRoutes: { routes: vi.fn(() => ttsProtectedMiddleware) },
     }))
-    vi.doMock('../../packages/server/src/routes/hermes/stt', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/routes/stt', () => ({
       sttProtectedRoutes: { routes: vi.fn(() => sttProtectedMiddleware) },
     }))
 

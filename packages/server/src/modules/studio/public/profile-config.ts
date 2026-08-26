@@ -62,6 +62,8 @@ export function listProfileNames(): string[] {
   return configured().listProfileNames()
 }
 
+export const listProfileNamesFromDisk = listProfileNames
+
 export function readConfigYamlForProfile(profile: string): Promise<Record<string, any>> {
   return configured().readConfigYamlForProfile(profile)
 }

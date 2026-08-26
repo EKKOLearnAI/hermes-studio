@@ -1,1 +1,1 @@
-export * from '../../../modules/studio/contracts/voice/url-safety'
+export * from '../../../modules/studio/services/voice/tts/providers/url-safety'

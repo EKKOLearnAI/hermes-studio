@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   decodeMcuImaAdpcm,
   encodeMcuImaAdpcm,
-} from '../../packages/server/src/services/hermes/mcu-adpcm'
-import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/services/global-agent/mcu-voice-instructions'
+} from '../../packages/server/src/modules/studio/services/voice/mcu/adpcm'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/modules/studio/services/global-agent/mcu-voice-instructions'
 
 const authMocks = vi.hoisted(() => ({
   authenticateUserToken: vi.fn(),

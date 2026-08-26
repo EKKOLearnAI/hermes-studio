@@ -12,7 +12,7 @@ vi.mock('../../packages/server/src/controllers/update', () => ({ stopPreviewRunt
 vi.mock('../../packages/server/src/services/hermes/gateway-runner', () => ({
   shutdownManagedGateways: shutdownManagedGatewaysMock,
 }))
-vi.mock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager', () => ({
   shutdownLocalSttRuntime: shutdownLocalSttRuntimeMock,
 }))
 vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({

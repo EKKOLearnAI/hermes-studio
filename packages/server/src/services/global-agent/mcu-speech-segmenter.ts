@@ -1,4 +1,4 @@
-import { cleanTtsText } from '../hermes/tts-providers/text'
+import { cleanTtsText } from '../../modules/studio/services/voice/tts/providers/text'
 
 const PARAGRAPH_END_RE = /[。！？!?.…][\s"'”’）)\]】》]*$/
 

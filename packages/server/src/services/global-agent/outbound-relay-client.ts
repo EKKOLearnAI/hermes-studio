@@ -6,16 +6,16 @@ import { config } from '../../config'
 import { clearSessionMessages } from '../../db/hermes/session-store'
 import { getChatRunServer } from '../../routes/hermes/chat-run'
 import { logger } from '../logger'
-import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
-import { encodeMcuImaAdpcm } from '../hermes/mcu-adpcm'
-import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
+import { transcodeToPcmS16le } from '../../modules/studio/services/voice/stt/audio-convert'
+import { encodeMcuImaAdpcm } from '../../modules/studio/services/voice/mcu/adpcm'
+import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../modules/studio/services/voice/mcu/prompts'
 import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
 import {
   DEFAULT_MCU_AGENT_RUNTIME,
   mcuChatRunFields,
   normalizeMcuAgentRuntime,
   type McuAgentRuntime,
-} from './mcu-agent-runtime'
+} from '../../modules/studio/services/global-agent/mcu-agent-runtime'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const MAX_REQUEST_TIMEOUT_MS = 120_000

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/voice/config-sync', () => ({
   syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'unchanged', tts: 'synced' })),
 }))
 
@@ -48,11 +48,11 @@ function createMockCtx(body: Record<string, any> = {}) {
 
 describe('getTtsProvider', () => {
   it('returns expected providers and undefined for unknown ids', async () => {
-    const { getTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers')
-    const { edgeTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/edge')
-    const { customTtsProvider, openaiTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/openai')
-    const { mimoTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/mimo')
-    const { doubaoTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/doubao')
+    const { getTtsProvider } = await import('../../packages/server/src/modules/studio/services/voice/tts/providers')
+    const { edgeTtsProvider } = await import('../../packages/server/src/modules/studio/services/voice/tts/providers/edge')
+    const { customTtsProvider, openaiTtsProvider } = await import('../../packages/server/src/modules/studio/services/voice/tts/providers/openai')
+    const { mimoTtsProvider } = await import('../../packages/server/src/modules/studio/services/voice/tts/providers/mimo')
+    const { doubaoTtsProvider } = await import('../../packages/server/src/modules/studio/services/voice/tts/providers/doubao')
 
     expect(getTtsProvider('edge')).toBe(edgeTtsProvider)
     expect(getTtsProvider('openai')).toBe(openaiTtsProvider)
@@ -67,18 +67,18 @@ describe('tts synthesize controller', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    vi.doUnmock('../../packages/server/src/services/hermes/tts-providers')
-    vi.doUnmock('../../packages/server/src/controllers/hermes/tts')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/voice/tts/providers')
+    vi.doUnmock('../../packages/server/src/modules/studio/controllers/tts')
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   })
 
   it('returns 400 for an unknown provider', async () => {
     const getTtsProvider = vi.fn(() => undefined)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ provider: 'nope', text: 'hello' })
 
     await ctrl.synthesize(ctx)
@@ -122,7 +122,7 @@ describe('tts synthesize controller', () => {
         )
       `)
 
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         settings: {
           model: 'tts-1',
@@ -173,7 +173,7 @@ describe('tts synthesize controller', () => {
     try {
       const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx: saveCtx } = createMockCtx({
         settings: { model: 'tts-1', voice: 'alloy' },
         secrets: { apiKey: 'server-secret' },
@@ -219,7 +219,7 @@ describe('tts synthesize controller', () => {
     try {
       const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx()
       ctx.state = { user: { id: 7 } }
       ctx.params = { provider: 'edge' }
@@ -248,7 +248,7 @@ describe('tts synthesize controller', () => {
       const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
 
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         settings: {
           voice: 'zh-CN-YunxiNeural',
@@ -338,7 +338,7 @@ describe('tts synthesize controller', () => {
       const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
 
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         settings: { voice: 'zh-CN-XiaoxiaoNeural' },
       })
@@ -372,7 +372,7 @@ describe('tts synthesize controller', () => {
     const getTtsProvider = vi.fn(() => provider)
     const getActiveTtsProvider = vi.fn(() => 'doubao')
     const getTtsProviderSetting = vi.fn(() => null)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
@@ -381,7 +381,7 @@ describe('tts synthesize controller', () => {
       getTtsProviderSetting,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ text: 'hello' })
     ctx.state = { user: { id: 7 } }
 
@@ -409,7 +409,7 @@ describe('tts synthesize controller', () => {
     const getActiveTtsProvider = vi.fn(() => null)
     const getTtsProviderSetting = vi.fn(() => null)
     const listTtsProviderSettings = vi.fn(() => [])
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
@@ -419,7 +419,7 @@ describe('tts synthesize controller', () => {
       listTtsProviderSettings,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ text: 'hello' })
     ctx.state = { user: { id: 7 } }
 
@@ -437,11 +437,11 @@ describe('tts synthesize controller', () => {
   it('returns 400 for missing or blank text', async () => {
     const provider = { synthesize: vi.fn() }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ provider: 'mimo', text: '   ' })
 
     await ctrl.synthesize(ctx)
@@ -454,11 +454,11 @@ describe('tts synthesize controller', () => {
   it('returns 400 when options is not an object', async () => {
     const provider = { synthesize: vi.fn() }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
 
     for (const options of ['voice=verse', null, ['verse']]) {
       const { ctx } = createMockCtx({ provider: 'mimo', text: 'hello', options })
@@ -483,11 +483,11 @@ describe('tts synthesize controller', () => {
       }),
     }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx, headers } = createMockCtx({
       provider: 'mimo',
       text: 'Hello world',
@@ -525,7 +525,7 @@ describe('tts synthesize controller', () => {
     }
     const getTtsProvider = vi.fn(() => provider)
     const getTtsProviderSetting = vi.fn(() => null)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
@@ -533,7 +533,7 @@ describe('tts synthesize controller', () => {
       getTtsProviderSetting,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({
       provider: 'openai',
       text: 'Hello world',
@@ -580,7 +580,7 @@ describe('tts synthesize controller', () => {
       },
       secrets: {},
     }))
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
@@ -588,7 +588,7 @@ describe('tts synthesize controller', () => {
       getTtsProviderSetting,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({
       provider: 'openai',
       text: 'Hello world',
@@ -634,7 +634,7 @@ describe('tts synthesize controller', () => {
         apiKey: 'stored-secret',
       },
     }))
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
@@ -642,7 +642,7 @@ describe('tts synthesize controller', () => {
       getTtsProviderSetting,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({
       provider: 'openai',
       text: 'Hello world',
@@ -685,11 +685,11 @@ describe('tts synthesize controller', () => {
       }),
     }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx, emitRequestAborted, emitResponseClose } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
 
     const pending = ctrl.synthesize(ctx)
@@ -714,11 +714,11 @@ describe('tts synthesize controller', () => {
       synthesize: vi.fn().mockRejectedValue(abortError),
     }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
 
     await ctrl.synthesize(ctx)
@@ -733,11 +733,11 @@ describe('tts synthesize controller', () => {
       synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: apiKey=*** body')),
     }
     const getTtsProvider = vi.fn(() => provider)
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider,
     }))
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const { ctx } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
 
     await ctrl.synthesize(ctx)
@@ -764,7 +764,7 @@ describe('tts synthesize controller', () => {
     globalThis.fetch = fetchMock as any
 
     try {
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         kind: 'tts',
         provider: 'custom',
@@ -810,7 +810,7 @@ describe('tts synthesize controller', () => {
     globalThis.fetch = fetchMock as any
 
     try {
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         kind: 'stt',
         provider: 'custom',
@@ -844,7 +844,7 @@ describe('tts synthesize controller', () => {
     globalThis.fetch = fetchMock as any
 
     try {
-      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
       const { ctx } = createMockCtx({
         kind: 'tts',
         provider: 'custom',
@@ -871,8 +871,8 @@ describe('tts routes', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    vi.doUnmock('../../packages/server/src/routes/hermes/tts')
-    vi.doUnmock('../../packages/server/src/controllers/hermes/tts')
+    vi.doUnmock('../../packages/server/src/modules/studio/routes/tts')
+    vi.doUnmock('../../packages/server/src/modules/studio/controllers/tts')
   })
 
   it('registers public legacy routes separately from the protected synthesize route', async () => {
@@ -890,7 +890,7 @@ describe('tts routes', () => {
     const synthesizeVoiceProxy = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesizeVoiceProxy' } })
     const synthesizeVoiceProxyOpenAi = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesizeVoiceProxyOpenAi' } })
 
-    vi.doMock('../../packages/server/src/controllers/hermes/tts', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/controllers/tts', () => ({
       generate,
       openaiProxy,
       mcuAudio,
@@ -906,7 +906,7 @@ describe('tts routes', () => {
       synthesizeVoiceProxyOpenAi,
     }))
 
-    const { ttsRoutes, ttsProtectedRoutes } = await import('../../packages/server/src/routes/hermes/tts')
+    const { ttsRoutes, ttsProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/tts')
     const paths = ttsRoutes.stack.map((entry: any) => entry.path)
     const protectedPaths = ttsProtectedRoutes.stack.map((entry: any) => entry.path)
 
@@ -950,7 +950,7 @@ describe('route registration ordering', () => {
     const ttsPublicMiddleware = async () => {}
     const ttsProtectedMiddleware = async () => {}
 
-    vi.doMock('../../packages/server/src/routes/hermes/tts', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/routes/tts', () => ({
       ttsRoutes: { routes: vi.fn(() => ttsPublicMiddleware) },
       ttsProtectedRoutes: { routes: vi.fn(() => ttsProtectedMiddleware) },
     }))

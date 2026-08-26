@@ -8,11 +8,11 @@ const localStreamMocks = vi.hoisted(() => ({
   cancel: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/voice-config-sync', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/voice/config-sync', () => ({
   syncVoiceConfigToHermesProfile: vi.fn(async () => ({ stt: 'synced', tts: 'unchanged' })),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager', () => ({
   LocalSttStreamSessionError: class LocalSttStreamSessionError extends Error {},
   LOCAL_STT_MODEL_ID: 'test-local-stt-model',
   getLocalSttModelStatus: () => ({
@@ -56,7 +56,7 @@ describe('stt settings controller', () => {
   async function initController() {
     const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
-    return await import('../../packages/server/src/controllers/hermes/stt')
+    return await import('../../packages/server/src/modules/studio/controllers/stt')
   }
 
   function makeCtx(user: any | null, body: any = {}, params: Record<string, string> = {}, query: Record<string, string> = {}) {
@@ -361,8 +361,8 @@ describe('stt routes', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    vi.doUnmock('../../packages/server/src/routes/hermes/stt')
-    vi.doUnmock('../../packages/server/src/controllers/hermes/stt')
+    vi.doUnmock('../../packages/server/src/modules/studio/routes/stt')
+    vi.doUnmock('../../packages/server/src/modules/studio/controllers/stt')
   })
 
   it('registers the protected STT settings and transcribe routes', async () => {
@@ -382,7 +382,7 @@ describe('stt routes', () => {
     const finishLocalStream = vi.fn()
     const cancelLocalStream = vi.fn()
 
-    vi.doMock('../../packages/server/src/controllers/hermes/stt', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/controllers/stt', () => ({
       listSettings,
       saveActiveProvider,
       saveSettings,
@@ -400,7 +400,7 @@ describe('stt routes', () => {
       cancelLocalStream,
     }))
 
-    const { sttProtectedRoutes } = await import('../../packages/server/src/routes/hermes/stt')
+    const { sttProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/stt')
     const protectedPaths = sttProtectedRoutes.stack.map((entry: any) => entry.path)
 
     expect(protectedPaths).toEqual(expect.arrayContaining([

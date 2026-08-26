@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/services/global-agent/mcu-voice-instructions'
+import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from '../../packages/server/src/modules/studio/services/global-agent/mcu-voice-instructions'
 
 const { mockIo, mockSocket, sockets, socketHandlers, mockWebSockets, MockWebSocket, resetMockSockets } = vi.hoisted(() => {
   function createMockSocket(id: string, url = '') {

@@ -8,15 +8,15 @@ import { authenticateUserToken, type AuthenticatedUser } from '../../middleware/
 import { userCanAccessProfile } from '../../db/hermes/users-store'
 import { config } from '../../config'
 import { getChatRunServer } from '../../routes/hermes/chat-run'
-import { transcodeToPcmS16le } from '../hermes/stt-providers/audio-convert'
-import { decodeMcuImaAdpcm, encodeMcuImaAdpcm } from '../hermes/mcu-adpcm'
-import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../hermes/mcu-prompts'
+import { transcodeToPcmS16le } from '../../modules/studio/services/voice/stt/audio-convert'
+import { decodeMcuImaAdpcm, encodeMcuImaAdpcm } from '../../modules/studio/services/voice/mcu/adpcm'
+import { MCU_TTS_SAMPLE_RATE, mcuPromptText, mcuPromptUrl } from '../../modules/studio/services/voice/mcu/prompts'
 import { createMcuSpeechSegmenter, normalizeMcuSpeechText } from './mcu-speech-segmenter'
 import {
   mcuChatRunFields,
   normalizeMcuAgentRuntime,
   type McuAgentRuntime,
-} from './mcu-agent-runtime'
+} from '../../modules/studio/services/global-agent/mcu-agent-runtime'
 import type {
   RelayHttpRequest,
   RelayHttpResponse,

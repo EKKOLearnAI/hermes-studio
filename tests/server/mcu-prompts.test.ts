@@ -10,7 +10,7 @@ import {
   mcuPromptUrl,
   resolveMcuAudioPath,
   type McuPromptId,
-} from '../../packages/server/src/services/hermes/mcu-prompts'
+} from '../../packages/server/src/modules/studio/services/voice/mcu/prompts'
 
 describe('mcu prompts', () => {
   it('serves bundled 24k prompt assets through local MCU audio URLs', async () => {

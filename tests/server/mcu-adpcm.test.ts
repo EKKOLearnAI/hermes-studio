@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeMcuImaAdpcm,
   encodeMcuImaAdpcm,
-} from '../../packages/server/src/services/hermes/mcu-adpcm'
+} from '../../packages/server/src/modules/studio/services/voice/mcu/adpcm'
 
 function pcmBuffer(samples: number[]): Buffer {
   const pcm = Buffer.alloc(samples.length * 2)

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { doubaoTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/doubao'
+import { doubaoTtsProvider } from '../../packages/server/src/modules/studio/services/voice/tts/providers/doubao'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
