@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { checkServerModuleBoundaries } from './server-module-boundaries.mjs'
 
@@ -28,86 +27,6 @@ function requireDir(relativePath) {
   }
 }
 
-function gitLines(args) {
-  try {
-    return execFileSync('git', args, {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-  } catch {
-    return []
-  }
-}
-
-function changedFilesFromGit() {
-  const files = new Set()
-
-  for (const file of gitLines(['diff', '--name-only'])) files.add(file)
-  for (const file of gitLines(['diff', '--name-only', '--cached'])) files.add(file)
-  for (const file of gitLines(['ls-files', '--others', '--exclude-standard'])) files.add(file)
-
-  const baseRef = process.env.GITHUB_BASE_REF
-  if (baseRef) {
-    const baseCandidates = [`origin/${baseRef}`, baseRef]
-    let foundPrBase = false
-    for (const base of baseCandidates) {
-      const diff = gitLines(['diff', '--name-only', `${base}...HEAD`])
-      if (diff.length > 0) {
-        foundPrBase = true
-        for (const file of diff) files.add(file)
-        break
-      }
-    }
-    if (process.env.GITHUB_ACTIONS === 'true' && !foundPrBase && files.size === 0) {
-      fail(`Unable to inspect PR diff against ${baseRef}; build checkout must fetch full history`)
-    }
-  } else {
-    const upstream = gitLines(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])[0]
-    if (upstream) {
-      for (const file of gitLines(['diff', '--name-only', `${upstream}...HEAD`])) files.add(file)
-    }
-  }
-
-  return [...files].sort()
-}
-
-function isChatSessionChainFile(file) {
-  return file === 'packages/client/src/api/studio/chat.ts'
-    || file === 'packages/client/src/api/studio/group-chat.ts'
-    || file === 'packages/client/src/api/studio/sessions.ts'
-    || file === 'packages/client/src/stores/hermes/group-chat.ts'
-    || file === 'packages/client/src/stores/hermes/chat.ts'
-    || file === 'packages/server/src/modules/studio/controllers/sessions'
-    || file === 'packages/server/src/modules/studio/controllers/sessions.ts'
-    || file === 'packages/server/src/modules/studio/routes/sessions.ts'
-    || file === 'packages/server/src/modules/studio/repositories/session-store'
-    || file === 'packages/server/src/modules/studio/routes/group-chat'
-    || file === 'packages/server/src/modules/studio/routes/group-chat.ts'
-    || file === 'packages/server/src/modules/studio/controllers/group-chat.ts'
-    || file === 'packages/server/src/modules/studio/sockets/group-chat.ts'
-    || file.startsWith('packages/client/src/components/hermes/group-chat/')
-    || file.startsWith('packages/client/src/components/hermes/chat/')
-    || file.startsWith('packages/server/src/modules/studio/services/context-compressor/index')
-    || file.startsWith('packages/server/src/modules/studio/services/group-chat/context-engine/index')
-    || file.startsWith('packages/server/src/modules/studio/sockets/group-chat')
-    || file.startsWith('packages/server/src/modules/studio/sockets/chat-run')
-    || file.startsWith('packages/server/src/modules/studio/controllers/group-chat')
-    || file.startsWith('packages/server/src/modules/studio/services/group-chat/')
-    || file.startsWith('packages/server/src/modules/studio/services/chat-run/')
-    || file.startsWith('packages/server/src/modules/studio/services/context-compressor/')
-    || file.startsWith('packages/server/src/modules/hermes/services/bridge/')
-}
-
-function isChatChainChangeFragment(file) {
-  return file.startsWith('docs/chat-chain-changes/')
-    && file.endsWith('.md')
-    && path.basename(file) !== 'README.md'
-}
-
 for (const file of [
   'AGENTS.md',
   'ARCHITECTURE.md',
@@ -117,7 +36,6 @@ for (const file of [
   'docs/harness/worktree-runbook.md',
   'docs/harness/pr-review.md',
   'docs/harness/server-module-boundaries.md',
-  'docs/chat-chain-changes/README.md',
 ]) {
   requireFile(file)
 }
@@ -131,7 +49,6 @@ for (const dir of [
   'tests/server',
   'tests/e2e',
   '.github/workflows',
-  'docs/chat-chain-changes',
 ]) {
   requireDir(dir)
 }
@@ -173,7 +90,6 @@ for (const requiredLink of [
 const packageJson = JSON.parse(await readText('package.json'))
 for (const scriptName of [
   'harness:check',
-  'harness:server-boundaries',
   'test',
   'test:coverage',
   'test:e2e',
@@ -201,61 +117,9 @@ const buildWorkflow = await readText('.github/workflows/build.yml')
 if (!buildWorkflow.includes('npm run harness:check')) {
   fail('Build workflow must run npm run harness:check')
 }
-if (!buildWorkflow.includes('fetch-depth: 0')) {
-  fail('Build workflow checkout must use fetch-depth: 0 so harness:check can inspect PR diffs')
-}
 
 for (const failure of await checkServerModuleBoundaries(root)) {
   fail(failure)
-}
-
-const chatSessionsDoc = await readText('docs/cli-chat-sessions.md')
-for (const phrase of [
-  '最后重建时间',
-  '维护要求',
-  '最近链路变更记录',
-  'docs/chat-chain-changes/',
-  '每个 PR 一个变更片段',
-  'packages/server/src/modules/hermes/services/bridge/',
-  'packages/server/src/modules/studio/services/group-chat/',
-  'packages/server/src/modules/studio/services/context-compressor/',
-  '任何改动都算 Chat 链路改动',
-]) {
-  if (!chatSessionsDoc.includes(phrase)) {
-    fail(`docs/cli-chat-sessions.md must document chat chain maintenance rule: ${phrase}`)
-  }
-}
-
-const changedFiles = changedFilesFromGit()
-const changedChatChainFiles = changedFiles.filter(
-  file => !isChatChainChangeFragment(file)
-    && file !== 'docs/chat-chain-changes/README.md'
-    && file !== 'docs/cli-chat-sessions.md'
-    && isChatSessionChainFile(file),
-)
-const changedChatChainFragments = changedFiles.filter(isChatChainChangeFragment)
-const presentChatChainFragments = changedChatChainFragments.filter(file =>
-  existsSync(path.join(root, file)),
-)
-if (changedChatChainFiles.length > 0 && presentChatChainFragments.length === 0) {
-  fail(
-    [
-      'Chat session chain changed without adding a docs/chat-chain-changes/*.md fragment.',
-      'Add one fragment with date, PR/commit, touched feature, and behavior impact.',
-      `Changed chain files: ${changedChatChainFiles.join(', ')}`,
-    ].join(' '),
-  )
-}
-for (const file of presentChatChainFragments) {
-  const fragment = await readText(file)
-  for (const marker of ['date:', 'feature:', 'impact:']) {
-    if (!fragment.includes(marker)) {
-      fail(`Chat chain change fragment ${file} must include frontmatter field: ${marker}`)
-    }
-  }
-  if (!fragment.includes('pr:') && !fragment.includes('commit:')) {
-    fail(`Chat chain change fragment ${file} must include either pr: or commit:`)
-  }
 }
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')

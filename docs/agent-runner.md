@@ -353,6 +353,3 @@ Minimum checks for each phase:
 - `npm run test -- tests/server/run-chat-content-blocks.test.ts` when touching
   chat input conversion.
 - `npm run build` before merging shared TypeScript contracts.
-
-For chat session behavior changes, also add a fragment under
-`docs/chat-chain-changes/` according to the repository validation guide.

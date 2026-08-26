@@ -4,7 +4,9 @@ This document is the architecture contract for `packages/server/src`. It
 separates Studio-owned capabilities from the three agent families while
 preserving request/response semantics and persisted data. Studio-owned HTTP
 operations use `/api/studio/*`; Hermes-owned operations use `/api/hermes/*`.
-Old server source trees and old Studio URLs are not retained as aliases.
+Old server source trees are not retained. The only old Studio URL aliases are
+the centralized compatibility mappings for already-released App versions in
+`modules/studio/middleware/legacy-app-api.ts`.
 
 All server TypeScript source lives under `modules/` or `bootstrap/`, except the
 package entrypoint `index.ts`. The boundary harness rejects any source file that
@@ -74,6 +76,7 @@ packages/server/src/
       middleware/
         auth.ts
         errors.ts
+        legacy-app-api.ts          # temporary old-App URL mapping only
         request-context.ts
       http/
         body.ts
@@ -382,18 +385,19 @@ Preserve behavior while moving ownership:
    import. `bootstrap` supplies concrete agent implementations.
 4. Move a complete vertical feature slice: route, controller, service,
    repository/adapter, socket, Client API, and focused tests.
-5. Do not add compatibility re-exports, legacy source trees, or old HTTP URL
-   aliases. Callers migrate in the same change.
+5. Do not add compatibility re-exports or legacy source trees. Old HTTP aliases
+   are allowed only in `modules/studio/middleware/legacy-app-api.ts` for released
+   App versions; current clients must migrate to canonical URLs in the same change.
 
 ## Mechanical Harness
 
 Run:
 
 ```bash
-npm run harness:server-boundaries
+npm run harness:check
 ```
 
-`scripts/server-module-boundaries.mjs` enforces:
+The unified harness invokes `scripts/server-module-boundaries.mjs`, which enforces:
 
 - only the four declared module roots under `modules/`;
 - no server TypeScript outside `modules/`, `bootstrap/`, and the package
@@ -404,6 +408,7 @@ npm run harness:server-boundaries
 - no direct dependency between concrete agent modules.
 - no file, download, preview, or App upload implementation under Hermes;
   these capabilities are mechanically reserved for Studio.
+- legacy Studio URLs are declared only in the centralized App compatibility middleware.
 
 Resolve cross-module behavior through Studio contracts/public APIs and inject
 concrete runtime adapters from `bootstrap`.

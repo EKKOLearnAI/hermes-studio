@@ -750,8 +750,7 @@ or resume semantics.
 - A boundary-stopped turn followed by a queued turn has correct message order.
 - Existing explicit Stop and natural queue completion remain unchanged.
 
-Chat-chain implementation must include the required
-`docs/chat-chain-changes/*.md` record and run the validation set specified in
+Chat-chain implementation must run the focused validation set specified in
 `docs/harness/validation.md`.
 
 ## Acceptance Criteria

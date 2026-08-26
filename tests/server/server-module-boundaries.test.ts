@@ -3,6 +3,7 @@ import {
   classifyServerFile,
   collectModuleSpecifiers,
   forbiddenDomainDependency,
+  legacyAppAliasFailure,
   studioOwnershipFailure,
   validateTargetDependency,
 } from '../../scripts/server-module-boundaries.mjs'
@@ -74,6 +75,21 @@ describe('server module boundary harness', () => {
     )
     expect(studioOwnershipFailure('modules/studio/routes/files.ts')).toBeNull()
     expect(studioOwnershipFailure('modules/hermes/services/profiles/app-profile-avatar.ts')).toBeNull()
+  })
+
+  it('keeps legacy App aliases in the single Studio compatibility middleware', () => {
+    expect(legacyAppAliasFailure(
+      'modules/studio/routes/sessions.ts',
+      "routes.get('/api/hermes/sessions', controller)",
+    )).toContain('keep App aliases in modules/studio/middleware/legacy-app-api.ts')
+    expect(legacyAppAliasFailure(
+      'modules/studio/middleware/legacy-app-api.ts',
+      "['/api/hermes/sessions', '/api/studio/sessions']",
+    )).toBeNull()
+    expect(legacyAppAliasFailure(
+      'modules/hermes/routes/jobs.ts',
+      "routes.get('/api/hermes/jobs', controller)",
+    )).toBeNull()
   })
 
   it('keeps controllers and services pointed down the layer graph', () => {

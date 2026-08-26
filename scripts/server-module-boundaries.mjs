@@ -20,6 +20,24 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
 const RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 const STUDIO_AGENT_ENTRY_POINTS = new Set(['contracts', 'public'])
 const STUDIO_ROUTE_ENTRY_POINTS = new Set(['contracts', 'public', 'middleware', 'http'])
+const LEGACY_APP_COMPATIBILITY_FILE = 'modules/studio/middleware/legacy-app-api.ts'
+const LEGACY_STUDIO_API_PREFIXES = [
+  '/api/hermes/session-categories',
+  '/api/hermes/search/sessions',
+  '/api/hermes/group-chat-link',
+  '/api/hermes/group-chat',
+  '/api/hermes/app-uploads',
+  '/api/hermes/performance',
+  '/api/hermes/workflows',
+  '/api/hermes/sessions',
+  '/api/hermes/workspace',
+  '/api/hermes/download',
+  '/api/hermes/files',
+  '/api/hermes/usage',
+  '/api/hermes/logs',
+  '/api/hermes/stt',
+  '/api/hermes/tts',
+]
 const HERMES_STUDIO_FILE_PATTERNS = [
   /^modules\/hermes\/routes\/(?:app-upload|download|files)(?:\/|\.ts$)/,
   /^modules\/hermes\/controllers\/(?:app-upload|download|file-preview|files)(?:\/|\.ts$)/,
@@ -77,6 +95,14 @@ export function studioOwnershipFailure(file) {
   const normalized = normalizePath(file)
   if (!HERMES_STUDIO_FILE_PATTERNS.some(pattern => pattern.test(normalized))) return null
   return `${normalized} places Studio-owned file capability under Hermes`
+}
+
+export function legacyAppAliasFailure(file, source) {
+  const normalized = normalizePath(file)
+  if (normalized === LEGACY_APP_COMPATIBILITY_FILE) return null
+  const legacyPrefix = LEGACY_STUDIO_API_PREFIXES.find(prefix => source.includes(prefix))
+  if (!legacyPrefix) return null
+  return `${normalized} declares legacy Studio API ${legacyPrefix}; keep App aliases in ${LEGACY_APP_COMPATIBILITY_FILE}`
 }
 
 export function collectModuleSpecifiers(source, fileName = 'source.ts') {
@@ -258,6 +284,11 @@ export async function inspectServerModuleBoundaries(root = process.cwd()) {
     }
     const ownershipFailure = studioOwnershipFailure(file)
     if (ownershipFailure) failures.push(`${SERVER_SOURCE_ROOT}/${ownershipFailure}`)
+    if (isSourceFile(file)) {
+      const source = await readFile(path.join(sourceRoot, file), 'utf8')
+      const aliasFailure = legacyAppAliasFailure(file, source)
+      if (aliasFailure) failures.push(`${SERVER_SOURCE_ROOT}/${aliasFailure}`)
+    }
   }
 
   for (const dependency of dependencies) {

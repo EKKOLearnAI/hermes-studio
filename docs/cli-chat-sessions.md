@@ -5,16 +5,6 @@
 > bridge 直连命令层已经不再是产品入口。
 >
 > 最后重建时间：2026-06-03。
->
-> 维护要求：后续 PR 如果修改本文列出的普通 Chat 链路核心文件，需要新增
-> `docs/chat-chain-changes/` 下的独立变更片段。每个 PR 一个变更片段，写清楚
-> 修改时间、PR/commit、动到的功能和行为影响，避免多个 PR 同时改本文产生冲突。
-> `packages/server/src/modules/hermes/services/bridge/` 是普通 Chat 的核心链路，
-> 该目录下任何改动都算 Chat 链路改动；即使只是启动、环境变量、日志或品牌
-> attribution，也要记录影响范围，必要时明确“运行行为无变化”。
-> `packages/server/src/modules/studio/services/group-chat/`、`/group-chat` Socket.IO、
-> group-chat 前端 store/API/component、共享压缩器和 context-engine 也属于核心
-> 聊天链路，改动时同样需要记录。
 
 ## 1. 结论先行
 
@@ -47,28 +37,6 @@ ChatPanel / ChatInput
 - 同一个 session 同时只跑一个 active run，后续输入进入 session 队列。
 - 工具审批、用户澄清、压缩、abort、usage、slash command 都复用同一条
   `/chat-run` 事件通道。
-
-### 最近链路变更记录
-
-变更记录按 PR 拆分保存在 `docs/chat-chain-changes/`。新增 Chat session chain、
-Agent Bridge、compression 或 Group Chat 核心链路改动时，新增一个 fragment 文件，
-不要继续修改本文维护集中表格。
-
-每个 fragment 至少包含：
-
-```md
----
-date: YYYY-MM-DD
-pr: 1234
-feature: 改动功能
-impact: 行为影响
----
-
-补充说明。
-```
-
-开 PR 前还没有编号时可以先写 `pr: pending`，PR 创建后再把该 fragment 改成实际
-PR 号。
 
 ## 2. 主要文件
 
