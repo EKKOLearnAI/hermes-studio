@@ -80,7 +80,6 @@ const tagMappings = {
   'modules/studio/routes/petdex.ts': { name: 'Petdex', description: 'Desktop pet catalog and assets' },
   'modules/studio/routes/pets.ts': { name: 'Pets', description: 'Per-profile desktop pet settings' },
   'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
-  'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
   'modules/studio/routes/health.ts': { name: 'Health', description: 'Health check' },
   'routes/update.ts': { name: 'Update', description: 'Self-update management' },
   'routes/upload.ts': { name: 'Upload', description: 'File upload' },
