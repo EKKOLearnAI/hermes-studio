@@ -7,7 +7,7 @@ import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
 import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 import { stopAppRelayClient } from './app-relay/client'
 import { closeGlobalEkkoAgent } from './ekko-agent/manager'
-import { stopChatWebhookDispatcher } from './hermes/chat-webhooks'
+import { stopChatWebhookDispatcher } from '../modules/hermes/services/webhooks'
 import { shutdownSocialMessageRuntimes } from './social-messages'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000

@@ -21,7 +21,7 @@ import {
   GroupAgentRelayServer,
 } from './services/hermes/group-chat/agent-relay'
 import { ChatRunSocket } from './services/hermes/run-chat'
-import { startChatWebhookDispatcher } from './services/hermes/chat-webhooks'
+import { startChatWebhookDispatcher } from './modules/hermes/services/webhooks'
 import { getAgentBridgeManager, startAgentBridgeManager } from './modules/hermes/services/bridge'
 import { HermesSkillInjector } from './modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from './modules/hermes/services/mcp/studio-autoinject'

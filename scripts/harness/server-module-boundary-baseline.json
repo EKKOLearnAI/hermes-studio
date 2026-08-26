@@ -46,7 +46,6 @@
     "services/hermes/run-chat/sse-utils.ts -> services/coding-agents/shared/sse.ts",
     "services/shutdown.ts -> services/coding-agents/runtime/run-manager.ts",
     "services/shutdown.ts -> services/ekko-agent/manager.ts",
-    "services/shutdown.ts -> services/hermes/chat-webhooks/index.ts",
     "services/shutdown.ts -> services/hermes/gateway-runner.ts",
     "services/shutdown.ts -> services/hermes/local-stt-model-manager.ts",
     "services/workflow-import-capabilities.ts -> services/coding-agents/shared/provider-policy.ts",

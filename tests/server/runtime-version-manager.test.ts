@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ appHome: '' }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     get appHome() {
       return state.appHome
@@ -13,7 +13,7 @@ vi.mock('../../packages/server/src/config', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/services/system-info', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   getHermesAgentVersion: () => 'v2026.8.1',
   getHermesWebUiVersion: () => '0.6.31',
 }))

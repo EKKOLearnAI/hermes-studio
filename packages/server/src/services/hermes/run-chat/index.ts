@@ -53,7 +53,7 @@ import type {
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 import { observeRunChatPetEvent } from '../pet-state-socket'
-import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../chat-webhooks'
+import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../../../modules/hermes/services/webhooks'
 import { codingAgentRunManager } from '../../coding-agents/runtime/run-manager'
 import { respondToEkkoToolApproval } from '../../ekko-agent/approvals'
 import { respondToEkkoClarification } from '../../ekko-agent/clarifications'
