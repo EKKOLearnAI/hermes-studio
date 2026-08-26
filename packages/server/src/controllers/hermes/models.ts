@@ -436,7 +436,7 @@ async function buildAvailableForProfile(
       base_url,
       models: availableModels,
       available_models: availableModels,
-      api_key,
+      api_key: '',
       ...(apiMode ? { api_mode: apiMode } : {}),
       ...(builtin ? { builtin: true } : {}),
       ...(Object.keys(unavailableMeta).length ? { model_meta: unavailableMeta } : {}),
