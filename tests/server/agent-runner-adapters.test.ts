@@ -7,24 +7,24 @@ import {
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
   truncateResponsesToolOutputs,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses-stream'
 
 const target = { model: 'test-model' }
 const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }

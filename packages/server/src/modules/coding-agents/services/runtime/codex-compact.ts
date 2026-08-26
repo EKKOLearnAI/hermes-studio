@@ -5,7 +5,7 @@ import {
   normalizeWindowsCommandPath,
   windowsCmdShimExecution,
   windowsCommandNeedsShell,
-} from '../../windows-command'
+} from '../../../studio/public/windows-command'
 
 const APP_SERVER_READY_TIMEOUT_MS = 30_000
 const COMPACT_TIMEOUT_MS = 5 * 60 * 1000

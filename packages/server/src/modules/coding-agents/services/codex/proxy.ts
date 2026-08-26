@@ -1,28 +1,28 @@
 import { Readable } from 'stream'
 import type { Context } from 'koa'
-import { config } from '../../../config'
+import { config } from '../../../studio/public/config'
 import {
   anthropicMessagesUrl as resolveAnthropicMessagesUrl,
   chatCompletionsUrl as resolveChatCompletionsUrl,
   responsesUrl as resolveResponsesUrl,
-} from '../shared/endpoint-resolver'
-import { sseEvent } from '../shared/sse'
-import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../shared/target-registry'
-import type { ApiMode } from '../shared/types'
+} from '../../protocol/endpoint-resolver'
+import { sseEvent } from '../../protocol/sse'
+import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../../protocol/target-registry'
+import type { ApiMode } from '../../protocol/types'
 import {
   anthropicMessageToResponses,
   openAiChatToResponses,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
   truncateResponsesToolOutputs,
-} from '../shared/adapters/responses'
+} from '../../protocol/adapters/responses'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../shared/adapters/responses-stream'
-import { agentRunGateway } from '../shared/gateway'
+} from '../../protocol/adapters/responses-stream'
+import { agentRunGateway } from '../../protocol/gateway'
 import { codingAgentRunManager } from '../runtime/run-manager'
 
 export interface CodexProxyTargetInput extends AgentTargetInput {

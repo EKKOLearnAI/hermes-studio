@@ -3,7 +3,7 @@ import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getProfileDir } from './hermes/hermes-profile'
-import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
+import { getCompatibleCustomProviders } from '../modules/studio/contracts/provider-compat'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
 

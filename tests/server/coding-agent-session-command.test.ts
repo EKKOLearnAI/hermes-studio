@@ -26,13 +26,14 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => 
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
+  updateContextTokenUsage: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
   getModelContextLength: getModelContextLengthMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: {
     compact: compactMock,
     getRunInfo: getRunInfoMock,
@@ -42,7 +43,7 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
   },
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/index', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/index', () => ({
   startCodingAgentRun: startCodingAgentRunMock,
   compactStoredCodingAgentSession: compactStoredCodingAgentSessionMock,
 }))

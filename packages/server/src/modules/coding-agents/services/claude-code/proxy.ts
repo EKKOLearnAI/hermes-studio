@@ -1,37 +1,37 @@
 import { Readable } from 'stream'
 import type { Context } from 'koa'
-import { config } from '../../../config'
+import { config } from '../../../studio/public/config'
 import {
   anthropicMessagesUrl as resolveAnthropicMessagesUrl,
   chatCompletionsUrl as resolveChatCompletionsUrl,
   responsesUrl as resolveResponsesUrl,
-} from '../shared/endpoint-resolver'
-import { parseSseFrame, readSseFrameTexts, sseEvent } from '../shared/sse'
-import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../shared/target-registry'
-import type { ApiMode } from '../shared/types'
+} from '../../protocol/endpoint-resolver'
+import { parseSseFrame, readSseFrameTexts, sseEvent } from '../../protocol/sse'
+import { AgentTargetRegistry, type AgentTargetInput, type RegisteredAgentTarget } from '../../protocol/target-registry'
+import type { ApiMode } from '../../protocol/types'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../shared/adapters/anthropic'
+} from '../../protocol/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../shared/adapters/anthropic-stream'
+} from '../../protocol/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../shared/adapters/responses-stream'
-import { agentRunGateway, ProviderApiError } from '../shared/gateway'
-import { teeAsyncIterable } from '../shared/stream-tee'
+} from '../../protocol/adapters/responses-stream'
+import { agentRunGateway, ProviderApiError } from '../../protocol/gateway'
+import { teeAsyncIterable } from '../../protocol/stream-tee'
 import { codingAgentRunManager } from '../runtime/run-manager'
-import { logger } from '../../logger'
+import { logger } from '../../../studio/public/logging'
 
-export type { ApiMode } from '../shared/types'
+export type { ApiMode } from '../../protocol/types'
 
 export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
 

@@ -6,6 +6,11 @@ import { themeRoutes } from '../modules/studio/routes/theme'
 import { appConnectionRoutes, appRelayRoutes } from './app-relay'
 import { devicePublicRoutes, deviceRoutes } from './devices'
 import { socialMessageRoutes } from '../modules/studio/routes/social-messages'
+import {
+  claudeCodeProxyRoutes,
+  codexProxyRoutes,
+  codingAgentRoutes,
+} from './coding-agents'
 
 // Shared legacy route modules. Move these imports into their owning module as
 // each vertical slice is migrated.
@@ -13,9 +18,6 @@ import { uploadRoutes } from '../routes/upload'
 import { appUploadRoutes } from '../routes/hermes/app-upload'
 import { authPublicRoutes, authProtectedRoutes } from '../routes/auth'
 import { mcuDeviceRoutes } from '../routes/mcu-devices'
-import { codingAgentRoutes } from '../routes/coding-agents'
-import { claudeCodeProxyRoutes } from '../routes/claude-code-proxy'
-import { codexProxyRoutes } from '../routes/codex-proxy'
 
 // Legacy routes currently stored under routes/hermes. Their final ownership
 // may be Studio, Hermes, or another module as documented by the migration map.

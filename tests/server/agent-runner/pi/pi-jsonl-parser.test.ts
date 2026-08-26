@@ -1,6 +1,6 @@
 import { PassThrough } from 'stream'
 import { describe, expect, it } from 'vitest'
-import { attachPiJsonlReader } from '../../../../packages/server/src/services/coding-agents/pi/jsonl-parser'
+import { attachPiJsonlReader } from '../../../../packages/server/src/modules/coding-agents/services/pi/jsonl-parser'
 
 describe('attachPiJsonlReader', () => {
   it('splits records only on LF and preserves Unicode separators inside JSON strings', () => {
