@@ -6,7 +6,7 @@ const { addMessageMock, addMessagesMock } = vi.hoisted(() => ({
   addMessagesMock: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   addMessages: addMessagesMock,
 }))

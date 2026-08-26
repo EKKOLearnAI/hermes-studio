@@ -54,7 +54,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   authenticateUserToken: authMocks.authenticateUserToken,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: authMocks.userCanAccessProfile,
 }))
 

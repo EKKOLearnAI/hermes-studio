@@ -7,23 +7,23 @@ describe('MCU devices store', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('stores official and unofficial MCU devices', async () => {
-    const { createMcuDevice, listMcuDevices } = await import('../../packages/server/src/db/hermes/mcu-devices-store')
+    const { createMcuDevice, listMcuDevices } = await import('../../packages/server/src/modules/studio/repositories/mcu-devices-store')
 
     const official = createMcuDevice({
       name: 'Official Box',
@@ -42,7 +42,7 @@ describe('MCU devices store', () => {
   })
 
   it('rejects duplicate device codes', async () => {
-    const { createMcuDevice } = await import('../../packages/server/src/db/hermes/mcu-devices-store')
+    const { createMcuDevice } = await import('../../packages/server/src/modules/studio/repositories/mcu-devices-store')
 
     createMcuDevice({
       name: 'Box',
@@ -58,7 +58,7 @@ describe('MCU devices store', () => {
   })
 
   it('updates device name only', async () => {
-    const { createMcuDevice, updateMcuDeviceName } = await import('../../packages/server/src/db/hermes/mcu-devices-store')
+    const { createMcuDevice, updateMcuDeviceName } = await import('../../packages/server/src/modules/studio/repositories/mcu-devices-store')
 
     const created = createMcuDevice({
       name: 'Old Name',
@@ -73,7 +73,7 @@ describe('MCU devices store', () => {
   })
 
   it('deletes MCU devices', async () => {
-    const { createMcuDevice, deleteMcuDevice, listMcuDevices } = await import('../../packages/server/src/db/hermes/mcu-devices-store')
+    const { createMcuDevice, deleteMcuDevice, listMcuDevices } = await import('../../packages/server/src/modules/studio/repositories/mcu-devices-store')
 
     const created = createMcuDevice({
       name: 'Delete Me',

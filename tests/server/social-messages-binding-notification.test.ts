@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { send } = vi.hoisted(() => ({ send: vi.fn() }))
 const database = vi.hoisted(() => ({ value: null as any }))
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 vi.mock('../../packages/server/src/services/social-messages/service', () => ({
   getSocialMessageService: () => ({ send }),
 }))
@@ -15,7 +15,7 @@ describe('Social Messages first binding notification', () => {
     send.mockResolvedValue({ platform: 'telegram', recipient: '1234', messageId: '1' })
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
@@ -26,7 +26,7 @@ describe('Social Messages first binding notification', () => {
   })
 
   it('binds the first sender and pushes a localized success message only once', async () => {
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     store.upsertSocialMessageAccount({
       userId: 7,
       platform: 'telegram',
@@ -63,7 +63,7 @@ describe('Social Messages first binding notification', () => {
   })
 
   it('retries on the next inbound message when the success notification fails', async () => {
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     store.upsertSocialMessageAccount({
       userId: 7,
       platform: 'weixin',

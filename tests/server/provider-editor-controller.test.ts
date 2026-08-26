@@ -38,7 +38,7 @@ vi.mock('../../packages/server/src/services/hermes/provider-editor', () => ({
   testProviderEditorDraft: mockTestDraft,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/provider-audit-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/provider-audit-store', () => ({
   appendProviderAuditEvent: mockAppendAudit,
 }))
 

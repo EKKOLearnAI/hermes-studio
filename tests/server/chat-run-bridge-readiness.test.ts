@@ -58,7 +58,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   getSessionMetadata: getSessionMock,
   getSessionDetail: vi.fn(() => null),
@@ -75,7 +75,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   isAuthEnabled: vi.fn(async () => false),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: userCanAccessProfileMock,
 }))
 

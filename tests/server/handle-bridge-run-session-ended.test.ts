@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: mocks.getSession,
   getSessionDetail: mocks.getSessionDetail,
   createSession: mocks.createSession,
@@ -31,7 +31,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: mocks.updateSessionStats,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: mocks.updateUsage,
 }))
 

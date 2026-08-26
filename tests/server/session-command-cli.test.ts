@@ -8,7 +8,7 @@ const getModelContextLengthMock = vi.fn(() => 256_000)
 const calcAndUpdateUsageMock = vi.fn()
 const forceCompressBridgeHistoryMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   clearSessionMessages: vi.fn(),
   createSession: createSessionMock,

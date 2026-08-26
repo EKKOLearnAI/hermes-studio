@@ -9,7 +9,7 @@ const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbState.db,
   isSqliteAvailable: () => Boolean(dbState.db),
 }))
@@ -51,7 +51,7 @@ describe('group chat room workspace', () => {
     originalWebUiHome = process.env.HERMES_WEB_UI_HOME
     process.env.WORKSPACE_BASE = root
     process.env.HERMES_WEB_UI_HOME = join(root, 'web-ui-home')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     httpServer = createServer()
   })
@@ -427,7 +427,7 @@ describe('group chat room workspace', () => {
     )`)
     dbState.db?.prepare('INSERT INTO gc_rooms (id, name) VALUES (?, ?)').run('old-room', 'Old Room')
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
     const row = dbState.db?.prepare(

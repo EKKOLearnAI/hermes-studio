@@ -8,7 +8,7 @@ describe('chat run webhooks', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
       isSqliteAvailable: () => true,
@@ -16,7 +16,7 @@ describe('chat run webhooks', () => {
     vi.doMock('../../packages/server/src/services/auth', () => ({
       getToken: async () => 'test-server-token',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
@@ -31,7 +31,7 @@ describe('chat run webhooks', () => {
     vi.useRealTimers()
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/services/auth')
     vi.doUnmock('../../packages/server/src/services/social-messages/session-push')
     vi.resetModules()
@@ -39,7 +39,7 @@ describe('chat run webhooks', () => {
 
   async function createEndpoint(overrides: Record<string, unknown> = {}) {
     const { createChatWebhookEndpoint } = await import(
-      '../../packages/server/src/db/hermes/chat-webhook-store'
+      '../../packages/server/src/modules/studio/repositories/chat-webhook-store'
     )
     return createChatWebhookEndpoint({
       name: 'Operations',
@@ -74,7 +74,7 @@ describe('chat run webhooks', () => {
     await createEndpoint({ name: 'Audit', url: 'https://93.184.216.35/audit' })
 
     const { listChatWebhookEndpoints } = await import(
-      '../../packages/server/src/db/hermes/chat-webhook-store'
+      '../../packages/server/src/modules/studio/repositories/chat-webhook-store'
     )
     expect(listChatWebhookEndpoints().map(endpoint => endpoint.name)).toEqual(['Operations', 'Audit'])
 

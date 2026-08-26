@@ -21,7 +21,7 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
   saveCompressionSnapshot: saveCompressionSnapshotMock,
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,

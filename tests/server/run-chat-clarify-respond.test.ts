@@ -29,7 +29,7 @@ const sessionStoreMock = vi.hoisted(() => ({
   getSessionDetail: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => sessionStoreMock)
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => sessionStoreMock)
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
@@ -42,7 +42,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   isAuthEnabled: vi.fn(async () => false),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: vi.fn(() => true),
 }))
 

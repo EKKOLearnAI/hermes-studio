@@ -9,7 +9,7 @@ const readConfigYamlForProfileMock = vi.fn()
 const safeReadFileMock = vi.fn()
 const startRunMock = vi.fn()
 
-vi.doMock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.doMock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   updateSession: updateSessionMock,
 }))

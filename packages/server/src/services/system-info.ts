@@ -5,25 +5,14 @@ import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, resolve } from 'path'
 import { config } from '../config'
 import * as hermesCli from './hermes/hermes-cli'
+import type { PublicSystemInfo } from '../modules/studio/contracts/devices'
+
+export type { PublicSystemInfo } from '../modules/studio/contracts/devices'
 
 declare const __APP_VERSION__: string
 
 type PackageInfo = {
   version: string
-}
-
-export type PublicSystemInfo = {
-  device_id: string
-  device_public_key: string
-  computer_name: string
-  os: {
-    type: string
-    platform: NodeJS.Platform
-    release: string
-    arch: string
-  }
-  hermes_agent_version: string
-  hermes_web_ui_version: string
 }
 
 type DeviceIdentity = {

@@ -8,7 +8,7 @@ const buildDbHistoryMock = vi.fn()
 const buildSnapshotAwareHistoryMock = vi.fn()
 const estimateUsageTokensFromMessagesMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   createSession: vi.fn(),
   getSession: vi.fn(() => ({ id: 'session-resume', profile: 'default', model: 'gpt-test', provider: 'openai' })),
@@ -16,7 +16,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: updateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: updateUsageMock,
 }))
 
@@ -34,7 +34,7 @@ vi.mock('../../packages/server/src/lib/context-compressor', () => ({
   SUMMARY_PREFIX: '[Summary] ',
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: vi.fn(),
 }))
 

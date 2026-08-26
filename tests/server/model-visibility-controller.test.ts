@@ -36,7 +36,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk: mockListProfileNamesFromDisk,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   listUserProfiles: mockListUserProfiles,
 }))
 
@@ -146,7 +146,7 @@ vi.mock('../../packages/server/src/db', () => ({
   getDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/schemas', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/schemas', () => ({
   MODEL_CONTEXT_TABLE: 'model_context',
 }))
 

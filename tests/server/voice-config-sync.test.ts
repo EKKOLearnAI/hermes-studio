@@ -24,19 +24,19 @@ beforeEach(async () => {
 
   const { DatabaseSync } = await import('node:sqlite')
   db = new DatabaseSync(':memory:')
-  vi.doMock('../../packages/server/src/db/index', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
 
-  const schemas = await import('../../packages/server/src/db/hermes/schemas')
+  const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
   schemas.initAllHermesTables()
 })
 
 afterEach(async () => {
   db?.close()
   db = null
-  vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   vi.doUnmock('../../packages/server/src/services/hermes/local-stt-model-manager')
   vi.resetModules()
   if (originalHermesHome === undefined) delete process.env.HERMES_HOME
@@ -54,8 +54,8 @@ async function readConfig(): Promise<Record<string, any>> {
 
 describe('Hermes voice config sync', () => {
   it('registers one Hermes Studio provider while keeping upstream settings and secrets in Web UI storage', async () => {
-    const sttStore = await import('../../packages/server/src/db/hermes/stt-settings-store')
-    const ttsStore = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const sttStore = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
+    const ttsStore = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     sttStore.saveSttProviderSetting('default', 'openai', {
       settings: {
         baseUrl: 'https://api.openai.com/v1/audio/transcriptions',
@@ -126,8 +126,8 @@ describe('Hermes voice config sync', () => {
       '',
     ].join('\n'), 'utf-8')
 
-    const sttStore = await import('../../packages/server/src/db/hermes/stt-settings-store')
-    const ttsStore = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const sttStore = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
+    const ttsStore = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     sttStore.saveActiveSttProvider('default', 'browser')
     ttsStore.saveTtsProviderSetting('default', 'edge', {
       settings: { voice: 'zh-CN-XiaoxiaoNeural', rate: 1.1 },
@@ -151,7 +151,7 @@ describe('Hermes voice config sync', () => {
     vi.doMock('../../packages/server/src/services/hermes/local-stt-model-manager', () => ({
       isLocalSttModelUsable: () => true,
     }))
-    const sttStore = await import('../../packages/server/src/db/hermes/stt-settings-store')
+    const sttStore = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
     sttStore.saveSttProviderSetting('default', 'local', {
       settings: { model: 'local-model' },
       secrets: {},
@@ -170,8 +170,8 @@ describe('Hermes voice config sync', () => {
   })
 
   it('hides Groq and MiMo behind the same Hermes Studio provider', async () => {
-    const sttStore = await import('../../packages/server/src/db/hermes/stt-settings-store')
-    const ttsStore = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const sttStore = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
+    const ttsStore = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     sttStore.saveSttProviderSetting('default', 'custom', {
       settings: {
         baseUrl: 'https://api.groq.com/openai/v1/audio/transcriptions',
@@ -201,7 +201,7 @@ describe('Hermes voice config sync', () => {
   })
 
   it('uses a WAV command output for Gemini PCM audio', async () => {
-    const ttsStore = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const ttsStore = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     ttsStore.saveTtsProviderSetting('default', 'gemini', {
       settings: {
         model: 'gemini-2.5-flash-preview-tts',

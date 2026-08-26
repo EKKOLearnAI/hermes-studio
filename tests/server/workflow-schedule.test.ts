@@ -9,16 +9,16 @@ process.env.HERMES_WEB_UI_HOME = join(root, 'home')
 process.env.HERMES_WEBUI_STATE_DIR = join(root, 'home')
 
 afterAll(async () => {
-  const { closeDb } = await import('../../packages/server/src/db/index')
+  const { closeDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
   closeDb()
   rmSync(root, { recursive: true, force: true })
 })
 
 describe('workflow schedules', () => {
   it('persists a unique trigger identity before dispatching and never dispatches it twice', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, getWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, getWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
     const { WorkflowScheduleService } = await import('../../packages/server/src/services/workflow-schedule-service')
     initAllStores()
     const workflow = createWorkflow({ id: 'schedule-workflow', name: 'Scheduled', nodes: [], edges: [] })
@@ -39,9 +39,9 @@ describe('workflow schedules', () => {
   })
 
   it('skips missed intervals and active workflows with durable audit evidence', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, getWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, getWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
     const { WorkflowScheduleService } = await import('../../packages/server/src/services/workflow-schedule-service')
     initAllStores()
     const workflow = createWorkflow({ id: 'skip-workflow', name: 'Skip', nodes: [], edges: [] })
@@ -55,9 +55,9 @@ describe('workflow schedules', () => {
   })
 
   it('persists a disabled schedule as disabled', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, getWorkflowSchedule } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, getWorkflowSchedule } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
     initAllStores()
     const workflow = createWorkflow({ id: 'disabled-schedule-workflow', name: 'Disabled', nodes: [], edges: [] })
     const schedule = createWorkflowSchedule({ workflow_id: workflow.id, profile: 'default', schedule: '* * * * *', timezone: 'UTC', enabled: false })
@@ -66,9 +66,9 @@ describe('workflow schedules', () => {
   })
 
   it('records validation failures without dispatching a workflow', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
     const { WorkflowScheduleService } = await import('../../packages/server/src/services/workflow-schedule-service')
     initAllStores()
     const workflow = createWorkflow({ id: 'unavailable-provider-workflow', name: 'Unavailable provider', nodes: [], edges: [] })
@@ -88,9 +88,9 @@ describe('workflow schedules', () => {
   })
 
   it('records an admission race as a concurrency skip', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
     const { WorkflowScheduleService } = await import('../../packages/server/src/services/workflow-schedule-service')
     initAllStores()
     const workflow = createWorkflow({ id: 'admission-race-workflow', name: 'Admission race', nodes: [], edges: [] })
@@ -108,10 +108,10 @@ describe('workflow schedules', () => {
   })
 
   it('does not dispatch when the schedule owner loses profile access', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/db/hermes/workflow-schedule-store')
-    const { createUser } = await import('../../packages/server/src/db/hermes/users-store')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowSchedule, listWorkflowScheduleEvents } = await import('../../packages/server/src/modules/studio/repositories/workflow-schedule-store')
+    const { createUser } = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const { WorkflowScheduleService } = await import('../../packages/server/src/services/workflow-schedule-service')
     initAllStores()
     const owner = createUser({ username: 'schedule-owner-without-profile', password: 'pw', profiles: [] })!

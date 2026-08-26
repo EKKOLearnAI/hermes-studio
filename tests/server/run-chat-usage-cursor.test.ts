@@ -9,19 +9,19 @@ const deleteCompressionSnapshotMock = vi.fn()
 const getRecordedUsageTotalsMock = vi.fn()
 const getUsageMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   getSession: getSessionMock,
   getSessionContextMessages: getSessionContextMessagesMock,
   getSessionContextMessage: getSessionContextMessageMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   getRecordedUsageTotals: getRecordedUsageTotalsMock,
   getUsage: getUsageMock,
 }))

@@ -22,19 +22,19 @@ describe('MCU login controller', () => {
 
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
   })
 
   async function loadModules() {
     return {
       ctrl: await import('../../packages/server/src/controllers/auth'),
-      users: await import('../../packages/server/src/db/hermes/users-store'),
+      users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
       auth: await import('../../packages/server/src/middleware/user-auth'),
     }
   }

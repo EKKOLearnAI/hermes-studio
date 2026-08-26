@@ -4,7 +4,7 @@ const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }))
 const { notifyBinding } = vi.hoisted(() => ({ notifyBinding: vi.fn() }))
 const database = vi.hoisted(() => ({ value: null as any }))
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 vi.mock('../../packages/server/src/services/social-messages/binding-notification', () => ({
   notifyFirstSocialMessageBinding: notifyBinding,
 }))
@@ -32,7 +32,7 @@ describe('standalone Telegram runtime', () => {
     vi.stubGlobal('fetch', mockFetch)
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 

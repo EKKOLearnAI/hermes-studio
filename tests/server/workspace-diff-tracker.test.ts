@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
   appHome: '',
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => state.db,
   isSqliteAvailable: () => Boolean(state.db),
   jsonDelete: vi.fn(),
@@ -38,7 +38,7 @@ describe('workspace diff tracker', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workspace-diff-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'diffs.db'))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
     repo = join(root, 'repo')
@@ -101,7 +101,7 @@ describe('workspace diff tracker', () => {
     })
     expect(change?.files[0].patch).toBeUndefined()
 
-    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/modules/studio/repositories/workspace-run-changes-store')
     const detail = getWorkspaceRunChangeFile('session-1', change!.change_id, change!.files[0].id)
     expect(detail?.patch).toContain('-old')
     expect(detail?.patch).toContain('+new')
@@ -243,7 +243,7 @@ describe('workspace diff tracker', () => {
       ['old.txt', 'modified'],
     ])
 
-    const { getWorkspaceRunChangeFile } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const { getWorkspaceRunChangeFile } = await import('../../packages/server/src/modules/studio/repositories/workspace-run-changes-store')
     const modified = change!.files.find(file => file.path === 'old.txt')!
     const detail = getWorkspaceRunChangeFile('session-plain', change!.change_id, modified.id)
     expect(detail?.patch).toContain('-old')
@@ -433,7 +433,7 @@ describe('workspace diff tracker', () => {
     insertParent.run('zero-only', 1, 0, 0, 1, 64, now)
     insertFile.run('zero-only', 'only.bin', 0, 0, 64, 1, now)
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     initAllHermesTables()
 

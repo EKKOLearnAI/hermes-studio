@@ -25,7 +25,7 @@ const { mockIo, mockSocket } = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbMock.current,
 }))
 
@@ -38,7 +38,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 }))
 
 import { countTokens } from '../../packages/server/src/lib/context-compressor'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { healthRoutes } from '../../packages/server/src/routes/health'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'

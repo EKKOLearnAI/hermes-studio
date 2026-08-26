@@ -17,7 +17,7 @@ const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 const database = vi.hoisted(() => ({ value: null as any }))
 let studioHome = ''
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 
 function makeCtx(userId = 7, profile = 'research', query: Record<string, string> = {}): any {
   return {
@@ -35,7 +35,7 @@ describe('social messages Feishu QR registration', () => {
     vi.clearAllMocks()
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     vi.setSystemTime(new Date('2026-08-23T00:00:00.000Z'))
@@ -98,7 +98,7 @@ describe('social messages Feishu QR registration', () => {
       FEISHU_APP_SECRET: 'server-only-secret',
     })
     await expect(readSocialMessageCredentials(8)).resolves.toEqual({})
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     expect(store.getSocialMessageAccount(7, 'feishu')).toMatchObject({
       bindingLocale: 'ja',
       bindingNotified: false,

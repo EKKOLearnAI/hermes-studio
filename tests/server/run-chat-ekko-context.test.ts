@@ -29,7 +29,7 @@ const recordSessionUsageMock = vi.hoisted(() => vi.fn())
 const startWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
 const completeWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   createSession: createSessionMock,
   addMessage: addMessageMock,

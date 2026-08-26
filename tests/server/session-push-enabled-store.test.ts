@@ -7,25 +7,25 @@ describe('session push setting store', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
       isSqliteAvailable: () => true,
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('defaults new sessions to not pushed and persists changes', async () => {
     const { createSession, getSession, setSessionPushEnabled } = await import(
-      '../../packages/server/src/db/hermes/session-store'
+      '../../packages/server/src/modules/studio/repositories/session-store'
     )
 
     createSession({ id: 'session-1' })

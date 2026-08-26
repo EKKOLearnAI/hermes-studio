@@ -79,7 +79,7 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   findLatestExactSessionIdWithProfile: mockFindLatestExactSessionId,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   listUserProfiles: mockListUserProfiles,
 }))
 

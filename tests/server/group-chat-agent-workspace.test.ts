@@ -52,7 +52,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({ getToken: vi.fn(asyn
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
 }))
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({ updateUsage: vi.fn() }))
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({ updateUsage: vi.fn() }))
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))

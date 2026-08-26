@@ -4,11 +4,11 @@ import { createServer, type Server as HttpServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 const dbState = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => dbState.current }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => dbState.current }))
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
     isAuthEnabled: vi.fn(async () => false),
     authenticateUserToken: vi.fn(async () => null),

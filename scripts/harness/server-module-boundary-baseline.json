@@ -10,8 +10,6 @@
     "db/hermes/conversations-db.ts -> services/hermes/conversations.ts",
     "db/hermes/conversations-db.ts -> services/hermes/hermes-profile.ts",
     "db/hermes/sessions-db.ts -> services/hermes/hermes-profile.ts",
-    "db/hermes/stt-settings-store.ts -> services/hermes/tts-providers/url-safety.ts",
-    "db/hermes/tts-settings-store.ts -> services/hermes/tts-providers/url-safety.ts",
     "lib/context-compressor/export-compressor.ts -> services/hermes/run-chat/context-history.ts",
     "lib/context-compressor/index.ts -> services/ekko-agent/manager.ts",
     "lib/context-compressor/index.ts -> services/ekko-agent/provider-runtime.ts",

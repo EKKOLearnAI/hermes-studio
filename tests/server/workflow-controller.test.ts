@@ -32,7 +32,7 @@ vi.mock('../../packages/server/src/services/workflow-manager', async importOrigi
   }
 })
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   listUserProfiles: listUserProfilesMock,
 }))
 
@@ -51,7 +51,7 @@ vi.mock('../../packages/server/src/controllers/hermes/models', () => ({
 }))
 
 
-vi.mock('../../packages/server/src/db/hermes/workflow-run-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/workflow-run-store', () => ({
   listWorkflowRunNodeSessions: listWorkflowRunNodeSessionsMock,
   listWorkflowRunEdgeEvaluations: listWorkflowRunEdgeEvaluationsMock,
   listWorkflowRunLoopEpochs: listWorkflowRunLoopEpochsMock,

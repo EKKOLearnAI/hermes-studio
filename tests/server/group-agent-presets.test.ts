@@ -27,7 +27,7 @@ afterAll(async () => {
 
 describe('group Agent presets', () => {
   it('returns an application conflict for owner-scoped duplicate names without leaking SQLite details', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
     const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
     initAllStores()
     modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
@@ -90,14 +90,14 @@ describe('group Agent presets', () => {
   })
 
   it('persists owner-scoped CRUD snapshots without secret fields', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
     const {
       createGroupAgentPreset,
       deleteGroupAgentPreset,
       getGroupAgentPreset,
       listGroupAgentPresets,
       updateGroupAgentPreset,
-    } = await import('../../packages/server/src/db/hermes/group-agent-preset-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/group-agent-preset-store')
     initAllStores()
 
     const created = createGroupAgentPreset({

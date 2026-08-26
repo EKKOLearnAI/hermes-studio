@@ -16,18 +16,18 @@ beforeEach(async () => {
 
   const { DatabaseSync } = await import('node:sqlite')
   db = new DatabaseSync(':memory:')
-  vi.doMock('../../packages/server/src/db/index', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
-  const schemas = await import('../../packages/server/src/db/hermes/schemas')
+  const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
   schemas.initAllHermesTables()
 })
 
 afterEach(async () => {
   db?.close()
   db = null
-  vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   vi.doUnmock('../../packages/server/src/services/hermes/tts-providers')
   vi.doUnmock('../../packages/server/src/services/hermes/stt-providers')
   vi.resetModules()
@@ -82,7 +82,7 @@ describe('Hermes Studio voice proxy controllers', () => {
       getTtsProvider: (provider: string) => provider === 'edge' ? { id: 'edge', synthesize } : undefined,
     }))
 
-    const store = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     store.saveTtsProviderSetting('default', 'edge', {
       settings: { voice: 'zh-CN-YunjianNeural', rate: 1 },
     })
@@ -119,7 +119,7 @@ describe('Hermes Studio voice proxy controllers', () => {
       transcribeWithProvider,
     }))
 
-    const store = await import('../../packages/server/src/db/hermes/stt-settings-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
     store.saveSttProviderSetting('default', 'custom', {
       settings: {
         baseUrl: 'https://stt.example/v1/audio/transcriptions',

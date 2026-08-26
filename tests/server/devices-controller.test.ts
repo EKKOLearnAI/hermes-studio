@@ -37,11 +37,11 @@ describe('devices controller', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
@@ -49,7 +49,7 @@ describe('devices controller', () => {
     db?.close()
     db = null
     vi.unstubAllGlobals()
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/services/login-limiter')
     vi.resetModules()
   })
@@ -91,7 +91,7 @@ describe('devices controller', () => {
   })
 
   it('returns the inbound pairing status for a signed device status request', async () => {
-    const { requestInboundDeviceLink, updateInboundStatus } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestInboundDeviceLink, updateInboundStatus } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     requestInboundDeviceLink(device)
     updateInboundStatus(device.id, 'approved')
 
@@ -136,7 +136,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
     await requestDeviceLinkController(ctx)
 
@@ -163,7 +163,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
     await requestDeviceLinkController(ctx)
 
@@ -200,7 +200,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
     await requestDeviceLinkController(ctx)
 
@@ -229,7 +229,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
     await requestDeviceLinkController(ctx)
 
@@ -261,7 +261,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
     await requestDeviceLinkController(ctx)
 
@@ -412,7 +412,7 @@ describe('devices controller', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { requestInboundDeviceLink, updateInboundStatus, getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestInboundDeviceLink, updateInboundStatus, getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     requestInboundDeviceLink(device)
     updateInboundStatus(device.id, 'approved')
 
@@ -505,7 +505,7 @@ describe('devices controller', () => {
       })
       vi.stubGlobal('fetch', fetchMock)
 
-      const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+      const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
       const { requestDevicePairing } = await import('../../packages/server/src/controllers/devices')
       const ctx: any = {
         params: { id: fallbackDevice.id },
@@ -602,7 +602,7 @@ describe('devices controller', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { requestManualDevicePairing } = await import('../../packages/server/src/controllers/devices')
     const ctx: any = {
       request: {
@@ -674,7 +674,7 @@ describe('devices controller', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { updateOutboundStatus } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { updateOutboundStatus } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
     const { listDevices } = await import('../../packages/server/src/controllers/devices')
     updateOutboundStatus(device.id, 'approved', {
       ...device,

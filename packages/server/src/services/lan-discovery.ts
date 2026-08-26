@@ -2,7 +2,10 @@ import dgram from 'dgram'
 import { networkInterfaces } from 'os'
 import { config } from '../config'
 import { logger } from './logger'
-import { deviceIdFromPublicKey, getPublicSystemInfo, type PublicSystemInfo } from './system-info'
+import { deviceIdFromPublicKey, getPublicSystemInfo } from './system-info'
+import type { LanDeviceInfo, LanEndpointKind, PublicSystemInfo } from '../modules/studio/contracts/devices'
+
+export type { LanDeviceInfo, LanEndpointKind } from '../modules/studio/contracts/devices'
 
 const DISCOVERY_VERSION = 1
 export const HERMES_DISCOVERY_PORT = 48640
@@ -11,18 +14,6 @@ const DEFAULT_HTTP_PORTS = [8648, 8748]
 const DEFAULT_SCAN_TIMEOUT_MS = 1000
 
 type DiscoverySocket = dgram.Socket
-
-export type LanDeviceInfo = PublicSystemInfo & {
-  id: string
-  ip: string
-  http_port: number
-  endpoint_kind: LanEndpointKind
-  url: string
-  response_ms: number
-  last_seen_at: string
-}
-
-export type LanEndpointKind = 'web' | 'desktop' | 'custom'
 
 export type LanDiscoveryState = {
   scanning: boolean

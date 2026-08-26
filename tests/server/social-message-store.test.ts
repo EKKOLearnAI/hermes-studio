@@ -7,20 +7,20 @@ describe('Social Messages SQLite store', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({ getDb: () => db }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => db }))
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('enforces one active account per user and keeps targets on their account row', async () => {
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     store.upsertSocialMessageAccount({
       userId: 7,
       platform: 'feishu',
@@ -89,7 +89,7 @@ describe('Social Messages SQLite store', () => {
   })
 
   it('stores runtime cursor and peer state in SQLite', async () => {
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     store.writeSocialMessageRuntimeState(7, 'weixin', 'account-key', {
       syncBuf: 'cursor',
       peers: { 'wx-user': { contextToken: 'context' } },

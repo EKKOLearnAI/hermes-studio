@@ -16,7 +16,7 @@ vi.mock('../../packages/server/src/db', () => ({
   getDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/schemas', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/schemas', () => ({
   MODEL_CONTEXT_TABLE: 'model_context',
 }))
 

@@ -10,7 +10,7 @@ describe('session-sync', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -23,13 +23,13 @@ describe('session-sync', () => {
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/db/hermes/sessions-db')
     vi.resetModules()
   })
 
   async function initTestDb() {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
     initAllStores()
   }
 

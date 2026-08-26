@@ -73,7 +73,7 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   clearSessionMessages: sessionStoreMocks.clearSessionMessages,
   getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
   getSessionMetadata: vi.fn(() => ({
@@ -89,7 +89,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetail: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/workspace-run-changes-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/workspace-run-changes-store', () => ({
   listWorkspaceRunChangesForAssistantMessages: listWorkspaceRunChangesForAssistantMessagesMock,
 }))
 
@@ -104,7 +104,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   isAuthEnabled: vi.fn(async () => false),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: vi.fn(() => true),
 }))
 

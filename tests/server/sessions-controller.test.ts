@@ -85,7 +85,7 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   getUsageStatsFromDb: getUsageStatsFromDbMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   listSessions: localListSessionsMock,
   searchSessions: localSearchSessionsMock,
   getSessionDetail: localGetSessionDetailMock,
@@ -100,7 +100,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: localUpdateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-category-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-category-store', () => ({
   SESSION_CATEGORY_NAME_MAX_LENGTH: 40,
   listSessionCategories: listSessionCategoriesMock,
   createSessionCategory: createSessionCategoryMock,
@@ -113,11 +113,11 @@ vi.mock('../../packages/server/src/db/hermes/session-category-store', () => ({
   setSessionCategory: setSessionCategoryMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   listUserProfiles: listUserProfilesMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   deleteUsage: vi.fn(),
   getUsage: vi.fn(),
   getUsageBatch: vi.fn(),
@@ -161,7 +161,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/server-registry', ()
   getChatRunServer: getChatRunServerMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 

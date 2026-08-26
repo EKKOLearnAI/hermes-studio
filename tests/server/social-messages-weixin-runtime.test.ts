@@ -9,7 +9,7 @@ const database = vi.hoisted(() => ({ value: null as any }))
 vi.mock('../../packages/server/src/services/social-messages/weixin-ilink', () => ({
   weixinIlinkPost: mockIlinkPost,
 }))
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 vi.mock('../../packages/server/src/services/social-messages/binding-notification', () => ({
   notifyFirstSocialMessageBinding: notifyBinding,
 }))
@@ -21,7 +21,7 @@ describe('standalone Weixin runtime', () => {
     notifyBinding.mockResolvedValue(true)
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 

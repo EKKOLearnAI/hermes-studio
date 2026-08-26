@@ -15,7 +15,7 @@ const ekkoBackgroundMock = vi.hoisted(() => ({
   abort: vi.fn(async () => 0),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))

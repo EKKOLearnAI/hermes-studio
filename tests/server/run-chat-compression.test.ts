@@ -23,14 +23,14 @@ const compressorCompressMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const compressorConstructorMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   getSession: getSessionMock,
   getSessionContextMessages: getSessionContextMessagesMock,
   getSessionContextMessage: getSessionContextMessageMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 

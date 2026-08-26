@@ -69,7 +69,7 @@ describe('tts synthesize controller', () => {
     vi.clearAllMocks()
     vi.doUnmock('../../packages/server/src/services/hermes/tts-providers')
     vi.doUnmock('../../packages/server/src/controllers/hermes/tts')
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   })
 
   it('returns 400 for an unknown provider', async () => {
@@ -91,13 +91,13 @@ describe('tts synthesize controller', () => {
   it('saves TTS settings when the legacy provider table has no unique index', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
     try {
-      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
       db.exec('DROP INDEX IF EXISTS idx_tts_provider_settings_user_provider')
       db.exec('DROP TABLE tts_provider_settings')
@@ -158,20 +158,20 @@ describe('tts synthesize controller', () => {
       expect(JSON.parse(profileRow.secrets_json)).toEqual({ apiKey: 'server-secret' })
     } finally {
       db.close()
-      vi.doUnmock('../../packages/server/src/db/index')
+      vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     }
   })
 
   it('deletes a stored TTS provider row and falls back to Edge when it was active', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
     try {
-      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
       const { ctx: saveCtx } = createMockCtx({
@@ -204,20 +204,20 @@ describe('tts synthesize controller', () => {
       expect(activeRow.active_provider).toBe('edge')
     } finally {
       db.close()
-      vi.doUnmock('../../packages/server/src/db/index')
+      vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     }
   })
 
   it('rejects deleting the built-in Edge TTS provider', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
     try {
-      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
       const { ctx } = createMockCtx()
@@ -232,20 +232,20 @@ describe('tts synthesize controller', () => {
       expect(ctx.body).toEqual({ error: 'built-in TTS provider cannot be deleted' })
     } finally {
       db.close()
-      vi.doUnmock('../../packages/server/src/db/index')
+      vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     }
   })
 
   it('preserves numeric Edge TTS rate and pitch settings on save', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
     try {
-      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
 
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
@@ -290,14 +290,14 @@ describe('tts synthesize controller', () => {
       ])
     } finally {
       db.close()
-      vi.doUnmock('../../packages/server/src/db/index')
+      vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     }
   })
 
   it('repairs preexisting profile TTS tables before saving settings', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -335,7 +335,7 @@ describe('tts synthesize controller', () => {
         'INSERT INTO tts_profile_settings (profile, active_provider, created_at, updated_at) VALUES (?, ?, ?, ?)'
       ).run('default', 'openai', 2, 2)
 
-      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       schemas.initAllHermesTables()
 
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
@@ -355,7 +355,7 @@ describe('tts synthesize controller', () => {
       expect(db.prepare('SELECT COUNT(*) AS count FROM tts_profile_settings WHERE profile = ?').get('default').count).toBe(1)
     } finally {
       db.close()
-      vi.doUnmock('../../packages/server/src/db/index')
+      vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     }
   })
 
@@ -375,8 +375,8 @@ describe('tts synthesize controller', () => {
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
-    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
+    vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/tts-settings-store')>(),
       getActiveTtsProvider,
       getTtsProviderSetting,
     }))
@@ -412,8 +412,8 @@ describe('tts synthesize controller', () => {
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
-    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
+    vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/tts-settings-store')>(),
       getActiveTtsProvider,
       getTtsProviderSetting,
       listTtsProviderSettings,
@@ -528,8 +528,8 @@ describe('tts synthesize controller', () => {
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
-    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
+    vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/tts-settings-store')>(),
       getTtsProviderSetting,
     }))
 
@@ -583,8 +583,8 @@ describe('tts synthesize controller', () => {
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
-    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
+    vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/tts-settings-store')>(),
       getTtsProviderSetting,
     }))
 
@@ -637,8 +637,8 @@ describe('tts synthesize controller', () => {
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
-    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
+    vi.doMock('../../packages/server/src/modules/studio/repositories/tts-settings-store', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/tts-settings-store')>(),
       getTtsProviderSetting,
     }))
 

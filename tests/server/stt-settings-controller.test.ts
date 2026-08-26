@@ -40,7 +40,7 @@ describe('stt settings controller', () => {
     localStreamMocks.push.mockReset()
     localStreamMocks.finish.mockReset()
     localStreamMocks.cancel.mockReset()
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -49,12 +49,12 @@ describe('stt settings controller', () => {
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   async function initController() {
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     return await import('../../packages/server/src/controllers/hermes/stt')
   }

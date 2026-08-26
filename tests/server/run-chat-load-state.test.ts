@@ -9,7 +9,7 @@ const buildSnapshotAwareHistoryMock = vi.fn()
 const getRecordedUsageTotalsMock = vi.fn()
 const getUsageMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   createSession: vi.fn(),
   addMessage: vi.fn(),
@@ -17,13 +17,13 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetailPaginated: getSessionDetailPaginatedMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: vi.fn(),
   getRecordedUsageTotals: getRecordedUsageTotalsMock,
   getUsage: getUsageMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 

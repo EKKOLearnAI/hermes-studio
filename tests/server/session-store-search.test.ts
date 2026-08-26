@@ -7,25 +7,25 @@ describe('session store search', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       isSqliteAvailable: () => true,
       getStoragePath: () => ':memory:',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('finds rendered text when Markdown markers split the stored phrase', async () => {
     const { addMessage, createSession, searchSessions } = await import(
-      '../../packages/server/src/db/hermes/session-store'
+      '../../packages/server/src/modules/studio/repositories/session-store'
     )
     createSession({ id: 'markdown-session', profile: 'default', source: 'cli', title: 'Background tasks' })
     const messageId = addMessage({
@@ -52,7 +52,7 @@ describe('session store search', () => {
 
   it('ranks an exact coding-agent title before newer body matches and filters before limiting', async () => {
     const { addMessage, createSession, searchSessions } = await import(
-      '../../packages/server/src/db/hermes/session-store'
+      '../../packages/server/src/modules/studio/repositories/session-store'
     )
     createSession({ id: 'coding-agent', profile: 'default', source: 'coding_agent', title: 'test' })
     createSession({ id: 'recent-chat', profile: 'default', source: 'cli', title: 'Recent conversation' })
@@ -84,7 +84,7 @@ describe('session store search', () => {
       createSession,
       getSessionDetail,
       updateMessageDisplayContent,
-    } = await import('../../packages/server/src/db/hermes/session-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     createSession({ id: 'subagent-display', profile: 'default', source: 'cli', title: 'Subagent display' })
     const messageId = addMessage({
       session_id: 'subagent-display',

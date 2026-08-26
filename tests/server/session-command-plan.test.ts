@@ -6,7 +6,7 @@ const getSessionMock = vi.fn()
 const updateSessionStatsMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   clearSessionMessages: vi.fn(),
   createSession: createSessionMock,

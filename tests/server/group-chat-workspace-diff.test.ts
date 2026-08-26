@@ -9,7 +9,7 @@ const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbState.db,
   isSqliteAvailable: () => Boolean(dbState.db),
 }))
@@ -40,7 +40,7 @@ describe('group chat workspace diff persistence', () => {
     workspace = join(root, 'workspace')
     mkdirSync(workspace)
     dbState.db = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     httpServer = createServer()
   })

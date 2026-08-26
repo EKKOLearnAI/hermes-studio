@@ -126,7 +126,7 @@ describe('group chat room Agent handoff depth policy', () => {
           CREATE UNIQUE INDEX idx_gc_handoff_attempts_chain ON gc_handoff_attempts(chainId);
         `)
 
-        const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+        const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
         initAllHermesTables()
 
         const indexes = harness.db.prepare("PRAGMA index_list('gc_handoff_attempts')").all() as Array<{ name: string; unique: number }>
@@ -145,7 +145,7 @@ describe('group chat room Agent handoff depth policy', () => {
           WHERE status IN ('claimed', 'admitted', 'dispatched');
         `)
 
-        const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+        const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
         initAllHermesTables()
 
         const row = harness.db.prepare(

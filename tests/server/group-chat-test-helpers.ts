@@ -9,7 +9,7 @@ const groupChatAuthMock = vi.hoisted(() => ({
   user: null as any,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => groupChatDbMock.current,
   isSqliteAvailable: () => groupChatDbMock.current !== null,
 }))
@@ -18,7 +18,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
 }))
 
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 
 export function once<T = any>(socket: ClientSocket, event: string, timeoutMs = 2_000): Promise<T> {

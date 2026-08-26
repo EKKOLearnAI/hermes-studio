@@ -52,8 +52,8 @@ vi.mock('child_process', () => ({
   }),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../packages/server/src/db/hermes/session-store')>(),
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/session-store')>(),
   updateSessionStats: vi.fn(),
 }))
 

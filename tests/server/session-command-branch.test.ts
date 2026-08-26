@@ -17,7 +17,7 @@ const getOrCreateSessionMock = vi.fn((sessionMap: Map<string, any>, sessionId: s
   return sessionMap.get(sessionId)
 })
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   addMessages: addMessagesMock,
   clearSessionMessages: clearSessionMessagesMock,

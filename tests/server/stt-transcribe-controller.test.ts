@@ -93,7 +93,7 @@ describe('stt transcribe controller', () => {
     vi.clearAllMocks()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -106,7 +106,7 @@ describe('stt transcribe controller', () => {
       rmSync(tempDir, { recursive: true, force: true })
       tempDir = null
     }
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/config')
     vi.doUnmock('../../packages/server/src/services/hermes/stt-providers/audio-convert')
     vi.doUnmock('../../packages/server/src/services/hermes/stt-providers')
@@ -115,11 +115,11 @@ describe('stt transcribe controller', () => {
   })
 
   async function initControllerAndStore() {
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     return {
       ctrl: await import('../../packages/server/src/controllers/hermes/stt'),
-      store: await import('../../packages/server/src/db/hermes/stt-settings-store'),
+      store: await import('../../packages/server/src/modules/studio/repositories/stt-settings-store'),
     }
   }
 
