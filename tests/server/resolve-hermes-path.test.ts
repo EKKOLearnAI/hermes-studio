@@ -11,7 +11,7 @@ const HOME = '/tmp/hermes-resolve-home'
 describe('resolveHermesPath', () => {
   beforeEach(() => {
     vi.resetModules()
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
       getActiveProfileDir: () => HOME,
       getActiveEnvPath: () => join(HOME, '.env'),
       getProfileDir: (profile: string) => join(HOME, 'profiles', profile),
@@ -19,12 +19,12 @@ describe('resolveHermesPath', () => {
   })
 
   afterEach(() => {
-    vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/profiles/profile')
     vi.resetModules()
   })
 
   async function resolveHermesPath() {
-    return (await import('../../packages/server/src/services/hermes/file-provider')).resolveHermesPath
+    return (await import('../../packages/server/src/modules/hermes/services/files/file-provider')).resolveHermesPath
   }
 
   it('resolves an ordinary relative path under the profile home', async () => {

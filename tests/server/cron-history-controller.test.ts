@@ -8,7 +8,7 @@ const profileDirState = vi.hoisted(() => ({
   dirs: {} as Record<string, string>,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: () => 'default',
   getProfileDir: (profile: string) => profileDirState.dirs[profile] || profileDirState.value,
 }))
@@ -61,7 +61,7 @@ describe('Hermes cron history controller', () => {
       },
     ], researchDir)
 
-    const { listRuns } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { listRuns } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const ctx = createCtx({ state: { profile: { name: 'research' } } })
     await listRuns(ctx)
@@ -87,7 +87,7 @@ describe('Hermes cron history controller', () => {
       },
     ])
 
-    const { listRuns, readRun } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { listRuns, readRun } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const listCtx = createCtx({ query: { jobId: 'silent-job' } })
     await listRuns(listCtx)
@@ -134,7 +134,7 @@ describe('Hermes cron history controller', () => {
     mkdirSync(outputDir, { recursive: true })
     writeFileSync(join(outputDir, '2026-05-05T05-00-00.429347+00-00.md'), '# ok\n')
 
-    const { listRuns } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { listRuns } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const ctx = createCtx({ query: { jobId: 'output-job' } })
     await listRuns(ctx)
@@ -164,7 +164,7 @@ describe('Hermes cron history controller', () => {
     mkdirSync(outputDir, { recursive: true })
     writeFileSync(join(outputDir, '2026-05-05T05-00-00.000000+00-00.md'), '# older output\n')
 
-    const { listRuns } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { listRuns } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const ctx = createCtx({ query: { jobId: 'mixed-job' } })
     await listRuns(ctx)
@@ -193,7 +193,7 @@ describe('Hermes cron history controller', () => {
       },
     ])
 
-    const { listRuns } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { listRuns } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const ctx = createCtx({ query: { jobId: 'bad-job' } })
     await listRuns(ctx)
@@ -211,7 +211,7 @@ describe('Hermes cron history controller', () => {
       },
     ])
 
-    const { readRun } = await import('../../packages/server/src/controllers/hermes/cron-history')
+    const { readRun } = await import('../../packages/server/src/modules/hermes/controllers/cron-history')
 
     const ctx = createCtx({ params: { jobId: 'ticks-job', fileName: '__scheduler_metadata__.md' } })
     await readRun(ctx)
