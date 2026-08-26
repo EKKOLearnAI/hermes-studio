@@ -1,8 +1,12 @@
 import {
+  buildModelGroups,
   PROVIDER_ENV_MAP,
+  readConfigYaml,
   readConfigYamlForProfile,
   safeReadFile,
+  saveEnvValue,
   saveEnvValueForProfile,
+  updateConfigYaml,
   updateConfigYamlForProfile,
 } from '../services/config-helpers'
 import * as hermesProfile from '../modules/hermes/services/profiles/profile'
@@ -19,12 +23,16 @@ const listProfileNames = hasProfileExport('listProfileNamesFromDisk')
   : () => ['default']
 
 configureProfileConfig({
+  buildModelGroups,
   getProfilesBaseDir,
   getProfileDir: hermesProfile.getProfileDir,
   listProfileNames,
   providerEnvironmentMap: PROVIDER_ENV_MAP,
+  readConfigYaml,
   readConfigYamlForProfile,
   safeReadFile,
+  saveEnvValue,
   saveEnvValueForProfile,
+  updateConfigYaml,
   updateConfigYamlForProfile,
 })

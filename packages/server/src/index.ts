@@ -402,7 +402,7 @@ export async function bootstrap() {
   console.log('[bootstrap] global agent server ready')
 
   // Session deleter — periodically drain pending session deletes
-  const { SessionDeleter } = await import('./services/hermes/session-deleter')
+  const { SessionDeleter } = await import('./modules/hermes/services/history/session-deleter')
   const sessionDeleter = SessionDeleter.getInstance()
   const activeProfile = process.env.PROFILE || 'default'
   sessionDeleter.start(activeProfile)

@@ -5,12 +5,12 @@ const { mockReadAppConfig, mockWriteAppConfig } = vi.hoisted(() => ({
   mockWriteAppConfig: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYaml: vi.fn(),
   writeConfigYaml: vi.fn(),
   fetchProviderModels: vi.fn(),
@@ -18,12 +18,12 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   PROVIDER_ENV_MAP: {},
 }))
 
-vi.mock('../../packages/server/src/shared/providers', () => ({
+vi.mock('../../packages/server/src/modules/studio/contracts/providers', () => ({
   buildProviderModelMap: vi.fn(() => ({})),
   PROVIDER_PRESETS: [],
 }))
 
-vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/copilot-models', () => ({
   getCopilotModelsDetailed: vi.fn(),
   resolveCopilotOAuthToken: vi.fn(),
 }))
@@ -36,7 +36,7 @@ vi.mock('../../packages/server/src/modules/studio/infrastructure/database/schema
   MODEL_CONTEXT_TABLE: 'model_context',
 }))
 
-import { setModelAlias } from '../../packages/server/src/controllers/hermes/models'
+import { setModelAlias } from '../../packages/server/src/modules/hermes/controllers/models'
 
 describe('model alias controller', () => {
   beforeEach(() => {

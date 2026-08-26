@@ -17,7 +17,7 @@ const { mockGatewayAutostartDisabledByEnv, mockRestartGateway, mockReconcileGate
   mockDestroyProfile: vi.fn().mockResolvedValue({ destroyed: true }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => {
+vi.mock('../../packages/server/src/modules/hermes/services/gateway/autostart', () => {
   return {
     gatewayAutostartDisabledByEnv: mockGatewayAutostartDisabledByEnv,
     reconcileGatewayManagementTransition: mockReconcileGatewayManagement,

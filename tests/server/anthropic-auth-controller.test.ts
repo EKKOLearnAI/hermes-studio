@@ -12,7 +12,7 @@ import {
 let hermesHome = ''
 const mockResolveAuthorizedCredentials = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
   resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
 }))
 

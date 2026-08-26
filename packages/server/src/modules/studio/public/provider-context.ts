@@ -12,6 +12,45 @@ function ensureProviderContextTable(): void {
   })
 }
 
+export interface ModelContextRecord {
+  id: number
+  profile: string
+  provider: string
+  model: string
+  context_limit: number
+}
+
+export type ModelContextResult =
+  | { available: false }
+  | { available: true; row?: ModelContextRecord }
+
+export function readModelContextRecord(profile: string, provider: string, model: string): ModelContextResult {
+  const db = getDb()
+  if (!db) return { available: false }
+  const row = db.prepare(
+    `SELECT id, profile, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE profile = ? AND provider = ? AND model = ?`,
+  ).get(profile, provider, model) as ModelContextRecord | undefined
+  return { available: true, ...(row ? { row } : {}) }
+}
+
+export function upsertModelContextRecord(
+  profile: string,
+  provider: string,
+  model: string,
+  contextLimit: number,
+): ModelContextResult {
+  const db = getDb()
+  if (!db) return { available: false }
+  db.prepare(
+    `INSERT INTO ${MODEL_CONTEXT_TABLE} (profile, provider, model, context_limit) VALUES (?, ?, ?, ?) `
+    + 'ON CONFLICT(profile, provider, model) DO UPDATE SET context_limit = excluded.context_limit',
+  ).run(profile, provider, model, contextLimit)
+  const row = db.prepare(
+    `SELECT id, profile, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE profile = ? AND provider = ? AND model = ?`,
+  ).get(profile, provider, model) as unknown as ModelContextRecord
+  return { available: true, row }
+}
+
 export function readProviderContextLengths(profile: string, provider: string): Record<string, number> {
   const db = getDb()
   if (!db) return {}
