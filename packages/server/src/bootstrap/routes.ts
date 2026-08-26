@@ -62,6 +62,7 @@ import { runtimeVersionRoutes } from '../modules/hermes/routes/runtime-versions'
 import { writeGateRoutes } from '../modules/hermes/routes/write-gate'
 import { petdexPublicRoutes, petdexRoutes } from '../modules/studio/routes/petdex'
 import { petRoutes } from '../modules/studio/routes/pets'
+import { legacyAppApiCompatibility } from '../modules/studio/middleware/legacy-app-api'
 
 /**
  * Register all routes on the Koa app.
@@ -69,6 +70,8 @@ import { petRoutes } from '../modules/studio/routes/pets'
  * then all protected routes.
  */
 export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, next: Next) => Promise<void>>) {
+  app.use(legacyAppApiCompatibility)
+
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(authPublicRoutes.routes())
