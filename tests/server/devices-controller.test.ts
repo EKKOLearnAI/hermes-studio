@@ -1,7 +1,7 @@
 import { createHash, generateKeyPairSync, sign } from 'crypto'
 import { createServer, type Server } from 'http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { LanDeviceInfo } from '../../packages/server/src/services/lan-discovery'
+import type { LanDeviceInfo } from '../../packages/server/src/modules/studio/services/network/lan-discovery'
 
 const keyPair = generateKeyPairSync('ed25519', {
   publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -50,14 +50,14 @@ describe('devices controller', () => {
     db = null
     vi.unstubAllGlobals()
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/services/login-limiter')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/auth/login-limiter')
     vi.resetModules()
   })
 
   it('allows cross-origin reads of public device link info', async () => {
-    vi.doMock('../../packages/server/src/services/system-info', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
-        '../../packages/server/src/services/system-info',
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/public/system-info')>(
+        '../../packages/server/src/modules/studio/public/system-info',
       )
       return {
         ...actual,
@@ -74,7 +74,7 @@ describe('devices controller', () => {
 
     const set = vi.fn()
     const ctx: any = { set }
-    const { deviceLinkInfoController } = await import('../../packages/server/src/controllers/devices')
+    const { deviceLinkInfoController } = await import('../../packages/server/src/modules/studio/controllers/devices')
 
     await deviceLinkInfoController(ctx)
 
@@ -110,7 +110,7 @@ describe('devices controller', () => {
       },
     }
 
-    const { requestDeviceLinkStatusController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkStatusController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkStatusController(ctx)
 
     expect(ctx.status).toBeUndefined()
@@ -137,7 +137,7 @@ describe('devices controller', () => {
     }
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkController(ctx)
 
     expect(ctx.status).toBeUndefined()
@@ -164,7 +164,7 @@ describe('devices controller', () => {
     }
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkController(ctx)
 
     expect(ctx.status).toBe(403)
@@ -174,7 +174,7 @@ describe('devices controller', () => {
 
   it('does not trust forged forwarded private IPs for public pairing requests', async () => {
     const recordPairingFailure = vi.fn()
-    vi.doMock('../../packages/server/src/services/login-limiter', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/auth/login-limiter', () => ({
       checkPairing: (ip: string) => {
         expect(ip).toBe('8.8.8.8')
         return { allowed: true }
@@ -201,7 +201,7 @@ describe('devices controller', () => {
     }
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkController(ctx)
 
     expect(ctx.status).toBe(403)
@@ -230,7 +230,7 @@ describe('devices controller', () => {
     }
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkController(ctx)
 
     expect(ctx.status).toBe(403)
@@ -262,7 +262,7 @@ describe('devices controller', () => {
     }
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/modules/studio/controllers/devices')
     await requestDeviceLinkController(ctx)
 
     expect(ctx.status).toBeUndefined()
@@ -277,7 +277,7 @@ describe('devices controller', () => {
       verifyDevicePairingCode: () => false,
     }))
 
-    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const { getDevicePairingLink } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       protocol: 'http',
       host: 'studio.example.com',
@@ -308,7 +308,7 @@ describe('devices controller', () => {
       verifyDevicePairingCode: () => false,
     }))
 
-    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const { getDevicePairingLink } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       protocol: 'http',
       host: 'localhost:8648',
@@ -329,7 +329,7 @@ describe('devices controller', () => {
       verifyDevicePairingCode: () => false,
     }))
 
-    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const { getDevicePairingLink } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       protocol: 'http',
       host: '192.168.10.102:6060',
@@ -347,9 +347,9 @@ describe('devices controller', () => {
   })
 
   it('rejects peer socket connections until outbound pairing is approved locally', async () => {
-    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
-        '../../packages/server/src/services/lan-discovery',
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(
+        '../../packages/server/src/modules/studio/services/network/lan-discovery',
       )
       return {
         ...actual,
@@ -361,7 +361,7 @@ describe('devices controller', () => {
       }
     })
 
-    const { connectPeerDevice } = await import('../../packages/server/src/controllers/devices')
+    const { connectPeerDevice } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       params: { id: device.id },
       request: { body: {} },
@@ -374,9 +374,9 @@ describe('devices controller', () => {
   })
 
   it('records outbound status when requesting pairing from a device with inbound history', async () => {
-    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
-        '../../packages/server/src/services/lan-discovery',
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(
+        '../../packages/server/src/modules/studio/services/network/lan-discovery',
       )
       return {
         ...actual,
@@ -387,9 +387,9 @@ describe('devices controller', () => {
         }),
       }
     })
-    vi.doMock('../../packages/server/src/services/system-info', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
-        '../../packages/server/src/services/system-info',
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/public/system-info')>(
+        '../../packages/server/src/modules/studio/public/system-info',
       )
       return {
         ...actual,
@@ -416,7 +416,7 @@ describe('devices controller', () => {
     requestInboundDeviceLink(device)
     updateInboundStatus(device.id, 'approved')
 
-    const { requestDevicePairing } = await import('../../packages/server/src/controllers/devices')
+    const { requestDevicePairing } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       params: { id: device.id },
       request: { body: {} },
@@ -464,9 +464,9 @@ describe('devices controller', () => {
     }
 
     try {
-      vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
-        const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
-          '../../packages/server/src/services/lan-discovery',
+      vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async () => {
+        const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(
+          '../../packages/server/src/modules/studio/services/network/lan-discovery',
         )
         return {
           ...actual,
@@ -477,9 +477,9 @@ describe('devices controller', () => {
           }),
         }
       })
-      vi.doMock('../../packages/server/src/services/system-info', async () => {
-        const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
-          '../../packages/server/src/services/system-info',
+      vi.doMock('../../packages/server/src/modules/studio/public/system-info', async () => {
+        const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/public/system-info')>(
+          '../../packages/server/src/modules/studio/public/system-info',
         )
         return {
           ...actual,
@@ -506,7 +506,7 @@ describe('devices controller', () => {
       vi.stubGlobal('fetch', fetchMock)
 
       const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-      const { requestDevicePairing } = await import('../../packages/server/src/controllers/devices')
+      const { requestDevicePairing } = await import('../../packages/server/src/modules/studio/controllers/devices')
       const ctx: any = {
         params: { id: fallbackDevice.id },
         request: { body: {} },
@@ -533,9 +533,9 @@ describe('devices controller', () => {
   })
 
   it('requests pairing from a manually entered remote URL', async () => {
-    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
-        '../../packages/server/src/services/lan-discovery',
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(
+        '../../packages/server/src/modules/studio/services/network/lan-discovery',
       )
       return {
         ...actual,
@@ -546,9 +546,9 @@ describe('devices controller', () => {
         }),
       }
     })
-    vi.doMock('../../packages/server/src/services/system-info', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
-        '../../packages/server/src/services/system-info',
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/public/system-info')>(
+        '../../packages/server/src/modules/studio/public/system-info',
       )
       return {
         ...actual,
@@ -603,7 +603,7 @@ describe('devices controller', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { getDeviceRelation } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { requestManualDevicePairing } = await import('../../packages/server/src/controllers/devices')
+    const { requestManualDevicePairing } = await import('../../packages/server/src/modules/studio/controllers/devices')
     const ctx: any = {
       request: {
         body: {
@@ -638,9 +638,9 @@ describe('devices controller', () => {
   })
 
   it('keeps a manually paired remote device in the list when it is offline', async () => {
-    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
-        '../../packages/server/src/services/lan-discovery',
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(
+        '../../packages/server/src/modules/studio/services/network/lan-discovery',
       )
       return {
         ...actual,
@@ -651,9 +651,9 @@ describe('devices controller', () => {
         }),
       }
     })
-    vi.doMock('../../packages/server/src/services/system-info', async () => {
-      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
-        '../../packages/server/src/services/system-info',
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/public/system-info')>(
+        '../../packages/server/src/modules/studio/public/system-info',
       )
       return {
         ...actual,
@@ -675,7 +675,7 @@ describe('devices controller', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { updateOutboundStatus } = await import('../../packages/server/src/modules/studio/repositories/devices-store')
-    const { listDevices } = await import('../../packages/server/src/controllers/devices')
+    const { listDevices } = await import('../../packages/server/src/modules/studio/controllers/devices')
     updateOutboundStatus(device.id, 'approved', {
       ...device,
       ip: 'remote.example.com',
