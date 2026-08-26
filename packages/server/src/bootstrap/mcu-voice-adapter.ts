@@ -1,4 +1,4 @@
-import { getActiveGlobalAgentServer } from '../services/global-agent/server'
+import { getActiveGlobalAgentServer } from '../modules/studio/public/global-agent'
 import { configureMcuVoice } from '../modules/studio/public/mcu-voice'
 
 configureMcuVoice({

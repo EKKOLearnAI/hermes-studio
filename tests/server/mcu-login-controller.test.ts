@@ -5,7 +5,7 @@ const { startOutboundRelayClientMock, stopOutboundRelayClientMock } = vi.hoisted
   stopOutboundRelayClientMock: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/global-agent', () => ({
   startOutboundRelayClient: startOutboundRelayClientMock,
   stopOutboundRelayClient: stopOutboundRelayClientMock,
 }))

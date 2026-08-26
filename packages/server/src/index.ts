@@ -30,7 +30,7 @@ import { ensureProfileGatewaysRunning } from './modules/hermes/services/gateway/
 import { refreshConfiguredProviderModelCatalogsInBackground } from './modules/hermes/services/providers/model-catalog-cache'
 import { scanLanDevices, selectLanIPv4Address, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
-import { startGlobalAgentServer } from './services/global-agent/server'
+import { startGlobalAgentServer } from './modules/studio/public/global-agent'
 import { startLocalAppRelayServer } from './services/app-relay/server'
 import {
   hasPendingCloudAppConnectionRevocations,

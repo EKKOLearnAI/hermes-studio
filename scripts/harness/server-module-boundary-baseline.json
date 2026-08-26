@@ -7,8 +7,6 @@
     "controllers/upload.ts -> services/hermes/hermes-profile.ts",
     "controllers/upload.ts -> services/hermes/upload-paths.ts",
     "services/config-helpers.ts -> services/hermes/hermes-profile.ts",
-    "services/global-agent/outbound-relay-client.ts -> routes/hermes/chat-run.ts",
-    "services/global-agent/server.ts -> routes/hermes/chat-run.ts",
     "services/hermes/group-chat/agent-clients.ts -> services/ekko-agent/clarifications.ts",
     "services/hermes/group-chat/agent-relay.ts -> services/ekko-agent/approvals.ts",
     "services/hermes/group-chat/agent-relay.ts -> services/ekko-agent/clarifications.ts",

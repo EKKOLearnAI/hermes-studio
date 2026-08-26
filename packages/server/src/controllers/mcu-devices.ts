@@ -2,8 +2,12 @@ import type { Context } from 'koa'
 import { config } from '../config'
 import { getLanEndpointKind } from '../services/lan-discovery'
 import { getPublicSystemInfo } from '../services/system-info'
-import { getOutboundRelayClient, startOutboundRelayClient, stopOutboundRelayClient } from '../services/global-agent/outbound-relay-client'
-import { getGlobalAgentServer } from '../services/global-agent/server'
+import {
+  getGlobalAgentServer,
+  getOutboundRelayClient,
+  startOutboundRelayClient,
+  stopOutboundRelayClient,
+} from '../modules/studio/public/global-agent'
 import { createMcuDevice, deleteMcuDevice, getMcuDevice, listMcuDevices, updateMcuDeviceName, type McuDeviceRecord } from '../db/hermes/mcu-devices-store'
 
 function normalizeDeviceCode(value: unknown): string {

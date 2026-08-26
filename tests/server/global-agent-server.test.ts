@@ -62,7 +62,7 @@ vi.mock('socket.io-client', () => ({
   io: clientSocketMocks.clientIo,
 }))
 
-vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/chat-run', () => ({
   getChatRunServer: chatRunMocks.getChatRunServer,
 }))
 
@@ -198,7 +198,7 @@ describe('GlobalAgentServer', () => {
   it('registers a local control namespace with token auth', async () => {
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -226,7 +226,7 @@ describe('GlobalAgentServer', () => {
   it('tracks connected clients and forwards requests with ack', async () => {
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -254,7 +254,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -326,7 +326,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       localBaseUrl: 'http://127.0.0.1:8648',
@@ -417,7 +417,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, { localBaseUrl: 'http://127.0.0.1:8648' })
     server.init()
@@ -457,7 +457,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -512,7 +512,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -555,7 +555,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -612,7 +612,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -681,7 +681,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -746,7 +746,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -817,7 +817,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -841,7 +841,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -881,7 +881,7 @@ describe('GlobalAgentServer', () => {
     })
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -924,7 +924,7 @@ describe('GlobalAgentServer', () => {
     })
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -952,7 +952,7 @@ describe('GlobalAgentServer', () => {
   it('routes Hermes and Ekko MCU turns to isolated agent sessions', async () => {
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
     const server = new GlobalAgentServer(io as any)
 
     server.startMcuVoiceChatTurn({
@@ -1001,7 +1001,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -1120,7 +1120,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -1223,7 +1223,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, { localBaseUrl: 'http://127.0.0.1:8647' })
     server.init()
@@ -1294,7 +1294,7 @@ describe('GlobalAgentServer', () => {
     }))
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -1427,7 +1427,7 @@ describe('GlobalAgentServer', () => {
     })
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -1514,7 +1514,7 @@ describe('GlobalAgentServer', () => {
     })
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, {
       fetchImpl: fetchImpl as any,
@@ -1565,7 +1565,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any, { localBaseUrl: 'http://127.0.0.1:8647' })
     server.init()
@@ -1633,7 +1633,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -1694,7 +1694,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()
@@ -1749,7 +1749,7 @@ describe('GlobalAgentServer', () => {
       authMocks.userCanAccessProfile.mockReturnValue(true)
       const nsp = createMockNamespace()
       const io = { of: vi.fn(() => nsp) }
-      const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+      const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
       const server = new GlobalAgentServer(io as any)
       server.init()
@@ -1789,7 +1789,7 @@ describe('GlobalAgentServer', () => {
       authMocks.userCanAccessProfile.mockReturnValue(true)
       const nsp = createMockNamespace()
       const io = { of: vi.fn(() => nsp) }
-      const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+      const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
       const server = new GlobalAgentServer(io as any)
       server.init()
@@ -1843,7 +1843,7 @@ describe('GlobalAgentServer', () => {
     authMocks.userCanAccessProfile.mockReturnValue(true)
     const nsp = createMockNamespace()
     const io = { of: vi.fn(() => nsp) }
-    const { GlobalAgentServer } = await import('../../packages/server/src/services/global-agent/server')
+    const { GlobalAgentServer } = await import('../../packages/server/src/modules/studio/sockets/global-agent')
 
     const server = new GlobalAgentServer(io as any)
     server.init()

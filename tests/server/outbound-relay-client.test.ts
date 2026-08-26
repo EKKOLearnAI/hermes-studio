@@ -88,7 +88,7 @@ vi.mock('ws', () => ({
 
 describe('outbound relay client', () => {
   beforeEach(async () => {
-    const { stopOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { stopOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     stopOutboundRelayClient()
     resetMockSockets()
     vi.clearAllMocks()
@@ -154,7 +154,7 @@ describe('outbound relay client', () => {
   }
 
   it('stays disabled when no relay url is passed explicitly', async () => {
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     const client = startOutboundRelayClient({ relayUrl: '' })
 
@@ -163,7 +163,7 @@ describe('outbound relay client', () => {
   })
 
   it('connects to the configured remote relay as a socket client', async () => {
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     const client = startOutboundRelayClient({
       relayUrl: 'https://user:pass@relay.example.com/hermes',
@@ -206,7 +206,7 @@ describe('outbound relay client', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787/',
@@ -264,7 +264,7 @@ describe('outbound relay client', () => {
   it('does not reconnect the Socket.IO relay client after it is replaced remotely', async () => {
     vi.useFakeTimers()
     try {
-      const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+      const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
       startOutboundRelayClient({
         relayUrl: 'http://relay.example.com',
@@ -296,7 +296,7 @@ describe('outbound relay client', () => {
   it('does not reconnect the Socket.IO relay client after device-code auth is rejected', async () => {
     vi.useFakeTimers()
     try {
-      const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+      const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
       startOutboundRelayClient({
         relayUrl: 'http://relay.example.com',
@@ -318,7 +318,7 @@ describe('outbound relay client', () => {
 
   it('bridges Socket.IO MCU voice streams to the local global-agent server without completing early', async () => {
     const fetchImpl = vi.fn()
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787',
@@ -433,7 +433,7 @@ describe('outbound relay client', () => {
         return new Response('not found', { status: 404 })
       })
 
-      void import('../../packages/server/src/services/global-agent/outbound-relay-client').then(({ startOutboundRelayClient }) => {
+      void import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client').then(({ startOutboundRelayClient }) => {
         startOutboundRelayClient({
           relayUrl: 'http://device.local:8787',
           relayProtocol: 'mcu-socket.io',
@@ -520,7 +520,7 @@ describe('outbound relay client', () => {
         headers: { 'content-type': 'application/json' },
       })
     })
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787',
@@ -629,7 +629,7 @@ describe('outbound relay client', () => {
       }
       return new Response('not found', { status: 404 })
     })
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787',
@@ -742,7 +742,7 @@ describe('outbound relay client', () => {
         headers: { 'content-type': 'application/json' },
       })
     })
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787/',
@@ -815,7 +815,7 @@ describe('outbound relay client', () => {
         ttsSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
       })
     })
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     startOutboundRelayClient({
       relayUrl: 'http://device.local:8787/',
@@ -872,7 +872,7 @@ describe('outbound relay client', () => {
         'transfer-encoding': 'chunked',
       },
     }))
-    const { OutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { OutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     const client = new OutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       relayToken: '',
@@ -922,7 +922,7 @@ describe('outbound relay client', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { OutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { OutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     const client = new OutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       relayToken: '',
@@ -953,7 +953,7 @@ describe('outbound relay client', () => {
 
   it('rejects /v1 paths without calling local fetch', async () => {
     const fetchImpl = vi.fn()
-    const { OutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { OutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     const client = new OutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       relayToken: '',
@@ -980,7 +980,7 @@ describe('outbound relay client', () => {
   })
 
   it('opens a local /chat-run socket and relays chat events both ways', async () => {
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     const client = startOutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       localBaseUrl: 'http://127.0.0.1:8648',
@@ -1023,7 +1023,7 @@ describe('outbound relay client', () => {
   })
 
   it('supports non-streaming chat-run mode by suppressing deltas and returning final output', async () => {
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     startOutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       localBaseUrl: 'http://127.0.0.1:8648',
@@ -1069,7 +1069,7 @@ describe('outbound relay client', () => {
   })
 
   it('rejects socket namespaces and events outside the chat-run allowlist', async () => {
-    const { startOutboundRelayClient } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    const { startOutboundRelayClient } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
     startOutboundRelayClient({
       relayUrl: 'https://relay.example.com',
       localBaseUrl: 'http://127.0.0.1:8648',
@@ -1105,7 +1105,7 @@ describe('outbound relay client', () => {
       getOutboundRelayClients,
       startOutboundRelayClient,
       stopOutboundRelayClient,
-    } = await import('../../packages/server/src/services/global-agent/outbound-relay-client')
+    } = await import('../../packages/server/src/modules/studio/services/global-agent/outbound-relay-client')
 
     const first = startOutboundRelayClient({
       connectionId: 'primary',
