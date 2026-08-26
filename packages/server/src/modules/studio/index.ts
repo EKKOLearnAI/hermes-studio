@@ -11,3 +11,5 @@ export {
 export type { AgentRuntime, CodingAgentRuntime } from './contracts/agents/runtime'
 export { RUN_MODES, RUN_SURFACES, isRunMode, isRunSurface } from './contracts/runs/surface'
 export type { RunMode, RunSurface } from './contracts/runs/surface'
+export * from './contracts/providers'
+export * from './public/config'
