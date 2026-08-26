@@ -108,6 +108,39 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
 })
 
+test('selects a recent session without expanding its collapsed category', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await mockHermesApi(page, {
+    sessionCategories: [{ id: 1, name: 'Work' }],
+    sessions: [
+      sessionSummary('work-session', 'Project Alpha', 1, 200),
+      sessionSummary('uncategorized-session', 'General Notes', null, 100),
+    ],
+  })
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
+  const recentSession = page.getByRole('link', { name: /Project Alpha/ }).first()
+  await page.getByRole('link', { name: /General Notes/ }).first().click()
+  await expect(page).toHaveURL(/\/hermes\/session\/uncategorized-session$/)
+
+  await expect(workHeader).toBeVisible()
+  await workHeader.click()
+  await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
+    .toContain('category-1')
+
+  await recentSession.click()
+
+  await expect(page).toHaveURL(/\/hermes\/session\/work-session$/)
+  await expect(recentSession).toHaveClass(/active/)
+  await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
+    .toContain('category-1')
+})
+
 test('persists the collapsed recent group across reloads without changing the active session', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page, {
