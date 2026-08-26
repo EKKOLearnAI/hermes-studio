@@ -5,12 +5,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
 import {
   issueRemoteWorkspaceGrant,
   resetRemoteWorkspaceGrantsForTest,
   revokeRemoteWorkspaceGrantsForRun,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth'
 
 function listen(server: HttpServer): Promise<string> {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {

@@ -15,8 +15,8 @@ const modelGroups = vi.hoisted(() => ({
     model_meta?: Record<string, { disabled?: boolean }>
   }>,
 }))
-vi.mock('../../packages/server/src/controllers/hermes/models', () => ({
-  getAvailableModelGroupsForProfile: vi.fn(async () => modelGroups.value),
+vi.mock('../../packages/server/src/modules/studio/public/group-chat-agent-runtime', () => ({
+  getGroupAvailableModelGroups: vi.fn(async () => modelGroups.value),
 }))
 
 afterAll(async () => {
@@ -28,7 +28,7 @@ afterAll(async () => {
 describe('group Agent presets', () => {
   it('returns an application conflict for owner-scoped duplicate names without leaking SQLite details', async () => {
     const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
-    const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
     initAllStores()
     modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
 
@@ -131,7 +131,7 @@ describe('group Agent presets', () => {
     const {
       normalizeGroupAgentPresetInput,
       validateGroupAgentPresetCapability,
-    } = await import('../../packages/server/src/services/hermes/group-chat/agent-presets')
+    } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-presets')
 
     expect(() => normalizeGroupAgentPresetInput({
       agent: 'codex',
@@ -168,7 +168,7 @@ describe('group Agent presets', () => {
   })
 
   it('enforces owner/profile boundaries and fail-closes disabled models across CRUD and application', async () => {
-    const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
     modelGroups.value = [{ provider: 'openai', models: ['gpt-test', 'gpt-new'] }]
     const createCtx: any = {
       state: { user: { id: 41, role: 'admin', profiles: ['research'] } },

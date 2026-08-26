@@ -69,7 +69,7 @@ const tagMappings = {
   'modules/hermes/routes/xai-auth.ts': { name: 'xAI Auth', description: 'xAI OAuth' },
   'modules/hermes/routes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
   'modules/hermes/routes/minimax-auth.ts': { name: 'MiniMax Auth', description: 'MiniMax OAuth' },
-  'routes/hermes/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
+  'modules/studio/controllers/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
   'routes/hermes/chat-run.ts': { name: 'Chat Run', description: 'Chat run HTTP and Socket.IO bridge operations' },
   'modules/studio/routes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Cross-agent Chat Run webhook endpoint management' },
   'modules/hermes/routes/config.ts': { name: 'Config', description: 'Configuration management' },

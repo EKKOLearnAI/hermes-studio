@@ -84,12 +84,19 @@ function isChatSessionChainFile(file) {
     || file === 'packages/server/src/controllers/hermes/sessions.ts'
     || file === 'packages/server/src/db/hermes/session-store.ts'
     || file === 'packages/server/src/routes/hermes/group-chat.ts'
+    || file === 'packages/server/src/modules/studio/routes/group-chat.ts'
+    || file === 'packages/server/src/modules/studio/controllers/group-chat.ts'
+    || file === 'packages/server/src/modules/studio/sockets/group-chat.ts'
     || file.startsWith('packages/client/src/components/hermes/group-chat/')
     || file.startsWith('packages/client/src/components/hermes/chat/')
     || file.startsWith('packages/server/src/lib/context-compressor/')
     || file.startsWith('packages/server/src/services/hermes/context-engine/')
     || file.startsWith('packages/server/src/services/hermes/group-chat/')
     || file.startsWith('packages/server/src/services/hermes/run-chat/')
+    || file.startsWith('packages/server/src/modules/studio/controllers/group-chat')
+    || file.startsWith('packages/server/src/modules/studio/services/group-chat/')
+    || file.startsWith('packages/server/src/modules/studio/services/chat-run/')
+    || file.startsWith('packages/server/src/modules/studio/services/context-compressor/')
     || file.startsWith('packages/server/src/modules/hermes/services/bridge/')
 }
 
@@ -209,8 +216,8 @@ for (const phrase of [
   'docs/chat-chain-changes/',
   '每个 PR 一个变更片段',
   'packages/server/src/modules/hermes/services/bridge/',
-  'packages/server/src/services/hermes/group-chat/',
-  'packages/server/src/lib/context-compressor/',
+  'packages/server/src/modules/studio/services/group-chat/',
+  'packages/server/src/modules/studio/services/context-compressor/',
   '任何改动都算 Chat 链路改动',
 ]) {
   if (!chatSessionsDoc.includes(phrase)) {

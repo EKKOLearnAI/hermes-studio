@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   connectLocalAgentHandoff,
   resetLocalHandoffJobsForTest,
-} from '../../packages/server/src/controllers/hermes/group-chat-agent-link'
-import { GROUP_AGENT_PAIRING_REQUEST_TTL_MS } from '../../packages/server/src/services/hermes/group-chat/agent-relay-store'
-import { setGroupChatRuntimeServer } from '../../packages/server/src/services/hermes/group-chat/runtime'
+} from '../../packages/server/src/modules/studio/controllers/group-chat-agent-link'
+import { GROUP_AGENT_PAIRING_REQUEST_TTL_MS } from '../../packages/server/src/modules/studio/services/group-chat/agent-relay-store'
+import { setGroupChatRuntimeServer } from '../../packages/server/src/modules/studio/services/group-chat/runtime'
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/agent-relay', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/agent-relay', () => ({
   getGroupAgentOutboundRelayManager: vi.fn(() => ({ connect: vi.fn() })),
   GROUP_AGENT_RELAY_PROTOCOL_VERSION: 2,
 }))

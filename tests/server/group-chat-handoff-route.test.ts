@@ -3,9 +3,9 @@ import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 const dbState = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
 vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => dbState.current }))

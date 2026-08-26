@@ -63,6 +63,8 @@ packages/server/src/
         sessions.ts
         usage.ts
         workspace.ts
+        workspace-files.ts          # shared path, preview, Git status, and file policy facade
+        group-chat-agent-runtime.ts # injected concrete Agent adapters for Group Chat
       middleware/
         auth.ts
         errors.ts
@@ -122,6 +124,11 @@ packages/server/src/
         connections/
         credentials/
         files/
+          path.ts
+          file-policy.ts
+          file-preview.ts
+          workspace-path.ts
+          workspace-git-status.ts
         logging/
         notifications/
         providers/

@@ -5,9 +5,9 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
-import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
+import { ChatRunSocket } from '../../packages/server/src/modules/studio/sockets/chat-run'
 import '../../packages/server/src/bootstrap/chat-agent-runtime-adapter'
 import {
   denyPendingEkkoToolApprovals,
@@ -17,7 +17,7 @@ import {
   cancelPendingEkkoClarifications,
   waitForEkkoClarification,
 } from '../../packages/server/src/services/ekko-agent/clarifications'
-import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import type { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 describe('group chat approval and context baseline', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>

@@ -29,7 +29,7 @@ describe('invite-scoped group chat attachments', () => {
     messages = []
     agents = []
 
-    const routes = await import('../../packages/server/src/routes/hermes/group-chat')
+    const routes = await import('../../packages/server/src/modules/studio/routes/group-chat')
     setGroupChatServer = routes.setGroupChatServer
     const rooms = new Map([
       ['ROOM1', { id: 'room-1', name: 'Room 1', inviteCode: 'ROOM1' }],
@@ -138,7 +138,7 @@ describe('invite-scoped group chat attachments', () => {
   })
 
   it('rebinds human attachment blocks to this room without exposing the server path', async () => {
-    const attachments = await import('../../packages/server/src/services/hermes/group-chat/attachments')
+    const attachments = await import('../../packages/server/src/modules/studio/services/group-chat/attachments')
     const storedName = `${'a'.repeat(32)}.png`
     const roomPath = attachments.getGroupChatAttachmentPath('room-1', storedName)
     expect(roomPath).toBeTruthy()
@@ -171,7 +171,7 @@ describe('invite-scoped group chat attachments', () => {
   })
 
   it('stores Agent-uploaded media in the same room attachment format as the composer', async () => {
-    const attachments = await import('../../packages/server/src/services/hermes/group-chat/attachments')
+    const attachments = await import('../../packages/server/src/modules/studio/services/group-chat/attachments')
     const sourcePath = join(stateDir, 'workspace', 'renders', 'final image.png')
     await mkdir(join(stateDir, 'workspace', 'renders'), { recursive: true })
     await writeFile(sourcePath, 'agent-image')

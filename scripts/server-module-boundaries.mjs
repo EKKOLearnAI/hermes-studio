@@ -207,7 +207,7 @@ function targetDependencyFailures(fromFile, toFile) {
     failures.push(`${fromFile} is a route and must delegate through controllers instead of ${toFile}`)
   }
   if (from.layer === 'controllers'
-    && !['services', 'contracts', 'public', 'http'].includes(to.layer)) {
+    && !['controllers', 'services', 'contracts', 'public', 'http'].includes(to.layer)) {
     failures.push(`${fromFile} is a controller and must delegate through services instead of ${toFile}`)
   }
   if (from.layer === 'services' && ['routes', 'controllers', 'sockets'].includes(to.layer)) {

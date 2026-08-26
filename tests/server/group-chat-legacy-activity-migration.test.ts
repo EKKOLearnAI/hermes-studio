@@ -67,7 +67,7 @@ describe('group chat legacy activity migration', () => {
     ).run('history-streaming', 'room-z', 'agent-1', 'Agent', 'stream fragment', cutoff - 250, 'assistant', 'streaming')
 
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
 
@@ -144,7 +144,7 @@ describe('group chat legacy activity migration', () => {
 
   it('orders profile, authenticated-member, and owner room lists by activity', async () => {
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
@@ -170,7 +170,7 @@ describe('group chat legacy activity migration', () => {
 
   it('does not let new tool or streaming messages affect any room activity ordering path', async () => {
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()

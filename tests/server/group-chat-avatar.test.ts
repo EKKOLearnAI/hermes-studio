@@ -33,7 +33,7 @@ describe('group chat member avatars', () => {
     const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     httpServer = createServer()
     chatServer = new GroupChatServer(httpServer)
     return {

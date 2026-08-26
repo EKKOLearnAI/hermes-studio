@@ -12,7 +12,7 @@
 > `packages/server/src/modules/hermes/services/bridge/` 是普通 Chat 的核心链路，
 > 该目录下任何改动都算 Chat 链路改动；即使只是启动、环境变量、日志或品牌
 > attribution，也要记录影响范围，必要时明确“运行行为无变化”。
-> `packages/server/src/services/hermes/group-chat/`、`/group-chat` Socket.IO、
+> `packages/server/src/modules/studio/services/group-chat/`、`/group-chat` Socket.IO、
 > group-chat 前端 store/API/component、共享压缩器和 context-engine 也属于核心
 > 聊天链路，改动时同样需要记录。
 
@@ -91,22 +91,21 @@ PR 号。
 
 | 文件 | 职责 |
 | --- | --- |
-| `packages/server/src/services/hermes/run-chat/index.ts` | `ChatRunSocket`，`/chat-run` namespace 入口、认证、profile 校验、run/resume/abort/approval/clarify/queue 分发。 |
-| `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts` | 当前主运行路径：创建/更新本地 session，构建上下文，调用 Agent Bridge，消费 bridge 事件，落库。 |
-| `packages/server/src/services/hermes/run-chat/handle-api-run.ts` | 保留的 API Server 路径实现；当前 `resolveRunSource()` 固定返回 `cli`，正常不会走到这里。 |
-| `packages/server/src/services/hermes/run-chat/session-command.ts` | slash command 解析和执行。 |
-| `packages/server/src/services/hermes/run-chat/abort.ts` | active run 中断、状态落盘、队列衔接。 |
-| `packages/server/src/services/hermes/run-chat/compression.ts` | DB history 构建、snapshot-aware history、上下文压缩。 |
-| `packages/server/src/services/hermes/run-chat/bridge-message.ts` | Bridge assistant/tool 消息的内存态与 DB flush。 |
-| `packages/server/src/services/hermes/run-chat/bridge-delta.ts` | 过滤 bridge 输出中的工具调用标记，避免 UI 文本重复或丢字符。 |
+| `packages/server/src/modules/studio/sockets/chat-run.ts` | `ChatRunSocket`，`/chat-run` namespace 入口、认证、profile 校验、run/resume/abort/approval/clarify/queue 分发。 |
+| `packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts` | 当前主运行路径：创建/更新本地 session，构建上下文，调用 Agent Bridge，消费 bridge 事件，落库。 |
+| `packages/server/src/modules/studio/services/chat-run/session-command.ts` | slash command 解析和执行。 |
+| `packages/server/src/modules/studio/services/chat-run/abort.ts` | active run 中断、状态落盘、队列衔接。 |
+| `packages/server/src/modules/studio/services/chat-run/compression.ts` | DB history 构建、snapshot-aware history、上下文压缩。 |
+| `packages/server/src/modules/studio/services/chat-run/bridge-message.ts` | Bridge assistant/tool 消息的内存态与 DB flush。 |
+| `packages/server/src/modules/studio/services/chat-run/bridge-delta.ts` | 过滤 bridge 输出中的工具调用标记，避免 UI 文本重复或丢字符。 |
 | `packages/server/src/modules/hermes/services/bridge/client.ts` | Node 到 Python bridge 的本地 socket 客户端。 |
 | `packages/server/src/modules/hermes/services/bridge/manager.ts` | Python bridge broker 子进程生命周期管理。 |
 | `packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py` | Python broker/worker entrypoint；实现拆分在同目录的 `bridge_*.py` 模块中，覆盖 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
-| `packages/server/src/services/hermes/group-chat/index.ts` | `/group-chat` Socket.IO server、room/member/message 存储、agent 恢复、mention 分发、approval/interrupt 入口。 |
-| `packages/server/src/services/hermes/group-chat/agent-clients.ts` | Group Chat agent socket client，调用 Agent Bridge 执行被 mention 的 agent，并同步 tool/reasoning/context 状态。 |
-| `packages/server/src/services/hermes/context-engine/*` | Group Chat 上下文压缩和 summary cache。 |
-| `packages/server/src/lib/context-compressor/*` | 普通 Chat 和 Group Chat 共用的 token 估算、摘要压缩和 context message 处理。 |
-| `packages/server/src/routes/hermes/group-chat.ts` | Group Chat HTTP room/agent/config/compress/clear-context API。 |
+| `packages/server/src/modules/studio/sockets/group-chat.ts` | `/group-chat` Socket.IO server、room/member/message 存储、agent 恢复、mention 分发、approval/interrupt 入口。 |
+| `packages/server/src/modules/studio/services/group-chat/agent-clients.ts` | Group Chat agent socket client，经 Studio runtime port 调用具体 Agent，并同步 tool/reasoning/context 状态。 |
+| `packages/server/src/modules/studio/services/group-chat/*` | Group Chat 编排、上下文投影、summary cache、relay、附件与共享工作区。 |
+| `packages/server/src/modules/studio/services/context-compressor/*` | 普通 Chat 和 Group Chat 共用的 token 估算、摘要压缩和 context message 处理。 |
+| `packages/server/src/modules/studio/routes/group-chat.ts` | Group Chat HTTP room/agent/config/compress/clear-context API。 |
 | `packages/server/src/db/hermes/session-store.ts` | Web UI 本地 session/message SQLite 存储。 |
 | `packages/server/src/controllers/hermes/sessions.ts` | HTTP session 列表、详情、分页、删除、导入/导出等控制器。 |
 

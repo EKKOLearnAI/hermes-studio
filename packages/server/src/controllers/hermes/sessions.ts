@@ -38,7 +38,7 @@ import {
   useWindowsDriveWorkspaceMode,
   workspaceBaseOverride,
 } from '../../services/hermes/workspace-path'
-import { getGroupChatServer } from '../../routes/hermes/group-chat'
+import { getGroupChatServer } from '../../modules/studio/routes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'

@@ -6,9 +6,9 @@ import {
     buildFullSummaryPrompt,
     buildIncrementalUpdatePrompt,
     buildNonOwnerRequestSecurityPrompt,
-} from '../../packages/server/src/services/hermes/context-engine/prompt'
+} from '../../packages/server/src/modules/studio/services/group-chat/agent-prompt'
 import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
-import type { StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/services/hermes/context-engine/types'
+import type { StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/modules/studio/services/group-chat/types'
 
 // ─── Helpers ─────────────────────────────────────────────────
 

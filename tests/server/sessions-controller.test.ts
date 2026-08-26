@@ -125,7 +125,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () 
   getRecordedUsageSessionIds: getRecordedUsageSessionIdsMock,
 }))
 
-vi.mock('../../packages/server/src/routes/hermes/group-chat', () => ({
+vi.mock('../../packages/server/src/modules/studio/routes/group-chat', () => ({
   getGroupChatServer: getGroupChatServerMock,
 }))
 

@@ -125,7 +125,7 @@ describe('group Agent outbound Relay persistence', () => {
     }], null, 2)}\n`)
     relayConnectError.message = errorMessage
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
     await manager.restore()
@@ -171,7 +171,7 @@ describe('group Agent outbound Relay persistence', () => {
       return relaySocket
     })
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
 
@@ -259,7 +259,7 @@ describe('group Agent outbound Relay persistence', () => {
       return socket
     })
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
     const agent = {

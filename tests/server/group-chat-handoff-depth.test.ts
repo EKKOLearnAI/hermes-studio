@@ -4,7 +4,7 @@ import {
     recommendedGroupChatAgentHandoffDepth,
     resolveGroupChatAgentHandoffPolicy,
     shouldRouteGroupChatAgentHandoff,
-} from '../../packages/server/src/services/hermes/group-chat/handoff-depth'
+} from '../../packages/server/src/modules/studio/services/group-chat/handoff-depth'
 import { createTestGroupChatServer } from './group-chat-test-helpers'
 
 describe('group chat room Agent handoff depth policy', () => {

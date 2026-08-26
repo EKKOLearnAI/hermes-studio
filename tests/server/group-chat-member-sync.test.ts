@@ -26,10 +26,10 @@ vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () 
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/services/hermes/group-chat/access'
-import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
+import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/modules/studio/services/group-chat/access'
+import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
 
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))

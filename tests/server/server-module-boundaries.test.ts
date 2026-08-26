@@ -56,6 +56,10 @@ describe('server module boundary harness', () => {
 
   it('keeps controllers and services pointed down the layer graph', () => {
     expect(validateTargetDependency(
+      'modules/studio/controllers/group-chat.ts',
+      'modules/studio/controllers/group-chat-invite.ts',
+    )).toEqual([])
+    expect(validateTargetDependency(
       'modules/studio/controllers/update.ts',
       'modules/studio/repositories/settings/version.ts',
     )[0]).toContain('must delegate through services')

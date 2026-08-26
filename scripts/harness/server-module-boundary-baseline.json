@@ -7,13 +7,6 @@
     "controllers/upload.ts -> services/hermes/hermes-profile.ts",
     "controllers/upload.ts -> services/hermes/upload-paths.ts",
     "services/config-helpers.ts -> services/hermes/hermes-profile.ts",
-    "services/hermes/group-chat/agent-clients.ts -> services/ekko-agent/clarifications.ts",
-    "services/hermes/group-chat/agent-relay.ts -> services/ekko-agent/approvals.ts",
-    "services/hermes/group-chat/agent-relay.ts -> services/ekko-agent/clarifications.ts",
-    "services/hermes/group-chat/index.ts -> services/ekko-agent/approvals.ts",
-    "services/hermes/group-chat/index.ts -> services/ekko-agent/clarifications.ts",
-    "services/hermes/group-chat/room-summary.ts -> services/ekko-agent/manager.ts",
-    "services/hermes/group-chat/room-summary.ts -> services/ekko-agent/provider-runtime.ts",
     "services/shutdown.ts -> services/coding-agents/runtime/run-manager.ts",
     "services/shutdown.ts -> services/ekko-agent/manager.ts",
     "services/shutdown.ts -> services/hermes/gateway-runner.ts"

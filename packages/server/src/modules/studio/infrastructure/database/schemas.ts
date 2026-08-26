@@ -678,7 +678,7 @@ export const TTS_PROFILE_SETTINGS_SCHEMA: Record<string, string> = {
 }
 
 // ============================================================================
-// Group Chat (services/hermes/group-chat/index.ts)
+// Group Chat (modules/studio/sockets/group-chat.ts)
 // ============================================================================
 
 export const GC_ROOMS_TABLE = 'gc_rooms'
