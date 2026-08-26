@@ -235,7 +235,7 @@ describe('LAN discovery', () => {
     const source = readFileSync('packages/server/src/bootstrap/routes.ts', 'utf8')
     const deviceRoutesSource = readFileSync('packages/server/src/modules/studio/routes/devices.ts', 'utf8')
     const mcuDeviceRoutesSource = readFileSync('packages/server/src/modules/studio/routes/mcu-devices.ts', 'utf8')
-    const bootstrapSource = readFileSync('packages/server/src/index.ts', 'utf8')
+    const bootstrapSource = readFileSync('packages/server/src/bootstrap/http.ts', 'utf8')
 
     const authIndex = source.indexOf('authMiddleware.forEach')
     const publicDeviceIndex = source.indexOf('app.use(devicePublicRoutes.routes())')

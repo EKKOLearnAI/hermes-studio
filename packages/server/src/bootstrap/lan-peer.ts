@@ -1,5 +1,5 @@
-import { getTerminalConfig, validatePath } from '../services/hermes/file-provider'
-import { getActiveProfileDir } from '../services/hermes/hermes-profile'
+import { getTerminalConfig, validatePath } from '../modules/hermes/services/files/file-provider'
+import { getActiveProfileDir } from '../modules/hermes/services/profiles/profile'
 import {
   configureLanPeerFilesystem,
 } from '../modules/studio/services/network/lan-peer-socket'

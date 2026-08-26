@@ -25,6 +25,30 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database', () => ({ closeDb: closeDbMock }))
+vi.mock('../../packages/server/src/bootstrap/update', () => ({ stopPreviewRuntime: stopPreviewRuntimeMock }))
+vi.mock('../../packages/server/src/modules/hermes/services/gateway/runner', () => ({
+  shutdownManagedGateways: shutdownManagedGatewaysMock,
+}))
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
+  codingAgentRunManager: { shutdown: codingAgentShutdownMock },
+}))
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('../../packages/server/src/modules/studio/services/app-relay/client', () => ({
+  stopAppRelayClient: vi.fn(),
+}))
+vi.mock('../../packages/server/src/modules/ekko/services/manager', () => ({
+  closeGlobalEkkoAgent: vi.fn(),
+}))
+vi.mock('../../packages/server/src/modules/studio/services/webhooks', () => ({
+  stopChatWebhookDispatcher: vi.fn(),
+}))
+vi.mock('../../packages/server/src/modules/studio/services/social-messages', () => ({
+  shutdownSocialMessageRuntimes: vi.fn(async () => {}),
+}))
+
 describe('graceful shutdown background delivery ordering', () => {
   const originalStopBridge = process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN
 

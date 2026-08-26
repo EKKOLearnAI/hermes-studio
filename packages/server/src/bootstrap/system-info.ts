@@ -1,5 +1,5 @@
-import { config } from '../config'
-import * as hermesCli from '../services/hermes/hermes-cli'
+import { config } from '../modules/studio/public/config'
+import * as hermesCli from '../modules/hermes/services/runtime/cli'
 import * as systemInfo from '../modules/studio/public/system-info'
 
 systemInfo.configureSystemInfo({

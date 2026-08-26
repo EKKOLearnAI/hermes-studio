@@ -1,7 +1,7 @@
 import { getAgentBridgeManager } from '../modules/hermes/services/bridge/manager'
 import { redactAgentBridgeError } from '../modules/hermes/services/bridge/redact'
-import * as hermesCli from '../services/hermes/hermes-cli'
-import { isDockerContainer } from '../services/runtime-environment'
+import * as hermesCli from '../modules/hermes/services/runtime/cli'
+import { isDockerContainer } from '../modules/studio/public/runtime-environment'
 import type { AgentBridgeHealthPayload } from '../modules/studio/contracts/health'
 import { StudioHealthService } from '../modules/studio/services/health'
 import {

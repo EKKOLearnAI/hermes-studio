@@ -134,6 +134,21 @@ export function collectModuleSpecifiers(source, fileName = 'source.ts') {
   return [...specifiers].sort()
 }
 
+export function isLegacyCompatibilityFacade(source, fileName = 'source.ts') {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  return sourceFile.statements.every(statement => (
+    ts.isImportDeclaration(statement)
+    || ts.isExportDeclaration(statement)
+    || ts.isExportAssignment(statement)
+  ))
+}
+
 export function resolveServerImport(fromFile, specifier, allFiles) {
   if (!specifier.startsWith('.')) return null
 
@@ -314,6 +329,14 @@ export async function inspectServerModuleBoundaries(root = process.cwd()) {
         `${SERVER_SOURCE_ROOT}/${file} uses unknown module ${info.moduleName || '(missing name)'}; `
         + `expected one of: ${TARGET_MODULES.join(', ')}`,
       )
+    }
+    if (isSourceFile(file) && info.architecture === 'legacy') {
+      const source = await readFile(path.join(sourceRoot, file), 'utf8')
+      if (!isLegacyCompatibilityFacade(source, file)) {
+        failures.push(
+          `${SERVER_SOURCE_ROOT}/${file} is a legacy implementation; legacy paths may contain only import/export compatibility facades`,
+        )
+      }
     }
   }
 

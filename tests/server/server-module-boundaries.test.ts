@@ -4,6 +4,7 @@ import {
   collectModuleSpecifiers,
   compareDebtBaseline,
   forbiddenDomainDependency,
+  isLegacyCompatibilityFacade,
   validateTargetDependency,
 } from '../../scripts/server-module-boundaries.mjs'
 
@@ -86,6 +87,16 @@ describe('server module boundary harness', () => {
       "const legacy = require('./d')",
     ].join('\n')
     expect(collectModuleSpecifiers(source)).toEqual(['./a', './b', './c', './d'])
+  })
+
+  it('allows only import/export compatibility facades in legacy paths', () => {
+    expect(isLegacyCompatibilityFacade([
+      "import '../bootstrap/adapter'",
+      "export * from '../modules/studio/public/config'",
+    ].join('\n'))).toBe(true)
+    expect(isLegacyCompatibilityFacade(
+      "export function legacyBusinessLogic() { return true }",
+    )).toBe(false)
   })
 
   it('reports both increased and already removed legacy debt', () => {

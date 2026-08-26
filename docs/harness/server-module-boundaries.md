@@ -5,6 +5,11 @@ This document is the target architecture and migration contract for
 agent families without changing public API paths or persisted data as part of
 the move.
 
+Legacy paths outside `modules/` and `bootstrap/` are compatibility-only. They
+may contain imports and re-exports, but no functions, classes, variables, or
+business statements. The boundary harness enforces this so implementation
+cannot drift back into the legacy tree.
+
 ## Domain Vocabulary
 
 Do not use one `source` or `agent` field for all of these concepts:

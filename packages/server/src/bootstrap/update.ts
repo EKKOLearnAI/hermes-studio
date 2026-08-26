@@ -1,5 +1,5 @@
-import { getWebUiHome } from '../config'
-import { requireSuperAdmin } from '../middleware/user-auth'
+import { getWebUiHome } from '../modules/studio/public/config'
+import { requireSuperAdmin } from '../modules/studio/middleware/auth'
 import * as updateController from '../modules/studio/controllers/update'
 import { configureSuperAdminMiddleware } from '../modules/studio/middleware/super-admin'
 import { updateRoutes } from '../modules/studio/routes/update'
@@ -7,7 +7,7 @@ import {
   configureUpdateRuntime,
   stopPreviewRuntime,
 } from '../modules/studio/services/update/version-preview-manager'
-import { isDockerContainer } from '../services/runtime-environment'
+import { isDockerContainer } from '../modules/studio/public/runtime-environment'
 
 configureUpdateRuntime({ getWebUiHome, isDockerContainer })
 configureSuperAdminMiddleware(requireSuperAdmin)
