@@ -19,6 +19,7 @@ import {
 import type { SessionState } from '../../../studio/contracts/runs/session'
 import type { CanonicalResponsesEvent } from '../../protocol/adapters/responses-stream'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../../studio/public/windows-command'
+import { killOwnedProcessTree } from '../../../studio/infrastructure/process-tree'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { compactCodexThread } from './codex-compact'
@@ -502,7 +503,7 @@ function appendedTextDelta(existing: string, next: string): string {
 function terminateChildProcess(child?: ChildProcess) {
   if (!child || !child.pid || !childIsRunning(child)) return
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+    try { killOwnedProcessTree(child.pid, () => { child.kill() }) } catch {}
     return
   }
   try {
@@ -515,7 +516,7 @@ function terminateChildProcess(child?: ChildProcess) {
 function forceKillChildProcess(child?: ChildProcess) {
   if (!child || !child.pid || !childIsRunning(child)) return
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+    try { killOwnedProcessTree(child.pid, () => { child.kill('SIGKILL') }) } catch {}
     return
   }
   try {
@@ -590,6 +591,7 @@ export function sanitizeCodingAgentTerminalOutput(value: string): string {
 export class CodingAgentRunManager {
   private runs = new Map<string, ManagedCodingAgentRun>()
   private sessionIndex = new Map<string, string>()
+  private memoryExportChildren = new Set<ChildProcess>()
 
   constructor(private readonly idleMs = DEFAULT_IDLE_MS) {}
 
@@ -1208,6 +1210,8 @@ export class CodingAgentRunManager {
 
   shutdown() {
     for (const run of [...this.runs.values()]) this.cleanupRun(run, { kill: true })
+    for (const child of this.memoryExportChildren) forceKillChildProcess(child)
+    this.memoryExportChildren.clear()
   }
 
   private getBySession(sessionId: string): ManagedCodingAgentRun | null {
@@ -1312,7 +1316,9 @@ export class CodingAgentRunManager {
       if (run.launch.agentId === 'pi' && run.turnActive && childIsRunning(run.currentChild)) {
         this.writePiRpcCommand(run, { id: `abort_${Date.now()}`, type: 'abort' })
       }
-      try { run.pty?.kill() } catch {}
+      if (run.pty) {
+        try { killOwnedProcessTree(run.pty.pid, () => run.pty?.kill()) } catch {}
+      }
       terminateChildProcess(run.currentChild)
       if (childIsRunning(run.currentChild)) {
         run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(run.currentChild), 1500)
@@ -2046,7 +2052,6 @@ export class CodingAgentRunManager {
       }
       return
     }
-
     if (role === 'user') {
       for (const [index, block] of content.entries()) {
         if (block?.type !== 'tool_result') continue
@@ -2931,11 +2936,12 @@ export class CodingAgentRunManager {
       logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export failed to start')
       return
     }
+    this.memoryExportChildren.add(child)
 
     let stdout = ''
     let stderr = ''
     const timeout = setTimeout(() => {
-      try { child.kill() } catch {}
+      forceKillChildProcess(child)
     }, 60_000)
     timeout.unref?.()
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -2946,10 +2952,12 @@ export class CodingAgentRunManager {
     })
     child.on('error', (err) => {
       clearTimeout(timeout)
+      this.memoryExportChildren.delete(child)
       logger.debug({ err, runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export process error')
     })
     child.on('exit', (code) => {
       clearTimeout(timeout)
+      this.memoryExportChildren.delete(child)
       if (code === 0) {
         logger.info({ runId: run.id, sessionId: run.launch.sessionId, agentId, nativeSessionId }, '[coding-agent-run] memory export completed')
       } else {

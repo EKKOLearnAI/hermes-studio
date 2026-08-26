@@ -8,7 +8,7 @@ import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config, shouldCreateWebUiDataDir } from '../modules/studio/public/config'
 import { initLoginLimiter } from '../modules/studio/services/auth/login-limiter'
-import { bindShutdown } from './lifecycle'
+import { createShutdownHandler } from './lifecycle'
 import { setupTerminalWebSocket } from '../modules/hermes/sockets/terminal'
 import { setupKanbanEventsWebSocket } from '../modules/hermes/sockets/kanban-events'
 import { startVersionCheck } from './health'
@@ -28,7 +28,12 @@ import { HermesSkillInjector } from '../modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from '../modules/hermes/services/mcp/studio-autoinject'
 import { ensureProfileGatewaysRunning } from '../modules/hermes/services/gateway/autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from '../modules/hermes/services/providers/model-catalog-cache'
-import { scanLanDevices, selectLanIPv4Address, startLanDiscoveryResponder } from './lan-discovery'
+import {
+  scanLanDevices,
+  selectLanIPv4Address,
+  startLanDiscoveryResponder,
+  stopLanDiscoveryResponder,
+} from './lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './lan-peer'
 import { startGlobalAgentServer } from '../modules/studio/public/global-agent'
 import { startLocalAppRelayServer } from '../modules/studio/services/app-relay/server'
@@ -45,7 +50,7 @@ import { createStaticCompressionMiddleware } from '../modules/studio/middleware/
 import { getStaticCacheControl, SPA_ENTRY_CACHE_CONTROL } from '../modules/studio/middleware/static-cache'
 import { requireUserJwt, resolveUserProfile } from '../modules/studio/middleware/auth'
 import { createCorsOriginResolver, securityHeaders } from '../modules/studio/middleware/security'
-import type { ShutdownHandler } from './lifecycle'
+import type { AdditionalShutdownStep, ShutdownHandler } from './lifecycle'
 import { createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
 import {
   migratePersistedPiRuntimeMcpConfigs,
@@ -58,12 +63,53 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } })()
 
-// Global error handlers
+let server: any = null
+const servers: any[] = []
+let groupChatServer: GroupChatServer | null = null
+let chatRunServer: any = null
+let workflowSocketServer: WorkflowSocketServer | null = null
+let petStateSocketServer: PetStateSocketServer | null = null
+let groupAgentRelayServer: GroupAgentRelayServer | null = null
+let agentBridgeManager: any = null
+let desktopShutdownHandler: ShutdownHandler | null = null
+let shutdownRequested = false
+const additionalShutdownSteps: AdditionalShutdownStep[] = []
+
+function getShutdownHandler(): ShutdownHandler {
+  shutdownRequested = true
+  if (!desktopShutdownHandler) {
+    desktopShutdownHandler = createShutdownHandler(
+      servers,
+      groupChatServer,
+      chatRunServer,
+      agentBridgeManager,
+      additionalShutdownSteps,
+    )
+  }
+  return desktopShutdownHandler
+}
+
+async function shutdownAfterFatal(signal: string): Promise<void> {
+  try {
+    await getShutdownHandler()(signal, 1)
+  } catch (shutdownError) {
+    logger.fatal(shutdownError, 'Fatal error while cleaning up after %s', signal)
+    process.exit(1)
+  }
+}
+
+// Install signal/error handling before bootstrap starts spawning managed
+// process trees. The shutdown handler itself is created lazily so it captures
+// every runtime that has been initialized at the point of failure.
+process.once('SIGUSR2', signal => { void getShutdownHandler()(signal) })
+process.on('SIGINT', signal => { void getShutdownHandler()(signal) })
+process.on('SIGTERM', signal => { void getShutdownHandler()(signal) })
+
 process.on('uncaughtException', (err) => {
   console.error('FATAL: Uncaught exception')
   console.error(err)
   logger.fatal(err, 'Uncaught exception')
-  process.exit(1)
+  void shutdownAfterFatal('uncaught-exception')
 })
 
 process.on('unhandledRejection', (reason) => {
@@ -71,15 +117,6 @@ process.on('unhandledRejection', (reason) => {
   console.error(reason)
   logger.error(reason, 'Unhandled rejection')
 })
-
-let server: any = null
-let servers: any[] = []
-let chatRunServer: any = null
-let workflowSocketServer: WorkflowSocketServer | null = null
-let petStateSocketServer: PetStateSocketServer | null = null
-let groupAgentRelayServer: GroupAgentRelayServer | null = null
-let agentBridgeManager: any = null
-let desktopShutdownHandler: ShutdownHandler | null = null
 
 interface ListenResult {
   primary: any
@@ -183,14 +220,16 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
   if (gatewayAutostartDisabled()) {
     console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
   } else {
-    void ensureProfileGatewaysRunning()
-      .then(() => console.log('[bootstrap] profile gateways checked'))
-      .catch((err) => {
-        logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-        console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-      })
+    try {
+      await ensureProfileGatewaysRunning()
+      console.log('[bootstrap] profile gateways checked')
+    } catch (err) {
+      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+    }
   }
 
+  if (shutdownRequested) return
   try {
     agentBridgeManager = await startAgentBridgeManager()
     console.log('[bootstrap] agent bridge started')
@@ -200,31 +239,27 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
   }
 }
 
-function startRuntimeServicesAfterListen(): void {
+async function startRuntimeServicesAfterListen(): Promise<void> {
   if (gatewayAutostartDisabled()) {
     console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
   } else {
-    void (async () => {
-      try {
-        await ensureProfileGatewaysRunning()
-        console.log('[bootstrap] profile gateways checked')
-      } catch (err) {
-        logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-        console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-      }
-    })()
+    try {
+      await ensureProfileGatewaysRunning()
+      console.log('[bootstrap] profile gateways checked')
+    } catch (err) {
+      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+    }
   }
 
-  void (async () => {
-    try {
-      agentBridgeManager = await startAgentBridgeManager()
-      console.log('[bootstrap] agent bridge started')
-    } catch (err) {
-      logger.warn(err, '[bootstrap] agent bridge failed to start')
-      console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
-      return
-    }
-  })()
+  if (shutdownRequested) return
+  try {
+    agentBridgeManager = await startAgentBridgeManager()
+    console.log('[bootstrap] agent bridge started')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] agent bridge failed to start')
+    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+  }
 }
 
 function startLanDiscovery(): void {
@@ -305,9 +340,11 @@ export async function bootstrap() {
   setupGlobalEkkoAgent()
   console.log('[bootstrap] ekko-agent setup complete')
 
+  agentBridgeManager = getAgentBridgeManager()
   if (!isDesktopRuntime()) {
     await startRuntimeServicesBeforeListen()
   }
+  if (shutdownRequested) return
 
   const app = new Koa()
   // Initialize all web-ui SQLite tables
@@ -351,27 +388,50 @@ export async function bootstrap() {
   // Start server using the configured bind host. Default is IPv4 for WSL stability.
   const listenResult = await listenWithFallback(app, config.port, config.host)
   server = listenResult.primary
-  servers = listenResult.servers
+  servers.splice(0, servers.length, ...listenResult.servers)
   console.log('[bootstrap] app.listen called')
 
-  setupTerminalWebSocket(servers)
-  setupKanbanEventsWebSocket(servers)
-  getLanPeerSocketManager().setupServer(servers)
+  const terminalWebSocket = setupTerminalWebSocket(servers)
+  if (terminalWebSocket) {
+    additionalShutdownSteps.push({
+      name: 'Terminal WebSocket and PTY sessions',
+      close: () => terminalWebSocket.close(),
+      forceClose: () => terminalWebSocket.forceClose(),
+    })
+  }
+  const kanbanEventsWebSocket = setupKanbanEventsWebSocket(servers)
+  additionalShutdownSteps.push({
+    name: 'Kanban event WebSocket and watchers',
+    close: () => kanbanEventsWebSocket.close(),
+    forceClose: () => kanbanEventsWebSocket.forceClose(),
+  })
+  const lanPeerSocketManager = getLanPeerSocketManager()
+  lanPeerSocketManager.setupServer(servers)
+  additionalShutdownSteps.push({
+    name: 'LAN peer WebSocket and child runtimes',
+    close: () => lanPeerSocketManager.shutdown(),
+    forceClose: () => lanPeerSocketManager.forceClose(),
+  })
   console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
 
   const loopbackBaseUrl = getLoopbackBaseUrl(server)
 
   // Group chat Socket.IO (must be after server is created)
-  const groupChatServer = new GroupChatServer(servers)
-  setGroupChatServer(groupChatServer)
-  groupAgentRelayServer = new GroupAgentRelayServer(groupChatServer.getIO(), groupChatServer)
+  const activeGroupChatServer = new GroupChatServer(servers)
+  groupChatServer = activeGroupChatServer
+  setGroupChatServer(activeGroupChatServer)
+  groupAgentRelayServer = new GroupAgentRelayServer(activeGroupChatServer.getIO(), activeGroupChatServer)
+  additionalShutdownSteps.push({
+    name: 'Group agent relay',
+    close: () => groupAgentRelayServer?.shutdown(),
+  })
 
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
-  chatRunServer = new ChatRunSocket(groupChatServer.getIO())
+  chatRunServer = new ChatRunSocket(activeGroupChatServer.getIO())
   setChatRunServer(chatRunServer)
-  groupChatServer.setChatRunService(chatRunServer)
+  activeGroupChatServer.setChatRunService(chatRunServer)
   chatRunServer.init()
-  startLocalAppRelayServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
+  startLocalAppRelayServer(activeGroupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
   console.log('[bootstrap] local App relay server ready')
   if (
     listAppConnections().some(connection => connection.connection_type === 'cloud')
@@ -379,7 +439,14 @@ export async function bootstrap() {
   ) {
     void ensureAppRelayHostClient().catch(err => logger.warn(err, '[app-relay] cloud host restore failed'))
   }
-  void getGroupAgentOutboundRelayManager(() => groupChatServer.getChatRunService()).restore()
+  const groupAgentOutboundRelayManager = getGroupAgentOutboundRelayManager(
+    () => activeGroupChatServer.getChatRunService(),
+  )
+  additionalShutdownSteps.push({
+    name: 'Group agent outbound relay',
+    close: () => groupAgentOutboundRelayManager.shutdown(),
+  })
+  void groupAgentOutboundRelayManager.restore()
 
   // A process restart loses in-memory scheduler, approval, and runner ownership.
   // Persist a fail-closed terminal state before exposing workflow sockets, then abort
@@ -390,15 +457,24 @@ export async function bootstrap() {
     logger.warn('Recovered %d orphaned workflow runs and aborted %d sessions', recoveredWorkflows.runs, recoveredWorkflows.sessions)
   }
   const { getWorkflowScheduleService } = await import('../modules/studio/services/workflow/schedule')
-  getWorkflowScheduleService().start()
+  const workflowScheduleService = getWorkflowScheduleService()
+  workflowScheduleService.start()
+  additionalShutdownSteps.push({
+    name: 'Workflow scheduler',
+    close: () => workflowScheduleService.stop(),
+  })
 
-  workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
+  workflowSocketServer = new WorkflowSocketServer(activeGroupChatServer.getIO())
   workflowSocketServer.init()
+  additionalShutdownSteps.push({
+    name: 'Workflow Socket.IO runtime',
+    close: () => workflowSocketServer?.close(),
+  })
 
-  petStateSocketServer = new PetStateSocketServer(groupChatServer.getIO())
+  petStateSocketServer = new PetStateSocketServer(activeGroupChatServer.getIO())
   petStateSocketServer.init()
 
-  startGlobalAgentServer(groupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
+  startGlobalAgentServer(activeGroupChatServer.getIO(), { localBaseUrl: loopbackBaseUrl })
   console.log('[bootstrap] global agent server ready')
 
   // Session deleter — periodically drain pending session deletes
@@ -406,6 +482,10 @@ export async function bootstrap() {
   const sessionDeleter = SessionDeleter.getInstance()
   const activeProfile = process.env.PROFILE || 'default'
   sessionDeleter.start(activeProfile)
+  additionalShutdownSteps.push({
+    name: 'Session deleter',
+    close: () => sessionDeleter.stop(),
+  })
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
 
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
@@ -427,15 +507,19 @@ export async function bootstrap() {
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
   startLanDiscovery()
+  additionalShutdownSteps.push({
+    name: 'LAN discovery responder',
+    close: stopLanDiscoveryResponder,
+  })
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
 
   if (isDesktopRuntime()) {
-    agentBridgeManager = getAgentBridgeManager()
-    startRuntimeServicesAfterListen()
+    await startRuntimeServicesAfterListen()
   }
+  if (shutdownRequested) return
 
   // Restore group chat agents after server is ready.
-  groupChatServer.restoreWhenReady()
+  activeGroupChatServer.restoreWhenReady()
 
   servers.forEach((httpServer) => {
     httpServer.on('error', (err: any) => {
@@ -444,7 +528,13 @@ export async function bootstrap() {
     })
   })
 
-  desktopShutdownHandler = bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager)
+  desktopShutdownHandler = createShutdownHandler(
+    servers,
+    activeGroupChatServer,
+    chatRunServer,
+    agentBridgeManager,
+    additionalShutdownSteps,
+  )
   startVersionCheck()
 }
 
@@ -452,5 +542,5 @@ bootstrap().catch((error) => {
   console.error('FATAL: Failed to start Hermes Web UI')
   console.error(error)
   logger.fatal(error, 'Fatal error during bootstrap')
-  process.exit(1)
+  void shutdownAfterFatal('bootstrap-error')
 })

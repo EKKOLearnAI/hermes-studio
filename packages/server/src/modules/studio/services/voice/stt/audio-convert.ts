@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { killOwnedProcessTree } from '../../../infrastructure/process-tree'
 
 const TRANSCODE_TIMEOUT_MS = 30_000
 const DEFAULT_PCM_SAMPLE_RATE = 16000
@@ -28,7 +29,7 @@ function runFfmpeg(args: string[], input: Buffer, timeoutMs: number): Promise<Bu
     const child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] })
 
     const timer = setTimeout(() => {
-      child.kill('SIGKILL')
+      killOwnedProcessTree(child.pid, () => { child.kill('SIGKILL') })
       reject(new Error('ffmpeg transcoding timed out'))
     }, timeoutMs)
 

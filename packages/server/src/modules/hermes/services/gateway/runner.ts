@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { logger } from '../../../studio/public/logging'
 import { getActiveProfileDir } from '../profiles/profile'
@@ -38,6 +38,8 @@ interface ProfileState {
 }
 
 const profileState = new Map<string, ProfileState>()
+const stoppingGateways = new Map<number, SupervisedGateway>()
+let managedGatewayShutdownStarted = false
 
 /** Delay before respawning a gateway that exited unexpectedly. */
 const RESPAWN_DELAY_MS = 2000
@@ -62,6 +64,9 @@ function getOrCreateProfileState(profileDir: string): ProfileState {
 }
 
 type KillWindowsProcessTree = (pid: number) => Promise<void>
+type ForceKillWindowsProcessTree = (pid: number) => void
+type ListPosixDescendantPids = (pid: number) => number[]
+type KillPosixPid = (pid: number, signal: NodeJS.Signals) => void
 
 function clearRespawnTimer(state: ProfileState, profileDir: string): void {
   if (!state.respawnTimer) return
@@ -77,12 +82,101 @@ async function taskkillWindowsProcessTree(pid: number): Promise<void> {
   })
 }
 
+function forceTaskkillWindowsProcessTree(pid: number): void {
+  execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+    timeout: 5000,
+    windowsHide: true,
+    stdio: 'ignore',
+  })
+}
+
+function posixDescendantPids(rootPid: number): number[] {
+  try {
+    const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid='], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    })
+    const children = new Map<number, number[]>()
+    for (const line of output.split(/\r?\n/)) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)$/)
+      if (!match) continue
+      const pid = Number(match[1])
+      const parentPid = Number(match[2])
+      children.set(parentPid, [...(children.get(parentPid) || []), pid])
+    }
+
+    const descendants: number[] = []
+    const visit = (parentPid: number) => {
+      for (const pid of children.get(parentPid) || []) {
+        visit(pid)
+        descendants.push(pid)
+      }
+    }
+    visit(rootPid)
+    return descendants
+  } catch {
+    return []
+  }
+}
+
+function killPosixPid(pid: number, signal: NodeJS.Signals): void {
+  process.kill(pid, signal)
+}
+
+function forceKillKnownPosixDescendants(
+  descendantPids: Iterable<number>,
+  killPid: KillPosixPid,
+): number {
+  let killed = 0
+  for (const pid of new Set(descendantPids)) {
+    try {
+      killPid(pid, 'SIGKILL')
+      killed += 1
+    } catch {
+      // The gateway may have already reaped this child during graceful exit.
+    }
+  }
+  return killed
+}
+
+function forceKillManagedGateway(
+  entry: SupervisedGateway,
+  opts: {
+    platform: NodeJS.Platform
+    forceKillWindowsProcessTree: ForceKillWindowsProcessTree
+    listPosixDescendantPids: ListPosixDescendantPids
+    killPosixPid: KillPosixPid
+  },
+): void {
+  if (opts.platform === 'win32') {
+    try {
+      opts.forceKillWindowsProcessTree(entry.pid)
+      return
+    } catch (err) {
+      logger.warn(err, '[gateway-runner] forced taskkill failed for managed gateway pid=%s; falling back to child.kill', entry.pid)
+      try { entry.child.kill('SIGKILL') } catch {}
+      return
+    }
+  }
+
+  forceKillKnownPosixDescendants(opts.listPosixDescendantPids(entry.pid), opts.killPosixPid)
+  try {
+    // Managed POSIX gateways are spawned detached, so this also catches any
+    // descendants which stayed in the gateway process group.
+    opts.killPosixPid(-entry.pid, 'SIGKILL')
+  } catch {
+    try { entry.child.kill('SIGKILL') } catch {}
+  }
+}
+
 async function stopManagedGateway(
   entry: SupervisedGateway,
   opts: {
     timeoutMs: number
     platform: NodeJS.Platform
     killWindowsProcessTree: KillWindowsProcessTree
+    listPosixDescendantPids: ListPosixDescendantPids
+    killPosixPid: KillPosixPid
   },
 ): Promise<{ forced: boolean; error?: unknown }> {
   if (opts.platform === 'win32') {
@@ -100,6 +194,8 @@ async function stopManagedGateway(
     }
   }
 
+  const ownedDescendantPids = opts.listPosixDescendantPids(entry.pid)
+
   return new Promise(resolve => {
     let settled = false
     let forced = false
@@ -112,9 +208,22 @@ async function stopManagedGateway(
       resolve({ forced, error })
     }
 
-    const onExit = () => finish()
+    const onExit = () => {
+      // The gateway may exit before its MCP/watchdog descendants. Once their
+      // parent is gone they are reparented and can no longer be rediscovered
+      // from the gateway PID, so clean the ownership snapshot taken above.
+      if (forceKillKnownPosixDescendants(ownedDescendantPids, opts.killPosixPid) > 0) {
+        forced = true
+      }
+      finish()
+    }
     const timer = setTimeout(() => {
       forced = true
+      const descendants = [
+        ...ownedDescendantPids,
+        ...opts.listPosixDescendantPids(entry.pid),
+      ]
+      forceKillKnownPosixDescendants(descendants, opts.killPosixPid)
       try {
         entry.child.kill('SIGKILL')
       } catch (err) {
@@ -140,11 +249,19 @@ export async function shutdownManagedGateways(
     timeoutMs?: number
     platform?: NodeJS.Platform
     killWindowsProcessTree?: KillWindowsProcessTree
+    listPosixDescendantPids?: ListPosixDescendantPids
+    killPosixPid?: KillPosixPid
   } = {},
 ): Promise<ManagedGatewayShutdownResult> {
+  // This is a process-lifecycle boundary, not a profile reconcile. Once it
+  // starts, an in-flight bootstrap/autostart task must not create a new
+  // detached gateway after the ownership registry has been drained.
+  managedGatewayShutdownStarted = true
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
   const platform = opts.platform ?? process.platform
   const killWindowsProcessTree = opts.killWindowsProcessTree ?? taskkillWindowsProcessTree
+  const listDescendants = opts.listPosixDescendantPids ?? posixDescendantPids
+  const killPid = opts.killPosixPid ?? killPosixPid
   const stops: Promise<{ forced: boolean; error?: unknown }>[] = []
   let signaled = 0
 
@@ -160,7 +277,14 @@ export async function shutdownManagedGateways(
     state.current = null
     signaled += 1
     logger.info('[gateway-runner] stopping managed gateway profileDir=%s pid=%s', profileDir, entry.pid)
-    stops.push(stopManagedGateway(entry, { timeoutMs, platform, killWindowsProcessTree }))
+    stoppingGateways.set(entry.pid, entry)
+    stops.push(stopManagedGateway(entry, {
+      timeoutMs,
+      platform,
+      killWindowsProcessTree,
+      listPosixDescendantPids: listDescendants,
+      killPosixPid: killPid,
+    }).finally(() => stoppingGateways.delete(entry.pid)))
     profileState.delete(profileDir)
   }
 
@@ -181,6 +305,8 @@ export async function retireManagedGatewayForProfile(
     timeoutMs?: number
     platform?: NodeJS.Platform
     killWindowsProcessTree?: KillWindowsProcessTree
+    listPosixDescendantPids?: ListPosixDescendantPids
+    killPosixPid?: KillPosixPid
   } = {},
 ): Promise<ManagedGatewayShutdownResult> {
   const state = profileState.get(profileDir)
@@ -197,9 +323,18 @@ export async function retireManagedGatewayForProfile(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
   const platform = opts.platform ?? process.platform
   const killWindowsProcessTree = opts.killWindowsProcessTree ?? taskkillWindowsProcessTree
+  const listDescendants = opts.listPosixDescendantPids ?? posixDescendantPids
+  const killPid = opts.killPosixPid ?? killPosixPid
 
   logger.info('[gateway-runner] retiring managed gateway profileDir=%s pid=%s', profileDir, entry.pid)
-  const result = await stopManagedGateway(entry, { timeoutMs, platform, killWindowsProcessTree })
+  stoppingGateways.set(entry.pid, entry)
+  const result = await stopManagedGateway(entry, {
+    timeoutMs,
+    platform,
+    killWindowsProcessTree,
+    listPosixDescendantPids: listDescendants,
+    killPosixPid: killPid,
+  }).finally(() => stoppingGateways.delete(entry.pid))
   const forced = result.forced ? 1 : 0
   const errors = result.error ? 1 : 0
 
@@ -211,6 +346,44 @@ export async function retireManagedGatewayForProfile(
   )
 
   return { signaled: 1, forced, errors }
+}
+
+export function forceStopManagedGateways(
+  opts: {
+    platform?: NodeJS.Platform
+    forceKillWindowsProcessTree?: ForceKillWindowsProcessTree
+    listPosixDescendantPids?: ListPosixDescendantPids
+    killPosixPid?: KillPosixPid
+  } = {},
+): number {
+  managedGatewayShutdownStarted = true
+  const platform = opts.platform ?? process.platform
+  const forceKillWindowsProcessTree = opts.forceKillWindowsProcessTree ?? forceTaskkillWindowsProcessTree
+  const listDescendants = opts.listPosixDescendantPids ?? posixDescendantPids
+  const killPid = opts.killPosixPid ?? killPosixPid
+  const entries = new Map<number, SupervisedGateway>(stoppingGateways)
+
+  for (const [profileDir, state] of profileState) {
+    clearRespawnTimer(state, profileDir)
+    if (state.current) entries.set(state.current.pid, state.current)
+    state.current = null
+    profileState.delete(profileDir)
+  }
+
+  for (const entry of entries.values()) {
+    forceKillManagedGateway(entry, {
+      platform,
+      forceKillWindowsProcessTree,
+      listPosixDescendantPids: listDescendants,
+      killPosixPid: killPid,
+    })
+    stoppingGateways.delete(entry.pid)
+  }
+
+  if (entries.size > 0) {
+    logger.warn('[gateway-runner] force-stopped managed gateway trees count=%s', entries.size)
+  }
+  return entries.size
 }
 
 export function startGatewayRunManaged(
@@ -228,6 +401,10 @@ function startGatewayRunManagedInternal(
   opts: { profileDir?: string; preserveRespawnAttempts?: boolean } = {},
 ): { pid: number | null; reused: boolean } {
   const profileDir = opts.profileDir || getActiveProfileDir()
+  if (managedGatewayShutdownStarted) {
+    logger.warn('[gateway-runner] refusing managed gateway start after shutdown began profileDir=%s', profileDir)
+    return { pid: null, reused: false }
+  }
   const state = getOrCreateProfileState(profileDir)
 
   // A new spawn for this profile cancels any pending respawn from a previous

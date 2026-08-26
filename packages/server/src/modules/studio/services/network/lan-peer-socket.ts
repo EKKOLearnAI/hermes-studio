@@ -1,5 +1,6 @@
 import WebSocket, { WebSocketServer, type RawData } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'http'
+import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'fs'
 import { existsSync } from 'fs'
@@ -12,6 +13,7 @@ import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } fro
 import { logger } from '../../public/logging'
 import { config } from '../../public/config'
 import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../middleware/security'
+import { killOwnedProcessTree } from '../../infrastructure/process-tree'
 
 export interface LanPeerFilesystemDependencies {
   getActiveProfileDir: () => string
@@ -257,6 +259,7 @@ class LanPeerConnection {
   private uploads = new Map<string, UploadTransfer>()
   private pendingRequests = new Map<string, PendingRequest>()
   private pendingDownloads = new Map<string, PendingDownload>()
+  private execChildren = new Set<ReturnType<typeof spawn>>()
   private heartbeatTimer: NodeJS.Timeout | null = null
   private alive = true
   private closed = false
@@ -313,6 +316,11 @@ class LanPeerConnection {
     this.terminalSessions.clear()
     this.remoteTerminals.clear()
 
+    for (const child of this.execChildren) {
+      try { killOwnedProcessTree(child.pid, () => { child.kill() }) } catch { }
+    }
+    this.execChildren.clear()
+
     for (const upload of this.uploads.values()) {
       try { upload.stream.destroy() } catch { }
     }
@@ -363,7 +371,7 @@ class LanPeerConnection {
       session.idleTimer = null
     }
     this.terminalSessions.delete(session.id)
-    try { session.pty.kill() } catch { }
+    try { killOwnedProcessTree(session.pid, () => session.pty.kill()) } catch { }
     if (options.notify) {
       this.sendJson({ type: 'terminal.exit', terminal_id: session.id, exit_code: options.exitCode ?? 0 })
     }
@@ -799,11 +807,13 @@ class LanPeerConnection {
       this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: err?.message || 'Failed to start command' })
       return
     }
+    this.execChildren.add(child)
 
     const finish = (exitCode: number | null) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      this.execChildren.delete(child)
       this.sendJson({
         type: 'terminal.exec.result',
         request_id: msg.request_id,
@@ -824,7 +834,7 @@ class LanPeerConnection {
 
     const timer = setTimeout(() => {
       timedOut = true
-      try { child.kill() } catch { }
+      try { killOwnedProcessTree(child.pid, () => { child.kill() }) } catch { }
       finish(null)
     }, timeoutMs)
     timer.unref?.()
@@ -839,6 +849,7 @@ class LanPeerConnection {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      this.execChildren.delete(child)
       this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: err.message })
     })
     child.on('close', code => finish(code))
@@ -919,6 +930,7 @@ export class LanPeerSocketManager {
   private readonly connections = new Map<string, LanPeerConnection>()
   private readonly clientTargets = new Map<string, ClientPeerTarget>()
   private readonly seenNonces = new Map<string, number>()
+  private readonly upgradeHandlers = new Map<HttpServer, (req: IncomingMessage, socket: Duplex, head: Buffer) => void>()
   private setupDone = false
 
   setupServer(httpServers: HttpServer | HttpServer[]) {
@@ -927,7 +939,7 @@ export class LanPeerSocketManager {
     const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
     servers.forEach(httpServer => {
-      httpServer.on('upgrade', async (req, socket, head) => {
+      const onUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
         const url = new URL(req.url || '', `http://${req.headers.host}`)
         if (url.pathname !== PEER_SOCKET_PATH) return
 
@@ -955,8 +967,34 @@ export class LanPeerSocketManager {
           this.connections.set(connection.id, connection)
           this.wss.emit('connection', ws, req)
         })
-      })
+      }
+      this.upgradeHandlers.set(httpServer, onUpgrade)
+      httpServer.on('upgrade', onUpgrade)
     })
+  }
+
+  forceClose(): void {
+    for (const [httpServer, onUpgrade] of this.upgradeHandlers) {
+      httpServer.off('upgrade', onUpgrade)
+    }
+    this.upgradeHandlers.clear()
+
+    for (const target of this.clientTargets.values()) {
+      target.disabled = true
+      if (target.reconnectTimer) clearTimeout(target.reconnectTimer)
+      target.reconnectTimer = null
+    }
+    this.clientTargets.clear()
+
+    for (const connection of [...this.connections.values()]) {
+      connection.close({ intentional: true })
+    }
+    for (const ws of this.wss.clients) ws.terminate()
+  }
+
+  async shutdown(): Promise<void> {
+    this.forceClose()
+    await new Promise<void>(resolve => this.wss.close(() => resolve()))
   }
 
   async connectToDevice(device: LanDeviceInfo): Promise<LanPeerConnectionInfo> {

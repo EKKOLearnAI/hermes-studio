@@ -261,6 +261,78 @@ describe('gateway-runner supervision', () => {
     expect(fakeChildren).toHaveLength(2)
   })
 
+  it('refuses a late managed gateway start after shutdown begins', async () => {
+    vi.resetModules()
+    const { shutdownManagedGateways, startGatewayRunManaged } = await import(
+      '../../packages/server/src/modules/hermes/services/gateway/runner'
+    )
+
+    await expect(shutdownManagedGateways()).resolves.toEqual({ signaled: 0, forced: 0, errors: 0 })
+
+    expect(startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/late-start' })).toEqual({
+      pid: null,
+      reused: false,
+    })
+    expect(fakeChildren).toHaveLength(0)
+  })
+
+  it('kills the owned descendant snapshot when the gateway root exits first', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const listPosixDescendantPids = vi.fn(() => [20002, 20001])
+    const killPosixPid = vi.fn()
+    const { shutdownManagedGateways, startGatewayRunManaged } = await import(
+      '../../packages/server/src/modules/hermes/services/gateway/runner'
+    )
+
+    startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/descendants' })
+    const shutdown = shutdownManagedGateways({
+      timeoutMs: 5000,
+      platform: 'linux',
+      listPosixDescendantPids,
+      killPosixPid,
+    })
+
+    fakeChildren[0].emit('exit', 0, 'SIGTERM')
+
+    await expect(shutdown).resolves.toEqual({ signaled: 1, forced: 1, errors: 0 })
+    expect(listPosixDescendantPids).toHaveBeenCalledWith(10000)
+    expect(killPosixPid.mock.calls).toEqual([
+      [20002, 'SIGKILL'],
+      [20001, 'SIGKILL'],
+    ])
+  })
+
+  it('force-stops only gateway trees recorded in this process', async () => {
+    vi.resetModules()
+    const listPosixDescendantPids = vi.fn(() => [21001, 21002])
+    const killPosixPid = vi.fn()
+    const { forceStopManagedGateways, startGatewayRunManaged } = await import(
+      '../../packages/server/src/modules/hermes/services/gateway/runner'
+    )
+
+    startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/force-owned' })
+
+    expect(forceStopManagedGateways({
+      platform: 'linux',
+      listPosixDescendantPids,
+      killPosixPid,
+    })).toBe(1)
+    expect(killPosixPid.mock.calls).toEqual([
+      [21001, 'SIGKILL'],
+      [21002, 'SIGKILL'],
+      [-10000, 'SIGKILL'],
+    ])
+
+    killPosixPid.mockClear()
+    expect(forceStopManagedGateways({
+      platform: 'linux',
+      listPosixDescendantPids,
+      killPosixPid,
+    })).toBe(0)
+    expect(killPosixPid).not.toHaveBeenCalled()
+  })
+
   it('cancels pending respawn timers during managed gateway shutdown', async () => {
     vi.useFakeTimers()
     vi.resetModules()

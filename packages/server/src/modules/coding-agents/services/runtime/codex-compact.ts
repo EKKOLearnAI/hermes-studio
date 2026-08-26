@@ -6,6 +6,7 @@ import {
   windowsCmdShimExecution,
   windowsCommandNeedsShell,
 } from '../../../studio/public/windows-command'
+import { killOwnedProcessTree } from '../../../studio/infrastructure/process-tree'
 
 const APP_SERVER_READY_TIMEOUT_MS = 30_000
 const COMPACT_TIMEOUT_MS = 5 * 60 * 1000
@@ -201,10 +202,7 @@ export async function compactCodexThread(
 function terminateCodexChild(child: ChildProcess) {
   if (!child || child.killed || !child.pid) return
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
-      .on('error', () => {
-        try { child.kill() } catch {}
-      })
+    try { killOwnedProcessTree(child.pid, () => { child.kill() }) } catch {}
     return
   }
   try {

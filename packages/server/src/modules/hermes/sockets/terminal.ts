@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws'
-import type { Server as HttpServer } from 'http'
+import type { IncomingMessage, Server as HttpServer } from 'http'
+import type { Duplex } from 'stream'
 import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'fs'
 import { dirname, join, isAbsolute, resolve as resolvePath } from 'path'
 import { homedir } from 'os'
@@ -9,6 +10,7 @@ import { authenticateUserToken, isAuthEnabled } from '../../studio/public/auth'
 import { logger } from '../../studio/public/logging'
 import { config } from '../../studio/public/config'
 import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../studio/public/security'
+import { killOwnedProcessTree } from '../../studio/infrastructure/process-tree'
 
 let pty: any = null
 
@@ -137,51 +139,57 @@ function createSession(shell: string): PtySession {
   return session
 }
 
+function killPtySession(session: PtySession): void {
+  try {
+    killOwnedProcessTree(session.pid, () => session.pty.kill())
+  } catch { }
+}
+
 // ─── WebSocket server setup ─────────────────────────────────────
 
 export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
   if (!pty) {
     logger.warn('node-pty not available, skipping terminal WebSocket setup')
-    return
+    return null
   }
 
   const wss = new WebSocketServer({ noServer: true })
   const defaultShell = findShell()
   const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
-  servers.forEach((httpServer) => {
-    httpServer.on('upgrade', async (req, socket, head) => {
-      const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal') {
+  const onUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const url = new URL(req.url || '', `http://${req.headers.host}`)
+    if (url.pathname !== '/api/hermes/terminal') {
+      return
+    }
+
+    if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
+      writeForbiddenOrigin(socket)
+      return
+    }
+
+    // Auth check
+    if (await isAuthEnabled()) {
+      const token = url.searchParams.get('token') || ''
+      const user = await authenticateUserToken(token)
+      if (!user) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+        socket.destroy()
         return
       }
-
-      if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
-        writeForbiddenOrigin(socket)
+      if (!canOpenTerminal(user)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+        socket.destroy()
         return
       }
+    }
 
-      // Auth check
-      if (await isAuthEnabled()) {
-        const token = url.searchParams.get('token') || ''
-        const user = await authenticateUserToken(token)
-        if (!user) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
-          socket.destroy()
-          return
-        }
-        if (!canOpenTerminal(user)) {
-          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
-          socket.destroy()
-          return
-        }
-      }
-
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req)
-      })
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req)
     })
-  })
+  }
+
+  servers.forEach(httpServer => httpServer.on('upgrade', onUpgrade))
 
   wss.on('connection', (ws) => {
     const conn: Connection = {
@@ -302,7 +310,7 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
           const { sessionId } = parsed
           const session = conn.sessions.get(sessionId)
           if (!session) return
-          session.pty.kill()
+          killPtySession(session)
           conn.sessions.delete(sessionId)
           conn.outputBuffers.delete(sessionId)
           if (conn.activeSessionId === sessionId) {
@@ -334,7 +342,7 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
 
     ws.on('close', () => {
       for (const session of Array.from(conn.sessions.values())) {
-        try { session.pty.kill() } catch { }
+        killPtySession(session)
       }
       conn.sessions.clear()
       logger.info('Connection closed, all sessions killed')
@@ -342,7 +350,7 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
 
     ws.on('error', () => {
       for (const session of Array.from(conn.sessions.values())) {
-        try { session.pty.kill() } catch { }
+        killPtySession(session)
       }
       conn.sessions.clear()
     })
@@ -371,4 +379,21 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
   })
 
   logger.info('WebSocket ready at /terminal (shell: %s, transport: node-pty)', defaultShell)
+
+  let closePromise: Promise<void> | null = null
+  const detachAndTerminate = () => {
+    servers.forEach(httpServer => httpServer.off('upgrade', onUpgrade))
+    for (const ws of wss.clients) ws.terminate()
+  }
+  return {
+    forceClose: detachAndTerminate,
+    close(): Promise<void> {
+      if (closePromise) return closePromise
+      detachAndTerminate()
+      closePromise = new Promise(resolve => {
+        wss.close(() => resolve())
+      })
+      return closePromise
+    },
+  }
 }

@@ -8,6 +8,7 @@ import { basename, dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import * as tar from 'tar'
 import { config } from '../../../public/config'
+import { killOwnedProcessTree } from '../../../infrastructure/process-tree'
 import { transcodeToPcmS16le } from './audio-convert'
 import { SttNoSpeechDetectedError, type SttTranscribeInput, type SttTranscribeResult } from './types'
 
@@ -493,7 +494,9 @@ function stopModelProcess(child: ChildProcess, graceful = true): Promise<void> {
       resolvePromise()
     }
     const forceTimer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      if (child.exitCode === null && child.signalCode === null) {
+        killOwnedProcessTree(child.pid, () => { child.kill('SIGKILL') })
+      }
       finish()
     }, CHILD_EXIT_TIMEOUT_MS)
     forceTimer.unref?.()
@@ -501,10 +504,12 @@ function stopModelProcess(child: ChildProcess, graceful = true): Promise<void> {
 
     if (graceful && child.connected) {
       child.send({ action: 'shutdown' }, error => {
-        if (error && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+        if (error && child.exitCode === null && child.signalCode === null) {
+          killOwnedProcessTree(child.pid, () => { child.kill('SIGTERM') })
+        }
       })
     } else {
-      child.kill('SIGTERM')
+      killOwnedProcessTree(child.pid, () => { child.kill('SIGTERM') })
     }
   })
 }
