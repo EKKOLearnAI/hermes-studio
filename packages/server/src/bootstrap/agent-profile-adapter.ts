@@ -8,7 +8,7 @@ import {
   saveEnvValueForProfile,
   updateConfigYaml,
   updateConfigYamlForProfile,
-} from '../services/config-helpers'
+} from '../modules/hermes/services/profiles/config'
 import * as hermesProfile from '../modules/hermes/services/profiles/profile'
 import { configureProfileConfig } from '../modules/studio/public/profile-config'
 

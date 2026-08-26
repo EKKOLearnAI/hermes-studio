@@ -2,7 +2,6 @@
   "schema": 1,
   "cutoffCommit": "a513405354f6b038e220c587c3f729871c2b8b0d",
   "forbiddenImports": [
-    "services/config-helpers.ts -> services/hermes/hermes-profile.ts",
     "services/shutdown.ts -> services/coding-agents/runtime/run-manager.ts",
     "services/shutdown.ts -> services/ekko-agent/manager.ts",
     "services/shutdown.ts -> services/hermes/gateway-runner.ts"

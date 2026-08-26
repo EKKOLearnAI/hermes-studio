@@ -11,7 +11,7 @@ import {
   listSessionSummaryGroups,
 } from '../modules/hermes/services/history/sessions-db'
 import { deleteSessionForProfile, getSession } from '../modules/hermes/services/runtime/cli'
-import { getModelContextLength } from '../services/hermes/model-context'
+import { getModelContextLength } from '../modules/hermes/services/models/context'
 import { configureSessionAgentRuntime } from '../modules/studio/public/session-agent-runtime'
 
 configureSessionAgentRuntime({

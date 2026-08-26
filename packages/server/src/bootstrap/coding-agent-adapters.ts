@@ -1,5 +1,5 @@
 import './agent-profile-adapter'
-import * as modelContext from '../services/hermes/model-context'
+import * as modelContext from '../modules/hermes/services/models/context'
 import * as responseStream from '../modules/studio/services/chat-run/response-stream'
 import * as runUsage from '../modules/studio/services/chat-run/usage'
 import * as responseUtils from '../modules/studio/services/chat-run/response-utils'
