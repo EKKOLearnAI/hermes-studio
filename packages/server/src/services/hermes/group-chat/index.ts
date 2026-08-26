@@ -37,6 +37,13 @@ import {
     type GroupChatAgentHandoffPolicy,
 } from './handoff-depth'
 import { buildOutboundToolMessage } from '../run-chat/resume-payload'
+import * as kanbanCli from '../hermes-kanban'
+import {
+    COLLAB_ANCHOR_TOOL_NAME,
+    CollabOrchestrator,
+    type CollabSessionRow,
+    type CollabSessionStatus,
+} from './collab-orchestrator'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -72,7 +79,9 @@ interface ChatMessage {
     agentSessionId?: string
 }
 
-const GROUP_CHAT_FULL_PAYLOAD_TOOL_NAMES = ['workspace_diff'] as const
+// The collab anchor message carries the session id its task board renders
+// from, so its payload must survive outbound tool-message trimming.
+const GROUP_CHAT_FULL_PAYLOAD_TOOL_NAMES = ['workspace_diff', COLLAB_ANCHOR_TOOL_NAME] as const
 
 function buildOutboundGroupMessage(message: ChatMessage): ChatMessage {
     return buildOutboundToolMessage(message as ChatMessage & Record<string, unknown>, {
@@ -319,10 +328,26 @@ function normalizeRoomMemberAvatar(value: unknown): string {
     throw new Error('Invalid member avatar')
 }
 
+/**
+ * Drop the leading @mentions from a collab prompt so the Kanban task title is
+ * the goal itself rather than "@shyam 组织团队评审…". Mentions inside the body
+ * are left alone — only the addressing prefix is removed.
+ */
+export function stripMentionPrefix(text: string): string {
+    return String(text || '').replace(/^(?:\s*@[^\s@]+)+/, '').trim() || String(text || '').trim()
+}
+
+export type GroupRoomKind = 'chat' | 'collab'
+
+export function normalizeRoomKind(value: unknown): GroupRoomKind {
+    return String(value || '').trim() === 'collab' ? 'collab' : 'chat'
+}
+
 export interface RoomInfo {
     id: string
     name: string
     inviteCode: string | null
+    roomKind: GroupRoomKind
     summaryProfile: string
     summaryProvider: string
     summaryModel: string
@@ -352,6 +377,7 @@ const ROOM_SELECT_COLUMNS = [
     'id',
     'name',
     'inviteCode',
+    'roomKind',
     'summaryProfile',
     'summaryProvider',
     'summaryModel',
@@ -1048,20 +1074,21 @@ class ChatStorage {
         ).all(authUserId) || []) as any[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: RoomSummaryConfig & RoomAgentHandoffConfig & { workspace?: string; ownerAuthUserId?: number | null }): void {
+    saveRoom(id: string, name: string, inviteCode?: string, config?: RoomSummaryConfig & RoomAgentHandoffConfig & { workspace?: string; ownerAuthUserId?: number | null; roomKind?: GroupRoomKind }): void {
         const rawOwnerAuthUserId = Number(config?.ownerAuthUserId ?? 0)
         const ownerAuthUserId = Number.isFinite(rawOwnerAuthUserId) && rawOwnerAuthUserId > 0 ? Math.floor(rawOwnerAuthUserId) : null
         this.db()?.prepare(
             `INSERT OR IGNORE INTO gc_rooms (
-                id, name, inviteCode, summaryProfile, summaryProvider, summaryModel,
+                id, name, inviteCode, roomKind, summaryProfile, summaryProvider, summaryModel,
                 summaryApiMode, summaryEveryTurns, workspace, ownerAuthUserId, createdAt,
                 agentHandoffEnabled, agentHandoffMaxDepth, agentHandoffUnlimited,
                 tokenAccountingVersion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id,
             name,
             inviteCode || null,
+            normalizeRoomKind(config?.roomKind),
             String(config?.summaryProfile || 'default').trim() || 'default',
             String(config?.summaryProvider || '').trim(),
             String(config?.summaryModel || '').trim(),
@@ -1075,6 +1102,86 @@ class ChatStorage {
             config?.agentHandoffUnlimited ? 1 : 0,
             GROUP_CHAT_TOKEN_ACCOUNTING_VERSION,
         )
+    }
+
+    // ─── 群协作 (collaboration runs) ───────────────────────────
+    //
+    // A run row is the bridge between a group-chat message and the Kanban
+    // board. Task state itself is never mirrored here — it is read live from
+    // the board so Studio can never disagree with the source of truth.
+
+    private static readonly COLLAB_COLUMNS = [
+        'id', 'roomId', 'triggerMessageId', 'anchorMessageId', 'rootTaskId', 'tenant',
+        'board', 'coordinator', 'goal', 'workspace', 'status', 'error', 'createdAt', 'updatedAt',
+    ].join(', ')
+
+    createCollabSession(row: CollabSessionRow): void {
+        this.db()?.prepare(
+            `INSERT OR REPLACE INTO gc_collab_sessions (
+                id, roomId, triggerMessageId, anchorMessageId, rootTaskId, tenant,
+                board, coordinator, goal, workspace, status, error, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+            row.id,
+            row.roomId,
+            row.triggerMessageId,
+            row.anchorMessageId,
+            row.rootTaskId,
+            row.tenant,
+            row.board,
+            row.coordinator,
+            row.goal,
+            row.workspace,
+            row.status,
+            row.error,
+            row.createdAt,
+            row.updatedAt,
+        )
+    }
+
+    updateCollabSession(id: string, patch: Partial<CollabSessionRow>): void {
+        const sets: string[] = []
+        const vals: any[] = []
+        const assign = (column: keyof CollabSessionRow, value: unknown) => {
+            sets.push(`${column} = ?`)
+            vals.push(value)
+        }
+        if (patch.rootTaskId !== undefined) assign('rootTaskId', patch.rootTaskId)
+        if (patch.status !== undefined) assign('status', patch.status)
+        if (patch.error !== undefined) assign('error', patch.error)
+        if (patch.anchorMessageId !== undefined) assign('anchorMessageId', patch.anchorMessageId)
+        if (patch.updatedAt !== undefined) assign('updatedAt', patch.updatedAt)
+        if (sets.length === 0) return
+        vals.push(id)
+        this.db()?.prepare(`UPDATE gc_collab_sessions SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+    }
+
+    getCollabSession(id: string): CollabSessionRow | null {
+        const row = this.db()?.prepare(
+            `SELECT ${ChatStorage.COLLAB_COLUMNS} FROM gc_collab_sessions WHERE id = ?`,
+        ).get(id) as CollabSessionRow | undefined
+        return row || null
+    }
+
+    getCollabSessionByAnchor(anchorMessageId: string): CollabSessionRow | null {
+        const row = this.db()?.prepare(
+            `SELECT ${ChatStorage.COLLAB_COLUMNS} FROM gc_collab_sessions WHERE anchorMessageId = ?`,
+        ).get(anchorMessageId) as CollabSessionRow | undefined
+        return row || null
+    }
+
+    listCollabSessionsByRoom(roomId: string): CollabSessionRow[] {
+        return (this.db()?.prepare(
+            `SELECT ${ChatStorage.COLLAB_COLUMNS} FROM gc_collab_sessions
+             WHERE roomId = ? ORDER BY createdAt ASC`,
+        ).all(roomId) || []) as unknown as CollabSessionRow[]
+    }
+
+    listUnfinishedCollabSessions(): CollabSessionRow[] {
+        return (this.db()?.prepare(
+            `SELECT ${ChatStorage.COLLAB_COLUMNS} FROM gc_collab_sessions
+             WHERE status NOT IN ('done', 'failed') ORDER BY createdAt ASC`,
+        ).all() || []) as unknown as CollabSessionRow[]
     }
 
     setRoomOwnerAuthUserId(roomId: string, authUserId: number): void {
@@ -3129,6 +3236,8 @@ export class GroupChatServer {
     /** room-scoped clarification locator -> validated room and runtime session that requested it. */
     private pendingClarifyRoutes = new Map<string, PendingGroupClarifyRoute>()
     private pendingClarifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    /** 群协作 runs: @mentions become Kanban tasks instead of agent turns. */
+    private collab!: CollabOrchestrator
 
     private pendingApprovalRouteKey(roomId: string, approvalId: string): string {
         return `${roomId}:${approvalId}`
@@ -3304,9 +3413,146 @@ export class GroupChatServer {
             this.nsp.to(roomId).emit('message', buildOutboundGroupMessage(msg))
             this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         })
+        this.collab = new CollabOrchestrator({
+            storage: this.storage,
+            kanban: kanbanCli,
+            postAnchorMessage: (input) => this.postCollabAnchorMessage(input),
+            emitToRoom: (roomId, event, payload) => {
+                this.nsp.to(roomId).emit(event, payload)
+            },
+        })
+        // The Kanban board keeps running while Studio is down, so re-attach
+        // watchers to runs that were still in flight at shutdown. Without this
+        // a restart would freeze every in-progress board in the UI.
+        this.collab.resumeUnfinished()
+
         // Restore agent connections — call restoreWhenReady() after server is listening.
         // The dispatcher starts only after local runtime restoration completes.
         this._restoreScheduled = false
+    }
+
+    /**
+     * Post the assistant message whose body renders a run's live task board.
+     * It is attributed to the coordinator agent when that agent is a room
+     * member so the transcript reads like the coordinator answered.
+     */
+    private postCollabAnchorMessage(input: {
+        roomId: string
+        sessionId: string
+        coordinator: string
+        goal: string
+    }): { id: string } | null {
+        const agent = this.storage.getRoomAgents(input.roomId)
+            .find(candidate => candidate.profile === input.coordinator
+                || candidate.name === input.coordinator)
+
+        const message: ChatMessage = {
+            id: this.generateId(),
+            roomId: input.roomId,
+            senderId: agent?.agentId || `collab:${input.coordinator}`,
+            senderName: agent?.name || input.coordinator,
+            senderType: 'agent',
+            senderAgentRecordId: agent?.id || '',
+            senderAvatar: agent?.avatar || '',
+            senderAgentType: agent?.agent,
+            senderAgentProfile: agent?.profile || input.coordinator,
+            senderAgentProvider: agent?.provider || '',
+            senderAgentModel: agent?.model || '',
+            senderAgentDescription: agent?.description || '',
+            senderOwnerMemberId: agent?.ownerMemberId || '',
+            // The board is rendered from the live session, not from this text —
+            // the payload only needs to carry the session locator.
+            content: JSON.stringify({
+                collabSessionId: input.sessionId,
+                coordinator: input.coordinator,
+                goal: input.goal,
+            }),
+            timestamp: Date.now(),
+            persistedAt: Date.now(),
+            role: 'assistant',
+            tool_name: COLLAB_ANCHOR_TOOL_NAME,
+        }
+
+        try {
+            const saved = this.storage.saveMessageAndRefreshRoom(message)
+            this.nsp.to(input.roomId).emit('message', buildOutboundGroupMessage(saved.message))
+            this.nsp.to(input.roomId).emit('room_updated', {
+                roomId: input.roomId,
+                totalTokens: saved.totalTokens,
+            })
+            return { id: saved.message.id }
+        } catch (err) {
+            logger.error(`[Collab] failed to persist anchor message: ${err instanceof Error ? err.message : String(err)}`)
+            return null
+        }
+    }
+
+    getCollabOrchestrator(): CollabOrchestrator {
+        return this.collab
+    }
+
+    /**
+     * Resolve which profile coordinates a collaboration run. The @mention wins;
+     * a room with exactly one agent needs no mention at all. Anything else is
+     * ambiguous and reported back rather than guessed at.
+     */
+    private resolveCollabCoordinator(roomId: string, message: ChatMessage): string {
+        const agents = this.storage.getRoomAgents(roomId)
+        const mentionedId = Array.isArray(message.mentions)
+            ? String(message.mentions.find(mention => mention?.type === 'agent')?.participantId || '')
+            : ''
+        if (mentionedId) {
+            const agent = agents.find(candidate => candidate.agentId === mentionedId)
+            if (agent) return agent.profile || agent.name
+        }
+        // Fall back to text parsing so a manually typed @name still routes.
+        const text = contentToText(message.content)
+        const byName = agents.find(agent => isAgentMentioned(text, agent.name))
+        if (byName) return byName.profile || byName.name
+        if (agents.length === 1) return agents[0].profile || agents[0].name
+        return ''
+    }
+
+    private startCollabRun(roomId: string, message: ChatMessage): void {
+        const coordinator = this.resolveCollabCoordinator(roomId, message)
+        if (!coordinator) {
+            this.nsp.to(roomId).emit('collab_notice', {
+                roomId,
+                messageId: message.id,
+                code: 'COLLAB_COORDINATOR_UNRESOLVED',
+            })
+            return
+        }
+
+        const room = this.storage.getRoom(roomId)
+        const goal = stripMentionPrefix(contentToText(message.content))
+        if (!goal) {
+            this.nsp.to(roomId).emit('collab_notice', {
+                roomId,
+                messageId: message.id,
+                code: 'COLLAB_GOAL_EMPTY',
+            })
+            return
+        }
+
+        try {
+            this.collab.start({
+                roomId,
+                triggerMessageId: message.id,
+                goal,
+                coordinator,
+                // Children inherit this, so the room's workspace is what makes
+                // the documents under review readable by every worker.
+                workspace: room?.workspace || '',
+            })
+        } catch (err) {
+            logger.error(`[Collab] failed to start run: ${err instanceof Error ? err.message : String(err)}`)
+            this.nsp.to(roomId).emit('collab_notice', {
+                roomId,
+                messageId: message.id,
+                code: 'COLLAB_START_FAILED',
+            })
+        }
     }
 
     getIO(): Server {
@@ -4646,6 +4892,16 @@ export class GroupChatServer {
             } else {
                 this.storage.completeHandoffTarget(continuationAttemptId, savedMsg.id)
             }
+        }
+
+        // 群协作 fork. In a collab room an @mention does NOT run an agent turn —
+        // it opens a Kanban run whose coordinator decomposes the goal and fans
+        // the children out to specialist profiles in parallel. Everything above
+        // this point (persistence, broadcast, mention parsing) is shared with
+        // group chat, which is why both surfaces look and feel identical.
+        if (shouldRouteMentions && normalizeRoomKind(this.storage.getRoom(roomId)?.roomKind) === 'collab') {
+            this.startCollabRun(roomId, savedMsg)
+            return
         }
 
         if (shouldRouteMentions) {

@@ -4,10 +4,18 @@ import { fetchAuthenticatedBlob, saveBlob } from './binary-content'
 
 // ─── Types ──────────────────────────────────────────────────
 
+/**
+ * 'chat' rooms run an agent turn per @mention. 'collab' rooms turn an @mention
+ * into a Kanban run that the coordinator decomposes and fans out. Both share
+ * the same UI, so the kind is what the panel switches on.
+ */
+export type GroupRoomKind = 'chat' | 'collab'
+
 export interface RoomInfo {
     id: string
     name: string
     inviteCode: string | null
+    roomKind?: GroupRoomKind
     canManage?: boolean
     canMentionAll?: boolean
     ownerMemberId?: string
@@ -357,6 +365,84 @@ export function disconnectGroupChat(): void {
     }
 }
 
+// ─── 群协作 (collaboration runs) ─────────────────────────────
+
+export type CollabSessionStatus = 'creating' | 'decomposing' | 'running' | 'done' | 'failed'
+
+export interface CollabTaskSnapshot {
+    id: string
+    title: string
+    assignee: string
+    status: string
+    isRoot: boolean
+    summary: string
+    /** Why a `blocked` task stopped; empty for every other status. */
+    blockedReason: string
+    createdAt: number
+    startedAt: number | null
+    completedAt: number | null
+}
+
+export interface CollabSessionSnapshot {
+    id: string
+    roomId: string
+    anchorMessageId: string
+    rootTaskId: string
+    tenant: string
+    board: string
+    coordinator: string
+    goal: string
+    /** Directory every worker runs in — wrong value means invented findings. */
+    workspace: string
+    status: CollabSessionStatus
+    error: string
+    createdAt: number
+    updatedAt: number
+    tasks: CollabTaskSnapshot[]
+    counts: Record<string, number>
+    totalChildren: number
+    doneChildren: number
+}
+
+export interface CollabTaskLog {
+    taskId: string
+    content: string
+    truncated: boolean
+    exists: boolean
+}
+
+/** Hydrate every run in a room — used on page load and after a reconnect. */
+export async function listCollabSessions(roomId: string): Promise<{ sessions: CollabSessionSnapshot[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/collab`)
+}
+
+export async function getCollabSession(roomId: string, sessionId: string): Promise<{ session: CollabSessionSnapshot }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/collab/${sessionId}`)
+}
+
+/** A single worker's execution log, fetched on demand when a task is expanded. */
+export async function getCollabTaskLog(
+    roomId: string,
+    sessionId: string,
+    taskId: string,
+    tail = 40000,
+): Promise<{ log: CollabTaskLog }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/collab/${sessionId}/tasks/${taskId}/log?tail=${tail}`)
+}
+
+/** Abort every unfinished collaboration run in the room. */
+export async function stopCollabRoom(roomId: string): Promise<{ sessions: CollabSessionSnapshot[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/collab/stop`, { method: 'POST' })
+}
+
+/** Abort one collaboration run. */
+export async function stopCollabSession(
+    roomId: string,
+    sessionId: string,
+): Promise<{ session: CollabSessionSnapshot }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/collab/${sessionId}/stop`, { method: 'POST' })
+}
+
 // ─── REST API ───────────────────────────────────────────────
 
 export async function createRoom(data: {
@@ -373,6 +459,7 @@ export async function createRoom(data: {
         everyTurns: number
     }
     workspace?: string
+    roomKind?: GroupRoomKind
 }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request('/api/hermes/group-chat/rooms', {
         method: 'POST',

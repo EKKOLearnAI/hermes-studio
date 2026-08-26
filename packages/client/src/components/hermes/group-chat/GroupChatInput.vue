@@ -26,16 +26,23 @@ const props = withDefaults(defineProps<{
     allowAttachments?: boolean
     showSettings?: boolean
     allowAllMention?: boolean
+    /** Collaboration run in flight — composer shows stop instead of send. */
+    stopMode?: boolean
+    /** Stop request already in flight; keep the button latched. */
+    isStopping?: boolean
 }>(), {
     roomId: null,
     sendBlocked: false,
     allowAttachments: true,
     showSettings: true,
     allowAllMention: false,
+    stopMode: false,
+    isStopping: false,
 })
 const emit = defineEmits<{
     send: [content: string, attachments?: Attachment[], mentions?: GroupChatMention[]]
     'send-blocked': []
+    stop: []
 }>()
 const store = useGroupChatStore()
 const settingsStore = useSettingsStore()
@@ -541,11 +548,23 @@ function handleKeydown(e: KeyboardEvent) {
 
     if (e.key !== 'Enter' || e.shiftKey) return
     if (isComposing.value || e.isComposing || e.keyCode === 229) return
+    // While a collaboration is running the button is "stop", not "send" —
+    // Enter must not start a second run on top of the first.
+    if (props.stopMode) return
     e.preventDefault()
     handleSend()
 }
 
+function handleStop() {
+    if (props.isStopping) return
+    emit('stop')
+}
+
 function handleSend() {
+    if (props.stopMode) {
+        handleStop()
+        return
+    }
     if (isSending.value) return
     const content = inputText.value.trim()
     if (!content && attachments.value.length === 0) return
@@ -822,14 +841,24 @@ function isImage(type: string): boolean {
                         type="primary"
                         circle
                         class="send-button"
-                        :disabled="!canSend || isSending"
-                        :aria-label="t('chat.send')"
-                        @click="handleSend"
+                        :class="{ 'send-button--stop': props.stopMode }"
+                        :disabled="props.stopMode ? props.isStopping : (!canSend || isSending)"
+                        :aria-label="props.stopMode ? t('chat.stop') : t('chat.send')"
+                        @click="props.stopMode ? handleStop() : handleSend()"
                     >
                         <template #icon>
-                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                            <svg
+                                v-if="props.stopMode"
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                aria-hidden="true"
+                            >
+                                <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" />
+                            </svg>
+                            <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
                         </template>
-                        <span class="visually-hidden">{{ t('chat.send') }}</span>
+                        <span class="visually-hidden">{{ props.stopMode ? t('chat.stop') : t('chat.send') }}</span>
                     </NButton>
                 </div>
             </div>

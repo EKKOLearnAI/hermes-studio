@@ -33,6 +33,13 @@ import { isServerTtsProvider } from '@/api/hermes/tts'
 import { groupAgentAvatar, groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
+import CollabTaskBoard from './CollabTaskBoard.vue'
+
+/**
+ * 群协作 anchor messages carry only a session locator; the live task board is
+ * rendered from the store instead of from the message body.
+ */
+const COLLAB_ANCHOR_TOOL_NAME = 'collab_session'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -257,6 +264,23 @@ const quotableContent = computed(() => {
 const toolExpanded = ref(false)
 const expandedWorkspaceChangeIds = ref(new Set<string>())
 const isToolMessage = computed(() => props.message.role === 'tool')
+/** Non-null when this message is a 群协作 run's task-board anchor. */
+const collabAnchor = computed<{ collabSessionId: string; coordinator: string; goal: string } | null>(() => {
+    const toolName = props.message.tool_name || props.message.toolName
+    if (toolName !== COLLAB_ANCHOR_TOOL_NAME) return null
+    try {
+        const parsed = JSON.parse(props.message.content || '{}')
+        const sessionId = String(parsed?.collabSessionId || '')
+        if (!sessionId) return null
+        return {
+            collabSessionId: sessionId,
+            coordinator: String(parsed?.coordinator || ''),
+            goal: String(parsed?.goal || ''),
+        }
+    } catch {
+        return null
+    }
+})
 const assistantWorkspaceChanges = computed(() => props.message.workspaceChanges || [])
 const selectedWorkspaceDiffFileId = computed(() => toolPanelStore.workspaceDiff?.file.id ?? null)
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
@@ -820,7 +844,13 @@ onBeforeUnmount(() => {
                         <MarkdownRenderer :content="thinkingFullText" />
                     </div>
                 </div>
-                <template v-if="parsedMessageReference">
+                <CollabTaskBoard
+                    v-if="collabAnchor"
+                    :session-id="collabAnchor.collabSessionId"
+                    :coordinator="collabAnchor.coordinator"
+                    :goal="collabAnchor.goal"
+                />
+                <template v-else-if="parsedMessageReference">
                     <MarkdownRenderer :content="referencedContentMarkdown" :mention-names="mentionNames" />
                     <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" />
                 </template>
