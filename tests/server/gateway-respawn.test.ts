@@ -63,6 +63,20 @@ describe('gateway-runner supervision', () => {
     })
   })
 
+  it('reuses the active managed gateway when restart signals overlap for one profile', async () => {
+    vi.resetModules()
+    const { startGatewayRunManaged } = await import(
+      '../../packages/server/src/services/hermes/gateway-runner'
+    )
+
+    const first = startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/overlapping-restart' })
+    const second = startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/overlapping-restart' })
+
+    expect(first).toEqual({ pid: 10000, reused: false })
+    expect(second).toEqual({ pid: 10000, reused: true })
+    expect(fakeChildren).toHaveLength(1)
+  })
+
   it('respawns the gateway when the spawned child dies unexpectedly', async () => {
     vi.useFakeTimers()
     vi.resetModules()
