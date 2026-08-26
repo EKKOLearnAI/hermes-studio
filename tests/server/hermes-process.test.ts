@@ -36,7 +36,7 @@ describe('Hermes process invocation', () => {
   it('bypasses the uv hermes.exe trampoline on Windows packaged installs', async () => {
     setPlatform('win32')
     process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\python.exe'
-    const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+    const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
     const result = await execHermesWithBin(
       'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe',
@@ -60,7 +60,7 @@ describe('Hermes process invocation', () => {
       mkdirSync(scripts)
       writeFileSync(join(root, 'python.exe'), '')
       writeFileSync(join(scripts, 'hermes.exe'), '')
-      const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+      const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
       await execHermesWithBin(join(scripts, 'hermes.exe'), ['--version'])
 
@@ -82,7 +82,7 @@ describe('Hermes process invocation', () => {
       mkdirSync(scripts)
       writeFileSync(join(root, 'python.exe'), '')
       writeFileSync(join(scripts, 'hermes.cmd'), '')
-      const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+      const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
       await execHermesWithBin(join(scripts, 'hermes.cmd'), ['--version'])
 
@@ -98,7 +98,7 @@ describe('Hermes process invocation', () => {
 
   it('keeps normal Hermes command execution unchanged on non-Windows platforms', async () => {
     setPlatform('darwin')
-    const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+    const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
     await execHermesWithBin('/opt/hermes/bin/hermes', ['--version'], { windowsHide: true })
 
@@ -111,7 +111,7 @@ describe('Hermes process invocation', () => {
   it('defaults spawned Windows Hermes processes to hidden windows', async () => {
     setPlatform('win32')
     process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Hermes Studio\\resources\\python\\python.exe'
-    const { spawnHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+    const { spawnHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
     spawnHermesWithBin('C:\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe', ['gateway', 'run'])
 

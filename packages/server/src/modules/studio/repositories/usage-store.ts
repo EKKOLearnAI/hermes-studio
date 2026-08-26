@@ -1,5 +1,18 @@
 import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../infrastructure/database'
 import { USAGE_TABLE as TABLE } from '../infrastructure/database/schemas'
+import type {
+  LocalUsageStats,
+  UsageStatsAgentRow,
+  UsageStatsDailyRow,
+  UsageStatsModelRow,
+} from '../contracts/runs/usage'
+
+export type {
+  LocalUsageStats,
+  UsageStatsAgentRow,
+  UsageStatsDailyRow,
+  UsageStatsModelRow,
+} from '../contracts/runs/usage'
 
 export interface UsageRecord {
   input_tokens: number
@@ -234,51 +247,6 @@ export function deleteUsage(sessionId: string): void {
 }
 
 // --- Aggregation for stats endpoint ---
-
-export interface UsageStatsModelRow {
-  model: string
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  reasoning_tokens: number
-  sessions: number
-}
-
-export interface UsageStatsAgentRow {
-  agent: string
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  reasoning_tokens: number
-  sessions: number
-}
-
-export interface UsageStatsDailyRow {
-  date: string
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  sessions: number
-  errors: number
-  cost: number
-}
-
-export interface LocalUsageStats {
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  reasoning_tokens: number
-  sessions: number
-  by_model: UsageStatsModelRow[]
-  by_agent: UsageStatsAgentRow[]
-  by_day: UsageStatsDailyRow[]
-  cost: number
-  total_api_calls: number
-}
 
 export function getRecordedUsageSessionIds(profile?: string): string[] {
   if (isSqliteAvailable()) {

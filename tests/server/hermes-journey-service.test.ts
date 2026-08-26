@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockExecHermes = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/process', () => ({
   execHermes: mockExecHermes,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: () => 'default',
   getProfileDir: (name: string) => `/hermes/${name || 'default'}`,
 }))
@@ -22,7 +22,7 @@ describe('hermes journey service', () => {
       stderr: '',
     })
 
-    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    const { getJourneyGraph } = await import('../../packages/server/src/modules/hermes/services/journey/journey')
     await expect(getJourneyGraph('work')).resolves.toEqual({
       profile: 'work',
       source: 'cli',
@@ -44,7 +44,7 @@ describe('hermes journey service', () => {
   it('surfaces invalid JSON clearly', async () => {
     mockExecHermes.mockResolvedValueOnce({ stdout: 'not json', stderr: '' })
 
-    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    const { getJourneyGraph } = await import('../../packages/server/src/modules/hermes/services/journey/journey')
     await expect(getJourneyGraph('default')).rejects.toThrow('Hermes journey returned invalid JSON')
   })
 
@@ -53,7 +53,7 @@ describe('hermes journey service', () => {
       stderr: "usage: hermes [-h] {chat,config}\nhermes: error: argument command: invalid choice: 'journey'",
     }))
 
-    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    const { getJourneyGraph } = await import('../../packages/server/src/modules/hermes/services/journey/journey')
     await expect(getJourneyGraph('default')).rejects.toThrow('Please update Hermes to 0.18.0 or later to use Learning Journey.')
   })
 
@@ -62,7 +62,7 @@ describe('hermes journey service', () => {
       stderr: 'database is locked',
     }))
 
-    const { getJourneyGraph } = await import('../../packages/server/src/services/hermes/journey')
+    const { getJourneyGraph } = await import('../../packages/server/src/modules/hermes/services/journey/journey')
     await expect(getJourneyGraph('default')).rejects.toThrow('Failed to load Hermes journey graph: database is locked')
   })
 })

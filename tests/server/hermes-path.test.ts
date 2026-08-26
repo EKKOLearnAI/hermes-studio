@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { detectHermesHome } from '../../packages/server/src/services/hermes/hermes-path'
+import { detectHermesHome } from '../../packages/server/src/modules/hermes/services/runtime/path'
 
 describe('Hermes path detection', () => {
   const originalEnv = { ...process.env }
