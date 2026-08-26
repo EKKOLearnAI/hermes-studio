@@ -85,6 +85,8 @@ describe('provider editor service', () => {
       'base_url',
       'api_key',
       'api_mode',
+      'preserve_claude_code_identity',
+      'preserve_codex_identity',
       'preferred_model',
       'context_lengths',
       'discover_models',
