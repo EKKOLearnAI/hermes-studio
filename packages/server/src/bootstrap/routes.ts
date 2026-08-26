@@ -2,6 +2,7 @@ import type { Context, Next } from 'koa'
 import { apiDocsRoutes } from '../modules/studio'
 import { healthRoutes } from './health'
 import { updateRoutes } from './update'
+import { themeRoutes } from '../modules/studio/routes/theme'
 
 // Shared legacy route modules. Move these imports into their owning module as
 // each vertical slice is migrated.
@@ -14,7 +15,6 @@ import { codingAgentRoutes } from '../routes/coding-agents'
 import { appRelayRoutes } from '../routes/app-relay'
 import { appConnectionRoutes } from '../routes/app-connections'
 import { socialMessageRoutes } from '../routes/social-messages'
-import { themeRoutes } from '../routes/theme'
 import { claudeCodeProxyRoutes } from '../routes/claude-code-proxy'
 import { codexProxyRoutes } from '../routes/codex-proxy'
 

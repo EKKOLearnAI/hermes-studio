@@ -5,9 +5,19 @@ import { config } from '../../public/config'
 import {
   clearUserThemeBackground,
   getUserTheme,
+  saveUserTheme,
   saveUserThemeBackground,
+  toUserThemePayload,
+  UserThemeValidationError,
   type UserThemeRecord,
 } from '../../repositories/user-theme-store'
+
+export {
+  getUserTheme,
+  saveUserTheme,
+  toUserThemePayload,
+  UserThemeValidationError,
+}
 
 export const MAX_THEME_BACKGROUND_BYTES = 10 * 1024 * 1024
 

@@ -1,5 +1,6 @@
 export { apiDocsRoutes } from './routes/api-docs'
 export { updateRoutes } from './routes/update'
+export { themeRoutes } from './routes/theme'
 export type { AgentBridgeHealthPayload, StudioHealthDependencies } from './contracts/health'
 export { AGENT_FAMILIES, isAgentFamily } from './contracts/agents/family'
 export type { AgentFamily } from './contracts/agents/family'
