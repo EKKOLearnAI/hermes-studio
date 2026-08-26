@@ -39,14 +39,6 @@
     "services/hermes/run-chat/sse-utils.ts -> services/coding-agents/shared/sse.ts",
     "services/shutdown.ts -> services/coding-agents/runtime/run-manager.ts",
     "services/shutdown.ts -> services/ekko-agent/manager.ts",
-    "services/shutdown.ts -> services/hermes/gateway-runner.ts",
-    "services/workflow-import-capabilities.ts -> services/coding-agents/shared/provider-policy.ts",
-    "services/workflow-manager.ts -> routes/hermes/chat-run.ts",
-    "services/workflow-manager.ts -> services/coding-agents/runtime/run-manager.ts",
-    "services/workflow-manager.ts -> services/hermes/hermes-cli.ts",
-    "services/workflow-manager.ts -> services/hermes/hermes-profile.ts",
-    "services/workflow-manager.ts -> services/hermes/run-chat/index.ts",
-    "services/workflow-schedule-service.ts -> controllers/hermes/models.ts",
-    "services/workflow-skill-resolver.ts -> services/hermes/hermes-profile.ts"
+    "services/shutdown.ts -> services/hermes/gateway-runner.ts"
   ]
 }

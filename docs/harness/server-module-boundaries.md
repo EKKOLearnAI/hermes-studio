@@ -302,7 +302,7 @@ registry. Studio orchestration never imports a concrete agent module.
 | --- | --- | --- |
 | Studio update and Version Preview | Studio | Upgrades/restarts `hermes-web-ui`, not Hermes Agent. |
 | Auth, users, devices, files, app connections, relay, social messages | Studio | Product/platform capabilities shared across agents. |
-| Workflow, Group Chat, Global Agent | Studio | Cross-agent orchestration surfaces; dispatch through agent contracts. |
+| Single Chat (Chat Run), Workflow, Group Chat, Global Agent | Studio | Cross-agent run and orchestration surfaces; dispatch through agent contracts. |
 | Pets/Petdex and aggregate logs | Studio | Stored or presented as Studio product state. |
 | Common config, credentials, provider contracts, voice, run/session/usage helpers | Studio | Shared capabilities exposed through `studio/public` or `studio/contracts`. |
 | Studio SQLite tables and repositories | Studio | Application state owned by the Web UI. |
@@ -318,8 +318,9 @@ registry. Studio orchestration never imports a concrete agent module.
 
 If a feature can dispatch multiple agents, that alone does not make its data
 and business rules common. Ownership follows the state, command, and rules that
-the feature controls. Kanban is therefore Hermes; Group Chat and Workflow are
-Studio orchestration.
+the feature controls. Kanban is therefore Hermes; Single Chat, Group Chat,
+Workflow, and Global Agent are Studio orchestration. Hermes session history is
+still exposed through a Hermes adapter, but Studio owns the chat-run lifecycle.
 
 ## Allowed Dependency Matrix
 

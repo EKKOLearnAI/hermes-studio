@@ -28,20 +28,25 @@ const workflowSkillResolverMock = vi.hoisted(() => ({
   resolve: null as null | ((args: { agent?: string; profile: string; skillName: string }) => Promise<any>),
 }))
 
-vi.mock('../../packages/server/src/services/workflow-skill-resolver', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../packages/server/src/services/workflow-skill-resolver')>()
+vi.mock('../../packages/server/src/modules/studio/services/workflow/skill-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/modules/studio/services/workflow/skill-resolver')>()
   return {
     ...actual,
     resolveWorkflowSkillContent: (args: { agent?: string; profile: string; skillName: string }) => (
       workflowSkillResolverMock.resolve
         ? workflowSkillResolverMock.resolve(args)
-        : actual.resolveWorkflowSkillContent(args)
+        : Promise.resolve(null)
     ),
   }
 })
 
-vi.mock('../../packages/server/src/routes/hermes/chat-run', () => ({
-  getChatRunServer: () => chatRunMock,
+vi.mock('../../packages/server/src/modules/studio/public/workflow-runtime', () => ({
+  isWorkflowRunCoordinatorAvailable: () => true,
+  runWorkflowAndWait: (input: Record<string, unknown>, options: Record<string, unknown>) => chatRunMock.runAndWait(input, options),
+  abortWorkflowSession: (sessionId: string, reason: string) => chatRunMock.abortSession(sessionId, reason),
+  stopWorkflowAgentRun: vi.fn(),
+  deleteWorkflowPrimaryAgentSession: vi.fn(async () => true),
+  getWorkflowAvailableModelGroups: vi.fn(async () => []),
 }))
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', async (importOriginal) => {

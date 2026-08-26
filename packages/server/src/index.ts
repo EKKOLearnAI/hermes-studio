@@ -37,7 +37,7 @@ import {
 } from './db/hermes/app-connections-store'
 import { ensureAppRelayHostClient } from './services/app-relay/connection'
 import { setupGlobalEkkoAgent } from './bootstrap/ekko'
-import { WorkflowSocketServer } from './services/workflow-socket'
+import { WorkflowSocketServer } from './modules/studio/sockets/workflow'
 import { PetStateSocketServer } from './modules/studio/sockets/pet-state'
 import { logger } from './services/logger'
 import { createStaticCompressionMiddleware } from './middleware/static-compression'
@@ -384,12 +384,12 @@ export async function bootstrap() {
   // A process restart loses in-memory scheduler, approval, and runner ownership.
   // Persist a fail-closed terminal state before exposing workflow sockets, then abort
   // any surviving session runners through the now-registered ChatRun service.
-  const { getWorkflowManager } = await import('./services/workflow-manager')
+  const { getWorkflowManager } = await import('./modules/studio/services/workflow/manager')
   const recoveredWorkflows = await getWorkflowManager().recoverActiveRuns()
   if (recoveredWorkflows.runs > 0) {
     logger.warn('Recovered %d orphaned workflow runs and aborted %d sessions', recoveredWorkflows.runs, recoveredWorkflows.sessions)
   }
-  const { getWorkflowScheduleService } = await import('./services/workflow-schedule-service')
+  const { getWorkflowScheduleService } = await import('./modules/studio/services/workflow/schedule')
   getWorkflowScheduleService().start()
 
   workflowSocketServer = new WorkflowSocketServer(groupChatServer.getIO())
