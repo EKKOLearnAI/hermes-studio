@@ -18,7 +18,9 @@ agent can discover without chat history.
 - `docs/harness/validation.md` maps change types to checks.
 - `docs/harness/worktree-runbook.md` explains isolated worktree development.
 - `docs/harness/pr-review.md` provides a PR self-review checklist.
+- `docs/harness/server-module-boundaries.md` defines backend ownership and the migration target.
 - `scripts/harness-check.mjs` enforces baseline repository invariants.
+- `scripts/server-module-boundaries.mjs` prevents new backend boundary debt.
 
 ## Operating Model
 

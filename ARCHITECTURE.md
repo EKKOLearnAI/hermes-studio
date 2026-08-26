@@ -36,6 +36,13 @@ should not duplicate server persistence rules.
 
 ## Server Structure
 
+The current `routes/`, `controllers/`, `services/`, and `db/` directories are a
+legacy layout being migrated by business ownership. New server files belong in
+`modules/studio`, `modules/hermes`, `modules/ekko`, or
+`modules/coding-agents`; concrete module composition belongs in `bootstrap`.
+See `docs/harness/server-module-boundaries.md` for the complete target tree,
+ownership decisions, allowed dependency matrix, and migration rules.
+
 - `routes/` registers HTTP and WebSocket entry points.
 - `controllers/` handles request-level behavior.
 - `services/` owns reusable IO, domain behavior, external process calls, and integration logic.

@@ -11,6 +11,7 @@ and keep this file small enough to fit into every task context.
 - `docs/harness/validation.md` - which checks to run for each change type.
 - `docs/harness/worktree-runbook.md` - isolated local dev and test setup.
 - `docs/harness/pr-review.md` - self-review checklist before pushing.
+- `docs/harness/server-module-boundaries.md` - target backend modules, ownership, and dependency rules.
 
 ## Common Commands
 
@@ -38,6 +39,7 @@ Use the smallest relevant check while iterating. Before a broad PR, run
 ## Hard Rules
 
 - Keep routes thin: put request handling in controllers and reusable behavior in services.
+- Put new server code under `modules/studio`, `modules/hermes`, `modules/ekko`, or `modules/coding-agents`; compose modules only from `bootstrap`.
 - Keep Web UI state under `HERMES_WEB_UI_HOME` or `HERMES_WEBUI_STATE_DIR`.
 - Keep Hermes Agent state separate from Web UI state.
 - Register local API routes before proxy catch-all routes.

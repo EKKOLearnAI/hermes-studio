@@ -25,6 +25,7 @@ npm run build
 | Client component/store/API | focused `npm run test -- <pattern>`, then `npm run build` |
 | User-visible browser flow | focused Vitest plus `npm run test:e2e` |
 | Server controller/service/db | focused `npm run test -- tests/server/<file>` |
+| Server module move or dependency change | `npm run harness:server-boundaries`, focused server tests, then `npm run harness:check` |
 | Auth, profile, or credential behavior | focused server tests plus relevant e2e auth tests |
 | Chat, Socket.IO, group chat | focused server tests plus relevant e2e chat tests |
 | Chat session chain, Agent Bridge, compression, or Group Chat | Add one `docs/chat-chain-changes/*.md` fragment with date, PR/commit, touched feature, and behavior impact; then run `npm run harness:check` plus focused chat/bridge/group-chat tests |

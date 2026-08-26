@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
+import { checkServerModuleBoundaries } from './server-module-boundaries.mjs'
 
 const root = process.cwd()
 const failures = []
@@ -106,7 +107,9 @@ for (const file of [
   'docs/harness/validation.md',
   'docs/harness/worktree-runbook.md',
   'docs/harness/pr-review.md',
+  'docs/harness/server-module-boundaries.md',
   'docs/chat-chain-changes/README.md',
+  'scripts/harness/server-module-boundary-baseline.json',
 ]) {
   requireFile(file)
 }
@@ -162,6 +165,7 @@ for (const requiredLink of [
 const packageJson = JSON.parse(await readText('package.json'))
 for (const scriptName of [
   'harness:check',
+  'harness:server-boundaries',
   'test',
   'test:coverage',
   'test:e2e',
@@ -191,6 +195,10 @@ if (!buildWorkflow.includes('npm run harness:check')) {
 }
 if (!buildWorkflow.includes('fetch-depth: 0')) {
   fail('Build workflow checkout must use fetch-depth: 0 so harness:check can inspect PR diffs')
+}
+
+for (const failure of await checkServerModuleBoundaries(root)) {
+  fail(failure)
 }
 
 const chatSessionsDoc = await readText('docs/cli-chat-sessions.md')
