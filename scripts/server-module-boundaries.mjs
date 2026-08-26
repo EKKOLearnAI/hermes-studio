@@ -35,6 +35,7 @@ const LEGACY_STUDIO_API_PREFIXES = [
   '/api/hermes/files',
   '/api/hermes/usage',
   '/api/hermes/logs',
+  '/api/hermes/mcu',
   '/api/hermes/stt',
   '/api/hermes/tts',
 ]
@@ -102,7 +103,7 @@ export function legacyAppAliasFailure(file, source) {
   if (normalized === LEGACY_APP_COMPATIBILITY_FILE) return null
   const legacyPrefix = LEGACY_STUDIO_API_PREFIXES.find(prefix => source.includes(prefix))
   if (!legacyPrefix) return null
-  return `${normalized} declares legacy Studio API ${legacyPrefix}; keep App aliases in ${LEGACY_APP_COMPATIBILITY_FILE}`
+  return `${normalized} declares legacy Studio API ${legacyPrefix}; keep released-client aliases in ${LEGACY_APP_COMPATIBILITY_FILE}`
 }
 
 export function collectModuleSpecifiers(source, fileName = 'source.ts') {

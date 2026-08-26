@@ -3,9 +3,10 @@ import type { Middleware } from 'koa'
 type LegacyAppApiPrefix = readonly [legacy: string, canonical: string]
 
 /**
- * Compatibility for App versions released before Studio-owned APIs moved out
- * of /api/hermes. Keep every legacy App alias in this table; new callers must
- * use the canonical /api/studio paths directly.
+ * Compatibility for released clients that predate Studio-owned APIs moving
+ * out of /api/hermes. This includes old App versions and MCU firmware that
+ * must still reach its legacy OTA manifest. New callers must use canonical
+ * /api/studio paths directly.
  */
 export const LEGACY_APP_API_PREFIXES: readonly LegacyAppApiPrefix[] = Object.freeze([
   ['/api/hermes/session-categories', '/api/studio/session-categories'],
@@ -21,6 +22,7 @@ export const LEGACY_APP_API_PREFIXES: readonly LegacyAppApiPrefix[] = Object.fre
   ['/api/hermes/files', '/api/studio/files'],
   ['/api/hermes/usage', '/api/studio/usage'],
   ['/api/hermes/logs', '/api/studio/logs'],
+  ['/api/hermes/mcu', '/api/studio/mcu'],
   ['/api/hermes/stt', '/api/studio/stt'],
   ['/api/hermes/tts', '/api/studio/tts'],
 ])

@@ -5,7 +5,7 @@ separates Studio-owned capabilities from the three agent families while
 preserving request/response semantics and persisted data. Studio-owned HTTP
 operations use `/api/studio/*`; Hermes-owned operations use `/api/hermes/*`.
 Old server source trees are not retained. The only old Studio URL aliases are
-the centralized compatibility mappings for already-released App versions in
+the centralized compatibility mappings for already-released App and MCU firmware versions in
 `modules/studio/middleware/legacy-app-api.ts`.
 
 All server TypeScript source lives under `modules/` or `bootstrap/`, except the
@@ -76,7 +76,7 @@ packages/server/src/
       middleware/
         auth.ts
         errors.ts
-        legacy-app-api.ts          # temporary old-App URL mapping only
+        legacy-app-api.ts          # temporary released App and MCU firmware URL mapping only
         request-context.ts
       http/
         body.ts
@@ -387,7 +387,7 @@ Preserve behavior while moving ownership:
    repository/adapter, socket, Client API, and focused tests.
 5. Do not add compatibility re-exports or legacy source trees. Old HTTP aliases
    are allowed only in `modules/studio/middleware/legacy-app-api.ts` for released
-   App versions; current clients must migrate to canonical URLs in the same change.
+   App and MCU firmware versions; current clients must migrate to canonical URLs in the same change.
 
 ## Mechanical Harness
 

@@ -77,11 +77,11 @@ describe('server module boundary harness', () => {
     expect(studioOwnershipFailure('modules/hermes/services/profiles/app-profile-avatar.ts')).toBeNull()
   })
 
-  it('keeps legacy App aliases in the single Studio compatibility middleware', () => {
+  it('keeps released-client aliases in the single Studio compatibility middleware', () => {
     expect(legacyAppAliasFailure(
       'modules/studio/routes/sessions.ts',
       "routes.get('/api/hermes/sessions', controller)",
-    )).toContain('keep App aliases in modules/studio/middleware/legacy-app-api.ts')
+    )).toContain('keep released-client aliases in modules/studio/middleware/legacy-app-api.ts')
     expect(legacyAppAliasFailure(
       'modules/studio/middleware/legacy-app-api.ts',
       "['/api/hermes/sessions', '/api/studio/sessions']",
@@ -90,6 +90,10 @@ describe('server module boundary harness', () => {
       'modules/hermes/routes/jobs.ts',
       "routes.get('/api/hermes/jobs', controller)",
     )).toBeNull()
+    expect(legacyAppAliasFailure(
+      'modules/studio/routes/mcu-firmware.ts',
+      "routes.get('/api/hermes/mcu/firmware.bin', controller)",
+    )).toContain('keep released-client aliases in modules/studio/middleware/legacy-app-api.ts')
   })
 
   it('keeps controllers and services pointed down the layer graph', () => {

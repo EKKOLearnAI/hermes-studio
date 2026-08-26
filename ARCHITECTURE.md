@@ -46,7 +46,7 @@ ownership decisions, allowed dependency matrix, and migration rules.
 - Module `controllers/` handle request-level behavior.
 - Module `services/` own reusable IO, domain behavior, processes, and integrations.
 - Studio `repositories/` and `infrastructure/` own application persistence.
-- Studio `middleware/legacy-app-api.ts` is the only old-App URL compatibility map.
+- Studio `middleware/legacy-app-api.ts` is the only released App and MCU firmware URL compatibility map.
 
 Architecture rules:
 
