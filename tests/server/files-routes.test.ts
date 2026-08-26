@@ -15,7 +15,7 @@ const resolveHermesPathMock = vi.fn((relativePath: string) => {
   return normalized ? `/home/agent/.hermes/${normalized}` : '/home/agent/.hermes'
 })
 
-vi.mock('../../packages/server/src/services/hermes/file-provider', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/files/file-provider', () => ({
   createFileProvider: createFileProviderMock,
   resolveHermesPath: resolveHermesPathMock,
   isSensitivePath: vi.fn(() => false),
@@ -23,7 +23,7 @@ vi.mock('../../packages/server/src/services/hermes/file-provider', () => ({
 }))
 
 async function runFileRoute(path: string, ctx: any) {
-  const { fileRoutes } = await import('../../packages/server/src/routes/hermes/files')
+  const { fileRoutes } = await import('../../packages/server/src/modules/hermes/routes/files')
   const layer = fileRoutes.stack.find((entry: any) => entry.path === path)
   if (!layer) throw new Error(`Missing file route ${path}`)
 

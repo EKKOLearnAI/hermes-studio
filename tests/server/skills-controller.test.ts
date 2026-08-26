@@ -13,18 +13,21 @@ const mockSafeReadFile = vi.hoisted(() => vi.fn())
 const mockExtractDescription = vi.hoisted(() => vi.fn())
 const mockListFilesRecursive = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
   getSkillUsageStatsFromDb: mockGetSkillUsageStatsFromDb,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: mockGetActiveProfileName,
   getProfileDir: mockGetProfileDir,
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: mockReadConfigYamlForProfile,
   updateConfigYamlForProfile: mockUpdateConfigYamlForProfile,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/files', () => ({
   safeReadFile: mockSafeReadFile,
   extractDescription: mockExtractDescription,
   listFilesRecursive: mockListFilesRecursive,
@@ -32,7 +35,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
 
 async function loadController() {
   vi.resetModules()
-  return import('../../packages/server/src/controllers/hermes/skills')
+  return import('../../packages/server/src/modules/hermes/controllers/skills')
 }
 
 function multipartBody(boundary: string, parts: Array<{ name: string; value: string; filename?: string; filenameStar?: string; contentType?: string }>): Buffer {

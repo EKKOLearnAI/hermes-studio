@@ -1,4 +1,5 @@
-import { readFile, stat } from 'fs/promises'
+import { readFile, readdir, stat } from 'fs/promises'
+import { join } from 'path'
 
 export async function safeReadFile(filePath: string): Promise<string | null> {
   try {
@@ -15,4 +16,40 @@ export async function safeStat(filePath: string): Promise<{ mtime: number } | nu
   } catch {
     return null
   }
+}
+
+export function extractDescription(content: string): string {
+  const lines = content.split('\n')
+  let inFrontmatter = false
+  let bodyStarted = false
+  for (const line of lines) {
+    if (!bodyStarted && line.trim() === '---') {
+      if (!inFrontmatter) {
+        inFrontmatter = true
+        continue
+      }
+      inFrontmatter = false
+      bodyStarted = true
+      continue
+    }
+    if (inFrontmatter || line.trim() === '' || line.startsWith('#')) continue
+    return line.trim().slice(0, 80)
+  }
+  return ''
+}
+
+export async function listFilesRecursive(dir: string, prefix: string): Promise<Array<{ path: string; name: string }>> {
+  const result: Array<{ path: string; name: string }> = []
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return result
+  }
+  for (const entry of entries) {
+    const relPath = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) result.push(...await listFilesRecursive(join(dir, entry.name), relPath))
+    else result.push({ path: relPath, name: entry.name })
+  }
+  return result
 }
