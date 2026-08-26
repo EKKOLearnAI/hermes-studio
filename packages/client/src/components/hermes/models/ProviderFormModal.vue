@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, nextTick } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage, useDialog } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, NSwitch, useMessage, useDialog } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
@@ -44,6 +44,8 @@ const formData = ref({
   model: '',
   context_length: null as number | null,
   api_mode: 'chat_completions' as ProviderApiMode,
+  preserve_claude_code_identity: false,
+  preserve_codex_identity: false,
 })
 
 const providerNameInputProps = {
@@ -217,7 +219,7 @@ watch(() => formData.value.model, (model) => {
 
 watch(providerType, () => {
   modelOptions.value = []
-  formData.value = { name: '', base_url: '', api_key: '', model: '', context_length: null, api_mode: 'chat_completions' }
+  formData.value = { name: '', base_url: '', api_key: '', model: '', context_length: null, api_mode: 'chat_completions', preserve_claude_code_identity: false, preserve_codex_identity: false }
   selectedPreset.value = null
 })
 
@@ -339,6 +341,8 @@ async function handleSave() {
       model: formData.value.model,
       context_length: contextLength,
       api_mode: formData.value.api_mode,
+      preserve_claude_code_identity: formData.value.preserve_claude_code_identity,
+      preserve_codex_identity: formData.value.api_mode === 'codex_responses' && formData.value.preserve_codex_identity,
       providerKey,
     })
     message.success(t('models.providerAdded'))
@@ -577,6 +581,20 @@ function handleClose() {
           v-model:value="formData.api_mode"
           :options="apiModeOptions"
         />
+      </NFormItem>
+
+      <NFormItem
+        v-if="providerType === 'custom' && formData.api_mode === 'anthropic_messages'"
+        :label="t('models.preserveClaudeCodeIdentity')"
+      >
+        <NSwitch v-model:value="formData.preserve_claude_code_identity" />
+      </NFormItem>
+
+      <NFormItem
+        v-if="providerType === 'custom' && formData.api_mode === 'codex_responses'"
+        :label="t('models.preserveCodexIdentity')"
+      >
+        <NSwitch v-model:value="formData.preserve_codex_identity" />
       </NFormItem>
     </NForm>
 

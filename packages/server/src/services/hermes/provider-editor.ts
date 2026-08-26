@@ -21,6 +21,8 @@ export type ProviderEditableField =
   | 'base_url'
   | 'api_key'
   | 'api_mode'
+  | 'preserve_claude_code_identity'
+  | 'preserve_codex_identity'
   | 'preferred_model'
   | 'context_lengths'
   | 'discover_models'
@@ -38,6 +40,8 @@ export interface ProviderEditorDetail {
   source_key?: string
   base_url: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   preferred_model: string
   credential_configured: boolean
   editable: boolean
@@ -58,6 +62,8 @@ export interface ProviderEditorPatch {
   label?: string
   base_url?: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   preferred_model?: string
   credential_action?: CredentialAction
   api_key?: string
@@ -247,6 +253,8 @@ const CUSTOM_PROVIDER_EDITABLE_FIELDS: ProviderEditableField[] = [
   'base_url',
   'api_key',
   'api_mode',
+  'preserve_claude_code_identity',
+  'preserve_codex_identity',
   'preferred_model',
   'context_lengths',
   'discover_models',
@@ -339,6 +347,8 @@ function buildDetailFromRaw(
     ? (source.envMapping!.base_url_env ? env.get(source.envMapping!.base_url_env) : '') || source.preset!.base_url
     : normalized!.base_url
   const apiMode = source.builtin ? source.preset!.api_mode : normalized!.api_mode
+  const preserveClaudeCodeIdentity = !source.builtin && source.configEntry?.preserve_claude_code_identity === true
+  const preserveCodexIdentity = !source.builtin && source.configEntry?.preserve_codex_identity === true
   const preferredModel = appProfileValue(appConfig, 'providerPreferredModels', profile, providerId) ||
     (!source.builtin ? String(normalized!.model || '') : '')
   const fields = editableFields(source)
@@ -372,6 +382,8 @@ function buildDetailFromRaw(
     ...(source.sourceKey ? { source_key: source.sourceKey } : {}),
     base_url: baseUrl,
     ...(apiMode ? { api_mode: apiMode } : {}),
+    ...(preserveClaudeCodeIdentity ? { preserve_claude_code_identity: true } : {}),
+    ...(preserveCodexIdentity ? { preserve_codex_identity: true } : {}),
     preferred_model: preferredModel,
     credential_configured: credential.configured,
     editable: fields.length > 0,
@@ -598,6 +610,8 @@ function changedFields(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   if (patch.label !== undefined && patch.label.trim() !== before.label) fields.push('label')
   if (patch.base_url !== undefined && patch.base_url.replace(/\/+$/, '') !== before.base_url.replace(/\/+$/, '')) fields.push('base_url')
   if (patch.api_mode !== undefined && patch.api_mode !== before.api_mode) fields.push('api_mode')
+  if (patch.preserve_claude_code_identity !== undefined && patch.preserve_claude_code_identity !== Boolean(before.preserve_claude_code_identity)) fields.push('preserve_claude_code_identity')
+  if (patch.preserve_codex_identity !== undefined && patch.preserve_codex_identity !== Boolean(before.preserve_codex_identity)) fields.push('preserve_codex_identity')
   if (patch.preferred_model !== undefined && patch.preferred_model.trim() !== before.preferred_model) fields.push('preferred_model')
   if (patch.discover_models !== undefined && patch.discover_models !== before.discover_models) fields.push('discover_models')
   if (patch.rate_limit_delay !== undefined && patch.rate_limit_delay !== (before.rate_limit_delay ?? null)) fields.push('rate_limit_delay')
@@ -621,6 +635,8 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   if (patch.label !== undefined && !allowed.has('label')) throw new ProviderEditorError('Provider label is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.base_url !== undefined && !allowed.has('base_url')) throw new ProviderEditorError('Provider base URL is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.api_mode !== undefined && !allowed.has('api_mode')) throw new ProviderEditorError('Provider API mode is read-only', 400, 'FIELD_READ_ONLY')
+  if (patch.preserve_claude_code_identity !== undefined && !allowed.has('preserve_claude_code_identity')) throw new ProviderEditorError('Claude Code identity preservation is read-only', 400, 'FIELD_READ_ONLY')
+  if (patch.preserve_codex_identity !== undefined && !allowed.has('preserve_codex_identity')) throw new ProviderEditorError('Codex identity preservation is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.preferred_model !== undefined && !allowed.has('preferred_model')) throw new ProviderEditorError('Preferred model is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.discover_models !== undefined && !allowed.has('discover_models')) throw new ProviderEditorError('Model discovery is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.rate_limit_delay !== undefined && !allowed.has('rate_limit_delay')) throw new ProviderEditorError('Rate limit delay is read-only', 400, 'FIELD_READ_ONLY')
@@ -631,6 +647,8 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   if (patch.label !== undefined && (!patch.label.trim() || patch.label.trim().length > 100)) throw new ProviderEditorError('Provider label must contain 1-100 characters', 400, 'INVALID_LABEL')
   if (patch.base_url !== undefined) normalizeUrl(patch.base_url)
   if (patch.api_mode !== undefined && !normalizeApiMode(patch.api_mode)) throw new ProviderEditorError('Invalid API mode', 400, 'INVALID_API_MODE')
+  if (patch.preserve_claude_code_identity !== undefined && typeof patch.preserve_claude_code_identity !== 'boolean') throw new ProviderEditorError('Invalid Claude Code identity preservation value', 400, 'INVALID_PRESERVE_CLAUDE_CODE_IDENTITY')
+  if (patch.preserve_codex_identity !== undefined && typeof patch.preserve_codex_identity !== 'boolean') throw new ProviderEditorError('Invalid Codex identity preservation value', 400, 'INVALID_PRESERVE_CODEX_IDENTITY')
   if (patch.preferred_model !== undefined && (!patch.preferred_model.trim() || /[\r\n]/.test(patch.preferred_model))) throw new ProviderEditorError('Preferred model is invalid', 400, 'INVALID_MODEL')
   if (patch.credential_action === 'replace' && (!String(patch.api_key || '').trim() || /[\r\n]/.test(String(patch.api_key)))) throw new ProviderEditorError('A non-empty API key is required', 400, 'INVALID_API_KEY')
   validateOptionalRuntimeNumber(patch.rate_limit_delay, 'rate_limit_delay')
@@ -692,6 +710,12 @@ export async function updateProviderEditorDetail(
     }
     if (patch.api_mode !== undefined && !source.builtin) {
       setExistingAlias(source.configEntry!, ['api_mode', 'transport', 'apiMode'], patch.api_mode, 'api_mode')
+    }
+    if (patch.preserve_claude_code_identity !== undefined && !source.builtin) {
+      source.configEntry!.preserve_claude_code_identity = patch.preserve_claude_code_identity
+    }
+    if (patch.preserve_codex_identity !== undefined && !source.builtin) {
+      source.configEntry!.preserve_codex_identity = patch.preserve_codex_identity
     }
     if (!source.builtin) {
       if (patch.discover_models !== undefined) {

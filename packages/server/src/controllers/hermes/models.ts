@@ -24,7 +24,7 @@ const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
-type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: ProviderApiMode; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string; provider_source?: 'custom_providers' | 'providers'; provider_key?: string; provider_editable?: boolean; editable_fields?: ProviderEditableField[]; model_refreshable?: boolean; model_refresh_reason?: string; model_restore_available?: boolean }
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: ProviderApiMode; preserve_claude_code_identity?: boolean; preserve_codex_identity?: boolean; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string; provider_source?: 'custom_providers' | 'providers'; provider_key?: string; provider_editable?: boolean; editable_fields?: ProviderEditableField[]; model_refreshable?: boolean; model_refresh_reason?: string; model_restore_available?: boolean }
 type ModelVisibility = Record<string, ModelVisibilityRule>
 type CustomModels = Record<string, string[]>
 
@@ -414,7 +414,7 @@ async function buildAvailableForProfile(
 
   const groups: AvailableGroup[] = []
   const seenProviders = new Set<string>()
-  const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key' | 'api_mode'>) => {
+  const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key' | 'api_mode' | 'preserve_claude_code_identity' | 'preserve_codex_identity'>) => {
     if (seenProviders.has(provider)) return
     seenProviders.add(provider)
     const availableModels = [...new Set(models)]
@@ -438,6 +438,8 @@ async function buildAvailableForProfile(
       available_models: availableModels,
       api_key,
       ...(apiMode ? { api_mode: apiMode } : {}),
+      ...(extra?.preserve_claude_code_identity ? { preserve_claude_code_identity: true } : {}),
+      ...(extra?.preserve_codex_identity ? { preserve_codex_identity: true } : {}),
       ...(builtin ? { builtin: true } : {}),
       ...(Object.keys(unavailableMeta).length ? { model_meta: unavailableMeta } : {}),
       ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}),
@@ -518,13 +520,13 @@ async function buildAvailableForProfile(
         { hasStaticManifest, profile },
       )
       const models = [...new Set([cp.model, ...configuredModels, ...resolvedCatalogModels].filter(Boolean) as string[])]
-      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, builtin: hasStaticManifest, provider_source: cp.source, provider_key: cp.provider_key }
+      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, preserve_claude_code_identity: cp.preserve_claude_code_identity, preserve_codex_identity: cp.preserve_codex_identity, builtin: hasStaticManifest, provider_source: cp.source, provider_key: cp.provider_key }
     }),
   )
   for (const result of customFetches) {
     if (result.status === 'fulfilled' && result.value?.models.length) {
-      const { providerKey, label, base_url, models, api_key, api_mode, builtin, provider_source, provider_key } = result.value
-      addGroup(providerKey, label, base_url, models, api_key, builtin, undefined, { provider_source, provider_key, api_mode })
+      const { providerKey, label, base_url, models, api_key, api_mode, preserve_claude_code_identity, preserve_codex_identity, builtin, provider_source, provider_key } = result.value
+      addGroup(providerKey, label, base_url, models, api_key, builtin, undefined, { provider_source, provider_key, api_mode, preserve_claude_code_identity, preserve_codex_identity })
     }
   }
 
@@ -689,12 +691,12 @@ export async function getAvailable(ctx: any) {
       const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
       return match?.[1]?.trim() || ''
     }
-    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key'>) => {
+    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key' | 'api_mode' | 'preserve_claude_code_identity' | 'preserve_codex_identity'>) => {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
       const availableModels = [...models]
-      const apiMode = providerApiMode(provider)
-      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
+      const apiMode = providerApiMode(provider, extra?.api_mode)
+      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(extra?.preserve_claude_code_identity ? { preserve_claude_code_identity: true } : {}), ...(extra?.preserve_codex_identity ? { preserve_codex_identity: true } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
     }
 
     let storedAuth: any = {}
@@ -799,15 +801,15 @@ export async function getAvailable(ctx: any) {
         if (cp.api_key) {
           try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([...models, ...fetched])] } catch { }
         }
-        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
+        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, preserve_claude_code_identity: cp.preserve_claude_code_identity, preserve_codex_identity: cp.preserve_codex_identity, builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
       }),
     )
 
     for (const result of customFetches) {
       const value = (result as { value?: any }).value
       if (value) {
-        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin, provider_source, provider_key } = value
-        addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin, undefined, { provider_source, provider_key })
+        const { providerKey, label, base_url, models, api_key: cpApiKey, api_mode, preserve_claude_code_identity, preserve_codex_identity, builtin: cpBuiltin, provider_source, provider_key } = value
+        addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin, undefined, { provider_source, provider_key, api_mode, preserve_claude_code_identity, preserve_codex_identity })
       }
     }
 

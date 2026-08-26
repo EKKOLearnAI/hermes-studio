@@ -24,6 +24,7 @@ import {
 } from '../shared/adapters/responses-stream'
 import { agentRunGateway } from '../shared/gateway'
 import { codingAgentRunManager } from '../runtime/run-manager'
+import { getSession } from '../../../db/hermes/session-store'
 
 export interface CodexProxyTargetInput extends AgentTargetInput {
   profile: string
@@ -32,7 +33,7 @@ export interface CodexProxyTargetInput extends AgentTargetInput {
 type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput>
 
 const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
-  input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
+  input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || '', input.agentId || '', input.preserveCodexIdentity ? 'preserve-identity' : ''],
 )
 
 function localProxyBaseUrl(routeKey: string): string {
@@ -95,6 +96,35 @@ function requireTarget(ctx: Context): CodexProxyTarget | null {
   return target
 }
 
+function shouldPreserveCodexIdentity(target: CodexProxyTarget): boolean {
+  const override = target.chatSessionId ? getSession(target.chatSessionId)?.preserve_codex_identity : null
+  return target.agentId === 'codex' &&
+    target.apiMode === 'codex_responses' &&
+    (override ?? target.preserveCodexIdentity === true)
+}
+
+function preservedCodexHeaders(ctx: Context, target: CodexProxyTarget): Record<string, string> {
+  if (!shouldPreserveCodexIdentity(target)) return {}
+  const headers: Record<string, string> = {}
+  const allowedHeaders: Array<[string, string]> = [
+    ['user-agent', 'User-Agent'],
+    ['originator', 'Originator'],
+    ['openai-beta', 'OpenAI-Beta'],
+    ['x-openai-client-user-agent', 'X-OpenAI-Client-User-Agent'],
+    ['x-stainless-lang', 'X-Stainless-Lang'],
+    ['x-stainless-package-version', 'X-Stainless-Package-Version'],
+    ['x-stainless-os', 'X-Stainless-OS'],
+    ['x-stainless-arch', 'X-Stainless-Arch'],
+    ['x-stainless-runtime', 'X-Stainless-Runtime'],
+    ['x-stainless-runtime-version', 'X-Stainless-Runtime-Version'],
+  ]
+  for (const [incoming, outgoing] of allowedHeaders) {
+    const value = ctx.get(incoming).trim()
+    if (value) headers[outgoing] = value
+  }
+  return headers
+}
+
 function chatCompletionsUrl(target: CodexProxyTarget): string {
   return resolveChatCompletionsUrl(target.baseUrl)
 }
@@ -103,7 +133,7 @@ function anthropicMessagesUrl(target: CodexProxyTarget): string {
   return resolveAnthropicMessagesUrl(target.baseUrl)
 }
 
-async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any> {
+async function callOpenAiChat(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
   if (target.apiMode !== 'chat_completions') {
     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -113,11 +143,12 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any>
   return agentRunGateway.completeJson({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
+    headers: preservedCodexHeaders(ctx, target),
     body: chatBody,
   })
 }
 
-async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promise<any> {
+async function callAnthropicMessages(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Codex proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -130,12 +161,13 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
+      ...preservedCodexHeaders(ctx, target),
     },
     body: anthropicBody,
   })
 }
 
-async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise<any> {
+async function callOpenAiResponses(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
   if (target.apiMode !== 'codex_responses') {
     const err = new Error(`Codex proxy Responses adapter only supports codex_responses targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -145,6 +177,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
+    headers: preservedCodexHeaders(ctx, target),
     body: responsesBody,
   })
 }
@@ -184,7 +217,7 @@ function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterab
   return observe()
 }
 
-async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
   if (target.apiMode !== 'chat_completions') {
     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -195,6 +228,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   const stream = await agentRunGateway.streamBytes({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
+    headers: preservedCodexHeaders(ctx, target),
     body: chatBody,
   })
   return responsesEventStream(observableResponsesEvents(target, openAiChatSseToResponsesEvents(stream, {
@@ -203,7 +237,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   })))
 }
 
-async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Codex proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -217,6 +251,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
+      ...preservedCodexHeaders(ctx, target),
     },
     body: anthropicBody,
   })
@@ -226,7 +261,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
   })))
 }
 
-async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
+async function openAiResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
   if (target.apiMode !== 'codex_responses') {
     const err = new Error(`Codex proxy Responses adapter only supports codex_responses targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -237,6 +272,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
+    headers: preservedCodexHeaders(ctx, target),
     body: responsesBody,
   })
   return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream)))
@@ -249,19 +285,19 @@ export async function codexProxyResponses(ctx: Context) {
     const requestBody = ctx.request.body || {}
     if ((requestBody as any).stream === true) {
       const stream = target.apiMode === 'anthropic_messages'
-        ? await anthropicMessagesToResponsesSseStream(target, requestBody)
+        ? await anthropicMessagesToResponsesSseStream(target, requestBody, ctx)
         : target.apiMode === 'codex_responses'
-          ? await openAiResponsesSseStream(target, requestBody)
-          : await openAiChatToResponsesSseStream(target, requestBody)
+          ? await openAiResponsesSseStream(target, requestBody, ctx)
+          : await openAiChatToResponsesSseStream(target, requestBody, ctx)
       ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
       ctx.set('Cache-Control', 'no-cache')
       ctx.body = stream
     } else {
       ctx.body = target.apiMode === 'anthropic_messages'
-        ? anthropicMessageToResponses(await callAnthropicMessages(target, requestBody), target)
+        ? anthropicMessageToResponses(await callAnthropicMessages(target, requestBody, ctx), target)
         : target.apiMode === 'codex_responses'
-          ? await callOpenAiResponses(target, requestBody)
-          : openAiChatToResponses(await callOpenAiChat(target, requestBody), target)
+          ? await callOpenAiResponses(target, requestBody, ctx)
+          : openAiChatToResponses(await callOpenAiChat(target, requestBody, ctx), target)
     }
   } catch (err: any) {
     ctx.status = err.status || 502

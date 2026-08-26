@@ -19,6 +19,8 @@ const KNOWN_KEYS = new Set([
   'name', 'api', 'url', 'base_url',
   'api_key', 'key_env', 'api_key_env',
   'api_mode', 'transport',
+  'preserve_claude_code_identity',
+  'preserve_codex_identity',
   'model', 'default_model',
   'models',
   'context_length', 'rate_limit_delay',
@@ -47,6 +49,8 @@ export interface NormalizedCustomProvider {
   api_key?: string
   key_env?: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   model?: string
   models?: Record<string, any>
   context_length?: number
@@ -141,6 +145,13 @@ export function normalizeCustomProviderEntry(
   const apiMode = e.api_mode || e.transport
   if (typeof apiMode === 'string' && apiMode.trim()) {
     normalized.api_mode = normalizeApiMode(apiMode.trim())
+  }
+
+  if (typeof e.preserve_claude_code_identity === 'boolean') {
+    normalized.preserve_claude_code_identity = e.preserve_claude_code_identity
+  }
+  if (typeof e.preserve_codex_identity === 'boolean') {
+    normalized.preserve_codex_identity = e.preserve_codex_identity
   }
 
   const modelName = e.model || e.default_model

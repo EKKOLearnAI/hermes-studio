@@ -13,6 +13,8 @@ export interface SessionSummary {
   model: string
   provider?: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean | null
+  preserve_codex_identity?: boolean | null
   reasoning_effort?: string
   title: string | null
   parent_session_id?: string | null
@@ -573,6 +575,30 @@ export async function setSessionModel(id: string, model: string, provider: strin
     await request(`/api/hermes/sessions/${id}/model`, {
       method: 'POST',
       body: JSON.stringify({ model, provider, apiMode }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function setSessionClaudeCodeIdentity(id: string, preserveClaudeCodeIdentity: boolean): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/claude-code-identity`, {
+      method: 'POST',
+      body: JSON.stringify({ preserveClaudeCodeIdentity }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function setSessionCodexIdentity(id: string, preserveCodexIdentity: boolean): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${encodeURIComponent(id)}/codex-identity`, {
+      method: 'POST',
+      body: JSON.stringify({ preserveCodexIdentity }),
     })
     return true
   } catch {

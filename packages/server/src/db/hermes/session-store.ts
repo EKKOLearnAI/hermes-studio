@@ -20,6 +20,8 @@ export interface HermesSessionRow {
   model: string
   provider: string
   api_mode: string
+  preserve_claude_code_identity: boolean | null
+  preserve_codex_identity: boolean | null
   reasoning_effort: string
   title: string | null
   parent_session_id: string | null
@@ -120,6 +122,8 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     model: String(row.model || ''),
     provider: String(row.provider || ''),
     api_mode: String(row.api_mode || ''),
+    preserve_claude_code_identity: row.preserve_claude_code_identity == null ? null : Boolean(row.preserve_claude_code_identity),
+    preserve_codex_identity: row.preserve_codex_identity == null ? null : Boolean(row.preserve_codex_identity),
     reasoning_effort: String(row.reasoning_effort || ''),
     title,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
@@ -202,7 +206,7 @@ export function createSession(data: {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
-      user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null,
+      user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', preserve_claude_code_identity: null, preserve_codex_identity: null, reasoning_effort: data.reasoning_effort || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
       fork_point_message_id: null,
       started_at: now, ended_at: null, end_reason: null,

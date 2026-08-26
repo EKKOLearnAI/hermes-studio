@@ -29,6 +29,7 @@ import {
 import { agentRunGateway, ProviderApiError } from '../shared/gateway'
 import { teeAsyncIterable } from '../shared/stream-tee'
 import { codingAgentRunManager } from '../runtime/run-manager'
+import { getSession } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 
 export type { ApiMode } from '../shared/types'
@@ -38,7 +39,7 @@ export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
 type ClaudeCodeProxyTarget = RegisteredAgentTarget<ClaudeCodeProxyTargetInput>
 
 const targetRegistry = new AgentTargetRegistry<ClaudeCodeProxyTargetInput>(
-  input => [input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
+  input => [input.provider, input.model, input.apiMode, input.baseUrl, input.preserveClaudeCodeIdentity ? 'preserve-identity' : '', input.agentSessionId || '', input.chatSessionId || ''],
 )
 const CLAUDE_PROXY_VISIBLE_MODELS = [
   'claude-haiku-4-5',
@@ -83,8 +84,28 @@ function requireTarget(ctx: Context): ClaudeCodeProxyTarget | null {
   return target
 }
 
-function anthropicMessagesUrl(target: ClaudeCodeProxyTarget): string {
-  return resolveAnthropicMessagesUrl(target.baseUrl)
+function shouldPreserveClaudeCodeIdentity(target: ClaudeCodeProxyTarget): boolean {
+  const override = target.chatSessionId ? getSession(target.chatSessionId)?.preserve_claude_code_identity : null
+  return override ?? target.preserveClaudeCodeIdentity === true
+}
+
+function preservedClaudeCodeHeaders(ctx: Context, target: ClaudeCodeProxyTarget): Record<string, string> {
+  if (!shouldPreserveClaudeCodeIdentity(target)) return {}
+  const headers: Record<string, string> = {}
+  const userAgent = ctx.get('user-agent').trim()
+  const app = ctx.get('x-app').trim()
+  const beta = ctx.get('anthropic-beta').trim()
+  if (userAgent) headers['User-Agent'] = userAgent
+  if (app) headers['X-App'] = app
+  if (beta) headers['Anthropic-Beta'] = beta
+  return headers
+}
+
+function anthropicMessagesUrl(target: ClaudeCodeProxyTarget, ctx: Context): string {
+  const url = resolveAnthropicMessagesUrl(target.baseUrl)
+  return shouldPreserveClaudeCodeIdentity(target) && String(ctx.query.beta || '') === 'true'
+    ? `${url}${url.includes('?') ? '&' : '?'}beta=true`
+    : url
 }
 
 function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
@@ -289,18 +310,19 @@ async function probeSseEncryptedContentError(
   return { stream: replayAsyncIterator(chunks, iterator), encryptedContentError: false }
 }
 
-async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
+async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<any> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
     throw err
   }
   const result = await withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.completeJson({
-    url: anthropicMessagesUrl(target),
+    url: anthropicMessagesUrl(target, ctx),
     apiKey: target.apiKey,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
+      ...preservedClaudeCodeHeaders(ctx, target),
     },
     body: anthropicRequestBody(nextBody, target),
   }))
@@ -376,7 +398,7 @@ async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, bod
   return anthropicEventStream(openAiChatSseToAnthropicEvents(clientStream, target))
 }
 
-async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
+async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<Readable> {
   if (target.apiMode !== 'anthropic_messages') {
     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
     ;(err as any).status = 501
@@ -384,11 +406,12 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
   }
 
   const request = (nextBody: any) => agentRunGateway.streamBytes({
-    url: anthropicMessagesUrl(target),
+    url: anthropicMessagesUrl(target, ctx),
     apiKey: target.apiKey,
     headers: {
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
+      ...preservedClaudeCodeHeaders(ctx, target),
     },
     body: anthropicRequestBody(nextBody, target),
   })
@@ -467,7 +490,7 @@ export async function claudeProxyMessages(ctx: Context) {
     const requestBody = ctx.request.body || {}
     if ((requestBody as any).stream === true) {
       const stream = target.apiMode === 'anthropic_messages'
-        ? await anthropicMessagesSseStream(target, requestBody)
+        ? await anthropicMessagesSseStream(target, requestBody, ctx)
         : target.apiMode === 'codex_responses'
           ? await openAiResponsesToAnthropicSseStream(target, requestBody)
           : await openAiChatToAnthropicSseStream(target, requestBody)
@@ -476,7 +499,7 @@ export async function claudeProxyMessages(ctx: Context) {
       ctx.body = stream
     } else {
       const message = target.apiMode === 'anthropic_messages'
-        ? await callAnthropicMessages(target, requestBody)
+        ? await callAnthropicMessages(target, requestBody, ctx)
         : target.apiMode === 'codex_responses'
           ? openAiResponsesToAnthropicMessage(await callOpenAiResponses(target, requestBody), target, requestBody?.tools)
           : openAiToAnthropicMessage(await callOpenAiChat(target, requestBody), target)

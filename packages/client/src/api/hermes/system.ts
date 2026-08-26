@@ -97,6 +97,8 @@ export interface AvailableModelGroup {
   available_models?: string[]
   api_key: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   builtin?: boolean
   /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
   base_url_env?: string
@@ -138,6 +140,8 @@ export interface CustomProvider {
   model: string
   context_length?: number
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   providerKey?: string | null
 }
 
@@ -146,6 +150,8 @@ export type ProviderEditableField =
   | 'base_url'
   | 'api_key'
   | 'api_mode'
+  | 'preserve_claude_code_identity'
+  | 'preserve_codex_identity'
   | 'preferred_model'
   | 'context_lengths'
   | 'discover_models'
@@ -163,6 +169,8 @@ export interface ProviderEditorDetail {
   source_key?: string
   base_url: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   preferred_model: string
   credential_configured: boolean
   editable: boolean
@@ -182,6 +190,8 @@ export interface ProviderEditorPatch {
   label?: string
   base_url?: string
   api_mode?: ProviderApiMode
+  preserve_claude_code_identity?: boolean
+  preserve_codex_identity?: boolean
   preferred_model?: string
   credential_action?: ProviderCredentialAction
   api_key?: string

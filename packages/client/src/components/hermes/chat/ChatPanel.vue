@@ -33,6 +33,7 @@ import {
   NRadioButton,
   NRadioGroup,
   NSpin,
+  NSwitch,
   useMessage,
   type DropdownOption,
 } from "naive-ui";
@@ -1684,6 +1685,10 @@ const sessionModelCustomProvider = ref("");
 const sessionModelApiMode = ref<CodingAgentApiMode>("codex_responses");
 const pendingSessionModelSwitch = ref<{ model: string; provider: string } | null>(null);
 const sessionModelSwitching = ref(false);
+const sessionClaudeCodeIdentity = ref(false);
+const savingSessionClaudeCodeIdentity = ref(false);
+const sessionCodexIdentity = ref(false);
+const savingSessionCodexIdentity = ref(false);
 
 const sessionModelProfile = computed<string | null>(() => {
   const session = chatStore.sessions.find((s) => s.id === sessionModelSessionId.value);
@@ -1712,6 +1717,20 @@ const sessionModelCodingAgentId = computed<ChatCodingAgentId | undefined>(() =>
 const isSessionModelCodingAgent = computed(() =>
   sessionModelSession.value?.source === "coding_agent" || Boolean(sessionModelSession.value?.codingAgentId),
 );
+const canPreserveClaudeCodeIdentity = computed(() => {
+  const providerApiMode = sessionModelBaseGroups.value.find(group => group.provider === sessionModelProvider.value)?.api_mode
+  const apiMode = sessionModelSession.value?.apiMode || providerApiMode
+  return isSessionModelScopedCodingAgent.value &&
+    sessionModelCodingAgentId.value === 'claude-code' &&
+    apiMode === 'anthropic_messages'
+});
+const canPreserveCodexIdentity = computed(() => {
+  const providerApiMode = sessionModelBaseGroups.value.find(group => group.provider === sessionModelProvider.value)?.api_mode
+  const apiMode = sessionModelSession.value?.apiMode || providerApiMode
+  return isSessionModelScopedCodingAgent.value &&
+    sessionModelCodingAgentId.value === 'codex' &&
+    apiMode === 'codex_responses'
+});
 
 const sessionModelAllGroups = computed(() =>
   sessionModelProfile.value
@@ -1808,9 +1827,39 @@ async function openSessionModelModal(sessionId: string) {
     ? "moa"
     : providerGroup ? session?.provider || "" : defaults.provider || "";
   sessionModelCustomProvider.value = usesMoa ? defaults.provider : sessionModelProvider.value;
+  sessionClaudeCodeIdentity.value = session?.preserveClaudeCodeIdentity ?? Boolean(providerGroup?.preserve_claude_code_identity);
+  sessionCodexIdentity.value = session?.preserveCodexIdentity ?? Boolean(providerGroup?.preserve_codex_identity);
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
   showSessionModelModal.value = true;
+}
+
+async function updateSessionClaudeCodeIdentity(enabled: boolean) {
+  const sessionId = sessionModelSessionId.value;
+  if (!sessionId || savingSessionClaudeCodeIdentity.value) return;
+  const previous = sessionClaudeCodeIdentity.value;
+  sessionClaudeCodeIdentity.value = enabled;
+  savingSessionClaudeCodeIdentity.value = true;
+  const ok = await chatStore.setSessionClaudeCodeIdentity(sessionId, enabled);
+  savingSessionClaudeCodeIdentity.value = false;
+  if (!ok) {
+    sessionClaudeCodeIdentity.value = previous;
+    message.error(t('common.saveFailed'));
+  }
+}
+
+async function updateSessionCodexIdentity(enabled: boolean) {
+  const sessionId = sessionModelSessionId.value;
+  if (!sessionId || savingSessionCodexIdentity.value) return;
+  const previous = sessionCodexIdentity.value;
+  sessionCodexIdentity.value = enabled;
+  savingSessionCodexIdentity.value = true;
+  const ok = await chatStore.setSessionCodexIdentity(sessionId, enabled);
+  savingSessionCodexIdentity.value = false;
+  if (!ok) {
+    sessionCodexIdentity.value = previous;
+    message.error(t('common.saveFailed'));
+  }
 }
 
 function handleSessionModelKindChange(value: "model" | "moa") {
@@ -2332,6 +2381,24 @@ async function handleSessionModelCustomSubmit() {
     >
       <NSpin :show="sessionModelSwitching" class="session-model-switch-spin">
         <template #description>{{ t('chat.modelSwitching') }}</template>
+        <div v-if="canPreserveClaudeCodeIdentity" class="session-model-identity-field">
+          <span>{{ t('models.preserveClaudeCodeIdentity') }}</span>
+          <NSwitch
+            :value="sessionClaudeCodeIdentity"
+            :loading="savingSessionClaudeCodeIdentity"
+            :disabled="sessionModelSwitching"
+            @update:value="updateSessionClaudeCodeIdentity"
+          />
+        </div>
+        <div v-if="canPreserveCodexIdentity" class="session-model-identity-field">
+          <span>{{ t('models.preserveCodexIdentity') }}</span>
+          <NSwitch
+            :value="sessionCodexIdentity"
+            :loading="savingSessionCodexIdentity"
+            :disabled="sessionModelSwitching"
+            @update:value="updateSessionCodexIdentity"
+          />
+        </div>
         <div v-if="sessionCanUseMoa" class="session-model-kind-field">
           <span class="session-model-kind-label">{{ t('chat.modelType') }}</span>
           <NRadioGroup
@@ -3004,6 +3071,15 @@ async function handleSessionModelCustomSubmit() {
 
 .session-model-search {
   margin-bottom: 12px;
+}
+
+.session-model-identity-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: $text-muted;
+  font-size: 13px;
 }
 
 .session-model-kind-field {

@@ -103,10 +103,16 @@ function normalizeApiMode(value: unknown): ProviderApiMode | undefined {
     : undefined
 }
 
-function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number, api_mode?: ProviderApiMode) {
+function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number, api_mode?: ProviderApiMode, preserve_claude_code_identity?: boolean, preserve_codex_identity?: boolean) {
   const entry: any = { name, base_url, api_key, model }
   if (api_mode) {
     entry.api_mode = api_mode
+  }
+  if (preserve_claude_code_identity) {
+    entry.preserve_claude_code_identity = true
+  }
+  if (preserve_codex_identity) {
+    entry.preserve_codex_identity = true
   }
   if (context_length && context_length > 0) {
     entry.models = { [model]: { context_length } }
@@ -173,7 +179,7 @@ export async function patchEditor(ctx: any) {
       patch,
       expectedRevision(ctx),
     )
-    if (result.changed.some(field => field === 'api_key_replaced' || field === 'api_key_cleared' || field === 'base_url' || field === 'api_mode')) {
+    if (result.changed.some(field => field === 'api_key_replaced' || field === 'api_key_cleared' || field === 'base_url' || field === 'api_mode' || field === 'preserve_claude_code_identity' || field === 'preserve_codex_identity')) {
       invalidateCodingAgentProviderRuntime(profile, providerId)
     }
     setRevisionHeader(ctx, result.detail.revision)
@@ -288,14 +294,16 @@ export async function restoreModels(ctx: any) {
 }
 
 export async function create(ctx: any) {
-  const { name, base_url, api_key, model, context_length, providerKey, api_mode } = ctx.request.body as {
-    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null; api_mode?: ProviderApiMode
+  const { name, base_url, api_key, model, context_length, providerKey, api_mode, preserve_claude_code_identity, preserve_codex_identity } = ctx.request.body as {
+    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null; api_mode?: ProviderApiMode; preserve_claude_code_identity?: boolean; preserve_codex_identity?: boolean
   }
   const normalizedName = String(name || '').trim()
   const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
   const isBuiltin = poolKey in PROVIDER_ENV_MAP
   const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
   const customApiMode = normalizeApiMode(api_mode)
+  const preserveClaudeCodeIdentity = preserve_claude_code_identity === true
+  const preserveCodexIdentity = preserve_codex_identity === true
   if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
   }
@@ -324,7 +332,7 @@ export async function create(ctx: any) {
             existing.models[model].context_length = context_length
           }
         } else {
-          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length, customApiMode)
+          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length, customApiMode, preserveClaudeCodeIdentity, preserveCodexIdentity)
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) entry.api_mode = preset.api_mode
           config.custom_providers.push(entry)
@@ -359,7 +367,7 @@ export async function create(ctx: any) {
               existing.models[model].context_length = context_length
             }
           } else {
-            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length, customApiMode)
+            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length, customApiMode, preserveClaudeCodeIdentity, preserveCodexIdentity)
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) entry.api_mode = preset.api_mode
             config.custom_providers.push(entry)
