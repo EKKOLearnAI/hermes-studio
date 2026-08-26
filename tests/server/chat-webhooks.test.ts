@@ -13,7 +13,7 @@ describe('chat run webhooks', () => {
       getStoragePath: () => ':memory:',
       isSqliteAvailable: () => true,
     }))
-    vi.doMock('../../packages/server/src/services/auth', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
       getToken: async () => 'test-server-token',
     }))
     const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
@@ -32,7 +32,7 @@ describe('chat run webhooks', () => {
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
-    vi.doUnmock('../../packages/server/src/services/auth')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/auth/token-auth')
     vi.doUnmock('../../packages/server/src/services/social-messages/session-push')
     vi.resetModules()
   })

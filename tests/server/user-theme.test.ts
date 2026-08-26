@@ -124,7 +124,7 @@ describe('user theme storage', () => {
 
     try {
       await initStore()
-      const service = await import('../../packages/server/src/services/user-theme')
+      const service = await import('../../packages/server/src/modules/studio/services/theme/user-theme')
       const png = Buffer.from([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
         0x00, 0x00, 0x00, 0x00,

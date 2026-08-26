@@ -239,7 +239,7 @@ describe('devices controller', () => {
   })
 
   it('stores public pairing requests as pending when the startup pairing code is valid', async () => {
-    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/devices/pairing-code', () => ({
       getDevicePairingCode: () => 'pair-secret',
       verifyDevicePairingCode: (value: unknown) => value === 'pair-secret',
     }))
@@ -272,7 +272,7 @@ describe('devices controller', () => {
   })
 
   it('prefers public request hosts when building copyable pairing links', async () => {
-    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/devices/pairing-code', () => ({
       getDevicePairingCode: () => 'pair-secret',
       verifyDevicePairingCode: () => false,
     }))
@@ -303,7 +303,7 @@ describe('devices controller', () => {
         }),
       }
     })
-    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/devices/pairing-code', () => ({
       getDevicePairingCode: () => 'pair-secret',
       verifyDevicePairingCode: () => false,
     }))
@@ -324,7 +324,7 @@ describe('devices controller', () => {
   })
 
   it('uses a private request host instead of a Docker container interface for pairing links', async () => {
-    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/devices/pairing-code', () => ({
       getDevicePairingCode: () => 'pair-secret',
       verifyDevicePairingCode: () => false,
     }))

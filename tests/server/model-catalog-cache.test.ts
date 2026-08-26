@@ -105,7 +105,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: mockReadConfigYamlForProfile,
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
   readAppConfig: mockReadAppConfig,
 }))
 

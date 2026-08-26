@@ -123,7 +123,7 @@ vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
   resolveCopilotOAuthToken: vi.fn(async () => ''),
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
   providerDisplayLabel: (appConfig: any, profile: string, providerId: string, fallback: string) =>

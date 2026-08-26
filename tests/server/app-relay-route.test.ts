@@ -5,7 +5,7 @@ const { readAppConfig, writeAppConfig } = vi.hoisted(() => ({
   writeAppConfig: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
   readAppConfig,
   writeAppConfig,
 }))

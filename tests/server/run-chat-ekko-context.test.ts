@@ -91,7 +91,7 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/usage-recorder', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/usage/usage-recorder', () => ({
   recordSessionUsage: recordSessionUsageMock,
 }))
 

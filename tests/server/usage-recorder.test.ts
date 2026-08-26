@@ -10,7 +10,7 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   logger: { warn: vi.fn() },
 }))
 
-import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/services/usage-recorder'
+import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
 
 describe('usage recorder', () => {
   beforeEach(() => {

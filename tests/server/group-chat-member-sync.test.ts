@@ -22,7 +22,7 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 

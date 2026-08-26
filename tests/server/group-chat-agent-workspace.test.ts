@@ -48,7 +48,7 @@ const trackerMock = vi.hoisted(() => ({
 }))
 
 vi.mock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }))
-vi.mock('../../packages/server/src/services/auth', () => ({ getToken: vi.fn(async () => 'test-token') }))
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({ getToken: vi.fn(async () => 'test-token') }))
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
 }))

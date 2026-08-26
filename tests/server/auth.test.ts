@@ -19,7 +19,7 @@ async function loadAuth(overrides: Partial<FsMocks> & { home?: string } = {}) {
   vi.doMock('fs/promises', () => ({ readFile, writeFile, mkdir }))
   vi.doMock('os', () => ({ homedir: () => home }))
 
-  const mod = await import('../../packages/server/src/services/auth')
+  const mod = await import('../../packages/server/src/modules/studio/services/auth/token-auth')
   return {
     ...mod,
     mocks: { readFile, writeFile, mkdir },

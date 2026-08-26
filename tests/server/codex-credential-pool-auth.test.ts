@@ -41,7 +41,7 @@ function makeCtx(profile?: string): any {
 
 async function loadModelsController() {
   vi.resetModules()
-  vi.doMock('../../packages/server/src/services/app-config', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
     readAppConfig: vi.fn().mockResolvedValue({}),
     providerDisplayLabel: (_appConfig: any, _profile: string, _providerId: string, fallback: string) => fallback,
   }))
@@ -75,7 +75,7 @@ describe('OpenAI Codex credential pool auth compatibility', () => {
   })
 
   afterEach(() => {
-    vi.doUnmock('../../packages/server/src/services/app-config')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/config/app-config')
     vi.doUnmock('../../packages/server/src/services/hermes/copilot-models')
     vi.doUnmock('../../packages/server/src/services/logger')
     vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
