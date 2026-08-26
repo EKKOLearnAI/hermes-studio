@@ -806,7 +806,8 @@ async function loadContextLength() {
     } catch {
       if (currentContextLengthKey() !== key) return
       contextLength.value = FALLBACK_CONTEXT
-      contextLengthLoadedKey = key
+      // The fallback keeps the usage UI usable, but it is not resolved model
+      // metadata. Leave this key retryable on the next session/model lifecycle.
     } finally {
       if (contextLengthRequestKey === key) {
         contextLengthRequest = null
