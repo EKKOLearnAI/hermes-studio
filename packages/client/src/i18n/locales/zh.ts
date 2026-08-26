@@ -251,7 +251,7 @@ export default {
     updateSuccess: '更新成功，请稍后刷新页面，如长时间未启动，请手动启动',
     updateFailed: '更新失败',
     logout: '退出登录',
-    nodeVersionWarning: '检测到 Node.js v{version}，请升级到23以上版本。',
+    nodeVersionWarning: '检测到 Node.js v{version}，请升级到 22.5 以上版本。',
     changelog: '更新日志',
     noChangelog: '暂无更新日志',
     versionManagement: '版本管理',

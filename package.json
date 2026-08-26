@@ -9,7 +9,7 @@
   "homepage": "https://hermes-studio.ai",
   "license": "BSL-1.1",
   "engines": {
-    "node": ">=23.0.0"
+    "node": ">=22.5.0"
   },
   "keywords": [
     "hermes",

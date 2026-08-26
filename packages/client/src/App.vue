@@ -50,9 +50,8 @@ const showAppSidebar = computed(() => !isLoginPage.value && !isStandaloneChatPag
 const showMobileMenuButton = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && (showAppSidebar.value || usesPageSidebar.value))
 
 const nodeVersionLow = computed(() => {
-  const v = appStore.nodeVersion
-  const major = parseInt(v.split('.')[0], 10)
-  return !isNaN(major) && major < 23
+  const [major, minor] = appStore.nodeVersion.split('.').map(Number)
+  return Number.isFinite(major) && Number.isFinite(minor) && (major < 22 || (major === 22 && minor < 5))
 })
 
 const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
