@@ -60,7 +60,15 @@ describe('Ekko display name', () => {
     const occurrences = clientSourceFiles('packages/client/src')
       .flatMap(path => readFileSync(path, 'utf8').includes('Claude Code') ? [path] : [])
 
-    expect(occurrences).toEqual([])
+    const normalizedOccurrences = occurrences.map(path => path.replaceAll('\\', '/'))
+    expect(normalizedOccurrences).toEqual([
+      'packages/client/src/i18n/locales/en.ts',
+      'packages/client/src/i18n/locales/zh-TW.ts',
+      'packages/client/src/i18n/locales/zh.ts',
+    ])
+    for (const path of occurrences) {
+      expect(readFileSync(path, 'utf8')).toContain('preserveClaudeCodeIdentity')
+    }
     expect(readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8'))
       .toContain('{ label: "Claude", value: "claude-code" }')
   })

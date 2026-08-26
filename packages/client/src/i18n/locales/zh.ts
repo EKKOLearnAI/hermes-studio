@@ -1950,6 +1950,8 @@ export default {
     contextLength: '上下文长度',
     contextLengthPlaceholder: '例如 256000（可选）',
     apiMode: 'API 模式',
+    preserveClaudeCodeIdentity: '保留 Claude Code 身份',
+    preserveCodexIdentity: '保留 Codex 身份',
     local: '本地 ({host})',
     selectProviderRequired: '请选择 Provider',
     baseUrlRequired: 'Base URL 为必填项',

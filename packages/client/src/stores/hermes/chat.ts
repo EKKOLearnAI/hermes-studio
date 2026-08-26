@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
+import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, setSessionClaudeCodeIdentity as persistSessionClaudeCodeIdentity, setSessionCodexIdentity as persistSessionCodexIdentity, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -449,6 +449,8 @@ export interface Session {
   baseUrl?: string
   apiKey?: string
   apiMode?: ProviderApiMode
+  preserveClaudeCodeIdentity?: boolean | null
+  preserveCodexIdentity?: boolean | null
   messageCount?: number
   messageTotal?: number
   loadedMessageCount?: number
@@ -1152,6 +1154,8 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     apiMode: s.api_mode,
+    preserveClaudeCodeIdentity: s.preserve_claude_code_identity ?? null,
+    preserveCodexIdentity: s.preserve_codex_identity ?? null,
     reasoningEffort: s.reasoning_effort || undefined,
     messageCount: s.message_count,
     messageTotal: s.message_count,
@@ -2206,6 +2210,38 @@ export const useChatStore = defineStore('chat', () => {
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
     return true
+  }
+
+  async function setSessionClaudeCodeIdentity(sessionId: string, enabled: boolean): Promise<boolean> {
+    const target = sessions.value.find(s => s.id === sessionId)
+    const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
+    const session = target || activeTarget
+    if (!session || session.isLocalOnly) return false
+    const previous = session.preserveClaudeCodeIdentity
+    if (target) target.preserveClaudeCodeIdentity = enabled
+    if (activeTarget) activeTarget.preserveClaudeCodeIdentity = enabled
+    const ok = await persistSessionClaudeCodeIdentity(sessionId, enabled)
+    if (!ok) {
+      if (target) target.preserveClaudeCodeIdentity = previous
+      if (activeTarget) activeTarget.preserveClaudeCodeIdentity = previous
+    }
+    return ok
+  }
+
+  async function setSessionCodexIdentity(sessionId: string, enabled: boolean): Promise<boolean> {
+    const target = sessions.value.find(s => s.id === sessionId)
+    const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
+    const session = target || activeTarget
+    if (!session || session.isLocalOnly) return false
+    const previous = session.preserveCodexIdentity
+    if (target) target.preserveCodexIdentity = enabled
+    if (activeTarget) activeTarget.preserveCodexIdentity = enabled
+    const ok = await persistSessionCodexIdentity(sessionId, enabled)
+    if (!ok) {
+      if (target) target.preserveCodexIdentity = previous
+      if (activeTarget) activeTarget.preserveCodexIdentity = previous
+    }
+    return ok
   }
 
   async function deleteSession(sessionId: string): Promise<boolean> {
@@ -5340,6 +5376,8 @@ export const useChatStore = defineStore('chat', () => {
     ensureSessionLoaded,
     loadOlderMessages,
     switchSessionModel,
+    setSessionClaudeCodeIdentity,
+    setSessionCodexIdentity,
     addOrUpdateSession,
     clearProviderFromSessions,
     deleteSession,

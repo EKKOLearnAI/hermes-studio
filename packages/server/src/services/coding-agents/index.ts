@@ -257,6 +257,8 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   baseUrl?: string
   apiKey?: string
   apiMode?: ApiMode
+  preserveClaudeCodeIdentity?: boolean
+  preserveCodexIdentity?: boolean
   reasoningEffort?: string
   sessionId?: string
   agentSessionId?: string
@@ -683,14 +685,16 @@ async function resolveStoredProviderLaunchInput(
     : undefined
   let apiMode = input.apiMode || storedApiMode
   let canonicalProvider = provider
+  let preserveClaudeCodeIdentity = false
+  let preserveCodexIdentity = false
   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
   if (ignoredStaleProviderRuntime) {
     baseUrl = ''
     apiKey = ''
   }
 
-  if (!provider || (baseUrl && apiKey && apiMode)) {
-    return { ...input, profile, provider: provider || input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
+  if (!provider) {
+    return { ...input, profile, provider: input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
   }
 
   let config: Record<string, any> = {}
@@ -721,6 +725,8 @@ async function resolveStoredProviderLaunchInput(
         preset?.api_mode || inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
       )
     }
+    preserveClaudeCodeIdentity = customEntry.preserve_claude_code_identity === true
+    preserveCodexIdentity = customEntry.preserve_codex_identity === true
   }
 
   const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
@@ -750,6 +756,8 @@ async function resolveStoredProviderLaunchInput(
     baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
     apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
     apiMode,
+    preserveClaudeCodeIdentity: input.preserveClaudeCodeIdentity ?? preserveClaudeCodeIdentity,
+    preserveCodexIdentity: input.preserveCodexIdentity ?? preserveCodexIdentity,
   }
 }
 
@@ -2444,6 +2452,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           baseUrl,
           apiKey,
           apiMode,
+          preserveClaudeCodeIdentity: input.preserveClaudeCodeIdentity,
           reasoningEffort,
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
@@ -2511,6 +2520,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           baseUrl,
           apiKey,
           apiMode,
+          preserveCodexIdentity: input.preserveCodexIdentity,
           reasoningEffort,
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,

@@ -1547,6 +1547,54 @@ export async function setModel(ctx: any) {
   ctx.body = { ok: true }
 }
 
+export async function setClaudeCodeIdentity(ctx: any) {
+  const id = ctx.params.id
+  const existing = localGetSession(id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  if (existing.source !== 'coding_agent' || existing.agent !== 'claude' || existing.agent_mode === 'global') {
+    ctx.status = 400
+    ctx.body = { error: 'Claude Code identity preservation is only available for scoped Claude Code sessions' }
+    return
+  }
+  const value = (ctx.request.body || {}).preserveClaudeCodeIdentity
+  if (typeof value !== 'boolean') {
+    ctx.status = 400
+    ctx.body = { error: 'preserveClaudeCodeIdentity must be a boolean' }
+    return
+  }
+  localUpdateSession(id, { preserve_claude_code_identity: value } as any)
+  ctx.body = { ok: true, preserve_claude_code_identity: value }
+}
+
+export async function setCodexIdentity(ctx: any) {
+  const id = ctx.params.id
+  const existing = localGetSession(id)
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, existing)) return
+  if (existing.source !== 'coding_agent' || existing.agent !== 'codex' || existing.agent_mode === 'global') {
+    ctx.status = 400
+    ctx.body = { error: 'Codex identity preservation is only available for scoped Codex sessions' }
+    return
+  }
+  const value = (ctx.request.body || {}).preserveCodexIdentity
+  if (typeof value !== 'boolean') {
+    ctx.status = 400
+    ctx.body = { error: 'preserveCodexIdentity must be a boolean' }
+    return
+  }
+  localUpdateSession(id, { preserve_codex_identity: value } as any)
+  ctx.body = { ok: true, preserve_codex_identity: value }
+}
+
 export async function setReasoningEffort(ctx: any) {
   const id = ctx.params.id
   const existing = localGetSession(id)

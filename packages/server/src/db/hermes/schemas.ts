@@ -64,6 +64,8 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
   api_mode: 'TEXT NOT NULL DEFAULT \'\'',
+  preserve_claude_code_identity: 'INTEGER',
+  preserve_codex_identity: 'INTEGER',
   reasoning_effort: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
   parent_session_id: 'TEXT',

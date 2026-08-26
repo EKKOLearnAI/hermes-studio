@@ -1749,6 +1749,8 @@ export default {
     contextLength: '上下文長度',
     contextLengthPlaceholder: '例如 256000（選填）',
     apiMode: 'API 模式',
+    preserveClaudeCodeIdentity: '保留 Claude Code 身份',
+    preserveCodexIdentity: '保留 Codex 身份',
     local: '本地 ({host})',
     selectProviderRequired: '請選擇 Provider',
     baseUrlRequired: 'Base URL 為必填項',

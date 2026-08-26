@@ -7,6 +7,8 @@ export interface AgentTargetInput {
   baseUrl: string
   apiKey: string
   apiMode?: AgentApiMode
+  preserveClaudeCodeIdentity?: boolean
+  preserveCodexIdentity?: boolean
   reasoningEffort?: string
   agentId?: string
   agentSessionId?: string

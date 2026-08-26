@@ -24,6 +24,8 @@ const setPushEnabledMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } }
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setClaudeCodeIdentityMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setCodexIdentityMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setReasoningEffortMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
 const createWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -73,6 +75,8 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   setWorkspace: setWorkspaceMock,
   setCategory: setCategoryMock,
   setModel: setModelMock,
+  setClaudeCodeIdentity: setClaudeCodeIdentityMock,
+  setCodexIdentity: setCodexIdentityMock,
   setReasoningEffort: setReasoningEffortMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
   createWorkspaceFolder: createWorkspaceFolderMock,
@@ -122,6 +126,8 @@ describe('session routes', () => {
     setPushEnabledMock.mockClear()
     setCategoryMock.mockClear()
     setModelMock.mockClear()
+    setClaudeCodeIdentityMock.mockClear()
+    setCodexIdentityMock.mockClear()
     setReasoningEffortMock.mockClear()
     listWorkspaceFoldersMock.mockClear()
     createWorkspaceFolderMock.mockClear()
@@ -182,6 +188,8 @@ describe('session routes', () => {
       '/api/hermes/sessions/:id/push-enabled',
       '/api/hermes/sessions/:id/category',
       '/api/hermes/sessions/:id/model',
+      '/api/hermes/sessions/:id/claude-code-identity',
+      '/api/hermes/sessions/:id/codex-identity',
       '/api/hermes/sessions/:id/reasoning-effort',
       '/api/hermes/workspace/folders',
       '/api/hermes/workspace/folders/rename',
@@ -225,6 +233,21 @@ describe('session routes', () => {
     const assignCtx: any = { query: {}, request: { body: { categoryId: 1 } }, body: null, params: { id: 'session-1' } }
     await assignLayer.stack[0](assignCtx)
     expect(setCategoryMock).toHaveBeenCalledWith(assignCtx)
+
+    const claudeIdentityLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/hermes/sessions/:id/claude-code-identity',
+    )
+    const codexIdentityLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/hermes/sessions/:id/codex-identity',
+    )
+    const claudeIdentityCtx: any = { query: {}, request: { body: { preserve_claude_code_identity: true } }, body: null, params: { id: 'session-1' } }
+    const codexIdentityCtx: any = { query: {}, request: { body: { preserve_codex_identity: true } }, body: null, params: { id: 'session-1' } }
+
+    await claudeIdentityLayer.stack[0](claudeIdentityCtx)
+    await codexIdentityLayer.stack[0](codexIdentityCtx)
+
+    expect(setClaudeCodeIdentityMock).toHaveBeenCalledWith(claudeIdentityCtx)
+    expect(setCodexIdentityMock).toHaveBeenCalledWith(codexIdentityCtx)
   })
 
   it('delegates session count route before the session id route', async () => {

@@ -8,6 +8,7 @@ import {
   NModal,
   NSelect,
   NSpin,
+  NSwitch,
   NTag,
   useDialog,
   useMessage,
@@ -46,6 +47,8 @@ const clearingCredential = ref(false)
 const label = ref('')
 const baseUrl = ref('')
 const apiMode = ref<ProviderApiMode>('chat_completions')
+const preserveClaudeCodeIdentity = ref(false)
+const preserveCodexIdentity = ref(false)
 const preferredModel = ref('')
 const newApiKey = ref('')
 const contextDraft = ref<Record<string, number | null>>({})
@@ -111,6 +114,8 @@ function resetDraft(next: ProviderEditorDetail) {
   label.value = next.label
   baseUrl.value = next.base_url
   apiMode.value = next.api_mode || 'chat_completions'
+  preserveClaudeCodeIdentity.value = next.preserve_claude_code_identity === true
+  preserveCodexIdentity.value = next.preserve_codex_identity === true
   preferredModel.value = next.preferred_model || props.provider.models[0] || ''
   newApiKey.value = ''
   discoverModels.value = next.discover_models ?? false
@@ -159,6 +164,8 @@ function buildPatch(): ProviderEditorPatch {
   if (can('label')) patch.label = label.value.trim()
   if (can('base_url')) patch.base_url = baseUrl.value.trim()
   if (can('api_mode')) patch.api_mode = apiMode.value
+  if (can('preserve_claude_code_identity')) patch.preserve_claude_code_identity = preserveClaudeCodeIdentity.value
+  if (can('preserve_codex_identity')) patch.preserve_codex_identity = apiMode.value === 'codex_responses' && preserveCodexIdentity.value
   if (can('preferred_model')) patch.preferred_model = preferredModel.value.trim()
   if (can('api_key')) {
     patch.credential_action = newApiKey.value.trim() ? 'replace' : 'keep'
@@ -349,6 +356,22 @@ async function clearCredentialNow() {
           <NSelect v-model:value="apiMode" :options="API_MODE_OPTIONS" />
         </label>
 
+        <div
+          v-if="can('preserve_claude_code_identity') && apiMode === 'anthropic_messages'"
+          class="field provider-identity-toggle"
+        >
+          <span>{{ t('models.preserveClaudeCodeIdentity') }}</span>
+          <NSwitch v-model:value="preserveClaudeCodeIdentity" />
+        </div>
+
+        <div
+          v-if="can('preserve_codex_identity') && apiMode === 'codex_responses'"
+          class="field provider-identity-toggle"
+        >
+          <span>{{ t('models.preserveCodexIdentity') }}</span>
+          <NSwitch v-model:value="preserveCodexIdentity" />
+        </div>
+
         <label v-if="can('preferred_model')" class="field">
           <span>{{ t('models.providerPreferredModel') }}</span>
           <NSelect
@@ -514,6 +537,15 @@ async function clearCredentialNow() {
   small {
     color: $text-muted;
   }
+}
+
+.provider-identity-toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
 }
 
 .warning-text {
