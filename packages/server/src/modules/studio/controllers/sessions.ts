@@ -463,8 +463,17 @@ export async function list(ctx: any) {
   const profile = explicitProfileFilter(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
-  const allSessions = localListSessions(profile, source, effectiveLimit)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
+  const allowedProfiles = allowedProfileSet(ctx)
+  const visibleProfiles = knownProfiles
+    ? [...knownProfiles].filter(name => !allowedProfiles || allowedProfiles.has(name))
+    : undefined
+  const allSessions = localListSessions(profile, source, effectiveLimit, {
+    sources: source ? undefined : requestedSessionSources(),
+    profiles: visibleProfiles,
+    includeArchived: false,
+    excludeSessionIds: [...getPendingDeletedSessionIds()],
+  })
   ctx.body = {
     sessions: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
       isRequestedSessionSource(source, s.source) &&

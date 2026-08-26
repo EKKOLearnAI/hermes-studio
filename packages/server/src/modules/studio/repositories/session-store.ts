@@ -75,12 +75,14 @@ export interface HermesSessionSearchRow extends HermesSessionRow {
   rank: number
 }
 
-export interface SessionSearchOptions {
+export interface SessionListOptions {
   sources?: string[]
   profiles?: string[]
   includeArchived?: boolean
   excludeSessionIds?: string[]
 }
+
+export type SessionSearchOptions = SessionListOptions
 
 export interface HermesSessionDetailRow extends HermesSessionRow {
   messages: HermesMessageRow[]
@@ -487,10 +489,16 @@ export function setSessionPushEnabled(id: string, enabled: boolean): boolean {
   return result.changes > 0
 }
 
-export function listSessions(profile?: string, source?: string, limit = 2000): HermesSessionRow[] {
+export function listSessions(
+  profile?: string,
+  source?: string,
+  limit = 2000,
+  options: SessionListOptions = {},
+): HermesSessionRow[] {
   if (!isSqliteAvailable()) return []
+  const filters = sessionFilterSql(profile, source ? { ...options, sources: [source] } : options)
+  if (!filters) return []
   const db = getDb()!
-  const profileFilter = profile?.trim()
 
   // Use a subquery to generate preview from first user message if not set
   const sql = `
@@ -530,23 +538,12 @@ export function listSessions(profile?: string, source?: string, limit = 2000): H
       ) AS parent_last_message_role
     FROM ${SESSIONS_TABLE} s
     LEFT JOIN ${SESSIONS_TABLE} p ON p.id = s.parent_session_id
-    WHERE 1 = 1
-      ${profileFilter ? 'AND s.profile = ?' : ''}
-      ${source ? 'AND s.source = ?' : ''}
+    WHERE ${filters.sql}
     ORDER BY s.last_active DESC
     LIMIT ?
   `
 
-  const params: any[] = []
-  if (profileFilter) {
-    params.push(profileFilter)
-  }
-  if (source) {
-    params.push(source)
-  }
-  params.push(limit)
-
-  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[]
+  const rows = db.prepare(sql).all(...filters.params, limit) as Record<string, unknown>[]
   return rows.map(mapSessionRow)
 }
 
@@ -578,9 +575,9 @@ function sessionSearchMessageMatchSql(alias: string, termCount: number): string 
   ).join(' AND ')
 }
 
-function sessionSearchFilterSql(
+function sessionFilterSql(
   profile: string | null | undefined,
-  options: SessionSearchOptions,
+  options: SessionListOptions,
 ): { sql: string; params: string[] } | null {
   const clauses: string[] = []
   const params: string[] = []
@@ -640,7 +637,7 @@ export function searchSessions(
 ): HermesSessionSearchRow[] {
   if (!isSqliteAvailable()) return []
   const trimmed = query.trim()
-  const filters = sessionSearchFilterSql(profile, options)
+  const filters = sessionFilterSql(profile, options)
   if (!filters) return []
   const db = getDb()!
   if (!trimmed) {

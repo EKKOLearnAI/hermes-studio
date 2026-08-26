@@ -935,7 +935,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2000, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.sessions.map((session: any) => session.id)).toEqual(['default-session', 'travel-session'])
   })
 
@@ -950,7 +955,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: undefined,
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
   })
 
   it('lists only global-agent sessions when requested by source', async () => {
@@ -967,7 +977,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000, {
+      sources: undefined,
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
@@ -1006,7 +1021,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(workflowCtx)
 
-    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000)
+    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000, {
+      sources: undefined,
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
   })
 

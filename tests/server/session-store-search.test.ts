@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-describe('session store search', () => {
+describe('session store filtering', () => {
   let db: any = null
 
   beforeEach(async () => {
@@ -76,6 +76,25 @@ describe('session store search', () => {
       source: 'coding_agent',
       rank: 0,
     }))
+  })
+
+  it('filters hidden session sources before applying the list limit', async () => {
+    const { createSession, listSessions } = await import(
+      '../../packages/server/src/modules/studio/repositories/session-store'
+    )
+    createSession({ id: 'visible-chat', profile: 'default', source: 'cli', title: 'Visible chat' })
+    createSession({ id: 'latest-workflow', profile: 'default', source: 'workflow', title: 'Workflow node' })
+    db.prepare('UPDATE sessions SET last_active = 100 WHERE id = ?').run('visible-chat')
+    db.prepare('UPDATE sessions SET last_active = 200 WHERE id = ?').run('latest-workflow')
+
+    const results = listSessions(undefined, undefined, 1, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: ['default'],
+      includeArchived: false,
+    })
+
+    expect(results).toHaveLength(1)
+    expect(results[0]).toEqual(expect.objectContaining({ id: 'visible-chat', source: 'cli' }))
   })
 
   it('updates display-only message content without changing model context content', async () => {
