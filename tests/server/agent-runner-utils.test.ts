@@ -432,7 +432,21 @@ describe('agent runner target registry', () => {
     expect(registry.find(first.routeKey)?.apiKey).toBe('sk-second')
   })
 
-  it('separates route credentials by API mode and upstream URL', () => {
+  it('separates otherwise identical targets by provider proxy', () => {
+    const registry = new AgentTargetRegistry<AgentTargetInput>(
+      input => [input.provider, input.model, input.apiMode, input.baseUrl, input.proxy || ''],
+    )
+    const direct = registry.register({
+      provider: 'same-provider', model: 'same-model', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-direct',
+    })
+    const proxied = registry.register({
+      provider: 'same-provider', model: 'same-model', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-proxied', proxy: 'http://127.0.0.1:8080',
+    })
+    expect(proxied.routeKey).not.toBe(direct.routeKey)
+    expect(proxied.token).not.toBe(direct.token)
+  })
+
+  it('separates route credentials by API mode and upstream URL', async () => {
     const registry = new AgentTargetRegistry<AgentTargetInput>(
       input => [input.provider, input.model, input.apiMode, input.baseUrl],
     )

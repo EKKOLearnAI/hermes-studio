@@ -19,6 +19,7 @@ const KNOWN_KEYS = new Set([
   'name', 'api', 'url', 'base_url',
   'api_key', 'key_env', 'api_key_env',
   'api_mode', 'transport',
+  'proxy', 'proxy_url', 'proxyUrl',
   'model', 'default_model',
   'models',
   'context_length', 'rate_limit_delay',
@@ -47,6 +48,7 @@ export interface NormalizedCustomProvider {
   api_key?: string
   key_env?: string
   api_mode?: ProviderApiMode
+  proxy?: string
   model?: string
   models?: Record<string, any>
   context_length?: number
@@ -141,6 +143,11 @@ export function normalizeCustomProviderEntry(
   const apiMode = e.api_mode || e.transport
   if (typeof apiMode === 'string' && apiMode.trim()) {
     normalized.api_mode = normalizeApiMode(apiMode.trim())
+  }
+
+  const proxy = e.proxy || e.proxy_url || e.proxyUrl
+  if (typeof proxy === 'string' && proxy.trim()) {
+    normalized.proxy = proxy.trim()
   }
 
   const modelName = e.model || e.default_model

@@ -6,6 +6,7 @@ import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getProfileD
 import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
+import { ProxyAgent } from 'undici'
 
 // --- Provider env var mapping (from hermes providers.py HERMES_OVERLAYS + config.py) ---
 export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_env: string }> = {
@@ -221,13 +222,15 @@ export async function listFilesRecursive(dir: string, prefix: string): Promise<{
 
 // --- Provider model helpers ---
 
-export async function fetchProviderModels(baseUrl: string, apiKey: string, freeOnly = false): Promise<string[]> {
+export async function fetchProviderModels(baseUrl: string, apiKey: string, freeOnly = false, proxy?: string): Promise<string[]> {
   const base = baseUrl.replace(/\/+$/, '')
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
+    const dispatcher = proxy?.trim() ? new ProxyAgent(proxy.trim()) : undefined
     const res = await fetch(modelsUrl, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
+      ...(dispatcher ? { dispatcher } : {}),
     })
     if (!res.ok) {
       logger.warn('available-models %s returned %d', modelsUrl, res.status)

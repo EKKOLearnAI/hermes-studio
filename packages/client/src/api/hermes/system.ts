@@ -136,6 +136,7 @@ export interface CustomProvider {
   base_url: string
   api_key: string
   model: string
+  proxy?: string
   context_length?: number
   api_mode?: ProviderApiMode
   providerKey?: string | null
@@ -144,6 +145,7 @@ export interface CustomProvider {
 export type ProviderEditableField =
   | 'label'
   | 'base_url'
+  | 'proxy'
   | 'api_key'
   | 'api_mode'
   | 'preferred_model'
@@ -162,6 +164,7 @@ export interface ProviderEditorDetail {
   source: 'builtin_env' | 'custom_providers' | 'providers'
   source_key?: string
   base_url: string
+  proxy?: string
   api_mode?: ProviderApiMode
   preferred_model: string
   credential_configured: boolean
@@ -181,6 +184,7 @@ export interface ProviderEditorDetail {
 export interface ProviderEditorPatch {
   label?: string
   base_url?: string
+  proxy?: string
   api_mode?: ProviderApiMode
   preferred_model?: string
   credential_action?: ProviderCredentialAction

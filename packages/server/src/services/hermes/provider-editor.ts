@@ -14,11 +14,13 @@ import { safeFileStore, type MultiTextUpdate } from '../safe-file-store'
 import { getProfileDir } from './hermes-profile'
 import { normalizeCustomProviderEntry } from './custom-providers-compat'
 import { PROVIDER_PRESETS } from '../../shared/providers'
+import { ProxyAgent } from 'undici'
 
 export type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 export type ProviderEditableField =
   | 'label'
   | 'base_url'
+  | 'proxy'
   | 'api_key'
   | 'api_mode'
   | 'preferred_model'
@@ -37,6 +39,7 @@ export interface ProviderEditorDetail {
   source: 'builtin_env' | 'custom_providers' | 'providers'
   source_key?: string
   base_url: string
+  proxy?: string
   api_mode?: ProviderApiMode
   preferred_model: string
   credential_configured: boolean
@@ -57,6 +60,7 @@ export interface ProviderEditorPatch {
   revision?: string
   label?: string
   base_url?: string
+  proxy?: string
   api_mode?: ProviderApiMode
   preferred_model?: string
   credential_action?: CredentialAction
@@ -245,6 +249,7 @@ function credentialInfo(
 const CUSTOM_PROVIDER_EDITABLE_FIELDS: ProviderEditableField[] = [
   'label',
   'base_url',
+  'proxy',
   'api_key',
   'api_mode',
   'preferred_model',
@@ -338,12 +343,13 @@ function buildDetailFromRaw(
   const baseUrl = source.builtin
     ? (source.envMapping!.base_url_env ? env.get(source.envMapping!.base_url_env) : '') || source.preset!.base_url
     : normalized!.base_url
+  const entry = source.configEntry
+  const proxy = source.builtin ? undefined : normalized!.proxy
   const apiMode = source.builtin ? source.preset!.api_mode : normalized!.api_mode
   const preferredModel = appProfileValue(appConfig, 'providerPreferredModels', profile, providerId) ||
     (!source.builtin ? String(normalized!.model || '') : '')
   const fields = editableFields(source)
   const contexts = contextLengths(profile, providerId)
-  const entry = source.configEntry
   const discoverModels = !source.builtin && typeof existingAlias(entry!, ['discover_models', 'discoverModels'], undefined) === 'boolean'
     ? Boolean(existingAlias(entry!, ['discover_models', 'discoverModels'], undefined))
     : undefined
@@ -362,6 +368,7 @@ function buildDetailFromRaw(
     envBaseUrl: source.envMapping?.base_url_env ? env.get(source.envMapping.base_url_env) || '' : '',
     label,
     preferredModel,
+    proxy: proxy || '',
     contexts,
   })
   return {
@@ -371,6 +378,7 @@ function buildDetailFromRaw(
     source: source.source,
     ...(source.sourceKey ? { source_key: source.sourceKey } : {}),
     base_url: baseUrl,
+    ...(proxy ? { proxy } : {}),
     ...(apiMode ? { api_mode: apiMode } : {}),
     preferred_model: preferredModel,
     credential_configured: credential.configured,
@@ -444,7 +452,7 @@ async function readLimitedResponse(response: Response): Promise<string> {
   }
 }
 
-export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: string, apiMode?: ProviderApiMode): Promise<string[]> {
+export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: string, apiMode?: ProviderApiMode, proxy?: string): Promise<string[]> {
   const endpoint = providerModelsEndpoint(baseUrl, apiMode)
   let current = endpoint.url
   const headers: Record<string, string> = { Accept: 'application/json' }
@@ -460,9 +468,10 @@ export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: strin
   }
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TEST_TIMEOUT_MS)
+  const dispatcher = proxy?.trim() ? new ProxyAgent(proxy.trim()) : undefined
   try {
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      const response = await fetch(current, { headers, redirect: 'manual', signal: controller.signal })
+      const response = await fetch(current, { headers, redirect: 'manual', signal: controller.signal, ...(dispatcher ? { dispatcher } : {}) })
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location')
         if (!location || redirects === 3) throw new ProviderEditorError('Provider returned too many redirects', 422, 'PROVIDER_REDIRECT_REJECTED')
@@ -519,13 +528,14 @@ export async function testProviderEditorDraft(
   const apiKey = patch.credential_action === 'replace' ? String(patch.api_key || '') : existingCredential
   if (patch.credential_action === 'clear') throw new ProviderEditorError('Cannot test a cleared credential', 422, 'PROVIDER_TEST_NO_CREDENTIAL')
   const baseUrl = patch.base_url !== undefined ? normalizeUrl(patch.base_url) : detail.base_url
+  const proxy = patch.proxy !== undefined ? String(patch.proxy || '').trim() : (detail.proxy || '')
   const apiMode = patch.api_mode || detail.api_mode
   const capability = connectionTestCapability(apiMode)
   if (!capability.supported) {
     throw new ProviderEditorError(capability.reason || 'Provider connection testing is not supported', 422, 'PROVIDER_TEST_UNSUPPORTED')
   }
   try {
-    const models = await fetchProviderCatalogForTest(baseUrl, apiKey, apiMode)
+    const models = await fetchProviderCatalogForTest(baseUrl, apiKey, apiMode, proxy)
     return { models: models.slice(0, 100), model_count: models.length }
   } catch (error) {
     // No catalog is not a failed connection. Report it as its own outcome so
@@ -597,6 +607,7 @@ function changedFields(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   const fields: string[] = []
   if (patch.label !== undefined && patch.label.trim() !== before.label) fields.push('label')
   if (patch.base_url !== undefined && patch.base_url.replace(/\/+$/, '') !== before.base_url.replace(/\/+$/, '')) fields.push('base_url')
+  if (patch.proxy !== undefined && String(patch.proxy || '').trim() !== (before.proxy || '')) fields.push('proxy')
   if (patch.api_mode !== undefined && patch.api_mode !== before.api_mode) fields.push('api_mode')
   if (patch.preferred_model !== undefined && patch.preferred_model.trim() !== before.preferred_model) fields.push('preferred_model')
   if (patch.discover_models !== undefined && patch.discover_models !== before.discover_models) fields.push('discover_models')
@@ -620,6 +631,7 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   const allowed = new Set(before.editable_fields)
   if (patch.label !== undefined && !allowed.has('label')) throw new ProviderEditorError('Provider label is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.base_url !== undefined && !allowed.has('base_url')) throw new ProviderEditorError('Provider base URL is read-only', 400, 'FIELD_READ_ONLY')
+  if (patch.proxy !== undefined && !allowed.has('proxy')) throw new ProviderEditorError('Provider proxy is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.api_mode !== undefined && !allowed.has('api_mode')) throw new ProviderEditorError('Provider API mode is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.preferred_model !== undefined && !allowed.has('preferred_model')) throw new ProviderEditorError('Preferred model is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.discover_models !== undefined && !allowed.has('discover_models')) throw new ProviderEditorError('Model discovery is read-only', 400, 'FIELD_READ_ONLY')
@@ -630,6 +642,14 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
   if (patch.credential_action && patch.credential_action !== 'keep' && !allowed.has('api_key')) throw new ProviderEditorError('Provider credential is read-only', 400, 'FIELD_READ_ONLY')
   if (patch.label !== undefined && (!patch.label.trim() || patch.label.trim().length > 100)) throw new ProviderEditorError('Provider label must contain 1-100 characters', 400, 'INVALID_LABEL')
   if (patch.base_url !== undefined) normalizeUrl(patch.base_url)
+  if (patch.proxy !== undefined && String(patch.proxy || '').trim()) {
+    try {
+      const parsed = new URL(String(patch.proxy).trim())
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol')
+    } catch {
+      throw new ProviderEditorError('Proxy must be a valid http:// or https:// URL', 400, 'INVALID_PROXY')
+    }
+  }
   if (patch.api_mode !== undefined && !normalizeApiMode(patch.api_mode)) throw new ProviderEditorError('Invalid API mode', 400, 'INVALID_API_MODE')
   if (patch.preferred_model !== undefined && (!patch.preferred_model.trim() || /[\r\n]/.test(patch.preferred_model))) throw new ProviderEditorError('Preferred model is invalid', 400, 'INVALID_MODEL')
   if (patch.credential_action === 'replace' && (!String(patch.api_key || '').trim() || /[\r\n]/.test(String(patch.api_key)))) throw new ProviderEditorError('A non-empty API key is required', 400, 'INVALID_API_KEY')
@@ -689,6 +709,11 @@ export async function updateProviderEditorDetail(
       } else {
         setExistingAlias(source.configEntry!, ['base_url', 'url', 'api', 'baseUrl'], baseUrl, 'base_url')
       }
+    }
+    if (patch.proxy !== undefined && !source.builtin) {
+      const proxyValue = String(patch.proxy || '').trim()
+      if (proxyValue) setExistingAlias(source.configEntry!, ['proxy', 'proxy_url', 'proxyUrl'], proxyValue, 'proxy')
+      else deleteAliases(source.configEntry!, ['proxy', 'proxy_url', 'proxyUrl'])
     }
     if (patch.api_mode !== undefined && !source.builtin) {
       setExistingAlias(source.configEntry!, ['api_mode', 'transport', 'apiMode'], patch.api_mode, 'api_mode')

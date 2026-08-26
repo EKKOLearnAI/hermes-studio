@@ -2296,6 +2296,24 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
   }
 }
 
+async function resolveCodingAgentProviderProxy(profile: string, provider: string, baseUrl: string): Promise<string> {
+  const normalizedBaseUrl = String(baseUrl || '').trim().replace(/\/+$/, '')
+  if (!normalizedBaseUrl) return ''
+  try {
+    const config = await readConfigYamlForProfile(profile)
+    const providerName = providerKeyWithoutCustomPrefix(String(provider || '').trim())
+    const expectedSlug = slugProviderName(providerName)
+    const entry = getCompatibleCustomProviders(config).find((candidate: any) => {
+      const candidateUrl = String(candidate?.base_url || '').trim().replace(/\/+$/, '')
+      return candidateUrl === normalizedBaseUrl && (!expectedSlug || slugProviderName(String(candidate?.name || '')) === expectedSlug)
+    })
+    const proxy = String((entry as any)?.proxy || (entry as any)?.proxy_url || (entry as any)?.proxyUrl || '').trim()
+    return /^https?:\/\//i.test(proxy) ? proxy : ''
+  } catch {
+    return ''
+  }
+}
+
 export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentLaunchResult> {
   const tool = getCodingAgentDefinition(id)
   if (!tool) {
@@ -2400,6 +2418,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   }
 
   const baseUrl = String(input.baseUrl || '').trim()
+  const providerProxy = await resolveCodingAgentProviderProxy(scope.profile, provider, baseUrl)
   const preset = PROVIDER_PRESETS.find(item => item.value === provider)
   const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
   const reasoningEffort = String(input.reasoningEffort || '').trim()
@@ -2443,6 +2462,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           model,
           baseUrl,
           apiKey,
+          proxy: providerProxy,
           apiMode,
           reasoningEffort,
           agentId: tool.id,
@@ -2510,6 +2530,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           model,
           baseUrl,
           apiKey,
+          proxy: providerProxy,
           apiMode,
           reasoningEffort,
           agentId: tool.id,
@@ -2586,6 +2607,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           model,
           baseUrl,
           apiKey,
+          proxy: providerProxy,
           apiMode,
           reasoningEffort,
           agentId: tool.id,

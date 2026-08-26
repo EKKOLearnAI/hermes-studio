@@ -6,6 +6,8 @@ export interface AgentTargetInput {
   model: string
   baseUrl: string
   apiKey: string
+  /** Optional HTTP/HTTPS proxy for this target's upstream provider request. */
+  proxy?: string
   apiMode?: AgentApiMode
   reasoningEffort?: string
   agentId?: string

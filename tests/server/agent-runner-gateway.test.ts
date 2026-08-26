@@ -32,6 +32,30 @@ describe('agent run gateway', () => {
     }))
   })
 
+  it('uses a provider-scoped HTTP proxy without changing unrelated requests', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const gateway = new AgentRunGateway()
+
+    await gateway.completeJson({
+      url: 'https://direct.example/v1/chat/completions',
+      apiKey: 'sk-direct',
+      body: { model: 'm' },
+    })
+    await gateway.completeJson({
+      url: 'https://proxied.example/v1/chat/completions',
+      apiKey: 'sk-proxied',
+      proxy: 'http://127.0.0.1:8080',
+      body: { model: 'm' },
+    })
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, expect.any(String), expect.not.objectContaining({ dispatcher: expect.anything() }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ dispatcher: expect.anything() }))
+  })
+
   it('throws structured provider errors', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       error: { message: 'bad key' },

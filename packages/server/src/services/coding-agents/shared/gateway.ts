@@ -1,3 +1,17 @@
+import { ProxyAgent } from 'undici'
+
+function providerProxyAgent(value: string | undefined): ProxyAgent | undefined {
+  const proxy = String(value || '').trim()
+  if (!proxy) return undefined
+  try {
+    const parsed = new URL(proxy)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+    return new ProxyAgent(proxy)
+  } catch {
+    return undefined
+  }
+}
+
 /** A provider request issued by a Coding Agent proxy. */
 export interface AgentGatewayRequest {
   url: string
@@ -5,6 +19,8 @@ export interface AgentGatewayRequest {
   body: unknown
   headers?: Record<string, string>
   signal?: AbortSignal
+  /** Provider-scoped HTTP/HTTPS proxy. Never use a global proxy for unrelated targets. */
+  proxy?: string
 }
 
 export class ProviderApiError extends Error {
@@ -43,6 +59,7 @@ export class AgentRunGateway {
   }
 
   private post(request: AgentGatewayRequest): Promise<Response> {
+    const dispatcher = providerProxyAgent(request.proxy)
     return fetch(request.url, {
       method: 'POST',
       headers: {
@@ -52,7 +69,8 @@ export class AgentRunGateway {
       },
       body: JSON.stringify(request.body),
       signal: request.signal,
-    })
+      ...(dispatcher ? { dispatcher } : {}),
+    } as RequestInit)
   }
 }
 

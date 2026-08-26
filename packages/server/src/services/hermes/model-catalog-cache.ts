@@ -46,6 +46,7 @@ export interface ProviderCatalogRefreshTarget {
   free_only?: boolean
   profile: string
   api_mode?: string
+  proxy?: string
   credential_kind: 'api_key' | 'oauth' | 'copilot' | 'none'
   skip_live_fetch?: boolean
 }
@@ -266,6 +267,7 @@ export async function refreshProviderModelCatalog(input: {
   profiles?: string[]
   profile?: string
   api_mode?: string
+  proxy?: string
   credential_kind?: ProviderCatalogRefreshTarget['credential_kind']
 }): Promise<ProviderModelCatalogEntry | null> {
   const provider = input.provider.trim()
@@ -281,6 +283,7 @@ export async function refreshProviderModelCatalog(input: {
     free_only: input.free_only,
     profile: String(input.profile || input.profiles?.[0] || '').trim(),
     api_mode: input.api_mode,
+    proxy: input.proxy,
     credential_kind: input.credential_kind || (input.api_key ? 'api_key' : 'none'),
   })
   if (fetched.length > 0) {
@@ -343,6 +346,7 @@ function mergeCandidate(candidates: Map<string, RefreshCandidate>, candidate: Re
     existing.api_key = candidate.api_key
     existing.credential_kind = candidate.credential_kind
   }
+  if (!existing.proxy && candidate.proxy) existing.proxy = candidate.proxy
   existing.skip_live_fetch = existing.skip_live_fetch === true && candidate.skip_live_fetch === true
 }
 
@@ -417,7 +421,10 @@ export async function fetchProviderCatalogRefreshTargetModels(
   if (target.provider === 'claude-oauth') {
     return fetchClaudeOAuthModels(target.base_url, target.api_key)
   }
-  return fetchProviderModels(target.base_url, target.api_key, target.free_only === true)
+  const freeOnly = target.free_only === true
+  return target.proxy
+    ? fetchProviderModels(target.base_url, target.api_key, freeOnly, target.proxy)
+    : fetchProviderModels(target.base_url, target.api_key, freeOnly)
 }
 
 function hasOAuthCredential(value: any): boolean {
@@ -563,6 +570,7 @@ async function collectRefreshCandidates(profiles = listProfileNamesFromDisk()): 
         fallback_models: uniqueModels([cp.model, ...configuredModels, ...presetModels]),
         profile,
         api_mode: cp.api_mode,
+        proxy: cp.proxy,
         credential_kind: apiKey ? 'api_key' : 'none',
       })
     }
@@ -626,6 +634,7 @@ export async function refreshConfiguredProviderModelCatalogs(options: { force?: 
           profiles,
           profile: candidate.profile,
           api_mode: candidate.api_mode,
+          proxy: candidate.proxy,
           credential_kind: candidate.credential_kind,
         })
       }

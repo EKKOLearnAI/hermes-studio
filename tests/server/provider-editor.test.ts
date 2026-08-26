@@ -83,6 +83,7 @@ describe('provider editor service', () => {
     expect(detail.editable_fields).toEqual([
       'label',
       'base_url',
+      'proxy',
       'api_key',
       'api_mode',
       'preferred_model',
@@ -356,7 +357,7 @@ describe('provider editor service', () => {
     expect(Object.keys((await getProviderEditorDetail('research', 'custom:context-race')).context_lengths)).toHaveLength(1)
   })
 
-  it('tests an unsaved draft and rejects a cross-origin credential redirect', async () => {
+  it('tests an unsaved draft through its provider proxy and rejects a cross-origin credential redirect', async () => {
     const credential = ['test', 'credential'].join('-')
     writeProfile('research', [
       'model:',
@@ -366,6 +367,7 @@ describe('provider editor service', () => {
       '  - name: testable',
       '    base_url: https://models.example/v1',
       `    api_key: ${credential}`,
+      '    proxy: http://127.0.0.1:8080',
       '    model: old-model',
       '',
     ].join('\n'))
@@ -381,6 +383,7 @@ describe('provider editor service', () => {
     })
     expect(result).toEqual({ models: ['model-a', 'model-b'], model_count: 2 })
     expect(String(fetchMock.mock.calls[0][0])).toBe('https://draft.example/v1/models')
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ dispatcher: expect.anything() }))
 
     fetchMock.mockResolvedValueOnce(new Response(null, {
       status: 302,
