@@ -33,7 +33,7 @@ describe('chat run webhooks', () => {
     db = null
     vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.doUnmock('../../packages/server/src/modules/studio/services/auth/token-auth')
-    vi.doUnmock('../../packages/server/src/services/social-messages/session-push')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/social-messages/session-push')
     vi.resetModules()
   })
 
@@ -244,7 +244,7 @@ describe('chat run webhooks', () => {
 
   it('fans session notifications out from the unified webhook observer', async () => {
     const notifySessionPush = vi.fn(async () => 1)
-    vi.doMock('../../packages/server/src/services/social-messages/session-push', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/social-messages/session-push', () => ({
       notifySessionPush,
     }))
     const webhookService = await import('../../packages/server/src/services/hermes/chat-webhooks')

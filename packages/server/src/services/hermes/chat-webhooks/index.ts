@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { getChatWebhookDispatcher } from './dispatcher'
 import { logger } from '../../logger'
-import { notifySessionPush } from '../../social-messages/session-push'
+import { notifySessionPush } from '../../../modules/studio/public/social-messages'
 import {
   stableChatWebhookEventId,
   truncateChatWebhookContent,

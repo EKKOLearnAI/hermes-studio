@@ -4,8 +4,8 @@ import {
   deleteSocialMessageRuntimeState,
   readSocialMessageRuntimeState,
   updateSocialMessageRuntimeState,
-} from '../../db/hermes/social-message-store'
-import { logger } from '../logger'
+} from '../../repositories/social-message-store'
+import { logger } from '../../public/logging'
 import { notifyFirstSocialMessageBinding } from './binding-notification'
 import type { StoredFeishuCredentials } from './credentials'
 

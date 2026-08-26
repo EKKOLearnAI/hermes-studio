@@ -9,7 +9,7 @@ const { notifyBinding } = vi.hoisted(() => ({ notifyBinding: vi.fn() }))
 const database = vi.hoisted(() => ({ value: null as any }))
 
 vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
-vi.mock('../../packages/server/src/services/social-messages/binding-notification', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/social-messages/binding-notification', () => ({
   notifyFirstSocialMessageBinding: notifyBinding,
 }))
 
@@ -41,7 +41,7 @@ describe('standalone Feishu runtime', () => {
   })
 
   afterEach(async () => {
-    const runtime = await import('../../packages/server/src/services/social-messages/feishu-runtime')
+    const runtime = await import('../../packages/server/src/modules/studio/services/social-messages/feishu-runtime')
     runtime.shutdownFeishuRuntimes()
     database.value?.close()
     database.value = null
@@ -49,7 +49,7 @@ describe('standalone Feishu runtime', () => {
   })
 
   it('records an inbound chat as the automatic push target and persists it', async () => {
-    const runtime = await import('../../packages/server/src/services/social-messages/feishu-runtime')
+    const runtime = await import('../../packages/server/src/modules/studio/services/social-messages/feishu-runtime')
     const credentials = {
       appId: 'cli_1234567890abcdef',
       appSecret: 'standalone-secret',
@@ -82,7 +82,7 @@ describe('standalone Feishu runtime', () => {
   })
 
   it('ignores app-authored events and clears targets when reset', async () => {
-    const runtime = await import('../../packages/server/src/services/social-messages/feishu-runtime')
+    const runtime = await import('../../packages/server/src/modules/studio/services/social-messages/feishu-runtime')
     const credentials = {
       appId: 'cli_fedcba0987654321',
       appSecret: 'standalone-secret',

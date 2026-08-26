@@ -4,8 +4,8 @@ import {
   normalizeSocialMessageBindingLocale,
   setSocialMessageAccountTarget,
   type SocialMessageBindingLocale,
-} from '../../db/hermes/social-message-store'
-import { logger } from '../logger'
+} from '../../repositories/social-message-store'
+import { logger } from '../../public/logging'
 import { getSocialMessageService } from './service'
 import type { SocialMessagePlatform, SocialMessageRecipientType } from './types'
 

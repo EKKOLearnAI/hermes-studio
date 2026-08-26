@@ -3,11 +3,11 @@ import {
   deleteSocialMessageRuntimeState,
   readSocialMessageRuntimeState,
   writeSocialMessageRuntimeState,
-} from '../../db/hermes/social-message-store'
+} from '../../repositories/social-message-store'
 import type { StoredWeixinCredentials } from './credentials'
 import { notifyFirstSocialMessageBinding } from './binding-notification'
 import { weixinIlinkPost } from './weixin-ilink'
-import { logger } from '../logger'
+import { logger } from '../../public/logging'
 
 export interface WeixinRecipient {
   userId: string

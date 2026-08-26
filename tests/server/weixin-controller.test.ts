@@ -16,7 +16,7 @@ async function loadController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
   process.env.HERMES_WEB_UI_HOME = studioHome
-  return import('../../packages/server/src/controllers/social-messages')
+  return import('../../packages/server/src/modules/studio/controllers/social-messages')
 }
 
 function makeCtx(body: Record<string, any>, userId = 7, profile = 'research'): any {
@@ -116,7 +116,7 @@ describe('social messages Weixin credentials', () => {
 
   it('saves manually entered Weixin credentials only for Social Messages', async () => {
     const { savePlatformCredentials } = await loadController()
-    const { readStoredWeixinCredentials } = await import('../../packages/server/src/services/social-messages/credentials')
+    const { readStoredWeixinCredentials } = await import('../../packages/server/src/modules/studio/services/social-messages/credentials')
     const ctx = makeCtx({
       accountId: 'manual-social-account',
       token: 'manual-social-token',
@@ -138,7 +138,7 @@ describe('social messages Weixin credentials', () => {
 
   it('shares credentials across profiles for one user and isolates different users', async () => {
     const { saveWeixinCredentials } = await loadController()
-    const { readStoredWeixinCredentials } = await import('../../packages/server/src/services/social-messages/credentials')
+    const { readStoredWeixinCredentials } = await import('../../packages/server/src/modules/studio/services/social-messages/credentials')
     const researchCtx = makeCtx({ account_id: 'research-account', token: 'research-token' }, 7, 'research')
     const defaultCtx = makeCtx({ account_id: 'default-account', token: 'default-token' }, 7, 'default')
     const otherUserCtx = makeCtx({ account_id: 'other-account', token: 'other-token' }, 8, 'research')
@@ -194,7 +194,7 @@ describe('social messages Weixin credentials', () => {
   it('clears Weixin credentials together with the saved runtime state', async () => {
     const { clearPlatformCredentials, saveWeixinCredentials } = await loadController()
     const { readStoredWeixinCredentials } = await import(
-      '../../packages/server/src/services/social-messages/credentials'
+      '../../packages/server/src/modules/studio/services/social-messages/credentials'
     )
     const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     await saveWeixinCredentials(makeCtx({ account_id: 'clear-account', token: 'clear-token' }))

@@ -262,6 +262,7 @@ function repositoryServerFiles(root) {
     .map(file => file.trim())
     .filter(Boolean)
     .map(file => normalizePath(path.posix.relative(SERVER_SOURCE_ROOT, file)))
+    .filter(file => existsSync(path.join(root, SERVER_SOURCE_ROOT, file)))
     .sort()
 }
 

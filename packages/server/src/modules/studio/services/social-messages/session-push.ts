@@ -1,10 +1,10 @@
-import { getSession, type HermesSessionRow } from '../../db/hermes/session-store'
+import { getSession, type HermesSessionRow } from '../../repositories/session-store'
 import {
   getActiveSocialMessageAccount,
   normalizeSocialMessageBindingLocale,
   type SocialMessageBindingLocale,
-} from '../../db/hermes/social-message-store'
-import { logger } from '../logger'
+} from '../../repositories/social-message-store'
+import { logger } from '../../public/logging'
 import {
   readActiveSocialMessagePlatform,
   readStoredFeishuCredentials,

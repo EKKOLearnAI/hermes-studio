@@ -3,7 +3,7 @@ import {
   getActiveSocialMessageAccount,
   listSocialMessageAccounts,
   setSocialMessageAccountTarget,
-} from '../../db/hermes/social-message-store'
+} from '../../repositories/social-message-store'
 import type {
   SocialMessagePlatform,
   SocialMessageRecipientType,

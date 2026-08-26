@@ -4,7 +4,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }))
 const database = vi.hoisted(() => ({ value: null as any }))
 
 vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
-vi.mock('../../packages/server/src/services/social-messages/service', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/social-messages/service', () => ({
   getSocialMessageService: () => ({ send }),
 }))
 
@@ -35,7 +35,7 @@ describe('Social Messages first binding notification', () => {
       bindingLocale: 'zh',
     })
     const notification = await import(
-      '../../packages/server/src/services/social-messages/binding-notification'
+      '../../packages/server/src/modules/studio/services/social-messages/binding-notification'
     )
     const input = {
       userId: 7,
@@ -73,7 +73,7 @@ describe('Social Messages first binding notification', () => {
     })
     send.mockRejectedValueOnce(new Error('temporary failure')).mockResolvedValueOnce({})
     const notification = await import(
-      '../../packages/server/src/services/social-messages/binding-notification'
+      '../../packages/server/src/modules/studio/services/social-messages/binding-notification'
     )
     const input = {
       userId: 7,
@@ -94,7 +94,7 @@ describe('Social Messages first binding notification', () => {
 
   it('formats every selectable locale and falls back to English', async () => {
     const { formatBindingSuccessMessage } = await import(
-      '../../packages/server/src/services/social-messages/binding-notification'
+      '../../packages/server/src/modules/studio/services/social-messages/binding-notification'
     )
     const expected = {
       zh: '✅ 通知绑定成功',

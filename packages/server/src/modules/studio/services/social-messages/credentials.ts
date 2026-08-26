@@ -8,7 +8,7 @@ import {
   SOCIAL_MESSAGE_BINDING_LOCALES,
   upsertSocialMessageAccount,
   type SocialMessageBindingLocale,
-} from '../../db/hermes/social-message-store'
+} from '../../repositories/social-message-store'
 import type { SocialMessageCredentials, SocialMessagePlatform } from './types'
 
 export interface StoredTelegramCredentials {

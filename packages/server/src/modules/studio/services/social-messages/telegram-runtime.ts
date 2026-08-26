@@ -3,8 +3,8 @@ import {
   deleteSocialMessageRuntimeState,
   readSocialMessageRuntimeState,
   writeSocialMessageRuntimeState,
-} from '../../db/hermes/social-message-store'
-import { logger } from '../logger'
+} from '../../repositories/social-message-store'
+import { logger } from '../../public/logging'
 import { notifyFirstSocialMessageBinding } from './binding-notification'
 import type { StoredTelegramCredentials } from './credentials'
 
