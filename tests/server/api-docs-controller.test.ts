@@ -31,5 +31,24 @@ describe('api docs controller', () => {
     expect(
       ctx.body.paths['/api/studio/chat-run/runs'].post.requestBody.content['application/json'].schema.properties.source.enum,
     ).toEqual(['cli', 'coding_agent', 'global_agent'])
+
+    for (const path of [
+      '/api/studio/update/preview/prepare',
+      '/api/studio/update/preview/start',
+    ]) {
+      expect(ctx.body.paths[path].post.requestBody).toEqual({
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                tag: { type: 'string' },
+              },
+            },
+          },
+        },
+      })
+    }
   })
 })

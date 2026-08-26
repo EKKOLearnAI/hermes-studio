@@ -127,9 +127,9 @@ function scanRouteFile(filePath, tagInfo, paths) {
   let match
   while (ctrlRouteRegex && (match = ctrlRouteRegex.exec(content)) !== null) {
     const [, method, path, controllerAlias, controllerMethod] = match
-    const controllerContent = controllerContents.get(controllerAlias)
-    const controllerSource = controllerContent
-      ? extractFunctionSource(controllerContent, controllerMethod)
+    const controller = controllerContents.get(controllerAlias)
+    const controllerSource = controller
+      ? extractHandlerSource(controller.filePath, controller.content, controllerMethod)
       : ''
     addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource)
   }
@@ -150,12 +150,80 @@ function readControllerContents(routeFilePath, routeContent) {
     const [, alias, importPath] = match
     const controllerPath = resolve(dirname(routeFilePath), `${importPath}.ts`)
     try {
-      contents.set(alias, readFileSync(controllerPath, 'utf-8'))
+      contents.set(alias, {
+        content: readFileSync(controllerPath, 'utf-8'),
+        filePath: controllerPath,
+      })
     } catch {
       // Non-controller namespace imports are ignored by the route scanner.
     }
   }
   return contents
+}
+
+function extractHandlerSource(filePath, content, functionName) {
+  const source = extractFunctionSource(content, functionName)
+  if (!source) return ''
+
+  // Module controllers may intentionally be thin HTTP boundaries that delegate
+  // the implementation to a service. Include directly delegated handlers so
+  // request parameters remain visible after moving business logic to services.
+  const namedImports = readNamedImports(filePath, content)
+  const delegatedSources = []
+  const seen = new Set()
+
+  for (const match of source.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(\s*ctx\s*\)/g)) {
+    const localName = match[1]
+    const imported = namedImports.get(localName)
+    if (!imported || seen.has(localName)) continue
+    seen.add(localName)
+
+    try {
+      const importedContent = readFileSync(imported.filePath, 'utf-8')
+      const delegatedSource = extractFunctionSource(importedContent, imported.importedName)
+      if (delegatedSource) delegatedSources.push(delegatedSource)
+    } catch {
+      // An unresolved delegated import should not prevent the remaining API
+      // catalog from being generated.
+    }
+  }
+
+  return [source, ...delegatedSources].join('\n')
+}
+
+function readNamedImports(importerPath, content) {
+  const imports = new Map()
+
+  for (const match of content.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    const [, bindings, importPath] = match
+    if (!importPath.startsWith('.')) continue
+
+    const importedFilePath = resolveTypeScriptImport(importerPath, importPath)
+    if (!importedFilePath) continue
+
+    for (const binding of bindings.split(',')) {
+      const parsed = binding.trim().match(/^(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/)
+      if (!parsed) continue
+      const importedName = parsed[1]
+      const localName = parsed[2] || importedName
+      imports.set(localName, { filePath: importedFilePath, importedName })
+    }
+  }
+
+  return imports
+}
+
+function resolveTypeScriptImport(importerPath, importPath) {
+  const basePath = resolve(dirname(importerPath), importPath)
+  for (const candidate of [`${basePath}.ts`, join(basePath, 'index.ts')]) {
+    try {
+      readFileSync(candidate, 'utf-8')
+      return candidate
+    } catch {
+      // Try the next supported TypeScript module path.
+    }
+  }
+  return null
 }
 
 function extractFunctionSource(content, functionName) {
