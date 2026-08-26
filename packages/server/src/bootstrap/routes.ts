@@ -1,12 +1,12 @@
 import type { Context, Next } from 'koa'
 import { apiDocsRoutes } from '../modules/studio'
 import { healthRoutes } from './health'
+import { updateRoutes } from './update'
 
 // Shared legacy route modules. Move these imports into their owning module as
 // each vertical slice is migrated.
 import { uploadRoutes } from '../routes/upload'
 import { appUploadRoutes } from '../routes/hermes/app-upload'
-import { updateRoutes } from '../routes/update'
 import { authPublicRoutes, authProtectedRoutes } from '../routes/auth'
 import { devicePublicRoutes, deviceRoutes } from '../routes/devices'
 import { mcuDeviceRoutes } from '../routes/mcu-devices'

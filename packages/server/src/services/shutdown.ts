@@ -1,6 +1,6 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
-import { stopPreviewRuntime } from '../controllers/update'
+import { stopPreviewRuntime } from '../bootstrap/update'
 import { codingAgentRunManager } from './coding-agents/runtime/run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
 import { shutdownLocalSttRuntime } from './hermes/local-stt-model-manager'
