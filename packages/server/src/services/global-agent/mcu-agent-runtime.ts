@@ -1,6 +1,7 @@
 import { MCU_VOICE_SYSTEM_INSTRUCTIONS } from './mcu-voice-instructions'
+import type { AgentRuntime } from '../../modules/studio/contracts/agents/runtime'
 
-export type McuAgentRuntime = 'ekko' | 'hermes'
+export type McuAgentRuntime = Extract<AgentRuntime, 'ekko' | 'hermes'>
 
 export const DEFAULT_MCU_AGENT_RUNTIME: McuAgentRuntime = 'ekko'
 

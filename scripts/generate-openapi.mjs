@@ -6,14 +6,13 @@
  * OpenAPI documentation without requiring code changes or decorators.
  */
 
-import { readFileSync, writeFileSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve, join } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const rootDir = resolve(__dirname, '..')
-const routesDir = join(rootDir, 'packages/server/src/routes')
-const controllersDir = join(rootDir, 'packages/server/src/controllers')
+const serverSourceDir = join(rootDir, 'packages/server/src')
 const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'))
 
 // OpenAPI template
@@ -79,7 +78,7 @@ const tagMappings = {
   'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
   'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
   'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
-  'routes/health.ts': { name: 'Health', description: 'Health check' },
+  'modules/studio/routes/health.ts': { name: 'Health', description: 'Health check' },
   'routes/update.ts': { name: 'Update', description: 'Self-update management' },
   'routes/upload.ts': { name: 'Upload', description: 'File upload' },
   'routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
@@ -88,34 +87,29 @@ const tagMappings = {
   'routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
   'routes/coding-agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
   'routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
-  'routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
+  'modules/studio/routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
 }
 
 // Extract route definitions from route files
 function scanRoutes() {
   const paths = {}
 
-  // Scan hermes routes
-  const hermesRoutesDir = join(routesDir, 'hermes')
-  const hermesRouteFiles = readdirSync(hermesRoutesDir).filter(f => f.endsWith('.ts'))
+  // Mappings may point at legacy routes or at their migrated module path.
+  // Preserve the historical scan order: Hermes files alphabetically first,
+  // followed by all other mappings in declaration order.
+  const mappings = Object.entries(tagMappings)
+  const hermesMappings = mappings
+    .filter(([routeFile]) => routeFile.startsWith('routes/hermes/'))
+    .sort(([left], [right]) => left.localeCompare(right))
+  const sharedAndMigratedMappings = mappings
+    .filter(([routeFile]) => !routeFile.startsWith('routes/hermes/'))
 
-  for (const file of hermesRouteFiles) {
-    const routePath = join('hermes', file)
-    const tagInfo = tagMappings[`routes/${routePath}`]
-    if (tagInfo) {
-      scanRouteFile(join(hermesRoutesDir, file), tagInfo, paths)
-    }
-  }
-
-  // Scan top-level routes
-  for (const [routeFile, tagInfo] of Object.entries(tagMappings)) {
-    if (!routeFile.startsWith('routes/hermes/')) {
-      const filePath = join(routesDir, routeFile.replace('routes/', ''))
-      try {
-        scanRouteFile(filePath, tagInfo, paths)
-      } catch (e) {
-        // File might not exist, skip
-      }
+  for (const [routeFile, tagInfo] of [...hermesMappings, ...sharedAndMigratedMappings]) {
+    const filePath = join(serverSourceDir, routeFile)
+    try {
+      scanRouteFile(filePath, tagInfo, paths)
+    } catch (e) {
+      // File might not exist, skip
     }
   }
 

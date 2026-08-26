@@ -1,5 +1,7 @@
 import type { ChatMessage } from '../../../lib/context-compressor'
 import type { EkkoBackgroundContinuationContext } from '../../../../../ekko-agent/src'
+import type { AgentRuntime } from '../../../modules/studio/contracts/agents/runtime'
+import type { RunMode } from '../../../modules/studio/contracts/runs/surface'
 
 export interface HermesBackgroundContinuationContext {
   runtime: 'hermes'
@@ -69,7 +71,7 @@ export interface QueuedRun {
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   codingAgentId?: ChatCodingAgentId
   agentId?: ChatCodingAgentId
-  mode?: 'scoped' | 'global'
+  mode?: RunMode
   baseUrl?: string
   base_url?: string
   apiKey?: string
@@ -100,7 +102,7 @@ export interface BackgroundDelegationState {
   dispatchPayload?: Record<string, unknown>
 }
 
-export type QueueInsertionRuntime = 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
+export type QueueInsertionRuntime = AgentRuntime
 export type QueueInsertionGuarantee = 'strict' | 'immediate'
 export type QueueInsertionPhase =
   | 'requesting'

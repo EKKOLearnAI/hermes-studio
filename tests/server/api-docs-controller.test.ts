@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { openapi } from '../../packages/server/src/controllers/api-docs'
+import { openapi } from '../../packages/server/src/modules/studio/controllers/api-docs'
 
 describe('api docs controller', () => {
   it('returns the OpenAPI route catalog', async () => {

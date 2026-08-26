@@ -22,6 +22,7 @@ import { getSession, updateSession, type HermesSessionRow } from '../../db/herme
 import type { SessionState } from '../hermes/run-chat/types'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../windows-command'
 import { assertScopedCodingAgentProviderAllowed } from './shared/provider-policy'
+import type { CodingAgentRuntime } from '../../modules/studio/contracts/agents/runtime'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -201,7 +202,7 @@ interface CommandExecution {
   windowsVerbatimArguments?: WindowsCommandExecution['windowsVerbatimArguments']
 }
 
-export type CodingAgentId = 'claude-code' | 'codex' | 'pi'
+export type CodingAgentId = CodingAgentRuntime
 
 export interface CodingAgentDefinition {
   id: CodingAgentId
