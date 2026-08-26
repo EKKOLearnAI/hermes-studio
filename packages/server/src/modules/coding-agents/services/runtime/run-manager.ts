@@ -19,7 +19,7 @@ import {
 import type { SessionState } from '../../../studio/contracts/runs/session'
 import type { CanonicalResponsesEvent } from '../../protocol/adapters/responses-stream'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../../studio/public/windows-command'
-import { killOwnedProcessTree } from '../../../studio/infrastructure/process-tree'
+import { killOwnedProcessTree } from '../../../studio/public/process-tree'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { compactCodexThread } from './codex-compact'

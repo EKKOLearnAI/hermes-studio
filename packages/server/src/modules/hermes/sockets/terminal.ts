@@ -10,7 +10,7 @@ import { authenticateUserToken, isAuthEnabled } from '../../studio/public/auth'
 import { logger } from '../../studio/public/logging'
 import { config } from '../../studio/public/config'
 import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../studio/public/security'
-import { killOwnedProcessTree } from '../../studio/infrastructure/process-tree'
+import { killOwnedProcessTree } from '../../studio/public/process-tree'
 
 let pty: any = null
 

@@ -6,7 +6,7 @@ import {
   windowsCmdShimExecution,
   windowsCommandNeedsShell,
 } from '../../../studio/public/windows-command'
-import { killOwnedProcessTree } from '../../../studio/infrastructure/process-tree'
+import { killOwnedProcessTree } from '../../../studio/public/process-tree'
 
 const APP_SERVER_READY_TIMEOUT_MS = 30_000
 const COMPACT_TIMEOUT_MS = 5 * 60 * 1000

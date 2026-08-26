@@ -7,7 +7,7 @@ import { config } from '../../studio/public/config'
 import { logger } from '../../studio/public/logging'
 import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../studio/public/security'
 import { userCanAccessProfile } from '../../studio/public/users'
-import { killOwnedProcessTree } from '../../studio/infrastructure/process-tree'
+import { killOwnedProcessTree } from '../../studio/public/process-tree'
 import * as kanbanCli from '../services/kanban/kanban-service'
 
 interface KanbanEventsRequest extends IncomingMessage {

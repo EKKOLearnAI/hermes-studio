@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { killOwnedProcessTree } from '../../packages/server/src/modules/studio/infrastructure/process-tree'
+import { killOwnedProcessTree } from '../../packages/server/src/modules/studio/public/process-tree'
 
 describe('owned process tree cleanup', () => {
   it('uses synchronous Windows tree termination instead of killing only the root', () => {
