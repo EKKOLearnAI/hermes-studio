@@ -9,6 +9,7 @@ export interface AgentStatusRecord {
   source: AgentStatusSource
   path: string
   version: string
+  error?: string
 }
 
 export interface AgentStatusSnapshot {

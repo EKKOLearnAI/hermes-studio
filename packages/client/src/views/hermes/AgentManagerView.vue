@@ -12,10 +12,8 @@ import {
   type CodingAgentToolStatus,
   type CodingAgentUpdateResult,
 } from '@/api/coding-agents'
-import {
-  fetchRuntimeVersionStatus,
-  type RuntimeVersionStatus,
-} from '@/api/hermes/runtime-versions'
+import { fetchAgentStatusSnapshot, type AgentStatusSnapshot } from '@/api/agent-status'
+import { fetchRuntimeVersionStatus } from '@/api/hermes/runtime-versions'
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
 import { useAppStore } from '@/stores/hermes/app'
 
@@ -24,6 +22,8 @@ interface CodingAgentCard {
   name: string
   provider: string
   logo: string
+  command: string
+  packageName: string
 }
 
 defineProps<{
@@ -35,9 +35,30 @@ const emit = defineEmits<{
 }>()
 
 const codingAgents: CodingAgentCard[] = [
-  { id: 'claude-code', name: 'Claude', provider: 'Anthropic', logo: '/coding-agents/claude-code.svg' },
-  { id: 'codex', name: 'Codex', provider: 'OpenAI', logo: '/coding-agents/codex-openai.png' },
-  { id: 'pi', name: 'Pi', provider: 'Pi', logo: '/coding-agents/pi.svg' },
+  {
+    id: 'claude-code',
+    name: 'Claude',
+    provider: 'Anthropic',
+    logo: '/coding-agents/claude-code.svg',
+    command: 'claude',
+    packageName: '@anthropic-ai/claude-code',
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    provider: 'OpenAI',
+    logo: '/coding-agents/codex-openai.png',
+    command: 'codex',
+    packageName: '@openai/codex',
+  },
+  {
+    id: 'pi',
+    name: 'Pi',
+    provider: 'Pi',
+    logo: '/coding-agents/pi.svg',
+    command: 'pi',
+    packageName: '@earendil-works/pi-coding-agent',
+  },
 ]
 
 const { t } = useI18n()
@@ -47,7 +68,7 @@ const route = useRoute()
 const router = useRouter()
 
 const tools = ref<CodingAgentToolStatus[]>([])
-const runtimeStatus = ref<RuntimeVersionStatus | null>(null)
+const agentStatusSnapshot = ref<AgentStatusSnapshot | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const runtimeManagerVisible = ref(false)
@@ -60,29 +81,21 @@ const updateInfo = ref<Record<CodingAgentId, CodingAgentUpdateResult | null>>({
   pi: null,
 })
 
-const allCliInstallations = computed(() => runtimeStatus.value?.hermes.cliInstallations || [])
-const hermesDetected = computed(() => Boolean(
-  runtimeStatus.value?.hermes.agentVersion
-  || allCliInstallations.value.length,
-))
-const hermesVersion = computed(() => formatVersion(
-  allCliInstallations.value.find(item => item.selected)?.version
-  || runtimeStatus.value?.hermes.agentVersion
-  || runtimeStatus.value?.hermes.activeVersion
-  || allCliInstallations.value[0]?.version,
-))
+const hermesStatus = computed(() => agentStatusSnapshot.value?.agents.find(agent => agent.id === 'hermes'))
+const hermesDetected = computed(() => Boolean(hermesStatus.value?.installed))
+const hermesVersion = computed(() => formatHermesVersion(hermesStatus.value?.version))
 const hermesType = computed<'CLI' | 'Runtime' | ''>(() => {
-  const selected = allCliInstallations.value.find(item => item.selected)
-  if (selected) return selected.source === 'user-cli' ? 'CLI' : 'Runtime'
-
-  const activeRuntime = runtimeStatus.value?.hermes.installed.some(item => item.active)
-    || Boolean(runtimeStatus.value?.hermes.activeVersion)
-  if (activeRuntime) return 'Runtime'
-  return allCliInstallations.value.some(item => item.source === 'user-cli') ? 'CLI' : ''
+  if (hermesStatus.value?.source === 'user-cli') return 'CLI'
+  if (hermesStatus.value?.source === 'managed-runtime') return 'Runtime'
+  return ''
 })
 
 watch(runtimeManagerVisible, (visible, previous) => {
-  if (!visible && previous) void loadRuntimeStatus()
+  if (!visible && previous) {
+    void syncAgentStatus().catch((error) => {
+      loadError.value = errorMessage(error)
+    })
+  }
 })
 
 function toolStatus(id: CodingAgentId): CodingAgentToolStatus | undefined {
@@ -93,6 +106,10 @@ function formatVersion(value?: string): string {
   const version = value?.trim()
   if (!version) return t('agentManager.unknownVersion')
   return /^v(?=\d)/i.test(version) ? version : `v${version}`
+}
+
+function formatHermesVersion(value?: string): string {
+  return formatVersion(value?.split('·')[0])
 }
 
 function installedVersion(id: CodingAgentId): string {
@@ -112,21 +129,54 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function loadCodingAgents() {
-  tools.value = (await fetchCodingAgentsStatus()).tools
+function applyAgentStatusSnapshot(snapshot: AgentStatusSnapshot) {
+  agentStatusSnapshot.value = snapshot
+  const statuses = new Map(snapshot.agents.map(status => [status.id, status]))
+  tools.value = codingAgents.map((agent) => {
+    const status = statuses.get(agent.id)
+    return {
+      ...agent,
+      installed: Boolean(status?.installed),
+      version: status?.version || '',
+      rawVersion: status?.version || '',
+      source: status?.source === 'user-cli' ? 'user-cli' : 'not-installed',
+      path: status?.path || '',
+      error: status?.error || '',
+    }
+  })
 }
 
-async function loadRuntimeStatus() {
-  runtimeStatus.value = await fetchRuntimeVersionStatus({ includeRemote: false })
+async function syncAgentStatus() {
+  applyAgentStatusSnapshot(await fetchAgentStatusSnapshot())
 }
 
-async function loadAll() {
+async function loadCachedStatus() {
   loading.value = true
   loadError.value = ''
-  const results = await Promise.allSettled([loadCodingAgents(), loadRuntimeStatus()])
+  try {
+    await syncAgentStatus()
+  } catch (error) {
+    loadError.value = errorMessage(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function refreshAll() {
+  loading.value = true
+  loadError.value = ''
+  const results = await Promise.allSettled([
+    fetchCodingAgentsStatus(),
+    fetchRuntimeVersionStatus({ includeRemote: false }),
+  ])
   const errors = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map(result => errorMessage(result.reason))
+  try {
+    await syncAgentStatus()
+  } catch (error) {
+    errors.push(errorMessage(error))
+  }
   if (errors.length) loadError.value = errors.join('\n')
   loading.value = false
 }
@@ -182,7 +232,7 @@ onMounted(() => {
     delete query.runtime
     void router.replace({ query })
   }
-  void loadAll()
+  void loadCachedStatus()
 })
 </script>
 
@@ -210,7 +260,7 @@ onMounted(() => {
           </NButton>
           <h2 class="header-title">{{ t('agentManager.title') }}</h2>
         </div>
-        <NButton size="small" secondary :loading="loading" @click="loadAll()">
+        <NButton size="small" secondary :loading="loading" @click="refreshAll()">
           {{ t('agentManager.refresh') }}
         </NButton>
       </header>

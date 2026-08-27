@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({
   checkCodingAgentUpdate: vi.fn(),
   deleteCodingAgent: vi.fn(),
+  fetchAgentStatusSnapshot: vi.fn(),
   fetchCodingAgentsStatus: vi.fn(),
   fetchRuntimeVersionStatus: vi.fn(),
   installCodingAgent: vi.fn(),
@@ -18,6 +19,10 @@ vi.mock('@/api/coding-agents', () => ({
   deleteCodingAgent: api.deleteCodingAgent,
   fetchCodingAgentsStatus: api.fetchCodingAgentsStatus,
   installCodingAgent: api.installCodingAgent,
+}))
+
+vi.mock('@/api/agent-status', () => ({
+  fetchAgentStatusSnapshot: api.fetchAgentStatusSnapshot,
 }))
 
 vi.mock('@/api/hermes/runtime-versions', () => ({
@@ -96,7 +101,7 @@ function runtimeStatus() {
     remoteError: '',
     hermes: {
       activeVersion: '0.21.0',
-      agentVersion: '0.21.0',
+      agentVersion: 'v0.21.0 (2026.8.27) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
       activeDirectory: '/runtime/0.21.0',
       storageDirectory: '/runtime',
       defaultStorageDirectory: '/runtime',
@@ -127,6 +132,26 @@ function runtimeStatus() {
   }
 }
 
+function agentStatusSnapshot() {
+  return {
+    revision: 1,
+    updatedAt: '2026-08-27T00:00:00.000Z',
+    agents: [
+      {
+        id: 'hermes',
+        installed: true,
+        source: 'managed-runtime',
+        path: '/runtime/0.21.0/bin/hermes',
+        version: 'v0.21.0 (2026.8.27) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
+      },
+      { id: 'ekko-agent', installed: true, source: 'built-in', path: '', version: '0.7.0' },
+      { id: 'claude-code', installed: true, source: 'user-cli', path: '/usr/local/bin/claude', version: '2.0.0' },
+      { id: 'codex', installed: false, source: 'not-installed', path: '', version: '' },
+      { id: 'pi', installed: false, source: 'not-installed', path: '', version: '' },
+    ],
+  }
+}
+
 describe('Agent Manager page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -148,6 +173,7 @@ describe('Agent Manager page', () => {
       ],
     })
     api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
+    api.fetchAgentStatusSnapshot.mockResolvedValue(agentStatusSnapshot())
   })
 
   it('shows Hermes with the same compact card structure as other Agents', async () => {
@@ -164,14 +190,18 @@ describe('Agent Manager page', () => {
     const hermesCard = wrapper.get('[data-testid="agent-card-hermes"]')
     expect(hermesCard.text()).not.toContain('agentManager.managedRuntimeHint')
     expect(hermesCard.text()).toContain('codingAgents.installed')
-    expect(hermesCard.get('.agent-version').text()).toBe('v0.21.0')
+    expect(hermesCard.get('.agent-version').text()).toBe('v0.21.0 (2026.8.27)')
+    expect(hermesCard.text()).not.toContain('3f497e2b')
+    expect(hermesCard.text()).not.toContain('470cf66b')
     expect(hermesCard.text()).not.toContain('agentManager.hermesDescription')
     expect(hermesCard.text()).not.toContain('/Users/test/.local/bin/hermes')
     expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('Runtime')
     expect(hermesCard.findAll('button').map(button => button.text()))
       .toEqual(['agentManager.manageRuntime', 'sidebar.settings'])
     expect(wrapper.findComponent({ name: 'VersionManagementModal' }).exists()).toBe(true)
-    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledOnce()
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+    expect(api.fetchCodingAgentsStatus).not.toHaveBeenCalled()
 
     const ekkoCard = wrapper.get('[data-testid="agent-card-ekko"]')
     expect(ekkoCard.findAll('button')).toHaveLength(0)
@@ -188,9 +218,14 @@ describe('Agent Manager page', () => {
 
   it('detects the CLI before offering Runtime management in the desktop shell', async () => {
     ;(window as typeof window & { hermesDesktop?: { isDesktop: boolean } }).hermesDesktop = { isDesktop: true }
-    const status = runtimeStatus()
-    status.hermes.cliInstallations[0].selected = true
-    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const status = agentStatusSnapshot()
+    status.agents[0] = {
+      ...status.agents[0],
+      source: 'user-cli',
+      path: '/Users/test/.local/bin/hermes',
+      version: '0.20.4',
+    }
+    api.fetchAgentStatusSnapshot.mockResolvedValue(status)
     const wrapper = mount(AgentManagerView, {
       props: { sidebarCollapsed: false },
       global: {
@@ -206,16 +241,21 @@ describe('Agent Manager page', () => {
     expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('CLI')
     expect(hermesCard.findAll('button').map(button => button.text()))
       .toEqual(['sidebar.settings'])
-    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
     expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(false)
   })
 
-  it('does not open Runtime management just because the desktop CLI probe finds nothing', async () => {
+  it('does not open Runtime management when cached Hermes status is unavailable', async () => {
     ;(window as typeof window & { hermesDesktop?: { isDesktop: boolean } }).hermesDesktop = { isDesktop: true }
-    const status = runtimeStatus()
-    status.hermes.agentVersion = ''
-    status.hermes.cliInstallations = []
-    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const status = agentStatusSnapshot()
+    status.agents[0] = {
+      ...status.agents[0],
+      installed: false,
+      source: 'not-installed',
+      path: '',
+      version: '',
+    }
+    api.fetchAgentStatusSnapshot.mockResolvedValue(status)
 
     const wrapper = mount(AgentManagerView, {
       props: { sidebarCollapsed: false },
@@ -227,7 +267,7 @@ describe('Agent Manager page', () => {
     })
     await flushPromises()
 
-    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
     const hermesCard = wrapper.get('[data-testid="agent-card-hermes"]')
     expect(hermesCard.text()).toContain('codingAgents.notInstalled')
     expect(hermesCard.text()).toContain('agentManager.hermesDescription')
@@ -273,5 +313,27 @@ describe('Agent Manager page', () => {
     expect(claudeCard.find('.update-alert').exists()).toBe(false)
     expect(claudeCard.findAll('button').map(button => button.text()))
       .toContain('agentManager.updateToVersion:2.1.0')
+  })
+
+  it('only probes installed Agents after the user clicks refresh', async () => {
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: { stubs: { VersionManagementModal: true } },
+    })
+    await flushPromises()
+
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledOnce()
+    expect(api.fetchCodingAgentsStatus).not.toHaveBeenCalled()
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+
+    const refreshButton = wrapper.findAll('button')
+      .find(button => button.text() === 'agentManager.refresh')
+    expect(refreshButton).toBeDefined()
+    await refreshButton!.trigger('click')
+    await flushPromises()
+
+    expect(api.fetchCodingAgentsStatus).toHaveBeenCalledOnce()
+    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledTimes(2)
   })
 })
