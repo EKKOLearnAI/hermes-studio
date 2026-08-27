@@ -6,6 +6,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'pat
 import * as tar from 'tar'
 import { config } from '../../../studio/public/config'
 import { getHermesAgentVersion, getHermesWebUiVersion } from '../../../studio/public/system-info'
+import { updateAgentStatus } from '../../../studio/public/agent-status-registry'
+import { discoverHermesCliInstallations, type HermesCliInstallation } from './discovery'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
 const DEFAULT_REMOTE_MANIFEST_URL = 'https://api.hermes-studio.ai/api/studio/versions'
@@ -85,6 +87,7 @@ export interface RuntimeVersionStatus {
     pendingStorageDirectory: string
     migrationError: string
     activationError: string
+    cliInstallations: HermesCliInstallation[]
     installed: InstalledRuntimeVersion[]
     remoteVersions: string[]
   }
@@ -95,6 +98,11 @@ export interface RuntimeVersionStatus {
     installed: InstalledWebUiVersion[]
     remoteVersions: string[]
   }
+}
+
+export interface RuntimeVersionStatusOptions {
+  probeRuntime?: boolean
+  includeRemote?: boolean
 }
 
 interface RuntimePackageManifest {
@@ -124,6 +132,13 @@ interface DownloadProgress {
 }
 
 type DownloadProgressHandler = (progress: DownloadProgress) => void
+type RuntimeInstallCompletedHandler = (runtime: InstalledRuntimeVersion) => void | Promise<void>
+
+let runtimeInstallCompletedHandler: RuntimeInstallCompletedHandler | null = null
+
+export function configureRuntimeInstallCompletedHandler(handler: RuntimeInstallCompletedHandler | null): void {
+  runtimeInstallCompletedHandler = handler
+}
 
 function runtimePlatformKey(platformName = process.platform, archName = process.arch): string {
   const osLabel = platformName === 'win32' ? 'win' : platformName === 'darwin' ? 'mac' : platformName
@@ -379,40 +394,83 @@ async function fetchRemoteVersions(): Promise<{ manifest: StudioVersionManifest 
   }
 }
 
-export async function getRuntimeVersionStatus(): Promise<RuntimeVersionStatus> {
-  const active = readActiveVersionManifest()
-  const [{ manifest, error }, agentVersion] = await Promise.all([
-    fetchRemoteVersions(),
-    getHermesAgentVersion(),
+async function probeHermesAgentVersion(): Promise<string> {
+  try {
+    return await getHermesAgentVersion()
+  } catch {
+    // A missing Hermes executable is a normal inventory result. Discovery
+    // below determines whether another user CLI or managed Runtime exists.
+    return ''
+  }
+}
+
+export async function getRuntimeVersionStatus(
+  options: RuntimeVersionStatusOptions = {},
+): Promise<RuntimeVersionStatus> {
+  const probeRuntime = options.probeRuntime !== false
+  const includeRemote = probeRuntime && options.includeRemote !== false
+  const active = probeRuntime ? readActiveVersionManifest() : null
+  const installedRuntimes = probeRuntime ? listInstalledRuntimeVersions(active) : []
+  const [{ manifest, error }, agentVersion, cliInstallations] = await Promise.all([
+    includeRemote ? fetchRemoteVersions() : Promise.resolve({ manifest: null, error: '' }),
+    probeHermesAgentVersion(),
+    discoverHermesCliInstallations(installedRuntimes),
   ])
   const webUiVersion = getHermesWebUiVersion()
 
-  return {
+  const status: RuntimeVersionStatus = {
     active,
     platform: runtimePlatformKey(),
-    activeVersionPath: activeVersionPath(),
-    remoteManifestUrl: process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL?.trim() || DEFAULT_REMOTE_MANIFEST_URL,
+    activeVersionPath: probeRuntime ? activeVersionPath() : '',
+    remoteManifestUrl: probeRuntime
+      ? process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL?.trim() || DEFAULT_REMOTE_MANIFEST_URL
+      : '',
     remoteError: error,
     hermes: {
-      activeVersion: active?.hermesRuntimeVersion || '',
+      activeVersion: probeRuntime ? active?.hermesRuntimeVersion || '' : '',
       agentVersion,
-      activeDirectory: active?.runtimeDirectory || '',
-      storageDirectory: runtimeStorageRoot(active),
-      defaultStorageDirectory: defaultDesktopRuntimeRoot(),
-      pendingStorageDirectory: active?.pendingRuntimeRootDirectory || '',
-      migrationError: active?.runtimeMigrationError || '',
-      activationError: active?.runtimeActivationError || '',
-      installed: listInstalledRuntimeVersions(active),
+      activeDirectory: probeRuntime ? active?.runtimeDirectory || '' : '',
+      storageDirectory: probeRuntime ? runtimeStorageRoot(active) : '',
+      defaultStorageDirectory: probeRuntime ? defaultDesktopRuntimeRoot() : '',
+      pendingStorageDirectory: probeRuntime ? active?.pendingRuntimeRootDirectory || '' : '',
+      migrationError: probeRuntime ? active?.runtimeMigrationError || '' : '',
+      activationError: probeRuntime ? active?.runtimeActivationError || '' : '',
+      cliInstallations,
+      installed: installedRuntimes,
       remoteVersions: normalizeStringList(manifest?.hermes),
     },
     webui: {
       currentVersion: webUiVersion,
-      activeVersion: active?.webUiVersion || webUiVersion,
-      activeDirectory: activeWebUiDirectory(active),
-      installed: listInstalledWebUiVersions(active),
+      activeVersion: probeRuntime ? active?.webUiVersion || webUiVersion : webUiVersion,
+      activeDirectory: probeRuntime ? activeWebUiDirectory(active) : '',
+      installed: probeRuntime ? listInstalledWebUiVersions(active) : [],
       remoteVersions: [],
     },
   }
+  recordHermesAgentStatus(status)
+  return status
+}
+
+function recordHermesAgentStatus(status: RuntimeVersionStatus): void {
+  const selected = status.hermes.cliInstallations.find(item => item.selected)
+    || status.hermes.cliInstallations[0]
+  const activeRuntime = status.hermes.installed.find(item => item.active)
+  const installed = Boolean(status.hermes.agentVersion || selected?.path || activeRuntime)
+  updateAgentStatus('hermes', {
+    name: 'Hermes',
+    provider: 'Nous Research',
+    kind: 'hermes',
+    installed,
+    version: status.hermes.agentVersion
+      || selected?.version
+      || activeRuntime?.manifestHermesRuntimeVersion
+      || activeRuntime?.version
+      || '',
+    source: installed ? selected?.source || (activeRuntime ? 'managed-runtime' : 'user-cli') : 'not-installed',
+    path: selected?.path || '',
+    error: '',
+    installations: status.hermes.cliInstallations,
+  })
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -775,13 +833,21 @@ function createDownloadJob(
     })
 
     runner(cleanVersion, updateProgress)
-      .then(result => {
+      .then(async result => {
+        if (kind === 'runtime') {
+          activateInstalledRuntimeVersion(result.version)
+          result = { ...result, active: true }
+          await getRuntimeVersionStatus({ includeRemote: false })
+        }
         job.status = 'completed'
         job.stage = 'completed'
         job.message = 'runtimeVersions.jobStage.completed'
         job.percent = 100
         job.result = result
         job.updatedAt = new Date().toISOString()
+        if (kind === 'runtime' && runtimeInstallCompletedHandler) {
+          void Promise.resolve(runtimeInstallCompletedHandler(result as InstalledRuntimeVersion)).catch(() => undefined)
+        }
       })
       .catch(err => {
         job.status = 'failed'

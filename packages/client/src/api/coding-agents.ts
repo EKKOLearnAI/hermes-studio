@@ -58,6 +58,8 @@ export interface CodingAgentToolStatus {
   installed: boolean
   version: string
   rawVersion: string
+  source?: 'user-cli' | 'not-installed'
+  path?: string
   error?: string
 }
 

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   appHome: `/tmp/hermes-web-ui-logs-controller-${process.pid}`,
   listLogFiles: vi.fn(async () => []),
   readLogs: vi.fn(async () => ''),
+  hermesAvailable: true,
 }))
 
 vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
@@ -22,6 +23,10 @@ vi.mock('../../packages/server/src/modules/studio/public/agent-logs', () => ({
   },
 }))
 
+vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
+  isHermesAgentAvailable: vi.fn(() => mocks.hermesAvailable),
+}))
+
 describe('Hermes logs controller Ekko source', () => {
   beforeAll(async () => {
     await rm(mocks.appHome, { recursive: true, force: true })
@@ -30,6 +35,7 @@ describe('Hermes logs controller Ekko source', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.hermesAvailable = true
   })
 
   afterAll(async () => {
@@ -82,5 +88,26 @@ describe('Hermes logs controller Ekko source', () => {
     })
     expect(readContext.body.entries[0].message).toContain('tool.failed')
     expect(readContext.body.entries[0].message).toContain('session=session-target')
+  })
+
+  it('keeps Studio logs but does not query Hermes logs when Hermes is unavailable', async () => {
+    mocks.hermesAvailable = false
+    const controller = await import('../../packages/server/src/modules/studio/controllers/logs')
+    const listContext: any = { state: { profile: { name: 'work' } }, query: {}, body: null }
+
+    await controller.list(listContext)
+
+    expect(mocks.listLogFiles).not.toHaveBeenCalled()
+    expect(listContext.body.files.map((file: any) => file.name)).not.toContain('agent')
+
+    const readContext: any = {
+      params: { name: 'agent' },
+      query: { lines: '100' },
+      body: null,
+    }
+    await controller.read(readContext)
+
+    expect(mocks.readLogs).not.toHaveBeenCalled()
+    expect(readContext.body).toEqual({ entries: [] })
   })
 })

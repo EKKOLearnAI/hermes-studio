@@ -19,6 +19,10 @@ vi.mock('../../packages/server/src/modules/ekko/services/auth-providers', () => 
   resolveEkkoAuthorizedProviderCredentials: mocks.resolveAuthorized,
 }))
 
+vi.mock('../../packages/server/src/modules/studio/public/authorized-provider-runtime', () => ({
+  isAuthorizedRuntimeProvider: (provider: string) => provider === 'openai-codex',
+}))
+
 describe('resolveEkkoProviderRuntimeConfig', () => {
   beforeEach(() => {
     mocks.readConfigYamlForProfile.mockReset()
@@ -75,7 +79,7 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
     })
   })
 
-  it('prefers explicit connection values over stored OAuth credentials', async () => {
+  it('prefers Studio-refreshed OAuth credentials over stale explicit values', async () => {
     mocks.resolveAuthorized.mockResolvedValue({
       baseUrl: 'https://stored.example/v1',
       apiKey: 'stored-key',
@@ -92,10 +96,40 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
       apiMode: 'codex_responses',
     })).resolves.toEqual({
       provider: 'openai-codex',
-      baseUrl: 'https://explicit.example/v1',
-      apiKey: 'explicit-key',
+      baseUrl: 'https://stored.example/v1',
+      apiKey: 'stored-key',
       apiMode: 'codex_responses',
     })
+  })
+
+  it('forces a Studio refresh and retries once when an opaque token receives 401', async () => {
+    mocks.resolveAuthorized.mockResolvedValue({
+      baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiKey: 'fresh-token',
+      apiMode: 'codex_responses',
+    })
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    const { createEkkoAuthorizedProviderFetch } = await import(
+      '../../packages/server/src/modules/ekko/services/provider-runtime'
+    )
+    const wrapped = createEkkoAuthorizedProviderFetch({
+      profile: 'research',
+      provider: 'openai-codex',
+      model: 'gpt-5.5',
+      accessToken: 'opaque-token-without-expiry',
+    }, fetcher)
+
+    await expect(wrapped('https://chatgpt.com/backend-api/codex/responses', {
+      method: 'POST',
+      body: '{}',
+    })).resolves.toMatchObject({ status: 200 })
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('authorization')).toBe('Bearer opaque-token-without-expiry')
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).get('authorization')).toBe('Bearer fresh-token')
+    expect(mocks.resolveAuthorized).toHaveBeenCalledWith('research', 'openai-codex', 'gpt-5.5', true)
   })
 
   it('uses the authorized MiniMax region and fresh token over stale explicit values', async () => {

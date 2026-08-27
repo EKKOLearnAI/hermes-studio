@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto'
 import { mkdir, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import {
+  createChatEkkoAuthorizedProviderFetch as createAuthorizedProviderFetch,
   createChatEkkoModelClient as createModelClient,
   createPrimaryAgentBridge,
   getChatEkkoAgent as getGlobalEkkoAgent,
@@ -593,7 +594,14 @@ async function callEkkoSummarizer(
     apiMode: runtimeConfig.apiMode,
     timeoutMs,
   })
-  const providerClient = createModelClient(providerConfig)
+  const providerClient = createModelClient(providerConfig, {
+    fetch: createAuthorizedProviderFetch({
+      profile: options.profile,
+      provider,
+      model,
+      accessToken: runtimeConfig.apiKey,
+    }),
+  })
   const agent = getGlobalEkkoAgent(options.profile)
 
   await writeSummarizerDebugDump({

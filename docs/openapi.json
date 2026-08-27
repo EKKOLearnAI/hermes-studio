@@ -193,6 +193,10 @@
       "description": "OpenAPI route catalog"
     },
     {
+      "name": "Agent Status",
+      "description": "In-memory Agent installation, version, and source status"
+    },
+    {
       "name": "Coding Agents",
       "description": "Coding agent installation, config, and runs"
     },
@@ -202,6 +206,32 @@
     }
   ],
   "paths": {
+    "/api/agents/status": {
+      "get": {
+        "tags": [
+          "Agent Status"
+        ],
+        "summary": "Get status",
+        "description": "GET /api/agents/status",
+        "operationId": "status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/app-connections": {
       "get": {
         "tags": [
@@ -7177,10 +7207,7 @@
                   "name": {
                     "type": "string"
                   }
-                },
-                "required": [
-                  "name"
-                ]
+                }
               }
             }
           }
@@ -7751,7 +7778,33 @@
           "404": {
             "description": "Not found"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "remote",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "enum": [
+                "false",
+                "0"
+              ]
+            }
+          },
+          {
+            "name": "runtime",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "enum": [
+                "false",
+                "0"
+              ]
+            }
+          }
+        ]
       }
     },
     "/api/hermes/runtime-versions/active-runtime": {
@@ -7898,6 +7951,32 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/runtime-versions/restart-webui": {
+      "post": {
+        "tags": [
+          "Runtime Versions"
+        ],
+        "summary": "Create restart-webui",
+        "description": "POST /api/hermes/runtime-versions/restart-webui",
+        "operationId": "restartWebUi",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
       }
     },
     "/api/hermes/runtime-versions/runtime-root": {

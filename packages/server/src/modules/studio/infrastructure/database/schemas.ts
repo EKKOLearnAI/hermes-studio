@@ -118,6 +118,37 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
+export const SKILL_USAGE_EVENTS_TABLE = 'skill_usage_events'
+
+export const SKILL_USAGE_EVENTS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  source: "TEXT NOT NULL DEFAULT 'studio'",
+  message_id: 'INTEGER NOT NULL',
+  session_id: 'TEXT NOT NULL',
+  run_id: "TEXT NOT NULL DEFAULT ''",
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  agent: "TEXT NOT NULL DEFAULT ''",
+  skill: 'TEXT NOT NULL',
+  action: 'TEXT NOT NULL',
+  timestamp: 'INTEGER NOT NULL',
+}
+
+export const SKILL_USAGE_EVENTS_INDEXES = {
+  uniq_skill_usage_source_message: 'CREATE UNIQUE INDEX IF NOT EXISTS uniq_skill_usage_source_message ON skill_usage_events(source, profile, message_id)',
+  idx_skill_usage_profile_timestamp: 'CREATE INDEX IF NOT EXISTS idx_skill_usage_profile_timestamp ON skill_usage_events(profile, timestamp)',
+  idx_skill_usage_agent_timestamp: 'CREATE INDEX IF NOT EXISTS idx_skill_usage_agent_timestamp ON skill_usage_events(agent, timestamp)',
+  idx_skill_usage_skill_timestamp: 'CREATE INDEX IF NOT EXISTS idx_skill_usage_skill_timestamp ON skill_usage_events(skill, timestamp)',
+  idx_skill_usage_session: 'CREATE INDEX IF NOT EXISTS idx_skill_usage_session ON skill_usage_events(session_id)',
+}
+
+export const SKILL_USAGE_SYNC_TABLE = 'skill_usage_sync_state'
+
+export const SKILL_USAGE_SYNC_SCHEMA: Record<string, string> = {
+  source: 'TEXT PRIMARY KEY',
+  last_message_id: 'INTEGER NOT NULL DEFAULT 0',
+  updated_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
 // ============================================================================
 // Chat Run Webhooks
 // ============================================================================
@@ -1478,6 +1509,10 @@ export function initAllHermesTables(): void {
     createIndexes(db, SESSIONS_INDEXES)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(SKILL_USAGE_EVENTS_TABLE, SKILL_USAGE_EVENTS_SCHEMA, {
+      indexes: SKILL_USAGE_EVENTS_INDEXES,
+    })
+    syncTable(SKILL_USAGE_SYNC_TABLE, SKILL_USAGE_SYNC_SCHEMA, { primaryKey: 'source' })
     syncTable(CHAT_WEBHOOK_ENDPOINTS_TABLE, CHAT_WEBHOOK_ENDPOINTS_SCHEMA, {
       indexes: CHAT_WEBHOOK_ENDPOINTS_INDEXES,
     })

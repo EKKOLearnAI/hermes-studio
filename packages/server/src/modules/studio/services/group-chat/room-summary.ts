@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import {
+  createGroupEkkoAuthorizedProviderFetch,
   createGroupEkkoModelClient,
   getGroupEkkoAgent,
   resolveGroupEkkoModelProviderConfigs,
@@ -586,7 +587,14 @@ export class GroupRoomSummaryService {
     })
     const result = await getGroupEkkoAgent(input.profile).runIsolated(
       {
-        modelClient: createGroupEkkoModelClient(providerConfig),
+        modelClient: createGroupEkkoModelClient(providerConfig, {
+          fetch: createGroupEkkoAuthorizedProviderFetch({
+            profile: input.profile,
+            provider: input.provider,
+            model: input.model,
+            accessToken: runtimeConfig.apiKey,
+          }),
+        }),
         toolsEnabled: false,
         skillsEnabled: false,
         systemPrompt: GROUP_SUMMARY_SYSTEM_PROMPT,

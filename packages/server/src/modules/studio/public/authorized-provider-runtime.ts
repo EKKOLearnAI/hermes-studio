@@ -15,6 +15,7 @@ export interface AuthorizedProviderRuntimeDependencies {
     profile: string
     provider: string
     model?: string
+    forceRefresh?: boolean
   }) => Promise<AuthorizedProviderRuntimeCredentials>
 }
 
@@ -41,6 +42,7 @@ export function resolveAuthorizedProviderRuntimeCredentials(input: {
   profile: string
   provider: string
   model?: string
+  forceRefresh?: boolean
 }): Promise<AuthorizedProviderRuntimeCredentials> {
   return configured().resolveAuthorizedProviderRuntimeCredentials(input)
 }

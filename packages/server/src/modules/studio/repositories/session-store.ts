@@ -6,6 +6,7 @@ import { isSqliteAvailable, getDb } from '../infrastructure/database'
 import { COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE } from '../infrastructure/database/schemas'
 import { normalizeMessageContentForStorageRole } from './message-content'
 import { copyCompressionSnapshot } from './compression-snapshot'
+import { recordSkillUsageMessage } from './skill-usage-store'
 
 // Re-export types for compatibility with sessions-db.ts consumers
 export interface HermesSessionRow {
@@ -339,7 +340,11 @@ export function createBranchedSession(data: {
         msg.reasoning_details ?? null,
         msg.reasoning_content ?? null,
       )
-      if (result.lastInsertRowid != null) forkPointMessageId = String(result.lastInsertRowid)
+      if (result.lastInsertRowid != null) {
+        const messageId = Number(result.lastInsertRowid)
+        forkPointMessageId = String(messageId)
+        recordSkillUsageMessage(messageId, { ...msg, session_id: data.id })
+      }
     }
 
     if (forkPointMessageId) {
@@ -825,7 +830,9 @@ export function addMessage(msg: {
     msg.reasoning ?? null, msg.reasoning_details ?? null,
     msg.reasoning_content ?? null,
   )
-  return result.lastInsertRowid as number
+  const messageId = Number(result.lastInsertRowid)
+  recordSkillUsageMessage(messageId, msg)
+  return messageId
 }
 
 export function addMessages(msgs: Array<{
@@ -866,7 +873,9 @@ export function addMessages(msgs: Array<{
         msg.reasoning ?? null, msg.reasoning_details ?? null,
         msg.reasoning_content ?? null,
       )
-      ids.push(Number(result.lastInsertRowid))
+      const messageId = Number(result.lastInsertRowid)
+      ids.push(messageId)
+      recordSkillUsageMessage(messageId, msg)
     }
     db.exec('COMMIT')
     return ids

@@ -46,6 +46,7 @@ const bridgeSwitchSessionModelMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
 const emitSessionSettingsUpdatedMock = vi.fn()
 const getChatRunServerMock = vi.fn()
+const agentStatusMocks = vi.hoisted(() => ({ hermesAvailable: true }))
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
@@ -236,9 +237,14 @@ vi.mock('../../packages/server/src/modules/studio/public/session-agent-runtime',
   stopCodingAgentSessionRun: codingAgentRunManagerMock.stop,
 }))
 
+vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
+  isHermesAgentAvailable: vi.fn(() => agentStatusMocks.hermesAvailable),
+}))
+
 describe('session conversations controller', () => {
   beforeEach(() => {
     vi.resetModules()
+    agentStatusMocks.hermesAvailable = true
     listConversationSummariesFromDbMock.mockReset()
     getConversationDetailFromDbMock.mockReset()
     listConversationSummariesMock.mockReset()
@@ -1622,6 +1628,62 @@ describe('session conversations controller', () => {
       title: 'Hermes detail',
       messages: [{ content: 'from hermes' }],
     })
+  })
+
+  it('returns 404 without reading state.db or spawning Hermes when local history is missing', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localGetSessionDetailMock.mockReturnValue(null)
+    getSessionDetailFromDbMock.mockResolvedValue(null)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'missing-session' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(getSessionDetailFromDbMock).not.toHaveBeenCalled()
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
+  })
+
+  it('lists only Studio-local history when Hermes is unavailable', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localListSessionsMock.mockReturnValue([{
+      id: 'local-history',
+      profile: 'default',
+      source: 'api_server',
+      title: 'Local history',
+      last_active: 10,
+    }])
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: {}, body: null }
+    await mod.listHermesSessions(ctx)
+
+    expect(listSessionSummariesMock).not.toHaveBeenCalled()
+    expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'local-history' })])
+  })
+
+  it('groups only Studio-local history when Hermes is unavailable', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localListSessionsMock.mockReturnValue([{
+      id: 'local-history',
+      profile: 'default',
+      source: 'api_server',
+      title: 'Local history',
+      last_active: 10,
+    }])
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { limit: '20' }, body: null }
+    await mod.listHermesSessionGroups(ctx)
+
+    expect(listSessionSummaryGroupsMock).not.toHaveBeenCalled()
+    expect(ctx.body.groups).toEqual([
+      expect.objectContaining({
+        source: 'api_server',
+        sessions: [expect.objectContaining({ id: 'local-history' })],
+      }),
+    ])
   })
 
   it('reads Hermes history detail from the requested profile database', async () => {

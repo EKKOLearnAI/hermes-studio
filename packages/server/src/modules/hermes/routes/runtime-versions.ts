@@ -11,6 +11,7 @@ runtimeVersionRoutes.post('/api/hermes/runtime-versions/active-runtime', require
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/runtime-root', requireSuperAdmin, ctrl.selectRuntimeRoot)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/active-webui', requireSuperAdmin, ctrl.activateWebUi)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/runtime/download', requireSuperAdmin, ctrl.downloadRuntime)
+runtimeVersionRoutes.post('/api/hermes/runtime-versions/restart-webui', requireSuperAdmin, ctrl.restartWebUi)
 runtimeVersionRoutes.post('/api/hermes/runtime-versions/webui/download', requireSuperAdmin, ctrl.downloadWebUi)
 runtimeVersionRoutes.delete('/api/hermes/runtime-versions/runtime/:version', requireSuperAdmin, ctrl.deleteRuntime)
 runtimeVersionRoutes.delete('/api/hermes/runtime-versions/webui/:version', requireSuperAdmin, ctrl.deleteWebUi)

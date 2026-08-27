@@ -64,6 +64,7 @@ describe('runtime version manager storage migration', () => {
   beforeEach(() => {
     vi.resetModules()
     process.env = { ...originalEnv }
+    process.env.HERMES_DESKTOP = 'true'
     delete process.env.HERMES_DESKTOP_RUNTIME_DIR
     delete process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL
     state.appHome = tempDir('hermes-runtime-version-home-')
@@ -130,6 +131,77 @@ describe('runtime version manager storage migration', () => {
       'https://api.hermes-studio.ai/api/studio/versions',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
+  })
+
+  it('can probe the desktop CLI before loading Runtime state', async () => {
+    const platform = runtimePlatformKey()
+    const runtime = join(state.appHome, 'desktop-runtime', 'hermes', '0.19.1', platform)
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    createRuntime(runtime, '0.19.1')
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.19.1',
+      runtimeDirectory: runtime,
+      platform,
+    }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
+    const status = await getRuntimeVersionStatus({ probeRuntime: false })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(status.active).toBeNull()
+    expect(status.activeVersionPath).toBe('')
+    expect(status.hermes.activeVersion).toBe('')
+    expect(status.hermes.activeDirectory).toBe('')
+    expect(status.hermes.installed).toEqual([])
+    expect(status.hermes.remoteVersions).toEqual([])
+  })
+
+  it('probes local Runtime storage without loading remote versions in Web UI mode', async () => {
+    delete process.env.HERMES_DESKTOP
+    const platform = runtimePlatformKey()
+    const runtime = join(state.appHome, 'desktop-runtime', 'hermes', '0.19.1', platform)
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    createRuntime(runtime, '0.19.1')
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: '0.19.1',
+      runtimeDirectory: runtime,
+      runtimeRootDirectory: join(state.appHome, 'desktop-runtime'),
+      webUiVersion: '0.6.30',
+      platform,
+    }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getRuntimeVersionStatus } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
+    const status = await getRuntimeVersionStatus({ includeRemote: false })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(status.active).toMatchObject({ hermesRuntimeVersion: '0.19.1' })
+    expect(status.activeVersionPath).toBe(activeVersionPath)
+    expect(status.remoteManifestUrl).not.toBe('')
+    expect(status.remoteError).toBe('')
+    expect(status.hermes).toMatchObject({
+      activeVersion: '0.19.1',
+      agentVersion: 'v2026.8.1',
+      activeDirectory: runtime,
+      storageDirectory: join(state.appHome, 'desktop-runtime'),
+      defaultStorageDirectory: join(state.appHome, 'desktop-runtime'),
+      pendingStorageDirectory: '',
+      migrationError: '',
+      activationError: '',
+      installed: [expect.objectContaining({ version: '0.19.1', active: true })],
+      remoteVersions: [],
+    })
+    expect(status.webui).toMatchObject({
+      currentVersion: '0.6.31',
+      activeVersion: '0.6.30',
+      installed: [],
+      remoteVersions: [],
+    })
   })
 
   it('falls back to the previous website manifest when the Studio version API is unavailable', async () => {

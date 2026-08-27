@@ -7,7 +7,11 @@ import {
   readConfigYamlForProfile,
   safeReadFile,
 } from '../../studio/public/profile-config'
-import { resolveEkkoAuthorizedProviderCredentials } from './auth-providers'
+import {
+  resolveEkkoAuthorizedProviderCredentials,
+  type EkkoAuthorizedProviderCredentials,
+} from './auth-providers'
+import { isAuthorizedRuntimeProvider } from '../../studio/public/authorized-provider-runtime'
 
 export interface EkkoProviderRuntimeConfig {
   provider: string
@@ -23,14 +27,20 @@ export async function resolveEkkoProviderRuntimeConfig(input: {
   baseUrl?: string
   apiKey?: string
   apiMode?: string
+  forceRefresh?: boolean
 }): Promise<EkkoProviderRuntimeConfig> {
   const provider = String(input.provider || '').trim()
   if (!provider) throw new Error('Ekko model provider is required')
 
   const profile = String(input.profile || '').trim() || 'default'
   const providerKey = providerKeyWithoutCustomPrefix(provider.toLowerCase())
-  const authorized = await resolveEkkoAuthorizedProviderCredentials(profile, provider, input.model)
-  const authorizedValuesFirst = providerKey === 'minimax-oauth'
+  const authorized = await resolveEkkoAuthorizedProviderCredentials(
+    profile,
+    provider,
+    input.model,
+    input.forceRefresh === true,
+  )
+  const authorizedValuesFirst = !!authorized.apiKey
   let baseUrl = String(
     authorizedValuesFirst
       ? authorized.baseUrl || input.baseUrl || ''
@@ -84,6 +94,51 @@ export async function resolveEkkoProviderRuntimeConfig(input: {
     ...(apiKey ? { apiKey } : {}),
     ...(apiMode ? { apiMode } : {}),
   }
+}
+
+/**
+ * Studio-owned 401 recovery for OAuth providers. Ekko only receives a fetch
+ * implementation and never reads refresh tokens or mutates Hermes auth state.
+ */
+export function createEkkoAuthorizedProviderFetch(input: {
+  profile: string
+  provider: string
+  model?: string
+  accessToken?: string
+}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): typeof fetch {
+  if (!isAuthorizedRuntimeProvider(input.provider)) return fetchImpl
+
+  let accessToken = String(input.accessToken || '').trim()
+  let refresh: Promise<EkkoAuthorizedProviderCredentials> | null = null
+  const wrapped = async (...args: Parameters<typeof fetch>): Promise<Response> => {
+    const [resource, init] = args
+    const retryResource = typeof Request !== 'undefined' && resource instanceof Request
+      ? resource.clone()
+      : resource
+    const baseHeaders = init?.headers || (
+      typeof Request !== 'undefined' && resource instanceof Request ? resource.headers : undefined
+    )
+    const headers = new Headers(baseHeaders)
+    if (accessToken) headers.set('authorization', `Bearer ${accessToken}`)
+    const response = await fetchImpl(resource, { ...init, headers })
+    if (response.status !== 401) return response
+
+    await response.body?.cancel().catch(() => undefined)
+    refresh ||= resolveEkkoAuthorizedProviderCredentials(
+      input.profile,
+      input.provider,
+      input.model,
+      true,
+    ).finally(() => { refresh = null })
+    const credentials = await refresh
+    accessToken = String(credentials.apiKey || '').trim()
+    if (!accessToken) return response
+
+    const retryHeaders = new Headers(baseHeaders)
+    retryHeaders.set('authorization', `Bearer ${accessToken}`)
+    return fetchImpl(retryResource, { ...init, headers: retryHeaders })
+  }
+  return wrapped as typeof fetch
 }
 
 function providerKeyWithoutCustomPrefix(provider: string): string {

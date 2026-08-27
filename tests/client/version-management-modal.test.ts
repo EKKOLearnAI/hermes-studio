@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   downloadWebUiVersion: vi.fn(),
   fetchRuntimeVersionStatus: vi.fn(),
   fetchVersionDownloadJobs: vi.fn(),
+  restartWebUiAfterRuntimeChange: vi.fn(),
   selectRuntimeRoot: vi.fn(),
 }))
 
@@ -26,7 +27,7 @@ vi.mock('vue-i18n', () => ({
 }))
 vi.mock('naive-ui', () => ({
   NAlert: { template: '<div><slot /></div>' },
-  NButton: { template: '<button v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>' },
+  NButton: { emits: ['click'], template: '<button v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>' },
   NDrawer: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
   NDrawerContent: { template: '<div><slot /></div>' },
   NPopconfirm: { template: '<div><slot name="trigger" /><slot /></div>' },
@@ -76,6 +77,7 @@ describe('VersionManagementModal Runtime storage selector', () => {
     api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
     api.fetchVersionDownloadJobs.mockResolvedValue({ jobs: [] })
     api.selectRuntimeRoot.mockResolvedValue({ success: true, active: {} })
+    api.restartWebUiAfterRuntimeChange.mockResolvedValue({ success: true })
   })
 
   it('explains how to update Hermes Runtime from the command line', async () => {
@@ -86,6 +88,7 @@ describe('VersionManagementModal Runtime storage selector', () => {
     const note = wrapper.get('[data-testid="runtime-cli-update-note"]')
     expect(note.text()).toContain('runtimeVersions.cliUpdateDescription')
     expect(note.text()).toContain('hermes-studio cli update')
+    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith()
   })
 
   it('shows the installed Hermes Agent version instead of the Runtime package version', async () => {
@@ -170,5 +173,30 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     expect(api.selectRuntimeRoot).toHaveBeenCalledWith('/state/desktop-runtime')
     expect(message.success).toHaveBeenCalledWith('runtimeVersions.runtimeDirectorySaved')
+  })
+
+  it('restarts standalone Web UI after selecting an installed Runtime', async () => {
+    const status = runtimeStatus()
+    status.hermes.remoteVersions = ['0.20.4']
+    status.hermes.installed = [{
+      version: '0.20.4',
+      platform: 'mac-arm64',
+      directory: '/state/desktop-runtime/hermes/0.20.4/mac-arm64',
+      active: false,
+    }]
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    api.activateRuntimeVersion.mockResolvedValue({ success: true, active: {} })
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const useVersion = wrapper.findAll('button').find(button => button.text() === 'runtimeVersions.useVersion')
+    expect(useVersion).toBeDefined()
+    await useVersion!.trigger('click')
+    await flushPromises()
+
+    expect(api.activateRuntimeVersion).toHaveBeenCalledWith('0.20.4')
+    expect(api.restartWebUiAfterRuntimeChange).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 })

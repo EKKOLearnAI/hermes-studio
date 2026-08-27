@@ -28,12 +28,10 @@ function resolveHermesBin(): string {
   return process.env.HERMES_BIN?.trim() || 'hermes'
 }
 
-const HERMES_BIN = resolveHermesBin()
-
 async function waitForGatewayRunning(profileDir: string, timeoutMs = 15000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (await isGatewayRunningForProfile(HERMES_BIN, profileDir)) return true
+    if (await isGatewayRunningForProfile(resolveHermesBin(), profileDir)) return true
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   return false
@@ -41,7 +39,7 @@ async function waitForGatewayRunning(profileDir: string, timeoutMs = 15000): Pro
 
 async function stopGatewayForActiveProfile(): Promise<void> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['gateway', 'stop'], {
+    await execHermesWithBin(resolveHermesBin(), ['gateway', 'stop'], {
       timeout: 30000,
       ...activeGatewayExecOpts(),
     })
@@ -239,7 +237,7 @@ export async function exportSessionsRaw(source?: string): Promise<HermesSessionF
   if (source) args.push('--source', source)
 
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), args, {
       maxBuffer: 50 * 1024 * 1024, // 50MB
       timeout: 30000,
       ...execOpts,
@@ -306,7 +304,7 @@ export async function getSession(id: string): Promise<HermesSession | null> {
   const args = ['sessions', 'export', '-', '--session-id', id]
 
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), args, {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -350,7 +348,7 @@ export async function getSession(id: string): Promise<HermesSession | null> {
  */
 export async function deleteSession(id: string): Promise<boolean> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['sessions', 'delete', id, '--yes'], {
+    await execHermesWithBin(resolveHermesBin(), ['sessions', 'delete', id, '--yes'], {
       timeout: 10000,
       ...execOpts,
     })
@@ -366,7 +364,7 @@ export async function deleteSession(id: string): Promise<boolean> {
  */
 export async function deleteSessionForProfile(id: string, profile: string): Promise<boolean> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['sessions', 'delete', id, '--yes'], {
+    await execHermesWithBin(resolveHermesBin(), ['sessions', 'delete', id, '--yes'], {
       timeout: 10000,
       ...execOpts,
       env: {
@@ -386,7 +384,7 @@ export async function deleteSessionForProfile(id: string, profile: string): Prom
  */
 export async function renameSession(id: string, title: string): Promise<boolean> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['sessions', 'rename', id, title], {
+    await execHermesWithBin(resolveHermesBin(), ['sessions', 'rename', id, title], {
       timeout: 10000,
       ...execOpts,
     })
@@ -408,7 +406,7 @@ export interface LogFileInfo {
  */
 export async function getVersion(): Promise<string> {
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, ['--version'], { timeout: 5000, ...execOpts })
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), ['--version'], { timeout: 5000, ...execOpts })
     return stdout.trim()
   } catch {
     return ''
@@ -424,7 +422,7 @@ export async function startGateway(): Promise<string> {
     return pid ? `Gateway started (PID: ${pid})` : 'Gateway start triggered'
   }
 
-  const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['gateway', 'start'], {
+  const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['gateway', 'start'], {
     timeout: 30000,
     ...activeGatewayExecOpts(),
   })
@@ -436,7 +434,7 @@ export async function startGateway(): Promise<string> {
  * Uses "hermes gateway run" as a detached background process
  */
 export async function startGatewayBackground(): Promise<number | null> {
-  const child = spawnHermesWithBin(HERMES_BIN, ['gateway', 'run'], {
+  const child = spawnHermesWithBin(resolveHermesBin(), ['gateway', 'run'], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -459,13 +457,13 @@ export async function restartGateway(): Promise<string> {
     await stopGatewayForActiveProfile()
     const lockReleased = await waitForGatewayLockReleasedAfterStop(profileDir)
     if (!lockReleased) throw new Error('Gateway stopped but runtime lock is still held by another process')
-    const result = startGatewayRunManaged(HERMES_BIN, { profileDir })
+    const result = startGatewayRunManaged(resolveHermesBin(), { profileDir })
     const ready = await waitForGatewayRunning(profileDir)
     if (!ready) throw new Error(`Gateway run replace triggered but gateway did not report running within timeout${result.pid ? ` (PID: ${result.pid})` : ''}`)
     return result.pid ? `Gateway run replaced (PID: ${result.pid})` : 'Gateway run replaced'
   }
   try {
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['gateway', 'restart'], {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['gateway', 'restart'], {
       timeout: 30000,
       ...activeGatewayExecOpts(),
     })
@@ -477,7 +475,7 @@ export async function restartGateway(): Promise<string> {
     await stopGatewayForActiveProfile()
     const lockReleased = await waitForGatewayLockReleasedAfterStop(profileDir)
     if (!lockReleased) throw new Error('Gateway restart failed and runtime lock is still held by another process')
-    const result = startGatewayRunManaged(HERMES_BIN, { profileDir })
+    const result = startGatewayRunManaged(resolveHermesBin(), { profileDir })
     const ready = await waitForGatewayRunning(profileDir)
     if (!ready) throw new Error(`Gateway run fallback triggered but gateway did not report running within timeout${result.pid ? ` (PID: ${result.pid})` : ''}`)
     return result.pid ? `Gateway run started (PID: ${result.pid})` : 'Gateway run started'
@@ -488,7 +486,7 @@ export async function restartGateway(): Promise<string> {
  * Stop Hermes gateway
  */
 export async function stopGateway(): Promise<string> {
-  const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['gateway', 'stop'], {
+  const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['gateway', 'stop'], {
     timeout: 30000,
     ...activeGatewayExecOpts(),
   })
@@ -500,7 +498,7 @@ export async function stopGateway(): Promise<string> {
  */
 export async function listLogFiles(): Promise<LogFileInfo[]> {
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, ['logs', 'list'], {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), ['logs', 'list'], {
       timeout: 10000,
       ...execOpts,
     })
@@ -542,7 +540,7 @@ export async function readLogs(
   if (since) args.push('--since', since)
 
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), args, {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 15000,
       ...execOpts,
@@ -598,7 +596,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
   const activeProfileName = getActiveProfileName()
   let runtimeInfo = new Map<string, ProfileListRuntimeInfo>()
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, ['profile', 'list'], {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), ['profile', 'list'], {
       timeout: 10000,
       ...execOpts,
     })
@@ -625,7 +623,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
  */
 export async function getProfile(name: string): Promise<HermesProfileDetail> {
   try {
-    const { stdout } = await execHermesWithBin(HERMES_BIN, ['profile', 'show', name], {
+    const { stdout } = await execHermesWithBin(resolveHermesBin(), ['profile', 'show', name], {
       timeout: 10000,
       ...execOpts,
     })
@@ -668,7 +666,7 @@ export async function createProfile(name: string, clone?: boolean): Promise<stri
   if (clone) args.push('--clone')
 
   try {
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), args, {
       timeout: 15000,
       ...execOpts,
     })
@@ -684,7 +682,7 @@ export async function createProfile(name: string, clone?: boolean): Promise<stri
  */
 export async function deleteProfile(name: string): Promise<boolean> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['profile', 'delete', name, '--yes'], {
+    await execHermesWithBin(resolveHermesBin(), ['profile', 'delete', name, '--yes'], {
       timeout: 10000,
       ...execOpts,
     })
@@ -700,7 +698,7 @@ export async function deleteProfile(name: string): Promise<boolean> {
  */
 export async function renameProfile(oldName: string, newName: string): Promise<boolean> {
   try {
-    await execHermesWithBin(HERMES_BIN, ['profile', 'rename', oldName, newName], {
+    await execHermesWithBin(resolveHermesBin(), ['profile', 'rename', oldName, newName], {
       timeout: 10000,
       ...execOpts,
     })
@@ -716,7 +714,7 @@ export async function renameProfile(oldName: string, newName: string): Promise<b
  */
 export async function useProfile(name: string): Promise<string> {
   try {
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['profile', 'use', name], {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['profile', 'use', name], {
       timeout: 10000,
       ...execOpts,
     })
@@ -787,7 +785,7 @@ export async function exportProfile(name: string, outputPath?: string): Promise<
   let archiveTempDirectory = ''
   try {
     archiveTempDirectory = await mkdtemp(join(tmpdir(), 'hermes-profile-archive-'))
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), args, {
       timeout: PROFILE_ARCHIVE_TIMEOUT_MS,
       env: archiveTempEnvironment(archiveTempDirectory),
       ...execOpts,
@@ -807,7 +805,7 @@ export async function exportProfile(name: string, outputPath?: string): Promise<
  */
 export async function setupReset(): Promise<string> {
   try {
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['setup', '--non-interactive', '--reset'], {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['setup', '--non-interactive', '--reset'], {
       timeout: 30000,
       ...execOpts,
     })
@@ -828,7 +826,7 @@ export async function importProfile(archivePath: string, name?: string): Promise
   let archiveTempDirectory = ''
   try {
     archiveTempDirectory = await mkdtemp(join(tmpdir(), 'hermes-profile-archive-'))
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, args, {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), args, {
       timeout: PROFILE_ARCHIVE_TIMEOUT_MS,
       env: archiveTempEnvironment(archiveTempDirectory),
       ...execOpts,
@@ -849,7 +847,7 @@ export async function importProfile(archivePath: string, name?: string): Promise
 export async function pinSkill(name: string, pinned: boolean): Promise<string> {
   const subcmd = pinned ? 'pin' : 'unpin'
   try {
-    const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['curator', subcmd, name], {
+    const { stdout, stderr } = await execHermesWithBin(resolveHermesBin(), ['curator', subcmd, name], {
       timeout: 15000,
       ...execOpts,
     })

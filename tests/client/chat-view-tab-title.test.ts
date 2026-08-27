@@ -12,7 +12,7 @@ import { useSettingsStore } from '@/stores/hermes/settings'
 vi.mock('@/components/hermes/chat/ChatPanel.vue', () => ({
   default: {
     name: 'ChatPanel',
-    props: { standalone: Boolean },
+    props: { standalone: Boolean, contentMode: String },
     template: '<div data-testid="chat-panel" />',
   },
 }))
@@ -143,6 +143,15 @@ describe('ChatView tab title', () => {
     expect(wrapper.getComponent({ name: 'ChatPanel' }).props('standalone')).toBe(true)
     expect(wrapper.get('.chat-view').classes()).toContain('chat-view--standalone')
     expect(document.title).toBe('Desktop Chat')
+    wrapper.unmount()
+  })
+
+  it('renders Agent management inside the shared single-chat shell', () => {
+    mockRoute.name = 'hermes.agentManager'
+
+    const wrapper = mount(ChatView)
+
+    expect(wrapper.getComponent({ name: 'ChatPanel' }).props('contentMode')).toBe('agents')
     wrapper.unmount()
   })
 })

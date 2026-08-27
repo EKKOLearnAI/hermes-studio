@@ -88,6 +88,22 @@ describe('gateway-runner supervision', () => {
     expect(newPid).not.toBe(10000)
   })
 
+  it('handles a missing Hermes executable without an uncaught error or respawn loop', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const { startGatewayRunManaged } = await import(
+      '../../packages/server/src/modules/hermes/services/gateway/runner'
+    )
+
+    startGatewayRunManaged('hermes', { profileDir: '/tmp/missing-hermes' })
+
+    expect(() => fakeChildren[0].emit('error', Object.assign(new Error('spawn hermes ENOENT'), {
+      code: 'ENOENT',
+    }))).not.toThrow()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fakeChildren).toHaveLength(1)
+  })
+
   it('stops respawning after three consecutive quick failures', async () => {
     vi.useFakeTimers()
     vi.resetModules()

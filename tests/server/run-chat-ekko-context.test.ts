@@ -84,6 +84,7 @@ vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', as
   const clarifications = await import('../../packages/server/src/modules/ekko/services/clarifications')
   const reasoning = await import('../../packages/ekko-agent/src/model/messages')
   return {
+    createChatEkkoAuthorizedProviderFetch: vi.fn(() => vi.fn()),
     getChatEkkoAgent: getGlobalEkkoAgentMock,
     resolveChatEkkoMcpServers: vi.fn(() => undefined),
     resolveChatEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,

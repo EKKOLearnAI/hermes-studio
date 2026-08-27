@@ -16,7 +16,10 @@ import {
 import { respondToEkkoToolApproval, waitForEkkoToolApproval } from '../modules/ekko/services/approvals'
 import { respondToEkkoClarification, waitForEkkoClarification } from '../modules/ekko/services/clarifications'
 import { resolveEkkoMcpServers } from '../modules/ekko/services/mcp'
-import { resolveEkkoProviderRuntimeConfig } from '../modules/ekko/services/provider-runtime'
+import {
+  createEkkoAuthorizedProviderFetch,
+  resolveEkkoProviderRuntimeConfig,
+} from '../modules/ekko/services/provider-runtime'
 import { configureChatAgentRuntime } from '../modules/studio/public/chat-agent-runtime'
 import {
   agentReasoningText,
@@ -49,6 +52,7 @@ configureChatAgentRuntime({
   waitForEkkoClarification,
   resolveEkkoMcpServers,
   resolveEkkoProviderRuntimeConfig,
+  createEkkoAuthorizedProviderFetch,
   respondToEkkoToolApproval,
   respondToEkkoClarification,
 })

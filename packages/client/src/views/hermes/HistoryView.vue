@@ -834,7 +834,6 @@ function handleBatchDeleteConfirm() {
         <PageSidebarNav
           active="history"
           :primary-label="t('chat.newChat')"
-          hide-mode-switch
           @primary="openNewChatPage"
         />
         <div class="session-list-toolbar">

@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io'
 import { createHash, randomUUID } from 'crypto'
 import {
   chatEkkoAgentReasoningText as agentReasoningText,
+  createChatEkkoAuthorizedProviderFetch as createAuthorizedProviderFetch,
   createChatEkkoModelClient as createModelClient,
   getChatEkkoAgent as getGlobalEkkoAgent,
   getChatEkkoModelRequestTimeoutMs,
@@ -581,12 +582,18 @@ export async function handleEkkoAgentRun(
     apiMode,
     timeoutMs: getChatEkkoModelRequestTimeoutMs(),
   })
+  const authorizedProviderFetch = createAuthorizedProviderFetch({
+    profile,
+    provider: modelConfig.provider,
+    model: modelConfig.model,
+    accessToken: apiKey,
+  })
   const mcpServers = resolveEkkoMcpServers(profile, data.mcpServers || data.mcp_servers)
-  const modelClient = createProviderModelClient(createModelClient(providerConfig), {
+  const modelClient = createProviderModelClient(createModelClient(providerConfig, { fetch: authorizedProviderFetch }), {
     providerConfig,
     fallback: fallbackProviderConfig
       ? {
-          client: createModelClient(fallbackProviderConfig),
+          client: createModelClient(fallbackProviderConfig, { fetch: authorizedProviderFetch }),
           providerConfig: fallbackProviderConfig,
         }
       : undefined,

@@ -12,6 +12,7 @@ export interface GroupChatAgentRuntimeDependencies {
   resolveEkkoModelProviderConfigs(...args: any[]): any
   getEkkoAgent(profile: string): any
   resolveEkkoProviderRuntimeConfig(...args: any[]): Promise<any>
+  createEkkoAuthorizedProviderFetch(...args: any[]): any
   drainPrimaryAgentSessions(profile: string): Promise<any>
   getAvailableModelGroups(profile: string): Promise<any[]>
 }
@@ -35,5 +36,6 @@ export const createGroupEkkoModelClient = (...args: any[]) => configured().creat
 export const resolveGroupEkkoModelProviderConfigs = (...args: any[]) => configured().resolveEkkoModelProviderConfigs(...args)
 export const getGroupEkkoAgent = (profile: string) => configured().getEkkoAgent(profile)
 export const resolveGroupEkkoProviderRuntimeConfig = (...args: any[]) => configured().resolveEkkoProviderRuntimeConfig(...args)
+export const createGroupEkkoAuthorizedProviderFetch = (...args: any[]) => configured().createEkkoAuthorizedProviderFetch(...args)
 export const drainGroupPrimaryAgentSessions = (profile: string) => configured().drainPrimaryAgentSessions(profile)
 export const getGroupAvailableModelGroups = (profile: string) => configured().getAvailableModelGroups(profile)

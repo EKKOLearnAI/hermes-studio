@@ -15,10 +15,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import yaml from 'js-yaml'
-import { detectHermesHome } from '../runtime/path'
+import { detectHermesRootHome } from '../runtime/path'
 
 function hermesBase(): string {
-  return detectHermesHome()
+  return detectHermesRootHome()
 }
 
 function profileDir(profileName: string): string {

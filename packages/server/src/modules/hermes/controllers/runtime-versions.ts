@@ -12,13 +12,18 @@ import {
   startWebUiVersionDownload,
   type VersionDownloadSource,
 } from '../services/runtime/version-manager'
+import { configurePreferredHermesRuntime } from '../services/runtime/selection'
+import { scheduleWebUiRestart } from '../../studio/public/web-ui-restart'
 
 function parseDownloadSource(value: unknown): VersionDownloadSource {
   return value === 'github' ? 'github' : 'cf'
 }
 
 export async function status(ctx: Context) {
-  ctx.body = await getRuntimeVersionStatus()
+  const probeRuntime = ctx.query.runtime !== 'false' && ctx.query.runtime !== '0'
+  const includeRemote = ctx.query.remote !== 'false' && ctx.query.remote !== '0'
+  if (probeRuntime) await configurePreferredHermesRuntime()
+  ctx.body = await getRuntimeVersionStatus({ probeRuntime, includeRemote })
 }
 
 export async function activateRuntime(ctx: Context) {
@@ -26,6 +31,8 @@ export async function activateRuntime(ctx: Context) {
   const version = typeof body?.version === 'string' ? body.version : ''
   try {
     const active = activateInstalledRuntimeVersion(version)
+    await configurePreferredHermesRuntime()
+    await getRuntimeVersionStatus({ includeRemote: false })
     ctx.body = { success: true, active }
   } catch (err) {
     ctx.status = 400
@@ -49,7 +56,20 @@ export async function deleteRuntime(ctx: Context) {
   const version = String(ctx.params.version || '')
   try {
     const deleted = deleteInstalledRuntimeVersion(version)
+    await configurePreferredHermesRuntime()
+    await getRuntimeVersionStatus({ includeRemote: false })
     ctx.body = { success: true, deleted }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export function restartWebUi(ctx: Context) {
+  try {
+    scheduleWebUiRestart()
+    ctx.status = 202
+    ctx.body = { success: true }
   } catch (err) {
     ctx.status = 400
     ctx.body = { error: err instanceof Error ? err.message : String(err) }

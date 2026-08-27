@@ -9,6 +9,7 @@ import {
   type AgentLogRecord,
 } from '../public/agent-logs'
 import { config } from '../public/config'
+import { isHermesAgentAvailable } from '../public/agent-status-registry'
 
 const WEBUI_LOG_FILE = join(config.appHome, 'logs', 'server.log')
 const BRIDGE_LOG_FILE = join(config.appHome, 'logs', 'bridge.log')
@@ -84,7 +85,7 @@ function ekkoLogEntry(record: AgentLogRecord): LogEntry {
 }
 
 export async function list(ctx: any) {
-  const files = await listPrimaryAgentLogFiles()
+  const files = isHermesAgentAvailable() ? await listPrimaryAgentLogFiles() : []
   if (existsSync(WEBUI_LOG_FILE)) {
     try {
       const stat = statSync(WEBUI_LOG_FILE)
@@ -171,6 +172,11 @@ export async function read(ctx: any) {
     } catch (err: any) {
       ctx.status = 500; ctx.body = { error: err.message }
     }
+    return
+  }
+
+  if (!isHermesAgentAvailable()) {
+    ctx.body = { entries: [] }
     return
   }
 

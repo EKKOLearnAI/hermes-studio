@@ -18,7 +18,7 @@ const { t } = useI18n()
 
 const emit = defineEmits<{
   close: []
-  saved: []
+  saved: [globalModelsAlreadyRefreshed?: boolean]
 }>()
 
 const modelsStore = useModelsStore()
@@ -343,7 +343,7 @@ async function handleSave() {
       providerKey,
     })
     message.success(t('models.providerAdded'))
-    emit('saved')
+    emit('saved', true)
   } catch (e: any) {
     message.error(e.message)
   } finally {

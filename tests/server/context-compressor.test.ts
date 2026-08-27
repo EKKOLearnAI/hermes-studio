@@ -48,6 +48,7 @@ vi.mock('../../packages/ekko-agent/src', () => ({
 }))
 
 vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  createChatEkkoAuthorizedProviderFetch: vi.fn(() => vi.fn()),
   createPrimaryAgentBridge: vi.fn(() => ({
     request: bridgeRequestMock,
     destroy: bridgeDestroyMock,

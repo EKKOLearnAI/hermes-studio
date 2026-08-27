@@ -53,9 +53,14 @@ import { createCorsOriginResolver, securityHeaders } from '../modules/studio/mid
 import type { AdditionalShutdownStep, ShutdownHandler } from './lifecycle'
 import { createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
 import {
+  getCodingAgentsStatus,
   migratePersistedPiRuntimeMcpConfigs,
   restorePersistedPiProxyTargets,
 } from './coding-agents'
+import { configurePreferredHermesRuntime } from '../modules/hermes/services/runtime/selection'
+import { configureRuntimeInstallCompletedHandler, getRuntimeVersionStatus } from '../modules/hermes/services/runtime/version-manager'
+import { isHermesAgentAvailable, updateAgentStatus } from '../modules/studio/public/agent-status-registry'
+import { scheduleWebUiRestart } from '../modules/studio/public/web-ui-restart'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -216,7 +221,11 @@ function skillInjectionDisabled(): boolean {
   return envFlagEnabled('HERMES_WEB_UI_DISABLE_SKILL_INJECTION')
 }
 
-async function startRuntimeServicesBeforeListen(): Promise<void> {
+async function startRuntimeServicesBeforeListen(hermesAvailable: boolean): Promise<void> {
+  if (!hermesAvailable) {
+    console.log('[bootstrap] Hermes Agent unavailable; skipping profile gateways and agent bridge')
+    return
+  }
   if (gatewayAutostartDisabled()) {
     console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
   } else {
@@ -239,7 +248,11 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
   }
 }
 
-async function startRuntimeServicesAfterListen(): Promise<void> {
+async function startRuntimeServicesAfterListen(hermesAvailable: boolean): Promise<void> {
+  if (!hermesAvailable) {
+    console.log('[bootstrap] Hermes Agent unavailable; skipping profile gateways and agent bridge')
+    return
+  }
   if (gatewayAutostartDisabled()) {
     console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
   } else {
@@ -286,6 +299,30 @@ export async function bootstrap() {
   if (shouldCreateWebUiDataDir()) {
     await mkdir(config.dataDir, { recursive: true })
   }
+
+  const hermesSelection = await configurePreferredHermesRuntime()
+  console.log(`[bootstrap] Hermes source=${hermesSelection.source} version=${hermesSelection.version || '-'} path=${hermesSelection.path || '-'}`)
+  updateAgentStatus('ekko-agent', { version: APP_VERSION })
+  const inventoryResults = await Promise.allSettled([
+    getRuntimeVersionStatus({ includeRemote: false }),
+    getCodingAgentsStatus(),
+  ])
+  for (const result of inventoryResults) {
+    if (result.status === 'rejected') {
+      logger.warn(result.reason, '[bootstrap] failed to initialize an Agent status source')
+    }
+  }
+  const hermesAgentAvailable = isHermesAgentAvailable()
+  console.log(`[bootstrap] Hermes Agent inventory status=${hermesAgentAvailable ? 'available' : 'not-installed'}`)
+  configureRuntimeInstallCompletedHandler(() => {
+    if (isDesktopRuntime()) {
+      setTimeout(() => {
+        void getShutdownHandler()('runtime-installed', 75)
+      }, 250).unref?.()
+      return
+    }
+    scheduleWebUiRestart()
+  })
 
   await initLoginLimiter()
   if (skillInjectionDisabled()) {
@@ -342,7 +379,7 @@ export async function bootstrap() {
 
   agentBridgeManager = getAgentBridgeManager()
   if (!isDesktopRuntime()) {
-    await startRuntimeServicesBeforeListen()
+    await startRuntimeServicesBeforeListen(hermesAgentAvailable)
   }
   if (shutdownRequested) return
 
@@ -514,7 +551,7 @@ export async function bootstrap() {
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
 
   if (isDesktopRuntime()) {
-    await startRuntimeServicesAfterListen()
+    await startRuntimeServicesAfterListen(hermesAgentAvailable)
   }
   if (shutdownRequested) return
 

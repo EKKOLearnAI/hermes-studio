@@ -51,6 +51,7 @@ import {
 } from '../services/files/workspace-path'
 import { getGroupChatServer } from './group-chat'
 import { logger } from '../public/logging'
+import { isHermesAgentAvailable } from '../public/agent-status-registry'
 import { listUserProfiles } from '../public/users'
 import { defaultHermesWorkspace, ensureHermesRunWorkspace } from '../services/chat-run/workspace'
 import { getChatRunServer } from '../services/chat-run/server-registry'
@@ -252,6 +253,9 @@ function hasProfileOnDisk(profile: string): boolean {
 
 async function deleteHermesSessionIfPresent(sessionId: string, profile?: string | null): Promise<HermesDeleteResult> {
   const targetProfile = profile || 'default'
+  if (!isHermesAgentAvailable()) {
+    return { attempted: false, deleted: false, profile: targetProfile }
+  }
   if (!hasProfileOnDisk(targetProfile)) {
     return { attempted: false, deleted: false, profile: targetProfile }
   }
@@ -577,7 +581,9 @@ export async function listHermesSessions(ctx: any) {
   const paginated = Boolean(source) || normalizedOffset > 0
   const candidateLimit = paginated ? normalizedOffset + effectiveLimit + 1 : effectiveLimit
   const localSessions = localListSessions(profile, source, candidateLimit)
-  const allSessions = await listHermesSessionSummaries(source, candidateLimit, profile)
+  const allSessions = isHermesAgentAvailable()
+    ? await listHermesSessionSummaries(source, candidateLimit, profile)
+    : []
   const merged = mergeHermesHistorySessions(ctx, profile, allSessions, localSessions, source)
 
   if (paginated) {
@@ -611,10 +617,10 @@ export async function listHermesSessionGroups(ctx: any) {
     .filter(Boolean)
     .slice(0, 100)
 
-  const [hermesResult, localSessions] = await Promise.all([
-    listHermesSessionSummaryGroups(limit, profile, includedIds),
-    Promise.resolve(localListSessions(profile, undefined, 2000)),
-  ])
+  const localSessions = localListSessions(profile, undefined, 2000)
+  const hermesResult = isHermesAgentAvailable()
+    ? await listHermesSessionSummaryGroups(limit, profile, includedIds)
+    : { groups: [], included: [] }
   const hermesGroups = new Map<string, { source: string; sessions: any[]; hasMore: boolean }>(
     hermesResult.groups.map((group: any) => [group.source, group]),
   )
@@ -1107,6 +1113,12 @@ export async function getHermesSession(ctx: any) {
     return
   }
 
+  if (!isHermesAgentAvailable()) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+
   // Try Hermes state.db next (consistent with listHermesSessions)
   try {
     const session = profile
@@ -1129,7 +1141,7 @@ export async function getHermesSession(ctx: any) {
     logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
   }
 
-  // Fallback to CLI
+  // Fallback to CLI only while a usable Hermes installation is selected.
   const session = await getHermesCliSession(ctx.params.id)
   if (!session) {
     ctx.status = 404
@@ -1158,6 +1170,12 @@ export async function importHermesSession(ctx: any) {
   const existing = localGetSessionDetail(sessionId)
   if (existing) {
     ctx.body = { ok: true, imported: false, session: existing }
+    return
+  }
+
+  if (!isHermesAgentAvailable()) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
     return
   }
 
@@ -2063,7 +2081,9 @@ export async function getConversationMessagesPaginated(ctx: any) {
   const localResult = getSessionDetailPaginated(ctx.params.id, offset, limit)
   const result = localResult && (!profile || localResult.session.profile === profile)
     ? localResult
-    : await getHermesSessionDetailPaginatedForProfile(ctx.params.id, profile || 'default', offset, limit)
+    : isHermesAgentAvailable()
+      ? await getHermesSessionDetailPaginatedForProfile(ctx.params.id, profile || 'default', offset, limit)
+      : null
 
   if (!result) {
     ctx.status = 404

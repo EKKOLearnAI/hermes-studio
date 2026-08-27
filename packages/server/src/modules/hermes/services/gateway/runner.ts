@@ -428,6 +428,10 @@ function startGatewayRunManagedInternal(
       HERMES_HOME: profileDir,
     },
   })
+  child.once('error', (err) => {
+    if (child.pid && state.current?.pid === child.pid) state.current = null
+    logger.error(err, '[gateway-runner] failed to spawn Hermes gateway profileDir=%s bin=%s', profileDir, hermesBin)
+  })
   child.unref()
 
   const pid = child.pid ?? null

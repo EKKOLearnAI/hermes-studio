@@ -20,6 +20,7 @@ import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/th
 import { getSession, updateSession, type HermesSessionRow } from '../../studio/public/sessions'
 import type { SessionState } from '../../studio/contracts/runs/session'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../../studio/public/windows-command'
+import { updateAgentStatus } from '../../studio/public/agent-status-registry'
 import { assertScopedCodingAgentProviderAllowed } from '../protocol/provider-policy'
 import type { CodingAgentRuntime } from '../../studio/contracts/agents/runtime'
 
@@ -215,6 +216,8 @@ export interface CodingAgentToolStatus extends CodingAgentDefinition {
   installed: boolean
   version: string
   rawVersion: string
+  source: 'user-cli' | 'not-installed'
+  path: string
   error?: string
 }
 
@@ -1994,9 +1997,10 @@ export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConf
 }
 
 export async function getCodingAgentStatus(definition: CodingAgentDefinition): Promise<CodingAgentToolStatus> {
+  let resolvedCommand = ''
   try {
     const env = await commandEnv()
-    const resolvedCommand = await resolveCommandForExecution(definition.command, env)
+    resolvedCommand = await resolveCommandForExecution(definition.command, env)
     const execution = commandExecution(resolvedCommand, ['--version'])
     const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
       encoding: 'utf-8',
@@ -2007,29 +2011,56 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
     })
     const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
     if (definition.id === 'pi' && !existsSync(getPiMcpAdapterEntry())) {
-      return {
+      const status: CodingAgentToolStatus = {
         ...definition,
         installed: false,
         version: extractVersion(rawVersion),
         rawVersion,
+        source: 'user-cli',
+        path: resolvedCommand,
         error: `Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed`,
       }
+      recordCodingAgentStatus(status)
+      return status
     }
-    return {
+    const status: CodingAgentToolStatus = {
       ...definition,
       installed: true,
       version: extractVersion(rawVersion),
       rawVersion,
+      source: 'user-cli',
+      path: resolvedCommand,
     }
+    recordCodingAgentStatus(status)
+    return status
   } catch (err: any) {
-    return {
+    const commandLocated = resolvedCommand !== definition.command || existsSync(resolvedCommand)
+    const status: CodingAgentToolStatus = {
       ...definition,
       installed: false,
       version: '',
       rawVersion: '',
+      source: commandLocated ? 'user-cli' : 'not-installed',
+      path: commandLocated ? resolvedCommand : '',
       error: normalizeError(err),
     }
+    recordCodingAgentStatus(status)
+    return status
   }
+}
+
+function recordCodingAgentStatus(status: CodingAgentToolStatus): void {
+  updateAgentStatus(status.id, {
+    name: status.name,
+    provider: status.provider,
+    kind: 'coding-agent',
+    installed: status.installed,
+    version: status.version,
+    source: status.source,
+    path: status.path,
+    error: status.error || '',
+    installations: [],
+  })
 }
 
 export async function getCodingAgentsStatus(): Promise<CodingAgentsStatus> {

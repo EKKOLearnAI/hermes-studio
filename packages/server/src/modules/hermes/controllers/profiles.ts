@@ -15,9 +15,19 @@ import { logger } from '../../studio/public/logging'
 import { smartCloneCleanup, copyModelProviderAuthForClone } from '../services/profiles/profile-credentials'
 import { detectHermesRootHome } from '../services/runtime/path'
 import { getActiveProfileName } from '../services/profiles/profile'
+import {
+  createProfileWithoutHermes,
+  deleteProfileWithoutHermes,
+  isReservedProfileName,
+  normalizeProfileName,
+  ProfileLifecycleError,
+  validateProfileName,
+} from '../services/profiles/lifecycle'
+import { exportProfileWithoutHermes, importProfileWithoutHermes } from '../services/profiles/archive'
 import { HermesSkillInjector } from '../services/skills/injector'
 import type { HermesProfile } from '../services/runtime/cli'
 import { listUserProfiles } from '../../studio/public/users'
+import { isHermesAgentAvailable } from '../../studio/public/agent-status-registry'
 import { readAppProfileAvatar } from '../services/profiles/app-profile-avatar'
 
 const bridgeCleanupClient = () => new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 })
@@ -48,25 +58,16 @@ const runtimeStatusCache = new Map<string, RuntimeStatusCacheEntry>()
 let runtimeStatusRefreshPromise: Promise<void> | null = null
 let runtimeStatusMinimumFreshAt = 0
 
-const RESERVED_PROFILE_NAMES = new Set([
-  'hermes', 'default', 'test', 'tmp', 'root', 'sudo',
-])
-
-const HERMES_SUBCOMMAND_PROFILE_NAMES = new Set([
-  'chat', 'model', 'gateway', 'setup', 'whatsapp', 'login', 'logout',
-  'status', 'cron', 'doctor', 'dump', 'config', 'pairing', 'skills', 'tools',
-  'mcp', 'sessions', 'insights', 'version', 'update', 'uninstall',
-  'profile', 'plugins', 'honcho', 'acp',
-])
-
-function normalizeProfileName(name: string): string {
-  return String(name || '').trim().toLowerCase()
-}
-
 function isForbiddenProfileName(name: string): boolean {
   const normalized = normalizeProfileName(name)
   if (!normalized || normalized === 'default') return false
-  return RESERVED_PROFILE_NAMES.has(normalized) || HERMES_SUBCOMMAND_PROFILE_NAMES.has(normalized)
+  if (isReservedProfileName(normalized)) return true
+  try {
+    validateProfileName(normalized)
+    return false
+  } catch {
+    return true
+  }
 }
 
 function getActiveProfileFile(): string {
@@ -120,21 +121,6 @@ async function injectBundledSkillsForProfile(name: string): Promise<void> {
   } catch (err: any) {
     logger.warn(err, '[profiles] failed to sync bundled skills for profile "%s"', name)
   }
-}
-
-function deleteForbiddenProfileFromDisk(name: string): boolean {
-  if (!isForbiddenProfileName(name)) return false
-  const base = detectHermesRootHome()
-  const profileDir = join(base, 'profiles', name)
-  if (!existsSync(profileDir)) return false
-  rmSync(profileDir, { recursive: true, force: true })
-  try {
-    if (normalizeProfileName(getActiveProfileName()) === normalizeProfileName(name)) {
-      writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
-    }
-  } catch {}
-  logger.warn('[deleteProfile] removed reserved profile "%s" from disk after Hermes CLI rejected deletion', name)
-  return true
 }
 
 function profileDirectoryExists(name: string): boolean {
@@ -375,19 +361,29 @@ function scheduleRuntimeStatusRefresh(): void {
   startRuntimeStatusRefresh()
 }
 
+function respondWithProfileLifecycleError(ctx: any, err: unknown): boolean {
+  if (!(err instanceof ProfileLifecycleError)) return false
+  ctx.status = err.status
+  ctx.body = { error: err.message, code: err.code }
+  return true
+}
+
 export async function list(ctx: any) {
   try {
     let profiles: HermesProfile[]
-    try {
-      profiles = await hermesCli.listProfiles()
-    } catch (err: any) {
-      const { getActiveProfileName } = await import('../services/profiles/profile')
-      const activeProfileName = getActiveProfileName()
-      if (!isForbiddenProfileName(activeProfileName)) throw err
+    if (!isHermesAgentAvailable()) {
+      profiles = listProfilesFromDisk(getActiveProfileName())
+    } else {
+      try {
+        profiles = await hermesCli.listProfiles()
+      } catch (err: any) {
+        const activeProfileName = getActiveProfileName()
+        if (!isForbiddenProfileName(activeProfileName)) throw err
 
-      logger.warn(err, '[listProfiles] active_profile "%s" is invalid/reserved; resetting to default and listing profiles from disk', activeProfileName)
-      writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
-      profiles = listProfilesFromDisk('default')
+        logger.warn(err, '[listProfiles] active_profile "%s" is invalid/reserved; resetting to default and listing profiles from disk', activeProfileName)
+        writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
+        profiles = listProfilesFromDisk('default')
+      }
     }
 
     const activeProfileName = requestedProfileName(ctx)
@@ -410,15 +406,19 @@ export async function list(ctx: any) {
 export async function listForApp(ctx: any) {
   try {
     let profiles: HermesProfile[]
-    try {
-      profiles = await hermesCli.listProfiles()
-    } catch (err: any) {
-      const activeProfileName = getActiveProfileName()
-      if (!isForbiddenProfileName(activeProfileName)) throw err
+    if (!isHermesAgentAvailable()) {
+      profiles = listProfilesFromDisk(getActiveProfileName())
+    } else {
+      try {
+        profiles = await hermesCli.listProfiles()
+      } catch (err: any) {
+        const activeProfileName = getActiveProfileName()
+        if (!isForbiddenProfileName(activeProfileName)) throw err
 
-      logger.warn(err, '[listAppProfiles] active_profile "%s" is invalid/reserved; resetting to default and listing profiles from disk', activeProfileName)
-      writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
-      profiles = listProfilesFromDisk('default')
+        logger.warn(err, '[listAppProfiles] active_profile "%s" is invalid/reserved; resetting to default and listing profiles from disk', activeProfileName)
+        writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
+        profiles = listProfilesFromDisk('default')
+      }
     }
 
     const activeProfileName = requestedProfileName(ctx)
@@ -435,19 +435,13 @@ export async function listForApp(ctx: any) {
 }
 
 export async function create(ctx: any) {
-  const { name, clone } = ctx.request.body as { name?: string; clone?: boolean }
-  if (!name) {
-    ctx.status = 400
-    ctx.body = { error: 'Missing profile name' }
-    return
-  }
-  if (isForbiddenProfileName(name)) {
-    ctx.status = 400
-    ctx.body = { error: `Profile name '${name}' is reserved and cannot be created` }
-    return
-  }
+  const { name: requestedName, clone } = ctx.request.body as { name?: string; clone?: boolean }
   try {
-    const output = await hermesCli.createProfile(name, clone)
+    const name = validateProfileName(requestedName)
+    const useHermes = isHermesAgentAvailable()
+    const output = useHermes
+      ? await hermesCli.createProfile(name, clone)
+      : `Profile '${(await createProfileWithoutHermes(name, Boolean(clone))).name}' created by Studio`
 
     // clone=true 时执行智能清理：
     //   - 删除 .env 中的独占平台凭据（Weixin / Telegram / Slack / ...）
@@ -486,6 +480,11 @@ export async function create(ctx: any) {
     }
 
     await injectBundledSkillsForProfile(name)
+    setRuntimeStatusCache({
+      profile: name,
+      bridge: { running: false, profile: name, reachable: false, error: undefined },
+      gateway: { running: false, profile: name },
+    })
 
     ctx.body = {
       success: true,
@@ -496,6 +495,7 @@ export async function create(ctx: any) {
       copiedAuthProviders,
     }
   } catch (err: any) {
+    if (respondWithProfileLifecycleError(ctx, err)) return
     ctx.status = 500
     ctx.body = { error: err.message }
   }
@@ -613,10 +613,14 @@ export async function runtimeStatuses(ctx: any) {
 
 async function listProfilesForStatus(): Promise<HermesProfile[]> {
   let profiles: HermesProfile[]
-  try {
-    profiles = await hermesCli.listProfiles()
-  } catch {
+  if (!isHermesAgentAvailable()) {
     profiles = listProfilesFromDisk(getActiveProfileName())
+  } else {
+    try {
+      profiles = await hermesCli.listProfiles()
+    } catch {
+      profiles = listProfilesFromDisk(getActiveProfileName())
+    }
   }
   return filterVisibleProfiles(profiles)
 }
@@ -682,38 +686,50 @@ export async function restartProfileRuntime(ctx: any) {
 }
 
 export async function remove(ctx: any) {
-  const { name } = ctx.params
-  if (denyProfile(ctx, name)) return
-  if (name === 'default') {
+  const requestedName = ctx.params.name
+  const normalizedName = normalizeProfileName(requestedName)
+  if (normalizedName === 'default') {
     ctx.status = 400
     ctx.body = { error: 'Cannot delete the default profile' }
     return
   }
+  let name: string
   try {
-    try {
-      const result = await bridgeCleanupClient().destroyProfile(name)
-      logger.info('[profiles] destroyed bridge sessions for deleted profile "%s" destroyed=%s', name, result.destroyed)
-    } catch (err) {
-      logger.warn(err, '[profiles] failed to destroy bridge sessions for deleted profile "%s"', name)
+    name = validateProfileName(requestedName, { allowReserved: true })
+  } catch (err) {
+    if (respondWithProfileLifecycleError(ctx, err)) return
+    throw err
+  }
+  if (denyProfile(ctx, name)) return
+  try {
+    const useHermes = isHermesAgentAvailable()
+    if (useHermes) {
+      try {
+        const result = await bridgeCleanupClient().destroyProfile(name)
+        logger.info('[profiles] destroyed bridge sessions for deleted profile "%s" destroyed=%s', name, result.destroyed)
+      } catch (err) {
+        logger.warn(err, '[profiles] failed to destroy bridge sessions for deleted profile "%s"', name)
+      }
     }
 
-    await prepareGatewayForProfileDelete(name)
+    await prepareGatewayForProfileDelete(name, { useHermesCli: useHermes })
 
-    const ok = await hermesCli.deleteProfile(name)
+    const ok = useHermes
+      ? await hermesCli.deleteProfile(name)
+      : await deleteProfileWithoutHermes(name)
     if (ok && !profileDirectoryExists(name)) {
       removeProfileMetadata(name)
+      runtimeStatusCache.delete(name)
       ctx.body = { success: true }
     } else if (ok) {
       ctx.status = 500
       ctx.body = { error: 'Failed to delete profile: profile directory still exists' }
-    } else if (deleteForbiddenProfileFromDisk(name)) {
-      removeProfileMetadata(name)
-      ctx.body = { success: true, fallback: 'removed_reserved_profile_from_disk' }
     } else {
-      ctx.status = 500
-      ctx.body = { error: 'Failed to delete profile' }
+      ctx.status = useHermes ? 500 : 404
+      ctx.body = { error: useHermes ? 'Failed to delete profile' : `Profile '${name}' not found` }
     }
   } catch (err: any) {
+    if (respondWithProfileLifecycleError(ctx, err)) return
     ctx.status = 500
     ctx.body = { error: err.message }
   }
@@ -824,7 +840,11 @@ export async function exportProfile(ctx: any) {
   const outputPath = join(exportDir, filename)
   let cleanupAfterResponse = false
   try {
-    await hermesCli.exportProfile(name, outputPath)
+    if (isHermesAgentAvailable()) {
+      await hermesCli.exportProfile(name, outputPath)
+    } else {
+      await exportProfileWithoutHermes(name, outputPath)
+    }
     if (!existsSync(outputPath)) {
       ctx.status = 500
       ctx.body = { error: 'Export file not found' }
@@ -849,6 +869,7 @@ export async function exportProfile(ctx: any) {
     ctx.body = stream
     cleanupAfterResponse = true
   } catch (err: any) {
+    if (respondWithProfileLifecycleError(ctx, err)) return
     // 超时和"导出真的失败了"是两回事，前端要能分开提示
     const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
     ctx.status = timedOut ? 504 : 500
@@ -898,9 +919,21 @@ export async function importProfile(ctx: any) {
       return
     }
     try {
-      const result = await hermesCli.importProfile(archivePath)
-      ctx.body = { success: true, message: result.trim() }
+      if (isHermesAgentAvailable()) {
+        const result = await hermesCli.importProfile(archivePath)
+        ctx.body = { success: true, message: result.trim() }
+      } else {
+        const result = await importProfileWithoutHermes(archivePath)
+        await injectBundledSkillsForProfile(result.name)
+        setRuntimeStatusCache({
+          profile: result.name,
+          bridge: { running: false, profile: result.name, reachable: false, error: undefined },
+          gateway: { running: false, profile: result.name },
+        })
+        ctx.body = { success: true, message: result.message }
+      }
     } catch (err: any) {
+      if (respondWithProfileLifecycleError(ctx, err)) return
       const timedOut = err?.code === hermesCli.ARCHIVE_TIMEOUT_CODE
       ctx.status = timedOut ? 504 : 500
       ctx.body = timedOut ? { error: err.message, code: err.code } : { error: err.message }

@@ -2,6 +2,7 @@ import { getActiveProfileDir, getHermesBaseDir } from '../profiles/profile'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import type { LocalUsageStats } from '../../../studio/contracts/runs/usage'
+import type { ExternalSkillUsageEvent } from '../../../studio/contracts/skills'
 
 const SQLITE_AVAILABLE = (() => {
   const [major, minor] = process.versions.node.split('.').map(Number)
@@ -1213,10 +1214,81 @@ function emptySkillUsageStats(periodDays: number): HermesSkillUsageStats {
   }
 }
 
+export interface SkillUsageEventSyncPage {
+  events: ExternalSkillUsageEvent[]
+  cursor: number
+  reset: boolean
+}
+
+/** Incrementally read only new Hermes skill events for Studio's indexed ledger. */
+export async function listSkillUsageEventsAfterMessageId(
+  afterMessageId = 0,
+  profile?: string,
+): Promise<SkillUsageEventSyncPage> {
+  const dbPath = profile ? sessionDbPathForProfile(profile) : sessionDbPath()
+  if (!existsSync(dbPath)) return { events: [], cursor: 0, reset: afterMessageId > 0 }
+  const db = await openSessionDb(profile)
+  try {
+    const maxRow = db.prepare('SELECT COALESCE(MAX(id), 0) AS max_id FROM messages').get() as Record<string, unknown> | undefined
+    const cursor = Number(maxRow?.max_id || 0)
+    const reset = cursor < afterMessageId
+    const effectiveAfter = reset ? 0 : Math.max(0, afterMessageId)
+    if (cursor <= effectiveAfter) return { events: [], cursor, reset }
+
+    const rows = db.prepare(`
+      SELECT m.id AS message_id, m.session_id, m.tool_name, m.tool_call_id,
+        SUBSTR(m.content, 1, 500) AS content, COALESCE(m.timestamp, s.started_at) AS timestamp
+      FROM sessions s
+      JOIN messages m ON m.session_id = s.id
+      WHERE m.id > ? AND m.id <= ? AND m.role = 'tool'
+        AND (
+          COALESCE(m.tool_name, '') IN ('skill_view', 'skill_manage')
+          OR COALESCE(m.content, '') LIKE '[skill_view]%'
+          OR COALESCE(m.content, '') LIKE '[skill_manage]%'
+          OR m.tool_call_id IS NOT NULL
+        )
+    `).all(effectiveAfter, cursor) as Record<string, unknown>[]
+    const sessionIds = [...new Set(rows.map(row => String(row.session_id || '')).filter(Boolean))]
+    const assistantRows: Record<string, unknown>[] = []
+    for (const chunk of chunkValues(sessionIds, 500)) {
+      const placeholders = chunk.map(() => '?').join(', ')
+      assistantRows.push(...db.prepare(`
+        SELECT session_id, tool_calls
+        FROM messages
+        WHERE role = 'assistant'
+          AND tool_calls IS NOT NULL
+          AND (tool_calls LIKE '%skill_view%' OR tool_calls LIKE '%skill_manage%')
+          AND session_id IN (${placeholders})
+      `).all(...chunk) as Record<string, unknown>[])
+    }
+    const attached = attachAssistantToolCalls(rows, assistantRows)
+    const events: ExternalSkillUsageEvent[] = []
+    const counted = new Set<number>()
+    for (const row of attached) {
+      const messageId = Number(row.message_id)
+      if (!Number.isFinite(messageId) || counted.has(messageId)) continue
+      const event = mapSkillUsageEvent(row)
+      if (!event) continue
+      counted.add(messageId)
+      events.push({
+        messageId,
+        sessionId: String(row.session_id || ''),
+        skill: event.skill,
+        action: event.action,
+        timestamp: event.timestamp ?? Math.floor(Date.now() / 1000),
+      })
+    }
+    return { events, cursor, reset }
+  } finally {
+    db.close()
+  }
+}
+
 export async function getSkillUsageStatsFromDb(
   days = 7,
   nowSeconds = Math.floor(Date.now() / 1000),
   profile?: string,
+  excludedSessionIds: Iterable<string> = [],
 ): Promise<HermesSkillUsageStats> {
   const normalizedDays = Number.isFinite(days) ? days : 7
   const safeDays = Math.max(1, Math.floor(normalizedDays))
@@ -1233,6 +1305,11 @@ export async function getSkillUsageStatsFromDb(
     OR COALESCE(m.content, '') LIKE '[skill_view]%'
     OR COALESCE(m.content, '') LIKE '[skill_manage]%'
   `
+  const excludedIds = [...new Set([...excludedSessionIds].map(id => String(id || '').trim()).filter(Boolean))]
+  const exclusionClause = excludedIds.length > 0
+    ? ' AND s.id NOT IN (SELECT value FROM json_each(?))'
+    : ''
+  const exclusionParams = excludedIds.length > 0 ? [JSON.stringify(excludedIds)] : []
   const eventTimeExpression = 'COALESCE(m.timestamp, s.started_at)'
   const rowSelect = `
     SELECT
@@ -1254,14 +1331,16 @@ export async function getSkillUsageStatsFromDb(
           AND (${predicate})
           AND s.started_at > ?
           AND ${eventTimeExpression} > ?
-      `).all(since, since) as Record<string, unknown>[]
+          ${exclusionClause}
+      `).all(since, since, ...exclusionParams) as Record<string, unknown>[]
       const lateRows = db.prepare(`
         ${rowSelect}
         WHERE m.role = 'tool'
           AND (${predicate})
           AND s.started_at <= ?
           AND ${eventTimeExpression} > ?
-      `).all(since, since) as Record<string, unknown>[]
+          ${exclusionClause}
+      `).all(since, since, ...exclusionParams) as Record<string, unknown>[]
       return [...recentRows, ...lateRows]
     }
 

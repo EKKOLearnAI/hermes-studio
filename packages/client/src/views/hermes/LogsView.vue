@@ -85,6 +85,16 @@ async function loadLogs() {
 
 onMounted(async () => {
   logFiles.value = await fetchLogFiles()
+  if (!logFiles.value.some(file => file.name === selectedLog.value)) {
+    selectedLog.value = logFiles.value.find(file => file.name === 'webui')?.name
+      || logFiles.value.find(file => file.name === 'ekko-agent')?.name
+      || logFiles.value[0]?.name
+      || ''
+  }
+  if (!selectedLog.value) {
+    entries.value = []
+    return
+  }
   await loadLogs()
 })
 </script>

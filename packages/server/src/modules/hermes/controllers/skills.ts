@@ -10,7 +10,13 @@ import { safeReadFile, extractDescription, listFilesRecursive } from '../../stud
 import type { SkillSource } from '../../studio/contracts/skills'
 import { isPathWithin } from '../services/runtime/path'
 import { getActiveProfileName, getProfileDir } from '../services/profiles/profile'
-import { getSkillUsageStatsFromDb } from '../services/history/sessions-db'
+import { listSkillUsageEventsAfterMessageId } from '../services/history/sessions-db'
+import { isHermesAgentAvailable } from '../../studio/public/agent-status-registry'
+import {
+  getLocalSkillUsageStats,
+  getSkillUsageSyncCursor,
+  syncExternalSkillUsageEvents,
+} from '../../studio/public/skill-usage'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -589,12 +595,24 @@ export async function list(ctx: any) {
 export async function usageStats(ctx: any) {
   const rawDays = parseInt(String(ctx.query?.days ?? '7'), 10)
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 7
+  const profile = requestedProfile(ctx)
+  const local = getLocalSkillUsageStats(days, undefined, profile, false)
+
+  if (!isHermesAgentAvailable()) {
+    ctx.body = local.stats
+    return
+  }
 
   try {
-    ctx.body = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
-  } catch (err: any) {
-    ctx.status = 500
-    ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+    const cursorKey = `hermes:${profile}`
+    const cursor = getSkillUsageSyncCursor(cursorKey)
+    const page = await listSkillUsageEventsAfterMessageId(cursor, profile)
+    syncExternalSkillUsageEvents('hermes', profile, page.events, page.cursor, page.reset)
+    ctx.body = getLocalSkillUsageStats(days, undefined, profile, true).stats
+  } catch {
+    // Studio-local events remain authoritative and useful even if the optional
+    // Hermes history database is unreadable.
+    ctx.body = local.stats
   }
 }
 

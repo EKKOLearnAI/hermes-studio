@@ -432,6 +432,18 @@ function hasOAuthCredential(value: any): boolean {
 }
 
 async function profileStoredAuthCredential(profile: string, provider: string): Promise<StoredAuthCatalogCredential> {
+  if (provider === 'qwen-oauth') {
+    try {
+      const credentials = await resolveAuthorizedProviderRuntimeCredentials({ profile, provider })
+      return {
+        hasAuth: true,
+        api_key: credentials.apiKey,
+        ...(credentials.baseUrl ? { base_url: credentials.baseUrl } : {}),
+      }
+    } catch {
+      return { hasAuth: false }
+    }
+  }
   try {
     const raw = await readFile(join(getProfileDir(profile), 'auth.json'), 'utf-8')
     const auth = JSON.parse(raw)

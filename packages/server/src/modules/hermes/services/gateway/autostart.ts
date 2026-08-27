@@ -552,7 +552,10 @@ function getProfileDirForDelete(profile: string): string {
   return join(getHermesBaseDir(), 'profiles', profile)
 }
 
-export async function prepareGatewayForProfileDelete(profile: string): Promise<void> {
+export async function prepareGatewayForProfileDelete(
+  profile: string,
+  options: { useHermesCli?: boolean } = {},
+): Promise<void> {
   const hermesBin = resolveHermesBin()
   const profileDir = getProfileDirForDelete(profile)
 
@@ -568,6 +571,8 @@ export async function prepareGatewayForProfileDelete(profile: string): Promise<v
   } catch (err) {
     logger.warn(err, '[gateway-autostart] failed to retire managed gateway before profile delete profile=%s home=%s', profile, profileDir)
   }
+
+  if (options.useHermesCli === false) return
 
   try {
     await execHermesWithBin(hermesBin, ['gateway', 'stop'], {

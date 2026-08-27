@@ -13,6 +13,7 @@ export async function resolveEkkoAuthorizedProviderCredentials(
   profile: string,
   provider: string,
   model?: string,
+  forceRefresh = false,
 ): Promise<EkkoAuthorizedProviderCredentials> {
   if (!isAuthorizedRuntimeProvider(provider)) return {}
 
@@ -20,6 +21,7 @@ export async function resolveEkkoAuthorizedProviderCredentials(
     profile,
     provider,
     model,
+    ...(forceRefresh ? { forceRefresh: true } : {}),
   })
   return {
     apiKey: credentials.apiKey,

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as profilesApi from '@/api/hermes/profiles'
 import type { HermesProfile, HermesProfileDetail } from '@/api/hermes/profiles'
+import { fetchAgentStatusSnapshot } from '@/api/agent-status'
 import { useAppStore } from './app'
 
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
@@ -14,6 +15,7 @@ export const useProfilesStore = defineStore('profiles', () => {
   const detailMap = ref<Record<string, HermesProfileDetail>>({})
   const loading = ref(false)
   const switching = ref(false)
+  const hermesAvailable = ref(false)
 
   async function fetchProfiles() {
     loading.value = true
@@ -49,10 +51,24 @@ export const useProfilesStore = defineStore('profiles', () => {
   async function fetchHermesProfiles() {
     loading.value = true
     try {
-      profiles.value = await profilesApi.fetchProfiles()
+      const [profilesResult, statusResult] = await Promise.allSettled([
+        profilesApi.fetchProfiles(),
+        fetchAgentStatusSnapshot(),
+      ])
+      if (profilesResult.status === 'rejected') throw profilesResult.reason
+      profiles.value = profilesResult.value
+      const hermes = statusResult.status === 'fulfilled'
+        ? statusResult.value.agents.find(agent => agent.id === 'hermes')
+        : undefined
+      hermesAvailable.value = Boolean(
+        hermes?.installed
+        && hermes.source !== 'not-installed'
+        && hermes.path,
+      )
       activeProfile.value = profiles.value.find(profile => profile.active) ?? null
       clearAllSessionCaches()
     } catch (err) {
+      hermesAvailable.value = false
       console.error('Failed to fetch Hermes profiles:', err)
     } finally {
       loading.value = false
@@ -175,6 +191,7 @@ export const useProfilesStore = defineStore('profiles', () => {
     detailMap,
     loading,
     switching,
+    hermesAvailable,
     fetchProfiles,
     fetchHermesProfiles,
     fetchProfileDetail,
