@@ -79,28 +79,28 @@ function handleToolListWheel(event: WheelEvent): void {
 
 <template>
     <div class="group-agent-run" :data-run-id="message.run_id || undefined">
-        <div
-            class="run-avatar"
-            :class="{ 'run-avatar-active': active }"
-            :aria-busy="active"
-        >
-            <GroupAgentMessageAvatar
-                v-if="agentInfo"
-                :agent="agentInfo"
-                :owner="agentOwnerInfo"
-                :mentionable="!!activeAgentInfo"
-                :size="36"
-                @mention="emit('mentionAgent', $event)"
-            />
-            <ProfileAvatar
-                v-else
-                :name="message.senderName || message.senderId || 'user'"
-                :avatar="senderAvatar"
-                :size="36"
-            />
-        </div>
         <div class="run-column">
             <div class="run-header">
+                <div
+                    class="run-avatar"
+                    :class="{ 'run-avatar-active': active }"
+                    :aria-busy="active"
+                >
+                    <GroupAgentMessageAvatar
+                        v-if="agentInfo"
+                        :agent="agentInfo"
+                        :owner="agentOwnerInfo"
+                        :mentionable="!!activeAgentInfo"
+                        :size="22"
+                        @mention="emit('mentionAgent', $event)"
+                    />
+                    <ProfileAvatar
+                        v-else
+                        :name="message.senderName || message.senderId || 'user'"
+                        :avatar="senderAvatar"
+                        :size="22"
+                    />
+                </div>
                 <span class="run-agent-name">{{ message.senderName }}</span>
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
@@ -160,7 +160,6 @@ function handleToolListWheel(event: WheelEvent): void {
 .group-agent-run {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
     min-width: 0;
     max-width: 100%;
     padding: 2px 0;
@@ -169,10 +168,9 @@ function handleToolListWheel(event: WheelEvent): void {
 
 .run-avatar {
     position: relative;
-    width: 36px;
-    height: 36px;
-    flex: 0 0 36px;
-    margin-top: 2px;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
     overflow: visible;
     border-radius: 50%;
 }
@@ -180,7 +178,7 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-avatar-active::before {
     position: absolute;
     z-index: 0;
-    inset: -4px;
+    inset: -2px;
     border-radius: 50%;
     box-shadow:
         0 0 0 2px #ff6b6b,
@@ -251,7 +249,7 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-column {
     display: flex;
     flex-direction: column;
-    min-width: min(260px, calc(100% - 46px));
+    min-width: min(260px, 85%);
     width: fit-content;
     max-width: min(85%, 920px);
 }
@@ -259,14 +257,22 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-bottom: 2px;
+    gap: 6px;
+    padding-bottom: 6px;
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 22px;
 }
 
 .run-agent-name {
-    color: $text-primary;
-    font-size: 13px;
-    font-weight: 600;
+    min-width: 0;
+    max-width: 240px;
+    overflow: hidden;
+    color: inherit;
+    font-size: inherit;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .run-agent-icon {

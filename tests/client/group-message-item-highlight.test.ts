@@ -225,4 +225,55 @@ describe('GroupMessageItem tool details', () => {
     expect(block.find('.code-lang').text()).toBe('text')
     expect(block.find('code').text()).toBe('false')
   })
+
+  it('uses the compact single-chat identity layout for an Agent message', () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'group-agent-identity',
+          roomId: 'room-1',
+          senderId: 'agent-1',
+          senderName: 'Worker',
+          role: 'assistant',
+          content: 'Hello',
+          timestamp: Date.now(),
+        },
+        agents: [{ id: 'agent-row', roomId: 'room-1', agentId: 'agent-1', profile: 'worker', name: 'Worker', description: '', invited: 1 }],
+        members: [],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    const header = wrapper.get('.msg-header')
+    expect(header.get('.sender-name').text()).toBe('Worker')
+    expect(header.get('.message-agent-avatar').attributes('style')).toContain('width: 22px')
+    expect(header.get('.message-agent-avatar').classes()).toContain('message-agent-avatar--compact')
+    expect(wrapper.find('.avatar').exists()).toBe(false)
+  })
+
+  it('uses the compact mirrored identity layout for the current user', () => {
+    const wrapper = mount(GroupMessageItem, {
+      props: {
+        message: {
+          id: 'group-user-identity',
+          roomId: 'room-1',
+          senderId: 'user-1',
+          senderName: 'Researcher',
+          role: 'user',
+          content: 'Hello',
+          timestamp: Date.now(),
+        },
+        agents: [],
+        members: [{ userId: 'user-1', name: 'Researcher', avatar: '' }],
+        currentUserId: 'user-1',
+      },
+      global: { stubs: { MarkdownRenderer: true, ProfileAvatar: true } },
+    })
+
+    const header = wrapper.get('.msg-header')
+    expect(header.get('.sender-name').text()).toBe('Researcher')
+    expect(header.get('.profile-avatar-view').attributes('style')).toContain('width: 22px')
+    expect(wrapper.get('.group-message').classes()).toContain('self')
+  })
 })

@@ -108,6 +108,7 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
     expect(wrapper.get('.run-column').element.children[0]).toBe(wrapper.get('.run-header').element)
+    expect(wrapper.get('.run-header .message-agent-avatar').attributes('style')).toContain('width: 22px')
     expect(wrapper.get('.run-card').element.children[0]).toBe(panel.element)
     expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
     expect(wrapper.get('.run-column').element.children[2]).toBe(wrapper.get('.run-time').element)
