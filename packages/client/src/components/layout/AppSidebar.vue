@@ -9,7 +9,6 @@ import ModelSelector from "@/components/layout/ModelSelector.vue";
 import ProfileSelector from "@/components/layout/ProfileSelector.vue";
 import LanguageSwitch from "@/components/layout/LanguageSwitch.vue";
 import ThemeSwitch from "@/components/layout/ThemeSwitch.vue";
-import VersionManagementModal from "@/components/layout/VersionManagementModal.vue";
 import { changelog } from "@/data/changelog";
 import {
   getStoredUserId,
@@ -35,7 +34,6 @@ const isDesktopShell = computed(
       .hermesDesktop?.isDesktop === true,
 );
 const showChangelog = ref(false);
-const showVersionManagement = ref(false);
 const showDockerUpdateTip = ref(false);
 const isDockerRuntime = computed(() => appStore.isDocker);
 
@@ -80,10 +78,6 @@ async function handleLogout() {
 
 function openChangelog() {
   showChangelog.value = true;
-}
-
-function openVersionManagement() {
-  showVersionManagement.value = true;
 }
 
 function handleDockerUpdateTip() {
@@ -435,22 +429,6 @@ function handleUpdateClick() {
         <ThemeSwitch />
       </div>
       <NButton
-        v-if="isDesktopShell"
-        type="primary"
-        size="tiny"
-        block
-        class="update-btn version-management-btn"
-        :class="{ 'has-update': appStore.updateAvailable }"
-        @click="openVersionManagement"
-      >
-        <span class="version-management-label">
-          {{ t("sidebar.versionManagement") }}
-          <span class="version-update-label">{{
-            t("sidebar.updateAvailableLabel")
-          }}</span>
-        </span>
-      </NButton>
-      <NButton
         v-if="appStore.clientOutdated"
         type="warning"
         size="tiny"
@@ -549,11 +527,6 @@ function handleUpdateClick() {
         </div>
       </div>
     </NModal>
-    <VersionManagementModal
-      v-if="isDesktopShell"
-      v-model:show="showVersionManagement"
-    />
-
     <NModal
       v-model:show="showDockerUpdateTip"
       preset="dialog"
@@ -787,28 +760,6 @@ function handleUpdateClick() {
 .update-btn {
   margin: 4px 0 0;
   border-radius: $radius-sm;
-}
-
-.version-management-btn {
-  .version-management-label {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .version-update-label {
-    display: none;
-    flex: 0 0 auto;
-    color: inherit;
-    font-size: 11px;
-    font-weight: 600;
-  }
-
-  &.has-update .version-update-label {
-    display: inline;
-  }
 }
 
 .changelog-list {

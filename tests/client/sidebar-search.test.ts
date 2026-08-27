@@ -72,15 +72,6 @@ vi.mock("@/components/layout/ThemeSwitch.vue", () => ({
   default: { name: "ThemeSwitch", template: "<div />" },
 }));
 
-vi.mock("@/components/layout/VersionManagementModal.vue", () => ({
-  default: {
-    name: "VersionManagementModal",
-    props: ["show"],
-    template:
-      '<div class="version-management-modal-stub" :data-show="String(show)" />',
-  },
-}));
-
 vi.mock("@/components/common/RouteLinkItem.vue", () => ({
   default: {
     name: "RouteLinkItem",
@@ -153,29 +144,7 @@ describe("AppSidebar navigation", () => {
     expect(wrapper.find(".sidebar-return-tab").exists()).toBe(true);
   });
 
-  it("shows version management only in the desktop shell", async () => {
-    const webWrapper = mount(AppSidebar, {
-      global: {
-        stubs: {
-          ProfileSelector: true,
-          ModelSelector: true,
-          LanguageSwitch: true,
-          ThemeSwitch: true,
-          VersionManagementModal: {
-            name: "VersionManagementModal",
-            props: ["show"],
-            template:
-              '<div class="version-management-modal-stub" :data-show="String(show)" />',
-          },
-        },
-      },
-    });
-
-    expect(webWrapper.find(".version-management-btn").exists()).toBe(false);
-    expect(webWrapper.find(".version-management-modal-stub").exists()).toBe(
-      false,
-    );
-
+  it("does not show the legacy version management entry in the desktop shell", () => {
     (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
       isDesktop: true,
     };
@@ -186,30 +155,12 @@ describe("AppSidebar navigation", () => {
           ModelSelector: true,
           LanguageSwitch: true,
           ThemeSwitch: true,
-          VersionManagementModal: {
-            name: "VersionManagementModal",
-            props: ["show"],
-            template:
-              '<div class="version-management-modal-stub" :data-show="String(show)" />',
-          },
         },
       },
     });
 
-    expect(desktopWrapper.find(".version-management-btn").exists()).toBe(true);
-    expect(
-      desktopWrapper
-        .get(".version-management-modal-stub")
-        .attributes("data-show"),
-    ).toBe("false");
-
-    await desktopWrapper.get(".version-management-btn").trigger("click");
-
-    expect(
-      desktopWrapper
-        .get(".version-management-modal-stub")
-        .attributes("data-show"),
-    ).toBe("true");
+    expect(desktopWrapper.find(".version-management-btn").exists()).toBe(false);
+    expect(desktopWrapper.find(".version-management-modal-stub").exists()).toBe(false);
   });
 
   it("keeps navigation flat when the sidebar is collapsed", () => {

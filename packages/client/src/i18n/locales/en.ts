@@ -265,7 +265,7 @@ export default {
   agentManager: {
     title: 'Agent Manager',
     subtitle: 'Discover and manage the Agents available on this device.',
-    refresh: 'Detect again',
+    refresh: 'Refresh',
     hermesDescription: 'Hermes can come from a Studio-managed Runtime or a CLI installed by the user.',
     managedRuntime: 'Hermes Runtime',
     managedRuntimeHint: 'Studio installs and manages complete Runtime packages; it never installs the Hermes CLI separately.',

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { NBadge, NButton, NDrawer, NDrawerContent, NInput, NSelect } from 'naive-ui'
+import { NBadge, NButton, NDrawer, NDrawerContent, NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
@@ -40,12 +40,6 @@ const selectedSkillData = computed(() => {
   return cat?.skills.find(s => s.name === selectedSkill.value) ?? null
 })
 
-const skillTargetOptions = computed(() => [
-  { label: t('skills.targets.hermes'), value: 'hermes' },
-  { label: t('skills.targets.claude'), value: 'claude' },
-  { label: t('skills.targets.codex'), value: 'codex' },
-])
-
 const isHermesTarget = computed(() => skillTarget.value === 'hermes')
 const selectedSkillReadonly = computed(() => {
   if (!selectedSkillData.value) return true
@@ -84,14 +78,6 @@ async function loadSkills() {
   } finally {
     loading.value = false
   }
-}
-
-function handleTargetChange() {
-  selectedCategory.value = ''
-  selectedSkill.value = ''
-  sourceFilter.value = null
-  loadSkills()
-  if (skillTarget.value === 'hermes') loadPendingWriteCount()
 }
 
 async function loadPendingWriteCount() {
@@ -275,15 +261,6 @@ function handleSkillSaved() {
       <div v-else class="skills-layout">
           <div class="mobile-backdrop" :class="{ active: showSidebar }" @click="showSidebar = false" />
           <div v-if="showSidebar" class="skills-sidebar">
-            <div class="skills-target-filter">
-              <span class="target-filter-label">{{ t('skills.targetFilter') }}</span>
-              <NSelect
-                v-model:value="skillTarget"
-                size="small"
-                :options="skillTargetOptions"
-                @update:value="handleTargetChange"
-              />
-            </div>
             <SkillList
               :categories="categories"
               :archived="archived"
@@ -347,22 +324,6 @@ function handleSkillSaved() {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.skills-target-filter {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 8px 10px;
-  border-bottom: 1px solid $border-light;
-}
-
-.target-filter-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: $text-muted;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
 }
 
 .legend-item {

@@ -265,7 +265,7 @@ export default {
   agentManager: {
     title: 'Agent 管理',
     subtitle: '统一发现和管理这台设备上的 Agent。',
-    refresh: '重新探测',
+    refresh: '刷新',
     hermesDescription: 'Hermes 支持 Studio 托管的 Runtime，以及用户自行安装的本机 CLI。',
     managedRuntime: 'Hermes Runtime',
     managedRuntimeHint: 'Studio 只安装和管理完整 Runtime 包，不单独安装 Hermes CLI。',
