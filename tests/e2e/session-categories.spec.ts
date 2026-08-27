@@ -139,6 +139,14 @@ test('selects a recent session without expanding its collapsed category', async 
   await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
     .toContain('category-1')
+
+  await page.reload()
+
+  await expect(page).toHaveURL(/\/hermes\/session\/work-session$/)
+  await expect(page.getByRole('link', { name: /Project Alpha/ }).first()).toHaveClass(/active/)
+  await expect(page.getByRole('link', { name: /Project Alpha/ })).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
+    .toContain('category-1')
 })
 
 test('persists the collapsed recent group across reloads without changing the active session', async ({ page }) => {
