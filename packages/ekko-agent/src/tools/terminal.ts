@@ -9,6 +9,10 @@ export interface TerminalExecInput extends Record<string, unknown> {
   timeoutMs?: number
 }
 
+export interface TerminalExecToolOptions {
+  timeoutMs?: number
+}
+
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   readonly definition = {
     name: 'terminal_exec',
@@ -31,11 +35,17 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
     },
   }
 
+  private readonly timeoutMs: number
+
+  constructor(options: TerminalExecToolOptions = {}) {
+    this.timeoutMs = positiveInteger(options.timeoutMs, 30_000)
+  }
+
   async execute(input: TerminalExecInput, context: AgentToolContext = {}): Promise<AgentToolResult> {
     const normalized = normalizeTerminalCommand(input.command, input.args)
     const args = normalized.args
     const cwd = input.cwd ? resolveToolPath(input.cwd, context) : context.cwd || context.workspaceRoot || process.cwd()
-    const timeoutMs = input.timeoutMs ?? context.timeoutMs ?? 30_000
+    const timeoutMs = input.timeoutMs ?? context.timeoutMs ?? this.timeoutMs
     if (context.signal?.aborted) {
       return {
         ok: false,
@@ -105,8 +115,12 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   }
 }
 
-export function createTerminalTools(): AgentTool[] {
-  return [new TerminalExecTool()]
+export function createTerminalTools(options: TerminalExecToolOptions = {}): AgentTool[] {
+  return [new TerminalExecTool(options)]
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && Number(value) > 0 ? Math.floor(Number(value)) : fallback
 }
 
 function normalizeTerminalCommand(command: string, args?: string[]): { command: string; args: string[] } {

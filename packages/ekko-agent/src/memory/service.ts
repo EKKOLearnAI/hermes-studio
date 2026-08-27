@@ -15,12 +15,17 @@ import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode
 import { stableJson } from './store'
 import type {
   MemoryAuditEvent,
+  MemoryAuditQuery,
   MemoryContext,
+  MemoryCreateInput,
+  MemoryDeleteInput,
+  MemoryExpireInput,
   MemoryExtraction,
   MemoryExtractor,
   MemoryForgetInput,
   MemoryForgetResult,
   MemoryMessage,
+  MemoryMessageListInput,
   MemoryMessageRole,
   MemoryNode,
   MemoryProposeUpdateInput,
@@ -30,6 +35,8 @@ import type {
   MemoryRuntimeIdentity,
   MemoryStore,
   MemorySummary,
+  MemorySessionState,
+  MemoryUpdateInput,
 } from './types'
 
 const MEMORY_CANDIDATE_LIMIT = 500
@@ -232,6 +239,79 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) return undefined
     const node = await this.store.getNode(id)
     return node && isNodeAccessible(node, identity) ? node : undefined
+  }
+
+  async list(query: MemoryQuery = {}): Promise<MemoryNode[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.queryNodes({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
+  }
+
+  async create(input: MemoryCreateInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'create',
+    })
+  }
+
+  async update(id: string, input: MemoryUpdateInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'update',
+      targetId: id,
+      node: input.node ?? {},
+    })
+  }
+
+  async expire(id: string, input: MemoryExpireInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'expire',
+      targetId: id,
+      node: {},
+    })
+  }
+
+  async delete(id: string, input: MemoryDeleteInput): Promise<MemoryForgetResult> {
+    return this.forget({
+      ...input,
+      id,
+    })
+  }
+
+  async listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]> {
+    if (!this.isEnabled || !this.store) return []
+    if (input.afterMessageId) {
+      return this.store.listMessagesAfter({
+        sessionId: input.sessionId,
+        messageId: input.afterMessageId,
+        limit: input.limit,
+      })
+    }
+    return this.store.listRecentMessages({
+      sessionId: input.sessionId,
+      limit: input.limit ?? this.recentMessageLimit,
+    })
+  }
+
+  async getLatestSummary(sessionId: string): Promise<MemorySummary | undefined> {
+    if (!this.isEnabled || !this.store) return undefined
+    return this.store.getLatestSummary({ sessionId })
+  }
+
+  async getSessionState(sessionId: string): Promise<MemorySessionState | undefined> {
+    if (!this.isEnabled || !this.store) return undefined
+    return this.store.getSessionState(sessionId)
+  }
+
+  async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.listAuditEvents({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
   }
 
   async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult> {

@@ -31,6 +31,8 @@ export interface EkkoBackgroundContinuationContext {
 }
 
 export interface AgentRuntimeOptions {
+  /** Fixed profile identity for tool and memory operations. Per-run input cannot override it. */
+  profileId?: string
   modelClient?: ModelClient
   /** Disable every tool source, including built-ins, MCP, memory, and skill tools. */
   toolsEnabled?: boolean
@@ -49,6 +51,10 @@ export interface AgentRuntimeOptions {
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number
+  /** Default background delegation policy for runs that do not override it. */
+  backgroundDelegationEnabled?: boolean
+  /** Maximum step budget for each delegated subagent. */
+  subtaskMaxSteps?: number
   toolContext?: AgentToolContext
   modelDefaults?: Omit<ModelRequest, 'messages' | 'tools' | 'stream'>
   contextKey?: string

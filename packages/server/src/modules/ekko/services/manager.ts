@@ -61,9 +61,10 @@ export class GlobalEkkoAgent {
     options: Omit<AgentRuntimeOptions, 'logWriter' | 'logProfile'>,
     input: AgentRuntimeRunInput,
   ): Promise<AgentRuntimeRunResult> {
-    const runtime = new AgentRuntime({
+    const runtime = this.setup.createRuntime({
       ...options,
-      toolAuthorizer: options.toolAuthorizer ?? this.setup.toolApprovals.authorize,
+      profile: this.options.profile || 'default',
+      memory: options.memory ?? false,
       logWriter: this.fileLogger,
       logProfile: this.options.profile || 'default',
     })
@@ -117,10 +118,9 @@ export class GlobalEkkoAgent {
 
   private runtimeInstance(): AgentRuntime {
     if (this.runtime) return this.runtime
-    this.runtime = new AgentRuntime({
-      memory: this.memory,
-      skillDirectory: this.skillDirectory,
-      toolAuthorizer: this.setup.toolApprovals.authorize,
+    this.runtime = this.setup.createRuntime({
+      profile: this.options.profile || 'default',
+      memory: this.memory ?? false,
       logWriter: this.fileLogger,
       logProfile: this.options.profile || 'default',
     })

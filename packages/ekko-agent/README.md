@@ -1,6 +1,20 @@
 # Ekko Agent
 
-Ekko Agent is a package scaffold for future Hermes Web UI agent integration.
+Ekko Agent is a standalone TypeScript agent runtime used by Hermes Studio. It
+owns the model loop, provider adapters, tools, memory, skills, delegation,
+approvals, and structured request logging.
+
+The recommended entry is a Profile-oriented container: `new EkkoAgent()`
+creates one `EkkoProfileAgent` per configured Profile, so modules are used as
+`ekko.default.skill`, `ekko.default.memory`, or
+`ekko.agent.get('work').tool`. See the complete field, method, parameter, and
+configuration reference in [docs/API.md](docs/API.md).
+
+`default` is always created, even when `profiles` is omitted or does not list
+it. Existing first-level Profile directories under `.ekko/skills`,
+`.ekko/logs`, and `.ekko/workspace` are discovered automatically; explicit
+`profiles` are merged with those names and missing managed directories are
+created before the Profile Agent is validated.
 
 The first implemented layer is model-provider requests. Internally, the agent
 uses one request shape and provider adapters translate it to external APIs.
@@ -24,10 +38,12 @@ First-class OAuth provider presets:
 - `claude-oauth` — Anthropic Messages at the Anthropic API
 - `minimax-oauth` — Anthropic Messages for the MiniMax Coding Plan
 
-Pass the current OAuth access token as `apiKey`. Login, token persistence, and
-refresh remain the caller's responsibility; the preset supplies the provider's
-default endpoint, request style, and required identity headers. MiniMax Coding
-Plan requests use Bearer-only authentication and do not send `x-api-key`.
+Callers still own the interactive login flow, then store its result through
+`setModelAuthorization`. Ekko persists and refreshes those credentials before
+requests through a supplied provider refresher or a standard configured OAuth
+token endpoint. Passing `apiKey` remains available as a one-process override.
+MiniMax Coding Plan requests use Bearer-only authentication and do not send
+`x-api-key`.
 
 Default endpoints:
 
@@ -84,7 +100,7 @@ Use `workspaceRoot` to keep file and terminal working directories inside a
 specific workspace.
 
 ```ts
-import { createDefaultToolRegistry } from './src/index'
+import { createDefaultToolRegistry } from 'ekko-agent'
 
 const tools = createDefaultToolRegistry()
 
@@ -148,16 +164,19 @@ system, tool, message, and provider-context estimate needed for that external
 threshold decision without starting a model call. A standalone Ekko host can
 instead implement and own its internal compression lifecycle.
 
-Call `setupEkkoAgent()` once during host startup, before accepting agent work.
+Call `new EkkoAgent()` (or the compatible `setupEkkoAgent()`) once during host
+startup, before accepting agent work.
 The setup entry owns `EkkoDirectoryManager`, creates
 `<base>/.ekko/config/config.json`, the skills, logs, and workspace directories,
 and opens and migrates the SQLite database. Development uses the package-local
 `sql-data/ekko-agent.db`; production uses `<base>/.ekko/ekko.db`. It returns
-the shared database-backed memory service and closes that process-level resource
-through `setup.close()`. The global JSON file is initialized from Ekko's current
-runtime defaults. General runtime settings are not yet loaded as user- or
-profile-configurable input; the permanent tool-approval allowlist is the current
-exception. A configured profile uses
+the shared database-backed memory and conversation stores and closes that
+process-level resource through `setup.close()`. The global JSON file drives
+runtime limits, model defaults and providers, tools, approvals, delegation,
+memory, skills, logging, and prompt instructions. Configuration upgrades merge
+new defaults one field at a time: existing user values, arrays, and unknown
+forward-compatible fields are never replaced as a whole module. A configured
+profile uses
 `<base>/.ekko/skills/<profile>` for its skills and
 `<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
 `<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied
@@ -170,19 +189,22 @@ the default profile from `<hermes>/skills` and every named profile from
 skills.
 
 ```ts
-import { AgentRuntime, setupEkkoAgent } from './src/index'
+import { EkkoAgent } from 'ekko-agent'
 
-const setup = setupEkkoAgent({
+const ekko = new EkkoAgent({
   baseDirectory: '/path/to/base',
-  profiles: ['default'],
+  profiles: ['work'],
 })
-const profile = setup.profile('default')
-const runtime = new AgentRuntime({
-  modelClient: client,
-  memory: setup.memory,
-  skillDirectory: profile.skillDirectory,
-  toolAuthorizer: setup.toolApprovals.authorize,
+ekko.config.setModelProvider('deepseek', {
+  type: 'openai-compatible',
+  requestStyle: 'openai-chat',
+  baseUrl: 'https://api.deepseek.com/v1',
+  defaultModel: 'deepseek-chat',
+  apiKey: 'sk-...',
 })
+ekko.config.setDefaultModel('deepseek')
+
+const runtime = ekko.agent.get('work').runtime.create()
 
 try {
   const result = await runtime.run({
@@ -195,13 +217,167 @@ try {
     },
   })
 } finally {
-  setup.close()
+  ekko.close()
 }
 ```
 
 Set `toolsEnabled: false` to omit all tool sources (built-ins, MCP, memory,
 and skill tools). Set `skillsEnabled: false` to omit constructor and per-run
 skills. The switches are independent and default to `true`.
+
+## Configuration and Models
+
+`new EkkoAgent(options)` is the all-in-one public facade and multi-Profile
+container. Every Profile gets an independent Agent instance with bound
+`skill`, `tool`, `memory`, `conversation`, `runtime`, `directory`, and `log`
+modules. Shared config, model Provider, authorization, and database modules are
+also reachable through each Profile Agent. `setupEkkoAgent(options)` returns
+the same facade for compatibility with the existing setup style.
+
+`setup.config` is an `EkkoConfigStore`. It exposes `read`, `update`, `replace`,
+`reset`, provider-preset CRUD, configured-provider CRUD, authorization CRUD,
+`installModelProviderPreset`, and `setDefaultModel`. Nested
+`update` patches merge at field level, so changing `runtime.maxSteps` does not
+replace other runtime settings. `setup.modelProviderConfig()` resolves the
+active provider, and `setup.createModelClient()` creates a client without
+starting a runtime.
+
+The config contains a curated `model.providerCatalog` derived from Hermes
+Studio. It includes common API-key providers and the `nous`, `openai-codex`,
+`xai-oauth`, `qwen-oauth`, `claude-oauth`, and `minimax-oauth` authorization
+providers. Every preset has an explicit `apiMode`; Ekko validates that its
+adapter-level `requestStyle` matches instead of relying on endpoint inference.
+
+API-key credentials live in the provider object under `apiKey`. OAuth state
+lives under `model.authorizations`. The
+`.ekko/config/config.json` file is created with user-only `0600` permissions.
+A caller can still pass `apiKey` to `setup.createModelClient()` or
+`setup.createRuntime()` to override the persisted value for one process.
+
+```ts
+setup.config.update({
+  runtime: { maxSteps: 60 },
+  model: { reasoningEffort: 'high', maxTokens: 8_192 },
+  tools: { codeExec: { enabled: false } },
+})
+
+const providers = setup.config.listModelProviders()
+const client = setup.createModelClient({ provider: providers[0].id })
+```
+
+Install and manage a built-in provider with the exported config-store methods:
+
+```ts
+const agent = new EkkoAgent({ baseDirectory: '/path/to/base' })
+
+agent.installModelProviderPreset('openai-codex', {
+  defaultModel: 'gpt-5.6-terra',
+})
+agent.updateModelProvider('openai-codex', {
+  defaultModel: 'gpt-5.6-sol',
+})
+agent.deleteModelProvider('openai-codex')
+```
+
+OAuth providers refresh before a request when their configured expiry is
+within `model.authorizationRefreshLeewayMs`. Supply a provider-aware refresher
+to `setupEkkoAgent`, or configure `tokenUrl`, `refreshToken`, and optional OAuth
+client fields to use the exported standard refresh-token implementation.
+Refreshes are deduplicated per provider, rotated credentials are persisted,
+and refresh failures never fall back to an expiring stale token.
+
+```ts
+const setup = setupEkkoAgent({
+  authorizationRefresher: async ({ provider, authorization }) => {
+    const refreshed = await refreshProviderAuthorization(provider, authorization)
+    return {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: refreshed.expiresAt,
+      baseUrl: refreshed.baseUrl,
+      apiMode: refreshed.apiMode,
+    }
+  },
+})
+
+setup.config.setModelAuthorization('openai-codex', {
+  type: 'oauth',
+  accessToken,
+  refreshToken,
+  expiresAt,
+})
+
+await setup.authorizations.refresh('openai-codex')
+setup.config.updateModelAuthorization('openai-codex', { refreshToken: rotatedToken })
+setup.config.deleteModelAuthorization('openai-codex')
+```
+
+## Sessions and Messages
+
+The standalone database owns Studio-compatible `sessions` and `messages`
+tables. `setup.conversations` exposes Session operations `createSession`,
+`getSession`, `listSessions`, `updateSession`, `renameSession`,
+`setSessionArchived`, `endSession`, `reopenSession`, `deleteSession`, and
+`getSessionDetail`. Message operations are `addMessage`, `addMessages`,
+`getMessage`, `listMessages`, `updateMessage`, `deleteMessage`, and
+`clearMessages`. `recordSessionUsage` accumulates model usage independently of
+message edits.
+
+```ts
+const session = setup.conversations.createSession({
+  profile: 'default',
+  provider: 'deepseek',
+  model: 'deepseek-chat',
+  title: 'Repository review',
+})
+
+setup.conversations.addMessage({
+  sessionId: session.id,
+  role: 'user',
+  content: 'Review this repository.',
+})
+
+setup.conversations.renameSession(session.id, 'Ekko repository review')
+const history = setup.conversations.listMessages(session.id)
+```
+
+## Memory
+
+`setup.memory` exposes the standalone memory API. Memory-node operations are
+`list`, `get`, `search`, `create`, `update`, `expire`, `delete`, and `forget`.
+Conversation-derived memory data can be read with `listMessages`,
+`getLatestSummary`, `getSessionState`, and `listAuditEvents`. The lower-level
+SQLite implementation remains available as `setup.memoryStore`.
+
+```ts
+const created = await setup.memory.create({
+  kind: 'general_preference',
+  itemKey: 'interface_theme',
+  reason: 'User selected a persistent preference.',
+  explicitUserIntent: true,
+  identity: { sessionId: session.id, profileId: 'default' },
+  node: {
+    valueJson: 'dark',
+    title: 'Interface theme',
+    content: 'The user prefers a dark interface.',
+  },
+})
+
+const memories = await setup.memory.list({ profileId: 'default', limit: 20 })
+const updated = await setup.memory.update(created.nodeId!, {
+  reason: 'User changed the preference.',
+  expectedRevision: created.node!.revision,
+  identity: { sessionId: session.id, profileId: 'default' },
+  node: { valueJson: 'light' },
+})
+
+// Soft delete is the default. Hard delete additionally requires confirmed: true.
+await setup.memory.delete(updated.nodeId!, {
+  reason: 'User asked Ekko to forget it.',
+  expectedRevision: updated.node!.revision,
+  identity: { sessionId: session.id, profileId: 'default' },
+})
+```
 
 ## Skill Evolution
 
@@ -244,13 +420,16 @@ same file as the `ekko-agent` source for the selected profile.
 ## Commands
 
 ```bash
-npm --prefix packages/ekko-agent run check
+npm install
+npm run check
+npm test
+npm run build
 ```
 
 ## Example
 
 ```ts
-import { createModelClient } from './src/index'
+import { createModelClient } from 'ekko-agent'
 
 const client = createModelClient({
   id: 'deepseek',

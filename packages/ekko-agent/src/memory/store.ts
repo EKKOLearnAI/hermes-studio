@@ -4,6 +4,7 @@ import { EkkoDatabaseManager, type EkkoDatabaseMigration } from '../database'
 import { memorySlotForKind } from './schema'
 import type {
   MemoryAuditEvent,
+  MemoryAuditQuery,
   MemoryMessage,
   MemoryNode,
   MemoryQuery,
@@ -288,7 +289,9 @@ export class SqliteMemoryStore implements MemoryStore {
     if (!query.profileId) return []
     clauses.push('profile_id = ?')
     params.push(query.profileId)
-    if (query.includeExpired) {
+    if (query.statuses?.length) {
+      addInClause(clauses, params, 'status', query.statuses)
+    } else if (query.includeExpired) {
       clauses.push("status IN ('active', 'expired')")
     } else {
       clauses.push("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
@@ -364,13 +367,51 @@ export class SqliteMemoryStore implements MemoryStore {
     const rows = this.db.prepare(`
       SELECT * FROM memory_nodes ${where}
       ORDER BY ${relevanceOrder} importance DESC, confidence DESC, updated_at DESC
-      LIMIT ?
-    `).all(...params, ...relevanceParams, boundedLimit(query.limit ?? 50, 500)) as Row[]
+      LIMIT ? OFFSET ?
+    `).all(
+      ...params,
+      ...relevanceParams,
+      boundedLimit(query.limit ?? 50, 500),
+      boundedOffset(query.offset),
+    ) as Row[]
     return rows.map(nodeFromRow)
   }
 
   async appendAuditEvent(event: MemoryAuditEvent): Promise<void> {
     this.writeAudit(event)
+  }
+
+  async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]> {
+    const clauses: string[] = []
+    const params: SQLInputValue[] = []
+    if (query.profileId) {
+      clauses.push('profile_id = ?')
+      params.push(query.profileId)
+    }
+    if (query.nodeId) {
+      clauses.push('node_id = ?')
+      params.push(query.nodeId)
+    }
+    if (query.sessionId) {
+      clauses.push('session_id = ?')
+      params.push(query.sessionId)
+    }
+    if (query.eventTypes?.length) addInClause(clauses, params, 'event_type', query.eventTypes)
+    if (query.actor) {
+      clauses.push('actor = ?')
+      params.push(query.actor)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const rows = this.db.prepare(`
+      SELECT * FROM memory_audit_events ${where}
+      ORDER BY row_id DESC
+      LIMIT ? OFFSET ?
+    `).all(
+      ...params,
+      boundedLimit(query.limit ?? 50, 500),
+      boundedOffset(query.offset),
+    ) as Row[]
+    return rows.map(auditFromRow)
   }
 
   async getSessionState(sessionId: string): Promise<MemorySessionState | undefined> {
@@ -571,6 +612,20 @@ function nodeFromRow(row: Row): MemoryNode {
   }
 }
 
+function auditFromRow(row: Row): MemoryAuditEvent {
+  return {
+    id: String(row.id),
+    eventType: String(row.event_type) as MemoryAuditEvent['eventType'],
+    nodeId: optionalString(row.node_id),
+    sessionId: optionalString(row.session_id),
+    profileId: String(row.profile_id),
+    actor: String(row.actor),
+    reason: String(row.reason),
+    payload: parseJsonObject(row.payload_json),
+    createdAt: String(row.created_at),
+  }
+}
+
 function auditForNode(
   eventType: MemoryAuditEvent['eventType'],
   node: MemoryNode,
@@ -599,6 +654,11 @@ function categoryPathText(path: string[]): string {
 function boundedLimit(value: number, maximum: number): number {
   if (!Number.isFinite(value)) return Math.min(20, maximum)
   return Math.max(1, Math.min(Math.floor(value), maximum))
+}
+
+function boundedOffset(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.floor(Number(value)))
 }
 
 function addInClause(clauses: string[], params: SQLInputValue[], column: string, values: readonly string[]): void {

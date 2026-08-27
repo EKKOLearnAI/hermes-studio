@@ -33,6 +33,135 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
+  it('exposes standalone CRUD, history, and audit methods', async () => {
+    const identity = { sessionId: 'memory-api', profileId: 'default' }
+    const messageIds = await service.captureMessages(identity, [
+      { role: 'user', content: 'I prefer a dark interface.' },
+      { role: 'assistant', content: 'I will remember that.' },
+    ])
+
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'interface_theme',
+      reason: 'Explicit user preference.',
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'dark',
+        title: 'Interface theme',
+        content: 'The user prefers a dark interface.',
+        sourceMessageIds: [messageIds[0]],
+      },
+    })
+    expect(created).toMatchObject({ accepted: true, action: 'created' })
+
+    const active = await service.list({ profileId: 'default' })
+    expect(active).toMatchObject([{ id: created.nodeId, status: 'active', revision: 1 }])
+    await expect(service.get(created.nodeId!, identity)).resolves.toMatchObject({ valueJson: 'dark' })
+
+    const updated = await service.update(created.nodeId!, {
+      reason: 'The user changed the preference.',
+      expectedRevision: created.node!.revision,
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'light',
+        content: 'The user prefers a light interface.',
+      },
+    })
+    expect(updated).toMatchObject({ accepted: true, action: 'updated', node: { revision: 2, valueJson: 'light' } })
+    await expect(service.list({
+      profileId: 'default',
+      statuses: ['superseded'],
+    })).resolves.toMatchObject([{ id: created.nodeId, status: 'superseded' }])
+
+    const messages = await service.listMessages({ sessionId: identity.sessionId, limit: 10 })
+    expect(messages.map(message => message.id)).toEqual(messageIds)
+    const updatedAt = new Date().toISOString()
+    await store.appendSummary({
+      id: 'memory-api-summary',
+      sessionId: identity.sessionId,
+      fromMessageId: messageIds[0],
+      toMessageId: messageIds[1],
+      summary: 'The user selected an interface theme.',
+      constraints: [],
+      preferences: ['Interface theme'],
+      decisions: [],
+      completedWork: [],
+      pendingWork: [],
+      knownIssues: [],
+      createdAt: updatedAt,
+    })
+    await store.setSessionState({
+      sessionId: identity.sessionId,
+      lastExtractedMessageId: messageIds[1],
+      lastSummaryMessageId: messageIds[1],
+      updatedAt,
+    })
+    await expect(service.getLatestSummary(identity.sessionId)).resolves.toMatchObject({ id: 'memory-api-summary' })
+    await expect(service.getSessionState(identity.sessionId)).resolves.toMatchObject({
+      lastExtractedMessageId: messageIds[1],
+      lastSummaryMessageId: messageIds[1],
+    })
+
+    const removed = await service.delete(updated.nodeId!, {
+      reason: 'The user asked Ekko to forget this preference.',
+      expectedRevision: updated.node!.revision,
+      identity,
+    })
+    expect(removed).toMatchObject({ mode: 'soft', deletedIds: [updated.nodeId] })
+    await expect(service.list({
+      profileId: 'default',
+      statuses: ['deleted'],
+    })).resolves.toMatchObject([{ id: updated.nodeId, status: 'deleted', revision: 3 }])
+
+    const audits = await service.listAuditEvents({
+      profileId: 'default',
+      sessionId: identity.sessionId,
+    })
+    expect(audits.map(event => event.eventType)).toEqual(['delete', 'supersede', 'create'])
+    expect(audits.every(event => event.profileId === 'default')).toBe(true)
+  })
+
+  it('requires confirmation for the exported hard-delete method', async () => {
+    const identity = { sessionId: 'memory-hard-delete', profileId: 'default' }
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'temporary_note',
+      reason: 'Store a temporary fact.',
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'temporary',
+        title: 'Temporary note',
+        content: 'A temporary note.',
+      },
+    })
+    expect(created).toMatchObject({ accepted: true, action: 'created' })
+
+    const unconfirmed = await service.delete(created.nodeId!, {
+      mode: 'hard',
+      reason: 'Remove the temporary fact.',
+      expectedRevision: created.node!.revision,
+      identity,
+    })
+    expect(unconfirmed).toEqual({
+      deletedIds: [],
+      mode: 'hard',
+      requiresConfirmation: true,
+      reason: 'Hard delete requires confirmation.',
+    })
+    await expect(service.delete(created.nodeId!, {
+      mode: 'hard',
+      confirmed: true,
+      reason: 'Remove the temporary fact.',
+      expectedRevision: created.node!.revision,
+      identity,
+    })).resolves.toMatchObject({ mode: 'hard', deletedIds: [created.nodeId] })
+    await expect(service.get(created.nodeId!, identity)).resolves.toBeUndefined()
+  })
+
+
   it('keeps the latest 20 messages in automatic memory context by default', async () => {
     const identity = { sessionId: 's1', profileId: 'default' }
     await service.captureMessages(identity, Array.from({ length: 25 }, (_, index) => ({

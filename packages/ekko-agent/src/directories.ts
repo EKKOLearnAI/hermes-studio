@@ -132,6 +132,28 @@ export class EkkoDirectoryManager {
     return directory
   }
 
+  /** Discover persisted profiles from every profile-owned directory root. */
+  profileNames(): string[] {
+    const profiles = new Set<string>()
+    for (const root of [this.skillsDirectory, this.logsDirectory, this.workspaceDirectory]) {
+      let entries
+      try {
+        entries = readdirSync(root, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+        try {
+          profiles.add(profileDirectoryName(entry.name))
+        } catch {
+          // Ignore filesystem entries that cannot represent an Ekko profile.
+        }
+      }
+    }
+    return [...profiles].sort((left, right) => left.localeCompare(right))
+  }
+
   layout(): EkkoDirectoryLayout {
     return {
       baseDirectory: this.baseDirectory,

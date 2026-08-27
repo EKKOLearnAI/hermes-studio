@@ -172,7 +172,25 @@ describe('code_exec', () => {
       code: 'puts "no"',
     }, { workspaceRoot })).resolves.toMatchObject({
       ok: false,
-      error: 'code_exec language must be "node" or "python".',
+      error: 'code_exec language must be one of: node, python.',
+    })
+  })
+
+  it('honors the configured language allowlist', async () => {
+    const tool = new CodeExecTool({
+      allowedLanguages: ['node'],
+      dispatch: async () => ({ ok: true, content: 'unused' }),
+    })
+
+    await expect(tool.execute({
+      language: 'python',
+      code: 'print("no")',
+    }, { workspaceRoot })).resolves.toMatchObject({
+      ok: false,
+      error: 'code_exec language must be one of: node.',
+    })
+    expect(tool.definition.parameters).toMatchObject({
+      properties: { language: { enum: ['node'] } },
     })
   })
 })

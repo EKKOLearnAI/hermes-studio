@@ -209,6 +209,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('openai-codex')).toMatchObject({
       id: 'openai-codex',
       baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiMode: 'codex_responses',
       requestStyle: 'openai-responses',
     })
     expect(authorizedModelProviderPreset('xai-oauth')).toMatchObject({
@@ -219,6 +220,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('qwen-oauth')).toMatchObject({
       id: 'qwen-oauth',
       baseUrl: 'https://portal.qwen.ai/v1',
+      apiMode: 'chat_completions',
       requestStyle: 'openai-chat',
     })
     expect(authorizedModelProviderPreset('claude-oauth')).toMatchObject({
@@ -229,6 +231,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('minimax-oauth')).toMatchObject({
       id: 'minimax-oauth',
       baseUrl: 'https://api.minimax.io/anthropic',
+      apiMode: 'anthropic_messages',
       requestStyle: 'anthropic-messages',
     })
   })

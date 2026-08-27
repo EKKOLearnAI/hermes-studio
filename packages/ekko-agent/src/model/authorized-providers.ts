@@ -1,4 +1,5 @@
 import type { ModelRequestStyle } from './types'
+import type { EkkoModelApiMode } from './provider-presets'
 
 export type AuthorizedModelProviderId =
   | 'nous'
@@ -11,6 +12,7 @@ export type AuthorizedModelProviderId =
 export interface AuthorizedModelProviderPreset {
   id: AuthorizedModelProviderId
   baseUrl: string
+  apiMode: EkkoModelApiMode
   requestStyle: ModelRequestStyle
   headers: Record<string, string>
 }
@@ -45,6 +47,7 @@ export function authorizedModelProviderPreset(
     return {
       id,
       baseUrl: 'https://inference-api.nousresearch.com/v1',
+      apiMode: 'chat_completions',
       requestStyle: 'openai-chat',
       headers: {},
     }
@@ -53,6 +56,7 @@ export function authorizedModelProviderPreset(
     return {
       id,
       baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiMode: 'codex_responses',
       requestStyle: 'openai-responses',
       headers: codexHeaders(accessToken),
     }
@@ -61,6 +65,7 @@ export function authorizedModelProviderPreset(
     return {
       id,
       baseUrl: 'https://api.x.ai/v1',
+      apiMode: 'codex_responses',
       requestStyle: 'openai-responses',
       headers: {},
     }
@@ -69,6 +74,7 @@ export function authorizedModelProviderPreset(
     return {
       id,
       baseUrl: 'https://api.anthropic.com',
+      apiMode: 'anthropic_messages',
       requestStyle: 'anthropic-messages',
       headers: { 'anthropic-beta': 'oauth-2025-04-20' },
     }
@@ -77,6 +83,7 @@ export function authorizedModelProviderPreset(
     return {
       id,
       baseUrl: 'https://api.minimax.io/anthropic',
+      apiMode: 'anthropic_messages',
       requestStyle: 'anthropic-messages',
       headers: {},
     }
@@ -84,6 +91,7 @@ export function authorizedModelProviderPreset(
   return {
     id,
     baseUrl: 'https://portal.qwen.ai/v1',
+    apiMode: 'chat_completions',
     requestStyle: 'openai-chat',
     headers: qwenHeaders(),
   }

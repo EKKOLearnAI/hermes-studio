@@ -19,15 +19,13 @@ import { resolveEkkoMcpServers } from '../modules/ekko/services/mcp'
 import { resolveEkkoProviderRuntimeConfig } from '../modules/ekko/services/provider-runtime'
 import { configureChatAgentRuntime } from '../modules/studio/public/chat-agent-runtime'
 import {
+  agentReasoningText,
   createModelClient,
   DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
-  resolveModelProviderConfigs,
-} from '../../../ekko-agent/src'
-import {
-  agentReasoningText,
   normalizeAgentReasoning,
+  resolveModelProviderConfigs,
   serializeAgentReasoningDetails,
-} from '../../../ekko-agent/src/model/messages'
+} from '../../../ekko-agent/src'
 
 configureChatAgentRuntime({
   createPrimaryAgentBridge: options => new AgentBridgeClient(options),
