@@ -1018,7 +1018,7 @@ onBeforeUnmount(() => {
               :size="22"
             />
           </div>
-          <div v-else-if="message.role === 'assistant'" class="message-author assistant-message-author">
+          <div v-if="message.role === 'assistant'" class="message-author assistant-message-author">
             <img
               class="msg-avatar"
               :src="assistantAgent.src"

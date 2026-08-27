@@ -178,7 +178,7 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-avatar-active::before {
     position: absolute;
     z-index: 0;
-    inset: -2px;
+    inset: -4px;
     border-radius: 50%;
     box-shadow:
         0 0 0 2px #ff6b6b,

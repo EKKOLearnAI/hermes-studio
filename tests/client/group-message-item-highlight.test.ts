@@ -273,7 +273,8 @@ describe('GroupMessageItem tool details', () => {
 
     const header = wrapper.get('.msg-header')
     expect(header.get('.sender-name').text()).toBe('Researcher')
-    expect(header.get('.profile-avatar-view').attributes('style')).toContain('width: 22px')
+    const userAvatar = header.get('.profile-avatar-view, profile-avatar-stub')
+    expect(`${userAvatar.attributes('style') || ''} ${userAvatar.attributes('size') || ''}`).toContain('22')
     expect(wrapper.get('.group-message').classes()).toContain('self')
   })
 })
