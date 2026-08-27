@@ -205,7 +205,7 @@ describe('Agent Manager page', () => {
     expect(hermesCard.text()).not.toContain('/Users/test/.local/bin/hermes')
     expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('CLI')
     expect(hermesCard.findAll('button').map(button => button.text()))
-      .toEqual(['agentManager.manageRuntime', 'sidebar.settings'])
+      .toEqual(['sidebar.settings'])
     expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
     expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(false)
   })

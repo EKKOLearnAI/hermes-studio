@@ -264,7 +264,13 @@ onMounted(() => {
             </header>
 
             <div class="agent-actions">
-              <NButton type="primary" secondary size="small" @click="runtimeManagerVisible = true">
+              <NButton
+                v-if="!hermesDetected || hermesType === 'Runtime'"
+                type="primary"
+                secondary
+                size="small"
+                @click="runtimeManagerVisible = true"
+              >
                 {{ hermesDetected ? t('agentManager.manageRuntime') : t('codingAgents.installNow') }}
               </NButton>
               <NButton
