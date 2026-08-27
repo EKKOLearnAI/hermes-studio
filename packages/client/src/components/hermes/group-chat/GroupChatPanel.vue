@@ -1517,7 +1517,7 @@ async function handleEditAgent(agent: RoomAgent) {
 }
 
 onMounted(() => {
-    void refreshAgentAvailability()
+    if (!props.standalone) void refreshAgentAvailability()
     if (!props.standalone) {
         try {
             showGroupChatRefactorNotice.value = window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'
