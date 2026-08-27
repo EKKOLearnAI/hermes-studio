@@ -168,6 +168,19 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
 
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
+    if (pathname === '/api/agents/status' && request.method() === 'GET') {
+      return json({
+        revision: 1,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        agents: [
+          { id: 'hermes', name: 'Hermes', provider: 'Nous Research', kind: 'hermes', installed: true, version: '0.19.1', source: 'user-cli', path: '/usr/local/bin/hermes', error: '', installations: [] },
+          { id: 'ekko-agent', name: 'Ekko', provider: 'Hermes Studio', kind: 'built-in', installed: true, version: '0.6.47', source: 'built-in', path: '', error: '', installations: [] },
+          { id: 'claude-code', name: 'Claude', provider: 'Anthropic', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/claude', error: '', installations: [] },
+          { id: 'codex', name: 'Codex', provider: 'OpenAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/codex', error: '', installations: [] },
+          { id: 'pi', name: 'Pi', provider: 'Pi', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/pi', error: '', installations: [] },
+        ],
+      })
+    }
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/available-models') {
       return json({

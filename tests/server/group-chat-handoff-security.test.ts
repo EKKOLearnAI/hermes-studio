@@ -6,6 +6,10 @@ import {
 } from '../../packages/server/src/modules/studio/controllers/group-chat-agent-link'
 import { GROUP_AGENT_PAIRING_REQUEST_TTL_MS } from '../../packages/server/src/modules/studio/services/group-chat/agent-relay-store'
 import { setGroupChatRuntimeServer } from '../../packages/server/src/modules/studio/services/group-chat/runtime'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
 vi.mock('../../packages/server/src/modules/studio/services/group-chat/agent-relay', () => ({
   getGroupAgentOutboundRelayManager: vi.fn(() => ({ connect: vi.fn() })),
@@ -39,6 +43,12 @@ function handoffContext(body = handoffBody(), userId = 1): Context {
 
 describe('group chat Agent handoff security limits', () => {
   beforeEach(() => {
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
     setGroupChatRuntimeServer({
       getChatRunService: () => null,
     } as any)
@@ -46,6 +56,7 @@ describe('group chat Agent handoff security limits', () => {
 
   afterEach(() => {
     resetLocalHandoffJobsForTest()
+    resetAgentStatusRegistryForTests()
     setGroupChatRuntimeServer(null)
     vi.unstubAllGlobals()
   })

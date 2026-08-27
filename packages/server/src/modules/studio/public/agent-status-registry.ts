@@ -153,6 +153,12 @@ export function getAgentStatusSnapshot(): AgentStatusSnapshot {
   }
 }
 
+export function isAgentAvailable(id: AgentStatusId): boolean {
+  const status = records.get(id)
+  if (!status?.installed || status.source === 'not-installed') return false
+  return id !== 'hermes' || Boolean(status.path)
+}
+
 /**
  * Runtime services may only start when the in-memory inventory points at an
  * executable Hermes installation. A version by itself is not sufficient:
@@ -160,12 +166,7 @@ export function getAgentStatusSnapshot(): AgentStatusSnapshot {
  * from PATH.
  */
 export function isHermesAgentAvailable(): boolean {
-  const status = records.get('hermes')
-  return Boolean(
-    status?.installed
-    && status.source !== 'not-installed'
-    && status.path,
-  )
+  return isAgentAvailable('hermes')
 }
 
 export function resetAgentStatusRegistryForTests(): void {

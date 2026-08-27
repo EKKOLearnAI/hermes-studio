@@ -150,7 +150,7 @@ test('places Windows controls in a dedicated bar above main content', async ({ p
 
   const controls = page.locator('.desktop-titlebar')
   const header = page.locator('.page-header')
-  const sidebar = page.locator('aside.sidebar')
+  const sidebar = page.locator('aside.hermes-config-sidebar')
   await expect(controls).toBeVisible()
   await expect(controls.locator('.desktop-window-btn')).toHaveCount(3)
   await expect(controls.locator('img')).toHaveCount(0)
@@ -236,8 +236,8 @@ test('reserves the macOS traffic-light area inside the primary sidebar', async (
 
   await expect(page.locator('.desktop-titlebar')).toHaveCount(0)
   expect((await page.locator('.app-layout').boundingBox())?.y).toBe(0)
-  expect((await page.locator('aside.sidebar').boundingBox())?.y).toBe(10)
-  await expect(page.locator('aside.sidebar')).toHaveCSS('padding-top', '40px')
+  expect((await page.locator('aside.hermes-config-sidebar').boundingBox())?.y).toBe(10)
+  await expect(page.locator('aside.hermes-config-sidebar')).toHaveCSS('padding-top', '40px')
   await expect.poll(() => topGutterDragRegion(page)).toEqual({ appRegion: 'drag', height: '10px' })
 })
 
@@ -370,8 +370,8 @@ test('keeps Linux on native chrome and preserves its original sidebar spacing', 
 
   await expect(page.locator('.desktop-titlebar')).toHaveCount(0)
   expect((await page.locator('.app-layout').boundingBox())?.y).toBe(0)
-  expect((await page.locator('aside.sidebar').boundingBox())?.y).toBe(10)
-  await expect(page.locator('aside.sidebar')).toHaveCSS('padding-top', '8px')
+  expect((await page.locator('aside.hermes-config-sidebar').boundingBox())?.y).toBe(10)
+  await expect(page.locator('aside.hermes-config-sidebar')).toHaveCSS('padding-top', '8px')
   await expect.poll(() => topGutterDragRegion(page)).toEqual({ appRegion: 'none', height: 'auto' })
 })
 

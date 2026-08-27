@@ -11,6 +11,7 @@ import {
   normalizeGroupAgentPresetInput,
   validateGroupAgentPresetCapability,
 } from '../services/group-chat/agent-presets'
+import { assertAgentAvailable } from '../services/agent-availability'
 
 function authenticatedUser(ctx: any): { id: number; role: string; profiles?: string[] } | null {
   const user = ctx.state?.user
@@ -37,6 +38,7 @@ export async function resolveGroupAgentPresetForApplication(user: any, presetId:
   if (!preset) throw Object.assign(new Error('Agent preset not found'), { status: 404 })
   assertProfileAccess(user, preset.profile)
   validateGroupAgentPresetCapability(preset, await getGroupAvailableModelGroups(preset.profile))
+  assertAgentAvailable(preset.agent)
   return {
     agent: preset.agent,
     profile: preset.profile,
@@ -54,12 +56,14 @@ async function validateDefinition(user: { role: string; profiles?: string[] }, i
   const definition = normalizeGroupAgentPresetInput(input)
   assertProfileAccess(user, definition.profile)
   validateGroupAgentPresetCapability(definition, await getGroupAvailableModelGroups(definition.profile))
+  assertAgentAvailable(definition.agent)
   return definition
 }
 
 async function serializeAvailability(preset: GroupAgentPresetRecord) {
   try {
     validateGroupAgentPresetCapability(preset, await getGroupAvailableModelGroups(preset.profile))
+    assertAgentAvailable(preset.agent)
     return { ...preset, available: true, validationError: '' }
   } catch (error: any) {
     return { ...preset, available: false, validationError: error?.message || 'Preset references are unavailable' }

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +19,21 @@ vi.mock('../../packages/server/src/modules/studio/public/group-chat-agent-runtim
   getGroupAvailableModelGroups: vi.fn(async () => modelGroups.value),
 }))
 
+beforeEach(async () => {
+  const { resetAgentStatusRegistryForTests, updateAgentStatus } = await import(
+    '../../packages/server/src/modules/studio/public/agent-status-registry'
+  )
+  resetAgentStatusRegistryForTests()
+  updateAgentStatus('codex', {
+    installed: true,
+    source: 'user-cli',
+    path: '/usr/local/bin/codex',
+  })
+})
+
 afterAll(async () => {
+  const { resetAgentStatusRegistryForTests } = await import('../../packages/server/src/modules/studio/public/agent-status-registry')
+  resetAgentStatusRegistryForTests()
   const { closeDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
   closeDb()
   rmSync(root, { recursive: true, force: true })
@@ -165,6 +179,46 @@ describe('group Agent presets', () => {
       models: ['gpt-test'],
       model_meta: { 'gpt-test': { disabled: true } },
     }])).toThrow(/unavailable/i)
+  })
+
+  it('marks presets unavailable when their Agent is not installed', async () => {
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
+    const { updateAgentStatus } = await import('../../packages/server/src/modules/studio/public/agent-status-registry')
+    modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
+    const user = { id: 901, role: 'admin', profiles: ['research'] }
+    const input = {
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Availability Reviewer',
+      description: '',
+      avatar: '',
+    }
+    const createCtx: any = { state: { user }, request: { body: input } }
+    await controller.create(createCtx)
+    expect(createCtx.status).toBe(201)
+
+    updateAgentStatus('codex', {
+      installed: false,
+      source: 'not-installed',
+      path: '',
+      version: '',
+    })
+
+    const listCtx: any = { state: { user }, query: {} }
+    await controller.list(listCtx)
+    expect(listCtx.body.presets).toEqual([
+      expect.objectContaining({
+        id: createCtx.body.preset.id,
+        available: false,
+        validationError: 'Codex is not installed',
+      }),
+    ])
+    await expect(controller.resolveGroupAgentPresetForApplication(user, createCtx.body.preset.id))
+      .rejects.toMatchObject({ status: 409, code: 'AGENT_NOT_INSTALLED', agent: 'codex' })
   })
 
   it('enforces owner/profile boundaries and fail-closes disabled models across CRUD and application', async () => {

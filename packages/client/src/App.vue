@@ -433,7 +433,7 @@ useKeyboard();
   }
 
   :deep(.chat-input-area),
-  :deep(.coding-agents-content) {
+  :deep(.agent-manager-panel) {
     background-color: transparent;
   }
 

@@ -43,6 +43,7 @@ import {
   stopWorkflowAgentRun,
 } from '../../public/workflow-runtime'
 import { logger } from '../../public/logging'
+import { assertAgentAvailable } from '../agent-availability'
 
 export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 
@@ -119,6 +120,10 @@ export interface WorkflowNodeSnapshot {
     approvalRequired: boolean
     orchestration: { join: 'all' | 'any' }
   }
+}
+
+export function assertWorkflowAgentDependencies(nodes: WorkflowNodeSnapshot[]): void {
+  for (const node of nodes) assertAgentAvailable(node.data.agent)
 }
 
 type WorkflowEdgeRoute = 'success' | 'failure' | 'always'
@@ -415,6 +420,7 @@ export async function preflightWorkflowExecutionDefinition(
   const activeNodeIds = reachableFrom(compiled.startNodeIds, outgoing)
   assertWorkflowRunExecutionBudget(activeNodeIds, compiled.loops)
   const activeNodes = compiled.nodes.filter(node => activeNodeIds.has(node.id))
+  assertWorkflowAgentDependencies(activeNodes)
   await assertWorkflowNodeSkillDependencies(activeNodes, profile)
   return { compiled, activeNodeIds, activeNodes, schedulerStartNodeIds: compiled.startNodeIds }
 }
@@ -485,6 +491,7 @@ export async function preflightWorkflowRerunDefinition(args: {
   }
   assertWorkflowRunExecutionBudget(activeNodeIds, compiled.loops)
   const activeNodes = compiled.nodes.filter(node => activeNodeIds.has(node.id))
+  assertWorkflowAgentDependencies(activeNodes)
   await assertWorkflowNodeSkillDependencies(activeNodes, args.profile)
   return { compiled, activeNodeIds, activeNodes, schedulerStartNodeIds: args.preserveStartNode ? downstreamStartIds : [targetNodeId] }
 }

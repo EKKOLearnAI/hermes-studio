@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   getAgentStatusSnapshot,
+  isAgentAvailable,
   isHermesAgentAvailable,
   resetAgentStatusRegistryForTests,
   updateAgentStatus,
@@ -63,5 +64,18 @@ describe('Agent status registry', () => {
 
     updateAgentStatus('hermes', { path: '/usr/local/bin/hermes' })
     expect(isHermesAgentAvailable()).toBe(true)
+  })
+
+  it('reports built-in and installed coding Agents as available', () => {
+    expect(isAgentAvailable('ekko-agent')).toBe(true)
+    expect(isAgentAvailable('codex')).toBe(false)
+
+    updateAgentStatus('codex', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/codex',
+    })
+
+    expect(isAgentAvailable('codex')).toBe(true)
   })
 })

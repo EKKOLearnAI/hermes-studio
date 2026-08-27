@@ -24,6 +24,7 @@ import {
 } from '../services/group-chat/agent-relay'
 import { getGroupChatRuntimeServer } from '../services/group-chat/runtime'
 import { isReservedMentionName } from '../services/group-chat/mention-routing'
+import { assertAgentAvailable } from '../services/agent-availability'
 
 function serverOrUnavailable(ctx: Context) {
   const server = getGroupChatRuntimeServer()
@@ -310,6 +311,7 @@ export async function connectLocalAgent(ctx: Context): Promise<void> {
     const targetOrigin = normalizeGroupAgentTargetOrigin(body.targetOrigin)
     const pairingTicket = String(body.pairingTicket || '').trim()
     const agent = normalizeRemoteGroupAgentDescriptor(body.agent)
+    assertAgentAvailable(agent.agent)
     if (!pairingTicket) throw new Error('pairingTicket is required')
     const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
     const connected = await manager.connect({
@@ -319,9 +321,12 @@ export async function connectLocalAgent(ctx: Context): Promise<void> {
       agent,
     })
     ctx.body = { ok: true, ...connected }
-  } catch (error) {
-    ctx.status = 400
-    ctx.body = { error: error instanceof Error ? error.message : 'Could not connect local Agent' }
+  } catch (error: any) {
+    ctx.status = Number(error?.status || 400)
+    ctx.body = {
+      code: typeof error?.code === 'string' ? error.code : undefined,
+      error: error instanceof Error ? error.message : 'Could not connect local Agent',
+    }
   }
 }
 
@@ -375,13 +380,14 @@ export async function updateLocalAgent(ctx: Context): Promise<void> {
     const connectorId = String(ctx.params.connectorId || '').trim()
     if (!UUID_PATTERN.test(connectorId)) throw new Error('connectorId is invalid')
     const agent = normalizeRemoteGroupAgentDescriptor((ctx.request.body as any)?.agent)
+    assertAgentAvailable(agent.agent)
     const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
     ctx.body = {
       ok: true,
       connection: await manager.updateConnection(connectorId, agent),
     }
-  } catch (error) {
-    ctx.status = (error as any)?.code === 'ROOM_PARTICIPANT_NAME_CONFLICT' ? 409 : 400
+  } catch (error: any) {
+    ctx.status = Number(error?.status || (error?.code === 'ROOM_PARTICIPANT_NAME_CONFLICT' ? 409 : 400))
     ctx.body = {
       code: typeof (error as any)?.code === 'string' ? (error as any).code : undefined,
       error: error instanceof Error ? error.message : 'Could not update local Agent',
@@ -401,6 +407,7 @@ export async function connectLocalAgentHandoff(ctx: Context): Promise<void> {
     const requestSecret = boundedCredential(body.requestSecret, 'requestSecret')
     const pairingTicket = boundedCredential(body.pairingTicket, 'pairingTicket')
     const agent = normalizeRemoteGroupAgentDescriptor(body.agent)
+    assertAgentAvailable(agent.agent)
     const jobKey = `${cloudOrigin}:${requestId}`
     if (localHandoffJobs.has(jobKey)) {
       ctx.status = 202
@@ -459,12 +466,14 @@ export async function connectLocalAgentHandoff(ctx: Context): Promise<void> {
     }
     ctx.status = 202
     ctx.body = { ok: true, accepted: true }
-  } catch (error) {
+  } catch (error: any) {
     const limited = error instanceof LocalHandoffLimitError
-    ctx.status = limited ? 429 : 400
+    ctx.status = limited ? 429 : Number(error?.status || 400)
     if (limited) ctx.set('Retry-After', '5')
     const message = error instanceof Error ? error.message : 'Could not start Agent handoff'
-    ctx.body = limited ? { code: error.code, error: message } : { error: message }
+    ctx.body = limited
+      ? { code: error.code, error: message }
+      : { code: typeof error?.code === 'string' ? error.code : undefined, error: message }
   }
 }
 

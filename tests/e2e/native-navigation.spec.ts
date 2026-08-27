@@ -19,11 +19,12 @@ test('sidebar navigation exposes native links', async ({ page }) => {
   await mockHermesApi(page)
   await page.goto('/#/hermes/jobs')
 
-  const models = page.locator('aside.sidebar').getByRole('link', { name: /^Models$/ })
-  await expect(models).toHaveAttribute('href', '#/hermes/models')
+  const sidebar = page.locator('aside.hermes-config-sidebar')
+  const journey = sidebar.getByRole('link', { name: /^Journey$/ })
+  await expect(journey).toHaveAttribute('href', '#/hermes/journey')
 
-  const settings = page.locator('aside.sidebar').getByRole('link', { name: /^Settings$/ })
-  await expect(settings).toHaveAttribute('href', '#/hermes/settings')
+  const settings = sidebar.getByRole('link', { name: /^Settings$/ })
+  await expect(settings).toHaveAttribute('href', '#/hermes/config/settings')
 })
 
 test('session rows expose native session links', async ({ page }) => {

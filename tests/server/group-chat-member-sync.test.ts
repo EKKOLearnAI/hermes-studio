@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { socketHandlers, mockSocket, mockIo } = vi.hoisted(() => {
   const socketHandlers = new Map<string, (...args: any[]) => void>()
@@ -30,6 +30,10 @@ import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/mo
 import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/modules/studio/services/group-chat/access'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
@@ -41,6 +45,16 @@ describe('Group Chat member/agent identity sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     socketHandlers.clear()
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
+  })
+
+  afterEach(() => {
+    resetAgentStatusRegistryForTests()
   })
 
   it('distinguishes profile-based room managers from the room owner for @all', () => {

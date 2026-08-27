@@ -49,6 +49,10 @@ vi.mock('../../packages/server/src/modules/studio/public/workflow-runtime', () =
   getWorkflowAvailableModelGroups: vi.fn(async () => []),
 }))
 
+vi.mock('../../packages/server/src/modules/studio/services/agent-availability', () => ({
+  assertAgentAvailable: vi.fn(),
+}))
+
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/session-store')>()
   return {

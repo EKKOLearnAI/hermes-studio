@@ -248,6 +248,7 @@ test('creates a category in the new chat selector and sends its id with the firs
   await expect(page.getByText('Category "Client Work" created')).toBeVisible()
 
   await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page).toHaveURL(/#\/hermes\/session\//)
   const input = page.getByPlaceholder('Type a message... (Enter to send, Shift+Enter for new line)')
   await input.fill('Prepare the weekly summary')
   await page.getByRole('button', { name: 'Send' }).click()

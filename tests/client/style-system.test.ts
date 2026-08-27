@@ -139,7 +139,7 @@ describe('client style system', () => {
     expect(customBackgroundStyles).toContain(':deep(.chat-panel > .chat-main)')
     expect(customBackgroundStyles).toContain(':deep(.group-chat-panel > .chat-main)')
     expect(customBackgroundStyles).toContain(':deep(.virtual-message-list)')
-    expect(customBackgroundStyles).toContain(':deep(.coding-agents-content)')
+    expect(customBackgroundStyles).toContain(':deep(.agent-manager-panel)')
     expect(customBackgroundStyles).toMatch(
       /:deep\(\.workflow-view\),[\s\S]*:deep\(\.petdex-view\)\s*\{\s*background-color: transparent;/,
     )

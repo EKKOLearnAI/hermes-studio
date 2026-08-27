@@ -18,6 +18,10 @@ import { setGroupChatRuntimeServer } from '../services/group-chat/runtime'
 import * as inviteCtrl from './group-chat-invite'
 import * as uploadCtrl from './group-chat-upload'
 import * as agentPresetCtrl from './group-agent-presets'
+import {
+    AGENT_NOT_INSTALLED,
+    assertAgentAvailable,
+} from '../services/agent-availability'
 
 let chatServer: GroupChatServer | null = null
 const roomAgentUpdates = new Set<string>()
@@ -180,8 +184,16 @@ function applyParticipantNameConflict(ctx: any, err: any): boolean {
     return true
 }
 
+function applyAgentAvailabilityError(ctx: any, err: any): boolean {
+    if (err?.code !== AGENT_NOT_INSTALLED) return false
+    ctx.status = Number(err.status || 409)
+    ctx.body = { code: err.code, error: err.message, agent: err.agent }
+    return true
+}
+
 async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: string, input: AgentInput) {
     const agent = String(input.agent || 'hermes').trim() as AgentInput['agent']
+    assertAgentAvailable(agent)
     const profile = input.profile.trim()
     return server.agentClients.createAgent({
         agentId,
@@ -397,6 +409,13 @@ export async function createRoom(ctx: any) {
     } catch (err: any) {
         ctx.status = Number(err?.status || 409)
         ctx.body = { code: err?.code, error: err?.message || 'Agent preset is unavailable' }
+        return
+    }
+    try {
+        for (const agent of resolvedAgents) assertAgentAvailable(agent.agent || 'hermes')
+    } catch (err: any) {
+        ctx.status = Number(err?.status || 400)
+        ctx.body = { code: err?.code, error: err?.message || 'Invalid agent', agent: err?.agent }
         return
     }
     const reservedAgent = resolvedAgents.find(a => isReservedMentionName(a.name || a.profile))
@@ -767,6 +786,7 @@ export async function addRoomAgent(ctx: any) {
         ctx.body = { agent }
     } catch (err: any) {
         if (applyParticipantNameConflict(ctx, err)) return
+        if (applyAgentAvailabilityError(ctx, err)) return
         console.error(`[GroupChat] Failed to connect agent ${normalizedProfile} to room ${ctx.params.roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
@@ -943,6 +963,7 @@ export async function updateRoomAgent(ctx: any) {
             await replacement?.disconnect?.()
         }
         if (applyParticipantNameConflict(ctx, err)) return
+        if (applyAgentAvailabilityError(ctx, err)) return
         console.error(`[GroupChat] Failed to update agent ${normalizedProfile} in room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
         ctx.status = 502
         ctx.body = agentConnectFailureBody(normalizedProfile, err)
