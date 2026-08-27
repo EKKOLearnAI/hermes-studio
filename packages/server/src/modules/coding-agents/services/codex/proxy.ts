@@ -80,6 +80,12 @@ function authToken(ctx: Context): string {
   return match?.[1]?.trim() || ''
 }
 
+export function isAuthorizedCodexProxyRequest(ctx: Context): boolean {
+  const routeKey = /^\/api\/codex-proxy\/([^/]+)\/v1\/responses$/.exec(ctx.path)?.[1] || ''
+  const target = findTarget(routeKey)
+  return Boolean(target && authToken(ctx) === target.token)
+}
+
 function requireTarget(ctx: Context): CodexProxyTarget | null {
   const target = findTarget(String(ctx.params.key || ''))
   if (!target) {

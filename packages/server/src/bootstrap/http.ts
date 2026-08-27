@@ -51,11 +51,12 @@ import { getStaticCacheControl, SPA_ENTRY_CACHE_CONTROL } from '../modules/studi
 import { requireUserJwt, resolveUserProfile } from '../modules/studio/middleware/auth'
 import { createCorsOriginResolver, securityHeaders } from '../modules/studio/middleware/security'
 import type { AdditionalShutdownStep, ShutdownHandler } from './lifecycle'
-import { createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
+import { createCodexProxyRequestBodyParser, createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
 import {
   migratePersistedPiRuntimeMcpConfigs,
   restorePersistedPiProxyTargets,
 } from './coding-agents'
+import { isAuthorizedCodexProxyRequest } from '../modules/coding-agents/services/codex/proxy'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -355,6 +356,9 @@ export async function bootstrap() {
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
+  // Codex Responses requests may briefly exceed the public API limit before
+  // the proxy bounds historical inline images and tool outputs.
+  app.use(createCodexProxyRequestBodyParser(isAuthorizedCodexProxyRequest))
   // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
   // reference audio are posted as base64 data URLs before reaching handlers.
   app.use(createRequestBodyParser())

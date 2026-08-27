@@ -15,3 +15,21 @@ export function createRequestBodyParser() {
     parsedMethods: ['POST', 'PUT', 'PATCH', 'DELETE'],
   })
 }
+
+export function createCodexProxyRequestBodyParser(isAuthorized: (ctx: any) => boolean) {
+  const parse = bodyParser({
+    encoding: 'utf-8',
+    enableTypes: ['json'],
+    jsonLimit: '64mb',
+    parsedMethods: ['POST'],
+  })
+  return async (ctx: any, next: any) => {
+    if (!/^\/api\/codex-proxy\/[^/]+\/v1\/responses$/.test(ctx.path)) return next()
+    if (!isAuthorized(ctx)) {
+      ctx.status = 401
+      ctx.body = { error: { type: 'authentication_error', message: 'Invalid Codex proxy token' } }
+      return
+    }
+    return parse(ctx, next)
+  }
+}

@@ -75,6 +75,79 @@ describe('agent runner Responses adapters', () => {
     expect(cjkTruncated.endsWith('TAIL_MARKER')).toBe(true)
   })
 
+  it('bounds historical inline images while preserving the newest image context', () => {
+    const image = (fill: string, bytes: number) => `data:image/png;base64,${fill.repeat(bytes)}`
+    const oldest = image('A', 4 * 1024 * 1024)
+    const middle = image('B', 4 * 1024 * 1024)
+    const newest = image('C', 4 * 1024 * 1024)
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'old' }, { type: 'input_image', image_url: oldest }] },
+        { type: 'function_call_output', call_id: 'call_image', output: [{ type: 'input_image', image_url: middle }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'current' }, { type: 'input_image', image_url: newest }] },
+      ],
+    }
+
+    const sanitized = truncateResponsesToolOutputs(body)
+    const serialized = JSON.stringify(sanitized)
+
+    expect(sanitized).not.toBe(body)
+    expect(serialized).not.toContain(oldest)
+    expect(serialized).not.toContain(middle)
+    expect(serialized).toContain(newest)
+    expect(serialized).toContain('historical inline image omitted before provider request')
+    expect(body.input[0].content[1].image_url).toBe(oldest)
+  })
+
+  it('deduplicates identical historical inline images without dropping the newest copy', () => {
+    const shared = `data:image/jpeg;base64,${'D'.repeat(5 * 1024 * 1024)}`
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_image', image_url: shared }] },
+        { type: 'function_call_output', call_id: 'call_same', output: [{ type: 'input_image', image_url: shared }] },
+      ],
+    }
+
+    const sanitized = truncateResponsesToolOutputs(body)
+    const serialized = JSON.stringify(sanitized)
+
+    expect(serialized.match(/data:image\/jpeg;base64,/g) || []).toHaveLength(1)
+    expect(serialized).toContain('duplicate historical inline image omitted before provider request')
+  })
+
+  it('keeps the newest inline image even when it alone exceeds the history budget', () => {
+    const newest = `data:image/png;base64,${'E'.repeat(9 * 1024 * 1024)}`
+    const sanitized = truncateResponsesToolOutputs({
+      input: [{ role: 'user', content: [{ type: 'input_image', image_url: newest }] }],
+    })
+
+    expect(JSON.stringify(sanitized)).toContain(newest)
+  })
+
+  it('shrinks a production-shaped screenshot history below the parser forwarding ceiling', () => {
+    const imageSizes = [
+      2_669_482, 1_610_290, 1_413_018, 1_412_674, 1_119_830, 1_078_366,
+      1_055_042, 788_558, 753_866, 728_194, 693_342, 619_554, 605_414,
+      595_074, 557_990, 505_554, 492_254, 248_319, 248_319, 205_695,
+      163_510, 132_202, 109_514,
+    ]
+    const body = {
+      instructions: 'system context'.repeat(250_000),
+      input: imageSizes.map((size, index) => ({
+        role: 'user',
+        content: [{
+          type: 'input_image',
+          image_url: `data:image/png;base64,${String(index % 10).repeat(size)}`,
+        }],
+      })),
+    }
+
+    expect(Buffer.byteLength(JSON.stringify(body), 'utf8')).toBeGreaterThan(20 * 1024 * 1024)
+    const sanitized = truncateResponsesToolOutputs(body)
+    expect(Buffer.byteLength(JSON.stringify(sanitized), 'utf8')).toBeLessThan(12 * 1024 * 1024)
+    expect(JSON.stringify(sanitized)).toContain(body.input.at(-1)?.content[0].image_url)
+  })
+
   it('converts Responses input to OpenAI Chat messages and tools', () => {
     const body = {
       instructions: 'be terse',

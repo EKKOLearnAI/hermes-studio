@@ -13,6 +13,7 @@ const TOOL_SEARCH_NAME = 'tool_search'
 const RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT = 32 * 1024
 const RESPONSES_TOOL_OUTPUT_HEAD_BYTES = 24 * 1024
 const RESPONSES_TOOL_OUTPUT_TAIL_BYTES = 7 * 1024
+const RESPONSES_INLINE_IMAGE_FORWARD_LIMIT = 8 * 1024 * 1024
 
 const HERMES_STUDIO_MCP_TOOLS = [
   {
@@ -366,12 +367,87 @@ function truncateResponsesToolOutputText(output: string): string {
   ].join('\n')
 }
 
+function inlineResponseImageUrl(part: any): string {
+  if (!part || typeof part !== 'object' || part.type !== 'input_image') return ''
+  const imageUrl = typeof part.image_url === 'string'
+    ? part.image_url
+    : typeof part.image_url?.url === 'string'
+      ? part.image_url.url
+      : ''
+  return imageUrl.startsWith('data:image/') ? imageUrl : ''
+}
+
+function responseImageOmission(reason: 'duplicate' | 'budget', originalBytes: number): any {
+  const description = reason === 'duplicate'
+    ? 'duplicate historical inline image omitted before provider request'
+    : 'historical inline image omitted before provider request'
+  return {
+    type: 'input_text',
+    text: `[Hermes Web UI: ${description}; original_bytes=${originalBytes}]`,
+  }
+}
+
+function boundResponsesInlineImages(input: any[]): { input: any[]; changed: boolean } {
+  const omitted = new Map<any, 'duplicate' | 'budget'>()
+  const seen = new Set<string>()
+  let forwardedBytes = 0
+  let preservedImages = 0
+
+  // Preserve the newest unique images first. Older screenshots are historical
+  // context and must not crowd the current turn out of the provider request.
+  for (let itemIndex = input.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = input[itemIndex]
+    for (const key of ['output', 'content'] as const) {
+      const parts = Array.isArray(item?.[key]) ? item[key] : []
+      for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+        const part = parts[partIndex]
+        const imageUrl = inlineResponseImageUrl(part)
+        if (!imageUrl) continue
+        if (seen.has(imageUrl)) {
+          omitted.set(part, 'duplicate')
+          continue
+        }
+        seen.add(imageUrl)
+        const imageBytes = utf8ByteLength(imageUrl)
+        if (preservedImages > 0 && forwardedBytes + imageBytes > RESPONSES_INLINE_IMAGE_FORWARD_LIMIT) {
+          omitted.set(part, 'budget')
+          continue
+        }
+        forwardedBytes += imageBytes
+        preservedImages += 1
+      }
+    }
+  }
+
+  if (!omitted.size) return { input, changed: false }
+  return {
+    changed: true,
+    input: input.map((item: any) => {
+      if (!item || typeof item !== 'object') return item
+      let changed = false
+      const nextItem = { ...item }
+      for (const key of ['content', 'output'] as const) {
+        if (!Array.isArray(item[key])) continue
+        const nextParts = item[key].map((part: any) => {
+          const reason = omitted.get(part)
+          if (!reason) return part
+          changed = true
+          return responseImageOmission(reason, utf8ByteLength(inlineResponseImageUrl(part)))
+        })
+        if (changed) nextItem[key] = nextParts
+      }
+      return changed ? nextItem : item
+    }),
+  }
+}
+
 export function truncateResponsesToolOutputs(body: any): any {
   const input = responseInputItems(body)
   if (!input.length) return body
 
-  let changed = false
-  const nextInput = input.map((item: any) => {
+  const boundedImages = boundResponsesInlineImages(input)
+  let changed = boundedImages.changed
+  const nextInput = boundedImages.input.map((item: any) => {
     if (!item || typeof item !== 'object' || item.type !== 'function_call_output' || typeof item.output !== 'string') {
       return item
     }
