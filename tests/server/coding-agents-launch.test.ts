@@ -4,7 +4,12 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/modules/coding-agents/services/claude-code/proxy'
-import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
+import {
+  codexProxyModels,
+  codexProxyResponses,
+  isAuthorizedCodexProxyRequest,
+  registerCodexProxyTarget,
+} from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
 import {
   codexToolSearchConfig,
   migratePersistedPiRuntimeMcpConfigs,
@@ -1323,6 +1328,94 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'anthropic-compatible', 'codex'))
+  })
+
+  it('authenticates the enlarged Codex Responses parser with the registered route token', () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'parser-auth',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+    })
+    const context = (token: string) => ({
+      path: `/api/codex-proxy/${target.routeKey}/v1/responses`,
+      get(name: string) {
+        return name.toLowerCase() === 'authorization' ? `Bearer ${token}` : ''
+      },
+    }) as any
+
+    expect(isAuthorizedCodexProxyRequest(context(target.token))).toBe(true)
+    expect(isAuthorizedCodexProxyRequest(context('wrong-token'))).toBe(false)
+  })
+
+  it.each([
+    ['chat_completions', 'https://chat-history.example.com'],
+    ['anthropic_messages', 'https://anthropic-history.example.com'],
+    ['codex_responses', 'https://responses-history.example.com/v1'],
+  ] as const)('strips historical inline images before %s provider dispatch', async (apiMode, baseUrl) => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: `history-${apiMode}`,
+      model: 'test-model',
+      baseUrl,
+      apiKey: 'sk-upstream',
+      apiMode,
+      agentSessionId: `history-${apiMode}`,
+    })
+    const fetchMock = vi.fn(async () => {
+      if (apiMode === 'chat_completions') {
+        return new Response(JSON.stringify({
+          id: 'chatcmpl_history',
+          choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'ok' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (apiMode === 'anthropic_messages') {
+        return new Response(JSON.stringify({
+          id: 'msg_history',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({
+        id: 'resp_history',
+        object: 'response',
+        status: 'completed',
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const historicalImage = 'data:image/png;base64,HISTORICAL'
+    const currentImageA = 'data:image/png;base64,CURRENT_A'
+    const currentImageB = 'data:image/jpeg;base64,CURRENT_B'
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_image', image_url: historicalImage }] },
+        { role: 'assistant', content: [{ type: 'output_text', text: 'old response' }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'current request' },
+            { type: 'input_image', image_url: currentImageA },
+            { type: 'input_image', image_url: currentImageB },
+          ],
+        },
+      ],
+    }
+
+    await codexProxyResponses(makeProxyContext(target.routeKey, target.token, body))
+
+    const forwarded = String(fetchMock.mock.calls[0]?.[1]?.body || '')
+    expect(forwarded).not.toContain('HISTORICAL')
+    expect(forwarded).toContain('historical inline image omitted before provider request')
+    expect(forwarded).toContain('CURRENT_A')
+    expect(forwarded).toContain('CURRENT_B')
+    expect(body.input[0].content[0].image_url).toBe(historicalImage)
   })
 
   it('adapts Codex Responses requests to OpenAI Chat Completions', async () => {

@@ -52,12 +52,13 @@ import { getStaticCacheControl, SPA_ENTRY_CACHE_CONTROL } from '../modules/studi
 import { requireUserJwt, resolveUserProfile } from '../modules/studio/middleware/auth'
 import { createCorsOriginResolver, securityHeaders } from '../modules/studio/middleware/security'
 import type { AdditionalShutdownStep, ShutdownHandler } from './lifecycle'
-import { createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
+import { createCodexProxyRequestBodyParser, createRequestBodyParser } from '../modules/studio/middleware/request-body-parser'
 import {
   getCodingAgentsStatus,
   migratePersistedPiRuntimeMcpConfigs,
   restorePersistedPiProxyTargets,
 } from './coding-agents'
+import { isAuthorizedCodexProxyRequest } from '../modules/coding-agents/services/codex/proxy'
 import { configurePreferredHermesRuntime } from '../modules/hermes/services/runtime/selection'
 import { configureRuntimeInstallCompletedHandler, getRuntimeVersionStatus } from '../modules/hermes/services/runtime/version-manager'
 import { isHermesAgentAvailable, updateAgentStatus } from '../modules/studio/public/agent-status-registry'
@@ -406,6 +407,10 @@ export async function bootstrap() {
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
+  // Codex can replay inline images from its native thread. Accept a bounded,
+  // authenticated request here so the proxy can remove historical image data
+  // before dispatching to any provider API mode.
+  app.use(createCodexProxyRequestBodyParser(isAuthorizedCodexProxyRequest))
   // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
   // reference audio are posted as base64 data URLs before reaching handlers.
   app.use(createRequestBodyParser())

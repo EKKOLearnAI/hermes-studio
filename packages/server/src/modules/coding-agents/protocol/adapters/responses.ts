@@ -366,6 +366,67 @@ function truncateResponsesToolOutputText(output: string): string {
   ].join('\n')
 }
 
+function inlineResponseImageDataUrl(part: any): string {
+  if (!part || typeof part !== 'object' || part.type !== 'input_image') return ''
+  const imageUrl = typeof part.image_url === 'string'
+    ? part.image_url
+    : typeof part.image_url?.url === 'string'
+      ? part.image_url.url
+      : ''
+  return /^data:image\//i.test(imageUrl) ? imageUrl : ''
+}
+
+function historicalImageOmission(originalBytes: number): any {
+  return {
+    type: 'input_text',
+    text: `[Hermes Web UI: historical inline image omitted before provider request; original_bytes=${originalBytes}]`,
+  }
+}
+
+/**
+ * Remove every inline image before the latest user item. The latest user item
+ * and every item produced after it form the active Codex turn, so all of their
+ * images remain available to the model. The transformation is copy-on-write.
+ */
+export function stripHistoricalResponsesInlineImages(body: any): any {
+  const input = responseInputItems(body)
+  if (!input.length) return body
+
+  let currentTurnStart = -1
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    if (input[index]?.role === 'user') {
+      currentTurnStart = index
+      break
+    }
+  }
+  if (currentTurnStart <= 0) return body
+
+  let changed = false
+  const nextInput = input.map((item: any, itemIndex: number) => {
+    if (itemIndex >= currentTurnStart || !item || typeof item !== 'object') return item
+
+    let nextItem: any = item
+    for (const key of ['content', 'output'] as const) {
+      if (!Array.isArray(item[key])) continue
+      let partsChanged = false
+      const nextParts = item[key].map((part: any) => {
+        const imageUrl = inlineResponseImageDataUrl(part)
+        if (!imageUrl) return part
+        partsChanged = true
+        changed = true
+        return historicalImageOmission(utf8ByteLength(imageUrl))
+      })
+      if (partsChanged) {
+        if (nextItem === item) nextItem = { ...item }
+        nextItem[key] = nextParts
+      }
+    }
+    return nextItem
+  })
+
+  return changed ? { ...body, input: nextInput } : body
+}
+
 export function truncateResponsesToolOutputs(body: any): any {
   const input = responseInputItems(body)
   if (!input.length) return body

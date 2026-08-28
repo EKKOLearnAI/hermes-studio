@@ -6,6 +6,7 @@ import {
   responseToolNamespaceForName,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
+  stripHistoricalResponsesInlineImages,
   truncateResponsesToolOutputs,
 } from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses'
 import {
@@ -73,6 +74,69 @@ describe('agent runner Responses adapters', () => {
     expect(Buffer.byteLength(cjkTruncated, 'utf8')).toBeLessThanOrEqual(32 * 1024)
     expect(cjkTruncated).toContain(`original_bytes=${Buffer.byteLength(cjkOutput, 'utf8')}`)
     expect(cjkTruncated.endsWith('TAIL_MARKER')).toBe(true)
+  })
+
+  it('strips every historical inline image while preserving the full current turn', () => {
+    const oldUserImage = 'data:image/png;base64,OLD_USER'
+    const oldToolImage = 'data:image/jpeg;base64,OLD_TOOL'
+    const currentImageA = 'data:image/png;base64,CURRENT_A'
+    const currentImageB = 'data:image/png;base64,CURRENT_B'
+    const currentToolImage = 'data:image/webp;base64,CURRENT_TOOL'
+    const remoteHistoricalImage = 'https://example.com/old.png'
+    const body = {
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'old turn' },
+            { type: 'input_image', image_url: oldUserImage },
+            { type: 'input_image', image_url: remoteHistoricalImage },
+          ],
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'old-tool',
+          output: [{ type: 'input_image', image_url: { url: oldToolImage } }],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'current turn' },
+            { type: 'input_image', image_url: currentImageA },
+            { type: 'input_image', image_url: { url: currentImageB } },
+          ],
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'current-tool',
+          output: [{ type: 'input_image', image_url: currentToolImage }],
+        },
+      ],
+    }
+
+    const sanitized = stripHistoricalResponsesInlineImages(body)
+    const serialized = JSON.stringify(sanitized)
+
+    expect(sanitized).not.toBe(body)
+    expect(serialized).not.toContain(oldUserImage)
+    expect(serialized).not.toContain(oldToolImage)
+    expect(serialized).toContain(remoteHistoricalImage)
+    expect(serialized).toContain(currentImageA)
+    expect(serialized).toContain(currentImageB)
+    expect(serialized).toContain(currentToolImage)
+    expect(serialized.match(/historical inline image omitted before provider request/g)).toHaveLength(2)
+    expect(body.input[0].content[1]).toEqual({ type: 'input_image', image_url: oldUserImage })
+    expect(body.input[1].output[0]).toEqual({ type: 'input_image', image_url: { url: oldToolImage } })
+    expect(sanitized.input[2]).toBe(body.input[2])
+    expect(sanitized.input[3]).toBe(body.input[3])
+  })
+
+  it('does not strip inline images when no current user turn boundary exists', () => {
+    const body = {
+      input: [{ type: 'function_call_output', output: [{ type: 'input_image', image_url: 'data:image/png;base64,ONLY' }] }],
+    }
+
+    expect(stripHistoricalResponsesInlineImages(body)).toBe(body)
   })
 
   it('converts Responses input to OpenAI Chat messages and tools', () => {
