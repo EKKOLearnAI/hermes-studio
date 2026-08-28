@@ -88,6 +88,8 @@ interface BridgeRunMetadata {
   autonomous?: boolean
   delegationId?: string
   queueId?: string
+  studioTurnTailEnabled: boolean
+  backgroundDelegationEnabled: boolean
   backgroundDelegationIds: Set<string>
   originContext: Omit<HermesBackgroundContinuationContext, 'delegationId' | 'originRunId'>
 }
@@ -661,6 +663,7 @@ export async function handleBridgeRun(
     return
   }
 
+  const studioTurnTailEnabled = await isStudioTurnTailCompressionEnabled(profile)
   const history = callbackContext
     ? structuredClone(callbackContext.messages)
     : await buildCompressedHistory(
@@ -710,6 +713,8 @@ export async function handleBridgeRun(
       autonomous: data.autonomous === true,
       delegationId: data.background_delegation_id,
       queueId: data.queue_id,
+      studioTurnTailEnabled,
+      backgroundDelegationEnabled,
       backgroundDelegationIds: new Set<string>(),
       originContext: {
         runtime: 'hermes',
@@ -1768,7 +1773,7 @@ async function applyBridgeChunkAsync(
   updateSessionStats(sessionId)
   await delay(BRIDGE_USAGE_FLUSH_DELAY_MS)
   const usage = await calcAndUpdateUsage(sessionId, state, emit)
-  const contextTokens = await refreshFinalContextUsage({
+  let contextTokens = await refreshFinalContextUsage({
     sessionId,
     profile,
     model: modelContext.model,
@@ -1780,8 +1785,8 @@ async function applyBridgeChunkAsync(
     emit,
     bridge,
   })
-  if (!terminalError && !runMetadata?.delegationId && await isStudioTurnTailCompressionEnabled(profile)) {
-    await compactStudioTurnTail({
+  if (!terminalError && !state.isAborting && state.activeRunMarker === runMarker && runMetadata?.studioTurnTailEnabled) {
+    const turnTailContextTokens = await compactStudioTurnTail({
       sessionId,
       profile,
       upstream: '',
@@ -1800,10 +1805,12 @@ async function applyBridgeChunkAsync(
           state,
           bridge,
           refresh: true,
+          backgroundDelegationEnabled: runMetadata.backgroundDelegationEnabled,
         })
         return fixedContextTokens == null ? localMessageTokens : fixedContextTokens + localMessageTokens
       },
     })
+    if (turnTailContextTokens != null) contextTokens = turnTailContextTokens
   }
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   const eventName = terminalError ? 'run.failed' : 'run.completed'

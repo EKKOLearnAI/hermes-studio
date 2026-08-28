@@ -464,7 +464,7 @@ export async function compactStudioTurnTail(args: {
   sessionMap: Map<string, SessionState>
   modelContext?: CompressionModelContext
   contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>
-}): Promise<void> {
+}): Promise<number | undefined> {
   try {
     await buildCompressedHistory(
       args.sessionId,
@@ -478,6 +478,7 @@ export async function compactStudioTurnTail(args: {
       0,
       false,
     )
+    return args.sessionMap.get(args.sessionId)?.contextTokens
   } catch (err) {
     logger.warn(err, '[context-compress] Studio turn-tail compression failed for session %s; completing run', args.sessionId)
   }

@@ -1255,6 +1255,8 @@ export async function handleEkkoAgentRun(
       )
     }
     let fixedContextEstimate: Promise<number> | undefined
+    const studioTurnTailEnabled = data.context_compression_enabled !== false
+      && await isStudioTurnTailCompressionEnabled(profile)
     const compressedHistory = callbackContext
       ? []
       : data.context_compression_enabled === false ? [] : await buildCompressedHistory(
@@ -1494,12 +1496,9 @@ export async function handleEkkoAgentRun(
       contextTokens: contextEstimate?.contextTokens ?? state.contextTokens,
       context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
-    if (
-      data.context_compression_enabled !== false
-      && !data.background_delegation_id
-      && await isStudioTurnTailCompressionEnabled(profile)
-    ) {
-      await compactStudioTurnTail({
+    let completedContextTokens = contextEstimate?.contextTokens ?? state.contextTokens
+    if (studioTurnTailEnabled && !abortController.signal.aborted) {
+      const turnTailContextTokens = await compactStudioTurnTail({
         sessionId,
         profile,
         upstream: baseUrl,
@@ -1526,6 +1525,14 @@ export async function handleEkkoAgentRun(
           return estimate.contextTokens + localMessageTokens
         },
       })
+      if (turnTailContextTokens != null) completedContextTokens = turnTailContextTokens
+    }
+    const completedContextEstimate = contextEstimate && typeof contextEstimate === 'object'
+      ? { ...contextEstimate }
+      : contextEstimate
+    if (completedContextEstimate && typeof completedContextEstimate === 'object') {
+      completedContextEstimate.contextTokens = completedContextTokens
+      completedContextEstimate.context_tokens = completedContextTokens
     }
     const workspaceRunChange = completeWorkspaceRunDiff()
     emit('run.completed', {
@@ -1534,9 +1541,9 @@ export async function handleEkkoAgentRun(
       message_id: assistantMessageId || undefined,
       output: assistantText,
       context: result.context,
-      contextTokens: contextEstimate?.contextTokens,
-      context_tokens: contextEstimate?.contextTokens,
-      contextEstimate,
+      contextTokens: completedContextTokens,
+      context_tokens: completedContextTokens,
+      contextEstimate: completedContextEstimate,
       usage: {
         input_tokens: usageInput,
         output_tokens: usageOutput,

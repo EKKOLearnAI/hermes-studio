@@ -181,6 +181,7 @@ describe('ekko-agent context usage events', () => {
     vi.clearAllMocks()
     isStudioTurnTailCompressionEnabledMock.mockResolvedValue(false)
     buildDbSnapshotAwareHistoryMock.mockResolvedValue([])
+    compactStudioTurnTailMock.mockResolvedValue(undefined)
     agentEstimateContextMock.mockResolvedValue({ contextTokens: 5_000 })
     buildCompressedHistoryMock.mockImplementation(async (
       sessionId: string,
@@ -239,12 +240,15 @@ describe('ekko-agent context usage events', () => {
     })
     compactStudioTurnTailMock.mockImplementation(async () => {
       order.push('compress')
+      return 1_234
     })
-    agentRunMock.mockResolvedValueOnce({
-      runId: 'run-turn-tail',
-      output: { role: 'assistant', content: 'done' },
-      steps: [],
-      contextEstimate: { contextTokens: 5_000 },
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'context.estimated', runId: 'run-turn-tail', estimate: { contextTokens: 5_000, context_tokens: 5_000 } })
+      return {
+        runId: 'run-turn-tail',
+        output: { role: 'assistant', content: 'done' },
+        steps: [],
+      }
     })
     const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
     const { nsp, socket, sessionMap, events } = makeHarness()
@@ -263,6 +267,14 @@ describe('ekko-agent context usage events', () => {
     expect(compactStudioTurnTailMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
     expect(order.indexOf('persist')).toBeLessThan(order.indexOf('compress'))
     expect(order.indexOf('compress')).toBeLessThan(order.indexOf('completed'))
+    expect(events.find(item => item.event === 'run.completed')?.payload).toMatchObject({
+      contextTokens: 1_234,
+      context_tokens: 1_234,
+    })
+    expect(events.find(item => item.event === 'run.completed')?.payload.contextEstimate).toMatchObject({
+      contextTokens: 1_234,
+      context_tokens: 1_234,
+    })
   })
 
   it('bridges Ekko tool approval requests through the existing chat events', async () => {
