@@ -5,6 +5,7 @@ import { i18nReady } from './i18n'
 import App from './App.vue'
 import './styles/global.scss'
 import { desktopBridge } from '@/utils/desktop-bridge'
+import { waitForBootAnimation } from '@/utils/boot-animation'
 
 // Apply theme classes before mount to prevent FOUC (Flash of Unstyled Content)
 const savedBrightness = localStorage.getItem('hermes_brightness') || 'system'
@@ -52,6 +53,7 @@ async function mountApp(): Promise<void> {
   app.use(i18n)
   app.use(router)
   await router.isReady().catch(() => undefined)
+  await waitForBootAnimation()
   app.mount('#app')
 }
 
