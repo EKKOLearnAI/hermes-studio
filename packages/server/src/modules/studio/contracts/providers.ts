@@ -620,6 +620,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: [],
   },
   {
+    label: 'OrcaRouter',
+    value: 'orcarouter',
+    builtin: true,
+    base_url: 'https://api.orcarouter.ai/v1',
+    models: [],
+  },
+  {
     label: 'GitHub Copilot',
     value: 'copilot',
     builtin: true,

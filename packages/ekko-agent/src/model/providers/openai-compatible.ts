@@ -509,6 +509,7 @@ function usesReasoningContentProtocol(identifier: string): boolean {
     'glm',
     'z.ai',
     'bigmodel',
+    'orcarouter',
   ].some(part => identifier.includes(part))
 }
 

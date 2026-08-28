@@ -13,6 +13,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   'fun-claude': { api_key_env: '', base_url_env: '' },
   lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
   openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: 'OPENROUTER_BASE_URL' },
+  orcarouter: { api_key_env: 'ORCAROUTER_API_KEY', base_url_env: 'ORCAROUTER_BASE_URL' },
   glm: { api_key_env: 'GLM_API_KEY', base_url_env: '' },
   zai: { api_key_env: 'ZAI_API_KEY', base_url_env: 'ZAI_BASE_URL' },
   'kimi-coding': { api_key_env: 'KIMI_API_KEY', base_url_env: 'KIMI_BASE_URL' },

@@ -243,6 +243,7 @@ function providerApiMode(providerKey: string, configuredMode?: unknown): Availab
 
 function providerShouldFetchLiveModels(providerKey: string): boolean {
   return providerKey === 'openrouter' ||
+    providerKey === 'orcarouter' ||
     providerKey === 'cliproxyapi' ||
     providerKey === 'ollama-cloud' ||
     providerKey === 'lmstudio' ||
