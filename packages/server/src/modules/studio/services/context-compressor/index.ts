@@ -623,6 +623,9 @@ async function callEkkoSummarizer(
       toolsEnabled: false,
       skillsEnabled: false,
       systemPrompt: EKKO_SUMMARIZER_SYSTEM_PROMPT,
+      // Keep installation-wide prompt instructions out of the summarizer while
+      // still allowing harmless model-generation defaults to be inherited.
+      runtimeInstructions: [],
       maxSteps: 1,
       maxModelRetries: 0,
       modelDefaults: {

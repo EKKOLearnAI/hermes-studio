@@ -197,6 +197,30 @@ onBeforeUnmount(() => {
             </section>
           </NTabPane>
 
+          <!-- Ekko compression settings stay hidden until Studio delegates its
+          compression policy to the agent-level config. Studio currently owns
+          this configuration through the main Hermes settings.
+          <NTabPane name="compression" :tab="t('settings.tabs.compression')">
+            <section class="settings-section">
+              <SettingRow :label="t('settings.compression.enabled')" :hint="t('settings.compression.enabledHint')">
+                <NSwitch v-model:value="form.compression.enabled" @update:value="saveImmediateChange" />
+              </SettingRow>
+              <SettingRow :label="t('settings.compression.threshold')" :hint="t('settings.compression.thresholdHint')">
+                <NInputNumber v-model:value="form.compression.threshold" :min="0.1" :max="0.95" :step="0.05" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
+              </SettingRow>
+              <SettingRow :label="t('settings.compression.targetRatio')" :hint="t('settings.compression.targetRatioHint')">
+                <NInputNumber v-model:value="form.compression.targetRatio" :min="0.05" :max="0.8" :step="0.05" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
+              </SettingRow>
+              <SettingRow :label="t('settings.compression.protectLastN')" :hint="t('settings.compression.protectLastNHint')">
+                <NInputNumber v-model:value="form.compression.protectLastN" :min="0" :max="200" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
+              </SettingRow>
+              <SettingRow :label="t('settings.compression.protectFirstN')" :hint="t('settings.compression.protectFirstNHint')">
+                <NInputNumber v-model:value="form.compression.protectFirstN" :min="0" :max="50" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
+              </SettingRow>
+            </section>
+          </NTabPane>
+          -->
+
           <NTabPane name="tools" :tab="t('ekkoConfig.settingsTools')">
             <section class="settings-section">
               <SettingRow :label="t('ekkoConfig.toolsEnabled')" :hint="t('ekkoConfig.featureToggleHint')">

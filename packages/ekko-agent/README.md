@@ -171,7 +171,11 @@ When Ekko runs inside a host that owns conversation persistence, the host also
 owns context compression. `estimateContext()` exposes the provider-visible
 system, tool, message, and provider-context estimate needed for that external
 threshold decision without starting a model call. A standalone Ekko host can
-instead implement and own its internal compression lifecycle.
+instead implement and own its internal compression lifecycle. The global
+`compression` config provides a host policy surface for future integrations:
+`enabled`, `threshold`, `targetRatio`, `protectLastN`, and `protectFirstN`.
+Hermes Studio currently continues to read compression policy from its main
+configuration and does not apply this Ekko config section.
 
 Model context and memory evidence are separate inputs. A host that adds derived
 summaries, retrieved context, routing instructions, or other application-owned
@@ -205,7 +209,8 @@ and opens and migrates the SQLite database. Development uses the package-local
 the shared database-backed memory and conversation stores and closes that
 process-level resource through `setup.close()`. The global JSON file drives
 runtime limits, model defaults and providers, tools, approvals, profile-scoped
-MCP servers, delegation, memory, skills, logging, and prompt instructions. Configuration upgrades merge
+MCP servers, delegation, context compression, memory, skills, logging, and
+prompt instructions. Configuration upgrades merge
 new defaults one field at a time: existing user values, arrays, and unknown
 forward-compatible fields are never replaced as a whole module. A configured
 profile uses
@@ -263,6 +268,10 @@ import { EkkoAgent } from 'ekko-agent'
 const ekko = new EkkoAgent({
   baseDirectory: '/path/to/base',
   profiles: ['work'],
+  config: {
+    runtime: { maxSteps: 60 },
+    compression: { threshold: 0.6, protectLastN: 16 },
+  },
 })
 ekko.config.setModelProvider('deepseek', {
   type: 'openai-compatible',
@@ -302,6 +311,11 @@ container. Every Profile gets an independent Agent instance with bound
 modules. Shared config, model Provider, authorization, and database modules are
 also reachable through each Profile Agent. `setupEkkoAgent(options)` returns
 the same facade for compatibility with the existing setup style.
+
+Pass `config: EkkoConfigPatch` to either constructor style to apply and persist
+installation-wide values before Profile agents and runtime services are
+created. Every top-level config section supports nested partial values;
+explicit per-run runtime options still take precedence over these defaults.
 
 `setup.config` is an `EkkoConfigStore`. It exposes `read`, `update`, `replace`,
 `reset`, MCP server CRUD, provider-preset CRUD, configured-provider CRUD,

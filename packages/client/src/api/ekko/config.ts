@@ -43,6 +43,13 @@ export interface EkkoSettingsConfig {
     backgroundEnabled: boolean
     subtaskMaxSteps: number
   }
+  compression: {
+    enabled: boolean
+    threshold: number
+    targetRatio: number
+    protectLastN: number
+    protectFirstN: number
+  }
   memory: {
     enabled: boolean
     recentMessageLimit: number

@@ -14,6 +14,10 @@ import { EkkoAgent } from 'ekko-agent'
 const ekko = new EkkoAgent({
   baseDirectory: '/srv/ekko',
   profiles: ['work', 'personal'],
+  config: {
+    runtime: { maxSteps: 60 },
+    compression: { threshold: 0.6, protectLastN: 16 },
+  },
 })
 
 // default 是有静态类型的快捷属性。
@@ -58,6 +62,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | --- | --- | --- |
 | `baseDirectory` | `string?` | 数据根目录；实际数据位于 `<base>/.ekko`。默认使用用户主目录。 |
 | `profiles` | `string[]?` | 额外创建的命名 Profile；`default` 总会创建。省略时仍会从已有 Profile 目录自动发现。 |
+| `config` | `EkkoConfigPatch?` | 在创建 Profile Agent 和 runtime 服务前合并并持久化的安装级配置；支持下表全部配置段的局部字段。 |
 | `hermesRootDirectory` | `string?` | 首次初始化时导入 Hermes 的 default 与命名 Profile skills。 |
 | `env` | `Record<string, string \| undefined>?` | 路径和开发/生产数据库策略使用的环境变量。 |
 | `packageRoot` | `string?` | 开发模式下 `sql-data` 的包根目录。 |
@@ -330,7 +335,7 @@ API mode 固定映射：`chat_completions` → `openai-chat`，`codex_responses`
 
 | 路径 | 类型 | 说明 |
 | --- | --- | --- |
-| `schemaVersion` | `number` | 当前为 6；读取旧配置时补齐新字段。 |
+| `schemaVersion` | `number` | 当前为 7；读取旧配置时补齐新字段。 |
 | `runtime.maxSteps` | `number` | 单次主循环最大步数。 |
 | `runtime.maxModelRetries` | `number` | 单次模型步骤最大重试。 |
 | `runtime.maxConsecutiveToolFailures` | `number` | 连续工具失败终止阈值。 |
@@ -362,6 +367,11 @@ API mode 固定映射：`chat_completions` → `openai-chat`，`codex_responses`
 | `mcp.profiles.<profile>.servers` | `Record<string, EkkoMcpServerConfig>` | 每个 Profile 的 stdio 或 Streamable HTTP MCP 服务。 |
 | `delegation.backgroundEnabled` | `boolean` | 默认允许后台子任务。 |
 | `delegation.subtaskMaxSteps` | `number` | 子任务步数。 |
+| `compression.enabled` | `boolean` | Host 是否自动压缩持久会话上下文。 |
+| `compression.threshold` | `number` | 触发阈值占模型上下文窗口的比例，范围 0.05–0.95，默认 0.5。 |
+| `compression.targetRatio` | `number` | 摘要预算占上下文窗口的比例，范围 0.01–0.8，默认 0.2。 |
+| `compression.protectLastN` | `number` | 压缩后原样保留的最近消息数，范围 0–500，默认 20。 |
+| `compression.protectFirstN` | `number` | 压缩后原样保留的最早消息数，范围 0–100，默认 3。 |
 | `memory.enabled` | `boolean` | memory 总开关。 |
 | `memory.recentMessageLimit` | `number` | recall 携带近期消息数。 |
 | `memory.automaticRecallTokenBudget` | `number` | 自动 memory 提示 token 预算。 |
@@ -377,6 +387,8 @@ API mode 固定映射：`chat_completions` → `openai-chat`，`codex_responses`
 `EkkoModelProviderSettings` 字段：可选 `label`；必填 `type` 和 `defaultModel`；可选 `apiMode`、`requestStyle`、`openAIChatReasoningReplayFormat`、`baseUrl`、`endpointPath`、`models`、`authType`、`source`、`apiKey`、`headers`、`timeoutMs`、`capabilities`。`capabilities` 可覆盖 `streaming`、`tools`、`vision`、`jsonMode`、`systemPrompt`、`maxInputTokens`。
 
 `EkkoMcpServerConfig` 支持两种传输：stdio 使用 `command`，可选 `args` 和字符串 `env`；远程服务使用 `type: "streamable_http"`、`url` 和可选字符串 `headers`。`enabled` 控制是否加载。两种传输均使用官方 MCP Client；新 runtime 自动读取所选 Profile 的配置，显式 run-level `toolContext.mcpServers` 仍可覆盖它。
+
+`compression` 是供 Host 集成的策略配置，不属于 `AgentRuntime` 内部会话存储。独立 Host 可以读取 `ekko.readConfig().compression` 实现压缩生命周期；Hermes Studio 当前仍统一读取主配置中的压缩策略，暂不应用 Ekko 的该配置段。一次 Run 显式提供的消息和 runtime options 仍优先于安装级默认值。
 
 ## 文档 harness
 
@@ -685,7 +697,7 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig
 ### `src/config.ts`
 
 ```ts
-export const EKKO_CONFIG_SCHEMA_VERSION = 6
+export const EKKO_CONFIG_SCHEMA_VERSION = 7
 
 export const EKKO_CONFIG_DIRECTORY_NAME = 'config'
 
@@ -730,6 +742,14 @@ export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 8
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 
 export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
+
+export const DEFAULT_COMPRESSION_THRESHOLD = 0.5
+
+export const DEFAULT_COMPRESSION_TARGET_RATIO = 0.2
+
+export const DEFAULT_COMPRESSION_PROTECT_LAST_N = 20
+
+export const DEFAULT_COMPRESSION_PROTECT_FIRST_N = 3
 
 export interface EkkoRuntimeConfig {
   maxSteps: number
@@ -832,6 +852,14 @@ export interface EkkoDelegationConfig {
   subtaskMaxSteps: number
 }
 
+export interface EkkoCompressionConfig {
+  enabled: boolean
+  threshold: number
+  targetRatio: number
+  protectLastN: number
+  protectFirstN: number
+}
+
 export interface EkkoMemoryConfig {
   enabled: boolean
   recentMessageLimit: number
@@ -866,15 +894,16 @@ export interface EkkoConfig {
   tools: EkkoToolsConfig
   mcp: EkkoMcpConfig
   delegation: EkkoDelegationConfig
+  compression: EkkoCompressionConfig
   memory: EkkoMemoryConfig
   skills: EkkoSkillsConfig
   logging: EkkoLoggingConfig
   prompt: EkkoPromptConfig
 }
 
-export type EkkoConfigPatch = { schemaVersion?: number runtime?: Partial<EkkoRuntimeConfig> model?: Partial<Omit<EkkoModelConfig, 'providerCatalog' | 'disabledProviderPresets' | 'providers' | 'authorizations'>> & { providerCatalog?: Record<string, EkkoModelProviderPreset> disabledProviderPresets?: string[] providers?: Record<string, EkkoModelProviderSettings> authorizations?: Record<string, EkkoModelAuthorizationSettings> } tools?: Partial<Omit<EkkoToolsConfig, 'approvals' | 'codeExec'>> & { approvals?: Partial<EkkoToolApprovalConfig> codeExec?: Partial<EkkoCodeExecConfig> } mcp?: Partial<Omit<EkkoMcpConfig, 'profiles'>> & { profiles?: Record<string, EkkoMcpProfileConfig> } delegation?: Partial<EkkoDelegationConfig> memory?: Partial<EkkoMemoryConfig> skills?: Partial<Omit<EkkoSkillsConfig, 'profiles'>> & { profiles?: Record<string, Partial<EkkoSkillsProfileConfig>> } logging?: Partial<EkkoLoggingConfig> prompt?: Partial<EkkoPromptConfig> }
+export type EkkoConfigPatch = { schemaVersion?: number runtime?: Partial<EkkoRuntimeConfig> model?: Partial<Omit<EkkoModelConfig, 'providerCatalog' | 'disabledProviderPresets' | 'providers' | 'authorizations'>> & { providerCatalog?: Record<string, EkkoModelProviderPreset> disabledProviderPresets?: string[] providers?: Record<string, EkkoModelProviderSettings> authorizations?: Record<string, EkkoModelAuthorizationSettings> } tools?: Partial<Omit<EkkoToolsConfig, 'approvals' | 'codeExec'>> & { approvals?: Partial<EkkoToolApprovalConfig> codeExec?: Partial<EkkoCodeExecConfig> } mcp?: Partial<Omit<EkkoMcpConfig, 'profiles'>> & { profiles?: Record<string, EkkoMcpProfileConfig> } delegation?: Partial<EkkoDelegationConfig> compression?: Partial<EkkoCompressionConfig> memory?: Partial<EkkoMemoryConfig> skills?: Partial<Omit<EkkoSkillsConfig, 'profiles'>> & { profiles?: Record<string, Partial<EkkoSkillsProfileConfig>> } logging?: Partial<EkkoLoggingConfig> prompt?: Partial<EkkoPromptConfig> }
 
-export const DEFAULT_EKKO_CONFIG: EkkoConfig = { schemaVersion: EKKO_CONFIG_SCHEMA_VERSION, runtime: { maxSteps: DEFAULT_AGENT_MAX_STEPS, maxModelRetries: DEFAULT_AGENT_MODEL_MAX_RETRIES, maxConsecutiveToolFailures: DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES, }, model: { defaultProvider: '', defaultModel: '', requestTimeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS, reasoningEffort: 'medium', reasoningSummary: 'auto', authorizationRefreshLeewayMs: DEFAULT_MODEL_AUTHORIZATION_REFRESH_LEEWAY_MS, providerCatalog: structuredClone(BUILTIN_MODEL_PROVIDER_PRESETS), disabledProviderPresets: [], providers: {}, authorizations: {}, }, tools: { enabled: true, executionTimeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, approvals: { enabled: true, timeoutMs: DEFAULT_TOOL_APPROVAL_TIMEOUT_MS, permanentAllow: [], }, codeExec: { enabled: true, languages: [...DEFAULT_CODE_EXEC_LANGUAGES], timeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, maxToolCalls: DEFAULT_CODE_EXEC_MAX_TOOL_CALLS, maxOutputBytes: DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES, maxStderrBytes: DEFAULT_CODE_EXEC_MAX_STDERR_BYTES, maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES, }, }, mcp: { enabled: true, profiles: {}, }, delegation: { backgroundEnabled: true, subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS, }, memory: { enabled: true, recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT, automaticRecallTokenBudget: DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET, searchResultLimit: DEFAULT_MEMORY_SEARCH_RESULT_LIMIT, reviewEveryUserMessages: DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES, }, skills: { enabled: true, reviewEveryToolCalls: DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL, profiles: {}, }, logging: { maxBytes: DEFAULT_EKKO_LOG_MAX_BYTES, }, prompt: { instructions: [], }, }
+export const DEFAULT_EKKO_CONFIG: EkkoConfig = { schemaVersion: EKKO_CONFIG_SCHEMA_VERSION, runtime: { maxSteps: DEFAULT_AGENT_MAX_STEPS, maxModelRetries: DEFAULT_AGENT_MODEL_MAX_RETRIES, maxConsecutiveToolFailures: DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES, }, model: { defaultProvider: '', defaultModel: '', requestTimeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS, reasoningEffort: 'medium', reasoningSummary: 'auto', authorizationRefreshLeewayMs: DEFAULT_MODEL_AUTHORIZATION_REFRESH_LEEWAY_MS, providerCatalog: structuredClone(BUILTIN_MODEL_PROVIDER_PRESETS), disabledProviderPresets: [], providers: {}, authorizations: {}, }, tools: { enabled: true, executionTimeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, approvals: { enabled: true, timeoutMs: DEFAULT_TOOL_APPROVAL_TIMEOUT_MS, permanentAllow: [], }, codeExec: { enabled: true, languages: [...DEFAULT_CODE_EXEC_LANGUAGES], timeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, maxToolCalls: DEFAULT_CODE_EXEC_MAX_TOOL_CALLS, maxOutputBytes: DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES, maxStderrBytes: DEFAULT_CODE_EXEC_MAX_STDERR_BYTES, maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES, }, }, mcp: { enabled: true, profiles: {}, }, delegation: { backgroundEnabled: true, subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS, }, compression: { enabled: true, threshold: DEFAULT_COMPRESSION_THRESHOLD, targetRatio: DEFAULT_COMPRESSION_TARGET_RATIO, protectLastN: DEFAULT_COMPRESSION_PROTECT_LAST_N, protectFirstN: DEFAULT_COMPRESSION_PROTECT_FIRST_N, }, memory: { enabled: true, recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT, automaticRecallTokenBudget: DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET, searchResultLimit: DEFAULT_MEMORY_SEARCH_RESULT_LIMIT, reviewEveryUserMessages: DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES, }, skills: { enabled: true, reviewEveryToolCalls: DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL, profiles: {}, }, logging: { maxBytes: DEFAULT_EKKO_LOG_MAX_BYTES, }, prompt: { instructions: [], }, }
 
 export function serializeDefaultEkkoConfig(): string
 ```
@@ -2580,6 +2609,7 @@ export interface AgentRuntimeRunResult {
 export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOptions {
   baseDirectory?: string
   profiles?: string[]
+  config?: EkkoConfigPatch
   env?: Record<string, string | undefined>
   packageRoot?: string
   authorizationRefresher?: EkkoModelAuthorizationRefresher

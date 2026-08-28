@@ -32,6 +32,7 @@ export interface EkkoSettingsConfig {
   tools: EkkoConfig['tools']
   mcp: Pick<EkkoConfig['mcp'], 'enabled'>
   delegation: EkkoConfig['delegation']
+  compression: EkkoConfig['compression']
   memory: EkkoConfig['memory']
   skills: Pick<EkkoConfig['skills'], 'enabled' | 'reviewEveryToolCalls'>
   logging: EkkoConfig['logging']
@@ -70,6 +71,13 @@ const CODE_EXEC_KEYS = [
   'maxSourceBytes',
 ] as const
 const DELEGATION_KEYS = ['backgroundEnabled', 'subtaskMaxSteps'] as const
+const COMPRESSION_KEYS = [
+  'enabled',
+  'threshold',
+  'targetRatio',
+  'protectLastN',
+  'protectFirstN',
+] as const
 const MEMORY_KEYS = [
   'enabled',
   'recentMessageLimit',
@@ -111,6 +119,7 @@ function editableConfig(config: EkkoConfig): EkkoSettingsConfig {
     tools: structuredClone(config.tools),
     mcp: { enabled: config.mcp.enabled },
     delegation: structuredClone(config.delegation),
+    compression: structuredClone(config.compression),
     memory: structuredClone(config.memory),
     skills: {
       enabled: config.skills.enabled,
@@ -170,6 +179,7 @@ export function updateEkkoSettings(
 
   assignKnown(next.mcp, record(source.mcp), ['enabled'])
   assignKnown(next.delegation, record(source.delegation), DELEGATION_KEYS)
+  assignKnown(next.compression, record(source.compression), COMPRESSION_KEYS)
   assignKnown(next.memory, record(source.memory), MEMORY_KEYS)
   assignKnown(next.skills, record(source.skills), ['enabled', 'reviewEveryToolCalls'])
   assignKnown(next.logging, record(source.logging), ['maxBytes'])

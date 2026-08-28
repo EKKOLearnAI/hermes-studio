@@ -10,6 +10,8 @@ import {
   type AgentRuntimeBoundaryInterruptResult,
   type AgentRuntimeContextEstimate,
   type AgentRuntimeOptions,
+  type EkkoConfig,
+  type EkkoConfigPatch,
 } from '../../../../../ekko-agent/src'
 import { config } from '../../studio/public/config'
 import { logger } from '../../studio/public/logging'
@@ -21,6 +23,8 @@ export interface GlobalEkkoAgentOptions {
   setup: EkkoAgentSetup
   profile?: string
   memory?: MemoryService | false
+  /** Installation-wide values applied before this global agent is created. */
+  config?: EkkoConfigPatch
 }
 
 export class GlobalEkkoAgent {
@@ -32,7 +36,7 @@ export class GlobalEkkoAgent {
   private readonly skillDirectory: string
   private readonly logDirectory: string
   private readonly workspaceDirectory: string
-  private readonly fileLogger: EkkoFileLogger
+  private fileLogger: EkkoFileLogger
   private runtime?: AgentRuntime
   private activeRuns = 0
   private runtimeRefreshPending = false
@@ -42,11 +46,12 @@ export class GlobalEkkoAgent {
   constructor(options: GlobalEkkoAgentOptions) {
     this.options = options
     this.setup = options.setup
+    if (options.config) this.setup.config.update(options.config)
     const profileLayout = this.setup.profile(options.profile)
     this.skillDirectory = profileLayout.skillDirectory
     this.logDirectory = profileLayout.logDirectory
     this.workspaceDirectory = profileLayout.workspaceDirectory
-    this.fileLogger = new EkkoFileLogger({ directory: this.logDirectory })
+    this.fileLogger = this.createFileLogger()
     this.memory = options.memory === false ? undefined : options.memory ?? this.setup.memory
     this.memoryDatabasePath = this.memory === this.setup.memory
       ? this.setup.layout.databasePath
@@ -115,6 +120,7 @@ export class GlobalEkkoAgent {
       return 'deferred'
     }
     this.runtime = undefined
+    this.fileLogger = this.createFileLogger()
     this.runtimeRefreshPending = false
     return 'refreshed'
   }
@@ -137,6 +143,10 @@ export class GlobalEkkoAgent {
     }
   }
 
+  readConfig(): EkkoConfig {
+    return this.setup.config.read()
+  }
+
   private runtimeInstance(): AgentRuntime {
     this.applyPendingRuntimeRefresh()
     if (this.runtime) return this.runtime
@@ -152,7 +162,15 @@ export class GlobalEkkoAgent {
   private applyPendingRuntimeRefresh(): void {
     if (!this.runtimeRefreshPending || this.activeRuns > 0 || this.hasBackgroundTasks()) return
     this.runtime = undefined
+    this.fileLogger = this.createFileLogger()
     this.runtimeRefreshPending = false
+  }
+
+  private createFileLogger(): EkkoFileLogger {
+    return new EkkoFileLogger({
+      directory: this.logDirectory,
+      maxBytes: this.setup.config.read().logging.maxBytes,
+    })
   }
 
   private withDefaultWorkspace(input: AgentRuntimeRunInput): AgentRuntimeRunInput {
@@ -184,6 +202,7 @@ export function createGlobalEkkoAgent(
 export interface SetupGlobalEkkoAgentOptions {
   baseDirectory?: string
   profiles?: string[]
+  config?: EkkoConfigPatch
   env?: Record<string, string | undefined>
 }
 
@@ -198,6 +217,7 @@ export function setupGlobalEkkoAgent(
     baseDirectory: options.baseDirectory ?? config.appHome,
     hermesRootDirectory: getProfilesBaseDir(),
     profiles: options.profiles ?? listProfileNames(),
+    config: options.config,
     env: options.env,
   })
   if (globalEkkoSetup.skillImport) {

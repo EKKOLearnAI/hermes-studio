@@ -13,7 +13,7 @@ import {
   type EkkoModelProviderPreset,
 } from './model/provider-presets'
 
-export const EKKO_CONFIG_SCHEMA_VERSION = 6
+export const EKKO_CONFIG_SCHEMA_VERSION = 7
 export const EKKO_CONFIG_DIRECTORY_NAME = 'config'
 export const EKKO_CONFIG_FILE_NAME = 'config.json'
 
@@ -37,6 +37,10 @@ export const DEFAULT_MEMORY_SEARCH_RESULT_LIMIT = 50
 export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 8
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
+export const DEFAULT_COMPRESSION_THRESHOLD = 0.5
+export const DEFAULT_COMPRESSION_TARGET_RATIO = 0.2
+export const DEFAULT_COMPRESSION_PROTECT_LAST_N = 20
+export const DEFAULT_COMPRESSION_PROTECT_FIRST_N = 3
 
 export interface EkkoRuntimeConfig {
   maxSteps: number
@@ -144,6 +148,19 @@ export interface EkkoDelegationConfig {
   subtaskMaxSteps: number
 }
 
+/**
+ * Host-owned conversation compression policy. Ekko exposes the policy through
+ * its global config; a host with durable conversation history applies it
+ * before starting a runtime turn.
+ */
+export interface EkkoCompressionConfig {
+  enabled: boolean
+  threshold: number
+  targetRatio: number
+  protectLastN: number
+  protectFirstN: number
+}
+
 export interface EkkoMemoryConfig {
   enabled: boolean
   recentMessageLimit: number
@@ -180,6 +197,7 @@ export interface EkkoConfig {
   tools: EkkoToolsConfig
   mcp: EkkoMcpConfig
   delegation: EkkoDelegationConfig
+  compression: EkkoCompressionConfig
   memory: EkkoMemoryConfig
   skills: EkkoSkillsConfig
   logging: EkkoLoggingConfig
@@ -203,6 +221,7 @@ export type EkkoConfigPatch = {
     profiles?: Record<string, EkkoMcpProfileConfig>
   }
   delegation?: Partial<EkkoDelegationConfig>
+  compression?: Partial<EkkoCompressionConfig>
   memory?: Partial<EkkoMemoryConfig>
   skills?: Partial<Omit<EkkoSkillsConfig, 'profiles'>> & {
     profiles?: Record<string, Partial<EkkoSkillsProfileConfig>>
@@ -259,6 +278,13 @@ export const DEFAULT_EKKO_CONFIG: EkkoConfig = {
   delegation: {
     backgroundEnabled: true,
     subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS,
+  },
+  compression: {
+    enabled: true,
+    threshold: DEFAULT_COMPRESSION_THRESHOLD,
+    targetRatio: DEFAULT_COMPRESSION_TARGET_RATIO,
+    protectLastN: DEFAULT_COMPRESSION_PROTECT_LAST_N,
+    protectFirstN: DEFAULT_COMPRESSION_PROTECT_FIRST_N,
   },
   memory: {
     enabled: true,

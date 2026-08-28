@@ -91,6 +91,13 @@ const config = {
   },
   mcp: { enabled: true },
   delegation: { backgroundEnabled: false, subtaskMaxSteps: 40 },
+  compression: {
+    enabled: true,
+    threshold: 0.5,
+    targetRatio: 0.2,
+    protectLastN: 20,
+    protectFirstN: 3,
+  },
   memory: {
     enabled: true,
     recentMessageLimit: 24,

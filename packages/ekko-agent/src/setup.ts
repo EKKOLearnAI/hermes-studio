@@ -51,6 +51,11 @@ import { EkkoProfileAgent } from './agent/profile-agent'
 export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOptions {
   baseDirectory?: string
   profiles?: string[]
+  /**
+   * Installation-wide config patch applied to the canonical config before
+   * Profile agents and runtime services are created.
+   */
+  config?: EkkoConfigPatch
   env?: Record<string, string | undefined>
   packageRoot?: string
   authorizationRefresher?: EkkoModelAuthorizationRefresher
@@ -120,7 +125,9 @@ export class EkkoAgentSetup {
     }
     this.skillImport = this.directories.lastSkillImport
     this.config = new EkkoConfigStore({ configPath: this.layout.configPath })
-    const config = this.config.ensureDefaults()
+    const config = options.config
+      ? this.config.update(options.config)
+      : this.config.ensureDefaults()
     this.authorizations = new EkkoModelAuthorizationManager({
       config: this.config,
       refresher: options.authorizationRefresher,

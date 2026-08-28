@@ -22,6 +22,43 @@ afterEach(async () => {
 })
 
 describe('EkkoConfigStore', () => {
+  it('applies constructor config before creating global Profile agents', async () => {
+    const agent = new EkkoAgent({
+      baseDirectory,
+      env: { NODE_ENV: 'test' },
+      config: {
+        runtime: { maxSteps: 42 },
+        compression: {
+          enabled: true,
+          threshold: 0.7,
+          targetRatio: 0.3,
+          protectLastN: 16,
+          protectFirstN: 4,
+        },
+        prompt: { instructions: ['Keep responses concise.'] },
+      },
+    })
+    try {
+      expect(agent.readConfig()).toMatchObject({
+        runtime: { maxSteps: 42 },
+        compression: {
+          enabled: true,
+          threshold: 0.7,
+          targetRatio: 0.3,
+          protectLastN: 16,
+          protectFirstN: 4,
+        },
+        prompt: { instructions: ['Keep responses concise.'] },
+      })
+      expect(JSON.parse(await readFile(agent.layout.configPath, 'utf8'))).toMatchObject({
+        runtime: { maxSteps: 42 },
+        compression: { threshold: 0.7 },
+      })
+    } finally {
+      agent.close()
+    }
+  })
+
   it('collects model and authorization management on new EkkoAgent()', () => {
     const agent = new EkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
     try {
@@ -98,8 +135,20 @@ describe('EkkoConfigStore', () => {
 
     const config = new EkkoConfigStore({ configPath }).ensureDefaults()
 
-    expect(config.schemaVersion).toBe(6)
+    expect(config.schemaVersion).toBe(7)
     expect(config.memory.reviewEveryUserMessages).toBe(8)
+  })
+
+  it('validates context compression policy bounds', () => {
+    const setup = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    try {
+      expect(() => setup.config.update({ compression: { threshold: 1 } }))
+        .toThrow('compression.threshold: must be a number between 0.05 and 0.95')
+      expect(() => setup.config.update({ compression: { protectLastN: -1 } }))
+        .toThrow('compression.protectLastN: must be an integer between 0 and 500')
+    } finally {
+      setup.close()
+    }
   })
 
   it('patches nested leaves without replacing their sibling settings', () => {

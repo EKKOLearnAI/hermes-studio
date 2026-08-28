@@ -91,6 +91,11 @@ describe('Ekko configuration services', () => {
       mcp: { enabled: false, profiles: { work: { servers: {} } } },
       skills: { enabled: false, reviewEveryToolCalls: 4, profiles: {} },
       memory: { ...initial.config.memory, enabled: false, recentMessageLimit: 12 },
+      compression: {
+        ...initial.config.compression,
+        threshold: 0.65,
+        protectLastN: 14,
+      },
     }, setup)
 
     expect(updated.config).toMatchObject({
@@ -99,6 +104,7 @@ describe('Ekko configuration services', () => {
       mcp: { enabled: false },
       skills: { enabled: false, reviewEveryToolCalls: 4 },
       memory: { enabled: false, recentMessageLimit: 12 },
+      compression: { threshold: 0.65, protectLastN: 14 },
     })
     expect(setup.memory.isEnabled).toBe(false)
     const stored = setup.config.read()
