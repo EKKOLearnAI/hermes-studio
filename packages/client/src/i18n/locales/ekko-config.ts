@@ -100,7 +100,7 @@ const ekkoSettingsAr = {
 } satisfies EkkoSettingsMessages
 
 const ekkoSettingHintsEn = {
-  featureToggleHint: 'Controls whether this capability is available to Ekko Agent.',
+  featureToggleHint: 'Controls whether this capability is available to Ekko.',
   runLimitHint: 'Caps work in a single run; execution stops when the limit is reached.',
   retryLimitHint: 'Maximum automatic retries after a model request fails.',
   failureLimitHint: 'Stops the run after this many consecutive tool failures.',
@@ -114,14 +114,14 @@ const ekkoSettingHintsEn = {
   recallBudgetHint: 'Maximum tokens reserved for automatically recalled memories.',
   resultLimitHint: 'Maximum memory records returned by one search.',
   reviewIntervalHint: 'Runs an automatic review whenever this activity count is reached.',
-  promptInstructionsHint: 'Extra instructions appended to every Ekko Agent run.',
+  promptInstructionsHint: 'Extra instructions appended to every Ekko run.',
   readonlyConfigHint: 'Read-only metadata for the active Ekko configuration.',
 }
 
 type EkkoSettingHintMessages = { [Key in keyof typeof ekkoSettingHintsEn]: string }
 
 const ekkoSettingHintsZh = {
-  featureToggleHint: '控制 Ekko Agent 是否可以使用这项能力。',
+  featureToggleHint: '控制 Ekko 是否可以使用这项能力。',
   runLimitHint: '限制单次运行的工作量；达到上限后结束继续执行。',
   retryLimitHint: '模型请求失败后自动重试的最大次数。',
   failureLimitHint: '工具连续失败达到该次数后停止当前运行。',
@@ -135,12 +135,12 @@ const ekkoSettingHintsZh = {
   recallBudgetHint: '自动召回并注入记忆时最多占用的 Token。',
   resultLimitHint: '单次记忆搜索最多返回的记录数量。',
   reviewIntervalHint: '相关活动达到该次数时触发一次自动审核。',
-  promptInstructionsHint: '附加到每次 Ekko Agent 运行中的额外指令。',
+  promptInstructionsHint: '附加到每次 Ekko 运行中的额外指令。',
   readonlyConfigHint: '当前 Ekko 配置的只读元数据。',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsZhTw = {
-  featureToggleHint: '控制 Ekko Agent 是否可以使用這項能力。',
+  featureToggleHint: '控制 Ekko 是否可以使用這項能力。',
   runLimitHint: '限制單次執行的工作量；達到上限後停止繼續執行。',
   retryLimitHint: '模型請求失敗後自動重試的最大次數。',
   failureLimitHint: '工具連續失敗達到此次數後停止目前執行。',
@@ -154,12 +154,12 @@ const ekkoSettingHintsZhTw = {
   recallBudgetHint: '自動召回並注入記憶時最多占用的 Token。',
   resultLimitHint: '單次記憶搜尋最多回傳的記錄數量。',
   reviewIntervalHint: '相關活動達到此次數時觸發一次自動審核。',
-  promptInstructionsHint: '附加到每次 Ekko Agent 執行中的額外指令。',
+  promptInstructionsHint: '附加到每次 Ekko 執行中的額外指令。',
   readonlyConfigHint: '目前 Ekko 設定的唯讀中繼資料。',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsDe = {
-  featureToggleHint: 'Steuert, ob diese Funktion für Ekko Agent verfügbar ist.',
+  featureToggleHint: 'Steuert, ob diese Funktion für Ekko verfügbar ist.',
   runLimitHint: 'Begrenzt die Arbeit pro Lauf; beim Erreichen des Limits wird die Ausführung beendet.',
   retryLimitHint: 'Maximale automatische Wiederholungen nach einer fehlgeschlagenen Modellanfrage.',
   failureLimitHint: 'Beendet den Lauf nach dieser Anzahl aufeinanderfolgender Tool-Fehler.',
@@ -173,12 +173,12 @@ const ekkoSettingHintsDe = {
   recallBudgetHint: 'Maximale Tokenzahl für automatisch abgerufene Erinnerungen.',
   resultLimitHint: 'Maximale Anzahl von Erinnerungen pro Suche.',
   reviewIntervalHint: 'Startet eine automatische Prüfung, sobald diese Aktivitätszahl erreicht ist.',
-  promptInstructionsHint: 'Zusätzliche Anweisungen für jeden Lauf von Ekko Agent.',
+  promptInstructionsHint: 'Zusätzliche Anweisungen für jeden Lauf von Ekko.',
   readonlyConfigHint: 'Schreibgeschützte Metadaten der aktiven Ekko-Konfiguration.',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsEs = {
-  featureToggleHint: 'Controla si esta capacidad está disponible para Ekko Agent.',
+  featureToggleHint: 'Controla si esta capacidad está disponible para Ekko.',
   runLimitHint: 'Limita el trabajo de una ejecución; se detiene al alcanzar el límite.',
   retryLimitHint: 'Máximo de reintentos automáticos tras fallar una solicitud al modelo.',
   failureLimitHint: 'Detiene la ejecución tras este número de fallos consecutivos de herramientas.',
@@ -192,12 +192,12 @@ const ekkoSettingHintsEs = {
   recallBudgetHint: 'Máximo de tokens reservado para recuerdos recuperados automáticamente.',
   resultLimitHint: 'Máximo de registros de memoria devueltos por búsqueda.',
   reviewIntervalHint: 'Ejecuta una revisión automática al alcanzar esta cantidad de actividad.',
-  promptInstructionsHint: 'Instrucciones adicionales incluidas en cada ejecución de Ekko Agent.',
+  promptInstructionsHint: 'Instrucciones adicionales incluidas en cada ejecución de Ekko.',
   readonlyConfigHint: 'Metadatos de solo lectura de la configuración activa de Ekko.',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsFr = {
-  featureToggleHint: 'Détermine si cette fonctionnalité est disponible pour Ekko Agent.',
+  featureToggleHint: 'Détermine si cette fonctionnalité est disponible pour Ekko.',
   runLimitHint: 'Limite le travail par exécution ; celle-ci s’arrête lorsque la limite est atteinte.',
   retryLimitHint: 'Nombre maximal de nouvelles tentatives après l’échec d’une requête au modèle.',
   failureLimitHint: 'Arrête l’exécution après ce nombre d’échecs consécutifs des outils.',
@@ -211,12 +211,12 @@ const ekkoSettingHintsFr = {
   recallBudgetHint: 'Nombre maximal de tokens réservé aux souvenirs rappelés automatiquement.',
   resultLimitHint: 'Nombre maximal de souvenirs renvoyés par une recherche.',
   reviewIntervalHint: 'Lance une vérification automatique lorsque ce nombre d’activités est atteint.',
-  promptInstructionsHint: 'Instructions supplémentaires ajoutées à chaque exécution d’Ekko Agent.',
+  promptInstructionsHint: 'Instructions supplémentaires ajoutées à chaque exécution d’Ekko.',
   readonlyConfigHint: 'Métadonnées en lecture seule de la configuration Ekko active.',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsJa = {
-  featureToggleHint: 'この機能を Ekko Agent で使用できるかどうかを制御します。',
+  featureToggleHint: 'この機能を Ekko で使用できるかどうかを制御します。',
   runLimitHint: '1 回の実行量を制限し、上限に達すると実行を終了します。',
   retryLimitHint: 'モデルリクエスト失敗後の自動再試行回数の上限です。',
   failureLimitHint: 'ツールがこの回数連続で失敗すると現在の実行を停止します。',
@@ -230,12 +230,12 @@ const ekkoSettingHintsJa = {
   recallBudgetHint: '自動的に想起されるメモリに使用できる最大トークン数です。',
   resultLimitHint: '1 回の検索で返すメモリ件数の上限です。',
   reviewIntervalHint: '関連する操作がこの回数に達するたびに自動確認を行います。',
-  promptInstructionsHint: 'Ekko Agent の各実行に追加される指示です。',
+  promptInstructionsHint: 'Ekko の各実行に追加される指示です。',
   readonlyConfigHint: '現在の Ekko 設定に関する読み取り専用メタデータです。',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsKo = {
-  featureToggleHint: 'Ekko Agent에서 이 기능을 사용할 수 있는지 제어합니다.',
+  featureToggleHint: 'Ekko에서 이 기능을 사용할 수 있는지 제어합니다.',
   runLimitHint: '한 번의 실행 작업량을 제한하며 한도에 도달하면 실행을 종료합니다.',
   retryLimitHint: '모델 요청 실패 후 자동 재시도하는 최대 횟수입니다.',
   failureLimitHint: '도구가 이 횟수만큼 연속 실패하면 현재 실행을 중지합니다.',
@@ -249,12 +249,12 @@ const ekkoSettingHintsKo = {
   recallBudgetHint: '자동으로 불러온 메모리에 사용할 최대 토큰 수입니다.',
   resultLimitHint: '한 번의 검색에서 반환할 최대 메모리 레코드 수입니다.',
   reviewIntervalHint: '관련 활동이 이 횟수에 도달할 때마다 자동 검토를 실행합니다.',
-  promptInstructionsHint: '모든 Ekko Agent 실행에 추가되는 지침입니다.',
+  promptInstructionsHint: '모든 Ekko 실행에 추가되는 지침입니다.',
   readonlyConfigHint: '현재 Ekko 설정의 읽기 전용 메타데이터입니다.',
 } satisfies EkkoSettingHintMessages
 
 const ekkoSettingHintsPt = {
-  featureToggleHint: 'Controla se este recurso está disponível para o Ekko Agent.',
+  featureToggleHint: 'Controla se este recurso está disponível para o Ekko.',
   runLimitHint: 'Limita o trabalho por execução; ela termina quando o limite é atingido.',
   retryLimitHint: 'Máximo de novas tentativas automáticas após uma solicitação ao modelo falhar.',
   failureLimitHint: 'Encerra a execução após este número de falhas consecutivas de ferramentas.',
@@ -268,7 +268,7 @@ const ekkoSettingHintsPt = {
   recallBudgetHint: 'Máximo de tokens reservado para memórias recuperadas automaticamente.',
   resultLimitHint: 'Máximo de registros de memória retornados por pesquisa.',
   reviewIntervalHint: 'Executa uma revisão automática quando esta contagem de atividade é atingida.',
-  promptInstructionsHint: 'Instruções extras adicionadas a cada execução do Ekko Agent.',
+  promptInstructionsHint: 'Instruções extras adicionadas a cada execução do Ekko.',
   readonlyConfigHint: 'Metadados somente leitura da configuração ativa do Ekko.',
 } satisfies EkkoSettingHintMessages
 
