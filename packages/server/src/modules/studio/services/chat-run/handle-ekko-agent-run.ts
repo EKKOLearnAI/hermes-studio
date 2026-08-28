@@ -40,7 +40,7 @@ import { logger } from '../../public/logging'
 import { recordSessionUsage } from '../usage/usage-recorder'
 import { observeRunChatPetEvent } from '../../public/pet-events'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
-import { buildCompressedHistory, getOrCreateSession } from './compression'
+import { buildCompressedHistory, compactStudioTurnTail, getOrCreateSession, isStudioTurnTailCompressionEnabled } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { persistRunMessages, type RunMessageDraft } from './message-persistence'
 import { buildOutboundRunEvent } from './resume-payload'
@@ -1494,6 +1494,39 @@ export async function handleEkkoAgentRun(
       contextTokens: contextEstimate?.contextTokens ?? state.contextTokens,
       context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
+    if (
+      data.context_compression_enabled !== false
+      && !data.background_delegation_id
+      && await isStudioTurnTailCompressionEnabled(profile)
+    ) {
+      await compactStudioTurnTail({
+        sessionId,
+        profile,
+        upstream: baseUrl,
+        apiKey,
+        emit,
+        sessionMap,
+        modelContext: {
+          model: modelConfig.model,
+          provider: modelConfig.provider,
+          allowHermesFallback: false,
+        },
+        contextTokenEstimator: async (_messages, localMessageTokens) => {
+          const estimate = await agent.estimateContext({
+            modelClient,
+            model: modelConfig.model,
+            modelDefaults: { model: modelConfig.model },
+            messages: instructionMessages,
+            signal: abortController.signal,
+            memoryEnabled: false,
+            toolContext,
+            metadata,
+            backgroundDelegationEnabled: data.background_delegation_enabled !== false,
+          })
+          return estimate.contextTokens + localMessageTokens
+        },
+      })
+    }
     const workspaceRunChange = completeWorkspaceRunDiff()
     emit('run.completed', {
       event: 'run.completed',

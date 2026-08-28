@@ -74,6 +74,7 @@ controllers.
 - Inline previews for generated HTML, PDF, DOCX, PPTX, XLSX, CSV, images, Markdown, and source files
 - Session search — Ctrl+K search across the Studio local session database; read-only Hermes history sessions are not included
 - Session categories, message references, compression progress, and durable background delegation results
+- Optional Studio turn-tail compression — set `compression.studio_compact_on_turn_end: true` in the Hermes profile config to move threshold evaluation after a successful persisted turn; failures remain fail-open and Hermes Agent Core compression is unchanged
 - Profile-aware model selector — discovers models available to the signed-in account through authorized Hermes profiles
 - Per-session model display badge and context token usage
 

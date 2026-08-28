@@ -111,6 +111,56 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({})
   })
 
+  it('reads the Studio turn-tail compression switch independently from Core', async () => {
+    readConfigYamlForProfileMock.mockResolvedValue({
+      compression: { studio_compact_on_turn_end: true },
+    })
+
+    const { isStudioTurnTailCompressionEnabled } = await import(
+      '../../packages/server/src/modules/studio/services/chat-run/compression'
+    )
+
+    await expect(isStudioTurnTailCompressionEnabled('default')).resolves.toBe(true)
+    expect(readConfigYamlForProfileMock).toHaveBeenCalledWith('default')
+  })
+
+  it('keeps Studio turn-tail compression disabled for absent and Core-only switches', async () => {
+    const { isStudioTurnTailCompressionEnabled } = await import(
+      '../../packages/server/src/modules/studio/services/chat-run/compression'
+    )
+
+    readConfigYamlForProfileMock.mockResolvedValue({
+      compression: { compact_on_turn_end: true },
+    })
+    await expect(isStudioTurnTailCompressionEnabled('default')).resolves.toBe(false)
+
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    await expect(isStudioTurnTailCompressionEnabled('default')).resolves.toBe(false)
+  })
+
+  it('fails open when Studio turn-tail compression cannot fit fixed context', async () => {
+    getSessionDetailMock.mockReturnValue({ messages: [] })
+    getModelContextLengthMock.mockReturnValue(100_000)
+    readConfigYamlForProfileMock.mockResolvedValue({
+      compression: { threshold: 0.5 },
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 0, outputTokens: 0 })
+
+    const { compactStudioTurnTail } = await import(
+      '../../packages/server/src/modules/studio/services/chat-run/compression'
+    )
+
+    await expect(compactStudioTurnTail({
+      sessionId: 'session-1',
+      profile: 'default',
+      upstream: '',
+      emit: vi.fn(),
+      sessionMap: new Map(),
+      contextTokenEstimator: async () => 60_000,
+    })).resolves.toBeUndefined()
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
   it('preserves empty assistant reasoning_content in bridge history', async () => {
     getSessionDetailMock.mockReturnValue({
       messages: [

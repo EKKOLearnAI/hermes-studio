@@ -15,7 +15,7 @@ import type {
   PrimaryAgentBridgeOutput as AgentBridgeOutput,
 } from '../../public/chat-agent-runtime'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
-import { buildCompressedHistory, buildDbSnapshotAwareHistory, forceCompressBridgeHistory, pushState, replaceState } from './compression'
+import { buildCompressedHistory, buildDbSnapshotAwareHistory, compactStudioTurnTail, forceCompressBridgeHistory, isStudioTurnTailCompressionEnabled, pushState, replaceState } from './compression'
 import {
   calcAndUpdateUsage,
   contextTokensWithCachedOverhead,
@@ -1780,6 +1780,31 @@ async function applyBridgeChunkAsync(
     emit,
     bridge,
   })
+  if (!terminalError && !runMetadata?.delegationId && await isStudioTurnTailCompressionEnabled(profile)) {
+    await compactStudioTurnTail({
+      sessionId,
+      profile,
+      upstream: '',
+      apiKey: undefined,
+      emit,
+      sessionMap,
+      modelContext: { model: modelContext.model, provider: modelContext.provider },
+      contextTokenEstimator: async (_messages, localMessageTokens) => {
+        const fixedContextTokens = await ensureBridgeFixedContext({
+          sessionId,
+          profile,
+          model: modelContext.model,
+          provider: modelContext.provider,
+          workspace,
+          instructions,
+          state,
+          bridge,
+          refresh: true,
+        })
+        return fixedContextTokens == null ? localMessageTokens : fixedContextTokens + localMessageTokens
+      },
+    })
+  }
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   const eventName = terminalError ? 'run.failed' : 'run.completed'
   if (runMetadata?.delegationId && state.backgroundDelegations?.[runMetadata.delegationId]) {
