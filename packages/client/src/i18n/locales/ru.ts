@@ -815,6 +815,8 @@ export default {
     thinkingShow: 'Развернуть процесс размышления',
     thinkingHide: 'Свернуть процесс размышления',
     thinkingDuration: 'Наблюдается {duration}',
+    streamSpeed: 'Первый токен {ttft}мс · {tps} ток/с',
+    streamSpeedTitle: 'Время до первого токена и скорость',
     thinkingChars: '{count} зн.',
     copyBubble: 'Копировать сообщение',
     copiedBubble: 'Скопировано',

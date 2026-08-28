@@ -9,6 +9,7 @@ import { setModelContext } from '@/api/hermes/model-context'
 import { fetchSocialMessagePlatforms } from '@/api/studio/social-messages'
 import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 import { deleteSkillBundleApi, fetchSkillBundles, type SkillBundleInfo } from '@/api/hermes/skill-bundles'
+import { activeStreamSession, streamMetrics } from '@/utils/hermes/stream-metrics'
 import { NButton, NTooltip, NModal, NInputNumber, NPopover, NSlider, NDropdown, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -33,9 +34,12 @@ const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const props = withDefaults(defineProps<{
   modelLabel?: string
   modelDisabled?: boolean
+  /** Additive: opt-in live TTFT / tok/s chip (only meaningful in single-chat). */
+  showStreamSpeed?: boolean
 }>(), {
   modelLabel: '',
   modelDisabled: false,
+  showStreamSpeed: false,
 })
 
 const emit = defineEmits<{
@@ -112,6 +116,7 @@ const compactModelLabel = computed(() => {
 const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
 type DraftMap = Record<string, string>
 const inputText = ref('')
+
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
@@ -1153,6 +1158,7 @@ function isImage(type: string): boolean {
       class="input-wrapper"
       :class="{ 'drag-over': isDragging }"
       :style="inputWrapperStyle"
+      style="position: relative;"
       @dragover="handleDragOver"
       @dragenter="handleDragEnter"
       @dragleave="handleDragLeave"
@@ -1195,6 +1201,9 @@ function isImage(type: string): boolean {
             :style="{ width: `${usagePercent}%` }"
           />
         </div>
+      </div>
+      <div v-if="showStreamSpeed && streamMetrics.active && activeStreamSession() === chatStore.activeSessionId" class="stream-speed-chip" :title="t('chat.streamSpeedTitle')">
+        {{ t('chat.streamSpeed', { ttft: streamMetrics.ttftMs ?? '-', tps: streamMetrics.tokensPerSec ?? '-' }) }}
       </div>
       <textarea
         ref="textareaRef"
@@ -2564,6 +2573,22 @@ function isImage(type: string): boolean {
 .dropdown-fade-leave-to {
   opacity: 0;
   transform: translateY(4px);
+}
+
+
+.stream-speed-chip {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 14px;
+  z-index: 2;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(127, 127, 127, 0.12);
+  color: inherit;
+  opacity: 0.85;
+  pointer-events: none;
 }
 
 </style>

@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { endStreamMetrics, noteStreamDelta, noteStreamStart } from '@/utils/hermes/stream-metrics'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { showCompletionNotification } from '@/utils/completion-notification'
@@ -3604,6 +3605,7 @@ export const useChatStore = defineStore('chat', () => {
         activeAssistantMessageId = null
         reasoningAssistantMessageId = null
         activeRunMarker = null
+        endStreamMetrics()
       }
 
       const applyReconnectResume = (data: ResumeSessionPayload) => {
@@ -3752,6 +3754,9 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
+      // TTFT (additive): record run issue time so the first content delta can be timed.
+      noteRunStart(sid)
+      noteStreamStart(sid)
       // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
       const ctrl = startRunViaSocket(
         runPayload,
@@ -3945,6 +3950,9 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'message.delta': {
+              // TTFT (additive): consume once per run on the first non-empty
+              // content delta, so an empty leading chunk cannot start the clock.
+              if (evt.delta) noteStreamDelta(sid, evt.delta)
               if (evt.delta) {
                 runProducedAssistantText = true
                 runProducedAssistantContent = true
@@ -4094,6 +4102,7 @@ export const useChatStore = defineStore('chat', () => {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
               settleRunningTools(sid, 'done')
+              endStreamMetrics()
               // Server-computed usage (local countTokens, snapshot-aware)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
@@ -4256,6 +4265,7 @@ export const useChatStore = defineStore('chat', () => {
                   if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
                 }
               }
+              if (!queueInsertionInterruption) endStreamMetrics()
               if (queueInsertionInterruption) {
                 if (failedAssistant?.isStreaming) updateMessage(sid, failedAssistant.id, { isStreaming: false })
                 settleRunningTools(sid, 'done')
@@ -4293,6 +4303,7 @@ export const useChatStore = defineStore('chat', () => {
             updateMessage(sid, last.id, { isStreaming: false })
           }
           cleanup()
+          endStreamMetrics()
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
           activeRunMarker = null
@@ -4309,6 +4320,7 @@ export const useChatStore = defineStore('chat', () => {
             }
           })
           cleanup()
+          endStreamMetrics()
           activeAssistantMessageId = null
           reasoningAssistantMessageId = null
           activeRunMarker = null
@@ -4399,6 +4411,7 @@ export const useChatStore = defineStore('chat', () => {
       activeAssistantMessageId = null
       reasoningAssistantMessageId = null
       activeRunMarker = null
+      endStreamMetrics()
     }
 
     const initializeResumedAssistantState = () => {

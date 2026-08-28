@@ -2936,6 +2936,7 @@ async function handleSessionModelCustomSubmit() {
             />
             <ChatInput
               ref="chatInputRef"
+              show-stream-speed
               :model-label="activeSessionModelLabel"
               :model-disabled="activeSessionUsesGlobalCodingAgentConfig"
               @model-click="handleHeaderModelClick"
