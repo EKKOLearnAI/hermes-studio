@@ -1504,6 +1504,7 @@ export interface MemoryRunCompletionOptions {
 
 export class MemoryService {
   constructor(options: MemoryServiceOptions = {})
+  configure(options: Pick< MemoryServiceOptions, | 'enabled' | 'recentMessageLimit' | 'automaticRecallTokenBudget' | 'searchResultLimit' | 'reviewEveryUserMessages' >): void
   get isEnabled(): boolean
   async captureMessages(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[]): Promise<string[]>
   async retrieve(identity: MemoryRuntimeIdentity, queryText?: string, overrides: Partial<MemoryQuery> = {}): Promise<MemoryContext>
