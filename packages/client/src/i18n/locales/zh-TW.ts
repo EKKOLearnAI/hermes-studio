@@ -1,6 +1,8 @@
 import { socialMessagesZhTw } from '../social-messages'
+import { ekkoConfigZhTw } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigZhTw,
   socialMessages: socialMessagesZhTw,
   browser: {
     title: '瀏覽器', settings: '瀏覽器設定', desktopOnly: '內建瀏覽器僅在 Hermes Studio 桌面版可用。', newTab: '新分頁',

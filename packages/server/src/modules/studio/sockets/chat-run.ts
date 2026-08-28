@@ -28,7 +28,7 @@ import {
 } from '../public/chat-agent-runtime'
 import { handleBridgeRun, resumeBridgeRun } from '../services/chat-run/handle-bridge-run'
 import { handleCodingAgentRun } from '../services/chat-run/handle-coding-agent-run'
-import { handleEkkoAgentRun } from '../services/chat-run/handle-ekko-agent-run'
+import { handleEkkoAgentRun, type EkkoAgentRunSocketData } from '../services/chat-run/handle-ekko-agent-run'
 import { handleAbort } from '../services/chat-run/abort'
 import { getOrCreateSession } from '../services/chat-run/compression'
 import { loadSessionStateFromDb, resolveRunSource } from '../services/chat-run/load-state'
@@ -361,6 +361,13 @@ export class ChatRunSocket {
       category_id?: number | null
       source?: string
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
+      memory_input?: string | ContentBlock[]
+      memory_messages?: EkkoAgentRunSocketData['memory_messages']
+      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_origin?: EkkoAgentRunSocketData['memory_origin']
+      memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
+      memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']
+      memory_default_write_scope?: EkkoAgentRunSocketData['memory_default_write_scope']
       coding_agent_id?: ChatCodingAgentId
       agent_id?: ChatCodingAgentId
       mode?: 'scoped' | 'global'
@@ -799,6 +806,13 @@ export class ChatRunSocket {
       category_id?: number | null
       source?: string
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
+      memory_input?: string | ContentBlock[]
+      memory_messages?: EkkoAgentRunSocketData['memory_messages']
+      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_origin?: EkkoAgentRunSocketData['memory_origin']
+      memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
+      memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']
+      memory_default_write_scope?: EkkoAgentRunSocketData['memory_default_write_scope']
       queue_id?: string
       peerExcludeSocketId?: string
       coding_agent_id?: ChatCodingAgentId
@@ -1691,6 +1705,13 @@ export class ChatRunSocket {
       workspace?: string | null
       source?: string
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
+      memory_input?: string | ContentBlock[]
+      memory_messages?: EkkoAgentRunSocketData['memory_messages']
+      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_origin?: EkkoAgentRunSocketData['memory_origin']
+      memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
+      memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']
+      memory_default_write_scope?: EkkoAgentRunSocketData['memory_default_write_scope']
       queue_id?: string
       coding_agent_id?: ChatCodingAgentId
       agent_id?: ChatCodingAgentId

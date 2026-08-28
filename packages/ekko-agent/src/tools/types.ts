@@ -51,6 +51,14 @@ export interface AgentToolContext {
   sessionId?: string
   profileId?: string
   sourceMessageIds?: string[]
+  memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
+  memoryExplicitIntent?: boolean
+  memoryOrigin?: import('../memory/types').MemoryOrigin
+  memoryRecallScopes?: import('../memory/types').MemoryScope[]
+  memoryWriteScopes?: import('../memory/types').MemoryScope[]
+  memoryDefaultWriteScope?: import('../memory/types').MemoryScope
+  /** Runtime-owned signal used by the safe foreground memory_review tool. */
+  requestMemoryReview?: () => void
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number

@@ -14,6 +14,7 @@ import {
   EKKO_CONFIG_SCHEMA_VERSION,
   type EkkoConfig,
   type EkkoConfigPatch,
+  type EkkoMcpServerConfig,
   type EkkoModelAuthorizationSettings,
   type EkkoModelProviderSettings,
 } from './config'
@@ -74,6 +75,7 @@ const OPENAI_CHAT_REASONING_FORMATS: OpenAIChatReasoningReplayFormat[] = [
   'none',
 ]
 const PROVIDER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
 const CREDENTIAL_HEADER_NAMES = new Set([
   'authorization',
   'proxy-authorization',
@@ -156,6 +158,115 @@ export class EkkoConfigStore {
 
   reset(): EkkoConfig {
     return this.replace(cloneDefaultConfig())
+  }
+
+  getSkillProfile(profile = 'default'): EkkoConfig['skills']['profiles'][string] {
+    const profileId = normalizeProfileId(profile)
+    return structuredClone(this.read().skills.profiles[profileId] ?? {
+      disabled: [],
+      externalDirectories: [],
+    })
+  }
+
+  setSkillExternalDirectories(directories: string[], profile = 'default'): EkkoConfig {
+    const profileId = normalizeProfileId(profile)
+    const current = this.read()
+    const existing = current.skills.profiles[profileId]
+    return this.replace(normalizeEkkoConfig({
+      ...current,
+      skills: {
+        ...current.skills,
+        profiles: {
+          ...current.skills.profiles,
+          [profileId]: {
+            disabled: existing?.disabled ?? [],
+            externalDirectories: directories,
+          },
+        },
+      },
+    }))
+  }
+
+  setSkillEnabled(name: string, enabled: boolean, profile = 'default'): EkkoConfig {
+    const profileId = normalizeProfileId(profile)
+    const skillName = normalizeSkillName(name)
+    const current = this.read()
+    const existing = current.skills.profiles[profileId]
+    const disabled = new Set(existing?.disabled ?? [])
+    if (enabled) disabled.delete(skillName)
+    else disabled.add(skillName)
+    return this.replace(normalizeEkkoConfig({
+      ...current,
+      skills: {
+        ...current.skills,
+        profiles: {
+          ...current.skills.profiles,
+          [profileId]: {
+            externalDirectories: existing?.externalDirectories ?? [],
+            disabled: [...disabled].sort((left, right) => left.localeCompare(right)),
+          },
+        },
+      },
+    }))
+  }
+
+  listMcpServers(profile = 'default'): Record<string, EkkoMcpServerConfig> {
+    const key = normalizeProfileId(profile)
+    return structuredClone(this.read().mcp.profiles[key]?.servers ?? {})
+  }
+
+  getMcpServer(name: string, profile = 'default'): EkkoMcpServerConfig | undefined {
+    const serverName = normalizeMcpServerName(name)
+    const server = this.listMcpServers(profile)[serverName]
+    return server ? structuredClone(server) : undefined
+  }
+
+  setMcpServer(
+    name: string,
+    settings: EkkoMcpServerConfig,
+    profile = 'default',
+  ): EkkoConfig {
+    const profileId = normalizeProfileId(profile)
+    const serverName = normalizeMcpServerName(name)
+    const current = this.read()
+    const existingProfile = current.mcp.profiles[profileId]
+    return this.replace(normalizeEkkoConfig({
+      ...current,
+      mcp: {
+        ...current.mcp,
+        profiles: {
+          ...current.mcp.profiles,
+          [profileId]: {
+            ...existingProfile,
+            servers: {
+              ...existingProfile?.servers,
+              [serverName]: settings,
+            },
+          },
+        },
+      },
+    }))
+  }
+
+  deleteMcpServer(name: string, profile = 'default'): boolean {
+    const profileId = normalizeProfileId(profile)
+    const serverName = normalizeMcpServerName(name)
+    const current = this.read()
+    const existingProfile = current.mcp.profiles[profileId]
+    if (!existingProfile?.servers[serverName]) return false
+    const servers = { ...existingProfile.servers }
+    delete servers[serverName]
+    this.replace(normalizeEkkoConfig({
+      ...current,
+      mcp: {
+        ...current.mcp,
+        profiles: {
+          ...current.mcp.profiles,
+          [profileId]: { ...existingProfile, servers },
+        },
+      },
+    }))
+    return true
   }
 
   listModelProviderPresets(): EkkoModelProviderPreset[] {
@@ -427,6 +538,7 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
   const tools = record(source.tools, 'tools', true)
   const approvals = record(tools.approvals, 'tools.approvals', true)
   const codeExec = record(tools.codeExec, 'tools.codeExec', true)
+  const mcp = record(source.mcp, 'mcp', true)
   const delegation = record(source.delegation, 'delegation', true)
   const memory = record(source.memory, 'memory', true)
   const skills = record(source.skills, 'skills', true)
@@ -441,6 +553,8 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
   for (const provider of disabledProviderPresets) delete providerCatalog[provider]
   const providers = normalizeProviders(model.providers)
   const authorizations = normalizeAuthorizations(model.authorizations)
+  const mcpProfiles = normalizeMcpProfiles(mcp.profiles)
+  const skillProfiles = normalizeSkillProfiles(skills.profiles)
 
   const normalized: EkkoConfig = {
     ...source,
@@ -534,6 +648,11 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
         maxSourceBytes: integer(codeExec.maxSourceBytes, DEFAULT_EKKO_CONFIG.tools.codeExec.maxSourceBytes, 'tools.codeExec.maxSourceBytes', 1),
       },
     },
+    mcp: {
+      ...mcp,
+      enabled: booleanValue(mcp.enabled, DEFAULT_EKKO_CONFIG.mcp.enabled, 'mcp.enabled'),
+      profiles: mcpProfiles,
+    },
     delegation: {
       ...delegation,
       backgroundEnabled: booleanValue(
@@ -554,12 +673,15 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
       recentMessageLimit: integer(memory.recentMessageLimit, DEFAULT_EKKO_CONFIG.memory.recentMessageLimit, 'memory.recentMessageLimit', 1),
       automaticRecallTokenBudget: integer(memory.automaticRecallTokenBudget, DEFAULT_EKKO_CONFIG.memory.automaticRecallTokenBudget, 'memory.automaticRecallTokenBudget', 0),
       searchResultLimit: integer(memory.searchResultLimit, DEFAULT_EKKO_CONFIG.memory.searchResultLimit, 'memory.searchResultLimit', 1),
-      reviewEveryUserMessages: integer(memory.reviewEveryUserMessages, DEFAULT_EKKO_CONFIG.memory.reviewEveryUserMessages, 'memory.reviewEveryUserMessages', 1),
+      reviewEveryUserMessages: sourceSchemaVersion < 5 && Number(memory.reviewEveryUserMessages) === 1
+        ? DEFAULT_EKKO_CONFIG.memory.reviewEveryUserMessages
+        : integer(memory.reviewEveryUserMessages, DEFAULT_EKKO_CONFIG.memory.reviewEveryUserMessages, 'memory.reviewEveryUserMessages', 1),
     },
     skills: {
       ...skills,
       enabled: booleanValue(skills.enabled, DEFAULT_EKKO_CONFIG.skills.enabled, 'skills.enabled'),
       reviewEveryToolCalls: integer(skills.reviewEveryToolCalls, DEFAULT_EKKO_CONFIG.skills.reviewEveryToolCalls, 'skills.reviewEveryToolCalls', 0),
+      profiles: skillProfiles,
     },
     logging: {
       ...logging,
@@ -623,9 +745,27 @@ function mergeConfigPatch(current: EkkoConfig, patch: EkkoConfigPatch): JsonReco
       approvals: { ...current.tools.approvals, ...patch.tools?.approvals },
       codeExec: { ...current.tools.codeExec, ...patch.tools?.codeExec },
     },
+    mcp: {
+      ...current.mcp,
+      ...patch.mcp,
+      profiles: {
+        ...current.mcp.profiles,
+        ...patch.mcp?.profiles,
+      },
+    },
     delegation: { ...current.delegation, ...patch.delegation },
     memory: { ...current.memory, ...patch.memory },
-    skills: { ...current.skills, ...patch.skills },
+    skills: {
+      ...current.skills,
+      ...patch.skills,
+      profiles: {
+        ...current.skills.profiles,
+        ...Object.fromEntries(Object.entries(patch.skills?.profiles ?? {}).map(([profile, value]) => [
+          profile,
+          { ...current.skills.profiles[profile], ...value },
+        ])),
+      },
+    },
     logging: { ...current.logging, ...patch.logging },
     prompt: { ...current.prompt, ...patch.prompt },
   }
@@ -654,6 +794,91 @@ function mergeMissingDefaults(defaults: unknown, current: unknown): unknown {
     merged[key] = mergeMissingDefaults(defaultValue, currentRecord[key])
   }
   return merged
+}
+
+function normalizeMcpProfiles(value: unknown): EkkoConfig['mcp']['profiles'] {
+  const source = record(value, 'mcp.profiles', true)
+  const profiles: EkkoConfig['mcp']['profiles'] = {}
+  for (const [rawProfile, rawProfileConfig] of Object.entries(source)) {
+    const profile = normalizeProfileId(rawProfile)
+    const path = `mcp.profiles.${profile}`
+    const profileConfig = record(rawProfileConfig, path)
+    const rawServers = record(profileConfig.servers, `${path}.servers`, true)
+    const servers: Record<string, EkkoMcpServerConfig> = {}
+    for (const [rawName, rawServer] of Object.entries(rawServers)) {
+      const name = normalizeMcpServerName(rawName)
+      servers[name] = normalizeMcpServerConfig(rawServer, `${path}.servers.${name}`)
+    }
+    profiles[profile] = { ...profileConfig, servers }
+  }
+  return profiles
+}
+
+function normalizeMcpServerConfig(value: unknown, path: string): EkkoMcpServerConfig {
+  const source = record(value, path)
+  const configuredType = source.type === undefined
+    ? undefined
+    : enumValue(source.type, ['stdio', 'streamable_http'] as const, undefined, `${path}.type`)
+  const command = optionalString(source.command, `${path}.command`)
+  const url = optionalString(source.url, `${path}.url`)
+  const type = configuredType ?? (url ? 'streamable_http' : 'stdio')
+  if (type === 'stdio' && !command) throw new EkkoConfigError('is required for stdio MCP servers', `${path}.command`)
+  if (type === 'streamable_http' && !url) throw new EkkoConfigError('is required for Streamable HTTP MCP servers', `${path}.url`)
+  if (url) validateMcpHttpUrl(url, `${path}.url`)
+  const args = source.args === undefined
+    ? undefined
+    : mcpArgs(source.args, `${path}.args`)
+  const env = source.env === undefined
+    ? undefined
+    : stringRecord(source.env, `${path}.env`)
+  const headers = source.headers === undefined
+    ? undefined
+    : stringRecord(source.headers, `${path}.headers`)
+  return {
+    ...source,
+    ...(configuredType || type === 'streamable_http' ? { type } : {}),
+    ...(type === 'stdio' ? { command, ...(args ? { args } : {}), ...(env ? { env } : {}) } : {}),
+    ...(type === 'streamable_http' ? { url, ...(headers ? { headers } : {}) } : {}),
+    enabled: booleanValue(source.enabled, true, `${path}.enabled`),
+  }
+}
+
+function normalizeSkillProfiles(value: unknown): EkkoConfig['skills']['profiles'] {
+  const source = record(value, 'skills.profiles', true)
+  const profiles: EkkoConfig['skills']['profiles'] = {}
+  for (const [rawProfile, rawProfileConfig] of Object.entries(source)) {
+    const profile = normalizeProfileId(rawProfile)
+    const path = `skills.profiles.${profile}`
+    const profileConfig = record(rawProfileConfig, path)
+    profiles[profile] = {
+      ...profileConfig,
+      disabled: stringArray(profileConfig.disabled, [], `${path}.disabled`).map(normalizeSkillName),
+      externalDirectories: externalDirectoryArray(
+        profileConfig.externalDirectories,
+        `${path}.externalDirectories`,
+      ),
+    }
+  }
+  return profiles
+}
+
+function validateMcpHttpUrl(value: string, path: string): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new EkkoConfigError('must be a valid URL', path)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new EkkoConfigError('must use http or https', path)
+  }
+}
+
+function mcpArgs(value: unknown, path: string): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new EkkoConfigError('must be an array of strings', path)
+  }
+  return [...value]
 }
 
 function normalizeProviderCatalog(value: unknown): Record<string, EkkoModelProviderPreset> {
@@ -809,6 +1034,32 @@ function normalizeProviderId(value: string): string {
   return id
 }
 
+function normalizeProfileId(value: string): string {
+  return String(value || '').trim() || 'default'
+}
+
+function normalizeSkillName(value: string): string {
+  const name = String(value || '').trim().toLowerCase()
+  if (!/^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/.test(name)) {
+    throw new EkkoConfigError(
+      'must use lowercase letters, numbers, hyphens, or underscores (maximum 64 characters)',
+      'Skill name',
+    )
+  }
+  return name
+}
+
+function normalizeMcpServerName(value: string): string {
+  const name = String(value || '').trim()
+  if (!MCP_SERVER_NAME_PATTERN.test(name)) {
+    throw new EkkoConfigError(
+      'must contain letters, numbers, dots, underscores, or dashes (maximum 64 characters)',
+      'MCP server name',
+    )
+  }
+  return name
+}
+
 function record(value: unknown, path: string, optional = false): JsonRecord {
   if (value === undefined && optional) return {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -852,6 +1103,10 @@ function requiredString(value: unknown, path: string): string {
   return normalized
 }
 
+function optionalString(value: unknown, path: string): string | undefined {
+  return value === undefined ? undefined : requiredString(value, path)
+}
+
 function isoDateString(value: unknown, path: string): string {
   const normalized = requiredString(value, path)
   const timestamp = Date.parse(normalized)
@@ -865,6 +1120,16 @@ function stringArray(value: unknown, fallback: readonly string[], path: string):
     throw new EkkoConfigError('must be an array of strings', path)
   }
   return [...new Set(value.map(item => item.trim()).filter(Boolean))]
+}
+
+function externalDirectoryArray(value: unknown, path: string): string[] {
+  const directories = stringArray(value, [], path)
+  for (const directory of directories) {
+    if (directory.length > 2_048) throw new EkkoConfigError('path is too long', path)
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f]/.test(directory)) throw new EkkoConfigError('path contains control characters', path)
+  }
+  return directories
 }
 
 function stringRecord(value: unknown, path: string): Record<string, string> {

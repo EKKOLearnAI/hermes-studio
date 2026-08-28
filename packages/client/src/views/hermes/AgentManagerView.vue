@@ -285,6 +285,15 @@ onMounted(() => {
                   </div>
                 </div>
               </header>
+              <div class="agent-actions">
+                <NButton
+                  secondary
+                  size="small"
+                  @click="router.push({ name: 'ekko.settings' })"
+                >
+                  {{ t('sidebar.settings') }}
+                </NButton>
+              </div>
             </section>
 
           <section class="agent-card coding-agent-card hermes-card" data-testid="agent-card-hermes">

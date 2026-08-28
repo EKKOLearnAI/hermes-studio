@@ -1,6 +1,8 @@
 import { socialMessagesRu } from '../social-messages-locales'
+import { ekkoConfigRu } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigRu,
   socialMessages: socialMessagesRu,
   browser: {
     title: 'Браузер', settings: 'Настройки браузера', desktopOnly: 'Встроенный браузер доступен только в Hermes Studio Desktop.', newTab: 'Новая вкладка',

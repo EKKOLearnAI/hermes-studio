@@ -37,6 +37,7 @@ import type { AgentRuntimeOptions } from './runtime/types'
 import { createDefaultToolRegistry } from './tools/registry'
 import { EkkoToolManager } from './tools/manager'
 import { EkkoSkillManager } from './skills/manager'
+import { resolveEkkoExternalSkillDirectories } from './skills/external-directories'
 import { EkkoFileLogger } from './logging/file-logger'
 import type {
   EkkoConfig,
@@ -127,12 +128,20 @@ export class EkkoAgentSetup {
       now: options.authorizationNow,
     })
     this.currentToolApprovals = this.createToolApprovals(config)
-    this.unsubscribeConfig = this.config.onDidChange(nextConfig => {
-      this.currentToolApprovals = this.createToolApprovals(nextConfig)
-    })
     this.authorization = this.authorizations
     this.tool = new EkkoToolManager({
       createRegistry: profile => this.createProfileToolRegistry(profile),
+    })
+    this.unsubscribeConfig = this.config.onDidChange(nextConfig => {
+      this.currentToolApprovals = this.createToolApprovals(nextConfig)
+      this.tool.invalidate()
+      this.memory?.configure({
+        enabled: nextConfig.memory.enabled,
+        recentMessageLimit: nextConfig.memory.recentMessageLimit,
+        automaticRecallTokenBudget: nextConfig.memory.automaticRecallTokenBudget,
+        searchResultLimit: nextConfig.memory.searchResultLimit,
+        reviewEveryUserMessages: nextConfig.memory.reviewEveryUserMessages,
+      })
     })
     this.skill = new EkkoSkillManager(this.tool)
     this.model = new EkkoModelManager({
@@ -273,6 +282,19 @@ export class EkkoAgentSetup {
     const toolsEnabled = runtimeOverrides.toolsEnabled ?? config.tools.enabled
     const skillsEnabled = runtimeOverrides.skillsEnabled ?? config.skills.enabled
     const skillDirectory = runtimeOverrides.skillDirectory ?? profileLayout.skillDirectory
+    const profileSkillConfig = config.skills.profiles[profileLayout.profile] ?? {
+      disabled: [],
+      externalDirectories: [],
+    }
+    const usesProfileSkillDirectory = skillDirectory === profileLayout.skillDirectory
+    const externalSkillDirectories = runtimeOverrides.externalSkillDirectories
+      ?? (usesProfileSkillDirectory
+        ? resolveEkkoExternalSkillDirectories(profileSkillConfig.externalDirectories, {
+            localSkillDirectory: profileLayout.skillDirectory,
+          })
+        : [])
+    const disabledSkillNames = runtimeOverrides.disabledSkillNames
+      ?? (usesProfileSkillDirectory ? profileSkillConfig.disabled : [])
     const toolAuthorizer = runtimeOverrides.toolAuthorizer ?? this.toolApprovals.authorize
     const selectedProvider = String(provider || config.model.defaultProvider || '').trim()
     const modelClient = runtimeOverrides.modelClient ?? (selectedProvider
@@ -281,9 +303,14 @@ export class EkkoAgentSetup {
     const tools = runtimeOverrides.tools ?? (toolsEnabled
       ? this.tool.createRuntimeRegistry(
           profile,
-          skillDirectory === profileLayout.skillDirectory
+          usesProfileSkillDirectory
             ? undefined
-            : this.createProfileToolRegistry(profile, skillDirectory),
+            : this.createProfileToolRegistry(
+                profile,
+                skillDirectory,
+                externalSkillDirectories,
+                disabledSkillNames,
+              ),
         )
       : undefined)
     const modelDefaults = {
@@ -291,6 +318,12 @@ export class EkkoAgentSetup {
       ...runtimeOverrides.modelDefaults,
       ...(model ? { model } : {}),
     }
+    const configuredMcpServers = config.mcp.enabled
+      ? config.mcp.profiles[profileLayout.profile]?.servers ?? {}
+      : {}
+    const toolContext = runtimeOverrides.toolContext?.mcpServers === undefined
+      ? { ...runtimeOverrides.toolContext, mcpServers: configuredMcpServers }
+      : runtimeOverrides.toolContext
 
     return new AgentRuntime({
       ...runtimeOverrides,
@@ -299,9 +332,12 @@ export class EkkoAgentSetup {
       toolsEnabled,
       tools,
       toolAuthorizer,
+      toolContext,
       skillsEnabled,
       skills: runtimeOverrides.skills ?? this.skill.runtimeSkills(profile),
       skillDirectory,
+      externalSkillDirectories,
+      disabledSkillNames,
       skillReviewEveryToolCalls: runtimeOverrides.skillReviewEveryToolCalls
         ?? config.skills.reviewEveryToolCalls,
       runtimeInstructions: runtimeOverrides.runtimeInstructions ?? config.prompt.instructions,
@@ -380,11 +416,21 @@ export class EkkoAgentSetup {
     delete (this as Record<string, unknown>)[profileAgent.profile]
   }
 
-  private createProfileToolRegistry(profile: string, skillDirectory?: string) {
+  private createProfileToolRegistry(
+    profile: string,
+    skillDirectory?: string,
+    externalSkillDirectories = resolveEkkoExternalSkillDirectories(
+      this.config.getSkillProfile(profile).externalDirectories,
+      { localSkillDirectory: this.ensureProfile(profile).skillDirectory },
+    ),
+    disabledSkillNames = this.config.getSkillProfile(profile).disabled,
+  ) {
     const config = this.config.read()
     const profileLayout = this.ensureProfile(profile)
     return createDefaultToolRegistry({
       skillDirectory: skillDirectory ?? profileLayout.skillDirectory,
+      externalSkillDirectories,
+      disabledSkillNames,
       authorizer: (name, input, context) => this.toolApprovals.authorize(name, input, context),
       executionTimeoutMs: config.tools.executionTimeoutMs,
       codeExec: {

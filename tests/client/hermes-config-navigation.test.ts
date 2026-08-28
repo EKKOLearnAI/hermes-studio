@@ -11,6 +11,7 @@ describe("Hermes configuration navigation", () => {
     const configSidebar = readClientFile(
       "components/layout/HermesConfigSidebar.vue",
     );
+    const sharedSidebarStyles = readClientFile("styles/_agent-config-sidebar.scss");
     const router = readClientFile("router/index.ts");
 
     expect(app).toContain("@/components/layout/HermesConfigSidebar.vue");
@@ -40,10 +41,14 @@ describe("Hermes configuration navigation", () => {
     expect(configSidebar).toContain('class="hermes-config-collapse"');
     expect(configSidebar).toContain("appStore.toggleSidebarCollapsed()");
     expect(configSidebar).toContain("collapsed: appStore.sidebarCollapsed");
-    expect(configSidebar).toContain("padding: 8px 12px 20px");
-    expect(configSidebar).toContain("font-size: 14px");
-    expect(configSidebar).toContain("width: 28px");
-    expect(configSidebar).toContain("padding: 8px 8px 12px");
+    expect(configSidebar).toContain('@include agent-config-sidebar.layout("hermes")');
+    const mainGearPath = "M19.4 15a1.65 1.65 0 0 0 .33 1.82";
+    expect(appSidebar).toContain(mainGearPath);
+    expect(configSidebar).toContain(mainGearPath);
+    expect(sharedSidebarStyles).toContain("padding: 8px 12px 20px");
+    expect(sharedSidebarStyles).toContain("font-size: 14px");
+    expect(sharedSidebarStyles).toContain("width: 28px");
+    expect(sharedSidebarStyles).toContain("padding: 8px 8px 12px");
 
     for (const label of [
       "sidebar.kanban",

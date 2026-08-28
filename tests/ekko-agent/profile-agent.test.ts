@@ -34,7 +34,7 @@ describe('profile agent facade', () => {
       expect(work.memory).not.toBe(personal.memory)
       expect(work.validation).toMatchObject({
         profile: 'work',
-        configSchemaVersion: 3,
+        configSchemaVersion: 6,
         directories: {
           skill: join(baseDirectory, '.ekko', 'skills', 'work'),
           log: join(baseDirectory, '.ekko', 'logs', 'work'),
@@ -103,6 +103,7 @@ describe('profile agent facade', () => {
       expect(requests[0].tools).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'work_only' }),
       ]))
+      expect(requests[0].messages[0].content).toContain('profile: work')
       expect(runtimeToolProfiles).toContain('work')
 
       const session = work.conversation.createSession({ title: 'Work session' })

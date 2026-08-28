@@ -236,18 +236,18 @@ onUnmounted(() => {
         :active="activeRoute === 'hermes.configSettings'"
       >
         <svg
-          width="17"
-          height="17"
+          width="16"
+          height="16"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          stroke-width="1.7"
+          stroke-width="1.5"
           stroke-linecap="round"
           stroke-linejoin="round"
         >
           <circle cx="12" cy="12" r="3" />
           <path
-            d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.9 2.9-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5v.1h-4v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.9-2.9.1-.1a1.7 1.7 0 0 0 .3-1.8A1.7 1.7 0 0 0 3.1 14H3v-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.9-2.9.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3h4v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.9 2.9-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1Z"
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
           />
         </svg>
         <span>{{ t("sidebar.settings") }}</span>
@@ -303,187 +303,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-@use "@/styles/variables" as *;
+@use "@/styles/agent-config-sidebar" as agent-config-sidebar;
 
-.hermes-config-sidebar {
-  position: relative;
-  width: $sidebar-width;
-  min-width: $sidebar-width;
-  height: auto;
-  min-height: 0;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  margin: 10px;
-  padding: 8px 12px 20px;
-  overflow: hidden;
-  flex-shrink: 0;
-  border: 1px solid $border-color;
-  border-radius: 14px;
-  background-color: $bg-sidebar-surface;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-  transition:
-    width $transition-normal,
-    min-width $transition-normal,
-    padding $transition-normal;
-}
-
-.hermes-config-nav {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
-  overflow-y: auto;
-  min-height: 0;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-.hermes-config-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  border: none;
-  background: none;
-  appearance: none;
-  text-decoration: none;
-  color: $text-secondary;
-  font-size: 14px;
-  border-radius: $radius-sm;
-  cursor: pointer;
-  transition: all $transition-fast;
-  width: 100%;
-  text-align: start;
-
-  &:hover {
-    background-color: rgba(var(--accent-primary-rgb), 0.06);
-    color: $text-primary;
-  }
-
-  &.active {
-    background-color: rgba(var(--accent-primary-rgb), 0.12);
-    color: $accent-primary;
-  }
-
-  svg {
-    flex: 0 0 auto;
-  }
-}
-
-.hermes-config-footer {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid $border-color;
-}
-
-.hermes-config-return {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 8px 10px;
-  color: $text-muted;
-  font-size: 13px;
-}
-
-.hermes-config-collapse {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  appearance: none;
-  text-decoration: none;
-  color: $text-muted;
-  border-radius: $radius-sm;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin: 0;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $text-primary;
-    background-color: rgba(var(--accent-primary-rgb), 0.08);
-  }
-}
-
-.hermes-config-sidebar.collapsed {
-  width: $sidebar-collapsed-width;
-  min-width: $sidebar-collapsed-width;
-  padding: 8px 8px 12px;
-  overflow: hidden;
-
-  .hermes-config-nav-item {
-    justify-content: center;
-    gap: 0;
-    padding: 10px 4px;
-
-    span {
-      display: none;
-    }
-
-    svg {
-      flex-shrink: 0;
-    }
-  }
-
-  .hermes-config-footer {
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 8px;
-    padding-top: 8px;
-  }
-
-  .hermes-config-return {
-    width: 100%;
-    flex: 0 0 auto;
-  }
-}
-
-.hermes-config-backdrop {
-  display: none;
-}
-
-@media (max-width: $breakpoint-mobile) {
-  .hermes-config-backdrop {
-    position: fixed;
-    z-index: 1090;
-    inset: 0;
-    display: block;
-    background: rgba(0, 0, 0, 0.42);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity $transition-normal;
-
-    &.active {
-      opacity: 1;
-      pointer-events: auto;
-    }
-  }
-
-  .hermes-config-sidebar {
-    position: fixed;
-    z-index: 1100;
-    inset: 0 auto 0 0;
-    height: 100%;
-    margin: 0;
-    border-width: 0 1px 0 0;
-    border-radius: 0;
-    transform: translateX(-102%);
-    transition: transform $transition-normal;
-
-    &.open {
-      transform: translateX(0);
-    }
-  }
-}
+@include agent-config-sidebar.layout("hermes");
 </style>

@@ -33,6 +33,124 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
+  it('keeps identical canonical keys independent across profile, context, and session scopes', async () => {
+    const contextA = { type: 'context' as const, namespace: 'test.chat', id: 'conversation-a' }
+    const contextB = { type: 'context' as const, namespace: 'test.chat', id: 'conversation-b' }
+    const profile = { type: 'profile' as const }
+    const session = { type: 'session' as const, id: 'runtime-a' }
+    const createLocation = async (scope: typeof profile | typeof contextA | typeof contextB | typeof session, value: string) => service.proposeUpdate({
+      operation: 'create',
+      kind: 'home_location',
+      scope,
+      reason: `Store ${value} in its declared scope.`,
+      explicitUserIntent: true,
+      identity: {
+        sessionId: 'runtime-a',
+        profileId: 'default',
+        recallScopes: [profile, contextA, contextB, session],
+        writeScopes: [profile, contextA, contextB, session],
+        defaultWriteScope: scope,
+        origin: { host: 'test-host', namespace: 'chat', contextId: scope.type === 'context' ? scope.id : 'runtime-a' },
+      },
+      node: { valueJson: value, title: `常住地：${value}`, content: `用户常住在${value}。` },
+    })
+
+    const profileNode = await createLocation(profile, '上海')
+    const contextANode = await createLocation(contextA, '北京')
+    const contextBNode = await createLocation(contextB, '广州')
+    const sessionNode = await createLocation(session, '杭州')
+
+    expect([profileNode, contextANode, contextBNode, sessionNode])
+      .toEqual(expect.arrayContaining([expect.objectContaining({ accepted: true, action: 'created' })]))
+    await expect(service.list({ profileId: 'default', key: 'profile.location.home' }))
+      .resolves.toHaveLength(4)
+
+    const currentConversation = await service.search({
+      sessionId: 'runtime-a',
+      profileId: 'default',
+      recallScopes: [profile, contextA, session],
+    }, { kinds: ['home_location'], limit: 10 })
+    expect(currentConversation.exact.map(node => node.valueJson)).toEqual(expect.arrayContaining(['上海', '北京', '杭州']))
+    expect(currentConversation.exact.map(node => node.valueJson)).not.toContain('广州')
+
+    const legacyCaller = await service.search(
+      { sessionId: 'legacy-runtime', profileId: 'default' },
+      { kinds: ['home_location'], limit: 10 },
+    )
+    expect(legacyCaller.exact.map(node => node.valueJson)).toEqual(['上海'])
+    await expect(service.get(contextANode.nodeId!, {
+      sessionId: 'legacy-runtime',
+      profileId: 'default',
+    })).resolves.toBeUndefined()
+    await expect(service.get(contextANode.nodeId!, { profileId: 'default' }))
+      .resolves.toMatchObject({ valueJson: '北京', scope: contextA })
+    expect(contextANode.node).toMatchObject({
+      scope: contextA,
+      origin: { host: 'test-host', namespace: 'chat', contextId: 'conversation-a' },
+    })
+  })
+
+  it('migrates version-3 nodes to profile scope without deleting them', async () => {
+    const manager = new EkkoDatabaseManager({ databasePath: join(webUiHome, 'legacy-memory.db') })
+    manager.connection.exec(`
+      CREATE TABLE memory_nodes (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        parent_id TEXT,
+        supersedes_id TEXT,
+        profile_id TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        category_path_json TEXT NOT NULL,
+        category_path_text TEXT NOT NULL,
+        type TEXT NOT NULL,
+        key TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        value_json TEXT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        importance REAL NOT NULL,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        entities_json TEXT NOT NULL DEFAULT '[]',
+        source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT
+      );
+      CREATE UNIQUE INDEX idx_memory_nodes_unique_active_key
+        ON memory_nodes (profile_id, key) WHERE status = 'active';
+    `)
+    manager.connection.prepare(
+      'INSERT INTO schema_migrations (component, version, applied_at) VALUES (?, ?, ?)',
+    ).run('memory', 3, '2026-01-01T00:00:00.000Z')
+    manager.connection.prepare(`
+      INSERT INTO memory_nodes (
+        id, profile_id, domain, category_path_json, category_path_text, type, key,
+        revision, value_json, title, content, status, confidence, importance,
+        tags_json, entities_json, source_message_ids_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'legacy-node', 'default', 'profile', '["location"]', 'location', 'fact',
+      'profile.location.home', 1, '"\u82cf\u5dde"', '常住地', '用户常住苏州。', 'active', 0.9, 0.8,
+      '[]', '["\u82cf\u5dde"]', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+    )
+
+    const migrated = new SqliteMemoryStore(manager)
+    try {
+      await expect(migrated.getNode('legacy-node')).resolves.toMatchObject({
+        id: 'legacy-node',
+        scope: { type: 'profile' },
+        valueJson: '苏州',
+      })
+      expect(manager.connection.prepare(
+        'SELECT 1 AS applied FROM schema_migrations WHERE component = ? AND version = ?',
+      ).get('memory', 4)).toMatchObject({ applied: 1 })
+    } finally {
+      migrated.close()
+    }
+  })
+
   it('exposes standalone CRUD, history, and audit methods', async () => {
     const identity = { sessionId: 'memory-api', profileId: 'default' }
     const messageIds = await service.captureMessages(identity, [
@@ -66,6 +184,7 @@ describe('MemoryService', () => {
       identity,
       node: {
         valueJson: 'light',
+        title: 'Interface theme',
         content: 'The user prefers a light interface.',
       },
     })
@@ -229,7 +348,7 @@ describe('MemoryService', () => {
       kind: 'home_location',
       reason: '用户陈述常住地。',
       identity,
-      node: { valueJson: '测试城市' },
+      node: { valueJson: '测试城市', title: '用户常住地', content: '用户常住在测试城市。' },
     })
 
     const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_search')!
@@ -402,7 +521,7 @@ describe('MemoryService', () => {
     ])
     await service.drain()
 
-    const result = await service.search(identity, { domain: 'custom', key: 'custom.fact:food_flavor_profile' })
+    const result = await service.search(identity, { domain: 'preference', key: 'preference.general:food_flavor_profile' })
     expect([...result.exact, ...result.relevant]).toMatchObject([{
       profileId: 'default',
       valueJson: { oil: 'low', spicy: 'low' },
@@ -453,15 +572,27 @@ describe('MemoryService', () => {
     })
   })
 
-  it('reviews every completed user turn by default and lets the curator decide noop', async () => {
-    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Default review.', nodes: [] })
+  it('batches ordinary turns at the default review interval', async () => {
+    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Default batched review.', nodes: [] })
     const responsive = new MemoryService({ store, extractor: { extract } })
+
+    for (let turn = 1; turn <= 7; turn += 1) {
+      responsive.scheduleRunCompletion(
+        { sessionId: 'default-review-session', profileId: 'default' },
+        [
+          { role: 'user', content: `ordinary question ${turn}` },
+          { role: 'assistant', content: `ordinary answer ${turn}` },
+        ],
+      )
+    }
+    await responsive.drain()
+    expect(extract).not.toHaveBeenCalled()
 
     responsive.scheduleRunCompletion(
       { sessionId: 'default-review-session', profileId: 'default' },
       [
-        { role: 'user', content: '你好' },
-        { role: 'assistant', content: '你好！' },
+        { role: 'user', content: 'ordinary question 8' },
+        { role: 'assistant', content: 'ordinary answer 8' },
       ],
     )
     await responsive.drain()
@@ -518,7 +649,7 @@ describe('MemoryService', () => {
     expect(extract.mock.calls.map(call => call[0].messages[0].content)).toEqual(statements)
   })
 
-  it('injects retrieved memory and memory tools into runtime requests', async () => {
+  it('injects retrieved memory and read-only memory tools into foreground runtime requests', async () => {
     await service.proposeUpdate({
       operation: 'create',
       kind: 'food_avoidance',
@@ -539,32 +670,45 @@ describe('MemoryService', () => {
     const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
     expect(request.messages[0].content).toContain('## Memory Usage Rules')
     expect(request.messages[0].content).toContain('about to answer that you do not know or remember')
+    expect(request.messages[0].content).toContain('MUST call memory_review exactly once')
     expect(request.messages[0].content).toContain('Avoid 香菜')
     expect(request.messages[0].content).toContain('key=preference.food.avoid:香菜 revision=1')
     expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
-      'memory_search', 'memory_get', 'memory_propose_update', 'memory_forget',
+      'memory_search', 'memory_get', 'memory_review',
+    ]))
+    expect(request.tools?.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
+      'memory_propose_update', 'memory_forget',
     ]))
     expect(result.memoryContext?.usedMemoryIds).toHaveLength(1)
   })
 
-  it('attaches the latest user message id to foreground memory writes', async () => {
+  it('surfaces a safe foreground memory_review tool call before the post-run curator writes', async () => {
     const create = vi.fn()
       .mockResolvedValueOnce({
         content: '',
         finishReason: 'tool_calls',
         toolCalls: [{
-          id: 'foreground-memory-call',
+          id: 'foreground-memory-review',
+          name: 'memory_review',
+          arguments: {},
+        }],
+      })
+      .mockResolvedValueOnce({ content: '已送交记忆审核。', finishReason: 'stop' })
+      .mockResolvedValueOnce({
+        content: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{
+          id: 'curator-memory-call',
           name: 'memory_propose_update',
           arguments: {
             operation: 'create',
             kind: 'home_location',
             explicitUserIntent: true,
             reason: '用户明确说明当前常住地。',
-            node: { valueJson: '贵阳' },
+            node: { valueJson: '贵阳', title: '用户常住地', content: '用户当前常住在贵阳。' },
           },
         }],
       })
-      .mockResolvedValueOnce({ content: '记住了。', finishReason: 'stop' })
       .mockResolvedValueOnce({
         content: JSON.stringify({
           recentTopic: '更新常住地',
@@ -586,11 +730,27 @@ describe('MemoryService', () => {
     }
     const runtime = new AgentRuntime({ modelClient: client, memory: service })
 
-    await runtime.run({
-      messages: ['我现在常住贵阳'],
+    const runResult = await runtime.run({
+      messages: ['请记住我现在常住贵阳'],
       contextKey: 'foreground-source-session',
       toolContext: { sessionId: 'foreground-source-session', profileId: 'default' },
     })
+    const foregroundReviewRequest = create.mock.calls[0][0] as ModelRequest
+    expect(foregroundReviewRequest.toolChoice).toBe('required')
+    expect(foregroundReviewRequest.tools?.map(tool => tool.name)).toEqual(['memory_review'])
+    const foregroundAnswerRequest = create.mock.calls[1][0] as ModelRequest
+    expect(foregroundAnswerRequest.tools?.map(tool => tool.name)).not.toContain('memory_review')
+    expect(runResult.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool',
+        toolName: 'memory_review',
+        result: expect.objectContaining({
+          ok: true,
+          data: { requested: true },
+        }),
+      }),
+    ]))
+    await service.drain()
 
     const result = await service.search(
       { sessionId: 'foreground-source-session', profileId: 'default' },
@@ -605,9 +765,8 @@ describe('MemoryService', () => {
       .resolves.toEqual(expect.arrayContaining([expect.objectContaining({
         id: sourceId,
         role: 'user',
-        content: '我现在常住贵阳',
+        content: '请记住我现在常住贵阳',
       })]))
-    await service.drain()
   })
 
   it('uses a dedicated model pass with only memory tools to summarize and persist memory', async () => {
@@ -620,13 +779,14 @@ describe('MemoryService', () => {
           name: 'memory_propose_update',
           arguments: {
             operation: 'create',
-            kind: 'language_preference',
-            reason: 'The user explicitly requested a durable preference.',
+            kind: 'workflow_preference',
+            itemKey: 'code_examples',
+            reason: '用户明确要求长期使用 TypeScript 代码示例。',
             explicitUserIntent: true,
             node: {
               valueJson: 'TypeScript',
-              title: 'Preferred programming language',
-              content: 'Prefer TypeScript for code examples.',
+              title: '代码示例语言偏好',
+              content: '以后的代码示例优先使用 TypeScript。',
               confidence: 0.98,
               importance: 0.9,
             },
@@ -635,12 +795,12 @@ describe('MemoryService', () => {
       })
       .mockResolvedValueOnce({
         content: JSON.stringify({
-          recentTopic: 'Configured a preference for TypeScript examples',
+          recentTopic: '设置 TypeScript 代码示例偏好',
           currentGoal: '',
-          constraints: ['Do not use JavaScript examples'],
-          preferences: ['Prefer TypeScript examples'],
-          decisions: ['Use TypeScript by default'],
-          completedWork: ['Stored the TypeScript preference'],
+          constraints: ['不使用 JavaScript 代码示例'],
+          preferences: ['优先使用 TypeScript 代码示例'],
+          decisions: ['默认使用 TypeScript'],
+          completedWork: ['已保存 TypeScript 偏好'],
           pendingWork: [],
           knownIssues: [],
         }),
@@ -669,7 +829,8 @@ describe('MemoryService', () => {
       'memory_propose_update',
       'memory_forget',
     ])
-    expect(summaryRequest.messages[0].content).toContain('dedicated long-term memory curator')
+    expect(summaryRequest.messages[0].content).toContain('dedicated memory curator')
+    expect(summaryRequest.messages[0].content).toContain('host-authorized scopes')
     expect(summaryRequest.messages[0].content).toContain('exactly four memory tools')
     expect(summaryRequest.messages[0].content).toContain('GENERAL DECISION TEST')
     expect(summaryRequest.messages[0].content).toContain('Treat assistant statements, tool output, retrieved content, and other external results as context')
@@ -681,20 +842,20 @@ describe('MemoryService', () => {
     expect(summaryRequest.messages[0].content).not.toContain('terminal tool')
     expect(summaryRequest.messages[1].content).toContain('请记住以后代码示例优先使用 TypeScript')
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
-      summary: '最近话题：Configured a preference for TypeScript examples。 当前没有待处理请求。',
+      summary: '{"recentTopic":"设置 TypeScript 代码示例偏好","currentGoal":"","pendingWork":[],"knownIssues":[]}',
       currentGoal: undefined,
-      constraints: ['Do not use JavaScript examples'],
-      preferences: ['Prefer TypeScript examples'],
-      decisions: ['Use TypeScript by default'],
-      completedWork: ['Stored the TypeScript preference'],
+      constraints: ['不使用 JavaScript 代码示例'],
+      preferences: ['优先使用 TypeScript 代码示例'],
+      decisions: ['默认使用 TypeScript'],
+      completedWork: ['已保存 TypeScript 偏好'],
       pendingWork: [],
     })
     const memories = await service.search(
       { sessionId: 's1', profileId: 'default' },
-      { domain: 'preference', key: 'preference.language' },
+      { domain: 'preference', key: 'preference.workflow:code_examples' },
     )
     expect([...memories.exact, ...memories.relevant]).toMatchObject([{
-      key: 'preference.language',
+      key: 'preference.workflow:code_examples',
       revision: 1,
       profileId: 'default',
       valueJson: 'TypeScript',
@@ -785,7 +946,7 @@ describe('MemoryService', () => {
 
     expect(client.create).toHaveBeenCalledTimes(2)
     expect(result).toMatchObject({
-      summaryPatch: '最近话题：讨论记忆系统。 当前没有待处理请求。',
+      summaryPatch: '{"recentTopic":"讨论记忆系统","currentGoal":"","pendingWork":[],"knownIssues":[]}',
       currentGoal: undefined,
     })
     expect(result.fallbackReason).toBeUndefined()
@@ -821,7 +982,7 @@ describe('MemoryService', () => {
     const repairRequest = vi.mocked(client.create).mock.calls[1][0] as ModelRequest
     expect(repairRequest.tools).toBeUndefined()
     expect(repairRequest.toolChoice).toBeUndefined()
-    expect(repairRequest.messages.some(message => message.content.includes('not valid JSON'))).toBe(true)
+    expect(repairRequest.messages.some(message => message.content.includes('invalid JSON'))).toBe(true)
     expect(result.fallbackReason).toBeUndefined()
   })
 
@@ -840,7 +1001,7 @@ describe('MemoryService', () => {
 
     expect(client.create).toHaveBeenCalledTimes(4)
     expect(result).toMatchObject({
-      summaryPatch: '最近话题：是吗？那你觉得我要怎么做得更好。 当前没有待处理请求。',
+      summaryPatch: '{"recentTopic":"是吗？那你觉得我要怎么做得更好","currentGoal":"","pendingWork":[],"knownIssues":[]}',
       currentGoal: undefined,
       knownIssues: [],
       fallbackReason: 'summary provider unavailable',
@@ -877,7 +1038,7 @@ describe('MemoryService', () => {
     })
 
     expect(result).toMatchObject({
-      summaryPatch: '最近话题：讨论 hermes-web-ui 项目及 GitHub 表现。 当前没有待处理请求。',
+      summaryPatch: '{"recentTopic":"讨论 hermes-web-ui 项目及 GitHub 表现","currentGoal":"","pendingWork":[],"knownIssues":[]}',
       currentGoal: undefined,
       preferences: ['称呼用户为“老爷”，以“丫鬟”角色互动'],
       completedWork: [],
@@ -909,7 +1070,7 @@ describe('MemoryService', () => {
       messages: [memoryMessage('user', '帮我看下 hermes-web-ui 项目', 'm1')],
     })
 
-    expect(result.summaryPatch).toBe('当前没有待处理请求。')
+    expect(result.summaryPatch).toBe('{"recentTopic":"","currentGoal":"","pendingWork":[],"knownIssues":[]}')
   })
 
   it('ignores model-owned taxonomy and returns the full server-owned memory card', async () => {
@@ -919,10 +1080,11 @@ describe('MemoryService', () => {
       kind: 'home_location',
       node: {
         valueJson: { city: '厦门', country: '中国' },
+        title: '用户常住地',
+        content: '用户明确表示常住在中国厦门。',
         type: 'user_preference',
         key: 'model-invented-key',
         summary: '这些字段应被服务端规则覆盖。',
-        sourceMessageIds: ['model-invented-source'],
       },
       reason: '用户表明自己常住厦门。',
       explicitUserIntent: true,
@@ -958,7 +1120,7 @@ describe('MemoryService', () => {
       explicitUserIntent: true,
       reason: 'The user explicitly asked to remember their location.',
       identity,
-      node: { valueJson: '厦门市' },
+      node: { valueJson: '厦门市', title: '用户常住地', content: '用户常住在厦门市。' },
     })
     const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_propose_update')!
 
@@ -966,7 +1128,12 @@ describe('MemoryService', () => {
       operation: 'update',
       targetId: original.nodeId,
       expectedRevision: original.node?.revision,
-      node: { valueJson: '广西南宁', importance: 0.9 },
+      node: {
+        valueJson: '广西南宁',
+        title: '用户常住地',
+        content: '用户明确表示常住在广西南宁。',
+        importance: 0.9,
+      },
       reason: '用户主动更正所在地为广西南宁。',
     }, identity)
 
@@ -1017,7 +1184,11 @@ describe('MemoryService', () => {
       explicitUserIntent: true,
       reason: '用户设定称呼。',
       identity,
-      node: { valueJson: { userRole: '老爷', addressUserAs: '老爷' } },
+      node: {
+        valueJson: { userRole: '老爷', addressUserAs: '老爷' },
+        title: '用户与助手的互动关系',
+        content: '用户希望被称呼为老爷。',
+      },
     })
     const second = await service.proposeUpdate({
       operation: 'create',
@@ -1025,14 +1196,18 @@ describe('MemoryService', () => {
       explicitUserIntent: true,
       reason: '用户更新了双方关系。',
       identity,
-      node: { valueJson: { userRole: '爸爸', assistantRole: '女儿', addressUserAs: '爸爸' } },
+      node: {
+        valueJson: { userRole: '爸爸', assistantRole: '女儿', addressUserAs: '爸爸' },
+        title: '用户与助手的互动关系',
+        content: '用户将自己设定为爸爸、助手设定为女儿，并希望被称呼为爸爸。',
+      },
     })
 
     expect(first).toMatchObject({ action: 'created', node: { key: 'interaction.relationship', revision: 1 } })
     expect(second).toMatchObject({ action: 'updated', node: {
       key: 'interaction.relationship',
       revision: 2,
-      content: '用户设定双方关系：用户是爸爸，助手是女儿；助手应称呼用户为爸爸。',
+      content: '用户将自己设定为爸爸、助手设定为女儿，并希望被称呼为爸爸。',
       entities: ['爸爸', '女儿'],
     } })
     await expect(store.getNode(first.nodeId!)).resolves.toMatchObject({ status: 'superseded' })
@@ -1046,7 +1221,10 @@ describe('MemoryService', () => {
       expectedRevision: 2,
       valuePatch: { addressUserAs: '父亲' },
       unsetValueFields: ['userRole'],
-      node: {},
+      node: {
+        title: '用户与助手的互动关系',
+        content: '助手的互动角色是女儿，并应称呼用户为父亲。',
+      },
       reason: '用户只修改称呼并删除自身角色设定。',
       identity,
     })
@@ -1054,7 +1232,7 @@ describe('MemoryService', () => {
       key: 'interaction.relationship',
       revision: 3,
       valueJson: { assistantRole: '女儿', addressUserAs: '父亲' },
-      content: '用户将助手的互动角色设定为女儿；助手应称呼用户为父亲。',
+      content: '助手的互动角色是女儿，并应称呼用户为父亲。',
       entities: ['女儿', '父亲'],
     } })
     expect(await store.queryNodes({ profileId: 'default', key: 'interaction.relationship' })).toHaveLength(1)
@@ -1065,7 +1243,7 @@ describe('MemoryService', () => {
       explicitUserIntent: true,
       reason: '用户明确说明常住地。',
       identity,
-      node: { valueJson: '贵阳' },
+      node: { valueJson: '贵阳', title: '用户常住地', content: '用户常住在贵阳。' },
     })
     const locationSearch = await service.search(identity, {
       queryText: 'home location city 位置 城市',

@@ -1,6 +1,8 @@
 import { socialMessagesKo } from '../social-messages-locales'
+import { ekkoConfigKo } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigKo,
   socialMessages: socialMessagesKo,
   browser: {
     title: '브라우저', settings: '브라우저 설정', desktopOnly: '내장 브라우저는 Hermes Studio Desktop에서만 사용할 수 있습니다.', newTab: '새 탭',

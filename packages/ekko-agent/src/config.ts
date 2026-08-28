@@ -13,7 +13,7 @@ import {
   type EkkoModelProviderPreset,
 } from './model/provider-presets'
 
-export const EKKO_CONFIG_SCHEMA_VERSION = 3
+export const EKKO_CONFIG_SCHEMA_VERSION = 6
 export const EKKO_CONFIG_DIRECTORY_NAME = 'config'
 export const EKKO_CONFIG_FILE_NAME = 'config.json'
 
@@ -34,7 +34,7 @@ export const DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES = 200_000
 export const DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET = 4_000
 export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20
 export const DEFAULT_MEMORY_SEARCH_RESULT_LIMIT = 50
-export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 1
+export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 8
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
 
@@ -119,6 +119,26 @@ export interface EkkoToolsConfig {
   codeExec: EkkoCodeExecConfig
 }
 
+export interface EkkoMcpServerConfig {
+  type?: 'stdio' | 'streamable_http'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+  enabled: boolean
+}
+
+export interface EkkoMcpProfileConfig {
+  servers: Record<string, EkkoMcpServerConfig>
+}
+
+/** Profile-scoped MCP servers persisted in Ekko's canonical config file. */
+export interface EkkoMcpConfig {
+  enabled: boolean
+  profiles: Record<string, EkkoMcpProfileConfig>
+}
+
 export interface EkkoDelegationConfig {
   backgroundEnabled: boolean
   subtaskMaxSteps: number
@@ -132,9 +152,17 @@ export interface EkkoMemoryConfig {
   reviewEveryUserMessages: number
 }
 
+export interface EkkoSkillsProfileConfig {
+  /** Skill names excluded from runtime discovery for this Profile. */
+  disabled: string[]
+  /** External Skill roots referenced without copying them into Ekko storage. */
+  externalDirectories: string[]
+}
+
 export interface EkkoSkillsConfig {
   enabled: boolean
   reviewEveryToolCalls: number
+  profiles: Record<string, EkkoSkillsProfileConfig>
 }
 
 export interface EkkoLoggingConfig {
@@ -150,6 +178,7 @@ export interface EkkoConfig {
   runtime: EkkoRuntimeConfig
   model: EkkoModelConfig
   tools: EkkoToolsConfig
+  mcp: EkkoMcpConfig
   delegation: EkkoDelegationConfig
   memory: EkkoMemoryConfig
   skills: EkkoSkillsConfig
@@ -170,9 +199,14 @@ export type EkkoConfigPatch = {
     approvals?: Partial<EkkoToolApprovalConfig>
     codeExec?: Partial<EkkoCodeExecConfig>
   }
+  mcp?: Partial<Omit<EkkoMcpConfig, 'profiles'>> & {
+    profiles?: Record<string, EkkoMcpProfileConfig>
+  }
   delegation?: Partial<EkkoDelegationConfig>
   memory?: Partial<EkkoMemoryConfig>
-  skills?: Partial<EkkoSkillsConfig>
+  skills?: Partial<Omit<EkkoSkillsConfig, 'profiles'>> & {
+    profiles?: Record<string, Partial<EkkoSkillsProfileConfig>>
+  }
   logging?: Partial<EkkoLoggingConfig>
   prompt?: Partial<EkkoPromptConfig>
 }
@@ -218,6 +252,10 @@ export const DEFAULT_EKKO_CONFIG: EkkoConfig = {
       maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES,
     },
   },
+  mcp: {
+    enabled: true,
+    profiles: {},
+  },
   delegation: {
     backgroundEnabled: true,
     subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS,
@@ -232,6 +270,7 @@ export const DEFAULT_EKKO_CONFIG: EkkoConfig = {
   skills: {
     enabled: true,
     reviewEveryToolCalls: DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL,
+    profiles: {},
   },
   logging: {
     maxBytes: DEFAULT_EKKO_LOG_MAX_BYTES,

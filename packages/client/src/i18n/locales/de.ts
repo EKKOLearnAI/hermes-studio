@@ -1,6 +1,8 @@
 import { socialMessagesDe } from '../social-messages-locales'
+import { ekkoConfigDe } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigDe,
   socialMessages: socialMessagesDe,
   browser: {
     title: 'Browser', settings: 'Browser-Einstellungen', desktopOnly: 'Der integrierte Browser ist nur in Hermes Studio Desktop verfügbar.', newTab: 'Neuer Tab',

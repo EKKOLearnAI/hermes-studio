@@ -200,6 +200,30 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
+      path: '/ekko/memory',
+      name: 'ekko.memory',
+      component: () => import('@/views/ekko/MemoryView.vue'),
+      meta: { ekkoConfig: true, requiresSuperAdmin: true },
+    },
+    {
+      path: '/ekko/skills',
+      name: 'ekko.skills',
+      component: () => import('@/views/ekko/SkillsView.vue'),
+      meta: { ekkoConfig: true, requiresSuperAdmin: true },
+    },
+    {
+      path: '/ekko/mcp',
+      name: 'ekko.mcp',
+      component: () => import('@/views/ekko/McpView.vue'),
+      meta: { ekkoConfig: true, requiresSuperAdmin: true },
+    },
+    {
+      path: '/ekko/settings',
+      name: 'ekko.settings',
+      component: () => import('@/views/ekko/SettingsView.vue'),
+      meta: { ekkoConfig: true, requiresSuperAdmin: true },
+    },
+    {
       path: '/hermes/agents',
       redirect: { name: 'hermes.agentManager' },
     },

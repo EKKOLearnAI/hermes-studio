@@ -106,6 +106,12 @@ export class EkkoToolManager {
     return this.registry(profile).refreshTools(context)
   }
 
+  /** Drop cached direct registries after Profile configuration changes. */
+  invalidate(profile?: string): void {
+    if (profile) this.directRegistries.delete(normalizeProfile(profile))
+    else this.directRegistries.clear()
+  }
+
   execute(
     name: string,
     input: Record<string, unknown>,

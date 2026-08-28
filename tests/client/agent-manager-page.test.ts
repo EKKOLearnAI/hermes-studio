@@ -204,7 +204,7 @@ describe('Agent Manager page', () => {
     expect(api.fetchCodingAgentsStatus).not.toHaveBeenCalled()
 
     const ekkoCard = wrapper.get('[data-testid="agent-card-ekko"]')
-    expect(ekkoCard.findAll('button')).toHaveLength(0)
+    expect(ekkoCard.findAll('button').map(button => button.text())).toEqual(['sidebar.settings'])
     expect(ekkoCard.get('.agent-version').text()).toBe('Studio v0.7.0')
     expect(ekkoCard.text()).not.toContain('agentManager.ekkoDescription')
     const claudeCard = wrapper.get('[data-testid="agent-card-claude-code"]')

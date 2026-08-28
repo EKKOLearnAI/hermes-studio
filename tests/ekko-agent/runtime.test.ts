@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,6 +36,10 @@ function modelClient(responder: (request: ModelRequest, call: number) => ModelRe
     create: vi.fn(async (request: ModelRequest) => responder(request, ++call)),
     stream: vi.fn(),
   }
+}
+
+function skillContentHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex')
 }
 
 function streamingModelClient(events: ModelEvent[]): ModelClient {
@@ -678,6 +683,7 @@ describe('ekko-agent runtime', () => {
   })
 
   it('sanitizes base64 tool results before the next model request', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'ekko-runtime-assets-'))
     const dataUrl = `data:image/png;base64,${Buffer.from('runtime-avatar').toString('base64')}`
     const avatarTool: AgentTool = {
       definition: {
@@ -712,10 +718,11 @@ describe('ekko-agent runtime', () => {
 
     try {
       const result = await new AgentRuntime({ modelClient: client, tools })
-        .run({ messages: ['list profiles'] })
+        .run({ messages: ['list profiles'], toolContext: { workspaceRoot } })
       expect(result.output.content).toBe('done')
+      expect(fileURLToPath(assetUrl)).toContain(join(workspaceRoot, '.ekko-tmp', 'tool-assets'))
     } finally {
-      if (assetUrl) await rm(fileURLToPath(assetUrl), { force: true })
+      await rm(workspaceRoot, { recursive: true, force: true })
     }
   })
 
@@ -1106,16 +1113,448 @@ describe('ekko-agent runtime', () => {
   it('injects the skill discovery constraint when both skill tools are available', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skills-'))
     const skillDirectory = join(root, 'skills')
+    await mkdir(join(skillDirectory, 'weather'), { recursive: true })
+    await writeFile(join(skillDirectory, 'weather', 'SKILL.md'), [
+      '---',
+      'name: weather',
+      'description: INTERNAL DESCRIPTION MUST STAY HIDDEN.',
+      'metadata:',
+      '  keywords:',
+      '    - meteorological lookup',
+      '---',
+      '# Weather',
+      'Internal instructions.',
+      '',
+    ].join('\n'))
     const client = modelClient((request) => {
       expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill_list', 'skill_view', 'skill_manage']))
+      expect(request.messages[0].content).toContain('## Available Skill Names\nweather')
+      expect(request.messages[0].content).not.toContain('INTERNAL DESCRIPTION MUST STAY HIDDEN')
+      expect(request.messages[0].content).not.toContain('meteorological lookup')
       expect(request.messages[0].content).toContain('## Skill Discovery')
-      expect(request.messages[0].content).toContain('call skill_list before proceeding')
+      expect(request.messages[0].content).toContain('call skill_view directly with that exact name')
+      expect(request.messages[0].content).toContain('Use skill_list only as a fallback')
       expect(request.messages[0].content).toContain('## Skill Evolution')
       return { content: 'ok' }
     })
 
     try {
       await new AgentRuntime({ modelClient: client, skillDirectory }).run({ messages: ['hi'] })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('hard-loads keyword-matched skills through a visible skill_view before the model responds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-match-'))
+    const skillDirectory = join(root, 'skills')
+    await mkdir(join(skillDirectory, 'release-notes'), { recursive: true })
+    await writeFile(join(skillDirectory, 'release-notes', 'SKILL.md'), [
+      '---',
+      'name: release-notes',
+      'description: Write polished summaries.',
+      'metadata:',
+      '  keywords:',
+      '    - release summary',
+      '---',
+      '# Release Notes',
+      'Keep the summary user-facing.',
+      '',
+    ].join('\n'))
+    const requests: ModelRequest[] = []
+    const eventTypes: string[] = []
+    const client = modelClient((request) => {
+      requests.push(request)
+      return { content: 'ok' }
+    })
+
+    let result: Awaited<ReturnType<AgentRuntime['run']>>
+    try {
+      result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [{ role: 'user', content: 'Host-wrapped current request.' }],
+        memoryInput: {
+          messages: [{ role: 'user', content: 'Please write a release summary for this version.' }],
+        },
+        onEvent: event => eventTypes.push(event.type),
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].messages.slice(0, 4).map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+    ])
+    const skillResult = requests[0].messages.find(message => message.role === 'tool' && message.name === 'skill_view')
+    expect(skillResult?.content).toContain('[skill_view] name=release-notes')
+    expect(skillResult?.content).toContain('Keep the summary user-facing.')
+    expect(result!.steps.slice(0, 2).map(step => [step.type, step.step])).toEqual([
+      ['model', 0],
+      ['tool', 0],
+    ])
+    expect(eventTypes.indexOf('tool.started')).toBeLessThan(eventTypes.indexOf('model.started'))
+    expect(eventTypes).toContain('tool.completed')
+  })
+
+  it('reuses a complete matching skill_view already present in the effective context', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-reuse-'))
+    const skillDirectory = join(root, 'skills')
+    const skillContent = [
+      '---',
+      'name: release-notes',
+      'description: Write polished summaries.',
+      'metadata:',
+      '  keywords:',
+      '    - release summary',
+      '---',
+      '# Release Notes',
+      'Keep the summary user-facing.',
+      '',
+    ].join('\n')
+    await mkdir(join(skillDirectory, 'release-notes'), { recursive: true })
+    await writeFile(join(skillDirectory, 'release-notes', 'SKILL.md'), skillContent)
+    const priorResult = [
+      `[skill_view] name=release-notes (${skillContent.length} chars) file=SKILL.md sha256=${skillContentHash(skillContent)} baseDirectory=${join(skillDirectory, 'release-notes')}`,
+      skillContent,
+    ].join('\n')
+    const requests: ModelRequest[] = []
+    const client = modelClient((request) => {
+      requests.push(request)
+      return { content: 'ok' }
+    })
+
+    let result: Awaited<ReturnType<AgentRuntime['run']>>
+    try {
+      result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'prior-skill-view', name: 'skill_view', arguments: { name: 'release-notes' } }],
+          },
+          { role: 'tool', name: 'skill_view', toolCallId: 'prior-skill-view', content: priorResult },
+          { role: 'user', content: 'Please update the release summary.' },
+        ],
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].messages.filter(message => message.role === 'tool' && message.name === 'skill_view'))
+      .toHaveLength(1)
+    expect(result!.steps.some(step => step.type === 'tool' && step.step === 0)).toBe(false)
+  })
+
+  it('replaces a truncated matching skill_view instead of stacking another copy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-reload-'))
+    const skillDirectory = join(root, 'skills')
+    const skillContent = [
+      '---',
+      'name: release-notes',
+      'description: Write polished summaries.',
+      'metadata:',
+      '  keywords:',
+      '    - release summary',
+      '---',
+      '# Release Notes',
+      'Keep the summary user-facing and include every relevant change.',
+      '',
+    ].join('\n')
+    await mkdir(join(skillDirectory, 'release-notes'), { recursive: true })
+    await writeFile(join(skillDirectory, 'release-notes', 'SKILL.md'), skillContent)
+    const truncatedResult = [
+      `[skill_view] name=release-notes (${skillContent.length} chars) file=SKILL.md sha256=${skillContentHash(skillContent)} baseDirectory=${join(skillDirectory, 'release-notes')}`,
+      skillContent.slice(0, 36),
+      '... [truncated]',
+      skillContent.slice(-20),
+    ].join('\n')
+    const requests: ModelRequest[] = []
+    const client = modelClient((request) => {
+      requests.push(request)
+      return { content: 'ok' }
+    })
+
+    let result: Awaited<ReturnType<AgentRuntime['run']>>
+    try {
+      result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [{ id: 'truncated-skill-view', name: 'skill_view', arguments: { name: 'release-notes' } }],
+          },
+          { role: 'tool', name: 'skill_view', toolCallId: 'truncated-skill-view', content: truncatedResult },
+          { role: 'user', content: 'Please update the release summary.' },
+        ],
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    const visibleSkillResults = requests[0].messages.filter(message => (
+      message.role === 'tool' && message.name === 'skill_view'
+    ))
+    expect(visibleSkillResults).toHaveLength(1)
+    expect(visibleSkillResults[0].content).toContain(skillContent)
+    expect(visibleSkillResults[0].content).not.toContain('... [truncated]')
+    expect(result!.steps.some(step => step.type === 'tool' && step.step === 0)).toBe(true)
+  })
+
+  it('reloads a same-length historical skill_view when its content hash is stale', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-hash-reload-'))
+    const skillDirectory = join(root, 'skills')
+    const currentContent = [
+      '---',
+      'name: release-notes',
+      'description: Write polished summaries.',
+      'metadata:',
+      '  keywords:',
+      '    - release summary',
+      '---',
+      '# Release Notes',
+      'Keep every summary user-facing.',
+      '',
+    ].join('\n')
+    const staleContent = currentContent.replace('every', 'other')
+    expect(staleContent).toHaveLength(currentContent.length)
+    await mkdir(join(skillDirectory, 'release-notes'), { recursive: true })
+    await writeFile(join(skillDirectory, 'release-notes', 'SKILL.md'), currentContent)
+    const priorResult = [
+      `[skill_view] name=release-notes (${staleContent.length} chars) file=SKILL.md sha256=${skillContentHash(staleContent)} baseDirectory=${join(skillDirectory, 'release-notes')}`,
+      staleContent,
+    ].join('\n')
+    const requests: ModelRequest[] = []
+    const client = modelClient((request) => {
+      requests.push(request)
+      return { content: 'ok' }
+    })
+
+    let result: Awaited<ReturnType<AgentRuntime['run']>>
+    try {
+      result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [
+          {
+            role: 'assistant', content: '',
+            toolCalls: [{ id: 'stale-skill-view', name: 'skill_view', arguments: { name: 'release-notes' } }],
+          },
+          { role: 'tool', name: 'skill_view', toolCallId: 'stale-skill-view', content: priorResult },
+          { role: 'user', content: 'Please update the release summary.' },
+        ],
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    const retained = requests[0].messages.filter(message => (
+      message.role === 'tool' && message.name === 'skill_view'
+    ))
+    expect(retained).toHaveLength(1)
+    expect(retained[0].content).toContain(currentContent)
+    expect(retained[0].content).not.toContain(staleContent)
+    expect(result!.steps.some(step => step.type === 'tool' && step.step === 0)).toBe(true)
+  })
+
+  it('keeps only the latest cropped skill_view after the request moves to another task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-history-dedupe-'))
+    const skillDirectory = join(root, 'skills')
+    const skillContent = [
+      '---',
+      'name: release-notes',
+      'description: Write polished summaries.',
+      'metadata:',
+      '  keywords:',
+      '    - release summary',
+      '---',
+      '# Release Notes',
+      'Keep the summary user-facing.',
+      '',
+    ].join('\n')
+    await mkdir(join(skillDirectory, 'release-notes'), { recursive: true })
+    await writeFile(join(skillDirectory, 'release-notes', 'SKILL.md'), skillContent)
+    const cropped = (label: string) => [
+      `[skill_view] name=release-notes (${skillContent.length} chars) file=SKILL.md sha256=${skillContentHash(skillContent)} baseDirectory=${join(skillDirectory, 'release-notes')}`,
+      `${label}: ${skillContent.slice(0, 24)}`,
+      '... [truncated]',
+    ].join('\n')
+    const requests: ModelRequest[] = []
+    const client = modelClient((request) => {
+      requests.push(request)
+      return { content: 'ok' }
+    })
+
+    try {
+      await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [
+          {
+            role: 'assistant', content: '',
+            toolCalls: [{ id: 'old-skill-view', name: 'skill_view', arguments: { name: 'release-notes' } }],
+          },
+          { role: 'tool', name: 'skill_view', toolCallId: 'old-skill-view', content: cropped('old') },
+          {
+            role: 'assistant', content: '',
+            toolCalls: [{ id: 'latest-skill-view', name: 'skill_view', arguments: { name: 'release-notes' } }],
+          },
+          { role: 'tool', name: 'skill_view', toolCallId: 'latest-skill-view', content: cropped('latest') },
+          { role: 'user', content: 'Thanks, that task is complete. Tell me a short joke.' },
+        ],
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    const retained = requests[0].messages.filter(message => (
+      message.role === 'tool' && message.name === 'skill_view'
+    ))
+    expect(retained).toHaveLength(1)
+    expect(retained[0].content).toContain('latest:')
+  })
+
+  it('lets the main model map a non-English request to an injected skill name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-multilingual-skill-'))
+    const skillDirectory = join(root, 'skills')
+    await mkdir(join(skillDirectory, 'weather'), { recursive: true })
+    await writeFile(join(skillDirectory, 'weather', 'SKILL.md'), [
+      '---',
+      'name: weather',
+      'description: Fetch current conditions.',
+      'metadata:',
+      '  keywords:',
+      '    - weather forecast',
+      '---',
+      '# Weather',
+      'Fetch live weather data.',
+      '',
+    ].join('\n'))
+    const requests: ModelRequest[] = []
+    const client = modelClient((request, call) => {
+      requests.push(request)
+      if (call === 1) {
+        expect(request.messages[0].content).toContain('## Available Skill Names\nweather')
+        expect(request.messages.some(message => message.role === 'tool')).toBe(false)
+        return {
+          toolCalls: [{ id: 'skill-weather', name: 'skill_view', arguments: { name: 'weather' } }],
+        }
+      }
+      expect(request.messages.find(message => message.role === 'tool' && message.name === 'skill_view')?.content)
+        .toContain('Fetch live weather data.')
+      return { content: '已加载天气技能。' }
+    })
+
+    try {
+      const result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [{ role: 'user', content: '帮我查一下今天上海会不会下雨' }],
+      })
+      expect(result.output.content).toBe('已加载天气技能。')
+      expect(result.steps.some(step => step.type === 'tool' && step.toolName === 'skill_view')).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    expect(requests).toHaveLength(2)
+  })
+
+  it('surfaces post-install Skill validation in the terminal tool result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-skill-validation-'))
+    const skillDirectory = join(root, 'skills')
+    await mkdir(skillDirectory, { recursive: true })
+    const skillPath = join(skillDirectory, 'dashi-ppt', 'SKILL.md')
+    const skillContent = [
+      '---',
+      'name: dashi-ppt',
+      'description: Create presentation decks.',
+      '---',
+      '# Dashi PPT',
+      'Create a deck.',
+      '',
+    ].join('\n')
+    const installerPath = join(root, 'install-skill.cjs')
+    await writeFile(installerPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs')",
+      "const { dirname } = require('node:path')",
+      `const skillPath = ${JSON.stringify(skillPath)}`,
+      `const skillContent = ${JSON.stringify(skillContent)}`,
+      'mkdirSync(dirname(skillPath), { recursive: true })',
+      'writeFileSync(skillPath, skillContent)',
+      'process.stdout.write("installed")',
+    ].join('\n'))
+    const requests: ModelRequest[] = []
+    const client = modelClient((request, call) => {
+      requests.push(request)
+      if (call === 1) {
+        return {
+          toolCalls: [{
+            id: 'install-skill',
+            name: 'terminal_exec',
+            arguments: {
+              command: process.execPath,
+              args: [installerPath],
+            },
+          }],
+        }
+      }
+      const terminalResult = request.messages.find(message => message.role === 'tool' && message.name === 'terminal_exec')
+      expect(terminalResult?.content).toContain('installed')
+      expect(terminalResult?.content).toContain('[skill_validation]')
+      expect(terminalResult?.content).toContain('dashi-ppt (needs_metadata)')
+      expect(terminalResult?.content).toContain('Call skill_view')
+      return { content: 'repair required' }
+    })
+
+    try {
+      const result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [{ role: 'user', content: 'Install the requested package.' }],
+        toolContext: { workspaceRoot: root },
+      })
+      expect(result.output.content).toBe('repair required')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+
+    expect(requests).toHaveLength(2)
+  })
+
+  it('does not scan existing Skill metadata after an unrelated terminal command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ekko-runtime-unrelated-terminal-'))
+    const skillDirectory = join(root, 'skills')
+    await mkdir(join(skillDirectory, 'missing-keywords'), { recursive: true })
+    await writeFile(join(skillDirectory, 'missing-keywords', 'SKILL.md'), [
+      '---',
+      'name: missing-keywords',
+      'description: Existing invalid metadata.',
+      '---',
+      '# Existing Skill',
+      'Instructions.',
+      '',
+    ].join('\n'))
+    const client = modelClient((request, call) => {
+      if (call === 1) {
+        return {
+          toolCalls: [{
+            id: 'unrelated-command',
+            name: 'terminal_exec',
+            arguments: {
+              command: process.execPath,
+              args: ['-e', 'process.stdout.write("unrelated")'],
+            },
+          }],
+        }
+      }
+      const terminalResult = request.messages.find(message => message.role === 'tool' && message.name === 'terminal_exec')
+      expect(terminalResult?.content).toBe('unrelated')
+      expect(terminalResult?.content).not.toContain('[skill_validation]')
+      return { content: 'done' }
+    })
+
+    try {
+      const result = await new AgentRuntime({ modelClient: client, skillDirectory }).run({
+        messages: [{ role: 'user', content: 'Run an unrelated command.' }],
+        toolContext: { workspaceRoot: root },
+      })
+      expect(result.output.content).toBe('done')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -1166,6 +1605,9 @@ describe('ekko-agent runtime', () => {
                     '---',
                     'name: reusable-verification',
                     'description: Verify recurring changes consistently.',
+                    'metadata:',
+                    '  keywords:',
+                    '    - reusable verification',
                     '---',
                     '# Reusable Verification',
                     '## Procedure',
@@ -1345,12 +1787,13 @@ describe('ekko-agent runtime', () => {
     expect(prompt).not.toContain('read_file')
   })
 
-  it('buildSystemPrompt includes provider and model in runtime context', () => {
+  it('buildSystemPrompt includes provider, model, and profile in runtime context', () => {
     const prompt = buildSystemPrompt({
       basePrompt: 'Base',
       context: {
         provider: 'openrouter',
         model: 'anthropic/claude-sonnet-4',
+        profile: 'work',
         workspaceRoot: '/tmp/workspace',
       },
     })
@@ -1359,6 +1802,7 @@ describe('ekko-agent runtime', () => {
       '## Runtime Context',
       'provider: openrouter',
       'model: anthropic/claude-sonnet-4',
+      'profile: work',
       'workspaceRoot: /tmp/workspace',
     ].join('\n'))
   })
@@ -1368,11 +1812,13 @@ describe('ekko-agent runtime', () => {
       basePrompt: 'Base',
       skillDiscoveryEnabled: true,
       skillManagementEnabled: true,
+      skillNames: ['weather', 'pdf'],
     })
 
+    expect(prompt).toContain('## Available Skill Names\npdf, weather')
     expect(prompt).toContain('## Skill Discovery')
-    expect(prompt).toContain('call skill_list before proceeding')
-    expect(prompt).toContain('call skill_view with its exact name')
+    expect(prompt).toContain('call skill_view directly with that exact name')
+    expect(prompt).toContain('Use skill_list only as a fallback')
     expect(prompt).toContain('## Skill Evolution')
     expect(prompt).toContain('Prefer a small patch over a full edit.')
     expect(prompt).not.toContain('## Skills')
@@ -1396,6 +1842,9 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('use code_exec, including for one-line snippets')
     expect(prompt).toContain('Do not probe Node or Python with terminal_exec first')
     expect(prompt).toContain('Use terminal_exec for CLI commands')
+    expect(prompt).toContain('npx --dir')
+    expect(prompt).toContain("workspace's .ekko-tmp directory")
+    expect(prompt).toContain('After terminal_exec reports a [skill_validation] issue')
     expect(prompt).toContain('do not retry the operation through another tool or language runtime')
     expect(prompt).toContain('prefer a compatible installed or built-in alternative')
   })

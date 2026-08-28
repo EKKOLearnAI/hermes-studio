@@ -291,6 +291,19 @@ export interface GroupChatRunService {
             reasoning_effort?: string
             background_delegation_enabled?: boolean
             context_compression_enabled?: boolean
+            memory_input?: string | ContentBlock[]
+            memory_messages?: Array<{
+                id?: string
+                role: 'user' | 'assistant'
+                content: string
+                metadata?: Record<string, unknown>
+                createdAt?: string
+            }>
+            memory_review_policy?: 'automatic' | 'explicit-only'
+            memory_origin?: { host?: string; namespace?: string; contextId?: string }
+            memory_recall_scopes?: Array<Record<string, string>>
+            memory_write_scopes?: Array<Record<string, string>>
+            memory_default_write_scope?: Record<string, string>
         },
         options?: {
             profile?: string
@@ -968,6 +981,54 @@ export class AgentClient implements GroupAgentExecutor {
         return `${context}\n\nCurrent message: ${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
     }
 
+    private groupMemoryMessages(
+        roomId: string,
+        msg: MentionMessage,
+        runtimeContext: GroupRuntimeContext,
+    ): Array<{
+        id: string
+        role: 'user' | 'assistant'
+        content: string
+        metadata: Record<string, unknown>
+        createdAt: string
+    }> {
+        const sessionId = groupRuntimeSessionId(roomId, this.profile, this.name)
+        const evidenceId = (messageId: string) => createHash('sha256')
+            .update(sessionId)
+            .update('\0')
+            .update(messageId)
+            .digest('hex')
+        const messages: Array<{
+            id: string
+            role: 'user' | 'assistant'
+            content: string
+            metadata: Record<string, unknown>
+            createdAt: string
+        }> = runtimeContext.history.map(item => ({
+            id: evidenceId(item.id),
+            role: item.role,
+            content: `${item.senderName}：${item.content}`,
+            metadata: {
+                senderName: item.senderName,
+                groupMessageId: item.id,
+            },
+            createdAt: new Date(item.timestamp).toISOString(),
+        }))
+        const currentText = stripMentionRoutingTokens(msg.content, this.name) || msg.content
+        messages.push({
+            id: evidenceId(msg.messageId || `${msg.senderId}:${msg.timestamp}:${currentText}`),
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: `${msg.senderName}：${currentText}`,
+            metadata: {
+                senderId: msg.senderId,
+                senderName: msg.senderName,
+                ...(msg.messageId ? { groupMessageId: msg.messageId } : {}),
+            },
+            createdAt: new Date(msg.timestamp).toISOString(),
+        })
+        return messages
+    }
+
     private groupSystemPrompt(roomId: string, msg?: MentionMessage): string {
         const room = this.storage?.getRoom?.(roomId)
         const rawMembers = this.storage?.getRoomMembers?.(roomId)
@@ -1133,6 +1194,32 @@ export class AgentClient implements GroupAgentExecutor {
                 reasoning_effort: this.reasoningEffort || undefined,
                 background_delegation_enabled: false,
                 context_compression_enabled: false,
+                ...(codingAgentId === 'ekko-agent'
+                    ? {
+                        memory_messages: this.groupMemoryMessages(roomId, msg, runtimeContext),
+                        memory_review_policy: 'automatic' as const,
+                        memory_origin: {
+                            host: 'hermes-studio',
+                            namespace: 'group-chat',
+                            contextId: roomId,
+                        },
+                        memory_recall_scopes: [
+                            { type: 'profile' },
+                            { type: 'context', namespace: 'studio.group-chat', id: roomId },
+                            { type: 'session', id: sessionId },
+                        ],
+                        memory_write_scopes: [
+                            { type: 'profile' },
+                            { type: 'context', namespace: 'studio.group-chat', id: roomId },
+                            { type: 'session', id: sessionId },
+                        ],
+                        memory_default_write_scope: {
+                            type: 'context',
+                            namespace: 'studio.group-chat',
+                            id: roomId,
+                        },
+                    }
+                    : {}),
             }, {
                 profile: this.profile,
                 onEvent: (event, payload = {}) => {

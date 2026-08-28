@@ -4,11 +4,12 @@ import type { AgentSkill } from '../skills/types'
 import type { AgentToolRegistry } from '../tools/registry'
 import type { AgentToolAuthorizer, AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
-import type { MemoryContext } from '../memory/types'
+import type { MemoryContext, MemoryEvidenceMessageInput, MemoryOrigin, MemoryReviewPolicy, MemoryScope } from '../memory/types'
 import type { MemoryService } from '../memory/service'
 import type { SkillReviewUsageEvent } from '../skills/review'
 import type { EkkoLogWriter } from '../logging/file-logger'
 import type { EkkoRuntimeLogContext } from '../logging/runtime-logger'
+import type { EkkoExternalSkillDirectory } from '../skills/external-directories'
 
 export interface AgentRuntimeContextEstimate {
   contextTokens: number
@@ -44,6 +45,10 @@ export interface AgentRuntimeOptions {
   skills?: AgentSkill[]
   /** Fixed directory used by this agent instance for skill discovery and management. */
   skillDirectory?: string
+  /** Read-only Skill roots referenced by the current Profile. */
+  externalSkillDirectories?: EkkoExternalSkillDirectory[]
+  /** Skill names excluded from prompt injection and deterministic routing. */
+  disabledSkillNames?: string[]
   /** Trigger a background skill review after this many tool calls in one session. Set to 0 to disable. */
   skillReviewEveryToolCalls?: number
   systemPrompt?: string
@@ -84,6 +89,23 @@ export interface AgentRuntimeRunInput {
   contextKey?: string
   context?: unknown
   memoryEnabled?: boolean
+  /**
+   * Trusted conversation input used for memory retrieval and review. Hosts that
+   * augment a user turn with routing instructions, derived summaries, or quoted
+   * history should pass only the underlying conversation evidence here.
+   */
+  memoryInput?: {
+    messages: Array<AgentMessageInput | MemoryEvidenceMessageInput>
+    reviewPolicy?: MemoryReviewPolicy
+    /** Opaque provenance stamped by the host; never chosen by the model. */
+    origin?: MemoryOrigin
+    /** Long-term node scopes visible during this run. Defaults to profile scope. */
+    recallScopes?: MemoryScope[]
+    /** Scopes the memory curator may select for new or corrected nodes. */
+    writeScopes?: MemoryScope[]
+    /** Suggested scope when a caller or safe fallback does not choose one. */
+    defaultWriteScope?: MemoryScope
+  }
   /** Delete provider-native continuation state when this run exits. */
   ephemeralContext?: boolean
   /** Disable session-global skill review side effects for an isolated callback run. */

@@ -34,6 +34,8 @@ export class GlobalEkkoAgent {
   private readonly workspaceDirectory: string
   private readonly fileLogger: EkkoFileLogger
   private runtime?: AgentRuntime
+  private activeRuns = 0
+  private runtimeRefreshPending = false
   private readonly memory?: MemoryService
   private readonly memoryDatabasePath?: string
 
@@ -54,7 +56,14 @@ export class GlobalEkkoAgent {
   async run(input: AgentRuntimeRunInput): Promise<AgentRuntimeRunResult> {
     this.lastUsedAt = Date.now()
     this.runCount += 1
-    return this.runtimeInstance().run(this.withDefaultWorkspace(input))
+    const runtime = this.runtimeInstance()
+    this.activeRuns += 1
+    try {
+      return await runtime.run(this.withDefaultWorkspace(input))
+    } finally {
+      this.activeRuns -= 1
+      this.applyPendingRuntimeRefresh()
+    }
   }
 
   async runIsolated(
@@ -84,7 +93,9 @@ export class GlobalEkkoAgent {
   }
 
   async abortBackgroundTasks(sessionId?: string): Promise<number> {
-    return this.runtime?.abortBackgroundTasks(sessionId) ?? 0
+    const count = await (this.runtime?.abortBackgroundTasks(sessionId) ?? 0)
+    this.applyPendingRuntimeRefresh()
+    return count
   }
 
   requestBoundaryInterrupt(
@@ -96,6 +107,16 @@ export class GlobalEkkoAgent {
   close(): void {
     void this.runtime?.abortBackgroundTasks()
     this.runtime = undefined
+  }
+
+  refreshRuntime(): 'refreshed' | 'deferred' {
+    if (this.activeRuns > 0 || this.hasBackgroundTasks()) {
+      this.runtimeRefreshPending = true
+      return 'deferred'
+    }
+    this.runtime = undefined
+    this.runtimeRefreshPending = false
+    return 'refreshed'
   }
 
   status() {
@@ -117,6 +138,7 @@ export class GlobalEkkoAgent {
   }
 
   private runtimeInstance(): AgentRuntime {
+    this.applyPendingRuntimeRefresh()
     if (this.runtime) return this.runtime
     this.runtime = this.setup.createRuntime({
       profile: this.options.profile || 'default',
@@ -125,6 +147,12 @@ export class GlobalEkkoAgent {
       logProfile: this.options.profile || 'default',
     })
     return this.runtime
+  }
+
+  private applyPendingRuntimeRefresh(): void {
+    if (!this.runtimeRefreshPending || this.activeRuns > 0 || this.hasBackgroundTasks()) return
+    this.runtime = undefined
+    this.runtimeRefreshPending = false
   }
 
   private withDefaultWorkspace(input: AgentRuntimeRunInput): AgentRuntimeRunInput {
@@ -214,6 +242,16 @@ export async function abortGlobalEkkoBackgroundTasks(sessionId: string): Promise
     [...globalEkkoAgents.values()].map(agent => agent.abortBackgroundTasks(sessionId)),
   )
   return counts.reduce((sum, count) => sum + count, 0)
+}
+
+export function refreshGlobalEkkoAgentRuntimes(): { refreshed: number; deferred: number } {
+  let refreshed = 0
+  let deferred = 0
+  for (const agent of globalEkkoAgents.values()) {
+    if (agent.refreshRuntime() === 'refreshed') refreshed += 1
+    else deferred += 1
+  }
+  return { refreshed, deferred }
 }
 
 export function closeGlobalEkkoAgent(): void {

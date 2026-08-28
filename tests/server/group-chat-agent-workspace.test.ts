@@ -792,6 +792,34 @@ describe('group chat agent workspace bridge runs', () => {
     expect(runData.group_system_prompt).toBe(runData.instructions)
     expect(runData.group_room_id).toBe('room-runtime')
     expect(runData.group_agent_id).toBe(`agent-${agent}`)
+    if (agent === 'ekko') {
+      expect(runData.memory_messages).toEqual([
+        expect.objectContaining({
+          role: 'user',
+          content: 'Human：reply',
+          metadata: expect.objectContaining({ senderName: 'Human' }),
+        }),
+      ])
+      expect(runData.memory_review_policy).toBe('automatic')
+      expect(runData.memory_origin).toEqual({
+        host: 'hermes-studio',
+        namespace: 'group-chat',
+        contextId: 'room-runtime',
+      })
+      expect(runData.memory_recall_scopes).toEqual([
+        { type: 'profile' },
+        { type: 'context', namespace: 'studio.group-chat', id: 'room-runtime' },
+        { type: 'session', id: expect.any(String) },
+      ])
+      expect(runData.memory_default_write_scope).toEqual({
+        type: 'context',
+        namespace: 'studio.group-chat',
+        id: 'room-runtime',
+      })
+    } else {
+      expect(runData).not.toHaveProperty('memory_messages')
+      expect(runData).not.toHaveProperty('memory_review_policy')
+    }
     expect(mockSocket.emit).toHaveBeenCalledWith('clarify.requested', expect.objectContaining({
       roomId: 'room-runtime', clarify_id: `clarify-${agent}`, question: 'Continue?',
     }))

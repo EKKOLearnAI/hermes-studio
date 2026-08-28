@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
+import { resolve } from 'node:path'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
-import { resolveToolPath } from './path-safety'
+import { ensureWorkspaceTempRoot, workspaceTempEnvironment } from './workspace-temp'
 
 export interface TerminalExecInput extends Record<string, unknown> {
   command: string
@@ -19,6 +20,8 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
     description: [
       'Run a CLI command, project script, test, build, package manager, or system executable.',
       'Prefer command as the executable and args as the argument array; shell string execution is not used.',
+      'Commands are not confined to the workspace: explicit absolute paths and package-manager forms such as npx --dir are supported.',
+      'Keep downloads, clones, extracted files, and generated intermediates under the current workspace (prefer .ekko-tmp) when workspace tools need to inspect them.',
       'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.',
       'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.',
     ].join(' '),
@@ -27,7 +30,7 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
       properties: {
         command: { type: 'string', description: 'Executable command to run. Prefer a bare executable such as "node", "ls", or "/bin/sh".' },
         args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
-        cwd: { type: 'string', description: 'Working directory relative to the workspace.' },
+        cwd: { type: 'string', description: 'Working directory. Relative paths resolve from the current workspace; explicit absolute system paths are supported.' },
         timeoutMs: { type: 'number', description: 'Timeout in milliseconds.' },
       },
       required: ['command'],
@@ -44,7 +47,8 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   async execute(input: TerminalExecInput, context: AgentToolContext = {}): Promise<AgentToolResult> {
     const normalized = normalizeTerminalCommand(input.command, input.args)
     const args = normalized.args
-    const cwd = input.cwd ? resolveToolPath(input.cwd, context) : context.cwd || context.workspaceRoot || process.cwd()
+    const baseDirectory = context.cwd || context.workspaceRoot || process.cwd()
+    const cwd = input.cwd ? resolve(baseDirectory, input.cwd) : baseDirectory
     const timeoutMs = input.timeoutMs ?? context.timeoutMs ?? this.timeoutMs
     if (context.signal?.aborted) {
       return {
@@ -55,9 +59,14 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
       }
     }
 
-    return new Promise<AgentToolResult>((resolve) => {
+    const tempDirectory = await ensureWorkspaceTempRoot(context)
+    return new Promise<AgentToolResult>((resolveResult) => {
       const child = spawn(normalized.command, args, {
         cwd,
+        env: {
+          ...process.env,
+          ...workspaceTempEnvironment(tempDirectory),
+        },
         shell: false,
         windowsHide: true,
       })
@@ -83,7 +92,7 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
       child.on('error', error => {
         clearTimeout(timer)
         context.signal?.removeEventListener('abort', onAbort)
-        resolve({
+        resolveResult({
           ok: false,
           content: error.message,
           error: error.message,
@@ -94,7 +103,7 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
         clearTimeout(timer)
         context.signal?.removeEventListener('abort', onAbort)
         const content = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n')
-        resolve({
+        resolveResult({
           ok: code === 0 && !timedOut && !aborted,
           content: content || (aborted ? 'Command aborted.' : content),
           error: aborted ? 'Command aborted.' : timedOut ? `Command timed out after ${timeoutMs}ms` : code === 0 ? undefined : `Command exited with code ${code}`,
@@ -108,6 +117,7 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
             stderr,
             timedOut,
             aborted,
+            tempDirectory,
           },
         })
       })

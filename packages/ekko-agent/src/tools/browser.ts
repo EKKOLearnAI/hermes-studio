@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync } 
 import os from 'node:os'
 import path from 'node:path'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
+import { workspaceTempRoot } from './workspace-temp'
 
 type BrowserCommand = {
   command: string
@@ -654,7 +655,7 @@ function shortHash(value: string): string {
 }
 
 function browserScreenshotPath(context: AgentToolContext): string {
-  const dir = path.join(os.tmpdir(), 'ekko-agent-browser-screenshots', browserSessionName(context))
+  const dir = path.join(workspaceTempRoot(context), 'browser-screenshots', browserSessionName(context))
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   return path.join(dir, `browser_screenshot_${Date.now()}_${Math.random().toString(16).slice(2)}.png`)
 }

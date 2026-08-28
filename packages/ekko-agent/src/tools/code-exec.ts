@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
-import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
   DEFAULT_CODE_EXEC_LANGUAGES,
@@ -13,6 +12,7 @@ import {
   DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
 } from '../config'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
+import { workspaceTempEnvironment, workspaceTempRoot } from './workspace-temp'
 
 export type CodeExecLanguage = typeof DEFAULT_CODE_EXEC_LANGUAGES[number]
 
@@ -114,7 +114,9 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
     const startedAt = Date.now()
     const workDirectory = context.cwd || context.workspaceRoot || process.cwd()
-    const stagingDirectory = await mkdtemp(join(tmpdir(), 'ekko-code-exec-'))
+    const tempDirectory = workspaceTempRoot(context)
+    await mkdir(tempDirectory, { recursive: true })
+    const stagingDirectory = await mkdtemp(join(tempDirectory, 'code-exec-'))
     const controller = new AbortController()
     const nestedContext = { ...context, signal: controller.signal }
     let timedOut = false
@@ -149,6 +151,7 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
       const childEnv = codeExecChildEnvironment({
         stagingDirectory,
+        tempDirectory,
         language,
         rpc,
       })
@@ -458,6 +461,7 @@ async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> 
 
 function codeExecChildEnvironment(input: {
   stagingDirectory: string
+  tempDirectory: string
   language: CodeExecLanguage
   rpc: CodeExecRpcServer
 }): NodeJS.ProcessEnv {
@@ -481,6 +485,7 @@ function codeExecChildEnvironment(input: {
     if (value === undefined) continue
     if (exactNames.has(key) || key.startsWith('LC_')) env[key] = value
   }
+  Object.assign(env, workspaceTempEnvironment(input.tempDirectory))
   env.EKKO_CODE_RPC_HOST = input.rpc.host
   env.EKKO_CODE_RPC_PORT = String(input.rpc.port)
   env.EKKO_CODE_RPC_TOKEN = input.rpc.token

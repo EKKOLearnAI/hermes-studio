@@ -1,6 +1,8 @@
 import { socialMessagesAr } from '../social-messages-locales'
+import { ekkoConfigAr } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigAr,
   socialMessages: socialMessagesAr,
   browser: {
     title: 'المتصفح', settings: 'إعدادات المتصفح', desktopOnly: 'المتصفح المدمج متوفر فقط في Hermes Studio Desktop.', newTab: 'تبويب جديد',

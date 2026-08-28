@@ -1,21 +1,35 @@
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import {
   EKKO_CONFIG_DIRECTORY_NAME,
   EKKO_CONFIG_FILE_NAME,
   serializeDefaultEkkoConfig,
 } from './config'
+
+const BUILTIN_SKILL_MANIFEST_FILENAME = '.ekko-builtin-skills.json'
+const BUILTIN_SKILL_MANIFEST_OWNER = 'ekko-agent'
+const BUILTIN_SKILL_HASH_IGNORED_FILENAMES = new Set(['.DS_Store', 'Thumbs.db'])
+
+interface BuiltinSkillManifestEntry {
+  owner?: string
+  sourceHash?: string
+  installedHash?: string
+}
+
+type BuiltinSkillManifest = Record<string, BuiltinSkillManifestEntry>
 
 export interface EkkoDirectoryLayout {
   baseDirectory: string
@@ -57,6 +71,7 @@ export class EkkoDirectoryManager {
   readonly logsDirectory: string
   readonly workspaceDirectory: string
   lastSkillImport?: EkkoSkillImportResult
+  private builtinSkills?: EkkoBuiltinSkillSynchronizer
 
   constructor(baseDirectory: string = homedir()) {
     this.baseDirectory = resolve(baseDirectory || homedir())
@@ -71,6 +86,7 @@ export class EkkoDirectoryManager {
 
   initialize(options: EkkoDirectoryInitializationOptions = {}): EkkoDirectoryLayout {
     this.lastSkillImport = undefined
+    this.builtinSkills = EkkoBuiltinSkillSynchronizer.createDefault()
     this.initializeConfigDirectory()
     if (!existsSync(this.skillsDirectory) && options.hermesRootDirectory) {
       this.lastSkillImport = this.importHermesProfileSkills(options.hermesRootDirectory)
@@ -103,6 +119,7 @@ export class EkkoDirectoryManager {
   profileSkillsDirectory(profile = 'default'): string {
     const directory = join(this.skillsDirectory, profileDirectoryName(profile))
     mkdirSync(directory, { recursive: true })
+    this.builtinSkills?.sync(directory)
     return directory
   }
 
@@ -254,6 +271,189 @@ function hermesProfileSkillSources(
 function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+class EkkoBuiltinSkillSynchronizer {
+  private constructor(private readonly sourceDirectory: string) {}
+
+  static createDefault(): EkkoBuiltinSkillSynchronizer | undefined {
+    const override = process.env.EKKO_BUILTIN_SKILLS_DIR?.trim()
+    const sourceDirectory = override
+      ? resolve(override)
+      : [
+          // Production server bundle: dist/server/index.js with dist/ekko-skills.
+          resolve(__dirname, '../ekko-skills'),
+          // Ekko package source/build: src or dist with package/skills.
+          resolve(__dirname, '../skills'),
+          resolve(process.cwd(), 'packages/ekko-agent/skills'),
+        ].find(isDirectory)
+    return sourceDirectory ? new EkkoBuiltinSkillSynchronizer(sourceDirectory) : undefined
+  }
+
+  sync(targetDirectory: string): void {
+    if (!isDirectory(this.sourceDirectory)) return
+    const target = resolve(targetDirectory)
+    mkdirSync(target, { recursive: true })
+    const manifest = readBuiltinSkillManifest(target)
+    let manifestChanged = false
+
+    for (const entry of readdirSync(this.sourceDirectory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      if (
+        !entry.isDirectory() ||
+        entry.name.startsWith('.') ||
+        !isFile(join(this.sourceDirectory, entry.name, 'SKILL.md'))
+      ) continue
+
+      const sourceSkillDirectory = join(this.sourceDirectory, entry.name)
+      const targetSkillDirectory = join(target, entry.name)
+      const sourceHash = hashBuiltinSkillDirectory(sourceSkillDirectory)
+
+      if (!existsSync(targetSkillDirectory)) {
+        const installedHash = installBuiltinSkill(sourceSkillDirectory, targetSkillDirectory)
+        manifest[entry.name] = {
+          owner: BUILTIN_SKILL_MANIFEST_OWNER,
+          sourceHash,
+          installedHash,
+        }
+        manifestChanged = true
+        continue
+      }
+
+      if (!isPlainDirectory(targetSkillDirectory)) continue
+      const currentHash = hashBuiltinSkillDirectory(targetSkillDirectory)
+      const manifestEntry = manifest[entry.name]
+      const isUnchangedManagedCopy = manifestEntry?.owner === BUILTIN_SKILL_MANIFEST_OWNER &&
+        manifestEntry.installedHash === currentHash
+      const isIdenticalUnmanagedCopy = !manifestEntry && currentHash === sourceHash
+
+      if (isUnchangedManagedCopy && manifestEntry.sourceHash !== sourceHash) {
+        const installedHash = installBuiltinSkill(sourceSkillDirectory, targetSkillDirectory)
+        manifest[entry.name] = {
+          owner: BUILTIN_SKILL_MANIFEST_OWNER,
+          sourceHash,
+          installedHash,
+        }
+        manifestChanged = true
+      } else if (isIdenticalUnmanagedCopy) {
+        manifest[entry.name] = {
+          owner: BUILTIN_SKILL_MANIFEST_OWNER,
+          sourceHash,
+          installedHash: currentHash,
+        }
+        manifestChanged = true
+      }
+    }
+
+    if (manifestChanged) writeBuiltinSkillManifest(target, manifest)
+  }
+}
+
+function installBuiltinSkill(sourceDirectory: string, targetDirectory: string): string {
+  const parentDirectory = resolve(targetDirectory, '..')
+  const name = basename(targetDirectory)
+  const stagingDirectory = join(parentDirectory, `.${name}.${randomUUID()}.tmp`)
+  const previousDirectory = join(parentDirectory, `.${name}.${randomUUID()}.previous`)
+
+  try {
+    cpSync(sourceDirectory, stagingDirectory, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+    })
+  } catch (error) {
+    rmSync(stagingDirectory, { recursive: true, force: true })
+    throw error
+  }
+
+  if (!existsSync(targetDirectory)) {
+    renameSync(stagingDirectory, targetDirectory)
+    return hashBuiltinSkillDirectory(targetDirectory)
+  }
+
+  renameSync(targetDirectory, previousDirectory)
+  try {
+    renameSync(stagingDirectory, targetDirectory)
+  } catch (error) {
+    renameSync(previousDirectory, targetDirectory)
+    rmSync(stagingDirectory, { recursive: true, force: true })
+    throw error
+  }
+  rmSync(previousDirectory, { recursive: true, force: true })
+  return hashBuiltinSkillDirectory(targetDirectory)
+}
+
+function readBuiltinSkillManifest(targetDirectory: string): BuiltinSkillManifest {
+  try {
+    const parsed = JSON.parse(readFileSync(
+      join(targetDirectory, BUILTIN_SKILL_MANIFEST_FILENAME),
+      'utf8',
+    ))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as BuiltinSkillManifest
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeBuiltinSkillManifest(
+  targetDirectory: string,
+  manifest: BuiltinSkillManifest,
+): void {
+  const sorted: BuiltinSkillManifest = {}
+  for (const name of Object.keys(manifest).sort()) sorted[name] = manifest[name]
+  writeFileSync(
+    join(targetDirectory, BUILTIN_SKILL_MANIFEST_FILENAME),
+    `${JSON.stringify(sorted, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  )
+}
+
+function hashBuiltinSkillDirectory(directory: string): string {
+  const hash = createHash('sha256')
+  hashBuiltinSkillDirectoryInto(hash, directory, '')
+  return hash.digest('hex')
+}
+
+function hashBuiltinSkillDirectoryInto(
+  hash: ReturnType<typeof createHash>,
+  directory: string,
+  relativeDirectory: string,
+): void {
+  const entries = readdirSync(directory, { withFileTypes: true })
+    .filter(entry => !BUILTIN_SKILL_HASH_IGNORED_FILENAMES.has(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  for (const entry of entries) {
+    const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name
+    const fullPath = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      hash.update(`dir\0${relativePath}\0`)
+      hashBuiltinSkillDirectoryInto(hash, fullPath, relativePath)
+    } else if (entry.isFile()) {
+      hash.update(`file\0${relativePath}\0`)
+      hash.update(readFileSync(fullPath))
+      hash.update('\0')
+    }
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function isPlainDirectory(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory()
   } catch {
     return false
   }

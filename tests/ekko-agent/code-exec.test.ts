@@ -141,6 +141,22 @@ describe('code_exec', () => {
     })
   })
 
+  it('keeps code runtime temporary files under the current workspace', async () => {
+    const tool = new CodeExecTool({
+      dispatch: async () => ({ ok: true, content: 'unused' }),
+    })
+
+    const result = await tool.execute({
+      language: 'node',
+      code: 'console.log(process.env.TMPDIR)',
+    }, { workspaceRoot })
+
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(result.content)).toMatchObject({
+      output: `${join(workspaceRoot, '.ekko-tmp')}\n`,
+    })
+  })
+
   it('terminates scripts at the configured timeout', async () => {
     const tool = new CodeExecTool({
       timeoutMs: 50,

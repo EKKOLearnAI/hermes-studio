@@ -1,20 +1,31 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { watch, type FSWatcher } from 'node:fs'
 import {
   agentReasoningEstimatedTokens,
   agentReasoningText,
+  createAssistantMessage,
   createSystemMessage,
   createToolResultMessage,
   collectModelEvents,
   modelResponseToAgentMessage,
+  normalizeAgentMessage,
   normalizeAgentMessages,
 } from '../model/messages'
 import { countTextTokens } from '../model/tokens'
-import type { AgentOutputMessage } from '../model/messages'
+import type { AgentMessageInput, AgentOutputMessage } from '../model/messages'
 import type { AgentMessage, AgentToolCall, AgentToolDefinition, ModelRequest, ModelResponse } from '../model/types'
 import type { AgentSkill } from '../skills/types'
 import { AgentToolRegistry, createDefaultToolRegistry } from '../tools/registry'
 import { sanitizeAgentToolResult } from '../tools/tool-result-sanitizer'
 import type { AgentTaskRequest, AgentToolContext, AgentToolResult } from '../tools/types'
+import {
+  inspectLocalSkillValidationIssues,
+  resolveSkillRouting,
+  type DiscoveredSkill,
+  type SkillRoutingResolution,
+  type SkillValidationIssue,
+} from '../tools/skills'
+import { workspaceToolAssetDirectory } from '../tools/workspace-temp'
 import type { AgentRuntimeEvent } from './events'
 import { buildSystemPrompt } from './system-prompt'
 import type {
@@ -28,11 +39,13 @@ import type {
   AgentRuntimeStep,
   EkkoBackgroundContinuationContext,
 } from './types'
-import type { MemoryContext, MemoryRuntimeIdentity } from '../memory/types'
-import type { MemoryCaptureMessage } from '../memory/service'
+import type { MemoryContext, MemoryEvidenceMessageInput, MemoryOrigin, MemoryRuntimeIdentity } from '../memory/types'
+import { hasExplicitMemoryIntent, type MemoryCaptureMessage } from '../memory/service'
 import { ModelMemoryExtractor } from '../memory/extraction'
+import { PROFILE_MEMORY_SCOPE } from '../memory/scope'
 import { createMemoryTools } from '../memory/tools'
 import { SkillReviewService } from '../skills/review'
+import type { EkkoExternalSkillDirectory } from '../skills/external-directories'
 import { EkkoRuntimeLogger } from '../logging/runtime-logger'
 import {
   DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES,
@@ -65,6 +78,16 @@ interface ActiveBoundaryRun {
   modelController: AbortController
   pending: boolean
   terminal: boolean
+}
+
+interface HistoricalSkillView {
+  messageIndex: number
+  toolCallId?: string
+  name: string
+  filePath: string
+  declaredCharacters?: number
+  declaredHash?: string
+  body: string
 }
 
 function foregroundOnlyDelegateTaskDefinition(definition: AgentToolDefinition): AgentToolDefinition {
@@ -108,6 +131,9 @@ export class AgentRuntime {
   private readonly tools: AgentToolRegistry
   private readonly skillsEnabled: boolean
   private readonly skills: AgentSkill[]
+  private readonly skillDirectory?: string
+  private readonly externalSkillDirectories: EkkoExternalSkillDirectory[]
+  private readonly disabledSkillNames: string[]
   private readonly systemPrompt?: string
   private readonly runtimeInstructions: string[]
   private readonly maxSteps: number
@@ -125,6 +151,7 @@ export class AgentRuntime {
   private readonly modelContexts = new Map<string, unknown>()
   private readonly backgroundTasks = new Map<string, BackgroundTask>()
   private readonly activeBoundaryRuns = new Map<string, ActiveBoundaryRun>()
+  private readonly activeSkillValidationIssues = new Map<string, string>()
   private readonly runtimeLogger?: EkkoRuntimeLogger
 
   constructor(options: AgentRuntimeOptions) {
@@ -134,6 +161,8 @@ export class AgentRuntime {
     this.tools = this.toolsEnabled
       ? options.tools ?? createDefaultToolRegistry({
           skillDirectory: options.skillDirectory,
+          externalSkillDirectories: options.externalSkillDirectories,
+          disabledSkillNames: options.disabledSkillNames,
           authorizer: options.toolAuthorizer,
         })
       : new AgentToolRegistry()
@@ -142,6 +171,9 @@ export class AgentRuntime {
     }
     this.skillsEnabled = options.skillsEnabled !== false
     this.skills = this.skillsEnabled ? options.skills ?? [] : []
+    this.skillDirectory = String(options.skillDirectory || '').trim() || undefined
+    this.externalSkillDirectories = options.externalSkillDirectories ?? []
+    this.disabledSkillNames = options.disabledSkillNames ?? []
     this.systemPrompt = options.systemPrompt
     this.runtimeInstructions = options.runtimeInstructions ?? []
     this.maxSteps = options.maxSteps ?? DEFAULT_AGENT_MAX_STEPS
@@ -164,10 +196,18 @@ export class AgentRuntime {
       Math.floor(options.skillReviewEveryToolCalls ?? DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL),
     )
     this.skillReview = this.toolsEnabled && this.skillsEnabled && options.skillDirectory
-      ? new SkillReviewService({ skillDirectory: options.skillDirectory })
+      ? new SkillReviewService({
+          skillDirectory: options.skillDirectory,
+          externalSkillDirectories: this.externalSkillDirectories,
+          disabledSkillNames: this.disabledSkillNames,
+        })
       : undefined
     this.registerSkillTools(this.skills)
-    if (this.toolsEnabled && this.memory) this.tools.registerMany(createMemoryTools(this.memory))
+    if (this.toolsEnabled && this.memory) {
+      // Foreground runs may inspect memory, but durable mutations are owned by
+      // the post-run curator that sees only host-selected memory evidence.
+      this.tools.registerMany(createMemoryTools(this.memory, { writable: false, reviewable: true }))
+    }
   }
 
   registerSkill(skill: AgentSkill): void {
@@ -262,7 +302,10 @@ export class AgentRuntime {
   async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
     await this.refreshTools(this.runToolContext(input))
     const modelClient = this.modelClientFor(input)
-    const messages = this.prepareMessages(input)
+    const skillRouting = await this.skillRouting(input)
+    const messages = this.prepareMessages(input, undefined, skillRouting.names)
+    const skillsToLoad = reconcileMatchedSkillContext(messages, skillRouting.matches)
+    this.appendMatchedSkillMessages(messages, skillsToLoad)
     const request = this.modelRequest(input, messages, modelClient, this.contextKeyFor(input))
     return estimateModelRequestContext(request)
   }
@@ -277,6 +320,7 @@ export class AgentRuntime {
     const maxModelRetries = input.maxModelRetries ?? this.maxModelRetries
     const maxConsecutiveToolFailures = input.maxConsecutiveToolFailures ?? this.maxConsecutiveToolFailures
     const pendingBackgroundSubagentIds = new Set<string>()
+    let memoryReviewRequested = false
     const emit = (event: AgentRuntimeEvent) => {
       events.push(event)
       input.onEvent?.(event)
@@ -287,6 +331,9 @@ export class AgentRuntime {
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryPreparation = await this.prepareMemory(input, memoryIdentity)
     const memoryContext = memoryPreparation?.context
+    const forceInitialMemoryReview = Boolean(
+      memoryIdentity && hasExplicitMemoryIntent(this.memoryCaptureMessages(input)),
+    )
     const sessionId = this.contextKeyFor(input)?.trim()
     const activeBoundaryRun = sessionId
       ? this.registerBoundaryRun(sessionId, runId)
@@ -315,6 +362,9 @@ export class AgentRuntime {
           subagentId => pendingBackgroundSubagentIds.add(subagentId),
         )
       },
+      requestMemoryReview: () => {
+        memoryReviewRequested = true
+      },
     }
     if (memoryContext) {
       emit({
@@ -324,7 +374,12 @@ export class AgentRuntime {
         memoryIds: memoryContext.usedMemoryIds,
       })
     }
-    const messages = this.prepareMessages(input, memoryContext ? this.memory?.contextPrompt(memoryContext) : undefined)
+    const skillRouting = await this.skillRouting(input)
+    const messages = this.prepareMessages(
+      input,
+      memoryContext ? this.memory?.contextPrompt(memoryContext) : undefined,
+      skillRouting.names,
+    )
     let output: AgentOutputMessage = {
       role: 'assistant',
       content: '',
@@ -345,6 +400,33 @@ export class AgentRuntime {
     }
 
     try {
+      const matchedSkills = reconcileMatchedSkillContext(messages, skillRouting.matches)
+      if (matchedSkills.length) {
+        const toolCalls: AgentToolCall[] = matchedSkills.map(skill => ({
+          id: `skill-auto-${randomUUID()}`,
+          name: 'skill_view',
+          arguments: { name: skill.name },
+        }))
+        const skillLoadMessage: AgentOutputMessage = {
+          role: 'assistant',
+          content: '',
+          toolCalls,
+        }
+        messages.push(skillLoadMessage)
+        steps.push({ type: 'model', step: 0, message: skillLoadMessage })
+        for (const toolCall of toolCalls) {
+          const result = await this.executeTool(
+            runId,
+            0,
+            toolCall,
+            executionToolContext,
+            emit,
+            input.signal,
+          )
+          messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
+          steps.push({ type: 'tool', step: 0, toolCallId: toolCall.id, toolName: toolCall.name, result })
+        }
+      }
       for (let step = 1; step <= maxSteps; step += 1) {
         throwIfAborted(input.signal)
         if (activeBoundaryRun?.pending) return completeBoundaryInterrupt(step - 1)
@@ -354,6 +436,19 @@ export class AgentRuntime {
         const modelClient = this.modelClientFor(input)
         emit({ type: 'model.started', runId, step })
         const request = this.modelRequest(input, messages, modelClient, contextKey, modelSignal)
+        if (memoryReviewRequested && request.tools) {
+          request.tools = request.tools.filter(tool => tool.name !== 'memory_review')
+          if (!request.tools.length) {
+            request.tools = undefined
+            request.toolChoice = undefined
+          }
+        } else if (step === 1 && forceInitialMemoryReview) {
+          const reviewTools = request.tools?.filter(tool => tool.name === 'memory_review')
+          if (reviewTools?.length) {
+            request.tools = reviewTools
+            request.toolChoice = 'required'
+          }
+        }
         contextEstimate = estimateModelRequestContext(request)
         emit({ type: 'context.estimated', runId, step, estimate: contextEstimate })
         const modelResult = await this.createModelResponseWithRetries(
@@ -392,7 +487,7 @@ export class AgentRuntime {
           const context = contextKey ? this.modelContexts.get(contextKey) : assistantMessage.context
           if (activeBoundaryRun) activeBoundaryRun.terminal = true
           emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-          this.completeMemory(runId, memoryIdentity, messages, input)
+          this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
           this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
           return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
         }
@@ -422,7 +517,7 @@ export class AgentRuntime {
             }
             const context = contextKey ? this.modelContexts.get(contextKey) : undefined
             emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-            this.completeMemory(runId, memoryIdentity, messages, input)
+            this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
             this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
             return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
           }
@@ -453,7 +548,7 @@ export class AgentRuntime {
       }
       const context = contextKey ? this.modelContexts.get(contextKey) : undefined
       emit({ type: 'run.completed', runId, output, steps: maxSteps, context, contextEstimate })
-      this.completeMemory(runId, memoryIdentity, messages, input)
+      this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
       this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
       return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
     } catch (error) {
@@ -463,7 +558,7 @@ export class AgentRuntime {
         !input.signal?.aborted &&
         isAbortError(error)
       ) {
-        return completeBoundaryInterrupt(steps.filter(step => step.type === 'model').length)
+        return completeBoundaryInterrupt(steps.filter(step => step.type === 'model' && step.step > 0).length)
       }
       const message = error instanceof Error ? error.message : String(error)
       if (activeBoundaryRun) activeBoundaryRun.terminal = true
@@ -624,7 +719,11 @@ export class AgentRuntime {
     }
   }
 
-  private prepareMessages(input: AgentRuntimeRunInput, memoryContext?: string): AgentMessage[] {
+  private prepareMessages(
+    input: AgentRuntimeRunInput,
+    memoryContext?: string,
+    skillNames: string[] = [],
+  ): AgentMessage[] {
     const normalized = normalizeAgentMessages(input.messages)
     const userSystemMessages = normalized.filter(message => message.role === 'system').map(message => message.content)
     const nonSystemMessages = normalized.filter(message => message.role !== 'system')
@@ -636,13 +735,15 @@ export class AgentRuntime {
       userSystemMessages,
       memoryContext,
       clarificationEnabled: this.toolsEnabled && !!this.tools.get('clarify'),
-      skillDiscoveryEnabled: this.toolsEnabled &&
+      skillDiscoveryEnabled: this.toolsEnabled && this.skillsEnabled &&
         !!this.tools.get('skill_list') &&
         !!this.tools.get('skill_view'),
-      skillManagementEnabled: this.toolsEnabled && !!this.tools.get('skill_manage'),
+      skillManagementEnabled: this.toolsEnabled && this.skillsEnabled && !!this.tools.get('skill_manage'),
+      skillNames,
       context: {
         provider: modelClient.provider,
         model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
+        profile: this.profileId || stringMetadata(input.metadata?.profile) || toolContext?.profileId,
         cwd: toolContext?.cwd,
         workspaceRoot: toolContext?.workspaceRoot,
       },
@@ -654,6 +755,52 @@ export class AgentRuntime {
     ]
   }
 
+  private async skillRouting(input: AgentRuntimeRunInput): Promise<SkillRoutingResolution> {
+    if (
+      !this.toolsEnabled ||
+      !this.skillsEnabled ||
+      !this.skillDirectory ||
+      !this.tools.get('skill_view')
+    ) return { names: [], matches: [] }
+    const latestMemoryUserMessage = input.memoryInput?.messages?.length
+      ? [...normalizeAgentMessages(input.memoryInput.messages as AgentMessageInput[])]
+        .reverse()
+        .find(message => message.role === 'user' && message.content.trim())
+        ?.content
+      : undefined
+    const latestUserMessage = latestMemoryUserMessage || [...normalizeAgentMessages(input.messages)]
+      .reverse()
+      .find(message => message.role === 'user' && message.content.trim())
+      ?.content
+    return resolveSkillRouting(
+      this.skillDirectory,
+      latestUserMessage,
+      this.externalSkillDirectories,
+      this.disabledSkillNames,
+    )
+  }
+
+  private appendMatchedSkillMessages(
+    messages: AgentMessage[],
+    matchedSkills: DiscoveredSkill[],
+  ): void {
+    if (!matchedSkills.length) return
+    const calls = matchedSkills.map(skill => ({
+      id: `skill-auto-estimate-${skill.name}`,
+      name: 'skill_view',
+      arguments: { name: skill.name },
+    }))
+    messages.push(createAssistantMessage('', calls))
+    for (let index = 0; index < matchedSkills.length; index += 1) {
+      const skill = matchedSkills[index]
+      messages.push(createToolResultMessage(
+        calls[index].id,
+        `[skill_view] name=${skill.name} (${skill.content.length} chars) file=SKILL.md sha256=${skillContentHash(skill.content)} baseDirectory=${skill.directory}\n${skill.content}`,
+        'skill_view',
+      ))
+    }
+  }
+
   private memoryIdentityFor(input: AgentRuntimeRunInput): MemoryRuntimeIdentity | undefined {
     if (!this.memory || input.memoryEnabled === false) return undefined
     const sessionId = this.contextKeyFor(input)
@@ -662,6 +809,10 @@ export class AgentRuntime {
     return {
       sessionId,
       profileId: this.profileId || stringMetadata(input.metadata?.profile) || context?.profileId || 'default',
+      origin: input.memoryInput?.origin,
+      recallScopes: input.memoryInput?.recallScopes ?? [PROFILE_MEMORY_SCOPE],
+      writeScopes: input.memoryInput?.writeScopes ?? [PROFILE_MEMORY_SCOPE],
+      defaultWriteScope: input.memoryInput?.defaultWriteScope ?? PROFILE_MEMORY_SCOPE,
     }
   }
 
@@ -671,10 +822,12 @@ export class AgentRuntime {
   ): Promise<{ context: MemoryContext; sourceMessageIds: string[] } | undefined> {
     if (!this.memory || !identity) return undefined
     await this.memory.drain()
-    const normalized = normalizeAgentMessages(input.messages)
-      .filter(message => message.role !== 'system')
-      .map(toMemoryCaptureMessage)
-    const capturedIds = await this.memory.captureMessages(identity, normalized)
+    const normalized = this.memoryCaptureMessages(input)
+    const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
+    const shouldCapture = reviewPolicy === 'automatic' || hasExplicitMemoryIntent(normalized)
+    const capturedIds = shouldCapture
+      ? await this.memory.captureMessages(identity, normalized)
+      : []
     const queryText = [...normalized].reverse().find(message => message.role === 'user')?.content
     let latestUserIndex = -1
     for (let index = normalized.length - 1; index >= 0; index -= 1) {
@@ -696,12 +849,19 @@ export class AgentRuntime {
     identity: MemoryRuntimeIdentity | undefined,
     messages: AgentMessage[],
     input: AgentRuntimeRunInput,
+    forceReview = false,
   ): void {
     if (!this.memory || !identity) return
+    const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
+    const memoryMessages = input.memoryInput
+      ? completedMemoryCaptureMessages(input.memoryInput.messages, messages, input.memoryInput.origin)
+      : messages
+          .filter(message => message.role === 'user' || message.role === 'assistant')
+          .map(toMemoryCaptureMessage)
     const modelClient = this.modelClientFor(input)
     this.memory.scheduleRunCompletion(
       identity,
-      messages.filter(message => message.role !== 'system').map(toMemoryCaptureMessage),
+      memoryMessages,
       new ModelMemoryExtractor({
         modelClient,
         memory: this.memory,
@@ -712,7 +872,16 @@ export class AgentRuntime {
         requestLogContext: input.logContext,
         requestRunId: runId,
       }),
+      { reviewPolicy, forceReview },
     )
+  }
+
+  private memoryCaptureMessages(input: AgentRuntimeRunInput): MemoryCaptureMessage[] {
+    const origin = input.memoryInput?.origin
+    if (input.memoryInput) return normalizeMemoryEvidenceMessages(input.memoryInput.messages, origin)
+    return normalizeAgentMessages(input.messages)
+      .filter(message => message.role === 'user' || message.role === 'assistant')
+      .map(toMemoryCaptureMessage)
   }
 
   private recordSkillToolCall(contextKey: string | undefined, toolName: string): void {
@@ -838,11 +1007,18 @@ export class AgentRuntime {
 
   private runToolContext(input: AgentRuntimeRunInput, sourceMessageIds?: string[]): AgentToolContext | undefined {
     const context = this.mergedToolContext(input)
-    if (!input.signal && !sourceMessageIds?.length) return context
+    const memoryMessages = this.memoryCaptureMessages(input)
+    const memoryReviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
+    const memoryExplicitIntent = hasExplicitMemoryIntent(memoryMessages)
     return {
       ...context,
       ...(sourceMessageIds?.length ? { sourceMessageIds } : {}),
-      signal: input.signal,
+      ...(this.memory ? { memoryReviewPolicy, memoryExplicitIntent } : {}),
+      ...(input.memoryInput?.origin ? { memoryOrigin: input.memoryInput.origin } : {}),
+      ...(input.memoryInput?.recallScopes ? { memoryRecallScopes: input.memoryInput.recallScopes } : {}),
+      ...(input.memoryInput?.writeScopes ? { memoryWriteScopes: input.memoryInput.writeScopes } : {}),
+      ...(input.memoryInput?.defaultWriteScope ? { memoryDefaultWriteScope: input.memoryInput.defaultWriteScope } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
     }
   }
 
@@ -874,8 +1050,28 @@ export class AgentRuntime {
 
     try {
       throwIfAborted(signal)
-      const rawResult = await this.tools.execute(toolCall.name, toolCall.arguments, context)
-      const result = await sanitizeAgentToolResult(rawResult)
+      const skillChangeProbe = toolCall.name === 'terminal_exec' && this.skillDirectory
+        ? createDirectoryChangeProbe(this.skillDirectory)
+        : undefined
+      let skillDirectoryChanged = false
+      let rawResult: AgentToolResult
+      try {
+        rawResult = await this.tools.execute(toolCall.name, toolCall.arguments, context)
+      } finally {
+        skillDirectoryChanged = await skillChangeProbe?.stop() ?? false
+      }
+      const shouldInspectSkills = toolCall.name === 'skill_manage'
+        || skillDirectoryChanged
+        || (toolCall.name === 'terminal_exec'
+          && terminalCallReferencesSkillDirectory(toolCall.arguments, this.skillDirectory))
+      const validatedResult = await this.annotateSkillValidation(
+        toolCall.name,
+        rawResult,
+        shouldInspectSkills,
+      )
+      const result = await sanitizeAgentToolResult(validatedResult, {
+        tempRoot: workspaceToolAssetDirectory(context),
+      })
       throwIfAborted(signal)
       emit({
         type: result.ok ? 'tool.completed' : 'tool.failed',
@@ -904,6 +1100,57 @@ export class AgentRuntime {
         durationMs: Date.now() - startedAt,
       })
       return result
+    }
+  }
+
+  private async annotateSkillValidation(
+    toolName: string,
+    result: AgentToolResult,
+    shouldInspect: boolean,
+  ): Promise<AgentToolResult> {
+    if (
+      !shouldInspect ||
+      !this.skillDirectory ||
+      (toolName !== 'terminal_exec' && toolName !== 'skill_manage')
+    ) return result
+
+    let issues: SkillValidationIssue[]
+    try {
+      issues = await inspectLocalSkillValidationIssues(this.skillDirectory)
+    } catch {
+      // Skill validation must never replace the result of the command itself.
+      return result
+    }
+
+    const currentKeys = new Set(issues.map(issue => issue.directory))
+    for (const key of this.activeSkillValidationIssues.keys()) {
+      if (!currentKeys.has(key)) this.activeSkillValidationIssues.delete(key)
+    }
+
+    const changed = issues.filter(issue => {
+      const signature = `${issue.status}:${issue.sha256}:${issue.error}`
+      const previous = this.activeSkillValidationIssues.get(issue.directory)
+      this.activeSkillValidationIssues.set(issue.directory, signature)
+      return previous !== signature
+    })
+    if (toolName !== 'terminal_exec' || changed.length === 0) return result
+
+    const payload = {
+      status: 'requires_repair',
+      writable: true,
+      issues: changed,
+      next: 'Call skill_view for each Skill, then repair its SKILL.md with skill_manage before reporting installation success.',
+    }
+    const notice = [
+      '[skill_validation] Local Skill installation requires repair before deterministic routing:',
+      ...changed.map(issue => `- ${issue.name} (${issue.status}): ${issue.error}`),
+      payload.next,
+    ].join('\n')
+
+    return {
+      ...result,
+      content: [result.content, notice].filter(Boolean).join('\n\n'),
+      data: appendStructuredData(result.data, 'skillValidation', payload),
     }
   }
 
@@ -1159,6 +1406,120 @@ export class AgentRuntime {
   }
 }
 
+function reconcileMatchedSkillContext(
+  messages: AgentMessage[],
+  matchedSkills: DiscoveredSkill[],
+): DiscoveredSkill[] {
+  const matchedNames = new Set(matchedSkills.map(skill => skill.name.toLowerCase()))
+  const views = messages.flatMap((message, messageIndex): HistoricalSkillView[] => {
+    if (
+      message.role !== 'tool' ||
+      (message.name !== 'skill_view' && !message.content.startsWith('[skill_view] '))
+    ) return []
+    const parsed = parseHistoricalSkillView(message.content)
+    if (!parsed) return []
+    return [{
+      ...parsed,
+      messageIndex,
+      toolCallId: message.toolCallId,
+    }]
+  })
+  const removedMessageIndexes = new Set<number>()
+  const removedToolCallIds = new Set<string>()
+  const skillsToLoad: DiscoveredSkill[] = []
+
+  const historicalGroups = new Map<string, HistoricalSkillView[]>()
+  for (const view of views) {
+    if (view.filePath === 'SKILL.md' && matchedNames.has(view.name.toLowerCase())) continue
+    const key = `${view.name.toLowerCase()}\0${view.filePath}`
+    const group = historicalGroups.get(key) ?? []
+    group.push(view)
+    historicalGroups.set(key, group)
+  }
+  for (const group of historicalGroups.values()) {
+    for (const duplicate of group.slice(0, -1)) {
+      removedMessageIndexes.add(duplicate.messageIndex)
+      if (duplicate.toolCallId) removedToolCallIds.add(duplicate.toolCallId)
+    }
+  }
+
+  for (const skill of matchedSkills) {
+    const candidates = views.filter(view => (
+      view.filePath === 'SKILL.md' && view.name.toLowerCase() === skill.name.toLowerCase()
+    ))
+    const expectedHash = skillContentHash(skill.content)
+    const reusable = [...candidates].reverse().find(view => (
+      view.declaredCharacters === view.body.length &&
+      (!view.declaredHash || view.declaredHash === expectedHash) &&
+      skillContentHash(view.body) === expectedHash
+    ))
+
+    for (const candidate of candidates) {
+      if (candidate === reusable) continue
+      removedMessageIndexes.add(candidate.messageIndex)
+      if (candidate.toolCallId) removedToolCallIds.add(candidate.toolCallId)
+    }
+    if (!reusable) skillsToLoad.push(skill)
+  }
+
+  removeHistoricalSkillViews(messages, removedMessageIndexes, removedToolCallIds)
+  return skillsToLoad
+}
+
+function skillContentHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+function parseHistoricalSkillView(content: string): Omit<HistoricalSkillView, 'messageIndex' | 'toolCallId'> | null {
+  const headerEnd = content.indexOf('\n')
+  if (headerEnd < 0) return null
+  const header = content.slice(0, headerEnd)
+  if (!header.startsWith('[skill_view] ')) return null
+  const name = header.match(/\bname=([a-z0-9_-]+)/i)?.[1]
+  const filePath = header.match(/\bfile=(\S+)/)?.[1]
+  if (!name || !filePath) return null
+  const declaredCharacters = Number(header.match(/\((\d+) chars\)/)?.[1])
+  const declaredHash = header.match(/\bsha256=([a-f0-9]{64})\b/i)?.[1]?.toLowerCase()
+  return {
+    name,
+    filePath,
+    ...(Number.isSafeInteger(declaredCharacters) ? { declaredCharacters } : {}),
+    ...(declaredHash ? { declaredHash } : {}),
+    body: content.slice(headerEnd + 1),
+  }
+}
+
+function removeHistoricalSkillViews(
+  messages: AgentMessage[],
+  removedMessageIndexes: Set<number>,
+  removedToolCallIds: Set<string>,
+): void {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (removedMessageIndexes.has(index)) {
+      messages.splice(index, 1)
+      continue
+    }
+    const message = messages[index]
+    if (message.role !== 'assistant' || !message.toolCalls?.length) continue
+    const remainingToolCalls = message.toolCalls.filter(call => !removedToolCallIds.has(call.id))
+    if (remainingToolCalls.length === message.toolCalls.length) continue
+    if (
+      remainingToolCalls.length === 0 &&
+      !message.content.trim() &&
+      !agentReasoningText(message.reasoning).trim() &&
+      !message.reasoning?.native &&
+      !message.contentParts?.length
+    ) {
+      messages.splice(index, 1)
+      continue
+    }
+    messages[index] = {
+      ...message,
+      toolCalls: remainingToolCalls.length ? remainingToolCalls : undefined,
+    }
+  }
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError()
 }
@@ -1181,6 +1542,71 @@ function abortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.message === 'Run aborted.')
+}
+
+interface DirectoryChangeProbe {
+  stop(): Promise<boolean>
+}
+
+function createDirectoryChangeProbe(directory: string): DirectoryChangeProbe | undefined {
+  let changed = false
+  let watcher: FSWatcher
+  try {
+    watcher = watch(directory, { recursive: true, persistent: false }, () => {
+      changed = true
+    })
+  } catch {
+    return undefined
+  }
+  watcher.on('error', () => {
+    // An uncertain watcher result should fall back to one post-command scan.
+    changed = true
+  })
+  return {
+    async stop() {
+      // Let filesystem events queued by the child process close reach the
+      // watcher before deciding whether validation is necessary.
+      await new Promise<void>(resolveStop => setImmediate(resolveStop))
+      watcher.close()
+      return changed
+    },
+  }
+}
+
+function terminalCallReferencesSkillDirectory(
+  input: Record<string, unknown>,
+  skillDirectory?: string,
+): boolean {
+  const target = normalizedPathText(skillDirectory)
+  if (!target) return false
+  return stringLeaves(input).some(value => normalizedPathText(value).includes(target))
+}
+
+function normalizedPathText(value: unknown): string {
+  const normalized = String(value || '').trim().replaceAll('\\', '/')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+function stringLeaves(value: unknown, seen = new WeakSet<object>()): string[] {
+  if (typeof value === 'string') return [value]
+  if (!value || typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
+  return Object.values(value as Record<string, unknown>)
+    .flatMap(child => stringLeaves(child, seen))
+}
+
+function appendStructuredData(
+  data: unknown,
+  key: string,
+  value: unknown,
+): Record<string, unknown> {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return { ...(data as Record<string, unknown>), [key]: value }
+  }
+  return {
+    ...(data === undefined ? {} : { result: data }),
+    [key]: value,
+  }
 }
 
 function subtaskPrompt(request: AgentTaskRequest): string {
@@ -1242,6 +1668,52 @@ function toMemoryCaptureMessage(message: AgentMessage): MemoryCaptureMessage {
     role: message.role,
     content: message.content,
   }
+}
+
+function completedMemoryCaptureMessages(
+  inputs: NonNullable<AgentRuntimeRunInput['memoryInput']>['messages'],
+  completedMessages: AgentMessage[],
+  origin?: MemoryOrigin,
+): MemoryCaptureMessage[] {
+  const trusted = normalizeMemoryEvidenceMessages(inputs, origin)
+  const finalAssistant = [...completedMessages].reverse()
+    .find(message => message.role === 'assistant' && message.content.trim())
+  return finalAssistant
+    ? [...trusted, withMemoryOrigin(toMemoryCaptureMessage(finalAssistant), origin)]
+    : trusted
+}
+
+function withMemoryOrigin(
+  message: MemoryCaptureMessage,
+  origin: MemoryOrigin | undefined,
+): MemoryCaptureMessage {
+  if (!origin) return message
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      memoryOrigin: origin,
+    },
+  }
+}
+
+function normalizeMemoryEvidenceMessages(
+  inputs: NonNullable<AgentRuntimeRunInput['memoryInput']>['messages'],
+  origin: MemoryOrigin | undefined,
+): MemoryCaptureMessage[] {
+  return inputs.flatMap(input => {
+    const normalized = normalizeAgentMessage(input)
+    if (normalized.role !== 'user' && normalized.role !== 'assistant') return []
+    const evidence = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as MemoryEvidenceMessageInput
+      : undefined
+    return [withMemoryOrigin({
+      ...toMemoryCaptureMessage(normalized),
+      ...(evidence?.id ? { id: evidence.id } : {}),
+      ...(evidence?.metadata ? { metadata: evidence.metadata } : {}),
+      ...(evidence?.createdAt ? { createdAt: evidence.createdAt } : {}),
+    }, origin)]
+  })
 }
 
 function stringMetadata(value: unknown): string | undefined {

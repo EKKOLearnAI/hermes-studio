@@ -102,6 +102,19 @@ describe('GlobalEkkoAgent', () => {
     expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default'))).toBe(true)
   })
 
+  it('recreates the cached runtime after settings change', async () => {
+    const setup = createTestSetup()
+    const createRuntime = vi.spyOn(setup, 'createRuntime')
+    const agent = createGlobalEkkoAgent({ setup, memory: false })
+
+    await agent.run({ messages: ['first'], modelClient: modelClient('first') })
+    expect(createRuntime).toHaveBeenCalledTimes(1)
+    expect(agent.refreshRuntime()).toBe('refreshed')
+    await agent.run({ messages: ['second'], modelClient: modelClient('second') })
+
+    expect(createRuntime).toHaveBeenCalledTimes(2)
+  })
+
   it('exposes the runtime-owned boundary interrupt without creating queue policy', async () => {
     const agent = createTestAgent({ memory: false })
     let signalModelStarted!: () => void

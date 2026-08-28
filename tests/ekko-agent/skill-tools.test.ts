@@ -1,8 +1,14 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { SkillListTool, SkillViewTool, createDefaultToolRegistry } from '../../packages/ekko-agent/src'
+import {
+  SkillListTool,
+  SkillViewTool,
+  createDefaultToolRegistry,
+  inspectLocalSkillValidationIssues,
+  matchSkillsForUserMessage,
+} from '../../packages/ekko-agent/src'
 
 let root = ''
 let skillDirectory = ''
@@ -14,7 +20,7 @@ beforeEach(async () => {
   await mkdir(join(skillDirectory, 'local-only'), { recursive: true })
   await writeFile(
     join(skillDirectory, 'writing', 'release-notes', 'SKILL.md'),
-    '---\nname: release-notes\ndescription: "Write polished release summaries."\n---\n# Release Notes\nLocal instructions.\n',
+    '---\nname: release-notes\ndescription: "Write polished release summaries."\nmetadata:\n  keywords:\n    - release summary\n---\n# Release Notes\nLocal instructions.\n',
   )
   await writeFile(
     join(skillDirectory, 'local-only', 'SKILL.md'),
@@ -52,8 +58,15 @@ describe('ekko-agent skill tools', () => {
     const payload = JSON.parse(result.content)
 
     expect(payload.skills).toEqual([
-      { name: 'local-only', description: 'Use local guidance.', managedByEkko: false },
-      { name: 'release-notes', description: 'Write polished release summaries.', managedByEkko: false },
+      {
+        name: 'local-only', description: 'Use local guidance.', category: 'misc', source: 'local', enabled: true,
+        managedByEkko: false, builtIn: false, validationStatus: 'invalid',
+        validationError: 'SKILL.md must start with YAML frontmatter.',
+      },
+      {
+        name: 'release-notes', description: 'Write polished release summaries.', category: 'writing', source: 'local', enabled: true,
+        managedByEkko: false, builtIn: false, validationStatus: 'valid',
+      },
     ])
     expect(payload.total).toBe(2)
   })
@@ -67,7 +80,48 @@ describe('ekko-agent skill tools', () => {
     expect(payload.query).toBe('write')
     expect(payload.count).toBe(1)
     expect(payload.skills).toEqual([
-      { name: 'release-notes', description: 'Write polished release summaries.', managedByEkko: false },
+      {
+        name: 'release-notes', description: 'Write polished release summaries.', category: 'writing', source: 'local', enabled: true,
+        managedByEkko: false, builtIn: false, validationStatus: 'valid',
+      },
+    ])
+  })
+
+  it('flags third-party Skills that install without deterministic keyword metadata', async () => {
+    const directory = join(skillDirectory, 'dashi-ppt')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'SKILL.md'), [
+      '---',
+      'name: dashi-ppt',
+      'description: Create presentation decks.',
+      '---',
+      '# Dashi PPT',
+      'Create a deck.',
+      '',
+    ].join('\n'))
+
+    await expect(inspectLocalSkillValidationIssues(skillDirectory)).resolves.toContainEqual(
+      expect.objectContaining({
+        name: 'dashi-ppt',
+        status: 'needs_metadata',
+        error: expect.stringContaining('metadata.keywords'),
+        directory: await realpath(directory),
+      }),
+    )
+    const listed = await new SkillListTool(skillDirectory).execute({ query: 'dashi-ppt' })
+    expect(listed.data).toMatchObject({
+      skills: [{ name: 'dashi-ppt', validationStatus: 'needs_metadata' }],
+    })
+  })
+
+  it('hard-matches only skill names and maintained keywords', async () => {
+    await expect(matchSkillsForUserMessage(skillDirectory, 'Please prepare a release summary.')).resolves.toMatchObject([
+      { name: 'release-notes' },
+    ])
+    await expect(matchSkillsForUserMessage(skillDirectory, '请帮我整理一份发布说明')).resolves.toEqual([])
+    await expect(matchSkillsForUserMessage(skillDirectory, 'Please write polished notes.')).resolves.toEqual([])
+    await expect(matchSkillsForUserMessage(skillDirectory, 'Use release notes for this change.')).resolves.toMatchObject([
+      { name: 'release-notes' },
     ])
   })
 
@@ -89,6 +143,7 @@ describe('ekko-agent skill tools', () => {
 
   it('loads the main skill file when filePath is omitted, empty, or an explicit SKILL.md alias', async () => {
     const tool = new SkillViewTool(skillDirectory)
+    const expectedBaseDirectory = await realpath(join(skillDirectory, 'writing', 'release-notes'))
     for (const filePath of [undefined, '', 'SKILL.md', './SKILL.md', '.\\SKILL.md']) {
       const result = await tool.execute({
         name: 'release-notes',
@@ -97,6 +152,11 @@ describe('ekko-agent skill tools', () => {
 
       expect(result.ok).toBe(true)
       expect(result.content).toMatch(/^\[skill_view\] name=release-notes \(\d+ chars\) file=SKILL\.md/)
+      expect(result.content).toMatch(/\bsha256=[a-f0-9]{64}\b/)
+      expect(result.content).toContain(`baseDirectory=${expectedBaseDirectory}`)
+      expect(result.data).toMatchObject({
+        baseDirectory: expectedBaseDirectory,
+      })
       expect(result.content).toContain('Local instructions.')
     }
   })
@@ -125,6 +185,9 @@ describe('ekko-agent skill tools', () => {
       '---',
       'name: durable-debugging',
       'description: Preserve reusable debugging procedures.',
+      'metadata:',
+      '  keywords:',
+      '    - durable debugging',
       '---',
       '# Durable Debugging',
       '## Procedure',
@@ -169,6 +232,48 @@ describe('ekko-agent skill tools', () => {
     }, runContext)
     expect(secondPatchWithoutReview).toMatchObject({ ok: false })
     expect(secondPatchWithoutReview.content).toContain('skill_view')
+  })
+
+  it('requires creator-managed skills to maintain a non-empty keyword list', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const result = await tools.execute('skill_manage', {
+      action: 'create',
+      name: 'missing-keywords',
+      content: [
+        '---',
+        'name: missing-keywords',
+        'description: Missing deterministic routing metadata.',
+        '---',
+        '# Missing keywords',
+        'Instructions.',
+      ].join('\n'),
+    }, { runId: 'missing-keywords', skillMutationSource: 'foreground' })
+
+    expect(result).toMatchObject({ ok: false })
+    expect(result.content).toContain('requires at least one non-empty metadata.keywords entry')
+  })
+
+  it('requires creator-managed routing keywords to remain compact English ASCII', async () => {
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const result = await tools.execute('skill_manage', {
+      action: 'create',
+      name: 'localized-keywords',
+      content: [
+        '---',
+        'name: localized-keywords',
+        'description: Reject translated host routing metadata.',
+        'metadata:',
+        '  keywords:',
+        '    - weather lookup',
+        '    - 天气查询',
+        '---',
+        '# Localized keywords',
+        'Instructions.',
+      ].join('\n'),
+    }, { runId: 'localized-keywords', skillMutationSource: 'foreground' })
+
+    expect(result).toMatchObject({ ok: false })
+    expect(result.content).toContain('must use English ASCII text or technical identifiers')
   })
 
   it('requires a fresh same-run skill_view before overwriting existing content', async () => {
@@ -223,6 +328,9 @@ describe('ekko-agent skill tools', () => {
         '---',
         'name: support-files',
         'description: Keep reusable supporting material.',
+        'metadata:',
+        '  keywords:',
+        '    - support files',
         '---',
         '# Support Files',
         'Read references/checklist.md.',
@@ -280,6 +388,9 @@ describe('ekko-agent skill tools', () => {
       '---',
       'name: safe-skill',
       'description: Keep reusable safe procedures.',
+      'metadata:',
+      '  keywords:',
+      '    - safe procedure',
       '---',
       '# Safe Skill',
       '## Procedure',
@@ -333,5 +444,51 @@ describe('ekko-agent skill tools', () => {
     const payload = JSON.parse(result.content)
 
     expect(payload.skills.map((skill: { name: string }) => skill.name)).not.toContain('outside-skill')
+  })
+
+  it('discovers read-only external roots and excludes disabled Skills from routing', async () => {
+    const externalRoot = join(root, 'shared-skills')
+    await mkdir(join(externalRoot, 'research', 'shared-search'), { recursive: true })
+    await writeFile(
+      join(externalRoot, 'research', 'shared-search', 'SKILL.md'),
+      '---\nname: shared-search\ndescription: Search shared sources.\nmetadata:\n  keywords:\n    - shared lookup\n---\n# Shared search\n',
+    )
+    const external = [{ directory: externalRoot, sourcePath: '~/shared-skills' }]
+    const listed = await new SkillListTool(skillDirectory, external, ['release-notes']).execute({})
+    const skills = (listed.data as { skills: Array<Record<string, unknown>> }).skills
+
+    expect(skills).toContainEqual(expect.objectContaining({
+      name: 'shared-search', category: 'research', source: 'external',
+      sourcePath: '~/shared-skills', enabled: true,
+    }))
+    expect(skills).toContainEqual(expect.objectContaining({ name: 'release-notes', enabled: false }))
+    await expect(matchSkillsForUserMessage(
+      skillDirectory,
+      'Please do a shared lookup.',
+      external,
+      ['shared-search'],
+    )).resolves.toEqual([])
+  })
+
+  it('identifies built-ins from the Profile manifest and refuses to delete them', async () => {
+    await writeFile(join(skillDirectory, '.ekko-builtin-skills.json'), JSON.stringify({
+      'release-notes': { owner: 'ekko-agent', sourceHash: 'source', installedHash: 'installed' },
+    }))
+    const tools = createDefaultToolRegistry({ skillDirectory })
+    const runContext = { runId: 'builtin-delete', skillMutationSource: 'foreground' as const }
+    const listed = await tools.execute('skill_list', {}, runContext)
+    expect((listed.data as { skills: Array<{ name: string; builtIn: boolean }> }).skills)
+      .toContainEqual(expect.objectContaining({ name: 'release-notes', builtIn: true }))
+
+    await tools.execute('skill_view', { name: 'release-notes' }, runContext)
+    const deleted = await tools.execute('skill_manage', {
+      action: 'delete',
+      name: 'release-notes',
+      confirmed: true,
+    }, runContext)
+    expect(deleted).toMatchObject({ ok: false })
+    expect(deleted.content).toContain('Built-in skill cannot be deleted')
+    await expect(readFile(join(skillDirectory, 'writing', 'release-notes', 'SKILL.md'), 'utf8'))
+      .resolves.toContain('Local instructions.')
   })
 })

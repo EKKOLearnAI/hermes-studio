@@ -6,6 +6,7 @@ import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
+import SkillSourceLegend from '@/components/hermes/skills/SkillSourceLegend.vue'
 import PendingWriteApprovals from '@/components/hermes/skills/PendingWriteApprovals.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo, type SkillTarget } from '@/api/hermes/skills'
 import { fetchPendingWrites } from '@/api/hermes/write-gate'
@@ -100,10 +101,6 @@ function ensureSelectedSkill() {
   selectedSkill.value = firstSkill?.name || ''
 }
 
-function toggleFilter(filter: SourceFilter) {
-  sourceFilter.value = sourceFilter.value === filter ? null : filter
-}
-
 function handleSelect(category: string, skill: string) {
   if (selectedCategory.value === category && selectedSkill.value === skill) {
     return
@@ -159,23 +156,7 @@ function handleSkillSaved() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
       </div>
-      <div class="source-legend">
-        <button class="legend-item" :class="{ active: sourceFilter === 'builtin' }" @click="toggleFilter('builtin')">
-          <span class="legend-dot dot-builtin" />{{ t('skills.source.builtin') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'hub' }" @click="toggleFilter('hub')">
-          <span class="legend-dot dot-hub" />{{ t('skills.source.hub') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'local' }" @click="toggleFilter('local')">
-          <span class="legend-dot dot-local" />{{ t('skills.source.local') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'external' }" @click="toggleFilter('external')">
-          <span class="legend-dot dot-external" />{{ t('skills.source.external') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'modified' }" @click="toggleFilter('modified')">
-          <span class="modified-icon">✎</span>{{ t('skills.modified') }}
-        </button>
-      </div>
+      <SkillSourceLegend v-model="sourceFilter" />
       <div class="header-actions">
         <NButton
           v-if="isHermesTarget && writeApprovalSupported"
@@ -304,21 +285,9 @@ function handleSkillSaved() {
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+@use '@/styles/skills-manager' as skills-manager;
 
-.skills-view {
-  height: calc(100 * var(--vh));
-  display: flex;
-  flex-direction: column;
-}
-
-.source-legend {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  flex-wrap: wrap;
-  margin-inline-start: 16px;
-}
+@include skills-manager.layout;
 
 .header-actions {
   display: flex;
@@ -326,56 +295,7 @@ function handleSkillSaved() {
   gap: 8px;
 }
 
-.legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: $text-muted;
-  white-space: nowrap;
-  padding: 2px 6px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: none;
-  cursor: pointer;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $text-secondary;
-    background: rgba(var(--accent-primary-rgb), 0.04);
-  }
-
-  &.active {
-    color: $text-primary;
-    border-color: $border-color;
-    background: rgba(var(--accent-primary-rgb), 0.08);
-  }
-}
-
-.legend-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.legend-dot.dot-builtin { background: #888; }
-.legend-dot.dot-hub { background: #4a90d9; }
-.legend-dot.dot-local { background: #66bb6a; }
-.legend-dot.dot-external { background: #f59e0b; }
-
-.modified-icon {
-  font-size: 11px;
-  color: $warning;
-  opacity: 0.7;
-}
-
 @media (max-width: $breakpoint-mobile) {
-  .source-legend {
-    display: none;
-  }
-
   .header-action-label {
     display: none;
   }
@@ -400,103 +320,6 @@ function handleSkillSaved() {
   @media (max-width: $breakpoint-mobile) {
     width: 100%;
   }
-}
-
-.skills-content {
-  flex: 1;
-  overflow: hidden;
-}
-
-.skills-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  font-size: 13px;
-  color: $text-muted;
-}
-
-.skills-layout {
-  display: flex;
-  height: 100%;
-}
-
-.skills-sidebar {
-  width: 280px;
-  border-inline-end: 1px solid $border-color;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.skills-main {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
-  min-width: 0;
-}
-
-.sidebar-toggle {
-  display: none;
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: $text-secondary;
-  padding: 4px;
-  border-radius: $radius-sm;
-
-  &:hover {
-    background: rgba(var(--accent-primary-rgb), 0.06);
-  }
-}
-
-@media (max-width: $breakpoint-mobile) {
-  .sidebar-toggle {
-    display: flex;
-  }
-
-  .skills-sidebar {
-    position: absolute;
-    left: 0;
-    top: 0;
-    height: 100%;
-    z-index: 10;
-    background: $bg-card;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
-  }
-
-  .skills-layout {
-    position: relative;
-  }
-
-  .mobile-backdrop {
-    display: block;
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 9;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity $transition-fast;
-
-    &.active {
-      opacity: 1;
-      pointer-events: auto;
-    }
-  }
-}
-
-.empty-detail {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: $text-muted;
-  font-size: 13px;
 }
 
 </style>

@@ -56,6 +56,14 @@ cpSync(
   { recursive: true },
 )
 
+const ekkoSkillsOutDir = resolve(rootDir, 'dist/ekko-skills')
+rmSync(ekkoSkillsOutDir, { recursive: true, force: true })
+cpSync(
+  resolve(rootDir, 'packages/ekko-agent/skills'),
+  ekkoSkillsOutDir,
+  { recursive: true },
+)
+
 const firmwareOutDir = resolve(rootDir, 'dist/mcu')
 const legacyFirmwareOutPath = resolve(firmwareOutDir, 'firmware.bin')
 for (const firmwareVersion of ['v1', 'v2']) {

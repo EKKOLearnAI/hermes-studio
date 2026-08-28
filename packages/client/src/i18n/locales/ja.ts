@@ -1,6 +1,8 @@
 import { socialMessagesJa } from '../social-messages-locales'
+import { ekkoConfigJa } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigJa,
   socialMessages: socialMessagesJa,
   browser: {
     title: 'ブラウザー', settings: 'ブラウザー設定', desktopOnly: '内蔵ブラウザーは Hermes Studio Desktop でのみ利用できます。', newTab: '新しいタブ',

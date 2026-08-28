@@ -43,6 +43,7 @@ import {
 } from '../modules/studio/repositories/app-connections-store'
 import { ensureAppRelayHostClient } from '../modules/studio/services/app-relay/connection'
 import { setupGlobalEkkoAgent } from './ekko'
+import { injectManagedEkkoMcpServers } from '../modules/ekko/services/mcp'
 import { WorkflowSocketServer } from '../modules/studio/sockets/workflow'
 import { PetStateSocketServer } from '../modules/studio/sockets/pet-state'
 import { logger } from '../modules/studio/public/logging'
@@ -374,7 +375,20 @@ export async function bootstrap() {
     logger.warn(err, '[bootstrap] failed to restore persisted Pi proxy targets')
   }
 
-  setupGlobalEkkoAgent()
+  const ekkoSetup = setupGlobalEkkoAgent()
+  try {
+    const injection = injectManagedEkkoMcpServers(ekkoSetup)
+    const changed = injection.targets.filter(target => target.status === 'injected' || target.status === 'updated')
+    if (changed.length > 0) {
+      logger.info({
+        serverNames: injection.serverNames,
+        targets: changed,
+      }, '[bootstrap] Studio MCP servers injected into Ekko config')
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to inject Studio MCP servers into Ekko config')
+    console.warn('[bootstrap] failed to inject Studio MCP servers into Ekko config:', err instanceof Error ? err.message : err)
+  }
   console.log('[bootstrap] ekko-agent setup complete')
 
   agentBridgeManager = getAgentBridgeManager()
