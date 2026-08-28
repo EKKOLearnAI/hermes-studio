@@ -41,6 +41,8 @@ class MemoryReviewTool implements AgentTool {
 }
 
 class MemorySearchTool implements AgentTool {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'memory_search',
     description: 'Search memory in the host-authorized recall scopes. Results include the canonical key, scope, id, revision, value, and content required for precise mutations. Do not search again when automatic recall already contains a direct, conflict-free answer. Otherwise, use this tool to verify remembered information or before saying that you do not know or remember. Prefer kinds for known categories and queryText for open-ended questions.',
@@ -94,6 +96,8 @@ function validMemoryKinds(value: unknown): MemoryQuery['kinds'] {
 }
 
 class MemoryGetTool implements AgentTool {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'memory_get',
     description: 'Get one complete memory card by id, including its server canonical key and current revision.',

@@ -112,6 +112,8 @@ class SkillReadTracker {
 }
 
 export class SkillListTool implements AgentTool<SkillListInput> {
+  readonly concurrency = 'parallel' as const
+
   constructor(
     private readonly skillDirectory?: string,
     private readonly externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
@@ -173,6 +175,8 @@ export class SkillListTool implements AgentTool<SkillListInput> {
 }
 
 export class SkillViewTool implements AgentTool<SkillViewInput> {
+  readonly concurrency = 'parallel' as const
+
   constructor(
     private readonly skillDirectory?: string,
     private readonly tracker = new SkillReadTracker(),

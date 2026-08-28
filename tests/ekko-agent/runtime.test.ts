@@ -354,6 +354,173 @@ describe('ekko-agent runtime', () => {
     expect(result.steps.map(step => step.type)).toEqual(['model', 'tool', 'model'])
   })
 
+  it('executes explicitly parallel-safe tool calls concurrently and preserves result order', async () => {
+    let releaseFirst!: () => void
+    let signalSecondStarted!: () => void
+    const firstRelease = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const secondStarted = new Promise<void>((resolve) => {
+      signalSecondStarted = resolve
+    })
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'parallel_probe', description: 'parallel probe', parameters: { type: 'object' } },
+      concurrency: 'parallel',
+      async execute(input) {
+        const label = String(input.label)
+        if (label === 'first') await firstRelease
+        else signalSecondStarted()
+        return { ok: true, content: label }
+      },
+    })
+    const client = modelClient((_request, call) => call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'call-1', name: 'parallel_probe', arguments: { label: 'first' } },
+            { id: 'call-2', name: 'parallel_probe', arguments: { label: 'second' } },
+          ],
+          finishReason: 'tool_calls',
+        }
+      : { content: 'done', finishReason: 'stop' })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+
+    const run = runtime.run({ messages: ['run both probes'] })
+    const startedTogether = await Promise.race([
+      secondStarted.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 200)),
+    ])
+    releaseFirst()
+    const result = await run
+
+    expect(startedTogether).toBe(true)
+    expect(result.messages.filter(message => message.role === 'tool')).toMatchObject([
+      { toolCallId: 'call-1', content: 'first' },
+      { toolCallId: 'call-2', content: 'second' },
+    ])
+    expect(result.steps.filter(step => step.type === 'tool').map(step => step.toolCallId))
+      .toEqual(['call-1', 'call-2'])
+  })
+
+  it('keeps serial tools as barriers between parallel-safe segments', async () => {
+    let activeParallelCalls = 0
+    let barrierStartedWhileParallel = false
+    let parallelStartedBeforeBarrierFinished = false
+    let barrierFinished = false
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'parallel_segment', description: 'parallel segment', parameters: { type: 'object' } },
+      concurrency: 'parallel',
+      async execute(input) {
+        if (input.phase === 'after' && !barrierFinished) parallelStartedBeforeBarrierFinished = true
+        activeParallelCalls += 1
+        await new Promise(resolve => setTimeout(resolve, 10))
+        activeParallelCalls -= 1
+        return { ok: true, content: String(input.phase) }
+      },
+    })
+    tools.register({
+      definition: { name: 'serial_barrier', description: 'serial barrier', parameters: { type: 'object' } },
+      async execute() {
+        barrierStartedWhileParallel = activeParallelCalls > 0
+        barrierFinished = true
+        return { ok: true, content: 'barrier' }
+      },
+    })
+    const client = modelClient((_request, call) => call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'before-1', name: 'parallel_segment', arguments: { phase: 'before-1' } },
+            { id: 'before-2', name: 'parallel_segment', arguments: { phase: 'before-2' } },
+            { id: 'barrier', name: 'serial_barrier', arguments: {} },
+            { id: 'after-1', name: 'parallel_segment', arguments: { phase: 'after' } },
+            { id: 'after-2', name: 'parallel_segment', arguments: { phase: 'after' } },
+          ],
+          finishReason: 'tool_calls',
+        }
+      : { content: 'done', finishReason: 'stop' })
+
+    const result = await new AgentRuntime({ modelClient: client, tools }).run({ messages: ['run segments'] })
+
+    expect(barrierStartedWhileParallel).toBe(false)
+    expect(parallelStartedBeforeBarrierFinished).toBe(false)
+    expect(result.messages.filter(message => message.role === 'tool').map(message => message.toolCallId))
+      .toEqual(['before-1', 'before-2', 'barrier', 'after-1', 'after-2'])
+  })
+
+  it('limits parallel-safe tool execution to eight calls', async () => {
+    let activeCalls = 0
+    let maxActiveCalls = 0
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'bounded_parallel', description: 'bounded parallel tool', parameters: { type: 'object' } },
+      concurrency: 'parallel',
+      async execute(input) {
+        activeCalls += 1
+        maxActiveCalls = Math.max(maxActiveCalls, activeCalls)
+        await new Promise(resolve => setTimeout(resolve, 10))
+        activeCalls -= 1
+        return { ok: true, content: String(input.index) }
+      },
+    })
+    const toolCalls = Array.from({ length: 12 }, (_, index) => ({
+      id: `bounded-${index}`,
+      name: 'bounded_parallel',
+      arguments: { index },
+    }))
+    const client = modelClient((_request, call) => call === 1
+      ? { content: '', toolCalls, finishReason: 'tool_calls' }
+      : { content: 'done', finishReason: 'stop' })
+
+    const result = await new AgentRuntime({ modelClient: client, tools }).run({ messages: ['run bounded tools'] })
+
+    expect(maxActiveCalls).toBe(8)
+    expect(result.messages.filter(message => message.role === 'tool').map(message => message.toolCallId))
+      .toEqual(toolCalls.map(toolCall => toolCall.id))
+  })
+
+  it('applies the failure limit in call order before crossing a serial barrier', async () => {
+    let serialToolExecuted = false
+    const tools = new AgentToolRegistry()
+    tools.register({
+      definition: { name: 'parallel_failure', description: 'parallel failure', parameters: { type: 'object' } },
+      concurrency: 'parallel',
+      async execute(input) {
+        return { ok: false, content: `failed-${String(input.index)}`, error: 'failed' }
+      },
+    })
+    tools.register({
+      definition: { name: 'serial_after_failures', description: 'serial tool', parameters: { type: 'object' } },
+      async execute() {
+        serialToolExecuted = true
+        return { ok: true, content: 'should not run' }
+      },
+    })
+    const client = modelClient(() => ({
+      content: '',
+      toolCalls: [
+        { id: 'failure-1', name: 'parallel_failure', arguments: { index: 1 } },
+        { id: 'failure-2', name: 'parallel_failure', arguments: { index: 2 } },
+        { id: 'serial-after', name: 'serial_after_failures', arguments: {} },
+      ],
+      finishReason: 'tool_calls',
+    }))
+    const runtime = new AgentRuntime({
+      modelClient: client,
+      tools,
+      maxConsecutiveToolFailures: 2,
+    })
+
+    const result = await runtime.run({ messages: ['stop after failures'] })
+
+    expect(serialToolExecuted).toBe(false)
+    expect(result.output.finishReason).toBe('tool_failure_limit')
+    expect(result.messages.filter(message => message.role === 'tool').map(message => message.toolCallId))
+      .toEqual(['failure-1', 'failure-2'])
+  })
+
   it('waits for foreground delegated tasks and hides delegation from the child', async () => {
     const tools = new AgentToolRegistry()
     tools.register(new DelegateTaskTool())
@@ -1839,6 +2006,7 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('## Tool Execution')
     expect(prompt).toContain('prerequisites named by a Skill as requirements, not proof that they are installed')
     expect(prompt).toContain('perform a lightweight availability check')
+    expect(prompt).toContain('Request independent tool calls together in one response')
     expect(prompt).toContain('use code_exec, including for one-line snippets')
     expect(prompt).toContain('Do not probe Node or Python with terminal_exec first')
     expect(prompt).toContain('Use terminal_exec for CLI commands')

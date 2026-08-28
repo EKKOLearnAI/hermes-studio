@@ -155,6 +155,12 @@ these decisions into its UI.
 events together. The default `maxSteps` is `90`, matching Hermes' regular agent
 turn budget.
 
+Tools execute serially unless their `AgentTool.concurrency` is explicitly set
+to `parallel`. Consecutive parallel-safe calls run with an eight-call limit;
+serial tools remain ordered barriers, and results are replayed to the model in
+the original tool-call order. Built-in file/image/skill/memory reads opt in.
+MCP tools opt in per server with `supports_parallel_tool_calls: true`.
+
 The default registry exposes `clarify` only for a foreground run whose
 `AgentToolContext` provides `requestUserClarification`. Delegated subagents and
 non-interactive hosts do not receive the tool. When available, the runtime

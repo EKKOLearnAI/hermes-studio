@@ -7,12 +7,14 @@ interface StdioMcpServerConfig {
   command: string
   args: string[]
   env: Record<string, string>
+  supportsParallelToolCalls: boolean
 }
 
 interface StreamableHttpMcpServerConfig {
   type: 'streamable_http'
   url: string
   headers: Record<string, string>
+  supportsParallelToolCalls: boolean
 }
 
 type McpServerConfig = StdioMcpServerConfig | StreamableHttpMcpServerConfig
@@ -26,6 +28,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeServerConfig(value: unknown): McpServerConfig | null {
   if (!isRecord(value) || value.enabled === false) return null
+  const supportsParallelToolCalls = value.supports_parallel_tool_calls === true
   const configuredType = typeof value.type === 'string' ? value.type.trim().toLowerCase() : ''
   const command = typeof value.command === 'string' ? value.command.trim() : ''
   const rawUrl = typeof value.url === 'string' ? value.url.trim() : ''
@@ -39,6 +42,7 @@ function normalizeServerConfig(value: unknown): McpServerConfig | null {
         type: 'streamable_http',
         url: url.toString(),
         headers: normalizeStringRecord(value.headers),
+        supportsParallelToolCalls,
       }
     } catch {
       return null
@@ -52,6 +56,7 @@ function normalizeServerConfig(value: unknown): McpServerConfig | null {
     command,
     args: Array.isArray(value.args) ? value.args.map(arg => String(arg)) : [],
     env: normalizeProcessEnv(value.env),
+    supportsParallelToolCalls,
   }
 }
 
@@ -188,13 +193,16 @@ class McpClientSession {
 
 class McpTool implements AgentTool {
   readonly definition: AgentTool['definition']
+  readonly concurrency: AgentTool['concurrency']
 
   constructor(
     serverName: string,
     private readonly remoteName: string,
     tool: any,
     private readonly session: McpClientSession,
+    supportsParallelToolCalls: boolean,
   ) {
+    this.concurrency = supportsParallelToolCalls ? 'parallel' : 'serial'
     this.definition = {
       name: String(tool.name || remoteName),
       description: String(tool.description || `MCP tool ${remoteName} from ${serverName}`),
@@ -233,7 +241,13 @@ export function createMcpToolProvider(): AgentToolProvider {
           for (const tool of await session.listTools(timeoutMs)) {
             if (!tool?.name || usedNames.has(String(tool.name))) continue
             usedNames.add(String(tool.name))
-            tools.push(new McpTool(serverName, String(tool.name), tool, session))
+            tools.push(new McpTool(
+              serverName,
+              String(tool.name),
+              tool,
+              session,
+              server.supportsParallelToolCalls,
+            ))
           }
         } catch {
           // A broken MCP server should not prevent the rest of the agent run.

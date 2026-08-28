@@ -16,6 +16,8 @@ export interface WriteFileInput extends Record<string, unknown> {
 }
 
 export class ReadFileTool implements AgentTool<ReadFileInput> {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'read_file',
     description: 'Read a UTF-8 text file from the workspace.',

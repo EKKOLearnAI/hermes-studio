@@ -56,6 +56,7 @@ import {
 } from '../config'
 
 const MAX_TRACKED_SKILL_REVIEW_CONTEXTS = 1_024
+const MAX_CONCURRENT_TOOL_CALLS = 8
 const SUBTASK_OUTPUT_TAIL_CHARS = 4_000
 const SUBTASK_SUMMARY_CHARS = 500
 
@@ -88,6 +89,16 @@ interface HistoricalSkillView {
   declaredCharacters?: number
   declaredHash?: string
   body: string
+}
+
+interface ToolCallSegment {
+  mode: 'serial' | 'parallel'
+  toolCalls: AgentToolCall[]
+}
+
+interface ExecutedToolCall {
+  toolCall: AgentToolCall
+  result: AgentToolResult
 }
 
 function foregroundOnlyDelegateTaskDefinition(definition: AgentToolDefinition): AgentToolDefinition {
@@ -414,17 +425,19 @@ export class AgentRuntime {
         }
         messages.push(skillLoadMessage)
         steps.push({ type: 'model', step: 0, message: skillLoadMessage })
-        for (const toolCall of toolCalls) {
-          const result = await this.executeTool(
+        for (const segment of this.planToolCallSegments(toolCalls)) {
+          const executedCalls = await this.executeToolCallSegment(
             runId,
             0,
-            toolCall,
+            segment,
             executionToolContext,
             emit,
             input.signal,
           )
-          messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
-          steps.push({ type: 'tool', step: 0, toolCallId: toolCall.id, toolName: toolCall.name, result })
+          for (const { toolCall, result } of executedCalls) {
+            messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
+            steps.push({ type: 'tool', step: 0, toolCallId: toolCall.id, toolName: toolCall.name, result })
+          }
         }
       }
       for (let step = 1; step <= maxSteps; step += 1) {
@@ -492,34 +505,34 @@ export class AgentRuntime {
           return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
         }
 
-        for (const toolCall of toolCalls) {
-          throwIfAborted(input.signal)
-          const result = await this.executeTool(
+        for (const segment of this.planToolCallSegments(toolCalls)) {
+          const executedCalls = await this.executeToolCallSegment(
             runId,
             step,
-            toolCall,
+            segment,
             executionToolContext,
             emit,
             input.signal,
           )
-          throwIfAborted(input.signal)
-          messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
-          steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
-          consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
-          if (input.skillReviewEnabled !== false) this.recordSkillToolCall(contextKey, toolCall.name)
-          if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {
-            if (activeBoundaryRun) activeBoundaryRun.terminal = true
-            emit({ type: 'run.tool_failure_limit', runId, failures: consecutiveToolFailures })
-            output = {
-              role: 'assistant',
-              content: `Stopped after ${consecutiveToolFailures} consecutive tool failures.`,
-              finishReason: 'tool_failure_limit',
+          for (const { toolCall, result } of executedCalls) {
+            messages.push(createToolResultMessage(toolCall.id, result.content, toolCall.name, result.contentParts))
+            steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
+            consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
+            if (input.skillReviewEnabled !== false) this.recordSkillToolCall(contextKey, toolCall.name)
+            if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {
+              if (activeBoundaryRun) activeBoundaryRun.terminal = true
+              emit({ type: 'run.tool_failure_limit', runId, failures: consecutiveToolFailures })
+              output = {
+                role: 'assistant',
+                content: `Stopped after ${consecutiveToolFailures} consecutive tool failures.`,
+                finishReason: 'tool_failure_limit',
+              }
+              const context = contextKey ? this.modelContexts.get(contextKey) : undefined
+              emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
+              this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
+              this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
+              return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
             }
-            const context = contextKey ? this.modelContexts.get(contextKey) : undefined
-            emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-            this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
-            this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
-            return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
           }
         }
         if (pendingBackgroundSubagentIds.size > 0) {
@@ -1028,6 +1041,56 @@ export class AgentRuntime {
       : undefined
     if (!this.profileId) return context
     return { ...context, profileId: this.profileId }
+  }
+
+  private planToolCallSegments(toolCalls: AgentToolCall[]): ToolCallSegment[] {
+    const segments: ToolCallSegment[] = []
+    for (const toolCall of toolCalls) {
+      const mode = this.tools.get(toolCall.name)?.concurrency === 'parallel'
+        ? 'parallel'
+        : 'serial'
+      const previous = segments.at(-1)
+      if (previous?.mode === mode) previous.toolCalls.push(toolCall)
+      else segments.push({ mode, toolCalls: [toolCall] })
+    }
+    return segments
+  }
+
+  private async executeToolCallSegment(
+    runId: string,
+    step: number,
+    segment: ToolCallSegment,
+    context: AgentToolContext | undefined,
+    emit: (event: AgentRuntimeEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ExecutedToolCall[]> {
+    if (segment.mode === 'serial' || segment.toolCalls.length <= 1) {
+      const executedCalls: ExecutedToolCall[] = []
+      for (const toolCall of segment.toolCalls) {
+        throwIfAborted(signal)
+        const result = await this.executeTool(runId, step, toolCall, context, emit, signal)
+        throwIfAborted(signal)
+        executedCalls.push({ toolCall, result })
+      }
+      return executedCalls
+    }
+
+    const results: Array<ExecutedToolCall | undefined> = new Array(segment.toolCalls.length)
+    let nextIndex = 0
+    const worker = async () => {
+      while (!signal?.aborted) {
+        const index = nextIndex
+        nextIndex += 1
+        if (index >= segment.toolCalls.length) return
+        const toolCall = segment.toolCalls[index]
+        const result = await this.executeTool(runId, step, toolCall, context, emit, signal)
+        results[index] = { toolCall, result }
+      }
+    }
+    const workerCount = Math.min(MAX_CONCURRENT_TOOL_CALLS, segment.toolCalls.length)
+    await Promise.all(Array.from({ length: workerCount }, worker))
+    throwIfAborted(signal)
+    return results as ExecutedToolCall[]
   }
 
   private async executeTool(

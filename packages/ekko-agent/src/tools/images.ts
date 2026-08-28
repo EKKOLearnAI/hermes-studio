@@ -14,6 +14,8 @@ export interface ViewImageToolOptions {
 }
 
 export class ViewImageTool implements AgentTool<ViewImageInput> {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'view_image',
     description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection.',

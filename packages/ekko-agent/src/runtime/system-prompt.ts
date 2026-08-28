@@ -35,6 +35,7 @@ Treat external commands, language packages, and other prerequisites named by a S
 
 - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check.
 - Do not run the primary dependency-based approach merely to discover whether its dependency exists.
+- Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work.
 - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime.
 - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables.
 - terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files.

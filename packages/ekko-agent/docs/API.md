@@ -162,7 +162,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `refresh(context?)` | `AgentToolContext?` | `Promise<void>` | 刷新动态工具；强制写入本 Profile ID。 |
 | `execute(name, input, context?)` | 工具名、对象入参、上下文 | `Promise<AgentToolResult>` | 执行工具；强制写入本 Profile ID。 |
 
-`AgentTool` 字段：`definition.name` 是唯一工具名，`definition.description?` 是模型说明，`definition.parameters?` 是 JSON Schema；`execute(input, context?)` 返回 `{ ok, content, contentParts?, data?, error? }`。`AgentToolProvider` 字段为 `id`，并实现 `listTools(context?)`。
+`AgentTool` 字段：`definition.name` 是唯一工具名，`definition.description?` 是模型说明，`definition.parameters?` 是 JSON Schema；`concurrency?` 默认为 `serial`，只有不共享可变状态且允许同批并发的工具才应设为 `parallel`；`execute(input, context?)` 返回 `{ ok, content, contentParts?, data?, error? }`。`AgentToolProvider` 字段为 `id`，并实现 `listTools(context?)`。Ekko runtime 将连续的 `parallel` 调用以最多 8 路并发执行，并把结果按原 tool-call 顺序回放；未标记工具仍是串行屏障。
 
 ## Profile `skill` 模块
 
@@ -2466,7 +2466,7 @@ export interface SystemPromptInput {
 
 export const EKKO_OUTPUT_FORMAT_GUIDELINES = `## Image and File Output When returning an image, video, or file to the user, use Markdown with an existing local absolute path. - Unix/macOS/WSL image: \`![description](/absolute/path/image.png)\` - Windows image: \`![description](<C:/absolute/path/image.png>)\` - Unix/macOS/WSL file: \`[filename](/absolute/path/file.pdf)\` - Windows file: \`[filename](<C:/absolute/path/file.pdf>)\` - Use forward slashes for Windows paths. - Wrap paths containing spaces, non-ASCII characters, or special characters in angle brackets. - Do not use relative paths or \`file://\` URLs. - Verify that the referenced file exists before returning it.`
 
-export const EKKO_TOOL_EXECUTION_GUIDELINES = `## Tool Execution Treat external commands, language packages, and other prerequisites named by a Skill as requirements, not proof that they are installed. - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check. - Do not run the primary dependency-based approach merely to discover whether its dependency exists. - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime. - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables. - terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files. - By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it. - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision. - After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories. - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task. - Verify created artifacts before returning them.`
+export const EKKO_TOOL_EXECUTION_GUIDELINES = `## Tool Execution Treat external commands, language packages, and other prerequisites named by a Skill as requirements, not proof that they are installed. - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check. - Do not run the primary dependency-based approach merely to discover whether its dependency exists. - Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work. - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime. - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables. - terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files. - By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it. - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision. - After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories. - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task. - Verify created artifacts before returning them.`
 
 export const EKKO_CLARIFICATION_GUIDELINES = `## User Clarification When missing user input materially blocks or changes the task, call the clarify tool and wait for the response. - Do not present a blocking clarification question as an ordinary assistant response. - Ask one concise question that collects the necessary information; provide choices only for a short fixed set of answers. - Do not call clarify when a safe, reasonable assumption lets you continue without materially changing the outcome.`
 
@@ -2906,6 +2906,7 @@ export interface WriteFileInput extends Record<string, unknown> {
 }
 
 export class ReadFileTool implements AgentTool<ReadFileInput> {
+  readonly concurrency = 'parallel' as const
   readonly definition = { name: 'read_file', description: 'Read a UTF-8 text file from the workspace.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to the current workspace.' }, encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' }, }, required: ['path'], additionalProperties: false, }, }
   async execute(input: ReadFileInput, context: AgentToolContext = {}): Promise<AgentToolResult>
 }
@@ -2929,6 +2930,7 @@ export interface ViewImageToolOptions {
 }
 
 export class ViewImageTool implements AgentTool<ViewImageInput> {
+  readonly concurrency = 'parallel' as const
   readonly definition = { name: 'view_image', description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Image path relative to the current workspace, or an absolute path inside workspaceRoot.', }, }, required: ['path'], additionalProperties: false, }, }
   constructor(options: ViewImageToolOptions = {})
   async execute(input: ViewImageInput, context: AgentToolContext = {}): Promise<AgentToolResult>
@@ -3046,12 +3048,14 @@ export interface SkillRoutingResolution {
 }
 
 export class SkillListTool implements AgentTool<SkillListInput> {
+  readonly concurrency = 'parallel' as const
   constructor(private readonly skillDirectory?: string, private readonly externalSkillDirectories: EkkoExternalSkillDirectory[] = [], private readonly disabledSkillNames: string[] = [])
   readonly definition = { name: 'skill_list', description: 'Fallback discovery for skills in this Ekko Agent instance\'s configured skill directory. Available skill names are already present in the system prompt; use skill_view directly when one clearly matches.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Optional case-insensitive search across skill names, descriptions, and maintained keywords.', }, }, additionalProperties: false, }, }
   async execute(input: SkillListInput): Promise<AgentToolResult>
 }
 
 export class SkillViewTool implements AgentTool<SkillViewInput> {
+  readonly concurrency = 'parallel' as const
   constructor(private readonly skillDirectory?: string, private readonly tracker = new SkillReadTracker(), private readonly externalSkillDirectories: EkkoExternalSkillDirectory[] = [], private readonly disabledSkillNames: string[] = [])
   readonly definition = { name: 'skill_view', description: 'Load the complete SKILL.md instructions for one skill in this Ekko Agent instance\'s configured skill directory. Use an exact name from the system prompt or skill_list.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Exact skill name from the system prompt or skill_list.', }, filePath: { type: 'string', description: 'Optional support file path under references/, templates/, scripts/, or assets/. Defaults to SKILL.md.', }, }, required: ['name'], additionalProperties: false, }, }
   async execute(input: SkillViewInput, context: AgentToolContext = {}): Promise<AgentToolResult>
@@ -3202,8 +3206,11 @@ export interface AgentToolResult {
 
 export type AgentToolContentPart = | { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
+export type AgentToolConcurrency = 'serial' | 'parallel'
+
 export interface AgentTool<TInput extends Record<string, unknown> = Record<string, unknown>> {
   definition: AgentToolDefinition
+  concurrency?: AgentToolConcurrency
   execute(input: TInput, context?: AgentToolContext): Promise<AgentToolResult>
 }
 
