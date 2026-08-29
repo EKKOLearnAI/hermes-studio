@@ -206,7 +206,7 @@ describe('handleCodingAgentRun', () => {
     startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
     sendCodingAgentRunInputMock.mockResolvedValue({ runId: 'agent-session-1' })
 
-    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
     const state = {
       messages: [],
       isWorking: false,

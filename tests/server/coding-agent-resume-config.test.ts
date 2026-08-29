@@ -402,7 +402,7 @@ describe('coding agent resumed session config', () => {
     readConfigYamlForProfileMock.mockResolvedValue({})
     safeReadFileMock.mockResolvedValue('')
 
-    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    const { startCodingAgentRun } = await import('../../packages/server/src/bootstrap/coding-agents')
     await startCodingAgentRun('codex', { sessionId: 'external-codex-1', mode: 'global', workspace: 'C:\\repo' })
 
     expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -438,7 +438,7 @@ describe('coding agent resumed session config', () => {
     readConfigYamlForProfileMock.mockResolvedValue({})
     safeReadFileMock.mockResolvedValue('')
 
-    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    const { startCodingAgentRun } = await import('../../packages/server/src/bootstrap/coding-agents')
     await startCodingAgentRun('codex', { sessionId: 'external-codex-2', workspace: 'C:\\repo' })
 
     expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({

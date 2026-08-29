@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { windowsNpmShimExecution } from '../../packages/server/src/services/windows-command'
+import { windowsNpmShimExecution } from '../../packages/server/src/modules/studio/public/windows-command'
 
 const roots: string[] = []
 

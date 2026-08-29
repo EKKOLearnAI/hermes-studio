@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => {
   return { sessionGet, sessionRun, messageRows, messageRun, updateRun, prepare, db }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database', () => ({
   isSqliteAvailable: vi.fn(() => true),
   getDb: vi.fn(() => mocks.db),
 }))
@@ -31,7 +31,7 @@ describe('upsertExternalCodingAgentSession', () => {
   })
 
   it('creates an ended external coding-agent session and its messages', async () => {
-    const { upsertExternalCodingAgentSession } = await import('../../packages/server/src/db/hermes/session-store')
+    const { upsertExternalCodingAgentSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
 
     mocks.sessionGet
       .mockReturnValueOnce(null)
@@ -77,7 +77,7 @@ describe('upsertExternalCodingAgentSession', () => {
   })
 
   it('does not duplicate messages when an external file is synced again', async () => {
-    const { upsertExternalCodingAgentSession } = await import('../../packages/server/src/db/hermes/session-store')
+    const { upsertExternalCodingAgentSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     mocks.sessionGet
       .mockReturnValueOnce({ id: 'external_claude_1', source: 'claude', agent: 'claude', agent_native_session_id: 'claude-native-1' })
       .mockReturnValueOnce({ id: 'external_claude_1', source: 'claude', agent: 'claude' })
