@@ -102,6 +102,40 @@ describe('ekko-agent tools', () => {
     })
   })
 
+  it('reports a recoverable view_image failure when the current model is text-only', async () => {
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )
+    await writeFile(path.join(workspaceRoot, 'text-only-preview.png'), image)
+    const viewer = new ViewImageTool()
+
+    const result = await viewer.execute({ path: 'text-only-preview.png' }, {
+      workspaceRoot,
+      modelProvider: 'glm',
+      modelName: 'glm-5.3',
+      modelCapabilities: {
+        streaming: true,
+        tools: true,
+        vision: false,
+        jsonMode: true,
+        systemPrompt: true,
+      },
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('glm/glm-5.3 does not support vision input'),
+      data: {
+        code: 'VISION_UNSUPPORTED',
+        path: path.join(workspaceRoot, 'text-only-preview.png'),
+        bytes: image.byteLength,
+        mimeType: 'image/png',
+      },
+    })
+    expect(result).not.toHaveProperty('contentParts')
+  })
+
   it('enforces workspace and format boundaries when viewing images', async () => {
     const viewer = new ViewImageTool()
     await writeFile(path.join(workspaceRoot, 'not-an-image.png'), 'plain text')

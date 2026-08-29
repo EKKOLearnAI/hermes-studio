@@ -3130,6 +3130,94 @@
         ]
       }
     },
+    "/api/ekko/memory/review-jobs": {
+      "get": {
+        "tags": [
+          "Ekko Memory"
+        ],
+        "summary": "Get review-jobs",
+        "description": "GET /api/ekko/memory/review-jobs",
+        "operationId": "reviewJobs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/ekko/memory/review-jobs/{id}/review": {
+      "post": {
+        "tags": [
+          "Ekko Memory"
+        ],
+        "summary": "Create review",
+        "description": "POST /api/ekko/memory/review-jobs/:id/review",
+        "operationId": "reviewJobNow",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/ekko/memory/review-status": {
+      "get": {
+        "tags": [
+          "Ekko Memory"
+        ],
+        "summary": "Get review-status",
+        "description": "GET /api/ekko/memory/review-status",
+        "operationId": "reviewStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/ekko/memory/{id}": {
       "patch": {
         "tags": [

@@ -8,6 +8,7 @@ import {
   type EkkoDirectoryLayout,
 } from './directories'
 import { MemoryService } from './memory/service'
+import { ModelMemoryExtractor } from './memory/extraction'
 import { resolveEkkoDataDirectory } from './memory/paths'
 import { SqliteMemoryStore } from './memory/store'
 import { EkkoToolApprovalService } from './tools/approval'
@@ -175,6 +176,8 @@ export class EkkoAgentSetup {
         searchResultLimit: nextConfig.memory.searchResultLimit,
         reviewEveryUserMessages: nextConfig.memory.reviewEveryUserMessages,
       })
+      this.memory?.clearRegisteredReviewExtractors()
+      void this.memory?.recoverReviewJobs()
     })
     this.skill = new EkkoSkillManager(this.tool)
     this.model = new EkkoModelManager({
@@ -216,6 +219,7 @@ export class EkkoAgentSetup {
     try {
       for (const profile of profiles) this.agent.ensure(profile)
       this.default = this.agent.get('default')
+      void this.memory.recoverReviewJobs()
     } catch (error) {
       this.close()
       throw error
@@ -383,7 +387,7 @@ export class EkkoAgentSetup {
       modelDefaults,
       memory: memory === false
         ? undefined
-        : memory ?? (config.memory.enabled ? this.createMemoryService(config) : undefined),
+        : memory ?? (config.memory.enabled ? this.memory : undefined),
       logWriter: runtimeOverrides.logWriter ?? new EkkoFileLogger({
         directory: profileLayout.logDirectory,
         maxBytes: config.logging.maxBytes,
@@ -485,6 +489,36 @@ export class EkkoAgentSetup {
       automaticRecallTokenBudget: config.memory.automaticRecallTokenBudget,
       searchResultLimit: config.memory.searchResultLimit,
       reviewEveryUserMessages: config.memory.reviewEveryUserMessages,
+      reviewExtractorResolver: async job => {
+        const current = this.config.read()
+        const preferredAvailable = Boolean(
+          job.preferredProvider && current.model.providers[job.preferredProvider],
+        )
+        const currentProvider = String(current.model.defaultProvider || '').trim()
+        const provider = job.attempt <= 1 && preferredAvailable
+          ? job.preferredProvider!
+          : currentProvider
+        if (!provider || !current.model.providers[provider]) return undefined
+        const model = provider === job.preferredProvider && job.attempt <= 1
+          ? job.preferredModel
+          : modelRequestDefaultsFromConfig(current, provider).model
+        try {
+          return {
+            provider,
+            model,
+            extractor: new ModelMemoryExtractor({
+              mode: 'review',
+              modelClient: this.createModelClient({ provider, model }),
+              memory: this.memory,
+              model,
+              fallback: false,
+              maxModelRetries: 0,
+            }),
+          }
+        } catch {
+          return undefined
+        }
+      },
     })
   }
 }

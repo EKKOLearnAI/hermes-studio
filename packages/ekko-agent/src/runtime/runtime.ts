@@ -40,7 +40,12 @@ import type {
   EkkoBackgroundContinuationContext,
 } from './types'
 import type { MemoryContext, MemoryEvidenceMessageInput, MemoryOrigin, MemoryRuntimeIdentity } from '../memory/types'
-import { hasExplicitMemoryIntent, type MemoryCaptureMessage } from '../memory/service'
+import {
+  hasExplicitMemoryForgetIntent,
+  hasExplicitMemoryForgetAllIntent,
+  hasExplicitMemoryIntent,
+  type MemoryCaptureMessage,
+} from '../memory/service'
 import { ModelMemoryExtractor } from '../memory/extraction'
 import { PROFILE_MEMORY_SCOPE } from '../memory/scope'
 import { createMemoryTools } from '../memory/tools'
@@ -59,6 +64,12 @@ const MAX_TRACKED_SKILL_REVIEW_CONTEXTS = 1_024
 const MAX_CONCURRENT_TOOL_CALLS = 8
 const SUBTASK_OUTPUT_TAIL_CHARS = 4_000
 const SUBTASK_SUMMARY_CHARS = 500
+const FOREGROUND_MEMORY_REVIEW_TOOL_NAMES = new Set([
+  'memory_search',
+  'memory_get',
+  'memory_review',
+  'memory_forget',
+])
 
 interface ModelResponseResult {
   response: ModelResponse
@@ -215,9 +226,13 @@ export class AgentRuntime {
       : undefined
     this.registerSkillTools(this.skills)
     if (this.toolsEnabled && this.memory) {
-      // Foreground runs may inspect memory, but durable mutations are owned by
-      // the post-run curator that sees only host-selected memory evidence.
-      this.tools.registerMany(createMemoryTools(this.memory, { writable: false, reviewable: true }))
+      // Foreground runs may inspect memory and enqueue review, but durable
+      // mutations are owned by the isolated reviewer.
+      this.tools.registerMany(createMemoryTools(this.memory, {
+        writable: false,
+        reviewable: true,
+        forgetReviewable: true,
+      }))
     }
   }
 
@@ -340,10 +355,14 @@ export class AgentRuntime {
     const inputSkills = this.skillsEnabled ? input.skills ?? [] : []
     this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
-    const memoryPreparation = await this.prepareMemory(input, memoryIdentity)
+    const memoryPreparation = await this.prepareMemory(input, memoryIdentity, runId)
     const memoryContext = memoryPreparation?.context
+    const captureMessages = this.memoryCaptureMessages(input)
+    const forceInitialMemoryForget = Boolean(
+      memoryIdentity && hasExplicitMemoryForgetIntent(captureMessages),
+    )
     const forceInitialMemoryReview = Boolean(
-      memoryIdentity && hasExplicitMemoryIntent(this.memoryCaptureMessages(input)),
+      memoryIdentity && !forceInitialMemoryForget && hasExplicitMemoryIntent(captureMessages),
     )
     const sessionId = this.contextKeyFor(input)?.trim()
     const activeBoundaryRun = sessionId
@@ -355,6 +374,9 @@ export class AgentRuntime {
     const executionToolContext: AgentToolContext = {
       ...(this.runToolContext(input, memoryPreparation?.sourceMessageIds) || {}),
       runId,
+      modelCapabilities: this.modelClientFor(input).capabilities,
+      modelProvider: this.modelClientFor(input).provider,
+      modelName: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
       skillMutationSource: 'foreground',
       delegationDepth: input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0,
       delegateTask: request => {
@@ -373,8 +395,32 @@ export class AgentRuntime {
           subagentId => pendingBackgroundSubagentIds.add(subagentId),
         )
       },
-      requestMemoryReview: () => {
+      requestMemoryReview: async request => {
         memoryReviewRequested = true
+        const throughMessageId = memoryPreparation?.sourceMessageIds.at(-1)
+        if (!this.memory || !memoryIdentity || !throughMessageId) return {}
+        const modelClient = this.modelClientFor(input)
+        const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
+        const job = await this.memory.scheduleReview({
+          identity: memoryIdentity,
+          throughMessageId,
+          request,
+          preferredProvider: modelClient.provider,
+          preferredModel: model,
+          extractor: new ModelMemoryExtractor({
+            mode: 'review',
+            modelClient,
+            memory: this.memory,
+            model,
+            fallback: false,
+            maxModelRetries: 0,
+            onUsage: input.onMemoryUsage,
+            requestLogger: this.runtimeLogger,
+            requestLogContext: input.logContext,
+            requestRunId: runId,
+          }),
+        })
+        return { jobId: job?.id }
       },
     }
     if (memoryContext) {
@@ -450,10 +496,18 @@ export class AgentRuntime {
         emit({ type: 'model.started', runId, step })
         const request = this.modelRequest(input, messages, modelClient, contextKey, modelSignal)
         if (memoryReviewRequested && request.tools) {
-          request.tools = request.tools.filter(tool => tool.name !== 'memory_review')
+          request.tools = request.tools.filter(tool => !FOREGROUND_MEMORY_REVIEW_TOOL_NAMES.has(tool.name))
           if (!request.tools.length) {
             request.tools = undefined
             request.toolChoice = undefined
+          }
+        } else if (forceInitialMemoryForget && request.tools) {
+          const forgetTools = request.tools.filter(tool => (
+            tool.name === 'memory_search' || tool.name === 'memory_get' || tool.name === 'memory_forget'
+          ))
+          if (forgetTools.length) {
+            request.tools = forgetTools
+            request.toolChoice = 'required'
           }
         } else if (step === 1 && forceInitialMemoryReview) {
           const reviewTools = request.tools?.filter(tool => tool.name === 'memory_review')
@@ -637,7 +691,7 @@ export class AgentRuntime {
         }
       } catch (error) {
         throwIfAborted(request.signal)
-        if (attempt > maxRetries) throw error
+        if (attempt > maxRetries || isNonRetryableModelError(error)) throw error
         emit({
           type: 'model.retry',
           runId,
@@ -832,9 +886,27 @@ export class AgentRuntime {
   private async prepareMemory(
     input: AgentRuntimeRunInput,
     identity: MemoryRuntimeIdentity | undefined,
+    runId: string,
   ): Promise<{ context: MemoryContext; sourceMessageIds: string[] } | undefined> {
     if (!this.memory || !identity) return undefined
-    await this.memory.drain()
+    const modelClient = this.modelClientFor(input)
+    const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
+    this.memory.registerReviewExtractor(identity.profileId || 'default', {
+      provider: modelClient.provider,
+      model,
+      extractor: new ModelMemoryExtractor({
+        mode: 'review',
+        modelClient,
+        memory: this.memory,
+        model,
+        fallback: false,
+        maxModelRetries: 0,
+        onUsage: input.onMemoryUsage,
+        requestLogger: this.runtimeLogger,
+        requestLogContext: input.logContext,
+        requestRunId: runId,
+      }),
+    })
     const normalized = this.memoryCaptureMessages(input)
     const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
     const shouldCapture = reviewPolicy === 'automatic' || hasExplicitMemoryIntent(normalized)
@@ -862,7 +934,7 @@ export class AgentRuntime {
     identity: MemoryRuntimeIdentity | undefined,
     messages: AgentMessage[],
     input: AgentRuntimeRunInput,
-    forceReview = false,
+    reviewAlreadyScheduled = false,
   ): void {
     if (!this.memory || !identity) return
     const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
@@ -872,20 +944,38 @@ export class AgentRuntime {
           .filter(message => message.role === 'user' || message.role === 'assistant')
           .map(toMemoryCaptureMessage)
     const modelClient = this.modelClientFor(input)
+    const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
     this.memory.scheduleRunCompletion(
       identity,
       memoryMessages,
       new ModelMemoryExtractor({
+        mode: 'review',
         modelClient,
         memory: this.memory,
-        model: input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model,
-        signal: input.signal,
+        model,
+        fallback: false,
+        maxModelRetries: 0,
         onUsage: input.onMemoryUsage,
         requestLogger: this.runtimeLogger,
         requestLogContext: input.logContext,
         requestRunId: runId,
       }),
-      { reviewPolicy, forceReview },
+      {
+        reviewPolicy,
+        reviewAlreadyScheduled,
+        preferredProvider: modelClient.provider,
+        preferredModel: model,
+        summaryExtractor: new ModelMemoryExtractor({
+          mode: 'summary',
+          modelClient,
+          memory: this.memory,
+          model,
+          onUsage: input.onMemoryUsage,
+          requestLogger: this.runtimeLogger,
+          requestLogContext: input.logContext,
+          requestRunId: runId,
+        }),
+      },
     )
   }
 
@@ -1023,10 +1113,17 @@ export class AgentRuntime {
     const memoryMessages = this.memoryCaptureMessages(input)
     const memoryReviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
     const memoryExplicitIntent = hasExplicitMemoryIntent(memoryMessages)
+    const memoryForgetIntent = hasExplicitMemoryForgetIntent(memoryMessages)
+    const memoryForgetAllIntent = hasExplicitMemoryForgetAllIntent(memoryMessages)
     return {
       ...context,
       ...(sourceMessageIds?.length ? { sourceMessageIds } : {}),
-      ...(this.memory ? { memoryReviewPolicy, memoryExplicitIntent } : {}),
+      ...(this.memory ? {
+        memoryReviewPolicy,
+        memoryExplicitIntent,
+        memoryForgetIntent,
+        memoryForgetAllIntent,
+      } : {}),
       ...(input.memoryInput?.origin ? { memoryOrigin: input.memoryInput.origin } : {}),
       ...(input.memoryInput?.recallScopes ? { memoryRecallScopes: input.memoryInput.recallScopes } : {}),
       ...(input.memoryInput?.writeScopes ? { memoryWriteScopes: input.memoryInput.writeScopes } : {}),
@@ -1605,6 +1702,15 @@ function abortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.message === 'Run aborted.')
+}
+
+function isNonRetryableModelError(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    'retryable' in error &&
+    (error as { retryable?: unknown }).retryable === false,
+  )
 }
 
 interface DirectoryChangeProbe {

@@ -10,8 +10,10 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { useI18n } from 'vue-i18n'
 import {
-  deleteEkkoMemory, fetchEkkoMemory, updateEkkoMemory,
-  type EkkoMemoryNode, type EkkoMemoryStatus,
+  deleteEkkoMemory, fetchEkkoMemory, fetchEkkoMemoryReviewJobs, fetchEkkoMemoryReviewStatus,
+  reviewEkkoMemoryJobNow, updateEkkoMemory,
+  type EkkoMemoryNode, type EkkoMemoryReviewJob, type EkkoMemoryReviewJobStatus,
+  type EkkoMemoryReviewStatus, type EkkoMemoryStatus,
 } from '@/api/ekko/memory'
 import {
   buildEkkoMemoryGraphEdges, ekkoMemoryNeighborIds, layoutEkkoMemoryGraph,
@@ -24,6 +26,7 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
 type MemoryViewMode = 'graph' | 'list'
+type MemoryStatusFilter = 'all' | 'reviewing' | EkkoMemoryStatus
 
 interface MemoryFlowNodeData {
   memory: EkkoMemoryNode
@@ -46,10 +49,21 @@ const message = useMessage()
 const { fitView } = useVueFlow('ekko-memory')
 const loading = ref(false)
 const saving = ref(false)
+const reviewStatus = ref<EkkoMemoryReviewStatus>({
+  reviewing: false,
+  activeJobs: 0,
+  pending: 0,
+  running: 0,
+  retry: 0,
+  waitingForModel: 0,
+  needsConfirmation: 0,
+})
 const query = ref('')
-const status = ref<'all' | EkkoMemoryStatus>('active')
+const status = ref<MemoryStatusFilter>('active')
 const viewMode = ref<MemoryViewMode>('graph')
 const memories = ref<EkkoMemoryNode[]>([])
+const reviewJobs = ref<EkkoMemoryReviewJob[]>([])
+const activatingReviewJobId = ref('')
 const editing = ref<EkkoMemoryNode | null>(null)
 const draftTitle = ref('')
 const draftContent = ref('')
@@ -63,10 +77,13 @@ const drawerWidth = ref(420)
 
 let disposed = false
 let loadGeneration = 0
+let reviewStatusInitialized = false
+let reviewStatusTimer: ReturnType<typeof setTimeout> | undefined
 
 const statusOptions = computed(() => [
   { label: t('ekkoConfig.allStatuses'), value: 'all' },
   { label: t('ekkoConfig.statusActive'), value: 'active' },
+  { label: t('ekkoConfig.memoryReviewing'), value: 'reviewing' },
   { label: t('ekkoConfig.statusSuperseded'), value: 'superseded' },
   { label: t('ekkoConfig.statusExpired'), value: 'expired' },
   { label: t('ekkoConfig.statusDeleted'), value: 'deleted' },
@@ -92,6 +109,11 @@ const selectedRelations = computed(() => {
     const memory = neighborId ? memoryById.value.get(neighborId) : undefined
     return memory ? [{ edge, memory }] : []
   })
+})
+const reviewIndicatorLabel = computed(() => {
+  if (reviewStatus.value.reviewing) return t('ekkoConfig.memoryReviewing')
+  if (reviewStatus.value.waitingForModel) return t('ekkoConfig.memoryReviewWaitingForModel')
+  return t('ekkoConfig.memoryReviewNeedsConfirmation')
 })
 
 const flowNodes = computed(() => {
@@ -163,6 +185,13 @@ async function loadMemory() {
   const generation = ++loadGeneration
   loading.value = true
   try {
+    if (status.value === 'reviewing') {
+      const nextJobs = await fetchEkkoMemoryReviewJobs()
+      if (disposed || generation !== loadGeneration) return
+      reviewJobs.value = nextJobs
+      memories.value = []
+      return
+    }
     const nextMemories = await fetchEkkoMemory({
       query: query.value.trim(),
       status: status.value === 'all' ? undefined : status.value,
@@ -181,6 +210,63 @@ async function loadMemory() {
   } finally {
     if (!disposed && generation === loadGeneration) loading.value = false
   }
+}
+
+async function pollReviewStatus() {
+  if (disposed) return
+  try {
+    const previous = reviewStatus.value
+    const nextStatus = await fetchEkkoMemoryReviewStatus()
+    if (disposed) return
+    reviewStatus.value = nextStatus
+    const reviewJustFinished = reviewStatusInitialized && previous.reviewing && !nextStatus.reviewing
+    const completedJobChanged = reviewStatusInitialized &&
+      previous.latestCompletedAt !== nextStatus.latestCompletedAt &&
+      Boolean(nextStatus.latestCompletedAt)
+    reviewStatusInitialized = true
+    if (status.value === 'reviewing' || reviewJustFinished || completedJobChanged) await loadMemory()
+  } catch {
+    // Keep the memory page usable when the transient status request fails.
+  } finally {
+    if (!disposed) reviewStatusTimer = setTimeout(() => { void pollReviewStatus() }, 1_500)
+  }
+}
+
+function showReviewingJobs() {
+  status.value = 'reviewing'
+  void loadMemory()
+}
+
+async function reviewJobNow(job: EkkoMemoryReviewJob) {
+  if (activatingReviewJobId.value || job.status === 'pending' || job.status === 'running') return
+  activatingReviewJobId.value = job.id
+  try {
+    await reviewEkkoMemoryJobNow(job.id)
+    await Promise.all([loadMemory(), pollReviewStatusOnce()])
+  } catch (error) {
+    message.error(`${t('ekkoConfig.memoryReviewFailed')}: ${errorMessage(error)}`)
+  } finally {
+    activatingReviewJobId.value = ''
+  }
+}
+
+async function pollReviewStatusOnce() {
+  try {
+    reviewStatus.value = await fetchEkkoMemoryReviewStatus()
+  } catch {
+    // The regular poll will retry.
+  }
+}
+
+function reviewJobStatusLabel(jobStatus: EkkoMemoryReviewJobStatus): string {
+  const key: Record<EkkoMemoryReviewJobStatus, string> = {
+    pending: 'ekkoConfig.memoryReviewPending',
+    running: 'ekkoConfig.memoryReviewing',
+    retry: 'ekkoConfig.memoryReviewRetry',
+    waiting_for_model: 'ekkoConfig.memoryReviewWaitingForModel',
+    needs_confirmation: 'ekkoConfig.memoryReviewNeedsConfirmation',
+  }
+  return t(key[jobStatus])
 }
 
 function openDetails(id: string) {
@@ -285,10 +371,12 @@ onMounted(() => {
   window.addEventListener('resize', updateViewportMetrics)
   updateViewportMetrics()
   void loadMemory()
+  void pollReviewStatus()
 })
 onBeforeUnmount(() => {
   disposed = true
   loadGeneration += 1
+  if (reviewStatusTimer) clearTimeout(reviewStatusTimer)
   window.removeEventListener('resize', updateViewportMetrics)
 })
 watch(viewMode, (mode) => {
@@ -299,7 +387,17 @@ watch(viewMode, (mode) => {
 <template>
   <div class="ekko-page">
     <header class="page-header">
-      <h2 class="header-title">{{ t('ekkoConfig.memoryTitle') }}</h2>
+      <div class="memory-header-title">
+        <h2 class="header-title">{{ t('ekkoConfig.memoryTitle') }}</h2>
+        <button
+          v-if="reviewStatus.activeJobs || reviewStatus.needsConfirmation"
+          type="button" class="memory-review-filter" @click="showReviewingJobs"
+        >
+          <NTag size="small" type="warning" round :bordered="false">
+            <span class="memory-reviewing"><i />{{ reviewIndicatorLabel }}</span>
+          </NTag>
+        </button>
+      </div>
       <NButton size="small" quaternary :loading="loading" @click="loadMemory">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -312,16 +410,44 @@ watch(viewMode, (mode) => {
     </header>
 
     <div class="toolbar">
-      <NInput v-model:value="query" clearable :placeholder="t('ekkoConfig.searchMemory')" @keyup.enter="loadMemory" />
+      <NInput v-model:value="query" clearable :disabled="status === 'reviewing'" :placeholder="t('ekkoConfig.searchMemory')" @keyup.enter="loadMemory" />
       <NSelect v-model:value="status" class="status-select" :options="statusOptions" @update:value="loadMemory" />
-      <div class="view-switch" role="group" :aria-label="t('ekkoConfig.memoryTitle')">
+      <div v-if="status !== 'reviewing'" class="view-switch" role="group" :aria-label="t('ekkoConfig.memoryTitle')">
         <NButton size="small" :type="viewMode === 'graph' ? 'primary' : 'default'" :secondary="viewMode !== 'graph'" @click="viewMode = 'graph'">{{ t('ekkoConfig.graphView') }}</NButton>
         <NButton size="small" :type="viewMode === 'list' ? 'primary' : 'default'" :secondary="viewMode !== 'list'" @click="viewMode = 'list'">{{ t('ekkoConfig.listView') }}</NButton>
       </div>
     </div>
 
     <main class="memory-workspace">
-      <section v-if="viewMode === 'graph'" class="memory-graph-panel">
+      <section v-if="status === 'reviewing'" class="memory-review-panel">
+        <NSpin :show="loading" class="memory-review-spin">
+          <div v-if="reviewJobs.length" class="memory-review-list">
+            <article v-for="job in reviewJobs" :key="job.id" class="memory-review-card">
+              <div class="memory-review-card__head">
+                <div>
+                  <NTag size="small" type="warning" :bordered="false">{{ reviewJobStatusLabel(job.status) }}</NTag>
+                  <span class="memory-review-trigger">{{ job.trigger }}</span>
+                </div>
+                <NButton
+                  v-if="job.status === 'retry' || job.status === 'waiting_for_model' || job.status === 'needs_confirmation'"
+                  size="small" type="primary" :loading="activatingReviewJobId === job.id"
+                  @click="reviewJobNow(job)"
+                >{{ t('ekkoConfig.memoryReviewNow') }}</NButton>
+              </div>
+              <p v-if="job.evidencePreview" class="memory-review-evidence">{{ job.evidencePreview }}</p>
+              <p v-if="job.lastError" class="memory-review-error">{{ job.lastError }}</p>
+              <div class="memory-review-card__foot">
+                <span>Session {{ job.sessionId }}</span>
+                <span>{{ t('ekkoConfig.memoryReviewAttempt', { count: job.attempt }) }}</span>
+                <span>{{ formatDate(job.updatedAt) }}</span>
+              </div>
+            </article>
+          </div>
+          <NEmpty v-else class="empty" :description="t('ekkoConfig.noReviewingMemory')" />
+        </NSpin>
+      </section>
+
+      <section v-else-if="viewMode === 'graph'" class="memory-graph-panel">
         <div class="relationship-legend">
           <span class="relationship-legend__hint">{{ t('ekkoConfig.memoryGraphHint') }}</span>
           <span class="relationship-legend__item relationship-legend__item--revision"><i />{{ t('ekkoConfig.relationRevision') }} · {{ relationCounts.revision }}</span>
@@ -364,7 +490,7 @@ watch(viewMode, (mode) => {
               <MiniMap pannable zoomable :node-color="miniMapNodeColor" />
               <Controls :show-interactive="false" />
             </VueFlow>
-            <NEmpty v-if="!loading && !memories.length" class="graph-empty" :description="t('ekkoConfig.noMemory')" />
+            <NEmpty v-if="!loading && !memories.length" class="graph-empty" :description="t(reviewStatus.reviewing ? 'ekkoConfig.memoryReviewing' : 'ekkoConfig.noMemory')" />
             <div class="memory-hud">
               <span>{{ memories.length }} {{ t('ekkoConfig.memoryNodes') }}</span>
               <span>{{ graphEdges.length }} {{ t('ekkoConfig.memoryRelations') }}</span>
@@ -400,7 +526,7 @@ watch(viewMode, (mode) => {
               <div class="memory-foot">{{ formatDate(memory.updatedAt) }}</div>
             </article>
           </div>
-          <NEmpty v-else class="empty" :description="t('ekkoConfig.noMemory')" />
+          <NEmpty v-else class="empty" :description="t(reviewStatus.reviewing ? 'ekkoConfig.memoryReviewing' : 'ekkoConfig.noMemory')" />
         </div>
       </NSpin>
     </main>
@@ -468,10 +594,28 @@ watch(viewMode, (mode) => {
 @use '@/styles/variables' as *;
 
 .ekko-page { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.memory-header-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.memory-review-filter { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; }
+.memory-review-filter:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; border-radius: 999px; }
+.memory-reviewing { display: inline-flex; align-items: center; gap: 6px; }
+.memory-reviewing i {
+  width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+  animation: memory-review-pulse 1.2s ease-in-out infinite;
+}
+@keyframes memory-review-pulse { 50% { opacity: 0.35; transform: scale(0.78); } }
 .toolbar { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; margin: 16px 20px 14px; > .n-input { max-width: 520px; } }
 .status-select { width: 180px; flex: 0 0 auto; }
 .view-switch { display: flex; gap: 6px; margin-inline-start: auto; }
 .memory-workspace { flex: 1; min-height: 0; padding: 0 20px 20px; overflow: hidden; }
+.memory-review-panel, .memory-review-spin { height: 100%; min-height: 0; }
+.memory-review-list { height: 100%; overflow: auto; display: grid; align-content: start; gap: 12px; padding: 2px; }
+.memory-review-card { border: 1px solid var(--border-color); border-radius: 12px; padding: 14px; background: var(--card-color); }
+.memory-review-card__head, .memory-review-card__head > div, .memory-review-card__foot { display: flex; align-items: center; gap: 10px; }
+.memory-review-card__head { justify-content: space-between; }
+.memory-review-trigger { color: var(--text-color-3); font-size: 12px; }
+.memory-review-evidence { margin: 12px 0 0; color: var(--text-color-1); white-space: pre-wrap; }
+.memory-review-error { margin: 10px 0 0; color: var(--error-color); font-size: 12px; white-space: pre-wrap; }
+.memory-review-card__foot { margin-top: 12px; flex-wrap: wrap; color: var(--text-color-3); font-size: 12px; }
 .memory-graph-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 
 .relationship-legend { min-height: 30px; display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding: 0 2px 10px; color: $text-secondary; font-size: 11px; }

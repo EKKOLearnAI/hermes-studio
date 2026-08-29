@@ -9,7 +9,7 @@ import {
   DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
   DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
 } from '../config'
-import { RuleBasedMemoryExtractor } from './extraction'
+import { MemoryReviewNeedsConfirmationError, RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
 import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
 import { memoryScopeAllowed, normalizeMemoryScopes, PROFILE_MEMORY_SCOPE } from './scope'
@@ -33,6 +33,10 @@ import type {
   MemoryProposeUpdateResult,
   MemoryQuery,
   MemoryQueryResult,
+  MemoryReviewJob,
+  MemoryReviewJobRequest,
+  MemoryReviewJobStatus,
+  MemoryReviewQueueStatus,
   MemoryRuntimeIdentity,
   MemoryReviewPolicy,
   MemoryStore,
@@ -43,6 +47,18 @@ import type {
 
 const MEMORY_CANDIDATE_LIMIT = 500
 const MAX_MEMORY_SEARCH_RESULTS = 50
+const MEMORY_REVIEW_LEASE_MS = 5 * 60_000
+const MEMORY_REVIEW_ATTEMPT_TIMEOUT_MS = 2 * 60_000
+const MEMORY_REVIEW_RETRY_BASE_MS = 5_000
+const MEMORY_REVIEW_RETRY_MAX_MS = 5 * 60_000
+const MEMORY_REVIEW_MESSAGE_BATCH_LIMIT = 40
+const ACTIVE_MEMORY_REVIEW_JOB_STATUSES: MemoryReviewJobStatus[] = [
+  'pending',
+  'running',
+  'retry',
+  'waiting_for_model',
+  'needs_confirmation',
+]
 const ALWAYS_RECALLED_MEMORY_KINDS: NonNullable<MemoryQuery['kinds']> = [
   'interaction_contract',
   'language_preference',
@@ -62,8 +78,29 @@ export interface MemoryServiceOptions {
   /** @deprecated Use searchResultLimit. Automatic recall now uses automaticRecallTokenBudget. */
   nodeLimit?: number
   reviewEveryUserMessages?: number
+  reviewAttemptTimeoutMs?: number
   /** @deprecated Use reviewEveryUserMessages. */
   summaryEveryMessages?: number
+  reviewExtractorResolver?: MemoryReviewExtractorResolver
+}
+
+export interface MemoryReviewExtractorResolution {
+  extractor: MemoryExtractor
+  provider?: string
+  model?: string
+}
+
+export type MemoryReviewExtractorResolver = (
+  job: MemoryReviewJob,
+) => Promise<MemoryReviewExtractorResolution | undefined>
+
+export interface MemoryReviewScheduleInput {
+  identity: MemoryRuntimeIdentity
+  throughMessageId: string
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  extractor?: MemoryExtractor
 }
 
 export interface MemoryCaptureMessage {
@@ -78,6 +115,11 @@ export interface MemoryRunCompletionOptions {
   reviewPolicy?: MemoryReviewPolicy
   /** Force the current captured batch through review, subject to host review policy. */
   forceReview?: boolean
+  /** The foreground tool already created the immediate review job for this evidence batch. */
+  reviewAlreadyScheduled?: boolean
+  preferredProvider?: string
+  preferredModel?: string
+  summaryExtractor?: MemoryExtractor
 }
 
 export class MemoryService {
@@ -88,8 +130,17 @@ export class MemoryService {
   private automaticRecallTokenBudget: number
   private searchResultLimit: number
   private reviewEveryUserMessages: number
+  private readonly reviewAttemptTimeoutMs: number
+  private readonly reviewExtractorResolvers: MemoryReviewExtractorResolver[]
   private readonly warnings = new Set<string>()
-  private extractionQueue: Promise<void> = Promise.resolve()
+  private readonly reviewWorkers = new Map<string, Promise<void>>()
+  private readonly reviewWorkerWakeups = new Set<string>()
+  private readonly reviewExtractors = new Map<string, MemoryExtractor>()
+  private readonly profileReviewExtractors = new Map<string, MemoryReviewExtractorResolution>()
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly retryTimerDueAt = new Map<string, number>()
+  private summaryQueue: Promise<void> = Promise.resolve()
+  private closed = false
 
   constructor(options: MemoryServiceOptions = {}) {
     this.store = options.store
@@ -112,6 +163,10 @@ export class MemoryService {
         ?? DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
       ),
     )
+    this.reviewAttemptTimeoutMs = Math.max(10, Math.floor(
+      options.reviewAttemptTimeoutMs ?? MEMORY_REVIEW_ATTEMPT_TIMEOUT_MS,
+    ))
+    this.reviewExtractorResolvers = options.reviewExtractorResolver ? [options.reviewExtractorResolver] : []
     if (options.warning) this.warnings.add(options.warning)
   }
 
@@ -218,6 +273,7 @@ export class MemoryService {
         }),
         exactCandidatesPromise,
       ])
+      const pendingForgetIds = await this.pendingForgetNodeIds(identity.profileId || 'default')
       const result = resolveMemoryQuery(
         exactCandidates,
         relevantCandidates,
@@ -226,7 +282,7 @@ export class MemoryService {
         new Date(),
       )
       const selection = selectMemoryNodesByTokenBudget(
-        [...result.exact, ...result.relevant],
+        [...result.exact, ...result.relevant].filter(node => !pendingForgetIds.has(node.id)),
         this.automaticRecallTokenBudget,
       )
       const nodes = selection.nodes
@@ -264,7 +320,13 @@ export class MemoryService {
         ? this.store.queryNodes({ ...scoped, queryText: undefined, limit: MEMORY_CANDIDATE_LIMIT })
         : Promise.resolve([]),
     ])
-    return resolveMemoryQuery(exactCandidates, relevantCandidates, query.queryText, limit)
+    const pendingForgetIds = await this.pendingForgetNodeIds(identity.profileId || 'default')
+    return resolveMemoryQuery(
+      exactCandidates.filter(node => !pendingForgetIds.has(node.id)),
+      relevantCandidates.filter(node => !pendingForgetIds.has(node.id)),
+      query.queryText,
+      limit,
+    )
   }
 
   async get(id: string, identity?: Partial<MemoryRuntimeIdentity>): Promise<MemoryNode | undefined> {
@@ -344,6 +406,50 @@ export class MemoryService {
       ...query,
       profileId: query.profileId || 'default',
     })
+  }
+
+  async getReviewStatus(profileId = 'default'): Promise<MemoryReviewQueueStatus> {
+    if (!this.isEnabled || !this.store) {
+      return {
+        reviewing: false,
+        activeJobs: 0,
+        pending: 0,
+        running: 0,
+        retry: 0,
+        waitingForModel: 0,
+        needsConfirmation: 0,
+      }
+    }
+    const normalizedProfile = profileId || 'default'
+    await this.recoverStaleReviewJobsForProfile(normalizedProfile)
+    return this.store.getReviewQueueStatus(normalizedProfile)
+  }
+
+  async listReviewJobs(profileId = 'default'): Promise<MemoryReviewJob[]> {
+    if (!this.isEnabled || !this.store) return []
+    await this.recoverStaleReviewJobsForProfile(profileId || 'default')
+    return this.store.listReviewJobs({
+      profileId: profileId || 'default',
+      statuses: ACTIVE_MEMORY_REVIEW_JOB_STATUSES,
+      limit: 100,
+    })
+  }
+
+  async reviewJobNow(id: string, profileId = 'default'): Promise<MemoryReviewJob | undefined> {
+    if (!this.isEnabled || !this.store || this.closed) return undefined
+    const normalizedProfile = profileId || 'default'
+    await this.recoverStaleReviewJobsForProfile(normalizedProfile)
+    const current = await this.store.getReviewJob(id)
+    if (!current || current.profileId !== normalizedProfile) return undefined
+    if (current.status === 'completed' || current.status === 'running') return current
+    const activated = await this.store.activateReviewJob({
+      id,
+      profileId: normalizedProfile,
+      now: new Date().toISOString(),
+      confirmedByUser: true,
+    })
+    if (activated) this.startReviewWorker(normalizedProfile)
+    return activated
   }
 
   async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult> {
@@ -502,20 +608,63 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) {
       return { deletedIds: [], mode, reason: 'Memory store is disabled.' }
     }
-    if (!input.id && !input.domain && !input.type && !input.key && input.valueJson === undefined) {
+    const hasBroadSelector = Boolean(
+      input.domain ||
+      input.categoryPathPrefix?.length ||
+      input.type ||
+      input.key ||
+      input.valueJson !== undefined,
+    )
+    if (
+      !input.all &&
+      !input.targets?.length &&
+      !input.id &&
+      !hasBroadSelector
+    ) {
       return { deletedIds: [], mode, reason: 'A memory selector is required.' }
     }
-    const candidates = input.id
-      ? [await this.get(input.id, input.identity)].filter((node): node is MemoryNode => Boolean(node))
-      : await this.store.queryNodes(memoryQuery(input.identity as MemoryRuntimeIdentity, {
-          domain: input.domain,
-          categoryPathPrefix: input.categoryPathPrefix,
-          types: input.type ? [input.type] : undefined,
-          key: input.key,
-          valueJson: input.valueJson,
-          includeExpired: true,
-          limit: 100,
-        }))
+    const selectorCount = Number(input.all === true) +
+      Number(Boolean(input.targets?.length)) +
+      Number(Boolean(input.id)) +
+      Number(hasBroadSelector)
+    if (selectorCount > 1) {
+      return { deletedIds: [], mode, reason: 'Use exactly one memory selector: all, targets, id, or a broad query.' }
+    }
+    const exactTargets = input.targets?.length
+      ? [...new Map(input.targets.map(target => [target.id, target])).values()]
+      : undefined
+    const expectedRevisions = new Map<string, number>()
+    let candidates: MemoryNode[] = []
+    if (exactTargets) {
+      const resolved = await Promise.all(exactTargets.map(async target => ({
+        target,
+        node: await this.get(target.id, input.identity),
+      })))
+      const missing = resolved.find(item => !item.node)
+      if (missing) return { deletedIds: [], mode, reason: `Memory node not found: ${missing.target.id}` }
+      candidates = resolved.map(item => item.node!)
+      for (const { target, node } of resolved) {
+        const revisionError = validateExpectedRevision(node!, target.expectedRevision)
+        if (revisionError) return { deletedIds: [], mode, reason: revisionError }
+        expectedRevisions.set(target.id, target.expectedRevision)
+      }
+    } else if (input.id) {
+      candidates = [await this.get(input.id, input.identity)].filter((node): node is MemoryNode => Boolean(node))
+    } else {
+      const baseQuery = memoryQuery(input.identity as MemoryRuntimeIdentity, {
+        domain: input.all ? undefined : input.domain,
+        categoryPathPrefix: input.all ? undefined : input.categoryPathPrefix,
+        types: input.all || !input.type ? undefined : [input.type],
+        key: input.all ? undefined : input.key,
+        valueJson: input.all ? undefined : input.valueJson,
+        includeExpired: true,
+      })
+      for (let offset = 0; ; offset += 500) {
+        const page = await this.store.queryNodes({ ...baseQuery, limit: 500, offset })
+        candidates.push(...page)
+        if (page.length < 500) break
+      }
+    }
     if (!candidates.length) return { deletedIds: [], mode, reason: 'No matching memory was found.' }
     if (input.id) {
       const revisionError = validateExpectedRevision(candidates[0], input.expectedRevision)
@@ -536,7 +685,7 @@ export class MemoryService {
         mode,
         reason: input.reason,
         actor: input.actor || 'ekko-agent',
-        expectedRevision: input.id ? input.expectedRevision : undefined,
+        expectedRevision: expectedRevisions.get(node.id) ?? (input.id ? input.expectedRevision : undefined),
         sessionId: input.identity?.sessionId,
       })
       if (deleted) deletedIds.push(node.id)
@@ -552,10 +701,87 @@ export class MemoryService {
     }
   }
 
+  async scheduleReview(input: MemoryReviewScheduleInput): Promise<MemoryReviewJob | undefined> {
+    if (!this.isEnabled || !this.store || this.closed) return undefined
+    const profileId = input.identity.profileId || 'default'
+    const createdAt = new Date().toISOString()
+    const id = reviewJobId({
+      profileId,
+      sessionId: input.identity.sessionId,
+      throughMessageId: input.throughMessageId,
+      request: input.request,
+    })
+    const job = await this.store.enqueueReviewJob({
+      id,
+      profileId,
+      sessionId: input.identity.sessionId,
+      throughMessageId: input.throughMessageId,
+      identity: { ...input.identity, profileId },
+      request: input.request,
+      preferredProvider: input.preferredProvider,
+      preferredModel: input.preferredModel,
+      createdAt,
+    })
+    if (input.extractor) this.reviewExtractors.set(job.id, input.extractor)
+    this.wakeReviewJobs(profileId)
+    return job
+  }
+
+  wakeReviewJobs(profileId?: string): void {
+    if (!this.isEnabled || !this.store || this.closed) return
+    if (profileId) {
+      this.startReviewWorker(profileId)
+      return
+    }
+    const now = new Date()
+    void this.store.listPendingReviewProfiles({
+      now: now.toISOString(),
+      staleBefore: new Date(now.getTime() - MEMORY_REVIEW_LEASE_MS).toISOString(),
+    }).then(profiles => {
+      for (const profile of profiles) this.startReviewWorker(profile)
+    }).catch(error => this.recordWarning(error))
+  }
+
+  async recoverReviewJobs(): Promise<void> {
+    if (!this.isEnabled || !this.store || this.closed) return
+    const now = new Date()
+    await this.store.requeueStaleReviewJobs({
+      now: now.toISOString(),
+      staleBefore: new Date(now.getTime() - MEMORY_REVIEW_LEASE_MS).toISOString(),
+    })
+    if (typeof this.store.activateReviewJobs === 'function') {
+      await this.store.activateReviewJobs({ now: now.toISOString() })
+    }
+    this.wakeReviewJobs()
+  }
+
+  registerReviewExtractor(profileId: string, resolution: MemoryReviewExtractorResolution): void {
+    const normalizedProfile = profileId || 'default'
+    this.profileReviewExtractors.set(normalizedProfile, resolution)
+    if (!this.store || !this.isEnabled || this.closed) return
+    if (typeof this.store.activateReviewJobs !== 'function') {
+      this.startReviewWorker(normalizedProfile)
+      return
+    }
+    void this.store.activateReviewJobs({
+      profileId: normalizedProfile,
+      now: new Date().toISOString(),
+    }).then(() => this.startReviewWorker(normalizedProfile)).catch(error => this.recordWarning(error))
+  }
+
+  registerReviewExtractorResolver(resolver: MemoryReviewExtractorResolver): void {
+    this.reviewExtractorResolvers.unshift(resolver)
+    void this.recoverReviewJobs().catch(error => this.recordWarning(error))
+  }
+
+  clearRegisteredReviewExtractors(): void {
+    this.profileReviewExtractors.clear()
+  }
+
   scheduleExtraction(identity: MemoryRuntimeIdentity): void {
     if (!this.isEnabled || !this.store) return
-    this.extractionQueue = this.extractionQueue
-      .then(() => this.extractAndPersist(identity, this.extractor, true))
+    this.summaryQueue = this.summaryQueue
+      .then(() => this.enqueuePeriodicReview(identity, this.extractor, true))
       .catch(error => this.recordWarning(error))
   }
 
@@ -568,20 +794,42 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) return
     const explicitIntent = hasExplicitMemoryIntent(messages)
     if (options.reviewPolicy === 'explicit-only' && !explicitIntent) return
-    const forceReview = options.forceReview === true || explicitIntent || hasHighSignalMemoryCandidate(messages)
-    this.extractionQueue = this.extractionQueue
+    const forceReview = !options.reviewAlreadyScheduled && (
+      options.forceReview === true || explicitIntent || hasHighSignalMemoryCandidate(messages)
+    )
+    this.summaryQueue = this.summaryQueue
       .then(async () => {
-        await this.captureMessages(identity, messages)
-        await this.extractAndPersist(identity, extractor, forceReview)
+        const ids = await this.captureMessages(identity, messages)
+        const throughMessageId = ids.at(-1)
+        if (!throughMessageId) return
+        if (!options.reviewAlreadyScheduled) {
+          await this.enqueuePeriodicReview(
+            identity,
+            extractor,
+            forceReview,
+            throughMessageId,
+            options.preferredProvider,
+            options.preferredModel,
+          )
+        }
+        await this.summarizeIfDue(identity, options.summaryExtractor ?? extractor)
       })
       .catch(error => this.recordWarning(error))
   }
 
   async drain(): Promise<void> {
-    await this.extractionQueue
+    await this.summaryQueue
+    await Promise.allSettled([...this.reviewWorkers.values()])
   }
 
   close(): void {
+    this.closed = true
+    for (const timer of this.retryTimers.values()) clearTimeout(timer)
+    this.retryTimers.clear()
+    this.retryTimerDueAt.clear()
+    this.reviewWorkerWakeups.clear()
+    this.reviewExtractors.clear()
+    this.profileReviewExtractors.clear()
     this.store?.close()
   }
 
@@ -589,96 +837,398 @@ export class MemoryService {
     return buildMemoryContextPrompt(context)
   }
 
-  private async extractAndPersist(
+  private async reviewAndPersist(
     identity: MemoryRuntimeIdentity,
     extractor: MemoryExtractor = this.extractor,
-    forceReview = false,
+    throughMessageId?: string,
+    request?: MemoryReviewJobRequest,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.store) return
+    while (!this.closed) {
+      const state = await this.store.getSessionState(identity.sessionId)
+      const messages = await this.store.listMessagesAfter({
+        sessionId: identity.sessionId,
+        messageId: state?.lastReviewedMessageId ?? state?.lastExtractedMessageId,
+        throughMessageId,
+        limit: MEMORY_REVIEW_MESSAGE_BATCH_LIMIT,
+      })
+      if (!messages.length) return
+      const reachedTarget = !throughMessageId || messages.at(-1)?.id === throughMessageId
+      const previousSummary = await this.store.getLatestSummary({ sessionId: identity.sessionId })
+      const extraction = await extractor.extract({
+        ...identity,
+        previousSummary,
+        messages,
+        reviewRequest: reachedTarget ? request : { trigger: 'periodic' },
+        signal,
+      })
+      if (extraction.fallbackReason) {
+        throw new Error(`Memory review did not complete: ${extraction.fallbackReason}`)
+      }
+      for (const operation of extraction.nodes) {
+        if (operation.operation === 'ignore') continue
+        const result = await this.proposeUpdate({
+          operation: operation.operation,
+          kind: operation.kind,
+          itemKey: operation.itemKey,
+          scope: operation.scope,
+          targetId: operation.targetId,
+          expectedRevision: operation.expectedRevision,
+          node: {
+            ...operation.node,
+            sourceMessageIds: operation.node.sourceMessageIds?.length
+              ? operation.node.sourceMessageIds
+              : messages.map(message => message.id),
+          },
+          reason: operation.reason,
+          actor: 'memory-reviewer',
+          explicitUserIntent: operation.explicitUserIntent,
+          identity,
+        })
+        if (!result.accepted) throw new Error(result.reason || 'Memory review mutation was rejected.')
+      }
+      const lastReviewedMessageId = messages.at(-1)?.id
+      const reviewedAt = new Date().toISOString()
+      await this.store.setSessionState({
+        sessionId: identity.sessionId,
+        lastExtractedMessageId: lastReviewedMessageId,
+        lastReviewedMessageId,
+        updatedAt: reviewedAt,
+      })
+      await this.store.appendAuditEvent({
+        id: randomUUID(),
+        eventType: 'extract',
+        sessionId: identity.sessionId,
+        profileId: identity.profileId || 'default',
+        actor: 'memory-reviewer',
+        reason: 'Reviewed new conversation messages',
+        payload: {
+          fromMessageId: messages[0].id,
+          toMessageId: lastReviewedMessageId,
+          operations: extraction.nodes.length,
+        },
+        createdAt: reviewedAt,
+      })
+      if (reachedTarget) return
+    }
+  }
+
+  private async enqueuePeriodicReview(
+    identity: MemoryRuntimeIdentity,
+    extractor: MemoryExtractor,
+    forceReview: boolean,
+    capturedThroughMessageId?: string,
+    preferredProvider?: string,
+    preferredModel?: string,
   ): Promise<void> {
     if (!this.store) return
     const state = await this.store.getSessionState(identity.sessionId)
     const messages = await this.store.listMessagesAfter({
       sessionId: identity.sessionId,
-      messageId: state?.lastExtractedMessageId,
+      messageId: state?.lastReviewedMessageId ?? state?.lastExtractedMessageId,
       limit: 100,
     })
     if (!messages.length) return
-    const newUserMessageCount = messages.filter(message => message.role === 'user').length
-    if (!forceReview && newUserMessageCount < this.reviewEveryUserMessages) return
-
-    const previousSummary = await this.store.getLatestSummary({ sessionId: identity.sessionId })
-    const extraction = await extractor.extract({ ...identity, previousSummary, messages })
-    for (const operation of extraction.nodes) {
-      if (operation.operation === 'ignore') continue
-      await this.proposeUpdate({
-        operation: operation.operation,
-        kind: operation.kind,
-        itemKey: operation.itemKey,
-        scope: operation.scope,
-        targetId: operation.targetId,
-        expectedRevision: operation.expectedRevision,
-        node: {
-          ...operation.node,
-          sourceMessageIds: operation.node.sourceMessageIds?.length
-            ? operation.node.sourceMessageIds
-            : messages.map(message => message.id),
-        },
-        reason: operation.reason,
-        actor: 'memory-extractor',
-        explicitUserIntent: operation.explicitUserIntent,
-        identity,
-      })
+    if (!forceReview && messages.filter(message => message.role === 'user').length < this.reviewEveryUserMessages) {
+      return
     }
+    const throughMessageId = capturedThroughMessageId || messages.at(-1)?.id
+    if (!throughMessageId) return
+    await this.scheduleReview({
+      identity,
+      throughMessageId,
+      request: { trigger: forceReview ? 'review' : 'periodic' },
+      extractor,
+      preferredProvider,
+      preferredModel,
+    })
+  }
 
-    const sinceSummary = await this.store.listMessagesAfter({
+  private startReviewWorker(profileId: string): void {
+    if (this.closed) return
+    if (this.reviewWorkers.has(profileId)) {
+      this.reviewWorkerWakeups.add(profileId)
+      return
+    }
+    const worker = this.runReviewWorker(profileId)
+      .catch(error => this.recordWarning(error))
+      .finally(() => {
+        if (this.reviewWorkers.get(profileId) !== worker) return
+        this.reviewWorkers.delete(profileId)
+        if (this.reviewWorkerWakeups.delete(profileId)) this.startReviewWorker(profileId)
+      })
+    this.reviewWorkers.set(profileId, worker)
+  }
+
+  private async runReviewWorker(profileId: string): Promise<void> {
+    if (!this.store) return
+    while (!this.closed) {
+      const now = new Date()
+      const job = await this.store.claimNextReviewJob({
+        profileId,
+        now: now.toISOString(),
+        staleBefore: new Date(now.getTime() - MEMORY_REVIEW_LEASE_MS).toISOString(),
+      })
+      if (!job) return
+      try {
+        const deterministic = await this.tryDeterministicReview(job)
+        if (deterministic === 'completed') {
+          await this.completeReviewJob(job)
+          continue
+        }
+        if (deterministic === 'needs_confirmation') {
+          await this.store.updateReviewJob(job.id, {
+            status: 'needs_confirmation',
+            lastError: 'Memory deletion requires confirmation.',
+          })
+          continue
+        }
+        const jobExtractor = this.reviewExtractors.get(job.id)
+        const resolvedExtractor = jobExtractor
+          ? undefined
+          : await this.resolveReviewExtractor(job)
+        const extractor = jobExtractor
+          ? { extractor: jobExtractor }
+          : resolvedExtractor ?? (
+              this.reviewExtractorResolvers.length
+                ? undefined
+                : this.profileReviewExtractors.get(profileId)
+            )
+        if (!extractor) {
+          const delay = reviewRetryDelay(job.attempt)
+          await this.store.updateReviewJob(job.id, {
+            status: 'waiting_for_model',
+            nextAttemptAt: new Date(Date.now() + delay).toISOString(),
+            lastError: 'No usable model is currently available for memory review.',
+          })
+          this.scheduleReviewRetry(profileId, delay)
+          continue
+        }
+        await this.runReviewAttempt(job, extractor.extractor)
+        await this.completeReviewJob(job)
+      } catch (error) {
+        if (error instanceof MemoryReviewNeedsConfirmationError) {
+          await this.store.updateReviewJob(job.id, {
+            status: 'needs_confirmation',
+            lastError: error.message,
+          })
+          continue
+        }
+        const deterministic = await this.tryDeterministicReview(job)
+        if (deterministic === 'completed') {
+          await this.completeReviewJob(job)
+          continue
+        }
+        if (deterministic === 'needs_confirmation') {
+          await this.store.updateReviewJob(job.id, {
+            status: 'needs_confirmation',
+            lastError: 'Memory deletion requires confirmation.',
+          })
+          continue
+        }
+        const delay = reviewRetryDelay(job.attempt)
+        const message = error instanceof Error ? error.message : String(error)
+        await this.store.updateReviewJob(job.id, {
+          status: 'retry',
+          nextAttemptAt: new Date(Date.now() + delay).toISOString(),
+          lastError: message,
+        })
+        this.recordWarning(error)
+        this.scheduleReviewRetry(profileId, delay)
+      } finally {
+        this.reviewExtractors.delete(job.id)
+      }
+    }
+  }
+
+  private async completeReviewJob(job: MemoryReviewJob): Promise<void> {
+    if (!this.store) return
+    await this.store.updateReviewJob(job.id, {
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+    })
+  }
+
+  private async runReviewAttempt(job: MemoryReviewJob, extractor: MemoryExtractor): Promise<void> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(
+          `Memory review attempt timed out after ${this.reviewAttemptTimeoutMs}ms.`,
+        )
+        controller.abort(error)
+        reject(error)
+      }, this.reviewAttemptTimeoutMs)
+      timer.unref?.()
+    })
+    try {
+      await Promise.race([
+        this.reviewAndPersist(
+          job.identity,
+          extractor,
+          job.throughMessageId,
+          job.request,
+          controller.signal,
+        ),
+        timeout,
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (!controller.signal.aborted) controller.abort()
+    }
+  }
+
+  private async resolveReviewExtractor(
+    job: MemoryReviewJob,
+  ): Promise<MemoryReviewExtractorResolution | undefined> {
+    for (const resolver of this.reviewExtractorResolvers) {
+      try {
+        const resolution = await resolver(job)
+        if (resolution) return resolution
+      } catch (error) {
+        this.recordWarning(error)
+      }
+    }
+    return undefined
+  }
+
+  private async tryDeterministicReview(
+    job: MemoryReviewJob,
+  ): Promise<'completed' | 'needs_confirmation' | 'unavailable'> {
+    const forget = job.request.forget
+    if (job.request.trigger !== 'forget' || !forget) return 'unavailable'
+    const hasSelector = Boolean(
+      forget.all ||
+      forget.targets?.length ||
+      forget.id ||
+      forget.domain ||
+      forget.categoryPathPrefix?.length ||
+      forget.type ||
+      forget.key ||
+      forget.valueJson !== undefined,
+    )
+    if (!hasSelector) return 'unavailable'
+
+    let request = forget
+    if (forget.id) {
+      const current = await this.get(forget.id, job.identity)
+      if (!current || current.status === 'deleted') return 'completed'
+    } else if (forget.targets?.length) {
+      const remainingTargets: Array<{ id: string; expectedRevision: number }> = []
+      for (const target of forget.targets) {
+        const current = await this.get(target.id, job.identity)
+        if (current && current.status !== 'deleted') remainingTargets.push(target)
+      }
+      if (!remainingTargets.length) return 'completed'
+      request = { ...forget, targets: remainingTargets }
+    }
+    const result = await this.forget({
+      ...request,
+      identity: job.identity,
+      actor: 'memory-reviewer-deterministic',
+    })
+    if (result.requiresConfirmation) return 'needs_confirmation'
+    if (result.deletedIds.length || result.reason === 'No matching memory was found.') return 'completed'
+    throw new Error(result.reason || 'Deterministic memory deletion was rejected.')
+  }
+
+  private scheduleReviewRetry(profileId: string, delay: number): void {
+    const existing = this.retryTimers.get(profileId)
+    const dueAt = Date.now() + delay
+    if (existing && (this.retryTimerDueAt.get(profileId) ?? Number.POSITIVE_INFINITY) <= dueAt) return
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(profileId)
+      this.retryTimerDueAt.delete(profileId)
+      this.startReviewWorker(profileId)
+    }, delay)
+    timer.unref?.()
+    this.retryTimers.set(profileId, timer)
+    this.retryTimerDueAt.set(profileId, dueAt)
+  }
+
+  private async summarizeIfDue(identity: MemoryRuntimeIdentity, extractor: MemoryExtractor): Promise<void> {
+    if (!this.store) return
+    const state = await this.store.getSessionState(identity.sessionId)
+    const messages = await this.store.listMessagesAfter({
       sessionId: identity.sessionId,
       messageId: state?.lastSummaryMessageId,
       limit: 500,
     })
-    let lastSummaryMessageId = state?.lastSummaryMessageId
-    if (extraction.summaryPatch) {
-      const summary = buildSummary(identity.sessionId, previousSummary, sinceSummary, extraction)
-      await this.store.appendSummary(summary)
-      await this.store.appendAuditEvent({
-        id: randomUUID(),
-        eventType: 'summary',
-        sessionId: identity.sessionId,
-        profileId: identity.profileId || 'default',
-        actor: 'memory-extractor',
-        reason: extraction.fallbackReason ? 'Periodic chained summary (safe fallback)' : 'Periodic chained summary',
-        payload: {
-          summaryId: summary.id,
-          fromMessageId: summary.fromMessageId,
-          toMessageId: summary.toMessageId,
-          ...(extraction.fallbackReason ? { fallbackReason: extraction.fallbackReason } : {}),
-        },
-        createdAt: summary.createdAt,
-      })
-      lastSummaryMessageId = sinceSummary.at(-1)?.id
-    }
-    const lastExtractedMessageId = messages.at(-1)?.id
+    if (messages.filter(message => message.role === 'user').length < this.reviewEveryUserMessages) return
+    const previousSummary = await this.store.getLatestSummary({ sessionId: identity.sessionId })
+    const extraction = await extractor.extract({ ...identity, previousSummary, messages })
+    if (!extraction.summaryPatch) return
+    const summary = buildSummary(identity.sessionId, previousSummary, messages, extraction)
+    await this.store.appendSummary(summary)
     await this.store.setSessionState({
       sessionId: identity.sessionId,
-      lastExtractedMessageId,
-      lastSummaryMessageId,
-      updatedAt: new Date().toISOString(),
+      lastSummaryMessageId: messages.at(-1)?.id,
+      updatedAt: summary.createdAt,
     })
     await this.store.appendAuditEvent({
       id: randomUUID(),
-      eventType: 'extract',
+      eventType: 'summary',
       sessionId: identity.sessionId,
       profileId: identity.profileId || 'default',
-      actor: 'memory-extractor',
-      reason: extraction.fallbackReason
-        ? 'Processed new conversation messages using safe fallback'
-        : 'Processed new conversation messages',
+      actor: 'memory-summarizer',
+      reason: extraction.fallbackReason ? 'Periodic chained summary (safe fallback)' : 'Periodic chained summary',
       payload: {
-        fromMessageId: messages[0].id,
-        toMessageId: lastExtractedMessageId,
-        operations: extraction.nodes.length,
+        summaryId: summary.id,
+        fromMessageId: summary.fromMessageId,
+        toMessageId: summary.toMessageId,
         ...(extraction.fallbackReason ? { fallbackReason: extraction.fallbackReason } : {}),
       },
-      createdAt: new Date().toISOString(),
+      createdAt: summary.createdAt,
     })
+  }
+
+  private async pendingForgetNodeIds(profileId: string): Promise<Set<string>> {
+    if (!this.store) return new Set()
+    const jobs = await this.store.listReviewJobs({
+      profileId,
+      statuses: ACTIVE_MEMORY_REVIEW_JOB_STATUSES,
+      limit: 500,
+    })
+    const ids = new Set<string>()
+    for (const job of jobs) {
+      const forget = job.request.trigger === 'forget' ? job.request.forget : undefined
+      if (!forget) continue
+      if (forget.id) ids.add(forget.id)
+      for (const target of forget.targets || []) ids.add(target.id)
+      const hasBroadSelector = Boolean(
+        forget.all || forget.domain || forget.categoryPathPrefix?.length ||
+        forget.type || forget.key || forget.valueJson !== undefined,
+      )
+      if (!hasBroadSelector) continue
+      const query = memoryQuery(job.identity, {
+        domain: forget.all ? undefined : forget.domain,
+        categoryPathPrefix: forget.all ? undefined : forget.categoryPathPrefix,
+        types: forget.all || !forget.type ? undefined : [forget.type],
+        key: forget.all ? undefined : forget.key,
+        valueJson: forget.all ? undefined : forget.valueJson,
+        includeExpired: true,
+      })
+      for (let offset = 0; ; offset += 500) {
+        const page = await this.store.queryNodes({ ...query, limit: 500, offset })
+        for (const node of page) ids.add(node.id)
+        if (page.length < 500) break
+      }
+    }
+    return ids
+  }
+
+  private async recoverStaleReviewJobsForProfile(profileId: string): Promise<void> {
+    if (!this.store || this.closed) return
+    const now = new Date()
+    const recovered = await this.store.requeueStaleReviewJobs({
+      profileId,
+      now: now.toISOString(),
+      staleBefore: new Date(now.getTime() - MEMORY_REVIEW_LEASE_MS).toISOString(),
+    })
+    if (recovered > 0) this.startReviewWorker(profileId)
   }
 
   private disabledContext(): MemoryContext {
@@ -789,9 +1339,58 @@ function messageSignature(message: MemoryCaptureMessage): string {
     .digest('hex')
 }
 
+function reviewJobId(input: {
+  profileId: string
+  sessionId: string
+  throughMessageId: string
+  request: MemoryReviewJobRequest
+}): string {
+  return createHash('sha256')
+    .update(input.profileId)
+    .update('\0')
+    .update(input.sessionId)
+    .update('\0')
+    .update(input.throughMessageId)
+    .update('\0')
+    .update(stableJson(reviewRequestDedupePayload(input.request)))
+    .digest('hex')
+}
+
+function reviewRequestDedupePayload(request: MemoryReviewJobRequest): MemoryReviewJobRequest {
+  if (request.trigger !== 'forget' || !request.forget) return request
+  const { reason: _reason, targets, ...forget } = request.forget
+  return {
+    trigger: 'forget',
+    forget: {
+      ...forget,
+      ...(targets?.length
+        ? { targets: [...targets].sort((left, right) => left.id.localeCompare(right.id)) }
+        : {}),
+      reason: '',
+    },
+  }
+}
+
+function reviewRetryDelay(attempt: number): number {
+  return Math.min(
+    MEMORY_REVIEW_RETRY_MAX_MS,
+    MEMORY_REVIEW_RETRY_BASE_MS * (2 ** Math.max(0, Math.min(attempt - 1, 6))),
+  )
+}
+
 export function hasExplicitMemoryIntent(messages: MemoryCaptureMessage[]): boolean {
   const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
   return /(?:记住|记下来|保存(?:到|为)?记忆|以后(?:都|请)?|从现在起|忘掉|忘记|删除.{0,8}(?:记忆|偏好|记录)|更正.{0,8}(?:记忆|偏好|信息)|更新.{0,8}(?:记忆|偏好|信息)|remember|from now on|forget|delete (?:that|this|my) memory|update my memory)/i.test(latestUser)
+}
+
+export function hasExplicitMemoryForgetIntent(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  return /(?:忘掉|忘记|别记|删除.{0,12}(?:记忆|偏好|记录|信息)|不再记|forget|delete (?:that|this|my|the).{0,20}(?:memory|preference|record))/i.test(latestUser)
+}
+
+export function hasExplicitMemoryForgetAllIntent(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  return /(?:忘掉|忘记|删除|清空).{0,16}(?:所有|全部).{0,12}(?:记忆|偏好|记录|信息)|(?:forget|delete|clear).{0,16}(?:all|every).{0,16}(?:memories|memory|preferences|records)/i.test(latestUser)
 }
 
 function hasHighSignalMemoryCandidate(messages: MemoryCaptureMessage[]): boolean {

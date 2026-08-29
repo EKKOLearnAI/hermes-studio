@@ -1,8 +1,13 @@
 import {
   AgentRuntime,
+  DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
   EkkoAgentSetup,
   EkkoFileLogger,
+  EkkoRuntimeLogger,
   MemoryService,
+  ModelMemoryExtractor,
+  createModelClient,
+  resolveModelProviderConfigs,
   setupEkkoAgent,
   type AgentRuntimeRunInput,
   type AgentRuntimeRunResult,
@@ -12,12 +17,19 @@ import {
   type AgentRuntimeOptions,
   type EkkoConfig,
   type EkkoConfigPatch,
+  type MemoryReviewJob,
+  type MemoryReviewExtractorResolution,
 } from '../../../../../ekko-agent/src'
 import { config } from '../../studio/public/config'
 import { logger } from '../../studio/public/logging'
-import { getProfilesBaseDir, listProfileNames } from '../../studio/public/profile-config'
+import {
+  getProfilesBaseDir,
+  listProfileNames,
+  readConfigYamlForProfile,
+} from '../../studio/public/profile-config'
 import { denyPendingEkkoToolApprovals } from './approvals'
 import { cancelPendingEkkoClarifications } from './clarifications'
+import { createEkkoAuthorizedProviderFetch, resolveEkkoProviderRuntimeConfig } from './provider-runtime'
 
 export interface GlobalEkkoAgentOptions {
   setup: EkkoAgentSetup
@@ -220,6 +232,9 @@ export function setupGlobalEkkoAgent(
     config: options.config,
     env: options.env,
   })
+  globalEkkoSetup.memory.registerReviewExtractorResolver(
+    job => resolveStudioMemoryReviewExtractor(globalEkkoSetup!, job),
+  )
   logger.info({
     dataDirectory: globalEkkoSetup.layout.rootDirectory,
     configPath: globalEkkoSetup.layout.configPath,
@@ -227,6 +242,83 @@ export function setupGlobalEkkoAgent(
     profiles: globalEkkoSetup.profiles().map(profile => profile.profile),
   }, '[ekko-agent] setup complete')
   return globalEkkoSetup
+}
+
+async function resolveStudioMemoryReviewExtractor(
+  setup: EkkoAgentSetup,
+  job: MemoryReviewJob,
+): Promise<MemoryReviewExtractorResolution | undefined> {
+  const current = await currentProfileModel(job.profileId)
+  const preferOriginal = job.attempt <= 1
+  const provider = String(
+    preferOriginal ? job.preferredProvider || current.provider : current.provider || job.preferredProvider,
+  ).trim()
+  const model = String(
+    preferOriginal ? job.preferredModel || current.model : current.model || job.preferredModel,
+  ).trim()
+  if (!provider || !model) return undefined
+  try {
+    const runtime = await resolveEkkoProviderRuntimeConfig({
+      profile: job.profileId,
+      provider,
+      model,
+    })
+    const { providerConfig } = resolveModelProviderConfigs({
+      provider,
+      baseUrl: runtime.baseUrl,
+      apiKey: runtime.apiKey,
+      model,
+      apiMode: runtime.apiMode,
+      timeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS,
+    })
+    const authorizedFetch = createEkkoAuthorizedProviderFetch({
+      profile: job.profileId,
+      provider,
+      model,
+      accessToken: runtime.apiKey,
+    })
+    return {
+      provider,
+      model,
+      extractor: new ModelMemoryExtractor({
+        mode: 'review',
+        modelClient: createModelClient(providerConfig, { fetch: authorizedFetch }),
+        memory: setup.memory,
+        model,
+        fallback: false,
+        maxModelRetries: 0,
+        requestLogger: new EkkoRuntimeLogger(new EkkoFileLogger({
+          directory: setup.profile(job.profileId).logDirectory,
+          maxBytes: setup.config.read().logging.maxBytes,
+        }), {
+          profile: job.profileId,
+          sessionId: job.sessionId,
+        }),
+        requestRunId: `memory-review-${job.id.slice(0, 12)}`,
+      }),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function currentProfileModel(profile: string): Promise<{ provider: string; model: string }> {
+  try {
+    const config = await readConfigYamlForProfile(profile)
+    const modelConfig = config?.model
+    const model = typeof modelConfig === 'string'
+      ? modelConfig.trim()
+      : String(modelConfig?.default || '').trim()
+    const configuredProvider = typeof modelConfig === 'object'
+      ? String(modelConfig?.provider || '').trim()
+      : ''
+    return {
+      model,
+      provider: configuredProvider === 'claude-oauth' ? 'anthropic' : configuredProvider,
+    }
+  } catch {
+    return { provider: '', model: '' }
+  }
 }
 
 export function getGlobalEkkoAgent(profile = 'default'): GlobalEkkoAgent {

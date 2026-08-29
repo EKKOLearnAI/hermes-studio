@@ -1,11 +1,15 @@
 import type { AgentTool, AgentToolContext, AgentToolResult } from '../tools/types'
+import { memorySlotForKind } from './schema'
 import { normalizeMemoryScope } from './scope'
 import { MEMORY_KINDS, type MemoryForgetInput, type MemoryNode, type MemoryProposeUpdateInput, type MemoryQuery, type MemoryRuntimeIdentity } from './types'
 import type { MemoryService } from './service'
 
+const ITEMIZED_MEMORY_KINDS = MEMORY_KINDS.filter(kind => memorySlotForKind(kind).itemized)
+const ITEMIZED_MEMORY_KIND_LIST = ITEMIZED_MEMORY_KINDS.join(', ')
+
 export function createMemoryTools(
   service: MemoryService,
-  options: { writable?: boolean; reviewable?: boolean } = {},
+  options: { writable?: boolean; reviewable?: boolean; forgetReviewable?: boolean } = {},
 ): AgentTool[] {
   const tools: AgentTool[] = [
     new MemorySearchTool(service),
@@ -14,6 +18,8 @@ export function createMemoryTools(
   if (options.reviewable === true) tools.push(new MemoryReviewTool())
   if (options.writable !== false) {
     tools.push(new MemoryProposeUpdateTool(service), new MemoryForgetTool(service))
+  } else if (options.forgetReviewable === true) {
+    tools.push(new MemoryForgetTool(service, true))
   }
   return tools
 }
@@ -35,8 +41,11 @@ class MemoryReviewTool implements AgentTool {
       return failure('This host allows memory review only when the current user explicitly asks to remember, update, or forget something.')
     }
     if (!context.requestMemoryReview) return failure('Memory review is not available in this runtime context.')
-    context.requestMemoryReview()
-    return success({ requested: true })
+    const queued = await context.requestMemoryReview({ trigger: 'review' })
+    return success(
+      { requested: true, queued: true, ...queued },
+      'Memory review was queued and started asynchronously. Continue the current run without waiting, re-checking memory, or attempting another mutation path.',
+    )
   }
 }
 
@@ -140,7 +149,9 @@ class MemoryProposeUpdateTool implements AgentTool {
   readonly definition = {
     name: 'memory_propose_update',
     description: (
-      'Create or revision-check a durable memory. For create, provide a controlled kind and optional itemKey; ' +
+      'Create or revision-check a durable memory. For create, provide a controlled kind. itemKey is REQUIRED for every itemized kind ' +
+      `(${ITEMIZED_MEMORY_KIND_LIST}) and must be a short stable identifier; for example, project_context for Hermes Studio requires itemKey="hermes_studio". ` +
+      'Single-slot kinds do not require itemKey. ' +
       'the server generates the canonical key and automatically noops or replaces the active value in that slot. ' +
       'For update/supersede, first search/get, then provide targetId and expectedRevision; the server preserves the key. ' +
       'Use valuePatch/unsetValueFields for object fields. Never invent or submit a key. ' +
@@ -150,9 +161,16 @@ class MemoryProposeUpdateTool implements AgentTool {
       type: 'object',
       required: ['operation', 'reason'],
       properties: {
-        operation: { type: 'string', enum: ['create', 'update', 'supersede', 'expire', 'delete'] },
-        kind: { type: 'string', enum: [...MEMORY_KINDS], description: 'Required for create. Server maps this controlled kind to a canonical key.' },
-        itemKey: { type: 'string', description: 'Stable concept/entity discriminator required for itemized kinds, such as a preference dimension or entity name.' },
+        operation: {
+          type: 'string',
+          enum: ['create', 'update', 'supersede', 'expire', 'delete'],
+          description: 'create requires kind and node; every other operation requires targetId and expectedRevision from memory_search or memory_get.',
+        },
+        kind: { type: 'string', enum: [...MEMORY_KINDS], description: 'REQUIRED for operation=create. Server maps this controlled kind to a canonical key.' },
+        itemKey: {
+          type: 'string',
+          description: `CONDITIONALLY REQUIRED for operation=create when kind is one of: ${ITEMIZED_MEMORY_KIND_LIST}. Use a short stable concept/entity identifier, never a sentence, timestamp, or random value. Example: kind=project_context, itemKey=hermes_studio.`,
+        },
         scope: {
           type: 'object',
           description: 'Required for create. Select one of the host-provided writable scopes exactly.',
@@ -164,10 +182,11 @@ class MemoryProposeUpdateTool implements AgentTool {
           required: ['type'],
           additionalProperties: false,
         },
-        targetId: { type: 'string' },
-        expectedRevision: { type: 'integer', minimum: 1, description: 'Required for update, supersede, expire, and delete.' },
+        targetId: { type: 'string', description: 'REQUIRED for update, supersede, expire, and delete. Copy the exact id returned by memory_search or memory_get.' },
+        expectedRevision: { type: 'integer', minimum: 1, description: 'REQUIRED for update, supersede, expire, and delete. Copy the current revision returned by memory_search or memory_get.' },
         node: {
           type: 'object',
+          description: 'REQUIRED for create. title and content are required; include valueJson when the durable fact has a scalar or structured value.',
           properties: {
             valueJson: { description: 'Optional structured or scalar value. Use this exact field name, not value.' },
             title: { type: 'string', description: 'Short memory title in the language of the cited user evidence.' },
@@ -208,10 +227,34 @@ class MemoryProposeUpdateTool implements AgentTool {
     const operation = optionalString(input.operation) as MemoryProposeUpdateInput['operation'] | undefined
     const reason = optionalString(input.reason)
     if (!operation || !reason) return failure('operation and reason are required.')
+    const rawKind = optionalString(input.kind)
+    const kind = rawKind && (MEMORY_KINDS as readonly string[]).includes(rawKind)
+      ? rawKind as MemoryProposeUpdateInput['kind']
+      : undefined
+    const itemKey = optionalString(input.itemKey)
+    if (operation === 'create' && !kind) {
+      return failure(`create requires kind to be one of: ${MEMORY_KINDS.join(', ')}.`)
+    }
+    if (operation === 'create' && kind && memorySlotForKind(kind).itemized && !itemKey) {
+      return failure(
+        `itemKey is required when operation=create and kind=${kind}. Retry this tool call with a short stable identifier; ` +
+        'for example, project_context for Hermes Studio uses itemKey="hermes_studio".',
+      )
+    }
     const rawNode = input.node && typeof input.node === 'object' && !Array.isArray(input.node)
       ? input.node as Record<string, unknown>
       : {}
-    if (operation === 'create' && !input.node) return failure('create requires node.')
+    if (operation === 'create' && !input.node) {
+      return failure('create requires node with title, content, and the durable valueJson when applicable.')
+    }
+    if (operation !== 'create') {
+      const targetId = optionalString(input.targetId)
+      const expectedRevision = optionalNumber(input.expectedRevision)
+      if (!targetId) return failure(`${operation} requires targetId from memory_search or memory_get.`)
+      if (!Number.isInteger(expectedRevision) || Number(expectedRevision) < 1) {
+        return failure(`${operation} requires expectedRevision from memory_search or memory_get.`)
+      }
+    }
     const node = normalizeToolMemoryNode(rawNode)
     const allowedSourceMessageIds = uniqueStrings(context?.sourceMessageIds || [])
     const requestedSourceMessageIds = uniqueStrings(node.sourceMessageIds || [])
@@ -222,8 +265,8 @@ class MemoryProposeUpdateTool implements AgentTool {
     const explicitUserIntent = input.explicitUserIntent === true
     const result = await this.service.proposeUpdate({
       operation,
-      kind: optionalString(input.kind) as MemoryProposeUpdateInput['kind'],
-      itemKey: optionalString(input.itemKey),
+      kind,
+      itemKey,
       scope: normalizeMemoryScope(input.scope) || context?.memoryDefaultWriteScope,
       targetId: optionalString(input.targetId),
       expectedRevision: optionalNumber(input.expectedRevision),
@@ -240,29 +283,50 @@ class MemoryProposeUpdateTool implements AgentTool {
 }
 
 class MemoryForgetTool implements AgentTool {
-  readonly definition = {
-    name: 'memory_forget',
-    description: 'Delete memory by id and expectedRevision. Exact soft deletion is immediate; broad or hard deletion requires confirmation.',
-    parameters: {
-      type: 'object',
-      required: ['reason'],
-      properties: {
-        id: { type: 'string' },
-        expectedRevision: { type: 'integer', minimum: 1, description: 'Required when deleting by id.' },
-        domain: { type: 'string' },
-        categoryPathPrefix: { type: 'array', items: { type: 'string' } },
-        type: { type: 'string' },
-        key: { type: 'string' },
-        valueJson: {},
-        mode: { type: 'string', enum: ['soft', 'hard'] },
-        reason: { type: 'string' },
-        confirmed: { type: 'boolean' },
-      },
-      additionalProperties: false,
-    },
-  }
+  readonly definition: AgentTool['definition']
 
-  constructor(private readonly service: MemoryService) {}
+  constructor(
+    private readonly service: MemoryService,
+    private readonly reviewOnly = false,
+  ) {
+    this.definition = {
+      name: 'memory_forget',
+      description: reviewOnly
+        ? 'Queue one explicit memory deletion for immediate isolated review. Use all=true once when the user explicitly asks to forget every authorized memory; use targets for multiple resolved id/revision pairs; otherwise resolve one target with memory_search/get. Never make multiple memory_forget calls. This foreground tool never writes the database directly.'
+        : 'Delete memory once by all authorized memories, multiple exact targets, one id/revision, or a broad selector. Multiple or hard deletion requires confirmation.',
+      parameters: {
+        type: 'object',
+        required: ['reason'],
+        properties: {
+          all: { type: 'boolean', description: 'Delete every memory visible in the host-authorized scopes. Use only for an explicit forget-all request.' },
+          targets: {
+            type: 'array',
+            description: 'Multiple exact cards to delete in one operation. Never split these into multiple memory_forget calls.',
+            items: {
+              type: 'object',
+              required: ['id', 'expectedRevision'],
+              properties: {
+                id: { type: 'string' },
+                expectedRevision: { type: 'integer', minimum: 1 },
+              },
+              additionalProperties: false,
+            },
+          },
+          id: { type: 'string' },
+          expectedRevision: { type: 'integer', minimum: 1, description: 'Required when deleting by id.' },
+          domain: { type: 'string' },
+          categoryPathPrefix: { type: 'array', items: { type: 'string' } },
+          type: { type: 'string' },
+          key: { type: 'string' },
+          valueJson: {},
+          mode: { type: 'string', enum: ['soft', 'hard'] },
+          reason: { type: 'string' },
+          confirmed: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+    }
+  }
 
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
     const identity = runtimeIdentity(context)
@@ -270,21 +334,55 @@ class MemoryForgetTool implements AgentTool {
     if (context?.memoryReviewPolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {
       return failure('This host allows memory deletion only when the current user explicitly asks to forget or change something.')
     }
+    if (this.reviewOnly && context?.memoryForgetIntent !== true) {
+      return failure('Foreground memory deletion requires an explicit forget or change request from the current user.')
+    }
     const reason = optionalString(input.reason)
     if (!reason) return failure('reason is required.')
+    const forgetAll = input.all === true || (this.reviewOnly && context?.memoryForgetAllIntent === true)
+    if (this.reviewOnly && input.all === true && context?.memoryForgetAllIntent !== true) {
+      return failure('all=true requires an explicit request from the current user to forget every memory.')
+    }
+    const targets = forgetAll ? undefined : forgetTargets(input.targets)
     const request: MemoryForgetInput = {
-      id: optionalString(input.id),
-      expectedRevision: optionalNumber(input.expectedRevision),
-      domain: optionalString(input.domain),
-      categoryPathPrefix: stringArray(input.categoryPathPrefix),
-      type: optionalString(input.type) as MemoryNode['type'] | undefined,
-      key: optionalString(input.key),
-      valueJson: input.valueJson,
+      all: forgetAll || undefined,
+      targets,
+      id: forgetAll ? undefined : optionalString(input.id),
+      expectedRevision: forgetAll ? undefined : optionalNumber(input.expectedRevision),
+      domain: forgetAll ? undefined : optionalString(input.domain),
+      categoryPathPrefix: forgetAll ? undefined : stringArray(input.categoryPathPrefix),
+      type: forgetAll ? undefined : optionalString(input.type) as MemoryNode['type'] | undefined,
+      key: forgetAll ? undefined : optionalString(input.key),
+      valueJson: forgetAll ? undefined : input.valueJson,
       mode: optionalString(input.mode) as 'soft' | 'hard' | undefined,
       reason,
-      confirmed: input.confirmed === true,
+      confirmed: input.confirmed === true || (forgetAll && context?.memoryForgetAllIntent === true),
       identity,
       actor: 'ekko-agent-tool',
+    }
+    if (this.reviewOnly) {
+      if (!context?.requestMemoryReview) return failure('Memory review is not available in this runtime context.')
+      const queued = await context.requestMemoryReview({
+        trigger: 'forget',
+        forget: {
+          all: request.all,
+          targets: request.targets,
+          id: request.id,
+          expectedRevision: request.expectedRevision,
+          domain: request.domain,
+          categoryPathPrefix: request.categoryPathPrefix,
+          type: request.type,
+          key: request.key,
+          valueJson: request.valueJson,
+          mode: request.mode,
+          reason: request.reason,
+          confirmed: request.confirmed,
+        },
+      })
+      return success(
+        { requested: true, queued: true, operation: 'forget', ...queued },
+        'Memory deletion was queued for isolated review. Continue the current run without waiting, re-checking memory, calling application APIs, or using the shell to mutate memory.',
+      )
     }
     const result = await this.service.forget(request)
     if (result.requiresConfirmation) return failure(result.reason || 'Confirmation required.', result)
@@ -330,6 +428,20 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined
+}
+
+function forgetTargets(value: unknown): Array<{ id: string; expectedRevision: number }> | undefined {
+  if (!Array.isArray(value)) return undefined
+  const targets = value.flatMap(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    const id = optionalString(record.id)
+    const expectedRevision = optionalNumber(record.expectedRevision)
+    return id && Number.isInteger(expectedRevision) && Number(expectedRevision) >= 1
+      ? [{ id, expectedRevision: Number(expectedRevision) }]
+      : []
+  })
+  return targets.length ? targets : undefined
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

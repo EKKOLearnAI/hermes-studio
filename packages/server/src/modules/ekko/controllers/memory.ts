@@ -2,7 +2,10 @@ import type { Context } from 'koa'
 import { MEMORY_NODE_STATUSES, type MemoryNodeStatus } from '../../../../../ekko-agent/src'
 import {
   deleteEkkoMemory,
+  getEkkoMemoryReviewStatus,
+  listEkkoMemoryReviewJobs,
   listEkkoMemory,
+  reviewEkkoMemoryJobNow,
   updateEkkoMemory,
 } from '../services/memory'
 
@@ -10,9 +13,36 @@ function requestedProfile(ctx: Context): string {
   return String(ctx.state?.profile?.name || 'default').trim() || 'default'
 }
 
+export async function reviewStatus(ctx: Context): Promise<void> {
+  try {
+    const status = await getEkkoMemoryReviewStatus(requestedProfile(ctx))
+    ctx.body = { ok: true, status }
+  } catch (error) {
+    errorResponse(ctx, error)
+  }
+}
+
+export async function reviewJobs(ctx: Context): Promise<void> {
+  try {
+    const jobs = await listEkkoMemoryReviewJobs(requestedProfile(ctx))
+    ctx.body = { ok: true, jobs }
+  } catch (error) {
+    errorResponse(ctx, error)
+  }
+}
+
+export async function reviewJobNow(ctx: Context): Promise<void> {
+  try {
+    const job = await reviewEkkoMemoryJobNow(requestedProfile(ctx), ctx.params.id)
+    ctx.body = { ok: true, job }
+  } catch (error) {
+    errorResponse(ctx, error)
+  }
+}
+
 function errorResponse(ctx: Context, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
-  ctx.status = message === 'Memory not found.' ? 404 : 400
+  ctx.status = message === 'Memory not found.' || message === 'Memory review job not found.' ? 404 : 400
   ctx.body = { ok: false, error: message }
 }
 

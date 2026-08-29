@@ -649,11 +649,31 @@ describe('ekko-agent model requests', () => {
       apiKey: 'secret',
       defaultModel: 'glm-5.2',
       timeoutMs: 300_000,
+      capabilities: { vision: false },
     })
     expect(resolved.fallbackProviderConfig).toMatchObject({
       requestStyle: 'openai-chat',
       defaultModel: 'glm-5.2',
+      capabilities: { vision: false },
     })
+  })
+
+  it('marks GLM V models as vision-capable while keeping text GLM models text-only', () => {
+    const text = resolveModelProviderConfigs({
+      provider: 'glm',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model: 'glm-5.3',
+      apiMode: 'codex_responses',
+    })
+    const vision = resolveModelProviderConfigs({
+      provider: 'glm',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model: 'glm-5v-turbo',
+      apiMode: 'chat_completions',
+    })
+
+    expect(text.providerConfig.capabilities?.vision).toBe(false)
+    expect(vision.providerConfig.capabilities?.vision).toBe(true)
   })
 
   it('infers anthropic provider configs from anthropic URLs', () => {

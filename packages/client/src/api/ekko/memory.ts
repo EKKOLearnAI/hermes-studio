@@ -31,6 +31,39 @@ export interface EkkoMemoryNode {
   expiresAt?: string
 }
 
+export interface EkkoMemoryReviewStatus {
+  reviewing: boolean
+  activeJobs: number
+  pending: number
+  running: number
+  retry: number
+  waitingForModel: number
+  needsConfirmation: number
+  latestCompletedAt?: string
+}
+
+export type EkkoMemoryReviewJobStatus =
+  | 'pending'
+  | 'running'
+  | 'retry'
+  | 'waiting_for_model'
+  | 'needs_confirmation'
+
+export interface EkkoMemoryReviewJob {
+  id: string
+  sessionId: string
+  throughMessageId: string
+  trigger: 'review' | 'forget' | 'periodic'
+  status: EkkoMemoryReviewJobStatus
+  attempt: number
+  userConfirmed: boolean
+  evidencePreview?: string
+  lastError?: string
+  nextAttemptAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export async function fetchEkkoMemory(input: {
   query?: string
   status?: EkkoMemoryStatus
@@ -41,6 +74,24 @@ export async function fetchEkkoMemory(input: {
   const suffix = params.size ? `?${params.toString()}` : ''
   const response = await request<{ ok: boolean; memories: EkkoMemoryNode[] }>(`/api/ekko/memory${suffix}`)
   return response.memories
+}
+
+export async function fetchEkkoMemoryReviewStatus(): Promise<EkkoMemoryReviewStatus> {
+  const response = await request<{ ok: boolean; status: EkkoMemoryReviewStatus }>('/api/ekko/memory/review-status')
+  return response.status
+}
+
+export async function fetchEkkoMemoryReviewJobs(): Promise<EkkoMemoryReviewJob[]> {
+  const response = await request<{ ok: boolean; jobs: EkkoMemoryReviewJob[] }>('/api/ekko/memory/review-jobs')
+  return response.jobs
+}
+
+export async function reviewEkkoMemoryJobNow(id: string): Promise<EkkoMemoryReviewJob> {
+  const response = await request<{ ok: boolean; job: EkkoMemoryReviewJob }>(
+    `/api/ekko/memory/review-jobs/${encodeURIComponent(id)}/review`,
+    { method: 'POST' },
+  )
+  return response.job
 }
 
 export async function updateEkkoMemory(

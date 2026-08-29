@@ -10,6 +10,8 @@ import {
   DelegateTaskTool,
   DEFAULT_AGENT_MAX_STEPS,
   DEFAULT_AGENT_MODEL_MAX_RETRIES,
+  ModelProviderError,
+  ViewImageTool,
   buildSystemPrompt,
 } from '../../packages/ekko-agent/src/index'
 import type {
@@ -1216,6 +1218,81 @@ describe('ekko-agent runtime', () => {
     expect(client.create).toHaveBeenCalledTimes(4)
     expect(events.filter(event => event === 'model.retry')).toHaveLength(3)
     expect(events.at(-1)).toBe('run.failed')
+  })
+
+  it('does not retry a model provider error explicitly marked non-retryable', async () => {
+    const client = modelClient(() => {
+      throw new ModelProviderError('Not Found', {
+        provider: 'glm',
+        statusCode: 404,
+        retryable: false,
+      })
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools: new AgentToolRegistry() })
+    const events: string[] = []
+
+    await expect(runtime.run({
+      messages: ['hi'],
+      onEvent: event => events.push(event.type),
+    })).rejects.toThrow('Not Found')
+
+    expect(client.create).toHaveBeenCalledTimes(1)
+    expect(events).not.toContain('model.retry')
+    expect(events.at(-1)).toBe('run.failed')
+  })
+
+  it('keeps the run alive when view_image cannot be consumed by a text-only model', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'ekko-runtime-text-only-image-'))
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )
+    await writeFile(join(workspaceRoot, 'screenshot.png'), image)
+    const tools = new AgentToolRegistry()
+    tools.register(new ViewImageTool())
+    const client = modelClient((request, call) => {
+      if (call === 1) {
+        return {
+          content: '',
+          toolCalls: [{ id: 'view-image-call', name: 'view_image', arguments: { path: 'screenshot.png' } }],
+          finishReason: 'tool_calls',
+        }
+      }
+      const toolMessage = request.messages.find(message => message.toolCallId === 'view-image-call')
+      expect(toolMessage?.content).toContain('does not support vision input')
+      expect(toolMessage?.contentParts).toBeUndefined()
+      return { content: 'The current model cannot inspect the screenshot.', finishReason: 'stop' }
+    })
+    const runtime = new AgentRuntime({ modelClient: client, tools })
+    const events: any[] = []
+
+    try {
+      const result = await runtime.run({
+        messages: ['Inspect the screenshot'],
+        model: 'glm-5.3',
+        toolContext: { workspaceRoot },
+        onEvent: event => events.push(event),
+      })
+
+      expect(result.output.content).toBe('The current model cannot inspect the screenshot.')
+      expect(result.steps.find(step => step.type === 'tool')).toMatchObject({
+        type: 'tool',
+        toolName: 'view_image',
+        result: {
+          ok: false,
+          data: { code: 'VISION_UNSUPPORTED' },
+        },
+      })
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'tool.failed', toolName: 'view_image' }),
+        expect.objectContaining({ type: 'run.completed' }),
+      ]))
+      expect(events).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'run.failed' }),
+      ]))
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
   })
 
   it('builds a system prompt from runtime context and user system messages without skill instructions', async () => {

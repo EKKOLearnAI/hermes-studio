@@ -1396,6 +1396,7 @@ export function formatMemoryCard(node: MemoryNode): string
 export interface ModelMemoryExtractorOptions {
   modelClient: ModelClient
   memory: MemoryService
+  mode?: 'combined' | 'review' | 'summary'
   model?: string
   signal?: AbortSignal
   maxSteps?: number
@@ -1403,16 +1404,20 @@ export interface ModelMemoryExtractorOptions {
   maxSummaryRepairAttempts?: number
   maxTokens?: number
   maxTranscriptChars?: number
-  fallback?: MemoryExtractor
+  fallback?: MemoryExtractor | false
   requestLogger?: EkkoRuntimeLogger
   requestLogContext?: EkkoRuntimeLogContext
   requestRunId?: string
-  onUsage?: (input: { purpose: 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
+  onUsage?: (input: { purpose: 'ekko-memory-review' | 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
 }
 
 export class ModelMemoryExtractor implements MemoryExtractor {
   constructor(private readonly options: ModelMemoryExtractorOptions)
   async extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
+}
+
+export class MemoryReviewNeedsConfirmationError extends Error {
+  constructor(message = 'Memory review requires user confirmation.')
 }
 
 export class RuleBasedMemoryExtractor implements MemoryExtractor {
@@ -1510,7 +1515,26 @@ export interface MemoryServiceOptions {
   searchResultLimit?: number
   nodeLimit?: number
   reviewEveryUserMessages?: number
+  reviewAttemptTimeoutMs?: number
   summaryEveryMessages?: number
+  reviewExtractorResolver?: MemoryReviewExtractorResolver
+}
+
+export interface MemoryReviewExtractorResolution {
+  extractor: MemoryExtractor
+  provider?: string
+  model?: string
+}
+
+export type MemoryReviewExtractorResolver = ( job: MemoryReviewJob, ) => Promise<MemoryReviewExtractorResolution | undefined>
+
+export interface MemoryReviewScheduleInput {
+  identity: MemoryRuntimeIdentity
+  throughMessageId: string
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  extractor?: MemoryExtractor
 }
 
 export interface MemoryCaptureMessage {
@@ -1524,6 +1548,10 @@ export interface MemoryCaptureMessage {
 export interface MemoryRunCompletionOptions {
   reviewPolicy?: MemoryReviewPolicy
   forceReview?: boolean
+  reviewAlreadyScheduled?: boolean
+  preferredProvider?: string
+  preferredModel?: string
+  summaryExtractor?: MemoryExtractor
 }
 
 export class MemoryService {
@@ -1543,8 +1571,17 @@ export class MemoryService {
   async getLatestSummary(sessionId: string): Promise<MemorySummary | undefined>
   async getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
+  async getReviewStatus(profileId = 'default'): Promise<MemoryReviewQueueStatus>
+  async listReviewJobs(profileId = 'default'): Promise<MemoryReviewJob[]>
+  async reviewJobNow(id: string, profileId = 'default'): Promise<MemoryReviewJob | undefined>
   async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult>
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult>
+  async scheduleReview(input: MemoryReviewScheduleInput): Promise<MemoryReviewJob | undefined>
+  wakeReviewJobs(profileId?: string): void
+  async recoverReviewJobs(): Promise<void>
+  registerReviewExtractor(profileId: string, resolution: MemoryReviewExtractorResolution): void
+  registerReviewExtractorResolver(resolver: MemoryReviewExtractorResolver): void
+  clearRegisteredReviewExtractors(): void
   scheduleExtraction(identity: MemoryRuntimeIdentity): void
   scheduleRunCompletion(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[], extractor: MemoryExtractor = this.extractor, options: MemoryRunCompletionOptions = {}): void
   async drain(): Promise<void>
@@ -1553,6 +1590,10 @@ export class MemoryService {
 }
 
 export function hasExplicitMemoryIntent(messages: MemoryCaptureMessage[]): boolean
+
+export function hasExplicitMemoryForgetIntent(messages: MemoryCaptureMessage[]): boolean
+
+export function hasExplicitMemoryForgetAllIntent(messages: MemoryCaptureMessage[]): boolean
 ```
 ### `src/memory/store.ts`
 
@@ -1563,7 +1604,7 @@ export class SqliteMemoryStore implements MemoryStore {
   get databasePath(): string
   async appendMessage(message: MemoryMessage): Promise<void>
   async listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
-  async listMessagesAfter(input: { sessionId: string; messageId?: string; limit?: number }): Promise<MemoryMessage[]>
+  async listMessagesAfter(input: { sessionId: string messageId?: string throughMessageId?: string limit?: number }): Promise<MemoryMessage[]>
   async appendSummary(summary: MemorySummary): Promise<void>
   async getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   async getNode(id: string): Promise<MemoryNode | undefined>
@@ -1576,6 +1617,16 @@ export class SqliteMemoryStore implements MemoryStore {
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
   async getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   async setSessionState(state: MemorySessionState): Promise<void>
+  async enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
+  async getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
+  async listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
+  async activateReviewJob(input: { id: string profileId: string now: string confirmedByUser?: boolean }): Promise<MemoryReviewJob | undefined>
+  async claimNextReviewJob(input: { profileId: string now: string staleBefore: string }): Promise<MemoryReviewJob | undefined>
+  async updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
+  async requeueStaleReviewJobs(input: { profileId?: string now: string staleBefore: string }): Promise<number>
+  async activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
+  async listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
+  async getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
   close(): void
 }
 
@@ -1584,7 +1635,7 @@ export { stableJson }
 ### `src/memory/tools.ts`
 
 ```ts
-export function createMemoryTools( service: MemoryService, options: { writable?: boolean; reviewable?: boolean } = {}, ): AgentTool[]
+export function createMemoryTools( service: MemoryService, options: { writable?: boolean; reviewable?: boolean; forgetReviewable?: boolean } = {}, ): AgentTool[]
 ```
 ### `src/memory/types.ts`
 
@@ -1759,6 +1810,8 @@ export interface MemoryRuntimeIdentity {
 export interface MemoryExtractionInput extends MemoryRuntimeIdentity {
   previousSummary?: MemorySummary
   messages: MemoryMessage[]
+  reviewRequest?: MemoryReviewJobRequest
+  signal?: AbortSignal
 }
 
 export interface MemoryExtractionOperation {
@@ -1855,6 +1908,8 @@ export interface MemoryMessageListInput {
 }
 
 export interface MemoryForgetInput {
+  all?: boolean
+  targets?: Array<{ id: string; expectedRevision: number }>
   id?: string
   expectedRevision?: number
   domain?: string
@@ -1880,14 +1935,85 @@ export interface MemoryForgetResult {
 export interface MemorySessionState {
   sessionId: string
   lastExtractedMessageId?: string
+  lastReviewedMessageId?: string
   lastSummaryMessageId?: string
   updatedAt: string
+}
+
+export const MEMORY_REVIEW_JOB_STATUSES = [ 'pending', 'running', 'retry', 'waiting_for_model', 'needs_confirmation', 'completed', ] as const
+
+export type MemoryReviewJobStatus = typeof MEMORY_REVIEW_JOB_STATUSES[number]
+
+export type MemoryReviewJobTrigger = 'review' | 'forget' | 'periodic'
+
+export interface MemoryReviewJobRequest {
+  trigger: MemoryReviewJobTrigger
+  forget?: Omit<MemoryForgetInput, 'identity' | 'actor'>
+  userConfirmed?: boolean
+}
+
+export interface MemoryReviewJob {
+  id: string
+  profileId: string
+  sessionId: string
+  throughMessageId: string
+  identity: MemoryRuntimeIdentity
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  status: MemoryReviewJobStatus
+  attempt: number
+  nextAttemptAt?: string
+  lockedAt?: string
+  lastError?: string
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+export interface MemoryReviewJobCreateInput {
+  id: string
+  profileId: string
+  sessionId: string
+  throughMessageId: string
+  identity: MemoryRuntimeIdentity
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  createdAt: string
+}
+
+export interface MemoryReviewJobUpdateInput {
+  status: MemoryReviewJobStatus
+  nextAttemptAt?: string
+  lockedAt?: string
+  lastError?: string
+  completedAt?: string
+  incrementAttempt?: boolean
+}
+
+export interface MemoryReviewJobListInput {
+  profileId: string
+  statuses?: MemoryReviewJobStatus[]
+  limit?: number
+  offset?: number
+}
+
+export interface MemoryReviewQueueStatus {
+  reviewing: boolean
+  activeJobs: number
+  pending: number
+  running: number
+  retry: number
+  waitingForModel: number
+  needsConfirmation: number
+  latestCompletedAt?: string
 }
 
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
-  listMessagesAfter(input: { sessionId: string; messageId?: string; limit?: number }): Promise<MemoryMessage[]>
+  listMessagesAfter(input: { sessionId: string messageId?: string throughMessageId?: string limit?: number }): Promise<MemoryMessage[]>
   appendSummary(summary: MemorySummary): Promise<void>
   getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   getNode(id: string): Promise<MemoryNode | undefined>
@@ -1900,6 +2026,16 @@ export interface MemoryStore {
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
   getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   setSessionState(state: MemorySessionState): Promise<void>
+  enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
+  getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
+  listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
+  activateReviewJob(input: { id: string profileId: string now: string confirmedByUser?: boolean }): Promise<MemoryReviewJob | undefined>
+  claimNextReviewJob(input: { profileId: string now: string staleBefore: string }): Promise<MemoryReviewJob | undefined>
+  updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
+  requeueStaleReviewJobs(input: { profileId?: string now: string staleBefore: string }): Promise<number>
+  activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
+  listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
+  getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
   close(): void
 }
 ```
@@ -2571,7 +2707,7 @@ export interface AgentRuntimeRunInput {
   skillReviewEnabled?: boolean
   backgroundDelegationEnabled?: boolean
   logContext?: EkkoRuntimeLogContext
-  onMemoryUsage?: (input: { purpose: 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
+  onMemoryUsage?: (input: { purpose: 'ekko-memory-review' | 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
   onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }
@@ -2955,7 +3091,7 @@ export interface ViewImageToolOptions {
 
 export class ViewImageTool implements AgentTool<ViewImageInput> {
   readonly concurrency = 'parallel' as const
-  readonly definition = { name: 'view_image', description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Image path relative to the current workspace, or an absolute path inside workspaceRoot.', }, }, required: ['path'], additionalProperties: false, }, }
+  readonly definition = { name: 'view_image', description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection. If the current model cannot consume images, this tool returns a recoverable VISION_UNSUPPORTED failure; continue with text-based tools or explain that a vision-capable model is required.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Image path relative to the current workspace, or an absolute path inside workspaceRoot.', }, }, required: ['path'], additionalProperties: false, }, }
   constructor(options: ViewImageToolOptions = {})
   async execute(input: ViewImageInput, context: AgentToolContext = {}): Promise<AgentToolResult>
 }
@@ -3194,17 +3330,22 @@ export interface AgentToolContext {
   sourceMessageIds?: string[]
   memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
   memoryExplicitIntent?: boolean
+  memoryForgetIntent?: boolean
+  memoryForgetAllIntent?: boolean
   memoryOrigin?: import('../memory/types').MemoryOrigin
   memoryRecallScopes?: import('../memory/types').MemoryScope[]
   memoryWriteScopes?: import('../memory/types').MemoryScope[]
   memoryDefaultWriteScope?: import('../memory/types').MemoryScope
-  requestMemoryReview?: () => void
+  requestMemoryReview?: ( request: import('../memory/types').MemoryReviewJobRequest, ) => Promise<{ jobId?: string }>
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number
   signal?: AbortSignal
   requestToolApproval?: AgentToolApprovalRequester
   requestUserClarification?: AgentClarificationRequester
+  modelCapabilities?: ModelCapabilities
+  modelProvider?: string
+  modelName?: string
   skillMutationSource?: 'foreground' | 'background-review'
   delegationDepth?: number
   delegateTask?: AgentTaskDelegate

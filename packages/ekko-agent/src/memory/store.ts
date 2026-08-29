@@ -9,6 +9,11 @@ import type {
   MemoryMessage,
   MemoryNode,
   MemoryQuery,
+  MemoryReviewJob,
+  MemoryReviewJobCreateInput,
+  MemoryReviewJobListInput,
+  MemoryReviewQueueStatus,
+  MemoryReviewJobUpdateInput,
   MemorySessionState,
   MemoryStore,
   MemorySummary,
@@ -136,6 +141,58 @@ const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
         ON memory_nodes (profile_id, scope_type, scope_namespace, scope_id, status, updated_at);
     `)
   },
+}, {
+  component: 'memory',
+  version: 5,
+  migrate(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_session_state (
+        session_id TEXT PRIMARY KEY,
+        last_extracted_message_id TEXT,
+        last_summary_message_id TEXT,
+        updated_at TEXT NOT NULL
+      );
+      ALTER TABLE memory_session_state ADD COLUMN last_reviewed_message_id TEXT;
+      UPDATE memory_session_state
+      SET last_reviewed_message_id = last_extracted_message_id
+      WHERE last_reviewed_message_id IS NULL;
+
+      CREATE TABLE IF NOT EXISTS memory_review_jobs (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        profile_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        through_message_id TEXT NOT NULL,
+        identity_json TEXT NOT NULL,
+        request_type TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        preferred_provider TEXT,
+        preferred_model TEXT,
+        status TEXT NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        locked_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_review_jobs_evidence
+        ON memory_review_jobs (profile_id, session_id, through_message_id, request_type);
+      CREATE INDEX IF NOT EXISTS idx_memory_review_jobs_claim
+        ON memory_review_jobs (profile_id, status, next_attempt_at, row_id);
+    `)
+  },
+}, {
+  component: 'memory',
+  version: 6,
+  migrate(db) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_memory_review_jobs_evidence;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_review_jobs_evidence_request
+        ON memory_review_jobs (profile_id, session_id, through_message_id, request_type, request_json);
+    `)
+  },
 }]
 
 type Row = Record<string, unknown>
@@ -179,16 +236,29 @@ export class SqliteMemoryStore implements MemoryStore {
     return rows.map(messageFromRow)
   }
 
-  async listMessagesAfter(input: { sessionId: string; messageId?: string; limit?: number }): Promise<MemoryMessage[]> {
+  async listMessagesAfter(input: {
+    sessionId: string
+    messageId?: string
+    throughMessageId?: string
+    limit?: number
+  }): Promise<MemoryMessage[]> {
     const after = input.messageId
       ? this.db.prepare('SELECT row_id FROM memory_messages WHERE id = ? AND session_id = ?').get(input.messageId, input.sessionId) as Row | undefined
       : undefined
+    const through = input.throughMessageId
+      ? this.db.prepare('SELECT row_id FROM memory_messages WHERE id = ? AND session_id = ?').get(input.throughMessageId, input.sessionId) as Row | undefined
+      : undefined
     const rows = this.db.prepare(`
       SELECT * FROM memory_messages
-      WHERE session_id = ? AND row_id > ?
+      WHERE session_id = ? AND row_id > ? AND row_id <= ?
       ORDER BY row_id ASC
       LIMIT ?
-    `).all(input.sessionId, Number(after?.row_id || 0), boundedLimit(input.limit ?? 100, 500)) as Row[]
+    `).all(
+      input.sessionId,
+      Number(after?.row_id || 0),
+      input.throughMessageId ? Number(through?.row_id || 0) : Number.MAX_SAFE_INTEGER,
+      boundedLimit(input.limit ?? 100, 500),
+    ) as Row[]
     return rows.map(messageFromRow)
   }
 
@@ -447,6 +517,8 @@ export class SqliteMemoryStore implements MemoryStore {
     return {
       sessionId: String(row.session_id),
       lastExtractedMessageId: optionalString(row.last_extracted_message_id),
+      lastReviewedMessageId: optionalString(row.last_reviewed_message_id)
+        || optionalString(row.last_extracted_message_id),
       lastSummaryMessageId: optionalString(row.last_summary_message_id),
       updatedAt: String(row.updated_at),
     }
@@ -455,18 +527,243 @@ export class SqliteMemoryStore implements MemoryStore {
   async setSessionState(state: MemorySessionState): Promise<void> {
     this.db.prepare(`
       INSERT INTO memory_session_state
-        (session_id, last_extracted_message_id, last_summary_message_id, updated_at)
-      VALUES (?, ?, ?, ?)
+        (session_id, last_extracted_message_id, last_reviewed_message_id, last_summary_message_id, updated_at)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
-        last_extracted_message_id = excluded.last_extracted_message_id,
-        last_summary_message_id = excluded.last_summary_message_id,
-        updated_at = excluded.updated_at
+        last_extracted_message_id = COALESCE(excluded.last_extracted_message_id, memory_session_state.last_extracted_message_id),
+        last_reviewed_message_id = COALESCE(excluded.last_reviewed_message_id, memory_session_state.last_reviewed_message_id),
+        last_summary_message_id = COALESCE(excluded.last_summary_message_id, memory_session_state.last_summary_message_id),
+        updated_at = CASE
+          WHEN excluded.updated_at > memory_session_state.updated_at THEN excluded.updated_at
+          ELSE memory_session_state.updated_at
+        END
     `).run(
       state.sessionId,
-      state.lastExtractedMessageId ?? null,
+      state.lastExtractedMessageId ?? state.lastReviewedMessageId ?? null,
+      state.lastReviewedMessageId ?? state.lastExtractedMessageId ?? null,
       state.lastSummaryMessageId ?? null,
       state.updatedAt,
     )
+  }
+
+  async enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob> {
+    this.databaseManager.transaction(() => {
+      const evidence = this.db.prepare(
+        'SELECT 1 AS present FROM memory_messages WHERE id = ? AND session_id = ?',
+      ).get(input.throughMessageId, input.sessionId) as Row | undefined
+      if (!evidence) throw new Error(`Memory review evidence was not captured: ${input.throughMessageId}`)
+      this.db.prepare(`
+        INSERT OR IGNORE INTO memory_review_jobs (
+          id, profile_id, session_id, through_message_id, identity_json,
+          request_type, request_json, preferred_provider, preferred_model,
+          status, attempt, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+      `).run(
+        input.id,
+        input.profileId,
+        input.sessionId,
+        input.throughMessageId,
+        stableJson(input.identity),
+        input.request.trigger,
+        stableJson(input.request),
+        input.preferredProvider ?? null,
+        input.preferredModel ?? null,
+        input.createdAt,
+        input.createdAt,
+      )
+    })
+    const row = this.db.prepare('SELECT * FROM memory_review_jobs WHERE id = ?').get(input.id) as Row | undefined
+      || this.db.prepare(`
+        SELECT * FROM memory_review_jobs
+        WHERE profile_id = ? AND session_id = ? AND through_message_id = ?
+          AND request_type = ? AND request_json = ?
+      `).get(
+        input.profileId,
+        input.sessionId,
+        input.throughMessageId,
+        input.request.trigger,
+        stableJson(input.request),
+      ) as Row | undefined
+    if (!row) throw new Error(`Memory review job was not persisted: ${input.id}`)
+    return reviewJobFromRow(row)
+  }
+
+  async getReviewJob(id: string): Promise<MemoryReviewJob | undefined> {
+    const row = this.db.prepare('SELECT * FROM memory_review_jobs WHERE id = ?').get(id) as Row | undefined
+    return row ? reviewJobFromRow(row) : undefined
+  }
+
+  async listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]> {
+    const clauses = ['profile_id = ?']
+    const params: SQLInputValue[] = [input.profileId]
+    if (input.statuses?.length) addInClause(clauses, params, 'status', input.statuses)
+    const rows = this.db.prepare(`
+      SELECT * FROM memory_review_jobs
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY row_id DESC
+      LIMIT ? OFFSET ?
+    `).all(
+      ...params,
+      boundedLimit(input.limit ?? 100, 500),
+      boundedOffset(input.offset),
+    ) as Row[]
+    return rows.map(reviewJobFromRow)
+  }
+
+  async activateReviewJob(input: {
+    id: string
+    profileId: string
+    now: string
+    confirmedByUser?: boolean
+  }): Promise<MemoryReviewJob | undefined> {
+    this.databaseManager.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT * FROM memory_review_jobs WHERE id = ? AND profile_id = ?
+      `).get(input.id, input.profileId) as Row | undefined
+      if (!row || String(row.status) === 'completed' || String(row.status) === 'running') return
+      const request = reviewJobFromRow(row).request
+      const nextRequest = input.confirmedByUser
+        ? {
+            ...request,
+            userConfirmed: true,
+            ...(request.forget ? { forget: { ...request.forget, confirmed: true } } : {}),
+          }
+        : request
+      this.db.prepare(`
+        UPDATE memory_review_jobs
+        SET request_json = ?, status = 'pending', next_attempt_at = NULL,
+            locked_at = NULL, last_error = NULL, completed_at = NULL, updated_at = ?
+        WHERE id = ? AND profile_id = ? AND status <> 'completed' AND status <> 'running'
+      `).run(stableJson(nextRequest), input.now, input.id, input.profileId)
+    })
+    return this.getReviewJob(input.id).then(job => job?.profileId === input.profileId ? job : undefined)
+  }
+
+  async claimNextReviewJob(input: {
+    profileId: string
+    now: string
+    staleBefore: string
+  }): Promise<MemoryReviewJob | undefined> {
+    let claimed: MemoryReviewJob | undefined
+    this.databaseManager.transaction(() => {
+      this.db.prepare(`
+        UPDATE memory_review_jobs
+        SET status = 'retry', locked_at = NULL, next_attempt_at = ?,
+            last_error = COALESCE(last_error, 'Reviewer lease expired.'), updated_at = ?
+        WHERE profile_id = ? AND status = 'running' AND locked_at < ?
+      `).run(input.now, input.now, input.profileId, input.staleBefore)
+      const row = this.db.prepare(`
+        SELECT * FROM memory_review_jobs
+        WHERE profile_id = ?
+          AND status IN ('pending', 'retry', 'waiting_for_model')
+          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+        ORDER BY CASE request_type WHEN 'forget' THEN 0 WHEN 'review' THEN 1 ELSE 2 END, row_id ASC
+        LIMIT 1
+      `).get(input.profileId, input.now) as Row | undefined
+      if (!row) return
+      const changed = this.db.prepare(`
+        UPDATE memory_review_jobs
+        SET status = 'running', attempt = attempt + 1, locked_at = ?,
+            next_attempt_at = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('pending', 'retry', 'waiting_for_model')
+      `).run(input.now, input.now, String(row.id))
+      if (Number(changed.changes) !== 1) return
+      const current = this.db.prepare('SELECT * FROM memory_review_jobs WHERE id = ?')
+        .get(String(row.id)) as Row | undefined
+      if (current) claimed = reviewJobFromRow(current)
+    })
+    return claimed
+  }
+
+  async updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void> {
+    const now = new Date().toISOString()
+    this.db.prepare(`
+      UPDATE memory_review_jobs
+      SET status = ?, next_attempt_at = ?, locked_at = ?, last_error = ?,
+          completed_at = ?, updated_at = ?,
+          attempt = attempt + ?
+      WHERE id = ?
+    `).run(
+      input.status,
+      input.nextAttemptAt ?? null,
+      input.lockedAt ?? null,
+      input.lastError ?? null,
+      input.completedAt ?? null,
+      now,
+      input.incrementAttempt ? 1 : 0,
+      id,
+    )
+  }
+
+  async requeueStaleReviewJobs(input: {
+    profileId?: string
+    now: string
+    staleBefore: string
+  }): Promise<number> {
+    const profileClause = input.profileId ? ' AND profile_id = ?' : ''
+    const params: SQLInputValue[] = [input.now, input.now, input.staleBefore]
+    if (input.profileId) params.push(input.profileId)
+    const result = this.db.prepare(`
+      UPDATE memory_review_jobs
+      SET status = 'retry', locked_at = NULL, next_attempt_at = ?,
+          last_error = 'Reviewer lease expired before completion.', updated_at = ?
+      WHERE status = 'running' AND locked_at < ?${profileClause}
+    `).run(...params)
+    return Number(result.changes)
+  }
+
+  async activateReviewJobs(input: { profileId?: string; now: string }): Promise<void> {
+    const profileClause = input.profileId ? ' AND profile_id = ?' : ''
+    const params: SQLInputValue[] = [input.now, input.now]
+    if (input.profileId) params.push(input.profileId)
+    this.db.prepare(`
+      UPDATE memory_review_jobs
+      SET next_attempt_at = ?, updated_at = ?
+      WHERE status IN ('retry', 'waiting_for_model')${profileClause}
+    `).run(...params)
+  }
+
+  async listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]> {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT profile_id FROM memory_review_jobs
+      WHERE (status IN ('pending', 'retry', 'waiting_for_model')
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+         OR (status = 'running' AND locked_at < ?)
+      ORDER BY profile_id
+    `).all(input.now, input.staleBefore) as Row[]
+    return rows.map(row => String(row.profile_id))
+  }
+
+  async getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus> {
+    const rows = this.db.prepare(`
+      SELECT status, COUNT(*) AS count, MAX(completed_at) AS latest_completed_at
+      FROM memory_review_jobs
+      WHERE profile_id = ?
+      GROUP BY status
+    `).all(profileId) as Row[]
+    const counts = new Map(rows.map(row => [String(row.status), Number(row.count || 0)]))
+    const pending = counts.get('pending') || 0
+    const running = counts.get('running') || 0
+    const retry = counts.get('retry') || 0
+    const waitingForModel = counts.get('waiting_for_model') || 0
+    const needsConfirmation = counts.get('needs_confirmation') || 0
+    const latestCompletedAt = rows
+      .map(row => optionalString(row.latest_completed_at))
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1)
+    const activelyReviewingJobs = pending + running + retry
+    const activeJobs = activelyReviewingJobs + waitingForModel
+    return {
+      reviewing: activelyReviewingJobs > 0,
+      activeJobs,
+      pending,
+      running,
+      retry,
+      waitingForModel,
+      needsConfirmation,
+      latestCompletedAt,
+    }
   }
 
   close(): void {
@@ -662,6 +959,44 @@ function auditFromRow(row: Row): MemoryAuditEvent {
     reason: String(row.reason),
     payload: parseJsonObject(row.payload_json),
     createdAt: String(row.created_at),
+  }
+}
+
+function reviewJobFromRow(row: Row): MemoryReviewJob {
+  const identity = parseJsonObject(row.identity_json)
+  const request = parseJsonObject(row.request_json)
+  return {
+    id: String(row.id),
+    profileId: String(row.profile_id),
+    sessionId: String(row.session_id),
+    throughMessageId: String(row.through_message_id),
+    identity: {
+      sessionId: String(identity?.sessionId || row.session_id),
+      profileId: optionalString(identity?.profileId) || String(row.profile_id),
+      origin: normalizeMemoryOrigin(identity?.origin),
+      recallScopes: Array.isArray(identity?.recallScopes)
+        ? identity.recallScopes as MemoryReviewJob['identity']['recallScopes']
+        : undefined,
+      writeScopes: Array.isArray(identity?.writeScopes)
+        ? identity.writeScopes as MemoryReviewJob['identity']['writeScopes']
+        : undefined,
+      defaultWriteScope: identity?.defaultWriteScope as MemoryReviewJob['identity']['defaultWriteScope'],
+    },
+    request: {
+      trigger: String(request?.trigger || row.request_type) as MemoryReviewJob['request']['trigger'],
+      forget: request?.forget as MemoryReviewJob['request']['forget'],
+      userConfirmed: request?.userConfirmed === true || undefined,
+    },
+    preferredProvider: optionalString(row.preferred_provider),
+    preferredModel: optionalString(row.preferred_model),
+    status: String(row.status) as MemoryReviewJob['status'],
+    attempt: Math.max(0, Number(row.attempt || 0)),
+    nextAttemptAt: optionalString(row.next_attempt_at),
+    lockedAt: optionalString(row.locked_at),
+    lastError: optionalString(row.last_error),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    completedAt: optionalString(row.completed_at),
   }
 }
 

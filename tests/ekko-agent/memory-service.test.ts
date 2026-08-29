@@ -531,7 +531,7 @@ describe('MemoryService', () => {
     })
   })
 
-  it('stores every turn but waits for the user-message review threshold before calling the extractor', async () => {
+  it('stores every turn and runs independent review and summary passes at the user-message threshold', async () => {
     const extract = vi.fn().mockResolvedValue({
       summaryPatch: 'Two user turns were reviewed together.',
       nodes: [],
@@ -560,15 +560,52 @@ describe('MemoryService', () => {
     ])
     await gated.drain()
 
-    expect(extract).toHaveBeenCalledTimes(1)
+    expect(extract).toHaveBeenCalledTimes(2)
     expect(extract.mock.calls[0][0].messages.map((message: MemoryMessage) => message.content)).toEqual([
       'first question',
       'first answer',
       'second question',
       'second answer',
     ])
+    expect(extract.mock.calls[0][0].reviewRequest).toEqual({ trigger: 'periodic' })
+    expect(extract.mock.calls[1][0].reviewRequest).toBeUndefined()
     await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toMatchObject({
       summary: 'Two user turns were reviewed together.',
+    })
+  })
+
+  it('advances review and summary cursors independently when both background passes overlap', async () => {
+    let releaseReview!: () => void
+    const reviewGate = new Promise<void>(resolve => { releaseReview = resolve })
+    const reviewer = {
+      extract: vi.fn(async () => {
+        await reviewGate
+        return { nodes: [] }
+      }),
+    }
+    const summarizer = {
+      extract: vi.fn().mockResolvedValue({ summaryPatch: 'Independent summary.', nodes: [] }),
+    }
+    const overlapping = new MemoryService({ store, reviewEveryUserMessages: 1 })
+    const identity = { sessionId: 'overlapping-cursors', profileId: 'default' }
+    overlapping.scheduleRunCompletion(
+      identity,
+      [{ role: 'user', content: 'one durable message' }],
+      reviewer,
+      { summaryExtractor: summarizer },
+    )
+    await vi.waitFor(async () => {
+      await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toMatchObject({
+        summary: 'Independent summary.',
+      })
+    })
+    releaseReview()
+    await overlapping.drain()
+
+    const [message] = await store.listMessagesAfter({ sessionId: identity.sessionId, limit: 10 })
+    await expect(store.getSessionState(identity.sessionId)).resolves.toMatchObject({
+      lastReviewedMessageId: message.id,
+      lastSummaryMessageId: message.id,
     })
   })
 
@@ -597,7 +634,7 @@ describe('MemoryService', () => {
     )
     await responsive.drain()
 
-    expect(extract).toHaveBeenCalledTimes(1)
+    expect(extract).toHaveBeenCalledTimes(2)
   })
 
   it('allows a manual review to bypass the user-message threshold', async () => {
@@ -614,9 +651,517 @@ describe('MemoryService', () => {
     await gated.drain()
 
     expect(extract).toHaveBeenCalledTimes(1)
-    await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toMatchObject({
-      summary: 'Manual review.',
+    await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toBeUndefined()
+  })
+
+  it('persists a failed review and resumes the same job after an application restart', async () => {
+    const identity = { sessionId: 'restart-review-session', profileId: 'default' }
+    const [throughMessageId] = await service.captureMessages(identity, [
+      { role: 'user', content: '请记住我偏好简短回答' },
+    ])
+    await service.scheduleReview({
+      identity,
+      throughMessageId,
+      request: { trigger: 'review' },
+      preferredProvider: 'removed-provider',
+      preferredModel: 'removed-model',
+      extractor: { extract: vi.fn().mockRejectedValue(new Error('provider unavailable')) },
     })
+    await service.drain()
+
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status, attempt FROM memory_review_jobs WHERE session_id = ?',
+    ).get(identity.sessionId)).toMatchObject({ status: 'retry', attempt: 1 })
+    await expect(service.getSessionState(identity.sessionId)).resolves.toBeUndefined()
+
+    service.close()
+    store = new SqliteMemoryStore(new EkkoDatabaseManager({ baseDirectory: webUiHome }))
+    const resumedExtract = vi.fn().mockResolvedValue({ nodes: [] })
+    service = new MemoryService({
+      store,
+      reviewExtractorResolver: async () => ({
+        provider: 'current-provider',
+        model: 'current-model',
+        extractor: { extract: resumedExtract },
+      }),
+    })
+    await service.recoverReviewJobs()
+    await vi.waitFor(() => {
+      expect(store.databaseManager.connection.prepare(
+        'SELECT status FROM memory_review_jobs WHERE session_id = ?',
+      ).get(identity.sessionId)).toMatchObject({ status: 'completed' })
+    })
+    await service.drain()
+
+    expect(resumedExtract).toHaveBeenCalledTimes(1)
+    expect(resumedExtract.mock.calls[0][0]).toMatchObject({
+      sessionId: identity.sessionId,
+      reviewRequest: { trigger: 'review' },
+    })
+    expect(store.databaseManager.connection.prepare(
+      'SELECT COUNT(*) AS count, MAX(attempt) AS attempt FROM memory_review_jobs WHERE session_id = ?',
+    ).get(identity.sessionId)).toMatchObject({ count: 1, attempt: 2 })
+    await expect(service.getSessionState(identity.sessionId)).resolves.toMatchObject({
+      lastReviewedMessageId: throughMessageId,
+      lastSummaryMessageId: undefined,
+    })
+  })
+
+  it('uses the host resolver instead of a stale profile model cached by an earlier run', async () => {
+    const profileId = 'changed-provider-profile'
+    const identity = { sessionId: 'changed-provider-session', profileId }
+    const staleExtract = vi.fn().mockRejectedValue(new Error('deleted provider credentials'))
+    const currentExtract = vi.fn().mockResolvedValue({ nodes: [] })
+    service = new MemoryService({
+      store,
+      reviewExtractorResolver: async () => ({
+        provider: 'current-provider',
+        model: 'current-model',
+        extractor: { extract: currentExtract },
+      }),
+    })
+    service.registerReviewExtractor(profileId, {
+      provider: 'deleted-provider',
+      model: 'deleted-model',
+      extractor: { extract: staleExtract },
+    })
+    const [throughMessageId] = await service.captureMessages(identity, [{
+      role: 'user',
+      content: '请记住我喜欢简短回答',
+    }])
+
+    await service.scheduleReview({
+      identity,
+      throughMessageId,
+      request: { trigger: 'review' },
+      preferredProvider: 'deleted-provider',
+      preferredModel: 'deleted-model',
+    })
+    await vi.waitFor(() => expect(store.databaseManager.connection.prepare(
+      'SELECT status FROM memory_review_jobs WHERE session_id = ?',
+    ).get(identity.sessionId)).toMatchObject({ status: 'completed' }))
+    await service.drain()
+
+    expect(currentExtract).toHaveBeenCalledTimes(1)
+    expect(staleExtract).not.toHaveBeenCalled()
+  })
+
+  it('does not cap reviewer output tokens and retries provider-truncated reviews', async () => {
+    const identity = { sessionId: 'truncated-review-session', profileId: 'default' }
+    const [throughMessageId] = await service.captureMessages(identity, [{
+      role: 'user',
+      content: '我住在厦门。',
+    }])
+    const create = vi.fn(async () => ({
+      content: '',
+      finishReason: 'length' as const,
+    }))
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    await service.scheduleReview({
+      identity,
+      throughMessageId,
+      request: { trigger: 'review' },
+      extractor: new ModelMemoryExtractor({
+        mode: 'review',
+        modelClient: client,
+        memory: service,
+        fallback: false,
+      }),
+    })
+    await service.drain()
+
+    expect((create.mock.calls[0][0] as ModelRequest).maxTokens).toBeUndefined()
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status, last_error FROM memory_review_jobs WHERE session_id = ?',
+    ).get(identity.sessionId)).toMatchObject({
+      status: 'retry',
+      last_error: expect.stringContaining('truncated by the model provider'),
+    })
+    await expect(service.getSessionState(identity.sessionId)).resolves.toBeUndefined()
+  })
+
+  it('times out a hung review attempt and continues the serial queue without waiting for the model retry stack', async () => {
+    service = new MemoryService({ store, reviewAttemptTimeoutMs: 25 })
+    const profileId = 'timeout-profile'
+    const firstIdentity = { sessionId: 'hung-review-session', profileId }
+    const secondIdentity = { sessionId: 'next-review-session', profileId }
+    const [firstThrough] = await service.captureMessages(firstIdentity, [{ role: 'user', content: 'first fact' }])
+    const [secondThrough] = await service.captureMessages(secondIdentity, [{ role: 'user', content: 'second fact' }])
+    const first = vi.fn((input: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      input.signal?.addEventListener('abort', () => reject(input.signal?.reason), { once: true })
+    }))
+    const second = vi.fn().mockResolvedValue({ nodes: [] })
+
+    await service.scheduleReview({
+      identity: firstIdentity,
+      throughMessageId: firstThrough,
+      request: { trigger: 'review' },
+      extractor: { extract: first },
+    })
+    await service.scheduleReview({
+      identity: secondIdentity,
+      throughMessageId: secondThrough,
+      request: { trigger: 'review' },
+      extractor: { extract: second },
+    })
+    await service.drain()
+
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status, last_error FROM memory_review_jobs WHERE session_id = ?',
+    ).get(firstIdentity.sessionId)).toMatchObject({
+      status: 'retry',
+      last_error: expect.stringContaining('timed out after 25ms'),
+    })
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status FROM memory_review_jobs WHERE session_id = ?',
+    ).get(secondIdentity.sessionId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('requeues a stale running review when the status page checks it', async () => {
+    const identity = { sessionId: 'stale-review-session', profileId: 'stale-profile' }
+    const [throughMessageId] = await service.captureMessages(identity, [{ role: 'user', content: 'stale fact' }])
+    const job = await store.enqueueReviewJob({
+      id: 'stale-review-job',
+      profileId: identity.profileId,
+      sessionId: identity.sessionId,
+      throughMessageId,
+      identity,
+      request: { trigger: 'review' },
+      createdAt: '2026-08-29T00:00:00.000Z',
+    })
+    await store.updateReviewJob(job.id, {
+      status: 'running',
+      lockedAt: '2026-08-29T00:00:00.000Z',
+    })
+    const extract = vi.fn().mockResolvedValue({ nodes: [] })
+    service = new MemoryService({
+      store,
+      reviewExtractorResolver: async () => ({ extractor: { extract } }),
+    })
+
+    await service.getReviewStatus(identity.profileId)
+    await vi.waitFor(() => expect(store.databaseManager.connection.prepare(
+      'SELECT status FROM memory_review_jobs WHERE id = ?',
+    ).get(job.id)).toMatchObject({ status: 'completed' }))
+
+    expect(extract).toHaveBeenCalledTimes(1)
+  })
+
+  it('makes itemKey requirements explicit and lets the reviewer correct a rejected create in the same review', async () => {
+    const sourceMessageId = 'project-owner-message'
+    const create = vi.fn(async (request: ModelRequest) => {
+      const call = create.mock.calls.length
+      if (call === 1) {
+        return {
+          content: '',
+          toolCalls: [{
+            id: 'invalid-project-create',
+            name: 'memory_propose_update',
+            arguments: {
+              operation: 'create',
+              kind: 'project_context',
+              reason: '用户明确说明 Hermes Studio 是自己的开源项目。',
+              explicitUserIntent: false,
+              node: {
+                valueJson: { repository: 'EKKOLearnAI/hermes-studio', owner: true },
+                title: '用户的开源项目 Hermes Studio',
+                content: 'Hermes Studio 是用户的开源项目。',
+                sourceMessageIds: [sourceMessageId],
+              },
+            },
+          }],
+        }
+      }
+      if (call === 2) {
+        expect(request.messages.some(message => (
+          message.role === 'tool' && String(message.content).includes('itemKey is required')
+        ))).toBe(true)
+        return {
+          content: '',
+          toolCalls: [{
+            id: 'corrected-project-create',
+            name: 'memory_propose_update',
+            arguments: {
+              operation: 'create',
+              kind: 'project_context',
+              itemKey: 'hermes_studio',
+              reason: '用户明确说明 Hermes Studio 是自己的开源项目。',
+              explicitUserIntent: false,
+              node: {
+                valueJson: { repository: 'EKKOLearnAI/hermes-studio', owner: true },
+                title: '用户的开源项目 Hermes Studio',
+                content: 'Hermes Studio 是用户的开源项目。',
+                sourceMessageIds: [sourceMessageId],
+              },
+            },
+          }],
+        }
+      }
+      return { content: 'Review complete.' }
+    })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    const reviewer = new ModelMemoryExtractor({
+      mode: 'review',
+      modelClient: client,
+      memory: service,
+      fallback: false,
+    })
+
+    await reviewer.extract({
+      sessionId: 'project-review-correction',
+      profileId: 'default',
+      messages: [memoryMessage('user', 'https://github.com/EKKOLearnAI/hermes-studio 这是我的开源项目', sourceMessageId)],
+      reviewRequest: { trigger: 'review' },
+    })
+
+    const definition = createMemoryTools(service)
+      .find(tool => tool.definition.name === 'memory_propose_update')!.definition
+    expect(definition.description).toContain('itemKey is REQUIRED')
+    expect(JSON.stringify(definition.parameters)).toContain('kind=project_context, itemKey=hermes_studio')
+    await expect(service.search(
+      { sessionId: 'project-review-correction', profileId: 'default' },
+      { key: 'project.context:hermes_studio' },
+    )).resolves.toMatchObject({
+      exact: [expect.objectContaining({
+        key: 'project.context:hermes_studio',
+        valueJson: { repository: 'EKKOLearnAI/hermes-studio', owner: true },
+      })],
+    })
+  })
+
+  it('does not let a successful parallel mutation hide another rejected reviewer tool call', async () => {
+    const client = modelClient()
+    vi.mocked(client.create)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{
+          id: 'invalid-project',
+          name: 'memory_propose_update',
+          arguments: {
+            operation: 'create', kind: 'project_context', reason: 'missing item key',
+            node: { title: 'Project', content: 'User project.' },
+          },
+        }, {
+          id: 'valid-location',
+          name: 'memory_propose_update',
+          arguments: {
+            operation: 'create', kind: 'home_location', reason: 'explicit location',
+            node: { valueJson: '厦门', title: '所在地', content: '用户住在厦门。' },
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ content: 'Done without correcting the rejected call.' })
+    const reviewer = new ModelMemoryExtractor({
+      mode: 'review', modelClient: client, memory: service, fallback: false,
+    })
+
+    await expect(reviewer.extract({
+      sessionId: 'parallel-tool-error',
+      profileId: 'default',
+      messages: [memoryMessage('user', '这是我的项目，我住在厦门。', 'parallel-source')],
+      reviewRequest: { trigger: 'review' },
+    })).rejects.toThrow('did not correct rejected tool calls')
+  })
+
+  it('runs review jobs serially per profile while keeping each Session in a separate model call', async () => {
+    let active = 0
+    let maxActive = 0
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    const reviewedSessions: string[] = []
+    const extractor = {
+      extract: vi.fn(async (input: { sessionId: string }) => {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        reviewedSessions.push(input.sessionId)
+        if (input.sessionId === 'serial-session-a') await firstGate
+        active -= 1
+        return { nodes: [] }
+      }),
+    }
+    const identityA = { sessionId: 'serial-session-a', profileId: 'serial-profile' }
+    const identityB = { sessionId: 'serial-session-b', profileId: 'serial-profile' }
+    const [throughA] = await service.captureMessages(identityA, [{ role: 'user', content: 'A durable fact' }])
+    const [throughB] = await service.captureMessages(identityB, [{ role: 'user', content: 'B durable fact' }])
+    await service.scheduleReview({ identity: identityA, throughMessageId: throughA, request: { trigger: 'review' }, extractor })
+    await service.scheduleReview({ identity: identityB, throughMessageId: throughB, request: { trigger: 'review' }, extractor })
+    await vi.waitFor(() => expect(reviewedSessions).toEqual(['serial-session-a']))
+    await expect(service.getReviewStatus('serial-profile')).resolves.toMatchObject({
+      reviewing: true,
+      activeJobs: 2,
+      pending: 1,
+      running: 1,
+    })
+    releaseFirst()
+    await service.drain()
+
+    expect(maxActive).toBe(1)
+    expect(reviewedSessions).toEqual(['serial-session-a', 'serial-session-b'])
+    expect(extractor.extract).toHaveBeenCalledTimes(2)
+    await expect(service.getReviewStatus('serial-profile')).resolves.toMatchObject({
+      reviewing: false,
+      activeJobs: 0,
+      pending: 0,
+      running: 0,
+      latestCompletedAt: expect.any(String),
+    })
+  })
+
+  it('reviews a large pending Session in bounded batches through the job target', async () => {
+    const identity = { sessionId: 'batched-review-session', profileId: 'default' }
+    const ids = await service.captureMessages(
+      identity,
+      Array.from({ length: 45 }, (_, index) => ({
+        role: 'user' as const,
+        content: `durable message ${index + 1}`,
+      })),
+    )
+    const extract = vi.fn().mockResolvedValue({ nodes: [] })
+    await service.scheduleReview({
+      identity,
+      throughMessageId: ids.at(-1)!,
+      request: { trigger: 'review' },
+      extractor: { extract },
+    })
+    await service.drain()
+
+    expect(extract).toHaveBeenCalledTimes(2)
+    expect(extract.mock.calls.map(call => call[0].messages.length)).toEqual([40, 5])
+    expect(extract.mock.calls.map(call => call[0].reviewRequest)).toEqual([
+      { trigger: 'periodic' },
+      { trigger: 'review' },
+    ])
+    await expect(service.getSessionState(identity.sessionId)).resolves.toMatchObject({
+      lastReviewedMessageId: ids.at(-1),
+    })
+  })
+
+  it('executes an exact forget job deterministically without requiring the review model', async () => {
+    const identity = { sessionId: 'deterministic-forget-session', profileId: 'default' }
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'answer_length',
+      reason: 'explicit preference',
+      explicitUserIntent: true,
+      identity,
+      node: { valueJson: 'short', title: '回答长度', content: '用户偏好简短回答。' },
+    })
+    const [throughMessageId] = await service.captureMessages(identity, [
+      { role: 'user', content: '请忘记我的回答长度偏好' },
+    ])
+    const extract = vi.fn().mockRejectedValue(new Error('model unavailable'))
+    await service.scheduleReview({
+      identity,
+      throughMessageId,
+      request: {
+        trigger: 'forget',
+        forget: {
+          id: created.nodeId,
+          expectedRevision: created.node!.revision,
+          mode: 'soft',
+          reason: '用户明确要求删除该记忆。',
+        },
+      },
+      extractor: { extract },
+    })
+    await service.drain()
+
+    await expect(service.get(created.nodeId!, identity)).resolves.toMatchObject({ status: 'deleted' })
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status FROM memory_review_jobs WHERE session_id = ?',
+    ).get(identity.sessionId)).toMatchObject({ status: 'completed' })
+    expect(extract).not.toHaveBeenCalled()
+  })
+
+  it('lets one user review click confirm and immediately apply a persisted broad deletion job', async () => {
+    const identity = { sessionId: 'manual-confirm-review-session', profileId: 'default' }
+    for (const itemKey of ['cilantro', 'celery']) {
+      await service.create({
+        kind: 'food_avoidance',
+        itemKey,
+        reason: 'explicit avoidance',
+        explicitUserIntent: true,
+        identity,
+        node: { valueJson: itemKey, title: itemKey, content: `Avoid ${itemKey}.` },
+      })
+    }
+    const [throughMessageId] = await service.captureMessages(identity, [{
+      role: 'user', content: '删除全部饮食忌口记忆。',
+    }])
+    const job = await service.scheduleReview({
+      identity,
+      throughMessageId,
+      request: {
+        trigger: 'forget',
+        forget: { domain: 'preference', mode: 'soft', reason: '用户要求删除全部饮食忌口。' },
+      },
+    })
+    await service.drain()
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status FROM memory_review_jobs WHERE id = ?',
+    ).get(job!.id)).toMatchObject({ status: 'needs_confirmation' })
+
+    await service.reviewJobNow(job!.id, identity.profileId)
+    await service.drain()
+
+    expect(store.databaseManager.connection.prepare(
+      'SELECT status, request_json FROM memory_review_jobs WHERE id = ?',
+    ).get(job!.id)).toMatchObject({
+      status: 'completed',
+      request_json: expect.stringContaining('"confirmed":true'),
+    })
+    await expect(store.queryNodes({ profileId: identity.profileId, statuses: ['active'] }))
+      .resolves.toEqual([])
+  })
+
+  it('keeps distinct exact forget requests from the same evidence message instead of deduplicating them', async () => {
+    const identity = { sessionId: 'multiple-exact-forget-session', profileId: 'default' }
+    const memories = Array.from({ length: 4 }, (_, index) => memoryNode(`exact-forget-${index}`, {
+      key: `custom.fact:exact_forget_${index}`,
+      valueJson: `value-${index}`,
+    }))
+    for (const memory of memories) await store.upsertNode(memory)
+    const [throughMessageId] = await service.captureMessages(identity, [{
+      role: 'user',
+      content: '删除这四条指定记忆。',
+    }])
+    for (const [index, memory] of memories.entries()) {
+      await service.scheduleReview({
+        identity,
+        throughMessageId,
+        request: {
+          trigger: 'forget',
+          forget: {
+            id: memory.id,
+            expectedRevision: memory.revision,
+            mode: 'soft',
+            reason: `删除第 ${index + 1} 条指定记忆。`,
+          },
+        },
+      })
+    }
+    await service.drain()
+
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_review_jobs WHERE session_id = ? AND request_type = 'forget'",
+    ).get(identity.sessionId)).toMatchObject({ count: 4 })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_nodes WHERE id LIKE 'exact-forget-%' AND status = 'deleted'",
+    ).get()).toMatchObject({ count: 4 })
   })
 
   it('reviews high-signal durable statements immediately without requiring a remember command', async () => {
@@ -670,57 +1215,52 @@ describe('MemoryService', () => {
     const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
     expect(request.messages[0].content).toContain('## Memory Usage Rules')
     expect(request.messages[0].content).toContain('about to answer that you do not know or remember')
-    expect(request.messages[0].content).toContain('MUST call memory_review exactly once')
+    expect(request.messages[0].content).toContain('call memory_review exactly once')
     expect(request.messages[0].content).toContain('Avoid 香菜')
     expect(request.messages[0].content).toContain('key=preference.food.avoid:香菜 revision=1')
     expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
-      'memory_search', 'memory_get', 'memory_review',
+      'memory_search', 'memory_get', 'memory_review', 'memory_forget',
     ]))
-    expect(request.tools?.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
-      'memory_propose_update', 'memory_forget',
-    ]))
+    expect(request.tools?.map(tool => tool.name)).not.toContain('memory_propose_update')
     expect(result.memoryContext?.usedMemoryIds).toHaveLength(1)
   })
 
   it('surfaces a safe foreground memory_review tool call before the post-run curator writes', async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({
-        content: '',
-        finishReason: 'tool_calls',
-        toolCalls: [{
-          id: 'foreground-memory-review',
-          name: 'memory_review',
-          arguments: {},
-        }],
-      })
-      .mockResolvedValueOnce({ content: '已送交记忆审核。', finishReason: 'stop' })
-      .mockResolvedValueOnce({
-        content: '',
-        finishReason: 'tool_calls',
-        toolCalls: [{
-          id: 'curator-memory-call',
-          name: 'memory_propose_update',
-          arguments: {
-            operation: 'create',
-            kind: 'home_location',
-            explicitUserIntent: true,
-            reason: '用户明确说明当前常住地。',
-            node: { valueJson: '贵阳', title: '用户常住地', content: '用户当前常住在贵阳。' },
-          },
-        }],
-      })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: '更新常住地',
-          currentGoal: '',
-          constraints: [],
-          preferences: [],
-          decisions: [],
-          completedWork: [],
-          pendingWork: [],
-          knownIssues: [],
-        }),
-      })
+    let foregroundCalls = 0
+    let reviewCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      if (request.metadata?.purpose === 'ekko-memory-review') {
+        reviewCalls += 1
+        if (reviewCalls > 1) return { content: 'Review complete.', finishReason: 'stop' }
+        return {
+          content: '',
+          finishReason: 'tool_calls',
+          toolCalls: [{
+            id: 'curator-memory-call',
+            name: 'memory_propose_update',
+            arguments: {
+              operation: 'create',
+              kind: 'home_location',
+              explicitUserIntent: true,
+              reason: '用户明确说明当前常住地。',
+              node: { valueJson: '贵阳', title: '用户常住地', content: '用户当前常住在贵阳。' },
+            },
+          }],
+        }
+      }
+      foregroundCalls += 1
+      return foregroundCalls === 1
+        ? {
+            content: '',
+            finishReason: 'tool_calls',
+            toolCalls: [{
+              id: 'foreground-memory-review',
+              name: 'memory_review',
+              arguments: {},
+            }],
+          }
+        : { content: '已送交记忆审核。', finishReason: 'stop' }
+    })
     const client: ModelClient = {
       provider: 'test',
       requestStyle: 'custom-runtime',
@@ -735,18 +1275,24 @@ describe('MemoryService', () => {
       contextKey: 'foreground-source-session',
       toolContext: { sessionId: 'foreground-source-session', profileId: 'default' },
     })
-    const foregroundReviewRequest = create.mock.calls[0][0] as ModelRequest
+    const foregroundRequests = create.mock.calls
+      .map(call => call[0] as ModelRequest)
+      .filter(request => request.metadata?.purpose !== 'ekko-memory-review')
+    const foregroundReviewRequest = foregroundRequests[0]
     expect(foregroundReviewRequest.toolChoice).toBe('required')
     expect(foregroundReviewRequest.tools?.map(tool => tool.name)).toEqual(['memory_review'])
-    const foregroundAnswerRequest = create.mock.calls[1][0] as ModelRequest
-    expect(foregroundAnswerRequest.tools?.map(tool => tool.name)).not.toContain('memory_review')
+    const foregroundAnswerRequest = foregroundRequests[1]
+    expect((foregroundAnswerRequest.tools || [])
+      .map(tool => tool.name)
+      .filter(name => ['memory_search', 'memory_get', 'memory_review', 'memory_forget'].includes(name)))
+      .toEqual([])
     expect(runResult.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'tool',
         toolName: 'memory_review',
         result: expect.objectContaining({
           ok: true,
-          data: { requested: true },
+          data: expect.objectContaining({ requested: true, queued: true, jobId: expect.any(String) }),
         }),
       }),
     ]))
@@ -769,42 +1315,132 @@ describe('MemoryService', () => {
       })]))
   })
 
-  it('uses a dedicated model pass with only memory tools to summarize and persist memory', async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({ content: 'Main answer' })
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [{
-          id: 'memory-call-1',
-          name: 'memory_propose_update',
-          arguments: {
-            operation: 'create',
-            kind: 'workflow_preference',
-            itemKey: 'code_examples',
-            reason: '用户明确要求长期使用 TypeScript 代码示例。',
-            explicitUserIntent: true,
-            node: {
-              valueJson: 'TypeScript',
-              title: '代码示例语言偏好',
-              content: '以后的代码示例优先使用 TypeScript。',
-              confidence: 0.98,
-              importance: 0.9,
+  it('queues foreground memory_forget without blocking the run and suppresses the pending exact card from recall', async () => {
+    const identity = { sessionId: 'foreground-forget-session', profileId: 'default' }
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'interface_theme',
+      reason: 'explicit preference',
+      explicitUserIntent: true,
+      identity,
+      node: { valueJson: 'dark', title: '界面主题', content: '用户偏好深色界面。' },
+    })
+    let releaseReview!: () => void
+    let reviewStarted!: () => void
+    const reviewGate = new Promise<void>(resolve => { releaseReview = resolve })
+    const started = new Promise<void>(resolve => { reviewStarted = resolve })
+    const blockerIdentity = { sessionId: 'foreground-forget-blocker', profileId: 'default' }
+    const [blockerMessageId] = await service.captureMessages(blockerIdentity, [{
+      role: 'user',
+      content: 'Block this profile review worker while the foreground run continues.',
+    }])
+    await service.scheduleReview({
+      identity: blockerIdentity,
+      throughMessageId: blockerMessageId,
+      request: { trigger: 'review' },
+      extractor: {
+        extract: async () => {
+          reviewStarted()
+          await reviewGate
+          return { nodes: [] }
+        },
+      },
+    })
+    await started
+    let foregroundCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      foregroundCalls += 1
+      if (foregroundCalls === 1) {
+        return {
+          content: '',
+          finishReason: 'tool_calls',
+          toolCalls: [{
+            id: 'foreground-forget',
+            name: 'memory_forget',
+            arguments: {
+              id: created.nodeId,
+              expectedRevision: created.node!.revision,
+              mode: 'soft',
+              reason: '用户明确要求忘记该偏好。',
             },
-          },
-        }],
-      })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: '设置 TypeScript 代码示例偏好',
-          currentGoal: '',
-          constraints: ['不使用 JavaScript 代码示例'],
-          preferences: ['优先使用 TypeScript 代码示例'],
-          decisions: ['默认使用 TypeScript'],
-          completedWork: ['已保存 TypeScript 偏好'],
-          pendingWork: [],
-          knownIssues: [],
+          }],
+        }
+      }
+      return { content: '已提交删除审核。', finishReason: 'stop' }
+    })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({ modelClient: client, memory: service })
+
+    const run = await runtime.run({
+      messages: ['请忘记我的界面主题记忆'],
+      contextKey: identity.sessionId,
+      toolContext: identity,
+    })
+    const initialForegroundRequest = create.mock.calls
+      .map(call => call[0] as ModelRequest)
+      .find(request => request.metadata?.purpose !== 'ekko-memory-review')!
+    expect(initialForegroundRequest.toolChoice).toBe('required')
+    expect(initialForegroundRequest.tools?.map(tool => tool.name)).toEqual([
+      'memory_search', 'memory_get', 'memory_forget',
+    ])
+    expect(run.output.content).toBe('已提交删除审核。')
+    expect(run.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool',
+        toolName: 'memory_forget',
+        result: expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({ queued: true, operation: 'forget' }),
         }),
-      })
+      }),
+    ]))
+    const pendingRecall = await service.retrieve(identity, undefined, { key: created.node!.key })
+    expect(pendingRecall.usedMemoryIds).not.toContain(created.nodeId)
+    await expect(service.get(created.nodeId!, identity)).resolves.toMatchObject({ status: 'active' })
+
+    releaseReview()
+    await service.drain()
+    await expect(service.get(created.nodeId!, identity)).resolves.toMatchObject({ status: 'deleted' })
+    expect(create.mock.calls.some(call => (call[0] as ModelRequest).metadata?.purpose === 'ekko-memory-review')).toBe(false)
+  })
+
+  it('coalesces repeated foreground forget-all calls into one job and deletes 101 memories without reviewer model calls', async () => {
+    const identity = { sessionId: 'foreground-forget-all-session', profileId: 'default' }
+    const memories = Array.from({ length: 101 }, (_, index) => memoryNode(`bulk-memory-${index}`, {
+      key: `custom.fact:bulk_memory_${index}`,
+      valueJson: `value-${index}`,
+      title: `Bulk memory ${index}`,
+      content: `Bulk memory content ${index}`,
+    }))
+    for (const memory of memories) await store.upsertNode(memory)
+
+    let foregroundCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      foregroundCalls += 1
+      if (foregroundCalls === 1) {
+        return {
+          content: '',
+          finishReason: 'tool_calls',
+          toolCalls: memories.slice(0, 4).map((memory, index) => ({
+            id: `foreground-forget-all-${index}`,
+            name: 'memory_forget',
+            arguments: {
+              id: memory.id,
+              expectedRevision: memory.revision,
+              mode: 'soft',
+              reason: `模型错误地枚举了第 ${index + 1} 条记忆。`,
+            },
+          })),
+        }
+      }
+      return { content: '已提交全部记忆删除审核。', finishReason: 'stop' }
+    })
     const client: ModelClient = {
       provider: 'test',
       requestStyle: 'custom-runtime',
@@ -815,31 +1451,109 @@ describe('MemoryService', () => {
     const runtime = new AgentRuntime({ modelClient: client, memory: service })
 
     await runtime.run({
+      messages: ['忘记你所有的记忆'],
+      contextKey: identity.sessionId,
+      toolContext: identity,
+    })
+    await service.drain()
+
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_review_jobs WHERE session_id = ? AND request_type = 'forget'",
+    ).get(identity.sessionId)).toMatchObject({ count: 1 })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT request_json FROM memory_review_jobs WHERE session_id = ? AND request_type = 'forget'",
+    ).get(identity.sessionId)).toMatchObject({ request_json: expect.stringContaining('"all":true') })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_nodes WHERE profile_id = ? AND status = 'active'",
+    ).get(identity.profileId)).toMatchObject({ count: 0 })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_nodes WHERE profile_id = ? AND status = 'deleted'",
+    ).get(identity.profileId)).toMatchObject({ count: 101 })
+    expect(store.databaseManager.connection.prepare(
+      "SELECT COUNT(*) AS count FROM memory_audit_events WHERE actor = 'memory-reviewer-deterministic' AND event_type = 'delete'",
+    ).get()).toMatchObject({ count: 101 })
+    expect(create.mock.calls.some(call => (call[0] as ModelRequest).metadata?.purpose === 'ekko-memory-review')).toBe(false)
+  })
+
+  it('gives only memory tools to the reviewer and no tools to the independent summarizer', async () => {
+    let reviewCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      if (request.metadata?.purpose === 'ekko-memory-review') {
+        reviewCalls += 1
+        if (reviewCalls > 1) return { content: 'Review complete.' }
+        return {
+          content: '',
+          toolCalls: [{
+            id: 'memory-call-1',
+            name: 'memory_propose_update',
+            arguments: {
+              operation: 'create',
+              kind: 'workflow_preference',
+              itemKey: 'code_examples',
+              reason: '用户明确要求长期使用 TypeScript 代码示例。',
+              explicitUserIntent: true,
+              node: {
+                valueJson: 'TypeScript',
+                title: '代码示例语言偏好',
+                content: '以后的代码示例优先使用 TypeScript。',
+                confidence: 0.98,
+                importance: 0.9,
+              },
+            },
+          }],
+        }
+      }
+      if (request.metadata?.purpose === 'ekko-memory-summary') {
+        return {
+          content: JSON.stringify({
+            recentTopic: '设置 TypeScript 代码示例偏好',
+            currentGoal: '',
+            constraints: ['不使用 JavaScript 代码示例'],
+            preferences: ['优先使用 TypeScript 代码示例'],
+            decisions: ['默认使用 TypeScript'],
+            completedWork: ['已保存 TypeScript 偏好'],
+            pendingWork: [],
+            knownIssues: [],
+          }),
+        }
+      }
+      return { content: 'Main answer' }
+    })
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    const separated = new MemoryService({ store, reviewEveryUserMessages: 1 })
+    const runtime = new AgentRuntime({ modelClient: client, memory: separated })
+
+    await runtime.run({
       messages: ['请记住以后代码示例优先使用 TypeScript'],
       contextKey: 's1',
       toolContext: { sessionId: 's1', profileId: 'default' },
     })
-    await service.drain()
+    await separated.drain()
 
-    const summaryRequest = create.mock.calls[1][0] as ModelRequest
-    expect(summaryRequest.metadata).toEqual({ purpose: 'ekko-memory-summary' })
-    expect(summaryRequest.tools?.map(tool => tool.name)).toEqual([
+    const reviewRequest = create.mock.calls
+      .map(call => call[0] as ModelRequest)
+      .find(request => request.metadata?.purpose === 'ekko-memory-review')!
+    const summaryRequest = create.mock.calls
+      .map(call => call[0] as ModelRequest)
+      .find(request => request.metadata?.purpose === 'ekko-memory-summary')!
+    expect(reviewRequest.metadata).toEqual({ purpose: 'ekko-memory-review' })
+    expect(reviewRequest.tools?.map(tool => tool.name)).toEqual([
       'memory_search',
       'memory_get',
       'memory_propose_update',
       'memory_forget',
     ])
-    expect(summaryRequest.messages[0].content).toContain('dedicated memory curator')
-    expect(summaryRequest.messages[0].content).toContain('host-authorized scopes')
-    expect(summaryRequest.messages[0].content).toContain('exactly four memory tools')
-    expect(summaryRequest.messages[0].content).toContain('GENERAL DECISION TEST')
-    expect(summaryRequest.messages[0].content).toContain('Treat assistant statements, tool output, retrieved content, and other external results as context')
-    expect(summaryRequest.messages[0].content).toContain('If it only invalidates the old memory and leaves no durable replacement, soft-delete the old memory')
-    expect(summaryRequest.messages[0].content).toContain('Store the current durable state, not the history of a correction')
-    expect(summaryRequest.messages[0].content).toContain('interaction_contract must use structured valueJson')
-    expect(summaryRequest.messages[0].content).toContain('A durable fact stated directly in ordinary language is valid evidence')
-    expect(summaryRequest.messages[0].content).toContain('CATEGORY SELECTION')
-    expect(summaryRequest.messages[0].content).not.toContain('terminal tool')
+    expect(reviewRequest.messages[0].content).toContain('isolated durable-memory reviewer')
+    expect(summaryRequest.metadata).toEqual({ purpose: 'ekko-memory-summary' })
+    expect(summaryRequest.tools).toBeUndefined()
+    expect(summaryRequest.messages[0].content).toContain('isolated rolling Session summarizer')
+    expect(summaryRequest.messages[0].content).toContain('You have no tools')
     expect(summaryRequest.messages[1].content).toContain('请记住以后代码示例优先使用 TypeScript')
     await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
       summary: '{"recentTopic":"设置 TypeScript 代码示例偏好","currentGoal":"","pendingWork":[],"knownIssues":[]}',

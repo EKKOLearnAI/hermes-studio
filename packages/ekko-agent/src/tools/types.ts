@@ -1,4 +1,4 @@
-import type { AgentToolDefinition } from '../model/types'
+import type { AgentToolDefinition, ModelCapabilities } from '../model/types'
 
 export type AgentToolApprovalChoice = 'once' | 'session' | 'always' | 'deny'
 
@@ -53,18 +53,26 @@ export interface AgentToolContext {
   sourceMessageIds?: string[]
   memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
   memoryExplicitIntent?: boolean
+  memoryForgetIntent?: boolean
+  memoryForgetAllIntent?: boolean
   memoryOrigin?: import('../memory/types').MemoryOrigin
   memoryRecallScopes?: import('../memory/types').MemoryScope[]
   memoryWriteScopes?: import('../memory/types').MemoryScope[]
   memoryDefaultWriteScope?: import('../memory/types').MemoryScope
-  /** Runtime-owned signal used by the safe foreground memory_review tool. */
-  requestMemoryReview?: () => void
+  /** Runtime-owned enqueue hook used by safe foreground memory review tools. */
+  requestMemoryReview?: (
+    request: import('../memory/types').MemoryReviewJobRequest,
+  ) => Promise<{ jobId?: string }>
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number
   signal?: AbortSignal
   requestToolApproval?: AgentToolApprovalRequester
   requestUserClarification?: AgentClarificationRequester
+  /** Capabilities of the model that will consume this tool result. */
+  modelCapabilities?: ModelCapabilities
+  modelProvider?: string
+  modelName?: string
   skillMutationSource?: 'foreground' | 'background-review'
   delegationDepth?: number
   delegateTask?: AgentTaskDelegate

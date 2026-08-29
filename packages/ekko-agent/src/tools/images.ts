@@ -18,7 +18,7 @@ export class ViewImageTool implements AgentTool<ViewImageInput> {
 
   readonly definition = {
     name: 'view_image',
-    description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection.',
+    description: 'Load a local PNG, JPEG, WebP, or GIF image from the workspace for visual inspection. If the current model cannot consume images, this tool returns a recoverable VISION_UNSUPPORTED failure; continue with text-based tools or explain that a vision-capable model is required.',
     parameters: {
       type: 'object',
       properties: {
@@ -58,6 +58,24 @@ export class ViewImageTool implements AgentTool<ViewImageInput> {
         `Unsupported image format: ${input.path}. Expected PNG, JPEG, WebP, or GIF.`,
         'UNSUPPORTED_IMAGE_FORMAT',
       )
+    }
+
+    if (context.modelCapabilities?.vision === false) {
+      const modelLabel = [context.modelProvider, context.modelName].filter(Boolean).join('/') || 'current model'
+      const error = `Image inspection is unavailable because ${modelLabel} does not support vision input.`
+      return {
+        ok: false,
+        content: `${error} The image file itself was loaded successfully. Continue without the image, use text-based inspection tools, or ask the user to switch to a vision-capable model.`,
+        error,
+        data: {
+          code: 'VISION_UNSUPPORTED',
+          path: filePath,
+          bytes: data.byteLength,
+          mimeType,
+          provider: context.modelProvider,
+          model: context.modelName,
+        },
+      }
     }
 
     return {

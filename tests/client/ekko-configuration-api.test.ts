@@ -6,6 +6,9 @@ vi.mock('@/api/client', () => ({ request }))
 import {
   deleteEkkoMemory,
   fetchEkkoMemory,
+  fetchEkkoMemoryReviewJobs,
+  fetchEkkoMemoryReviewStatus,
+  reviewEkkoMemoryJobNow,
   updateEkkoMemory,
 } from '@/api/ekko/memory'
 import {
@@ -43,6 +46,20 @@ describe('Ekko configuration API', () => {
   it('uses revision-safe memory endpoints and filters', async () => {
     await fetchEkkoMemory({ query: 'dark mode', status: 'active' })
     expect(request).toHaveBeenLastCalledWith('/api/ekko/memory?query=dark+mode&status=active')
+
+    request.mockResolvedValueOnce({ status: { reviewing: true, activeJobs: 1 } })
+    await expect(fetchEkkoMemoryReviewStatus()).resolves.toMatchObject({ reviewing: true, activeJobs: 1 })
+    expect(request).toHaveBeenLastCalledWith('/api/ekko/memory/review-status')
+
+    request.mockResolvedValueOnce({ jobs: [{ id: 'review-1' }] })
+    await expect(fetchEkkoMemoryReviewJobs()).resolves.toEqual([{ id: 'review-1' }])
+    expect(request).toHaveBeenLastCalledWith('/api/ekko/memory/review-jobs')
+
+    request.mockResolvedValueOnce({ job: { id: 'review-1', status: 'pending' } })
+    await reviewEkkoMemoryJobNow('review/1')
+    expect(request).toHaveBeenLastCalledWith('/api/ekko/memory/review-jobs/review%2F1/review', {
+      method: 'POST',
+    })
 
     await updateEkkoMemory('memory/1', { expectedRevision: 2, title: 'Theme', content: 'Dark', tags: [] })
     expect(request).toHaveBeenLastCalledWith('/api/ekko/memory/memory%2F1', expect.objectContaining({ method: 'PATCH' }))

@@ -2,6 +2,9 @@ import type {
   EkkoAgentSetup,
   MemoryNode,
   MemoryNodeStatus,
+  MemoryReviewJob,
+  MemoryReviewJobStatus,
+  MemoryReviewQueueStatus,
 } from '../../../../../ekko-agent/src'
 import { MEMORY_NODE_STATUSES } from '../../../../../ekko-agent/src'
 import { setupGlobalEkkoAgent } from './manager'
@@ -19,6 +22,21 @@ export interface UpdateEkkoMemoryInput {
   title?: string
   content?: string
   tags?: string[]
+}
+
+export interface EkkoMemoryReviewJobView {
+  id: string
+  sessionId: string
+  throughMessageId: string
+  trigger: MemoryReviewJob['request']['trigger']
+  status: MemoryReviewJobStatus
+  attempt: number
+  userConfirmed: boolean
+  evidencePreview?: string
+  lastError?: string
+  nextAttemptAt?: string
+  createdAt: string
+  updatedAt: string
 }
 
 function resolveSetup(setup?: EkkoAgentSetup): EkkoAgentSetup {
@@ -43,6 +61,65 @@ export async function listEkkoMemory(
     limit,
     offset,
   })
+}
+
+export async function getEkkoMemoryReviewStatus(
+  profileInput: string,
+  setup?: EkkoAgentSetup,
+): Promise<MemoryReviewQueueStatus> {
+  return resolveSetup(setup).memory.getReviewStatus(normalizeProfile(profileInput))
+}
+
+export async function listEkkoMemoryReviewJobs(
+  profileInput: string,
+  setup?: EkkoAgentSetup,
+): Promise<EkkoMemoryReviewJobView[]> {
+  const memory = resolveSetup(setup).memory
+  const jobs = await memory.listReviewJobs(normalizeProfile(profileInput))
+  const sessions = new Map<string, Awaited<ReturnType<typeof memory.listMessages>>>()
+  await Promise.all([...new Set(jobs.map(job => job.sessionId))].map(async sessionId => {
+    sessions.set(sessionId, await memory.listMessages({ sessionId, limit: 50 }))
+  }))
+  return jobs.map(job => toReviewJobView(job, reviewEvidencePreview(job, sessions.get(job.sessionId) || [])))
+}
+
+export async function reviewEkkoMemoryJobNow(
+  profileInput: string,
+  id: string,
+  setup?: EkkoAgentSetup,
+): Promise<EkkoMemoryReviewJobView> {
+  const job = await resolveSetup(setup).memory.reviewJobNow(id, normalizeProfile(profileInput))
+  if (!job) throw new Error('Memory review job not found.')
+  const messages = await resolveSetup(setup).memory.listMessages({ sessionId: job.sessionId, limit: 50 })
+  return toReviewJobView(job, reviewEvidencePreview(job, messages))
+}
+
+function toReviewJobView(job: MemoryReviewJob, evidencePreview?: string): EkkoMemoryReviewJobView {
+  return {
+    id: job.id,
+    sessionId: job.sessionId,
+    throughMessageId: job.throughMessageId,
+    trigger: job.request.trigger,
+    status: job.status,
+    attempt: job.attempt,
+    userConfirmed: job.request.userConfirmed === true,
+    evidencePreview,
+    lastError: job.lastError,
+    nextAttemptAt: job.nextAttemptAt,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  }
+}
+
+function reviewEvidencePreview(
+  job: MemoryReviewJob,
+  messages: Awaited<ReturnType<EkkoAgentSetup['memory']['listMessages']>>,
+): string | undefined {
+  const throughIndex = messages.findIndex(message => message.id === job.throughMessageId)
+  const bounded = throughIndex >= 0 ? messages.slice(0, throughIndex + 1) : messages
+  const content = [...bounded].reverse().find(message => message.role === 'user')?.content.trim()
+  if (!content) return undefined
+  return content.length > 240 ? `${content.slice(0, 237)}…` : content
 }
 
 export async function updateEkkoMemory(

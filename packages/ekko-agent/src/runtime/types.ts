@@ -115,7 +115,7 @@ export interface AgentRuntimeRunInput {
   /** Correlation fields only; log events and payloads remain runtime-owned. */
   logContext?: EkkoRuntimeLogContext
   onMemoryUsage?: (input: {
-    purpose: 'ekko-memory-summary'
+    purpose: 'ekko-memory-review' | 'ekko-memory-summary'
     usage: ModelUsage
     model?: string
     callIndex: number

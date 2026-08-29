@@ -89,6 +89,7 @@ export function createProviderConfig(input: {
   timeoutMs?: number
 }): ModelProviderConfig {
   const authorizedPreset = authorizedModelProviderPreset(input.provider, input.apiKey)
+  const vision = knownModelVisionCapability(input.provider, input.baseUrl, input.model)
   return {
     id: authorizedPreset?.id || input.provider || 'openai',
     type: providerTypeForStyle(input.provider, input.requestStyle),
@@ -99,7 +100,22 @@ export function createProviderConfig(input: {
     defaultModel: input.model,
     headers: authorizedPreset?.headers,
     timeoutMs: input.timeoutMs,
+    ...(vision === undefined ? {} : { capabilities: { vision } }),
   }
+}
+
+function knownModelVisionCapability(
+  provider: string,
+  baseUrl: string | undefined,
+  model: string,
+): boolean | undefined {
+  const providerKey = String(provider || '').trim().toLowerCase()
+  const url = String(baseUrl || '').trim().toLowerCase()
+  const modelKey = String(model || '').trim().toLowerCase()
+  const isGlm = providerKey === 'glm' || providerKey === 'zai' ||
+    url.includes('bigmodel.cn') || url.includes('api.z.ai')
+  if (!isGlm || !modelKey.startsWith('glm-')) return undefined
+  return /^glm-[a-z0-9.]*v(?:-|$)/i.test(modelKey)
 }
 
 export function resolveModelProviderConfigs(input: ResolveModelProviderConfigInput): ResolvedModelProviderConfigs {

@@ -200,6 +200,8 @@ export interface MemoryRuntimeIdentity {
 export interface MemoryExtractionInput extends MemoryRuntimeIdentity {
   previousSummary?: MemorySummary
   messages: MemoryMessage[]
+  reviewRequest?: MemoryReviewJobRequest
+  signal?: AbortSignal
 }
 
 export interface MemoryExtractionOperation {
@@ -296,6 +298,8 @@ export interface MemoryMessageListInput {
 }
 
 export interface MemoryForgetInput {
+  all?: boolean
+  targets?: Array<{ id: string; expectedRevision: number }>
   id?: string
   expectedRevision?: number
   domain?: string
@@ -320,15 +324,99 @@ export interface MemoryForgetResult {
 
 export interface MemorySessionState {
   sessionId: string
+  /** @deprecated Kept for stores created before review and summary cursors were split. */
   lastExtractedMessageId?: string
+  lastReviewedMessageId?: string
   lastSummaryMessageId?: string
   updatedAt: string
+}
+
+export const MEMORY_REVIEW_JOB_STATUSES = [
+  'pending',
+  'running',
+  'retry',
+  'waiting_for_model',
+  'needs_confirmation',
+  'completed',
+] as const
+
+export type MemoryReviewJobStatus = typeof MEMORY_REVIEW_JOB_STATUSES[number]
+export type MemoryReviewJobTrigger = 'review' | 'forget' | 'periodic'
+
+export interface MemoryReviewJobRequest {
+  trigger: MemoryReviewJobTrigger
+  forget?: Omit<MemoryForgetInput, 'identity' | 'actor'>
+  /** Set only after the Studio user explicitly asks this persisted job to run now. */
+  userConfirmed?: boolean
+}
+
+export interface MemoryReviewJob {
+  id: string
+  profileId: string
+  sessionId: string
+  throughMessageId: string
+  identity: MemoryRuntimeIdentity
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  status: MemoryReviewJobStatus
+  attempt: number
+  nextAttemptAt?: string
+  lockedAt?: string
+  lastError?: string
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+export interface MemoryReviewJobCreateInput {
+  id: string
+  profileId: string
+  sessionId: string
+  throughMessageId: string
+  identity: MemoryRuntimeIdentity
+  request: MemoryReviewJobRequest
+  preferredProvider?: string
+  preferredModel?: string
+  createdAt: string
+}
+
+export interface MemoryReviewJobUpdateInput {
+  status: MemoryReviewJobStatus
+  nextAttemptAt?: string
+  lockedAt?: string
+  lastError?: string
+  completedAt?: string
+  incrementAttempt?: boolean
+}
+
+export interface MemoryReviewJobListInput {
+  profileId: string
+  statuses?: MemoryReviewJobStatus[]
+  limit?: number
+  offset?: number
+}
+
+export interface MemoryReviewQueueStatus {
+  reviewing: boolean
+  activeJobs: number
+  pending: number
+  running: number
+  retry: number
+  waitingForModel: number
+  needsConfirmation: number
+  latestCompletedAt?: string
 }
 
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
-  listMessagesAfter(input: { sessionId: string; messageId?: string; limit?: number }): Promise<MemoryMessage[]>
+  listMessagesAfter(input: {
+    sessionId: string
+    messageId?: string
+    throughMessageId?: string
+    limit?: number
+  }): Promise<MemoryMessage[]>
   appendSummary(summary: MemorySummary): Promise<void>
   getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   getNode(id: string): Promise<MemoryNode | undefined>
@@ -341,5 +429,28 @@ export interface MemoryStore {
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
   getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   setSessionState(state: MemorySessionState): Promise<void>
+  enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
+  getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
+  listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
+  activateReviewJob(input: {
+    id: string
+    profileId: string
+    now: string
+    confirmedByUser?: boolean
+  }): Promise<MemoryReviewJob | undefined>
+  claimNextReviewJob(input: {
+    profileId: string
+    now: string
+    staleBefore: string
+  }): Promise<MemoryReviewJob | undefined>
+  updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
+  requeueStaleReviewJobs(input: {
+    profileId?: string
+    now: string
+    staleBefore: string
+  }): Promise<number>
+  activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
+  listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
+  getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
   close(): void
 }
