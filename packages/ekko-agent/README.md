@@ -213,8 +213,12 @@ runtime limits, model defaults and providers, tools, approvals, profile-scoped
 MCP servers, delegation, context compression, memory, skills, logging, and
 prompt instructions. Configuration upgrades merge
 new defaults one field at a time: existing user values, arrays, and unknown
-forward-compatible fields are never replaced as a whole module. A configured
-profile uses
+forward-compatible fields are never replaced as a whole module. Startup
+validation upgrades older schemas in place. A malformed config or one written
+by a newer schema is copied to `config.invalid-<timestamp>-<uuid>.json` before
+the current defaults are restored, so startup continues without a restart;
+filesystem read failures remain fatal and never trigger replacement. A
+configured profile uses
 `<base>/.ekko/skills/<profile>` for its skills and
 `<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
 `<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied

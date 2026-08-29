@@ -134,7 +134,7 @@ export class EkkoConfigStore {
   /** Add newly introduced default leaves without replacing user-owned values. */
   ensureDefaults(): EkkoConfig {
     const currentText = readFileSync(this.configPath, 'utf8')
-    const normalized = loadEkkoConfig(this.configPath)
+    const normalized = parseEkkoConfig(currentText)
     const normalizedText = `${JSON.stringify(normalized, null, 2)}\n`
     if (currentText !== normalizedText) return writeEkkoConfig(this.configPath, normalized)
     return normalized
@@ -486,6 +486,10 @@ export function loadEkkoConfig(configPath: string): EkkoConfig {
       `could not read config: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  return parseEkkoConfig(raw)
+}
+
+function parseEkkoConfig(raw: string): EkkoConfig {
   try {
     return normalizeEkkoConfig(JSON.parse(raw))
   } catch (error) {

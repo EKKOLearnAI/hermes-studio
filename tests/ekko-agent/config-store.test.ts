@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_EKKO_CONFIG,
+  EKKO_CONFIG_SCHEMA_VERSION,
   EkkoAgent,
   EkkoConfigError,
   EkkoConfigStore,
@@ -18,8 +19,15 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await rm(baseDirectory, { recursive: true, force: true })
 })
+
+async function configBackups(configPath: string): Promise<string[]> {
+  return (await readdir(dirname(configPath)))
+    .filter(name => name.startsWith('config.invalid-') && name.endsWith('.json'))
+    .sort()
+}
 
 describe('EkkoConfigStore', () => {
   it('applies constructor config before creating global Profile agents', async () => {
@@ -118,6 +126,94 @@ describe('EkkoConfigStore', () => {
     expect(persisted.runtime.maxSteps).toBe(17)
     expect(persisted.runtime.maxModelRetries).toBe(DEFAULT_EKKO_CONFIG.runtime.maxModelRetries)
     expect(persisted.futureModule).toEqual({ userOwned: true })
+  })
+
+  it('upgrades schema version 6 in place without creating a recovery backup', async () => {
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const configPath = initial.layout.configPath
+    initial.close()
+    await writeFile(configPath, JSON.stringify({
+      ...DEFAULT_EKKO_CONFIG,
+      schemaVersion: 6,
+      runtime: { ...DEFAULT_EKKO_CONFIG.runtime, maxSteps: 61 },
+      futureModule: { userOwned: true },
+    }, null, 2))
+
+    const upgraded = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    try {
+      expect(upgraded.config.read()).toMatchObject({
+        schemaVersion: EKKO_CONFIG_SCHEMA_VERSION,
+        runtime: { maxSteps: 61 },
+        futureModule: { userOwned: true },
+      })
+      expect(await configBackups(configPath)).toEqual([])
+    } finally {
+      upgraded.close()
+    }
+  })
+
+  it('backs up a future schema and restores defaults during the same startup', async () => {
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const configPath = initial.layout.configPath
+    initial.close()
+    const futureConfig = {
+      ...structuredClone(DEFAULT_EKKO_CONFIG),
+      schemaVersion: EKKO_CONFIG_SCHEMA_VERSION + 1,
+      runtime: { ...DEFAULT_EKKO_CONFIG.runtime, maxSteps: 99 },
+      futureModule: { userOwned: true },
+    }
+    await writeFile(configPath, JSON.stringify(futureConfig, null, 2))
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const recovered = setupEkkoAgent({
+      baseDirectory,
+      env: { NODE_ENV: 'test' },
+      config: { runtime: { maxSteps: 42 } },
+    })
+    try {
+      expect(recovered.config.read()).toMatchObject({
+        schemaVersion: EKKO_CONFIG_SCHEMA_VERSION,
+        runtime: { maxSteps: 42 },
+      })
+      expect(recovered.config.read()).not.toHaveProperty('futureModule')
+      const backups = await configBackups(configPath)
+      expect(backups).toHaveLength(1)
+      await expect(readFile(join(dirname(configPath), backups[0]), 'utf8'))
+        .resolves.toBe(JSON.stringify(futureConfig, null, 2))
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('defaults restored'))
+    } finally {
+      recovered.close()
+    }
+  })
+
+  it('backs up malformed JSON and continues startup with current defaults', async () => {
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const configPath = initial.layout.configPath
+    initial.close()
+    const malformed = '{"schemaVersion": 7, "runtime":'
+    await writeFile(configPath, malformed)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const recovered = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    try {
+      expect(recovered.config.read()).toEqual(DEFAULT_EKKO_CONFIG)
+      const backups = await configBackups(configPath)
+      expect(backups).toHaveLength(1)
+      await expect(readFile(join(dirname(configPath), backups[0]), 'utf8')).resolves.toBe(malformed)
+    } finally {
+      recovered.close()
+    }
+  })
+
+  it('does not replace the config when the filesystem read fails', async () => {
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const configPath = initial.layout.configPath
+    initial.close()
+    await rm(configPath)
+    await mkdir(configPath)
+
+    expect(() => setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })).toThrow()
+    expect(await configBackups(configPath)).toEqual([])
   })
 
   it('migrates the former per-turn memory review default to the batched default', async () => {

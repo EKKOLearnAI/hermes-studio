@@ -44,6 +44,8 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 
 启动时会扫描 `.ekko/skills`、`.ekko/logs`、`.ekko/workspace` 下的一级实体目录，并取合法 Profile 名的并集。自动发现项、Hermes 首次导入项与显式 `profiles` 会合并，因此已有 Profile 不要求调用方再次传入。隐藏目录、普通文件、软链接和非法目录名会被忽略。
 
+安装级初始化会预检全局配置。旧 schema 会原地升级并保留用户字段；JSON 损坏、结构无效或 schema 高于当前程序支持版本时，原文件会先备份为 `config.invalid-<timestamp>-<uuid>.json`，随后恢复当前默认配置并在同一次启动中继续。文件权限、磁盘和其他读取错误不会触发重建。
+
 创建 Profile Agent 前会执行以下检查：
 
 - 调用 `config.ensureDefaults()`，解析、迁移并验证完整配置。
