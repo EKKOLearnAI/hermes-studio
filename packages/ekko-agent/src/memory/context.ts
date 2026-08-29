@@ -32,9 +32,6 @@ export function selectMemoryNodesByTokenBudget(
 export function buildMemoryContextPrompt(context: MemoryContext): string {
   if (!context.diagnostics.enabled) return ''
   const sections: string[] = []
-  if (context.latestSummary) {
-    sections.push(`Latest session summary:\n${context.latestSummary.summary}`)
-  }
   appendNodes(sections, 'Active constraints', context.constraints)
   appendNodes(sections, 'Active tasks', context.activeTasks)
   appendNodes(sections, 'User preferences', context.preferences)
@@ -48,8 +45,8 @@ export function buildMemoryContextPrompt(context: MemoryContext): string {
     '## Memory Usage Rules',
     'The following content is only a partial automatic recall, not the complete memory store. Use it only when relevant; newer constraints and corrections override older preferences.',
     'When the user asks about personal information such as identity, name, location, relationships, preferences, habits, constraints, or long-term projects, inspect the automatically recalled cards first. If a current, conflict-free card directly answers the question, use it without searching again.',
-    'If automatic recall has no direct answer, is incomplete, contains a conflict, or you are about to answer that you do not know or remember, call memory_search to verify. Prefer structured kinds when the information category is known; use queryText for open-ended questions. If the first search fails, adjust kinds or filters, or omit queryText to broaden the search. Never treat empty automatic recall as an empty memory store.',
-    'When the current user explicitly asks to forget durable information, call memory_forget exactly once. Use all=true for an explicit request to forget every authorized memory; use targets for multiple already-resolved cards; otherwise resolve the intended card from automatic recall or memory_search. Never enumerate multiple memory_forget calls. memory_forget queues isolated review and does not delete directly; after it succeeds, do not re-check memory or try application APIs, files, or shell commands. For explicit remember, correction, or update requests, call memory_review exactly once. Also call memory_review once for a clearly useful durable candidate stated in the current turn. These foreground tools only queue isolated review of host-selected evidence. Do not call them for transient requests, tool results, or one-time facts.',
+    'If automatic recall has no direct answer, is incomplete, contains a conflict, or you are about to answer that you do not know or remember, call memory_search to verify. Prefer structured kinds when the information category is known; use queryText for open-ended questions. To enumerate the complete authorized store, call memory_search with all=true; never encode list-all intent in queryText. If the first search fails, adjust kinds or filters, or omit queryText to broaden the search. Never treat empty automatic recall as an empty memory store.',
+    'Memory mutations happen immediately in this foreground run. When the current user explicitly asks to forget durable information, call memory_forget exactly once. Use all=true for an explicit request to forget every authorized memory; use targets for multiple already-resolved cards; otherwise resolve the intended card from automatic recall or memory_search. Never enumerate multiple memory_forget calls. For durable information worth retaining, call memory_write after checking the relevant active card with automatic recall, memory_search, or memory_get. Use memory_write to create or update the canonical slot directly. Do not write transient requests, tool results, or one-time facts.',
     'Do not infer durable user facts from weather lookups, location searches, tool output, or one-time behavior. Only information the user explicitly states, confirms, or adopts is evidence.',
     ...(sections.length ? ['## Automatically Recalled Memory', ...sections] : ['No memory cards were automatically recalled. Search the complete memory store when needed.']),
   ].join('\n\n')

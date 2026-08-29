@@ -41,7 +41,7 @@
     "dev:server": "nodemon",
     "build": "npm run openapi:generate && vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "harness:check": "node scripts/harness-check.mjs && npm --prefix packages/ekko-agent run api:docs:check",
-    "harness:memory": "vitest run tests/ekko-agent/memory-service.test.ts tests/ekko-agent/memory-quality-harness.test.ts tests/server/group-chat-agent-workspace.test.ts tests/server/run-chat-ekko-context.test.ts",
+    "harness:memory": "vitest run tests/ekko-agent/memory-service.test.ts tests/server/group-chat-agent-workspace.test.ts tests/server/run-chat-ekko-context.test.ts",
     "test:ekko-agent": "vitest run tests/ekko-agent",
     "build:ekko-agent": "npm --prefix packages/ekko-agent run build",
     "verify:sharp-runtime": "node scripts/verify-sharp-runtime.mjs",

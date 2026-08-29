@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { chmodSync, copyFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { EkkoDatabaseManager } from './database'
+import { EkkoDatabaseManager, EkkoDatabaseMigrationError } from './database'
 import {
   EkkoDirectoryManager,
   type EkkoDirectoryInitializationOptions,
   type EkkoDirectoryLayout,
 } from './directories'
 import { MemoryService } from './memory/service'
-import { ModelMemoryExtractor } from './memory/extraction'
 import { resolveEkkoDataDirectory } from './memory/paths'
 import { SqliteMemoryStore } from './memory/store'
 import { EkkoToolApprovalService } from './tools/approval'
@@ -51,6 +50,15 @@ import type {
 } from './config'
 import { EkkoAgentManager } from './agent/manager'
 import { EkkoProfileAgent } from './agent/profile-agent'
+
+const EKKO_DATABASE_RECOVERY_TABLES = [
+  'memory_messages',
+  'memory_nodes',
+  'memory_audit_events',
+  'memory_embeddings',
+  'sessions',
+  'messages',
+] as const
 
 export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOptions {
   baseDirectory?: string
@@ -174,10 +182,7 @@ export class EkkoAgentSetup {
         recentMessageLimit: nextConfig.memory.recentMessageLimit,
         automaticRecallTokenBudget: nextConfig.memory.automaticRecallTokenBudget,
         searchResultLimit: nextConfig.memory.searchResultLimit,
-        reviewEveryUserMessages: nextConfig.memory.reviewEveryUserMessages,
       })
-      this.memory?.clearRegisteredReviewExtractors()
-      void this.memory?.recoverReviewJobs()
     })
     this.skill = new EkkoSkillManager(this.tool)
     this.model = new EkkoModelManager({
@@ -189,20 +194,55 @@ export class EkkoAgentSetup {
     this.runtime = new EkkoRuntimeManager({
       create: runtimeOptions => this.createRuntime(runtimeOptions),
     })
-    this.database = new EkkoDatabaseManager({
+    let database = new EkkoDatabaseManager({
       databasePath: this.layout.databasePath,
       env: options.env,
     })
-
+    let memoryStore: SqliteMemoryStore
+    let conversations: EkkoConversationStore
     try {
-      this.memoryStore = new SqliteMemoryStore(this.database)
-      this.memory = this.createMemoryService(config)
-      this.conversations = new EkkoConversationStore(this.database)
-      this.conversation = this.conversations
+      memoryStore = new SqliteMemoryStore(database)
+      conversations = new EkkoConversationStore(database)
     } catch (error) {
-      this.database.close()
-      throw error
+      database.close()
+      if (!(error instanceof EkkoDatabaseMigrationError) || error.lockFailure) throw error
+
+      const backupPath = database.quarantineForRebuild()
+      database = new EkkoDatabaseManager({
+        databasePath: this.layout.databasePath,
+        env: options.env,
+      })
+      try {
+        memoryStore = new SqliteMemoryStore(database)
+        conversations = new EkkoConversationStore(database)
+      } catch (rebuildError) {
+        database.restoreQuarantinedDatabase(backupPath)
+        throw new Error(
+          `Ekko database rebuild failed; the original database was restored from ${backupPath}.`,
+          { cause: rebuildError },
+        )
+      }
+
+      try {
+        const recovery = database.recoverCompatibleTables(backupPath, EKKO_DATABASE_RECOVERY_TABLES)
+        memoryStore.rebuildSearchIndex()
+        console.warn(
+          `[ekko-agent] database rebuilt after migration failure; backup=${backupPath}; ` +
+          `recovered=${JSON.stringify(recovery.recoveredTables)}; skipped=${JSON.stringify(recovery.skippedTables)}`,
+        )
+      } catch (recoveryError) {
+        console.warn(
+          `[ekko-agent] database rebuilt but data recovery could not read the backup at ${backupPath}: ` +
+          `${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+        )
+      }
     }
+
+    this.database = database
+    this.memoryStore = memoryStore
+    this.memory = this.createMemoryService(config, memoryStore)
+    this.conversations = conversations
+    this.conversation = conversations
 
     this.agent = new EkkoAgentManager({
       create: profile => this.createProfileAgent(profile),
@@ -219,7 +259,6 @@ export class EkkoAgentSetup {
     try {
       for (const profile of profiles) this.agent.ensure(profile)
       this.default = this.agent.get('default')
-      void this.memory.recoverReviewJobs()
     } catch (error) {
       this.close()
       throw error
@@ -481,44 +520,13 @@ export class EkkoAgentSetup {
     })
   }
 
-  private createMemoryService(config: EkkoConfig): MemoryService {
+  private createMemoryService(config: EkkoConfig, store = this.memoryStore): MemoryService {
     return new MemoryService({
-      store: this.memoryStore,
+      store,
       enabled: config.memory.enabled,
       recentMessageLimit: config.memory.recentMessageLimit,
       automaticRecallTokenBudget: config.memory.automaticRecallTokenBudget,
       searchResultLimit: config.memory.searchResultLimit,
-      reviewEveryUserMessages: config.memory.reviewEveryUserMessages,
-      reviewExtractorResolver: async job => {
-        const current = this.config.read()
-        const preferredAvailable = Boolean(
-          job.preferredProvider && current.model.providers[job.preferredProvider],
-        )
-        const currentProvider = String(current.model.defaultProvider || '').trim()
-        const provider = job.attempt <= 1 && preferredAvailable
-          ? job.preferredProvider!
-          : currentProvider
-        if (!provider || !current.model.providers[provider]) return undefined
-        const model = provider === job.preferredProvider && job.attempt <= 1
-          ? job.preferredModel
-          : modelRequestDefaultsFromConfig(current, provider).model
-        try {
-          return {
-            provider,
-            model,
-            extractor: new ModelMemoryExtractor({
-              mode: 'review',
-              modelClient: this.createModelClient({ provider, model }),
-              memory: this.memory,
-              model,
-              fallback: false,
-              maxModelRetries: 0,
-            }),
-          }
-        } catch {
-          return undefined
-        }
-      },
     })
   }
 }

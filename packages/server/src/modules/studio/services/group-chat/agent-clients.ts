@@ -299,7 +299,7 @@ export interface GroupChatRunService {
                 metadata?: Record<string, unknown>
                 createdAt?: string
             }>
-            memory_review_policy?: 'automatic' | 'explicit-only'
+            memory_write_policy?: 'automatic' | 'explicit-only'
             memory_origin?: { host?: string; namespace?: string; contextId?: string }
             memory_recall_scopes?: Array<Record<string, string>>
             memory_write_scopes?: Array<Record<string, string>>
@@ -1197,7 +1197,7 @@ export class AgentClient implements GroupAgentExecutor {
                 ...(codingAgentId === 'ekko-agent'
                     ? {
                         memory_messages: this.groupMemoryMessages(roomId, msg, runtimeContext),
-                        memory_review_policy: 'automatic' as const,
+                        memory_write_policy: 'automatic' as const,
                         memory_origin: {
                             host: 'hermes-studio',
                             namespace: 'group-chat',

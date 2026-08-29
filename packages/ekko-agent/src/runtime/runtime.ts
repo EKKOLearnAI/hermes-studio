@@ -46,7 +46,6 @@ import {
   hasExplicitMemoryIntent,
   type MemoryCaptureMessage,
 } from '../memory/service'
-import { ModelMemoryExtractor } from '../memory/extraction'
 import { PROFILE_MEMORY_SCOPE } from '../memory/scope'
 import { createMemoryTools } from '../memory/tools'
 import { SkillReviewService } from '../skills/review'
@@ -64,13 +63,6 @@ const MAX_TRACKED_SKILL_REVIEW_CONTEXTS = 1_024
 const MAX_CONCURRENT_TOOL_CALLS = 8
 const SUBTASK_OUTPUT_TAIL_CHARS = 4_000
 const SUBTASK_SUMMARY_CHARS = 500
-const FOREGROUND_MEMORY_REVIEW_TOOL_NAMES = new Set([
-  'memory_search',
-  'memory_get',
-  'memory_review',
-  'memory_forget',
-])
-
 interface ModelResponseResult {
   response: ModelResponse
   emittedReasoning: boolean
@@ -226,13 +218,7 @@ export class AgentRuntime {
       : undefined
     this.registerSkillTools(this.skills)
     if (this.toolsEnabled && this.memory) {
-      // Foreground runs may inspect memory and enqueue review, but durable
-      // mutations are owned by the isolated reviewer.
-      this.tools.registerMany(createMemoryTools(this.memory, {
-        writable: false,
-        reviewable: true,
-        forgetReviewable: true,
-      }))
+      this.tools.registerMany(createMemoryTools(this.memory))
     }
   }
 
@@ -346,7 +332,6 @@ export class AgentRuntime {
     const maxModelRetries = input.maxModelRetries ?? this.maxModelRetries
     const maxConsecutiveToolFailures = input.maxConsecutiveToolFailures ?? this.maxConsecutiveToolFailures
     const pendingBackgroundSubagentIds = new Set<string>()
-    let memoryReviewRequested = false
     const emit = (event: AgentRuntimeEvent) => {
       events.push(event)
       input.onEvent?.(event)
@@ -361,7 +346,7 @@ export class AgentRuntime {
     const forceInitialMemoryForget = Boolean(
       memoryIdentity && hasExplicitMemoryForgetIntent(captureMessages),
     )
-    const forceInitialMemoryReview = Boolean(
+    const forceInitialMemoryWrite = Boolean(
       memoryIdentity && !forceInitialMemoryForget && hasExplicitMemoryIntent(captureMessages),
     )
     const sessionId = this.contextKeyFor(input)?.trim()
@@ -394,33 +379,6 @@ export class AgentRuntime {
           emit,
           subagentId => pendingBackgroundSubagentIds.add(subagentId),
         )
-      },
-      requestMemoryReview: async request => {
-        memoryReviewRequested = true
-        const throughMessageId = memoryPreparation?.sourceMessageIds.at(-1)
-        if (!this.memory || !memoryIdentity || !throughMessageId) return {}
-        const modelClient = this.modelClientFor(input)
-        const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
-        const job = await this.memory.scheduleReview({
-          identity: memoryIdentity,
-          throughMessageId,
-          request,
-          preferredProvider: modelClient.provider,
-          preferredModel: model,
-          extractor: new ModelMemoryExtractor({
-            mode: 'review',
-            modelClient,
-            memory: this.memory,
-            model,
-            fallback: false,
-            maxModelRetries: 0,
-            onUsage: input.onMemoryUsage,
-            requestLogger: this.runtimeLogger,
-            requestLogContext: input.logContext,
-            requestRunId: runId,
-          }),
-        })
-        return { jobId: job?.id }
       },
     }
     if (memoryContext) {
@@ -495,13 +453,7 @@ export class AgentRuntime {
         const modelClient = this.modelClientFor(input)
         emit({ type: 'model.started', runId, step })
         const request = this.modelRequest(input, messages, modelClient, contextKey, modelSignal)
-        if (memoryReviewRequested && request.tools) {
-          request.tools = request.tools.filter(tool => !FOREGROUND_MEMORY_REVIEW_TOOL_NAMES.has(tool.name))
-          if (!request.tools.length) {
-            request.tools = undefined
-            request.toolChoice = undefined
-          }
-        } else if (forceInitialMemoryForget && request.tools) {
+        if (forceInitialMemoryForget && request.tools) {
           const forgetTools = request.tools.filter(tool => (
             tool.name === 'memory_search' || tool.name === 'memory_get' || tool.name === 'memory_forget'
           ))
@@ -509,10 +461,12 @@ export class AgentRuntime {
             request.tools = forgetTools
             request.toolChoice = 'required'
           }
-        } else if (step === 1 && forceInitialMemoryReview) {
-          const reviewTools = request.tools?.filter(tool => tool.name === 'memory_review')
-          if (reviewTools?.length) {
-            request.tools = reviewTools
+        } else if (step === 1 && forceInitialMemoryWrite) {
+          const writeTools = request.tools?.filter(tool => (
+            tool.name === 'memory_search' || tool.name === 'memory_get' || tool.name === 'memory_write'
+          ))
+          if (writeTools?.length) {
+            request.tools = writeTools
             request.toolChoice = 'required'
           }
         }
@@ -554,7 +508,7 @@ export class AgentRuntime {
           const context = contextKey ? this.modelContexts.get(contextKey) : assistantMessage.context
           if (activeBoundaryRun) activeBoundaryRun.terminal = true
           emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-          this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
+          this.completeMemory(memoryIdentity, messages, input)
           this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
           return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
         }
@@ -573,6 +527,22 @@ export class AgentRuntime {
             steps.push({ type: 'tool', step, toolCallId: toolCall.id, toolName: toolCall.name, result })
             consecutiveToolFailures = result.ok ? 0 : consecutiveToolFailures + 1
             if (input.skillReviewEnabled !== false) this.recordSkillToolCall(contextKey, toolCall.name)
+            if (!result.ok && (toolCall.name === 'memory_write' || toolCall.name === 'memory_forget')) {
+              if (activeBoundaryRun) activeBoundaryRun.terminal = true
+              output = {
+                role: 'assistant',
+                content: `记忆操作未完成：${result.error || result.content || '未知错误'}`,
+                finishReason: 'memory_tool_failed',
+              }
+              messages.push(output)
+              steps.push({ type: 'model', step, message: output })
+              emit({ type: 'model.message', runId, step, message: output })
+              const context = contextKey ? this.modelContexts.get(contextKey) : undefined
+              emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
+              this.completeMemory(memoryIdentity, messages, input)
+              this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
+              return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
+            }
             if (maxConsecutiveToolFailures > 0 && consecutiveToolFailures >= maxConsecutiveToolFailures) {
               if (activeBoundaryRun) activeBoundaryRun.terminal = true
               emit({ type: 'run.tool_failure_limit', runId, failures: consecutiveToolFailures })
@@ -583,7 +553,7 @@ export class AgentRuntime {
               }
               const context = contextKey ? this.modelContexts.get(contextKey) : undefined
               emit({ type: 'run.completed', runId, output, steps: step, context, contextEstimate })
-              this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
+              this.completeMemory(memoryIdentity, messages, input)
               this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
               return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
             }
@@ -615,7 +585,7 @@ export class AgentRuntime {
       }
       const context = contextKey ? this.modelContexts.get(contextKey) : undefined
       emit({ type: 'run.completed', runId, output, steps: maxSteps, context, contextEstimate })
-      this.completeMemory(runId, memoryIdentity, messages, input, memoryReviewRequested)
+      this.completeMemory(memoryIdentity, messages, input)
       this.completeSkillReview(runId, contextKey, messages, input, input.onEvent)
       return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
     } catch (error) {
@@ -891,25 +861,9 @@ export class AgentRuntime {
     if (!this.memory || !identity) return undefined
     const modelClient = this.modelClientFor(input)
     const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
-    this.memory.registerReviewExtractor(identity.profileId || 'default', {
-      provider: modelClient.provider,
-      model,
-      extractor: new ModelMemoryExtractor({
-        mode: 'review',
-        modelClient,
-        memory: this.memory,
-        model,
-        fallback: false,
-        maxModelRetries: 0,
-        onUsage: input.onMemoryUsage,
-        requestLogger: this.runtimeLogger,
-        requestLogContext: input.logContext,
-        requestRunId: runId,
-      }),
-    })
     const normalized = this.memoryCaptureMessages(input)
-    const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
-    const shouldCapture = reviewPolicy === 'automatic' || hasExplicitMemoryIntent(normalized)
+    const writePolicy = input.memoryInput?.writePolicy ?? 'automatic'
+    const shouldCapture = writePolicy === 'automatic' || hasExplicitMemoryIntent(normalized)
     const capturedIds = shouldCapture
       ? await this.memory.captureMessages(identity, normalized)
       : []
@@ -930,53 +884,18 @@ export class AgentRuntime {
   }
 
   private completeMemory(
-    runId: string,
     identity: MemoryRuntimeIdentity | undefined,
     messages: AgentMessage[],
     input: AgentRuntimeRunInput,
-    reviewAlreadyScheduled = false,
   ): void {
     if (!this.memory || !identity) return
-    const reviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
+    const writePolicy = input.memoryInput?.writePolicy ?? 'automatic'
     const memoryMessages = input.memoryInput
       ? completedMemoryCaptureMessages(input.memoryInput.messages, messages, input.memoryInput.origin)
       : messages
           .filter(message => message.role === 'user' || message.role === 'assistant')
           .map(toMemoryCaptureMessage)
-    const modelClient = this.modelClientFor(input)
-    const model = input.model ?? input.modelDefaults?.model ?? this.modelDefaults?.model
-    this.memory.scheduleRunCompletion(
-      identity,
-      memoryMessages,
-      new ModelMemoryExtractor({
-        mode: 'review',
-        modelClient,
-        memory: this.memory,
-        model,
-        fallback: false,
-        maxModelRetries: 0,
-        onUsage: input.onMemoryUsage,
-        requestLogger: this.runtimeLogger,
-        requestLogContext: input.logContext,
-        requestRunId: runId,
-      }),
-      {
-        reviewPolicy,
-        reviewAlreadyScheduled,
-        preferredProvider: modelClient.provider,
-        preferredModel: model,
-        summaryExtractor: new ModelMemoryExtractor({
-          mode: 'summary',
-          modelClient,
-          memory: this.memory,
-          model,
-          onUsage: input.onMemoryUsage,
-          requestLogger: this.runtimeLogger,
-          requestLogContext: input.logContext,
-          requestRunId: runId,
-        }),
-      },
-    )
+    this.memory.scheduleCapture(identity, memoryMessages, writePolicy)
   }
 
   private memoryCaptureMessages(input: AgentRuntimeRunInput): MemoryCaptureMessage[] {
@@ -1111,7 +1030,7 @@ export class AgentRuntime {
   private runToolContext(input: AgentRuntimeRunInput, sourceMessageIds?: string[]): AgentToolContext | undefined {
     const context = this.mergedToolContext(input)
     const memoryMessages = this.memoryCaptureMessages(input)
-    const memoryReviewPolicy = input.memoryInput?.reviewPolicy ?? 'automatic'
+    const memoryWritePolicy = input.memoryInput?.writePolicy ?? 'automatic'
     const memoryExplicitIntent = hasExplicitMemoryIntent(memoryMessages)
     const memoryForgetIntent = hasExplicitMemoryForgetIntent(memoryMessages)
     const memoryForgetAllIntent = hasExplicitMemoryForgetAllIntent(memoryMessages)
@@ -1119,7 +1038,7 @@ export class AgentRuntime {
       ...context,
       ...(sourceMessageIds?.length ? { sourceMessageIds } : {}),
       ...(this.memory ? {
-        memoryReviewPolicy,
+        memoryWritePolicy,
         memoryExplicitIntent,
         memoryForgetIntent,
         memoryForgetAllIntent,

@@ -38,7 +38,7 @@ export type MemoryNodeStatus = typeof MEMORY_NODE_STATUSES[number]
 export type MemoryKind = typeof MEMORY_KINDS[number]
 export type MemoryScopeType = typeof MEMORY_SCOPE_TYPES[number]
 export type MemoryMessageRole = 'system' | 'user' | 'assistant' | 'tool'
-export type MemoryReviewPolicy = 'automatic' | 'explicit-only'
+export type MemoryWritePolicy = 'automatic' | 'explicit-only'
 
 export type MemoryScope =
   | { type: 'profile' }
@@ -70,23 +70,6 @@ export interface MemoryEvidenceMessageInput {
   createdAt?: string
 }
 
-export interface MemorySummary {
-  id: string
-  sessionId: string
-  parentSummaryId?: string
-  fromMessageId: string
-  toMessageId: string
-  summary: string
-  currentGoal?: string
-  constraints: string[]
-  preferences: string[]
-  decisions: string[]
-  completedWork: string[]
-  pendingWork: string[]
-  knownIssues: string[]
-  createdAt: string
-}
-
 export interface MemoryNode {
   id: string
   parentId?: string
@@ -116,7 +99,7 @@ export interface MemoryNode {
 
 export interface MemoryAuditEvent {
   id: string
-  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete' | 'extract' | 'summary'
+  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
   nodeId?: string
   sessionId?: string
   profileId: string
@@ -178,7 +161,6 @@ export interface MemoryContextDiagnostics {
 }
 
 export interface MemoryContext {
-  latestSummary?: MemorySummary
   recentMessages: MemoryMessage[]
   activeTasks: MemoryNode[]
   relevantNodes: MemoryNode[]
@@ -197,45 +179,8 @@ export interface MemoryRuntimeIdentity {
   defaultWriteScope?: MemoryScope
 }
 
-export interface MemoryExtractionInput extends MemoryRuntimeIdentity {
-  previousSummary?: MemorySummary
-  messages: MemoryMessage[]
-  reviewRequest?: MemoryReviewJobRequest
-  signal?: AbortSignal
-}
-
-export interface MemoryExtractionOperation {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'ignore'
-  kind?: MemoryKind
-  itemKey?: string
-  scope?: MemoryScope
-  targetId?: string
-  expectedRevision?: number
-  node: Partial<MemoryNode>
-  reason: string
-  explicitUserIntent?: boolean
-}
-
-export interface MemoryExtraction {
-  summaryPatch?: string
-  currentGoal?: string
-  constraints?: string[]
-  preferences?: string[]
-  decisions?: string[]
-  completedWork?: string[]
-  pendingWork?: string[]
-  knownIssues?: string[]
-  nodes: MemoryExtractionOperation[]
-  forceSummary?: boolean
-  fallbackReason?: string
-}
-
-export interface MemoryExtractor {
-  extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
-}
-
-export interface MemoryProposeUpdateInput {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
+export interface MemoryWriteInput {
+  operation: 'create' | 'update' | 'supersede' | 'expire'
   kind?: MemoryKind
   itemKey?: string
   scope?: MemoryScope
@@ -250,7 +195,7 @@ export interface MemoryProposeUpdateInput {
   identity?: Partial<MemoryRuntimeIdentity>
 }
 
-export interface MemoryProposeUpdateResult {
+export interface MemoryWriteResult {
   accepted: boolean
   nodeId?: string
   action?: 'created' | 'updated' | 'noop' | 'expired' | 'deleted'
@@ -288,7 +233,6 @@ export interface MemoryExpireInput {
 
 export interface MemoryDeleteInput extends MemoryExpireInput {
   mode?: 'soft' | 'hard'
-  confirmed?: boolean
 }
 
 export interface MemoryMessageListInput {
@@ -311,101 +255,13 @@ export interface MemoryForgetInput {
   reason: string
   actor?: string
   identity?: Partial<MemoryRuntimeIdentity>
-  confirmed?: boolean
 }
 
 export interface MemoryForgetResult {
   deletedIds: string[]
   deletedMemories?: MemoryNode[]
   mode: 'soft' | 'hard'
-  requiresConfirmation?: boolean
   reason?: string
-}
-
-export interface MemorySessionState {
-  sessionId: string
-  /** @deprecated Kept for stores created before review and summary cursors were split. */
-  lastExtractedMessageId?: string
-  lastReviewedMessageId?: string
-  lastSummaryMessageId?: string
-  updatedAt: string
-}
-
-export const MEMORY_REVIEW_JOB_STATUSES = [
-  'pending',
-  'running',
-  'retry',
-  'waiting_for_model',
-  'needs_confirmation',
-  'completed',
-] as const
-
-export type MemoryReviewJobStatus = typeof MEMORY_REVIEW_JOB_STATUSES[number]
-export type MemoryReviewJobTrigger = 'review' | 'forget' | 'periodic'
-
-export interface MemoryReviewJobRequest {
-  trigger: MemoryReviewJobTrigger
-  forget?: Omit<MemoryForgetInput, 'identity' | 'actor'>
-  /** Set only after the Studio user explicitly asks this persisted job to run now. */
-  userConfirmed?: boolean
-}
-
-export interface MemoryReviewJob {
-  id: string
-  profileId: string
-  sessionId: string
-  throughMessageId: string
-  identity: MemoryRuntimeIdentity
-  request: MemoryReviewJobRequest
-  preferredProvider?: string
-  preferredModel?: string
-  status: MemoryReviewJobStatus
-  attempt: number
-  nextAttemptAt?: string
-  lockedAt?: string
-  lastError?: string
-  createdAt: string
-  updatedAt: string
-  completedAt?: string
-}
-
-export interface MemoryReviewJobCreateInput {
-  id: string
-  profileId: string
-  sessionId: string
-  throughMessageId: string
-  identity: MemoryRuntimeIdentity
-  request: MemoryReviewJobRequest
-  preferredProvider?: string
-  preferredModel?: string
-  createdAt: string
-}
-
-export interface MemoryReviewJobUpdateInput {
-  status: MemoryReviewJobStatus
-  nextAttemptAt?: string
-  lockedAt?: string
-  lastError?: string
-  completedAt?: string
-  incrementAttempt?: boolean
-}
-
-export interface MemoryReviewJobListInput {
-  profileId: string
-  statuses?: MemoryReviewJobStatus[]
-  limit?: number
-  offset?: number
-}
-
-export interface MemoryReviewQueueStatus {
-  reviewing: boolean
-  activeJobs: number
-  pending: number
-  running: number
-  retry: number
-  waitingForModel: number
-  needsConfirmation: number
-  latestCompletedAt?: string
 }
 
 export interface MemoryStore {
@@ -417,8 +273,6 @@ export interface MemoryStore {
     throughMessageId?: string
     limit?: number
   }): Promise<MemoryMessage[]>
-  appendSummary(summary: MemorySummary): Promise<void>
-  getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   getNode(id: string): Promise<MemoryNode | undefined>
   upsertNode(node: MemoryNode, audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>): Promise<void>
   supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
@@ -427,30 +281,5 @@ export interface MemoryStore {
   queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
-  getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
-  setSessionState(state: MemorySessionState): Promise<void>
-  enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
-  getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
-  listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
-  activateReviewJob(input: {
-    id: string
-    profileId: string
-    now: string
-    confirmedByUser?: boolean
-  }): Promise<MemoryReviewJob | undefined>
-  claimNextReviewJob(input: {
-    profileId: string
-    now: string
-    staleBefore: string
-  }): Promise<MemoryReviewJob | undefined>
-  updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
-  requeueStaleReviewJobs(input: {
-    profileId?: string
-    now: string
-    staleBefore: string
-  }): Promise<number>
-  activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
-  listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
-  getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
   close(): void
 }

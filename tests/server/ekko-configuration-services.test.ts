@@ -5,10 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setupEkkoAgent, type EkkoAgentSetup } from '../../packages/ekko-agent/src'
 import {
   deleteEkkoMemory,
-  getEkkoMemoryReviewStatus,
-  listEkkoMemoryReviewJobs,
   listEkkoMemory,
-  reviewEkkoMemoryJobNow,
   updateEkkoMemory,
 } from '../../packages/server/src/modules/ekko/services/memory'
 import {
@@ -132,11 +129,6 @@ describe('Ekko configuration services', () => {
 
     const listed = await listEkkoMemory({ profile: 'work', status: 'active' }, setup)
     expect(listed).toMatchObject([{ id: created.nodeId, title: 'Editor theme' }])
-    await expect(getEkkoMemoryReviewStatus('work', setup)).resolves.toMatchObject({
-      reviewing: false,
-      activeJobs: 0,
-    })
-
     const updated = await updateEkkoMemory('work', created.nodeId!, {
       expectedRevision: created.node!.revision,
       title: 'IDE theme',
@@ -150,28 +142,6 @@ describe('Ekko configuration services', () => {
 
     const allStatuses = await listEkkoMemory({ profile: 'work' }, setup)
     expect(allStatuses.map(memory => memory.status).sort()).toEqual(['deleted', 'superseded'])
-  })
-
-  it('lists persisted review jobs and lets the user start one immediately', async () => {
-    const [throughMessageId] = await setup.memory.captureMessages(
-      { sessionId: 'review-settings', profileId: 'work' },
-      [{ id: 'review-message', role: 'user', content: 'hermes-studio 是我的开源项目' }],
-    )
-    const scheduled = await setup.memory.scheduleReview({
-      identity: { sessionId: 'review-settings', profileId: 'work' },
-      throughMessageId,
-      request: { trigger: 'review' },
-    })
-    expect(scheduled).toBeDefined()
-
-    const jobs = await listEkkoMemoryReviewJobs('work', setup)
-    expect(jobs).toContainEqual(expect.objectContaining({
-      id: scheduled!.id,
-      sessionId: 'review-settings',
-      evidencePreview: 'hermes-studio 是我的开源项目',
-    }))
-    const activated = await reviewEkkoMemoryJobNow('work', scheduled!.id, setup)
-    expect(activated).toMatchObject({ id: scheduled!.id })
   })
 
   it('creates, reads, edits, and archives profile skills', async () => {

@@ -55,7 +55,6 @@ export interface EkkoSettingsConfig {
     recentMessageLimit: number
     automaticRecallTokenBudget: number
     searchResultLimit: number
-    reviewEveryUserMessages: number
   }
   skills: {
     enabled: boolean

@@ -83,7 +83,6 @@ const MEMORY_KEYS = [
   'recentMessageLimit',
   'automaticRecallTokenBudget',
   'searchResultLimit',
-  'reviewEveryUserMessages',
 ] as const
 
 function record(value: unknown): JsonRecord {

@@ -1,10 +1,10 @@
-import type { AgentMessage, ModelClient, ModelRequest, ModelUsage } from '../model/types'
+import type { AgentMessage, ModelClient, ModelRequest } from '../model/types'
 import type { AgentMessageInput, AgentOutputMessage } from '../model/messages'
 import type { AgentSkill } from '../skills/types'
 import type { AgentToolRegistry } from '../tools/registry'
 import type { AgentToolAuthorizer, AgentToolContext, AgentToolResult } from '../tools/types'
 import type { AgentRuntimeEvent } from './events'
-import type { MemoryContext, MemoryEvidenceMessageInput, MemoryOrigin, MemoryReviewPolicy, MemoryScope } from '../memory/types'
+import type { MemoryContext, MemoryEvidenceMessageInput, MemoryOrigin, MemoryScope, MemoryWritePolicy } from '../memory/types'
 import type { MemoryService } from '../memory/service'
 import type { SkillReviewUsageEvent } from '../skills/review'
 import type { EkkoLogWriter } from '../logging/file-logger'
@@ -90,18 +90,18 @@ export interface AgentRuntimeRunInput {
   context?: unknown
   memoryEnabled?: boolean
   /**
-   * Trusted conversation input used for memory retrieval and review. Hosts that
+   * Trusted conversation input used for memory retrieval and direct writes. Hosts that
    * augment a user turn with routing instructions, derived summaries, or quoted
    * history should pass only the underlying conversation evidence here.
    */
   memoryInput?: {
     messages: Array<AgentMessageInput | MemoryEvidenceMessageInput>
-    reviewPolicy?: MemoryReviewPolicy
+    writePolicy?: MemoryWritePolicy
     /** Opaque provenance stamped by the host; never chosen by the model. */
     origin?: MemoryOrigin
     /** Long-term node scopes visible during this run. Defaults to profile scope. */
     recallScopes?: MemoryScope[]
-    /** Scopes the memory curator may select for new or corrected nodes. */
+    /** Scopes the foreground memory tools may select for new or corrected nodes. */
     writeScopes?: MemoryScope[]
     /** Suggested scope when a caller or safe fallback does not choose one. */
     defaultWriteScope?: MemoryScope
@@ -114,12 +114,6 @@ export interface AgentRuntimeRunInput {
   backgroundDelegationEnabled?: boolean
   /** Correlation fields only; log events and payloads remain runtime-owned. */
   logContext?: EkkoRuntimeLogContext
-  onMemoryUsage?: (input: {
-    purpose: 'ekko-memory-review' | 'ekko-memory-summary'
-    usage: ModelUsage
-    model?: string
-    callIndex: number
-  }) => void
   onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }

@@ -5,17 +5,11 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import type { EkkoMemoryNode } from '@/api/ekko/memory'
 
 const fetchMemoryMock = vi.hoisted(() => vi.fn())
-const fetchReviewStatusMock = vi.hoisted(() => vi.fn())
-const fetchReviewJobsMock = vi.hoisted(() => vi.fn())
-const reviewJobNowMock = vi.hoisted(() => vi.fn())
 const fitViewMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const messageMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 
 vi.mock('@/api/ekko/memory', () => ({
   fetchEkkoMemory: fetchMemoryMock,
-  fetchEkkoMemoryReviewStatus: fetchReviewStatusMock,
-  fetchEkkoMemoryReviewJobs: fetchReviewJobsMock,
-  reviewEkkoMemoryJobNow: reviewJobNowMock,
   updateEkkoMemory: vi.fn(),
   deleteEkkoMemory: vi.fn(),
 }))
@@ -87,12 +81,6 @@ let wrapper: VueWrapper<any> | undefined
 beforeEach(() => {
   vi.clearAllMocks()
   fetchMemoryMock.mockResolvedValue([memory('a'), memory('b')])
-  fetchReviewStatusMock.mockResolvedValue({
-    reviewing: false, activeJobs: 0, pending: 0, running: 0, retry: 0,
-    waitingForModel: 0, needsConfirmation: 0,
-  })
-  fetchReviewJobsMock.mockResolvedValue([])
-  reviewJobNowMock.mockResolvedValue({})
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
     width: 960, height: 640, top: 0, left: 0, right: 960, bottom: 640, x: 0, y: 0,
     toJSON() { return {} },
@@ -127,28 +115,11 @@ describe('Ekko MemoryView', () => {
     expect(wrapper.findAll('.memory-card')).toHaveLength(2)
   })
 
-  it('shows the live reviewing status reported by the memory queue', async () => {
-    fetchReviewStatusMock.mockResolvedValueOnce({
-      reviewing: true, activeJobs: 1, pending: 0, running: 1, retry: 0,
-      waitingForModel: 0, needsConfirmation: 0,
-    })
+  it('shows only memory status filters and does not poll an approval queue', async () => {
     wrapper = mount(MemoryView)
     await flushPromises()
 
-    expect(fetchReviewStatusMock).toHaveBeenCalled()
-    expect(wrapper.find('.memory-reviewing').text()).toBe('ekkoConfig.memoryReviewing')
-    expect(wrapper.find('option[value="reviewing"]').exists()).toBe(true)
-
-    fetchReviewJobsMock.mockResolvedValueOnce([{
-      id: 'review-1', sessionId: 'session-1', throughMessageId: 'message-1',
-      trigger: 'review', status: 'running', attempt: 1, userConfirmed: false,
-      evidencePreview: 'hermes-studio 是我的开源项目',
-      createdAt: '2026-08-29T00:00:00.000Z', updatedAt: '2026-08-29T00:00:01.000Z',
-    }])
-    await wrapper.find('.memory-review-filter').trigger('click')
-    await flushPromises()
-
-    expect(fetchReviewJobsMock).toHaveBeenCalled()
-    expect(wrapper.find('.memory-review-evidence').text()).toBe('hermes-studio 是我的开源项目')
+    expect(wrapper.find('option[value="reviewing"]').exists()).toBe(false)
+    expect(wrapper.find('.memory-review-panel').exists()).toBe(false)
   })
 })

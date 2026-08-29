@@ -180,8 +180,8 @@ configuration and does not apply this Ekko config section.
 Model context and memory evidence are separate inputs. A host that adds derived
 summaries, retrieved context, routing instructions, or other application-owned
 content to the model input should pass only its trusted conversation evidence
-through `memoryInput.messages`. The optional `memoryInput.reviewPolicy` lets the
-host choose automatic review or explicit-request-only writes without teaching
+through `memoryInput.messages`. The optional `memoryInput.writePolicy` lets the
+host choose normal direct writes or explicit-request-only writes without teaching
 the Ekko runtime about host-specific product concepts. A host can also attach
 an opaque `memoryInput.origin` and declare `recallScopes`, `writeScopes`, and a
 `defaultWriteScope`. Ekko understands only the generic `profile`, `context`, and
@@ -189,14 +189,13 @@ an opaque `memoryInput.origin` and declare `recallScopes`, `writeScopes`, and a
 that omit scope configuration remain backward compatible and can access only
 profile-scoped memory.
 
-The foreground agent can search and inspect authorized memory, but durable
-writes are performed only by the isolated post-run curator over the trusted
-`memoryInput.messages`. This prevents derived model context from bypassing the
-host's evidence and scope boundary. For an explicit remember, correction,
-update, or forget request, the runtime forces a visible foreground
-`memory_review` tool call first. That tool carries no proposed memory content;
-it only requests immediate isolated review, so visibility does not reopen the
-write bypass. See
+The foreground agent can search, inspect, create, update, and delete authorized
+memory directly. For an explicit remember, correction, or update request, the
+runtime requires a foreground `memory_write` path; explicit forget requests use
+`memory_forget`. Both tools apply the mutation synchronously and keep the host's
+trusted evidence and scope boundary. Run completion only records trusted
+conversation evidence; it does not start a memory model or create a hidden
+Session summary. See
 [`docs/MEMORY_HARNESS.md`](docs/MEMORY_HARNESS.md) for the executable quality
 contract.
 
@@ -441,13 +440,18 @@ const history = setup.conversations.listMessages(session.id)
 `setup.memory` exposes the standalone memory API. Memory-node operations are
 `list`, `get`, `search`, `create`, `update`, `expire`, `delete`, and `forget`.
 Conversation-derived memory data can be read with `listMessages`,
-`getLatestSummary`, `getSessionState`, and `listAuditEvents`. The lower-level
-SQLite implementation remains available as `setup.memoryStore`.
+and `listAuditEvents`. The lower-level SQLite implementation remains available
+as `setup.memoryStore`.
 
-Ordinary turns are reviewed in batches of eight by default, while explicit
-remember/forget requests and other high-signal durable statements are reviewed
-immediately. The curator follows the latest trusted user's language for memory
-cards and rolling summaries.
+Foreground runs write and forget durable memories synchronously through
+`memory_write` and `memory_forget`. There is no memory approval queue, review
+worker, or background Session-summary pass.
+
+Database migrations are transactional and retry SQLite lock conflicts. A
+non-lock migration failure preserves the original database as a timestamped
+backup, rebuilds the schema, restores compatible memory/conversation rows, and
+rebuilds the memory search index. Ekko never handles migration failure by
+silently disabling memory or switching to an untracked temporary database.
 
 ```ts
 const created = await setup.memory.create({
@@ -471,7 +475,7 @@ const updated = await setup.memory.update(created.nodeId!, {
   node: { valueJson: 'light' },
 })
 
-// Soft delete is the default. Hard delete additionally requires confirmed: true.
+// Soft delete is the default; mode: 'hard' deletes immediately as well.
 await setup.memory.delete(updated.nodeId!, {
   reason: 'User asked Ekko to forget it.',
   expectedRevision: updated.node!.revision,

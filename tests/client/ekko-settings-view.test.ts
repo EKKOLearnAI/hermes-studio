@@ -103,7 +103,6 @@ const config = {
     recentMessageLimit: 24,
     automaticRecallTokenBudget: 2_000,
     searchResultLimit: 8,
-    reviewEveryUserMessages: 8,
   },
   skills: { enabled: true, reviewEveryToolCalls: 6 },
   logging: { maxBytes: 10_000_000 },

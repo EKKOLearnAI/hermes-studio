@@ -709,14 +709,10 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
       ),
     },
     memory: {
-      ...memory,
       enabled: booleanValue(memory.enabled, DEFAULT_EKKO_CONFIG.memory.enabled, 'memory.enabled'),
       recentMessageLimit: integer(memory.recentMessageLimit, DEFAULT_EKKO_CONFIG.memory.recentMessageLimit, 'memory.recentMessageLimit', 1),
       automaticRecallTokenBudget: integer(memory.automaticRecallTokenBudget, DEFAULT_EKKO_CONFIG.memory.automaticRecallTokenBudget, 'memory.automaticRecallTokenBudget', 0),
       searchResultLimit: integer(memory.searchResultLimit, DEFAULT_EKKO_CONFIG.memory.searchResultLimit, 'memory.searchResultLimit', 1),
-      reviewEveryUserMessages: sourceSchemaVersion < 5 && Number(memory.reviewEveryUserMessages) === 1
-        ? DEFAULT_EKKO_CONFIG.memory.reviewEveryUserMessages
-        : integer(memory.reviewEveryUserMessages, DEFAULT_EKKO_CONFIG.memory.reviewEveryUserMessages, 'memory.reviewEveryUserMessages', 1),
     },
     skills: {
       ...skills,

@@ -22,29 +22,17 @@ afterEach(async () => {
 })
 
 describe('SqliteMemoryStore', () => {
-  it('stores recent messages and chained summaries in order', async () => {
+  it('stores recent messages in order and has no session-summary tables', async () => {
     await store.appendMessage({ id: 'm1', sessionId: 's1', role: 'user', content: 'one', createdAt: '2026-01-01T00:00:00.000Z' })
     await store.appendMessage({ id: 'm2', sessionId: 's1', parentId: 'm1', role: 'assistant', content: 'two', createdAt: '2026-01-01T00:00:01.000Z' })
-    await store.appendSummary({
-      id: 'summary-1',
-      sessionId: 's1',
-      fromMessageId: 'm1',
-      toMessageId: 'm2',
-      summary: 'first chain',
-      constraints: [],
-      preferences: [],
-      decisions: [],
-      completedWork: [],
-      pendingWork: [],
-      knownIssues: [],
-      createdAt: '2026-01-01T00:00:02.000Z',
-    })
-
     await expect(store.listRecentMessages({ sessionId: 's1', limit: 2 })).resolves.toMatchObject([
       { id: 'm1', content: 'one' },
       { id: 'm2', parentId: 'm1', content: 'two' },
     ])
-    await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({ id: 'summary-1' })
+    const obsoleteTables = store.databaseManager.connection.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('memory_summaries', 'memory_session_state')",
+    ).all()
+    expect(obsoleteTables).toEqual([])
   })
 
   it('isolates profiles and excludes expired nodes by default', async () => {

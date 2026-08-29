@@ -279,9 +279,6 @@ onBeforeUnmount(() => {
               <SettingRow :label="t('ekkoConfig.memorySearchLimit')" :hint="t('ekkoConfig.resultLimitHint')">
                 <NInputNumber v-model:value="form.memory.searchResultLimit" :min="1" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
               </SettingRow>
-              <SettingRow :label="t('ekkoConfig.memoryReviewInterval')" :hint="t('ekkoConfig.reviewIntervalHint')">
-                <NInputNumber v-model:value="form.memory.reviewEveryUserMessages" :min="1" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
-              </SettingRow>
               <SettingRow :label="t('ekkoConfig.skillsEnabled')" :hint="t('ekkoConfig.featureToggleHint')">
                 <NSwitch v-model:value="form.skills.enabled" @update:value="saveImmediateChange" />
               </SettingRow>

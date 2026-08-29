@@ -800,7 +800,7 @@ describe('group chat agent workspace bridge runs', () => {
           metadata: expect.objectContaining({ senderName: 'Human' }),
         }),
       ])
-      expect(runData.memory_review_policy).toBe('automatic')
+      expect(runData.memory_write_policy).toBe('automatic')
       expect(runData.memory_origin).toEqual({
         host: 'hermes-studio',
         namespace: 'group-chat',
@@ -818,7 +818,7 @@ describe('group chat agent workspace bridge runs', () => {
       })
     } else {
       expect(runData).not.toHaveProperty('memory_messages')
-      expect(runData).not.toHaveProperty('memory_review_policy')
+      expect(runData).not.toHaveProperty('memory_write_policy')
     }
     expect(mockSocket.emit).toHaveBeenCalledWith('clarify.requested', expect.objectContaining({
       roomId: 'room-runtime', clarify_id: `clarify-${agent}`, question: 'Continue?',

@@ -210,7 +210,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `memory?` | 自定义 MemoryService；默认使用共享服务并由运行身份限定 Profile。 |
 | `logWriter?`, `logProfile?` | 自定义结构化日志写入器和 Profile 标签。 |
 
-`AgentRuntime.run(input)` 的 `input` 字段包括：必填 `messages`；可选 `signal`、`systemPrompt`、`skills`、`maxSteps`、`maxModelRetries`、`maxConsecutiveToolFailures`、`toolContext`、`model`、`temperature`、`maxTokens`、`reasoningEffort`、`reasoningSummary`、`metadata`、`modelClient`、`modelDefaults`、`contextKey`、`context`、`memoryEnabled`、`memoryInput`、`backgroundDelegationEnabled`、`logContext`、`onMemoryUsage`、`onSkillReviewUsage`、`onEvent`。完整方法签名见文末自动清单。
+`AgentRuntime.run(input)` 的 `input` 字段包括：必填 `messages`；可选 `signal`、`systemPrompt`、`skills`、`maxSteps`、`maxModelRetries`、`maxConsecutiveToolFailures`、`toolContext`、`model`、`temperature`、`maxTokens`、`reasoningEffort`、`reasoningSummary`、`metadata`、`modelClient`、`modelDefaults`、`contextKey`、`context`、`memoryEnabled`、`memoryInput`、`backgroundDelegationEnabled`、`logContext`、`onSkillReviewUsage`、`onEvent`。完整方法签名见文末自动清单。
 
 ## Profile `memory` 模块
 
@@ -227,16 +227,13 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `create(input)` | kind/itemKey/node/reason/actor/explicitUserIntent/identity | 创建或合并节点。 |
 | `update(id, input)` | Node ID、node/valuePatch/unsetValueFields/reason/actor/expectedRevision/identity | 乐观并发更新。 |
 | `expire(id, input)` | Node ID、reason/actor/expectedRevision/identity | 标记过期。 |
-| `delete(id, input)` | expire 字段加 `mode?`、`confirmed?` | 软删或确认后的硬删。 |
-| `proposeUpdate(input)` | 完整 create/update/supersede/expire/delete 提案 | 低级写入口。 |
-| `forget(input)` | id 或 selector、mode、reason、confirmed 等 | 按选择器遗忘。 |
+| `delete(id, input)` | expire 字段加 `mode?` | 直接软删或硬删。 |
+| `write(input)` | 完整 create/update/supersede/expire 写请求 | 低级同步写入口。 |
+| `forget(input)` | id 或 selector、mode、reason 等 | 按选择器直接遗忘。 |
 | `listMessages(input)` | `sessionId`、`afterMessageId?`、`limit?` | 读 memory 消息链。 |
-| `getLatestSummary(sessionId)` | Session ID | 最新摘要。 |
-| `getSessionState(sessionId)` | Session ID | 提取/摘要游标。 |
 | `listAuditEvents(query?)` | Node/Session/event/actor/分页 | 本 Profile 审计记录。 |
-| `scheduleExtraction(identity)` | `{ sessionId }` | 排队提取。 |
-| `scheduleRunCompletion(identity, messages)` | Session、消息 | 排队 run 完成提取。 |
-| `drain()` | 无 | 等待共享提取队列完成。 |
+| `scheduleCapture(identity, messages)` | Session、消息 | 排队补录 run 完成后的对话证据，不调用模型。 |
+| `drain()` | 无 | 等待共享消息补录队列完成。 |
 | `contextPrompt(context)` | `MemoryContext` | 把 memory 上下文渲染成提示。 |
 
 关键 `MemoryNode` 字段：`id`、`parentId?`、`supersedesId?`、强制的 `profileId`、`domain`、`categoryPath`、`type`、规范化 `key`、`revision`、`valueJson?`、`title`、`content`、`status`、`confidence`、`importance`、`tags`、`entities`、`sourceMessageIds`、`createdAt`、`updatedAt`、`expiresAt?`。
@@ -377,7 +374,6 @@ API mode 固定映射：`chat_completions` → `openai-chat`，`codex_responses`
 | `memory.recentMessageLimit` | `number` | recall 携带近期消息数。 |
 | `memory.automaticRecallTokenBudget` | `number` | 自动 memory 提示 token 预算。 |
 | `memory.searchResultLimit` | `number` | 默认搜索结果上限。 |
-| `memory.reviewEveryUserMessages` | `number` | 普通用户消息的复盘间隔，默认 8；明确记忆请求和高信号持久信息仍立即复盘。 |
 | `skills.enabled` | `boolean` | 全部 skill 源总开关。 |
 | `skills.reviewEveryToolCalls` | `number` | 后台 skill 复盘工具调用间隔，0 禁用。 |
 | `skills.profiles.<profile>.externalDirectories` | `string[]` | Profile 引用的只读外部 Skill 根目录；支持 `~`、`$VAR` 和 `${VAR}`。 |
@@ -468,7 +464,7 @@ export type EkkoProfileMemoryDeleteInput = ProfileMemoryInput<MemoryDeleteInput>
 
 export type EkkoProfileMemoryForgetInput = ProfileMemoryInput<MemoryForgetInput>
 
-export type EkkoProfileMemoryProposeUpdateInput = ProfileMemoryInput<MemoryProposeUpdateInput>
+export type EkkoProfileMemoryWriteInput = ProfileMemoryInput<MemoryWriteInput>
 
 export class EkkoProfileDirectoryManager {
   readonly skillDirectory: string
@@ -525,18 +521,15 @@ export class EkkoProfileMemoryManager {
   search(identity: EkkoProfileMemoryIdentity, query: EkkoProfileMemoryQuery): Promise<MemoryQueryResult>
   get(id: string, identity?: Partial<EkkoProfileMemoryIdentity>): Promise<MemoryNode | undefined>
   list(query: EkkoProfileMemoryQuery = {}): Promise<MemoryNode[]>
-  create(input: EkkoProfileMemoryCreateInput): Promise<MemoryProposeUpdateResult>
-  update(id: string, input: EkkoProfileMemoryUpdateInput): Promise<MemoryProposeUpdateResult>
-  expire(id: string, input: EkkoProfileMemoryExpireInput): Promise<MemoryProposeUpdateResult>
+  create(input: EkkoProfileMemoryCreateInput): Promise<MemoryWriteResult>
+  update(id: string, input: EkkoProfileMemoryUpdateInput): Promise<MemoryWriteResult>
+  expire(id: string, input: EkkoProfileMemoryExpireInput): Promise<MemoryWriteResult>
   delete(id: string, input: EkkoProfileMemoryDeleteInput): Promise<MemoryForgetResult>
   listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]>
-  getLatestSummary(sessionId: string): Promise<MemorySummary | undefined>
-  getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   listAuditEvents(query: EkkoProfileMemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
-  proposeUpdate(input: EkkoProfileMemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult>
+  write(input: EkkoProfileMemoryWriteInput): Promise<MemoryWriteResult>
   forget(input: EkkoProfileMemoryForgetInput): Promise<MemoryForgetResult>
-  scheduleExtraction(identity: EkkoProfileMemoryIdentity): void
-  scheduleRunCompletion(identity: EkkoProfileMemoryIdentity, messages: MemoryCaptureMessage[]): void
+  scheduleCapture(identity: EkkoProfileMemoryIdentity, messages: MemoryCaptureMessage[]): void
   drain(): Promise<void>
   contextPrompt(context: MemoryContext): string
 }
@@ -698,7 +691,7 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig
 ### `src/config.ts`
 
 ```ts
-export const EKKO_CONFIG_SCHEMA_VERSION = 7
+export const EKKO_CONFIG_SCHEMA_VERSION = 9
 
 export const EKKO_CONFIG_DIRECTORY_NAME = 'config'
 
@@ -737,8 +730,6 @@ export const DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET = 4_000
 export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20
 
 export const DEFAULT_MEMORY_SEARCH_RESULT_LIMIT = 50
-
-export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 8
 
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 
@@ -866,7 +857,6 @@ export interface EkkoMemoryConfig {
   recentMessageLimit: number
   automaticRecallTokenBudget: number
   searchResultLimit: number
-  reviewEveryUserMessages: number
 }
 
 export interface EkkoSkillsProfileConfig {
@@ -904,7 +894,7 @@ export interface EkkoConfig {
 
 export type EkkoConfigPatch = { schemaVersion?: number runtime?: Partial<EkkoRuntimeConfig> model?: Partial<Omit<EkkoModelConfig, 'providerCatalog' | 'disabledProviderPresets' | 'providers' | 'authorizations'>> & { providerCatalog?: Record<string, EkkoModelProviderPreset> disabledProviderPresets?: string[] providers?: Record<string, EkkoModelProviderSettings> authorizations?: Record<string, EkkoModelAuthorizationSettings> } tools?: Partial<Omit<EkkoToolsConfig, 'approvals' | 'codeExec'>> & { approvals?: Partial<EkkoToolApprovalConfig> codeExec?: Partial<EkkoCodeExecConfig> } mcp?: Partial<Omit<EkkoMcpConfig, 'profiles'>> & { profiles?: Record<string, EkkoMcpProfileConfig> } delegation?: Partial<EkkoDelegationConfig> compression?: Partial<EkkoCompressionConfig> memory?: Partial<EkkoMemoryConfig> skills?: Partial<Omit<EkkoSkillsConfig, 'profiles'>> & { profiles?: Record<string, Partial<EkkoSkillsProfileConfig>> } logging?: Partial<EkkoLoggingConfig> prompt?: Partial<EkkoPromptConfig> }
 
-export const DEFAULT_EKKO_CONFIG: EkkoConfig = { schemaVersion: EKKO_CONFIG_SCHEMA_VERSION, runtime: { maxSteps: DEFAULT_AGENT_MAX_STEPS, maxModelRetries: DEFAULT_AGENT_MODEL_MAX_RETRIES, maxConsecutiveToolFailures: DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES, }, model: { defaultProvider: '', defaultModel: '', requestTimeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS, reasoningEffort: 'medium', reasoningSummary: 'auto', authorizationRefreshLeewayMs: DEFAULT_MODEL_AUTHORIZATION_REFRESH_LEEWAY_MS, providerCatalog: structuredClone(BUILTIN_MODEL_PROVIDER_PRESETS), disabledProviderPresets: [], providers: {}, authorizations: {}, }, tools: { enabled: true, executionTimeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, approvals: { enabled: true, timeoutMs: DEFAULT_TOOL_APPROVAL_TIMEOUT_MS, permanentAllow: [], }, codeExec: { enabled: true, languages: [...DEFAULT_CODE_EXEC_LANGUAGES], timeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, maxToolCalls: DEFAULT_CODE_EXEC_MAX_TOOL_CALLS, maxOutputBytes: DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES, maxStderrBytes: DEFAULT_CODE_EXEC_MAX_STDERR_BYTES, maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES, }, }, mcp: { enabled: true, profiles: {}, }, delegation: { backgroundEnabled: true, subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS, }, compression: { enabled: true, threshold: DEFAULT_COMPRESSION_THRESHOLD, targetRatio: DEFAULT_COMPRESSION_TARGET_RATIO, protectLastN: DEFAULT_COMPRESSION_PROTECT_LAST_N, protectFirstN: DEFAULT_COMPRESSION_PROTECT_FIRST_N, }, memory: { enabled: true, recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT, automaticRecallTokenBudget: DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET, searchResultLimit: DEFAULT_MEMORY_SEARCH_RESULT_LIMIT, reviewEveryUserMessages: DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES, }, skills: { enabled: true, reviewEveryToolCalls: DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL, profiles: {}, }, logging: { maxBytes: DEFAULT_EKKO_LOG_MAX_BYTES, }, prompt: { instructions: [], }, }
+export const DEFAULT_EKKO_CONFIG: EkkoConfig = { schemaVersion: EKKO_CONFIG_SCHEMA_VERSION, runtime: { maxSteps: DEFAULT_AGENT_MAX_STEPS, maxModelRetries: DEFAULT_AGENT_MODEL_MAX_RETRIES, maxConsecutiveToolFailures: DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES, }, model: { defaultProvider: '', defaultModel: '', requestTimeoutMs: DEFAULT_MODEL_REQUEST_TIMEOUT_MS, reasoningEffort: 'medium', reasoningSummary: 'auto', authorizationRefreshLeewayMs: DEFAULT_MODEL_AUTHORIZATION_REFRESH_LEEWAY_MS, providerCatalog: structuredClone(BUILTIN_MODEL_PROVIDER_PRESETS), disabledProviderPresets: [], providers: {}, authorizations: {}, }, tools: { enabled: true, executionTimeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, approvals: { enabled: true, timeoutMs: DEFAULT_TOOL_APPROVAL_TIMEOUT_MS, permanentAllow: [], }, codeExec: { enabled: true, languages: [...DEFAULT_CODE_EXEC_LANGUAGES], timeoutMs: DEFAULT_TOOL_EXECUTION_TIMEOUT_MS, maxToolCalls: DEFAULT_CODE_EXEC_MAX_TOOL_CALLS, maxOutputBytes: DEFAULT_CODE_EXEC_MAX_OUTPUT_BYTES, maxStderrBytes: DEFAULT_CODE_EXEC_MAX_STDERR_BYTES, maxSourceBytes: DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES, }, }, mcp: { enabled: true, profiles: {}, }, delegation: { backgroundEnabled: true, subtaskMaxSteps: DEFAULT_AGENT_SUBTASK_MAX_STEPS, }, compression: { enabled: true, threshold: DEFAULT_COMPRESSION_THRESHOLD, targetRatio: DEFAULT_COMPRESSION_TARGET_RATIO, protectLastN: DEFAULT_COMPRESSION_PROTECT_LAST_N, protectFirstN: DEFAULT_COMPRESSION_PROTECT_FIRST_N, }, memory: { enabled: true, recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT, automaticRecallTokenBudget: DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET, searchResultLimit: DEFAULT_MEMORY_SEARCH_RESULT_LIMIT, }, skills: { enabled: true, reviewEveryToolCalls: DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL, profiles: {}, }, logging: { maxBytes: DEFAULT_EKKO_LOG_MAX_BYTES, }, prompt: { instructions: [], }, }
 
 export function serializeDefaultEkkoConfig(): string
 ```
@@ -1080,6 +1070,20 @@ export interface EkkoDatabaseMigration {
 
 export interface EkkoDatabaseOptions extends EkkoDataPathOptions {
   databasePath?: string
+  migrationBusyTimeoutMs?: number
+  migrationMaxAttempts?: number
+}
+
+export interface EkkoDatabaseRecoveryReport {
+  backupPath: string
+  recoveredTables: Array<{ table: string; rows: number }>
+  skippedTables: Array<{ table: string; reason: string }>
+}
+
+export class EkkoDatabaseMigrationError extends Error {
+  readonly cause: unknown
+  readonly lockFailure: boolean
+  constructor(readonly databasePath: string, readonly component: string, readonly version: number, readonly attempts: number, cause: unknown)
 }
 
 export class EkkoDatabaseManager {
@@ -1087,6 +1091,9 @@ export class EkkoDatabaseManager {
   constructor(options: EkkoDatabaseOptions = {})
   get connection(): DatabaseSync
   migrate(migrations: EkkoDatabaseMigration[]): void
+  quarantineForRebuild(): string
+  restoreQuarantinedDatabase(backupPath: string): string | undefined
+  recoverCompatibleTables(backupPath: string, tables: readonly string[]): EkkoDatabaseRecoveryReport
   transaction<T>(operation: () => T): T
   close(): void
 }
@@ -1190,8 +1197,6 @@ export * from './logging/file-logger'
 export * from './logging/runtime-logger'
 
 export * from './memory/context'
-
-export * from './memory/extraction'
 
 export * from './memory/paths'
 
@@ -1390,40 +1395,6 @@ export function buildMemoryContextPrompt(context: MemoryContext): string
 
 export function formatMemoryCard(node: MemoryNode): string
 ```
-### `src/memory/extraction.ts`
-
-```ts
-export interface ModelMemoryExtractorOptions {
-  modelClient: ModelClient
-  memory: MemoryService
-  mode?: 'combined' | 'review' | 'summary'
-  model?: string
-  signal?: AbortSignal
-  maxSteps?: number
-  maxModelRetries?: number
-  maxSummaryRepairAttempts?: number
-  maxTokens?: number
-  maxTranscriptChars?: number
-  fallback?: MemoryExtractor | false
-  requestLogger?: EkkoRuntimeLogger
-  requestLogContext?: EkkoRuntimeLogContext
-  requestRunId?: string
-  onUsage?: (input: { purpose: 'ekko-memory-review' | 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
-}
-
-export class ModelMemoryExtractor implements MemoryExtractor {
-  constructor(private readonly options: ModelMemoryExtractorOptions)
-  async extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
-}
-
-export class MemoryReviewNeedsConfirmationError extends Error {
-  constructor(message = 'Memory review requires user confirmation.')
-}
-
-export class RuleBasedMemoryExtractor implements MemoryExtractor {
-  async extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
-}
-```
 ### `src/memory/paths.ts`
 
 ```ts
@@ -1507,34 +1478,12 @@ export function memoryScopeFromColumns(type: unknown, namespace: unknown, id: un
 ```ts
 export interface MemoryServiceOptions {
   store?: MemoryStore
-  extractor?: MemoryExtractor
   enabled?: boolean
   warning?: string
   recentMessageLimit?: number
   automaticRecallTokenBudget?: number
   searchResultLimit?: number
   nodeLimit?: number
-  reviewEveryUserMessages?: number
-  reviewAttemptTimeoutMs?: number
-  summaryEveryMessages?: number
-  reviewExtractorResolver?: MemoryReviewExtractorResolver
-}
-
-export interface MemoryReviewExtractorResolution {
-  extractor: MemoryExtractor
-  provider?: string
-  model?: string
-}
-
-export type MemoryReviewExtractorResolver = ( job: MemoryReviewJob, ) => Promise<MemoryReviewExtractorResolution | undefined>
-
-export interface MemoryReviewScheduleInput {
-  identity: MemoryRuntimeIdentity
-  throughMessageId: string
-  request: MemoryReviewJobRequest
-  preferredProvider?: string
-  preferredModel?: string
-  extractor?: MemoryExtractor
 }
 
 export interface MemoryCaptureMessage {
@@ -1545,45 +1494,24 @@ export interface MemoryCaptureMessage {
   createdAt?: string
 }
 
-export interface MemoryRunCompletionOptions {
-  reviewPolicy?: MemoryReviewPolicy
-  forceReview?: boolean
-  reviewAlreadyScheduled?: boolean
-  preferredProvider?: string
-  preferredModel?: string
-  summaryExtractor?: MemoryExtractor
-}
-
 export class MemoryService {
   constructor(options: MemoryServiceOptions = {})
-  configure(options: Pick< MemoryServiceOptions, | 'enabled' | 'recentMessageLimit' | 'automaticRecallTokenBudget' | 'searchResultLimit' | 'reviewEveryUserMessages' >): void
+  configure(options: Pick< MemoryServiceOptions, | 'enabled' | 'recentMessageLimit' | 'automaticRecallTokenBudget' | 'searchResultLimit' >): void
   get isEnabled(): boolean
   async captureMessages(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[]): Promise<string[]>
   async retrieve(identity: MemoryRuntimeIdentity, queryText?: string, overrides: Partial<MemoryQuery> = {}): Promise<MemoryContext>
   async search(identity: MemoryRuntimeIdentity, query: MemoryQuery): Promise<MemoryQueryResult>
   async get(id: string, identity?: Partial<MemoryRuntimeIdentity>): Promise<MemoryNode | undefined>
   async list(query: MemoryQuery = {}): Promise<MemoryNode[]>
-  async create(input: MemoryCreateInput): Promise<MemoryProposeUpdateResult>
-  async update(id: string, input: MemoryUpdateInput): Promise<MemoryProposeUpdateResult>
-  async expire(id: string, input: MemoryExpireInput): Promise<MemoryProposeUpdateResult>
+  async create(input: MemoryCreateInput): Promise<MemoryWriteResult>
+  async update(id: string, input: MemoryUpdateInput): Promise<MemoryWriteResult>
+  async expire(id: string, input: MemoryExpireInput): Promise<MemoryWriteResult>
   async delete(id: string, input: MemoryDeleteInput): Promise<MemoryForgetResult>
   async listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]>
-  async getLatestSummary(sessionId: string): Promise<MemorySummary | undefined>
-  async getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
-  async getReviewStatus(profileId = 'default'): Promise<MemoryReviewQueueStatus>
-  async listReviewJobs(profileId = 'default'): Promise<MemoryReviewJob[]>
-  async reviewJobNow(id: string, profileId = 'default'): Promise<MemoryReviewJob | undefined>
-  async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult>
+  async write(input: MemoryWriteInput): Promise<MemoryWriteResult>
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult>
-  async scheduleReview(input: MemoryReviewScheduleInput): Promise<MemoryReviewJob | undefined>
-  wakeReviewJobs(profileId?: string): void
-  async recoverReviewJobs(): Promise<void>
-  registerReviewExtractor(profileId: string, resolution: MemoryReviewExtractorResolution): void
-  registerReviewExtractorResolver(resolver: MemoryReviewExtractorResolver): void
-  clearRegisteredReviewExtractors(): void
-  scheduleExtraction(identity: MemoryRuntimeIdentity): void
-  scheduleRunCompletion(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[], extractor: MemoryExtractor = this.extractor, options: MemoryRunCompletionOptions = {}): void
+  scheduleCapture(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[], writePolicy: MemoryWritePolicy = 'automatic'): void
   async drain(): Promise<void>
   close(): void
   contextPrompt(context: MemoryContext): string
@@ -1605,8 +1533,6 @@ export class SqliteMemoryStore implements MemoryStore {
   async appendMessage(message: MemoryMessage): Promise<void>
   async listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
   async listMessagesAfter(input: { sessionId: string messageId?: string throughMessageId?: string limit?: number }): Promise<MemoryMessage[]>
-  async appendSummary(summary: MemorySummary): Promise<void>
-  async getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   async getNode(id: string): Promise<MemoryNode | undefined>
   async upsertNode(node: MemoryNode, audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>): Promise<void>
   async supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
@@ -1615,18 +1541,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   async appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
-  async getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
-  async setSessionState(state: MemorySessionState): Promise<void>
-  async enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
-  async getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
-  async listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
-  async activateReviewJob(input: { id: string profileId: string now: string confirmedByUser?: boolean }): Promise<MemoryReviewJob | undefined>
-  async claimNextReviewJob(input: { profileId: string now: string staleBefore: string }): Promise<MemoryReviewJob | undefined>
-  async updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
-  async requeueStaleReviewJobs(input: { profileId?: string now: string staleBefore: string }): Promise<number>
-  async activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
-  async listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
-  async getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
+  rebuildSearchIndex(): void
   close(): void
 }
 
@@ -1635,7 +1550,7 @@ export { stableJson }
 ### `src/memory/tools.ts`
 
 ```ts
-export function createMemoryTools( service: MemoryService, options: { writable?: boolean; reviewable?: boolean; forgetReviewable?: boolean } = {}, ): AgentTool[]
+export function createMemoryTools( service: MemoryService, options: { writable?: boolean } = {}, ): AgentTool[]
 ```
 ### `src/memory/types.ts`
 
@@ -1658,7 +1573,7 @@ export type MemoryScopeType = typeof MEMORY_SCOPE_TYPES[number]
 
 export type MemoryMessageRole = 'system' | 'user' | 'assistant' | 'tool'
 
-export type MemoryReviewPolicy = 'automatic' | 'explicit-only'
+export type MemoryWritePolicy = 'automatic' | 'explicit-only'
 
 export type MemoryScope = | { type: 'profile' } | { type: 'context'; namespace: string; id: string } | { type: 'session'; id: string }
 
@@ -1684,23 +1599,6 @@ export interface MemoryEvidenceMessageInput {
   content: string
   metadata?: Record<string, unknown>
   createdAt?: string
-}
-
-export interface MemorySummary {
-  id: string
-  sessionId: string
-  parentSummaryId?: string
-  fromMessageId: string
-  toMessageId: string
-  summary: string
-  currentGoal?: string
-  constraints: string[]
-  preferences: string[]
-  decisions: string[]
-  completedWork: string[]
-  pendingWork: string[]
-  knownIssues: string[]
-  createdAt: string
 }
 
 export interface MemoryNode {
@@ -1731,7 +1629,7 @@ export interface MemoryNode {
 
 export interface MemoryAuditEvent {
   id: string
-  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete' | 'extract' | 'summary'
+  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
   nodeId?: string
   sessionId?: string
   profileId: string
@@ -1788,7 +1686,6 @@ export interface MemoryContextDiagnostics {
 }
 
 export interface MemoryContext {
-  latestSummary?: MemorySummary
   recentMessages: MemoryMessage[]
   activeTasks: MemoryNode[]
   relevantNodes: MemoryNode[]
@@ -1807,45 +1704,8 @@ export interface MemoryRuntimeIdentity {
   defaultWriteScope?: MemoryScope
 }
 
-export interface MemoryExtractionInput extends MemoryRuntimeIdentity {
-  previousSummary?: MemorySummary
-  messages: MemoryMessage[]
-  reviewRequest?: MemoryReviewJobRequest
-  signal?: AbortSignal
-}
-
-export interface MemoryExtractionOperation {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'ignore'
-  kind?: MemoryKind
-  itemKey?: string
-  scope?: MemoryScope
-  targetId?: string
-  expectedRevision?: number
-  node: Partial<MemoryNode>
-  reason: string
-  explicitUserIntent?: boolean
-}
-
-export interface MemoryExtraction {
-  summaryPatch?: string
-  currentGoal?: string
-  constraints?: string[]
-  preferences?: string[]
-  decisions?: string[]
-  completedWork?: string[]
-  pendingWork?: string[]
-  knownIssues?: string[]
-  nodes: MemoryExtractionOperation[]
-  forceSummary?: boolean
-  fallbackReason?: string
-}
-
-export interface MemoryExtractor {
-  extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
-}
-
-export interface MemoryProposeUpdateInput {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
+export interface MemoryWriteInput {
+  operation: 'create' | 'update' | 'supersede' | 'expire'
   kind?: MemoryKind
   itemKey?: string
   scope?: MemoryScope
@@ -1860,7 +1720,7 @@ export interface MemoryProposeUpdateInput {
   identity?: Partial<MemoryRuntimeIdentity>
 }
 
-export interface MemoryProposeUpdateResult {
+export interface MemoryWriteResult {
   accepted: boolean
   nodeId?: string
   action?: 'created' | 'updated' | 'noop' | 'expired' | 'deleted'
@@ -1898,7 +1758,6 @@ export interface MemoryExpireInput {
 
 export interface MemoryDeleteInput extends MemoryExpireInput {
   mode?: 'soft' | 'hard'
-  confirmed?: boolean
 }
 
 export interface MemoryMessageListInput {
@@ -1921,101 +1780,19 @@ export interface MemoryForgetInput {
   reason: string
   actor?: string
   identity?: Partial<MemoryRuntimeIdentity>
-  confirmed?: boolean
 }
 
 export interface MemoryForgetResult {
   deletedIds: string[]
   deletedMemories?: MemoryNode[]
   mode: 'soft' | 'hard'
-  requiresConfirmation?: boolean
   reason?: string
-}
-
-export interface MemorySessionState {
-  sessionId: string
-  lastExtractedMessageId?: string
-  lastReviewedMessageId?: string
-  lastSummaryMessageId?: string
-  updatedAt: string
-}
-
-export const MEMORY_REVIEW_JOB_STATUSES = [ 'pending', 'running', 'retry', 'waiting_for_model', 'needs_confirmation', 'completed', ] as const
-
-export type MemoryReviewJobStatus = typeof MEMORY_REVIEW_JOB_STATUSES[number]
-
-export type MemoryReviewJobTrigger = 'review' | 'forget' | 'periodic'
-
-export interface MemoryReviewJobRequest {
-  trigger: MemoryReviewJobTrigger
-  forget?: Omit<MemoryForgetInput, 'identity' | 'actor'>
-  userConfirmed?: boolean
-}
-
-export interface MemoryReviewJob {
-  id: string
-  profileId: string
-  sessionId: string
-  throughMessageId: string
-  identity: MemoryRuntimeIdentity
-  request: MemoryReviewJobRequest
-  preferredProvider?: string
-  preferredModel?: string
-  status: MemoryReviewJobStatus
-  attempt: number
-  nextAttemptAt?: string
-  lockedAt?: string
-  lastError?: string
-  createdAt: string
-  updatedAt: string
-  completedAt?: string
-}
-
-export interface MemoryReviewJobCreateInput {
-  id: string
-  profileId: string
-  sessionId: string
-  throughMessageId: string
-  identity: MemoryRuntimeIdentity
-  request: MemoryReviewJobRequest
-  preferredProvider?: string
-  preferredModel?: string
-  createdAt: string
-}
-
-export interface MemoryReviewJobUpdateInput {
-  status: MemoryReviewJobStatus
-  nextAttemptAt?: string
-  lockedAt?: string
-  lastError?: string
-  completedAt?: string
-  incrementAttempt?: boolean
-}
-
-export interface MemoryReviewJobListInput {
-  profileId: string
-  statuses?: MemoryReviewJobStatus[]
-  limit?: number
-  offset?: number
-}
-
-export interface MemoryReviewQueueStatus {
-  reviewing: boolean
-  activeJobs: number
-  pending: number
-  running: number
-  retry: number
-  waitingForModel: number
-  needsConfirmation: number
-  latestCompletedAt?: string
 }
 
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
   listMessagesAfter(input: { sessionId: string messageId?: string throughMessageId?: string limit?: number }): Promise<MemoryMessage[]>
-  appendSummary(summary: MemorySummary): Promise<void>
-  getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
   getNode(id: string): Promise<MemoryNode | undefined>
   upsertNode(node: MemoryNode, audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>): Promise<void>
   supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
@@ -2024,18 +1801,6 @@ export interface MemoryStore {
   queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
-  getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
-  setSessionState(state: MemorySessionState): Promise<void>
-  enqueueReviewJob(input: MemoryReviewJobCreateInput): Promise<MemoryReviewJob>
-  getReviewJob(id: string): Promise<MemoryReviewJob | undefined>
-  listReviewJobs(input: MemoryReviewJobListInput): Promise<MemoryReviewJob[]>
-  activateReviewJob(input: { id: string profileId: string now: string confirmedByUser?: boolean }): Promise<MemoryReviewJob | undefined>
-  claimNextReviewJob(input: { profileId: string now: string staleBefore: string }): Promise<MemoryReviewJob | undefined>
-  updateReviewJob(id: string, input: MemoryReviewJobUpdateInput): Promise<void>
-  requeueStaleReviewJobs(input: { profileId?: string now: string staleBefore: string }): Promise<number>
-  activateReviewJobs(input: { profileId?: string; now: string }): Promise<void>
-  listPendingReviewProfiles(input: { now: string; staleBefore: string }): Promise<string[]>
-  getReviewQueueStatus(profileId: string): Promise<MemoryReviewQueueStatus>
   close(): void
 }
 ```
@@ -2702,12 +2467,11 @@ export interface AgentRuntimeRunInput {
   contextKey?: string
   context?: unknown
   memoryEnabled?: boolean
-  memoryInput?: { messages: Array<AgentMessageInput | MemoryEvidenceMessageInput> reviewPolicy?: MemoryReviewPolicy /** Opaque provenance stamped by the host; never chosen by the model. */ origin?: MemoryOrigin /** Long-term node scopes visible during this run. Defaults to profile scope. */ recallScopes?: MemoryScope[] /** Scopes the memory curator may select for new or corrected nodes. */ writeScopes?: MemoryScope[] /** Suggested scope when a caller or safe fallback does not choose one. */ defaultWriteScope?: MemoryScope }
+  memoryInput?: { messages: Array<AgentMessageInput | MemoryEvidenceMessageInput> writePolicy?: MemoryWritePolicy /** Opaque provenance stamped by the host; never chosen by the model. */ origin?: MemoryOrigin /** Long-term node scopes visible during this run. Defaults to profile scope. */ recallScopes?: MemoryScope[] /** Scopes the foreground memory tools may select for new or corrected nodes. */ writeScopes?: MemoryScope[] /** Suggested scope when a caller or safe fallback does not choose one. */ defaultWriteScope?: MemoryScope }
   ephemeralContext?: boolean
   skillReviewEnabled?: boolean
   backgroundDelegationEnabled?: boolean
   logContext?: EkkoRuntimeLogContext
-  onMemoryUsage?: (input: { purpose: 'ekko-memory-review' | 'ekko-memory-summary' usage: ModelUsage model?: string callIndex: number }) => void
   onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }
@@ -3328,7 +3092,7 @@ export interface AgentToolContext {
   sessionId?: string
   profileId?: string
   sourceMessageIds?: string[]
-  memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
+  memoryWritePolicy?: import('../memory/types').MemoryWritePolicy
   memoryExplicitIntent?: boolean
   memoryForgetIntent?: boolean
   memoryForgetAllIntent?: boolean
@@ -3336,7 +3100,6 @@ export interface AgentToolContext {
   memoryRecallScopes?: import('../memory/types').MemoryScope[]
   memoryWriteScopes?: import('../memory/types').MemoryScope[]
   memoryDefaultWriteScope?: import('../memory/types').MemoryScope
-  requestMemoryReview?: ( request: import('../memory/types').MemoryReviewJobRequest, ) => Promise<{ jobId?: string }>
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number

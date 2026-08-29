@@ -75,7 +75,7 @@ export interface EkkoAgentRunSocketData {
     metadata?: Record<string, unknown>
     createdAt?: string
   }>
-  memory_review_policy?: 'automatic' | 'explicit-only'
+  memory_write_policy?: 'automatic' | 'explicit-only'
   memory_origin?: { host?: string; namespace?: string; contextId?: string }
   memory_recall_scopes?: Array<
     | { type: 'profile' }
@@ -623,7 +623,6 @@ export async function handleEkkoAgentRun(
         }
       : undefined,
   })
-  const memoryUsageBatchId = randomUUID()
   const skillReviewUsageBatchId = randomUUID()
   const turnId = randomUUID()
   const currentInputTokens = estimateUsageTokensFromMessages([
@@ -1335,7 +1334,7 @@ export async function handleEkkoAgentRun(
                 role: 'user' as const,
                 ...await toUserAgentContent(data.memory_input ?? data.input),
               }],
-          reviewPolicy: data.memory_review_policy ?? 'automatic',
+          writePolicy: data.memory_write_policy ?? 'automatic',
           origin: data.memory_origin ?? {
             host: 'hermes-studio',
             namespace: isGroupMemory ? 'group-chat' : 'single-chat',
@@ -1370,22 +1369,6 @@ export async function handleEkkoAgentRun(
         turnId,
       },
       onEvent: handleRuntimeEvent,
-      onMemoryUsage: (event: any) => {
-        recordSessionUsage({
-          sessionId,
-          runId: `memory-summary:${memoryUsageBatchId}:call:${event.callIndex}`,
-          source: 'ekko_agent',
-          agent: 'ekko_agent',
-          usageScope: 'model_call',
-          purpose: event.purpose,
-          apiCalls: 1,
-          usage: event.usage,
-          profile,
-          model: event.model || modelConfig.model,
-          provider: modelConfig.provider,
-          isEstimated: false,
-        })
-      },
       onSkillReviewUsage: (event: any) => {
         recordSessionUsage({
           sessionId,

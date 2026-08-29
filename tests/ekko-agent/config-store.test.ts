@@ -216,7 +216,7 @@ describe('EkkoConfigStore', () => {
     expect(await configBackups(configPath)).toEqual([])
   })
 
-  it('migrates the former per-turn memory review default to the batched default', async () => {
+  it('removes obsolete memory review and session-summary intervals', async () => {
     const setup = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
     const configPath = setup.layout.configPath
     setup.close()
@@ -226,13 +226,15 @@ describe('EkkoConfigStore', () => {
       memory: {
         ...DEFAULT_EKKO_CONFIG.memory,
         reviewEveryUserMessages: 1,
+        summaryEveryUserMessages: 8,
       },
     }, null, 2))
 
     const config = new EkkoConfigStore({ configPath }).ensureDefaults()
 
-    expect(config.schemaVersion).toBe(7)
-    expect(config.memory.reviewEveryUserMessages).toBe(8)
+    expect(config.schemaVersion).toBe(9)
+    expect(config.memory).not.toHaveProperty('reviewEveryUserMessages')
+    expect(config.memory).not.toHaveProperty('summaryEveryUserMessages')
   })
 
   it('validates context compression policy bounds', () => {

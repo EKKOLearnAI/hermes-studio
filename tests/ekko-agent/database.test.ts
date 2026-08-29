@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EkkoDatabaseManager,
+  EkkoDatabaseMigrationError,
   EkkoDirectoryManager,
   DEFAULT_EKKO_CONFIG,
   resolveEkkoDatabasePath,
@@ -110,8 +111,8 @@ describe('EkkoDatabaseManager', () => {
       expect(existsSync(join(setup.layout.workspaceDirectory, 'work'))).toBe(true)
       expect(setup.memory.isEnabled).toBe(true)
       expect(setup.database.connection.prepare(
-        'SELECT component, version FROM schema_migrations WHERE component = ?',
-      ).get('memory')).toMatchObject({ component: 'memory', version: 3 })
+        'SELECT component, max(version) AS version FROM schema_migrations WHERE component = ? GROUP BY component',
+      ).get('memory')).toMatchObject({ component: 'memory', version: 8 })
     } finally {
       setup.close()
     }
@@ -252,6 +253,132 @@ describe('EkkoDatabaseManager', () => {
     expect(manager.connection.prepare(
       'SELECT component, version FROM schema_migrations WHERE component = ?',
     ).get('test-component')).toMatchObject({ component: 'test-component', version: 1 })
+    manager.close()
+  })
+
+  it('retries transient SQLite lock failures without rebuilding or duplicating writes', () => {
+    const manager = new EkkoDatabaseManager({
+      baseDirectory: webUiHome,
+      migrationBusyTimeoutMs: 0,
+      migrationMaxAttempts: 3,
+    })
+    let attempts = 0
+
+    manager.migrate([{
+      component: 'retry-component',
+      version: 1,
+      migrate(database) {
+        attempts += 1
+        database.exec('CREATE TABLE retry_records (value TEXT)')
+        database.prepare('INSERT INTO retry_records (value) VALUES (?)').run(`attempt-${attempts}`)
+        if (attempts < 3) throw new Error('database is locked')
+      },
+    }])
+
+    expect(attempts).toBe(3)
+    expect(manager.connection.prepare('SELECT value FROM retry_records').all())
+      .toEqual([{ value: 'attempt-3' }])
+    expect(manager.connection.prepare(
+      'SELECT 1 AS applied FROM schema_migrations WHERE component = ? AND version = ?',
+    ).get('retry-component', 1)).toMatchObject({ applied: 1 })
+    manager.close()
+  })
+
+  it('wraps non-lock migration failures after rolling back the attempted schema change', () => {
+    const manager = new EkkoDatabaseManager({ baseDirectory: webUiHome })
+
+    expect(() => manager.migrate([{
+      component: 'broken-component',
+      version: 1,
+      migrate(database) {
+        database.exec('CREATE TABLE should_rollback (value TEXT)')
+        throw new Error('invalid legacy schema')
+      },
+    }])).toThrow(EkkoDatabaseMigrationError)
+
+    expect(manager.connection.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'should_rollback'",
+    ).get()).toBeUndefined()
+    expect(manager.connection.prepare(
+      'SELECT 1 FROM schema_migrations WHERE component = ? AND version = ?',
+    ).get('broken-component', 1)).toBeUndefined()
+    manager.close()
+  })
+
+  it('rebuilds after a non-lock migration failure and recovers memory plus conversations', async () => {
+    const initial = setupEkkoAgent({ baseDirectory: webUiHome, env: { NODE_ENV: 'test' } })
+    const databasePath = initial.layout.databasePath
+    const created = await initial.memory.create({
+      kind: 'general_preference',
+      itemKey: 'database_recovery',
+      reason: 'Exercise migration recovery.',
+      explicitUserIntent: true,
+      identity: { sessionId: 'recovery-session', profileId: 'default' },
+      node: {
+        valueJson: 'preserved',
+        title: 'Database recovery preference',
+        content: 'This memory must survive a database rebuild.',
+      },
+    })
+    initial.conversations.createSession({ id: 'recovery-session', title: 'Recovery session' })
+    initial.conversations.addMessage({
+      sessionId: 'recovery-session',
+      role: 'user',
+      content: 'Keep this conversation.',
+    })
+    initial.close()
+
+    const malformed = new EkkoDatabaseManager({ databasePath, env: { NODE_ENV: 'test' } })
+    malformed.connection.exec(`
+      ALTER TABLE schema_migrations RENAME TO schema_migrations_original;
+      CREATE TABLE schema_migrations (component TEXT PRIMARY KEY);
+    `)
+    malformed.close()
+
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const recovered = setupEkkoAgent({ baseDirectory: webUiHome, env: { NODE_ENV: 'test' } })
+    try {
+      await expect(recovered.memory.get(created.nodeId!, { profileId: 'default' }))
+        .resolves.toMatchObject({ valueJson: 'preserved', status: 'active' })
+      expect(recovered.conversations.getSession('recovery-session')).toMatchObject({
+        id: 'recovery-session',
+        title: 'Recovery session',
+      })
+      expect(recovered.conversations.listMessages('recovery-session')).toMatchObject([
+        { role: 'user', content: 'Keep this conversation.' },
+      ])
+      expect(recovered.database.connection.prepare(
+        'SELECT max(version) AS version FROM schema_migrations WHERE component = ?',
+      ).get('memory')).toMatchObject({ version: 8 })
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('database rebuilt after migration failure'))
+      expect((await readdir(join(webUiHome, '.ekko')))
+        .filter(name => name.includes('ekko.db.migration-failed-') && name.endsWith('.bak'))).toHaveLength(1)
+    } finally {
+      recovered.close()
+      warning.mockRestore()
+    }
+  })
+
+  it('restores the original database when creating the replacement database fails', async () => {
+    const manager = new EkkoDatabaseManager({ baseDirectory: webUiHome })
+    manager.connection.exec('CREATE TABLE original_records (value TEXT NOT NULL)')
+    manager.connection.prepare('INSERT INTO original_records (value) VALUES (?)').run('preserved')
+
+    const backupPath = manager.quarantineForRebuild()
+    manager.connection.exec('CREATE TABLE failed_rebuild_records (value TEXT NOT NULL)')
+    manager.connection.prepare('INSERT INTO failed_rebuild_records (value) VALUES (?)').run('failed')
+
+    const failedRebuildPath = manager.restoreQuarantinedDatabase(backupPath)
+
+    expect(manager.connection.prepare('SELECT value FROM original_records').all())
+      .toEqual([{ value: 'preserved' }])
+    expect(manager.connection.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'failed_rebuild_records'",
+    ).get()).toBeUndefined()
+    expect(failedRebuildPath).toBeTruthy()
+    expect(existsSync(failedRebuildPath!)).toBe(true)
+    expect((await readdir(join(webUiHome, '.ekko')))
+      .filter(name => name.includes('ekko.db.rebuild-failed-') && name.endsWith('.bak'))).toHaveLength(1)
     manager.close()
   })
 

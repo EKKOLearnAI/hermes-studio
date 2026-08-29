@@ -1,132 +1,63 @@
 # Ekko Agent 单一记忆系统
 
-Ekko Agent 只维护一种可操作的长期记忆。记忆按 Hermes profile 隔离，模型和用户不再选择
-`session`、`workspace`、`user` 或 `global` scope。会话消息和滚动摘要仍作为内部整理游标，
-但不是可查询、可修改的另一类长期记忆。
-
-## 核心目标
-
-- 保存明确、耐久、对未来对话有帮助的信息。
-- 用户纠正信息时，快速找到旧记忆并用新版本覆盖。
-- 用户要求忘记时，精确删除；范围不清或物理删除时要求确认。
-- 避免重复、冲突和过时记忆同时保持 active。
-- 记忆失败不能阻断主 Agent 回复。
+Ekko 只维护一种可操作的长期记忆：`memory_nodes` 中的记忆卡片。不存在独立的审批队列、
+后台记忆评审或隐藏的 Session 摘要。`memory_messages` 只保存受信任的对话证据，供来源追溯，
+不会形成另一套记忆。
 
 ## 运行链路
 
 ```text
 Ekko Agent turn
-  -> 保存当前会话消息
-  -> 按 profile 检索相关 active memory_nodes
-  -> 注入最新会话摘要和相关长期记忆
-  -> 主模型回答，可直接使用四个 memory tools
-  -> 每次回复完成后由专用记忆 Agent 异步整理新增消息
-  -> 写入结构化记忆、滚动摘要和审计事件
+  -> 保存当前用户消息证据
+  -> 按宿主授权的 scope 检索 active memory_nodes
+  -> 注入相关记忆卡片
+  -> 主模型调用 memory_search / memory_get / memory_write / memory_forget
+  -> memory_write / memory_forget 在当前 run 中直接生效
+  -> run 完成后仅补录助手消息证据
 ```
 
-默认每个完成的用户回合都启动整理，由专用模型判断 `create / supersede / delete / noop`。
-如果调用方为了成本显式配置了批量阈值，身份、关系、称呼、偏好、工作流、纠正、忘记等
-高信号陈述仍会立即绕过阈值。用户无需先说“记住”。
+任何记忆增删改都只有这条前台链路。工具失败时 Runtime 立即返回真实错误，不允许模型继续
+声称操作成功。
 
-## 单一记忆模型
+## 增删改规则
 
-`memory_nodes` 中每条记忆都属于一个 `profile_id`。`type`、`domain`、`key` 和标签只是检索
-字段，不形成不同的权限层级或存储 scope。
+- 创建时模型提交受控 `kind` 和可选 `itemKey`，服务端生成 canonical key。
+- 相同 scope、相同 canonical key 最多只有一条 active 卡片。
+- 同槽位同内容返回 noop；同槽位新内容建立下一 revision 并 supersede 旧版。
+- 更新、过期和按 id 删除必须携带当前 `expectedRevision`，防止并发覆盖。
+- `sourceMessageIds` 只能来自宿主提供的当前用户证据，模型不能伪造来源。
+- soft delete 保留审计状态；hard delete 同时清理节点、FTS 和 embedding。
+- 增删改直接写入 `memory_audit_events`，没有待审批状态。
 
-```ts
-type MemoryNode = {
-  id: string
-  profileId: string
-  parentId?: string
-  supersedesId?: string
-  domain: string
-  categoryPath: string[]
-  type: 'preference' | 'fact' | 'decision' | 'task' | 'recipe' | 'skill' | 'constraint' | 'correction'
-  key: string              // 服务端生成的规范槽位 key
-  revision: number         // 每次修改或 soft delete 递增
-  valueJson?: unknown
-  title: string
-  content: string
-  status: 'active' | 'superseded' | 'expired' | 'deleted'
-  confidence: number
-  importance: number
-  tags: string[]
-  entities: string[]
-  sourceMessageIds: string[]
-  createdAt: string
-  updatedAt: string
-  expiresAt?: string
-}
-```
+## 检索规则
 
-## 灵敏的增删改规则
+- 自动召回受 token budget 和宿主授权 scope 限制，不能视为完整记忆库。
+- 已知类别优先使用结构化 `kinds`；开放问题使用 `queryText`。
+- 枚举全部记忆使用 `memory_search({ all: true })`。中文“所有/全部记忆”和英文
+  “all/every memories”等旧式 list-all 查询也会自动转成全量枚举，不做相关性过滤。
+- 没有匹配结果时，Agent 不得据此宣称整个记忆库为空，除非执行过全量枚举。
 
-### 保存
+## 删除规则
 
-- 模型只提交受控 `kind` 和可选 `itemKey`；服务端生成 `domain / type / key`。
-- `entities` 由受控结构化值重新生成；`sourceMessageIds` 只由运行时绑定当前用户消息，模型不能伪造来源。
-- `interaction_contract` 必须使用结构化 `valueJson`，包含 `userRole / assistantRole / addressUserAs`
-  中的至少一项；只写自由文本会被服务端拒绝。
-- 服务端在 `(profile_id, key)` 上保证最多一条 active 记忆。
-- 同槽位、同内容直接 noop；同槽位、不同内容自动建立新 revision 并 supersede 旧版。
-- 可并存的多值偏好使用稳定 `itemKey`，例如 `preference.food.avoid:<ingredient>`。
-
-### 修改与纠正
-
-- 先从系统提示词卡片或 `memory_search / memory_get` 取得 `id + key + revision + value`。
-- 修改必须提交 `targetId + expectedRevision`；服务端保留原 canonical key。
-- revision 不匹配时拒绝写入，要求重新检索，避免过期 Agent 覆盖新记忆。
-- 对象值优先用 `valuePatch / unsetValueFields` 精确修改字段，不重写无关内容。
-- 旧节点标记为 `superseded`，新节点通过 `supersedesId` 关联并将 revision 加一。
-- 用户明确说旧陈述是玩笑、假设、错误或已取消时，精确 soft delete 旧记忆；
-  不保留“这件事是玩笑”一类 active 负面墓碑。
-
-### 删除
-
-- 按 id 删除必须同时提交 `expectedRevision`；精确命中一条时可直接 soft delete。
-- 命中多条时必须确认删除范围。
-- hard delete 始终需要确认，并同时删除 FTS 和 embedding 数据。
-- 所有修改和删除写入 `memory_audit_events`。
-- 每条 create / supersede / expire / delete 审计都带触发它的 session id。
-
-### 检索
-
-- `memory_search` 只返回与查询文本、过滤条件或 canonical key 真正匹配的记忆；重要度和置信度不能让零文本命中的记忆混入结果。
-- 主 Agent 的自动上下文仍会无条件保留偏好、约束和纠正，其他事实按当前问题相关性注入。
-
-## 独立整理模型
-
-记忆整理只注册以下工具：
-
-- `memory_search`
-- `memory_get`
-- `memory_propose_update`
-- `memory_forget`
-
-它不加载文件、终端、浏览器、MCP、skills 或主 Agent 系统提示词。工具结果不进入整理
-transcript；外部获取的短期结果不会进入滚动摘要。模型失败后使用安全的规则
-摘要降级，不能影响已经完成的主回复。
-
-整理提示词会同时收到现有记忆卡，每张显式包含 `id / key / revision / value / content`。
-它使用三类通用判断：信息是否可能跨 session 保持真实且有用；证据是否来自用户的
-明确陈述或确认；新证据与旧记忆冲突时应当替换、局部修改还是删除。当前请求、
-未承诺的可能性、已完成工作和外部短期结果只进入 session state。助手陈述、工具输出和
-检索内容不作为用户事实，除非用户明确确认。记忆只保留当前有效状态，不保留纠错或撤回历史。
+- 用户明确要求忘记某条内容时，调用一次 `memory_forget` 精确删除。
+- 用户明确要求清除全部记忆时，调用一次 `memory_forget({ all: true })`。
+- “清掉、清除、清空、删除、忘掉”等表达都属于明确删除意图。
+- 不再经过确认弹窗或审批任务；权限边界仍由当前用户意图和宿主授权 scope 保证。
 
 ## 数据库
 
-Ekko 只接收一个可选的基目录，未传时使用用户主目录。数据库统一位于
-`<baseDirectory>/.ekko/ekko.db`。服务端 canonical key 与 revision 模型采用 memory schema version 3；升级时直接删除
-旧记忆表并重建，不迁移旧 scope 数据。
+数据库位于 `<baseDirectory>/.ekko/ekko.db`，记忆相关表为：
 
-数据库包含：
+- `memory_messages`：受信任的用户/助手对话证据。
+- `memory_nodes`：唯一的长期记忆卡片集合。
+- `memory_audit_events`：创建、覆盖、过期和删除审计。
+- `memory_embeddings`：语义检索数据。
 
-- `memory_messages`：会话原始消息和整理来源。
-- `memory_summaries`：每个 session 的滚动摘要链。
-- `memory_nodes`：唯一的长期记忆集合。
-- `memory_audit_events`：保存、覆盖、过期和删除审计。
-- `memory_session_state`：增量整理游标。
-- `memory_embeddings`：后续语义检索预留。
+memory schema version 8 会删除旧的 `memory_review_jobs`、`memory_summaries` 和
+`memory_session_state` 表，但不会删除 `memory_nodes` 中现有的记忆卡片。
 
-当前生产入口仍显式关闭 Ekko 长期记忆；正式开启前需要同时处理跨 session 整理队列和
-graceful shutdown。
+数据库迁移逐版本运行在 `BEGIN IMMEDIATE` 事务中。锁冲突最多尝试三次，每次受
+`busy_timeout` 约束；仍被占用时直接阻止启动，不会在旧进程仍写入时重建。其他迁移错误
+会先把原数据库及 WAL/SHM 移到带时间戳的备份，再创建新库，并按兼容列恢复记忆、证据、
+审计和 Ekko 会话，随后重建 FTS。若新库本身也无法建立，则恢复原数据库并终止启动。
+整个过程不会以禁用 Memory 或切换到临时空库作为降级方案。

@@ -363,7 +363,7 @@ export class ChatRunSocket {
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
       memory_input?: string | ContentBlock[]
       memory_messages?: EkkoAgentRunSocketData['memory_messages']
-      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_write_policy?: 'automatic' | 'explicit-only'
       memory_origin?: EkkoAgentRunSocketData['memory_origin']
       memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
       memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']
@@ -808,7 +808,7 @@ export class ChatRunSocket {
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
       memory_input?: string | ContentBlock[]
       memory_messages?: EkkoAgentRunSocketData['memory_messages']
-      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_write_policy?: 'automatic' | 'explicit-only'
       memory_origin?: EkkoAgentRunSocketData['memory_origin']
       memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
       memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']
@@ -1707,7 +1707,7 @@ export class ChatRunSocket {
       session_source?: 'global_agent' | 'workflow' | 'group_chat'
       memory_input?: string | ContentBlock[]
       memory_messages?: EkkoAgentRunSocketData['memory_messages']
-      memory_review_policy?: 'automatic' | 'explicit-only'
+      memory_write_policy?: 'automatic' | 'explicit-only'
       memory_origin?: EkkoAgentRunSocketData['memory_origin']
       memory_recall_scopes?: EkkoAgentRunSocketData['memory_recall_scopes']
       memory_write_scopes?: EkkoAgentRunSocketData['memory_write_scopes']

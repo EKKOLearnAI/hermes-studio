@@ -13,7 +13,7 @@ import {
   type EkkoModelProviderPreset,
 } from './model/provider-presets'
 
-export const EKKO_CONFIG_SCHEMA_VERSION = 7
+export const EKKO_CONFIG_SCHEMA_VERSION = 9
 export const EKKO_CONFIG_DIRECTORY_NAME = 'config'
 export const EKKO_CONFIG_FILE_NAME = 'config.json'
 
@@ -34,7 +34,6 @@ export const DEFAULT_CODE_EXEC_MAX_SOURCE_BYTES = 200_000
 export const DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET = 4_000
 export const DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT = 20
 export const DEFAULT_MEMORY_SEARCH_RESULT_LIMIT = 50
-export const DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES = 8
 export const DEFAULT_SKILL_REVIEW_TOOL_CALL_INTERVAL = 10
 export const DEFAULT_EKKO_LOG_MAX_BYTES = 10 * 1024 * 1024
 export const DEFAULT_COMPRESSION_THRESHOLD = 0.5
@@ -166,7 +165,6 @@ export interface EkkoMemoryConfig {
   recentMessageLimit: number
   automaticRecallTokenBudget: number
   searchResultLimit: number
-  reviewEveryUserMessages: number
 }
 
 export interface EkkoSkillsProfileConfig {
@@ -291,7 +289,6 @@ export const DEFAULT_EKKO_CONFIG: EkkoConfig = {
     recentMessageLimit: DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
     automaticRecallTokenBudget: DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
     searchResultLimit: DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
-    reviewEveryUserMessages: DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
   },
   skills: {
     enabled: true,

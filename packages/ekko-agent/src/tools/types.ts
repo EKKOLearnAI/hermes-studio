@@ -51,7 +51,7 @@ export interface AgentToolContext {
   sessionId?: string
   profileId?: string
   sourceMessageIds?: string[]
-  memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
+  memoryWritePolicy?: import('../memory/types').MemoryWritePolicy
   memoryExplicitIntent?: boolean
   memoryForgetIntent?: boolean
   memoryForgetAllIntent?: boolean
@@ -59,10 +59,6 @@ export interface AgentToolContext {
   memoryRecallScopes?: import('../memory/types').MemoryScope[]
   memoryWriteScopes?: import('../memory/types').MemoryScope[]
   memoryDefaultWriteScope?: import('../memory/types').MemoryScope
-  /** Runtime-owned enqueue hook used by safe foreground memory review tools. */
-  requestMemoryReview?: (
-    request: import('../memory/types').MemoryReviewJobRequest,
-  ) => Promise<{ jobId?: string }>
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number

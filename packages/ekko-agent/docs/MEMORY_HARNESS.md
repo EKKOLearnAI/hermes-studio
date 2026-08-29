@@ -12,28 +12,26 @@ The harness keeps these boundaries executable:
   turn with derived summaries, retrieved context, routing text, or quoted
   material passes only trusted conversation evidence through
   `memoryInput.messages`.
-- Memory review policy belongs to the host integration. `automatic` preserves
-  Ekko's normal memory behavior; `explicit-only` allows retrieval while
+- Memory write policy belongs to the host integration. `automatic` preserves
+  Ekko's normal direct-write behavior; `explicit-only` allows retrieval while
   accepting writes only for an explicit remember, correction, or forget
   request.
 - The generic runtime does not know about rooms, participants, products, or
   application workflows. Those provenance decisions stay in the host adapter.
 - Hosts may stamp opaque origin metadata and declare any combination of the
-  generic `profile`, `context`, and `session` scopes. The curator chooses only
+  generic `profile`, `context`, and `session` scopes. Direct write tools choose only
   from the declared writable set, while recall is limited to the declared read
   set. With no declaration, Ekko defaults to profile scope for compatibility.
-- Durable mutation tools are absent from the foreground agent. The isolated
-  curator owns writes and sees only host-selected evidence plus its origin and
-  authorized scopes.
-- Explicit remember, correction, update, and forget requests force a visible
-  foreground `memory_review` tool call. It only signals immediate review and
-  cannot submit or mutate memory content itself.
-- Human-readable memory cards, audit reasons, and rolling-summary fields follow
-  the latest trusted user message's language. Wrong-language model output is
-  rejected or repaired before persistence.
-- Ordinary one-to-one turns are reviewed in batches of eight by default.
-  High-signal durable statements and explicit memory requests are still
-  reviewed immediately.
+- Durable mutation tools run in the foreground. `memory_write` applies creates
+  and updates synchronously; `memory_forget` applies deletions synchronously.
+- Explicit remember, correction, update, and forget requests force the matching
+  direct mutation path and do not create background jobs.
+- A list-all request enumerates every active memory in the authorized scopes;
+  it is not treated as a relevance query.
+- A failed `memory_write` or `memory_forget` stops that mutation path and returns
+  the real tool error, so a later model turn cannot claim that it succeeded.
+- There is no memory approval queue, background review, or Session-summary model
+  pass. Run completion only records trusted conversation evidence.
 - Tool payloads and system messages are excluded from the memory transcript.
 - Development and production retain their existing database isolation; the
   harness never relocates or deletes user memory data.
