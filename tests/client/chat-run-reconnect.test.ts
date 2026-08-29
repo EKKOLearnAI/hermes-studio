@@ -135,7 +135,7 @@ describe('chat-run socket reconnect handling', () => {
   })
 
   it('defers reconnect resume until the session is persisted', async () => {
-    const { startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
     let persisted = false
 
     startRunViaSocket(
