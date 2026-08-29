@@ -117,40 +117,84 @@ describe('EkkoDatabaseManager', () => {
     }
   })
 
-  it('imports every Hermes profile skill only when the Ekko skills directory is first created', async () => {
+  it('never imports Hermes skills and removes only their legacy non-built-in Ekko copies', async () => {
     const hermesRoot = join(webUiHome, 'hermes')
     const ekkoBase = join(webUiHome, 'web-ui')
-    await mkdir(join(hermesRoot, 'skills', 'default-skill'), { recursive: true })
-    await mkdir(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'references'), { recursive: true })
-    await writeFile(join(hermesRoot, 'skills', 'default-skill', 'SKILL.md'), '# Default\nOriginal.\n')
-    await writeFile(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'SKILL.md'), '# Work\nProfile skill.\n')
-    await writeFile(
-      join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'references', 'guide.md'),
-      'Imported support file.\n',
-    )
+    const hermesSkill = join(hermesRoot, 'skills', 'legacy-hermes-skill')
+    const ekkoProfile = join(ekkoBase, '.ekko', 'skills', 'default')
+    await mkdir(hermesSkill, { recursive: true })
+    await mkdir(join(hermesRoot, 'skills', 'weather'), { recursive: true })
+    await mkdir(join(hermesRoot, 'skills', 'image-gen'), { recursive: true })
+    await mkdir(join(hermesRoot, 'skills', 'category', 'weather'), { recursive: true })
+    await writeFile(join(hermesSkill, 'SKILL.md'), '# Hermes only\n')
+    await writeFile(join(hermesRoot, 'skills', 'weather', 'SKILL.md'), '# Hermes weather\n')
+    await writeFile(join(hermesRoot, 'skills', 'image-gen', 'SKILL.md'), '# Hermes image gen\n')
+    await writeFile(join(hermesRoot, 'skills', 'category', 'weather', 'SKILL.md'), '# Categorized Hermes weather\n')
+    await writeFile(join(hermesRoot, 'skills', 'category', 'DESCRIPTION.md'), '# Hermes category\n')
+    const directories = new EkkoDirectoryManager(ekkoBase)
+    directories.initialize()
+    directories.profileSkillsDirectory('default')
+    const builtinManifestPath = join(ekkoProfile, '.ekko-builtin-skills.json')
+    const builtinManifest = JSON.parse(await readFile(builtinManifestPath, 'utf8'))
+    delete builtinManifest['image-gen']
+    await writeFile(builtinManifestPath, `${JSON.stringify(builtinManifest, null, 2)}\n`)
+    await mkdir(join(ekkoProfile, 'legacy-hermes-skill'), { recursive: true })
+    await mkdir(join(ekkoProfile, 'category', 'weather'), { recursive: true })
+    await mkdir(join(ekkoProfile, 'ekko-local'), { recursive: true })
+    await writeFile(join(ekkoProfile, 'legacy-hermes-skill', 'SKILL.md'), '# Modified after import\n')
+    await writeFile(join(ekkoProfile, 'weather', 'SKILL.md'), '# Modified Ekko built-in\n')
+    await writeFile(join(ekkoProfile, 'image-gen', 'SKILL.md'), '# Hermes image gen\n')
+    await writeFile(join(ekkoProfile, 'category', 'weather', 'SKILL.md'), '# Categorized Hermes weather\n')
+    await writeFile(join(ekkoProfile, 'category', 'DESCRIPTION.md'), '# Hermes category\n')
+    await writeFile(join(ekkoProfile, 'ekko-local', 'SKILL.md'), '# Ekko local\n')
+
+    directories.initialize({ hermesRootDirectory: hermesRoot })
+
+    expect(existsSync(join(ekkoProfile, 'legacy-hermes-skill'))).toBe(false)
+    await expect(readFile(join(ekkoProfile, 'weather', 'SKILL.md'), 'utf8'))
+      .resolves.toBe('# Modified Ekko built-in\n')
+    expect(existsSync(join(ekkoProfile, 'image-gen'))).toBe(false)
+    expect(existsSync(join(ekkoProfile, 'category'))).toBe(false)
+    await expect(readFile(join(ekkoProfile, 'ekko-local', 'SKILL.md'), 'utf8'))
+      .resolves.toBe('# Ekko local\n')
+    await expect(readFile(join(hermesSkill, 'SKILL.md'), 'utf8'))
+      .resolves.toBe('# Hermes only\n')
+    await expect(readFile(
+      join(ekkoBase, '.ekko', '.ekko-hermes-skill-cleanup-v2.json'),
+      'utf8',
+    ).then(JSON.parse)).resolves.toMatchObject({
+      version: 2,
+      removed: expect.arrayContaining([
+        { profile: 'default', skill: 'legacy-hermes-skill' },
+        { profile: 'default', skill: 'image-gen' },
+        { profile: 'default', skill: 'category/weather' },
+      ]),
+    })
+    directories.profileSkillsDirectory('default')
+    await expect(readFile(join(ekkoProfile, 'image-gen', 'SKILL.md'), 'utf8'))
+      .resolves.not.toBe('# Hermes image gen\n')
+
+    await mkdir(join(ekkoProfile, 'legacy-hermes-skill'), { recursive: true })
+    await writeFile(join(ekkoProfile, 'legacy-hermes-skill', 'SKILL.md'), '# Created after cleanup\n')
+    directories.initialize({ hermesRootDirectory: hermesRoot })
+    await expect(readFile(join(ekkoProfile, 'legacy-hermes-skill', 'SKILL.md'), 'utf8'))
+      .resolves.toBe('# Created after cleanup\n')
+  })
+
+  it('installs only Ekko built-ins when the skills root does not exist', async () => {
+    const hermesRoot = join(webUiHome, 'hermes')
+    const ekkoBase = join(webUiHome, 'web-ui')
+    await mkdir(join(hermesRoot, 'skills', 'hermes-only'), { recursive: true })
+    await writeFile(join(hermesRoot, 'skills', 'hermes-only', 'SKILL.md'), '# Hermes only\n')
 
     const directories = new EkkoDirectoryManager(ekkoBase)
     directories.initialize({ hermesRootDirectory: hermesRoot })
+    const profileDirectory = directories.profileSkillsDirectory('default')
 
-    await expect(readFile(
-      join(ekkoBase, '.ekko', 'skills', 'default', 'default-skill', 'SKILL.md'),
-      'utf8',
-    )).resolves.toBe('# Default\nOriginal.\n')
-    await expect(readFile(
-      join(ekkoBase, '.ekko', 'skills', 'work', 'work-skill', 'references', 'guide.md'),
-      'utf8',
-    )).resolves.toBe('Imported support file.\n')
-
-    await writeFile(join(hermesRoot, 'skills', 'default-skill', 'SKILL.md'), '# Default\nChanged later.\n')
-    await mkdir(join(hermesRoot, 'skills', 'late-skill'), { recursive: true })
-    await writeFile(join(hermesRoot, 'skills', 'late-skill', 'SKILL.md'), '# Late\nDo not import.\n')
+    expect(existsSync(join(profileDirectory, 'hermes-only'))).toBe(false)
+    expect(existsSync(join(profileDirectory, 'weather', 'SKILL.md'))).toBe(true)
     directories.initialize({ hermesRootDirectory: hermesRoot })
-
-    await expect(readFile(
-      join(ekkoBase, '.ekko', 'skills', 'default', 'default-skill', 'SKILL.md'),
-      'utf8',
-    )).resolves.toBe('# Default\nOriginal.\n')
-    expect(existsSync(join(ekkoBase, '.ekko', 'skills', 'default', 'late-skill'))).toBe(false)
+    expect(existsSync(join(profileDirectory, 'weather', 'SKILL.md'))).toBe(true)
   })
 
   it('uses the package-local database path with development SQLite settings', () => {

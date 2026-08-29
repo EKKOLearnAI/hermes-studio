@@ -42,7 +42,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 
 每个 Profile 都会 `new EkkoProfileAgent`，并分别创建绑定 Profile 的 `tool`、`skill`、`memory`、`conversation`、`runtime`、`directory` 和 `log` 模块。安装级配置、SQLite 连接、模型 Provider 与 OAuth 凭证是共享资源，因此各 Profile 的 `config`、`database`、`model` 和 `authorization` 指向同一安装级后端。
 
-启动时会扫描 `.ekko/skills`、`.ekko/logs`、`.ekko/workspace` 下的一级实体目录，并取合法 Profile 名的并集。自动发现项、Hermes 首次导入项与显式 `profiles` 会合并，因此已有 Profile 不要求调用方再次传入。隐藏目录、普通文件、软链接和非法目录名会被忽略。
+启动时会扫描 `.ekko/skills`、`.ekko/logs`、`.ekko/workspace` 下的一级实体目录，并取合法 Profile 名的并集。自动发现项与显式 `profiles` 会合并，因此已有 Profile 不要求调用方再次传入。隐藏目录、普通文件、软链接和非法目录名会被忽略。
 
 创建 Profile Agent 前会执行以下检查：
 
@@ -63,7 +63,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `baseDirectory` | `string?` | 数据根目录；实际数据位于 `<base>/.ekko`。默认使用用户主目录。 |
 | `profiles` | `string[]?` | 额外创建的命名 Profile；`default` 总会创建。省略时仍会从已有 Profile 目录自动发现。 |
 | `config` | `EkkoConfigPatch?` | 在创建 Profile Agent 和 runtime 服务前合并并持久化的安装级配置；支持下表全部配置段的局部字段。 |
-| `hermesRootDirectory` | `string?` | 首次初始化时导入 Hermes 的 default 与命名 Profile skills。 |
+| `hermesRootDirectory` | `string?` | 仅用于一次性识别并删除 `.ekko` 中旧版同步留下的 Hermes Skill 副本；Hermes 源目录只读且永不修改。 |
 | `env` | `Record<string, string \| undefined>?` | 路径和开发/生产数据库策略使用的环境变量。 |
 | `packageRoot` | `string?` | 开发模式下包内 `.ekko` 数据目录所在的包根目录。 |
 | `authorizationRefresher` | `EkkoModelAuthorizationRefresher?` | Provider-aware OAuth 刷新回调。 |
@@ -91,7 +91,6 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `tool` | `EkkoToolManager` | 兼容入口，方法需要 Profile 参数。新代码用 Profile 模块。 |
 | `skill` | `EkkoSkillManager` | 兼容入口，方法需要 Profile 参数。新代码用 Profile 模块。 |
 | `runtime` | `EkkoRuntimeManager` | 兼容入口，创建时需要 `profile`。 |
-| `skillImport` | `EkkoSkillImportResult?` | 本次初始化发生 Hermes skill 导入时的来源与 Profile 列表。 |
 | `toolApprovals` | `EkkoToolApprovalService` | 当前配置构建的审批服务；配置变化后会替换。 |
 
 ### 根方法
@@ -1108,11 +1107,6 @@ export interface EkkoDirectoryInitializationOptions {
   hermesRootDirectory?: string
 }
 
-export interface EkkoSkillImportResult {
-  hermesRootDirectory: string
-  profiles: string[]
-}
-
 export class EkkoDirectoryManager {
   readonly baseDirectory: string
   readonly rootDirectory: string
@@ -1122,7 +1116,6 @@ export class EkkoDirectoryManager {
   readonly skillsDirectory: string
   readonly logsDirectory: string
   readonly workspaceDirectory: string
-  lastSkillImport?: EkkoSkillImportResult
   constructor(baseDirectory: string = homedir())
   initialize(options: EkkoDirectoryInitializationOptions = {}): EkkoDirectoryLayout
   initializeConfigDirectory(): string
@@ -2651,7 +2644,6 @@ export class EkkoAgentSetup {
   readonly agent: EkkoAgentManager
   readonly agents: EkkoAgentManager
   readonly default: EkkoProfileAgent
-  readonly skillImport?: EkkoSkillImportResult
   constructor(options: SetupEkkoAgentOptions = {})
   ensureProfile(profile = 'default'): EkkoProfileDirectoryLayout
   profile(profile = 'default'): EkkoProfileDirectoryLayout

@@ -219,12 +219,12 @@ profile uses
 `<base>/.ekko/logs/<profile>` for its log. Its default per-session workspace is
 `<base>/.ekko/workspace/<profile>/<session-id>`; an explicitly supplied
 `workspaceRoot` or `cwd` takes precedence. The server supplies its Web UI home as
-the base directory. For compatibility, the server supplies the Hermes root during
-initialization. If `.ekko/skills` does not exist yet, the manager imports
-the default profile from `<hermes>/skills` and every named profile from
-`<hermes>/profiles/<profile>/skills`. This is a one-time copy: once
-`.ekko/skills` exists, later startups do not resync or overwrite Ekko-owned
-skills imported from Hermes.
+the base directory. Ekko never imports or synchronizes Hermes Skills. During the
+first startup after upgrading from the legacy import behavior, the server supplies
+the Hermes root only as a read-only inventory: matching non-built-in copies are
+removed from Ekko-owned Profile directories, while the Hermes source directories
+are never changed. A migration marker prevents later startups from repeating the
+cleanup or removing Skills installed afterward.
 
 Each Profile may additionally reference read-only Skill roots through
 `skills.profiles.<profile>.externalDirectories`; those directories stay in
@@ -247,8 +247,8 @@ Local Skills take precedence over same-name external Skills. For example:
 }
 ```
 
-Ekko's package-owned built-in skills are separate from that compatibility
-import. Each Profile receives `1password`, `apple-notes`, `apple-reminders`,
+Ekko's package-owned built-in skills are the only Skills installed automatically.
+Each Profile receives `1password`, `apple-notes`, `apple-reminders`,
 `document-to-action-items`, `docx`, `gh-issues`, `github`,
 `grok-image-to-video`, `hermes-studio-installation`, `image-gen`,
 `node-inspect-debugger`, `obsidian`,

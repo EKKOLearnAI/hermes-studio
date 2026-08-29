@@ -4,7 +4,6 @@ import {
   EkkoDirectoryManager,
   type EkkoDirectoryInitializationOptions,
   type EkkoDirectoryLayout,
-  type EkkoSkillImportResult,
 } from './directories'
 import { MemoryService } from './memory/service'
 import { resolveEkkoDataDirectory } from './memory/paths'
@@ -105,7 +104,6 @@ export class EkkoAgentSetup {
   readonly agent: EkkoAgentManager
   readonly agents: EkkoAgentManager
   readonly default: EkkoProfileAgent
-  readonly skillImport?: EkkoSkillImportResult
   private readonly profileLayouts = new Map<string, EkkoProfileDirectoryLayout>()
   private readonly directProfileProperties = new Set<string>()
   private currentToolApprovals: EkkoToolApprovalService
@@ -122,7 +120,6 @@ export class EkkoAgentSetup {
     this.layout = this.directories.initialize({
       hermesRootDirectory: options.hermesRootDirectory,
     })
-    this.skillImport = this.directories.lastSkillImport
     this.config = new EkkoConfigStore({ configPath: this.layout.configPath })
     const config = options.config
       ? this.config.update(options.config)
@@ -184,7 +181,6 @@ export class EkkoAgentSetup {
     const profiles = new Set([
       'default',
       ...this.directories.profileNames(),
-      ...(this.skillImport?.profiles ?? []),
       ...(options.profiles ?? []),
     ])
     try {

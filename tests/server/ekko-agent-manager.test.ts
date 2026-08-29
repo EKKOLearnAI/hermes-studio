@@ -182,7 +182,7 @@ describe('GlobalEkkoAgent', () => {
     })
   })
 
-  it('imports Hermes profile skills when the Ekko skills root does not exist', async () => {
+  it('does not import Hermes profile skills when the Ekko skills root does not exist', async () => {
     const hermesRoot = join(baseDirectory, 'hermes')
     await mkdir(join(hermesRoot, 'skills', 'default-skill'), { recursive: true })
     await mkdir(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill'), { recursive: true })
@@ -191,8 +191,10 @@ describe('GlobalEkkoAgent', () => {
 
     const agent = createTestAgent({ memory: false, profile: 'work' })
     try {
-      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default', 'default-skill', 'SKILL.md'))).toBe(true)
-      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work', 'work-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default', 'default-skill'))).toBe(false)
+      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work', 'work-skill'))).toBe(false)
+      expect(existsSync(join(hermesRoot, 'skills', 'default-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'SKILL.md'))).toBe(true)
     } finally {
       agent.close()
     }

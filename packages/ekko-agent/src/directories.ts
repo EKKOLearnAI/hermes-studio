@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import {
   EKKO_CONFIG_DIRECTORY_NAME,
   EKKO_CONFIG_FILE_NAME,
@@ -22,6 +22,7 @@ import {
 const BUILTIN_SKILL_MANIFEST_FILENAME = '.ekko-builtin-skills.json'
 const BUILTIN_SKILL_MANIFEST_OWNER = 'ekko-agent'
 const BUILTIN_SKILL_HASH_IGNORED_FILENAMES = new Set(['.DS_Store', 'Thumbs.db'])
+const LEGACY_HERMES_SKILL_CLEANUP_FILENAME = '.ekko-hermes-skill-cleanup-v2.json'
 
 interface BuiltinSkillManifestEntry {
   owner?: string
@@ -44,15 +45,11 @@ export interface EkkoDirectoryLayout {
 
 export interface EkkoDirectoryInitializationOptions {
   /**
-   * Hermes Agent's root data directory. When Ekko's skills directory does not
-   * exist yet, all default and named profile skills are imported once.
+   * Hermes Agent's root data directory. It is read only during the one-time
+   * removal of legacy Hermes Skill copies from Ekko-owned profile directories.
+   * Hermes Skills are never imported.
    */
   hermesRootDirectory?: string
-}
-
-export interface EkkoSkillImportResult {
-  hermesRootDirectory: string
-  profiles: string[]
 }
 
 /**
@@ -70,7 +67,6 @@ export class EkkoDirectoryManager {
   readonly skillsDirectory: string
   readonly logsDirectory: string
   readonly workspaceDirectory: string
-  lastSkillImport?: EkkoSkillImportResult
   private builtinSkills?: EkkoBuiltinSkillSynchronizer
 
   constructor(baseDirectory: string = homedir()) {
@@ -85,13 +81,11 @@ export class EkkoDirectoryManager {
   }
 
   initialize(options: EkkoDirectoryInitializationOptions = {}): EkkoDirectoryLayout {
-    this.lastSkillImport = undefined
     this.builtinSkills = EkkoBuiltinSkillSynchronizer.createDefault()
     this.initializeConfigDirectory()
-    if (!existsSync(this.skillsDirectory) && options.hermesRootDirectory) {
-      this.lastSkillImport = this.importHermesProfileSkills(options.hermesRootDirectory)
-    } else {
-      mkdirSync(this.skillsDirectory, { recursive: true })
+    mkdirSync(this.skillsDirectory, { recursive: true })
+    if (options.hermesRootDirectory) {
+      this.removeLegacyHermesSkillCopies(options.hermesRootDirectory)
     }
     mkdirSync(this.workspaceDirectory, { recursive: true })
     return this.layout()
@@ -184,30 +178,42 @@ export class EkkoDirectoryManager {
     }
   }
 
-  private importHermesProfileSkills(hermesRootDirectory: string): EkkoSkillImportResult {
-    const sources = hermesProfileSkillSources(hermesRootDirectory)
-    mkdirSync(this.rootDirectory, { recursive: true })
-    const stagingDirectory = join(this.rootDirectory, `.skills-import-${randomUUID()}`)
+  private removeLegacyHermesSkillCopies(hermesRootDirectory: string): void {
+    const cleanupPath = join(this.rootDirectory, LEGACY_HERMES_SKILL_CLEANUP_FILENAME)
+    if (existsSync(cleanupPath)) return
 
-    try {
-      mkdirSync(stagingDirectory, { recursive: false })
-      for (const source of sources) {
-        cpSync(source.directory, join(stagingDirectory, source.profile), {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          preserveTimestamps: true,
-        })
+    const sources = hermesProfileSkillSources(hermesRootDirectory)
+    const removed: Array<{ profile: string; skill: string }> = []
+
+    for (const source of sources) {
+      const profileDirectory = join(this.skillsDirectory, source.profile)
+      if (!isDirectory(profileDirectory)) continue
+      const manifest = readBuiltinSkillManifest(profileDirectory)
+      const managedBuiltinNames = new Set(
+        Object.entries(manifest)
+          .filter(([, entry]) => entry.owner === BUILTIN_SKILL_MANIFEST_OWNER)
+          .map(([name]) => name),
+      )
+
+      for (const skill of findSkillDirectories(source.directory)) {
+        const targetDirectory = join(profileDirectory, ...skill.segments)
+        const isProfileRootSkill = skill.segments.length === 1
+        if (isProfileRootSkill &&
+          (managedBuiltinNames.has(skill.name) ||
+            this.builtinSkills?.matches(skill.name, targetDirectory))) continue
+        if (!isPlainDirectory(targetDirectory) || !isFile(join(targetDirectory, 'SKILL.md'))) continue
+        rmSync(targetDirectory, { recursive: true, force: false })
+        removeEmptySkillParents(profileDirectory, targetDirectory)
+        removed.push({ profile: source.profile, skill: skill.segments.join('/') })
       }
-      renameSync(stagingDirectory, this.skillsDirectory)
-      return {
-        hermesRootDirectory: resolve(hermesRootDirectory),
-        profiles: sources.map(source => source.profile),
-      }
-    } catch (error) {
-      rmSync(stagingDirectory, { recursive: true, force: true })
-      throw error
+      removeSkilllessLegacyCategories(profileDirectory, source.directory)
     }
+
+    writeFileSync(cleanupPath, `${JSON.stringify({
+      version: 2,
+      hermesRootDirectory: resolve(hermesRootDirectory),
+      removed,
+    }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 }
 
@@ -268,6 +274,111 @@ function hermesProfileSkillSources(
   return sources
 }
 
+function findSkillDirectories(
+  rootDirectory: string,
+  segments: string[] = [],
+): Array<{ name: string; segments: string[] }> {
+  const skills: Array<{ name: string; segments: string[] }> = []
+  let entries
+  try {
+    entries = readdirSync(join(rootDirectory, ...segments), { withFileTypes: true })
+  } catch {
+    return skills
+  }
+
+  entries.sort((left, right) => left.name.localeCompare(right.name))
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    const nextSegments = [...segments, entry.name]
+    const directory = join(rootDirectory, ...nextSegments)
+    if (isFile(join(directory, 'SKILL.md'))) {
+      skills.push({ name: entry.name, segments: nextSegments })
+    } else {
+      skills.push(...findSkillDirectories(rootDirectory, nextSegments))
+    }
+  }
+  return skills
+}
+
+function removeEmptySkillParents(profileDirectory: string, removedDirectory: string): void {
+  let directory = resolve(removedDirectory, '..')
+  const boundary = resolve(profileDirectory)
+  while (directory !== boundary && directory.startsWith(`${boundary}${sep}`)) {
+    try {
+      if (readdirSync(directory).length > 0) return
+      rmSync(directory)
+    } catch {
+      return
+    }
+    directory = resolve(directory, '..')
+  }
+}
+
+function removeSkilllessLegacyCategories(profileDirectory: string, sourceDirectory: string): void {
+  let entries
+  try {
+    entries = readdirSync(sourceDirectory, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    const targetDirectory = join(profileDirectory, entry.name)
+    const legacySourceDirectory = join(sourceDirectory, entry.name)
+    if (!isPlainDirectory(targetDirectory) ||
+      containsSkill(targetDirectory) ||
+      !containsOnlyMatchingLegacyFiles(targetDirectory, legacySourceDirectory)) continue
+    rmSync(targetDirectory, { recursive: true, force: false })
+  }
+}
+
+function containsOnlyMatchingLegacyFiles(
+  targetDirectory: string,
+  sourceDirectory: string,
+): boolean {
+  let entries
+  try {
+    entries = readdirSync(targetDirectory, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) return false
+    const targetPath = join(targetDirectory, entry.name)
+    const sourcePath = join(sourceDirectory, entry.name)
+    if (entry.isDirectory()) {
+      if (!isPlainDirectory(sourcePath) ||
+        !containsOnlyMatchingLegacyFiles(targetPath, sourcePath)) return false
+    } else if (entry.isFile()) {
+      if (!isFile(sourcePath)) return false
+      try {
+        if (!readFileSync(targetPath).equals(readFileSync(sourcePath))) return false
+      } catch {
+        return false
+      }
+    } else {
+      return false
+    }
+  }
+  return true
+}
+
+function containsSkill(directory: string): boolean {
+  let entries
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const path = join(directory, entry.name)
+    if (entry.isFile() && entry.name === 'SKILL.md') return true
+    if (entry.isDirectory() && containsSkill(path)) return true
+  }
+  return false
+}
+
 function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory()
@@ -291,6 +402,15 @@ class EkkoBuiltinSkillSynchronizer {
           resolve(process.cwd(), 'packages/ekko-agent/skills'),
         ].find(isDirectory)
     return sourceDirectory ? new EkkoBuiltinSkillSynchronizer(sourceDirectory) : undefined
+  }
+
+  matches(name: string, targetDirectory: string): boolean {
+    const sourceSkillDirectory = join(this.sourceDirectory, name)
+    return isPlainDirectory(targetDirectory) &&
+      isFile(join(targetDirectory, 'SKILL.md')) &&
+      isDirectory(sourceSkillDirectory) &&
+      isFile(join(sourceSkillDirectory, 'SKILL.md')) &&
+      hashBuiltinSkillDirectory(targetDirectory) === hashBuiltinSkillDirectory(sourceSkillDirectory)
   }
 
   sync(targetDirectory: string): void {

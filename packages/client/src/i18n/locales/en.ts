@@ -424,7 +424,6 @@ export default {
       notReleased: 'Not released',
       downloadRequirements: 'Android 6.0 or later · ARM64',
       iosPending: 'The App Store release is in preparation',
-      harmonyPending: 'The AppGallery release is in preparation',
       downloadApk: 'Download for Android',
       scanModalTitle: 'Scan to connect',
       lanConnection: 'LAN connection',
@@ -3318,6 +3317,17 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_0_1: 'This release covers all 21 PRs merged after v0.6.47, led by complete Ekko integration, unified Agent runtime management, richer chat state retention, and safer Studio compatibility',
+    new_0_7_0_2: 'Ekko is now a complete Studio-owned runtime with profile agents, conversations, managed memory, built-in and external skills, MCP servers, and dedicated settings pages (#2752, #2770)',
+    new_0_7_0_3: 'Ekko can execute parallel-safe tool calls concurrently, persist versioned global Agent configuration, keep every development artifact—including one Navicat-friendly ekko.db—inside packages/ekko-agent/.ekko, and use only its own automatically installed Skills without copying Hermes Skills (#2772, #2775, #2776)',
+    new_0_7_0_4: 'The unified Agents manager handles Hermes Runtime discovery, selection, startup, restart, provider tokens, and live status; opening the page now uses cached status and reserves expensive discovery for Refresh (#2760, #2761)',
+    new_0_7_0_5: 'Chats now retain thinking elapsed time across navigation, keep reused tool-call IDs separated by run, and resume global Coding Agent context after stop, cleanup, or server restart (#2723, #2730, #2735)',
+    new_0_7_0_6: 'Attachment transfers now use correct content types, chunked upload and download, progress, cancellation, safer filenames, and video previews; Codex requests also discard historical inline images while retaining the active turn (#2732, #2773)',
+    new_0_7_0_7: 'Selecting a chat from Recent preserves its real category collapse state across navigation and refresh, while direct and group chats now show the correct profile, member, and Agent identities (#2742, #2754, #2755)',
+    new_0_7_0_8: 'Global Coding Agent chats no longer show an ineffective reasoning-effort selector, and the Weixin binding notice now explains delivery limits and how to restore notifications (#2728, #2731)',
+    new_0_7_0_9: 'Server ownership is now divided into canonical Studio, Hermes, Ekko, and Coding Agent modules, while legacy MCU routes remain compatible and shutdown reliably cleans up Studio-owned process trees (#2744, #2746, #2747)',
+    new_0_7_0_10: 'The English and Chinese READMEs now document the five runtimes, three Agent families, module ownership, canonical APIs, and current development and validation workflows (#2745)',
+    new_0_7_0_11: 'Device Connections now shows only Android and iOS download cards; official Apple releases are labeled App Store instead of TestFlight · App Store',
     new_0_6_47_1: 'This release covers all 13 PRs merged after v0.6.46, led by standalone social message delivery, configurable image models, more reliable chat handoffs, and focused frontend polish',
     new_0_6_47_2: 'The new Social Messages workspace manages standalone Telegram, Feishu, and Weixin connections, per-channel notification languages, localized binding and status updates, and per-session message push controls (#2718)',
     new_0_6_47_3: 'Image generation and editing can now use dedicated provider and model choices in Auxiliary Models, while explicit request selections and existing defaults retain precedence (#2691)',

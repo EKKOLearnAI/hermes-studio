@@ -65,12 +65,11 @@ const deletingConnectionId = ref<number | null>(null)
 const lanAuthorization = ref<LanAppAuthorizationResponse | null>(null)
 const cloudAuthorization = ref<CloudAppAuthorizationResponse | null>(null)
 const qrCodeDataUrls = ref<Record<'lan' | 'cloud', string>>({ lan: '', cloud: '' })
-type DownloadQrChannel = 'androidApk' | 'googlePlay' | 'apple' | 'harmony'
+type DownloadQrChannel = 'androidApk' | 'googlePlay' | 'apple'
 const downloadQrCodeDataUrls = ref<Record<DownloadQrChannel, string>>({
   androidApk: '',
   googlePlay: '',
   apple: '',
-  harmony: '',
 })
 const currentTimestamp = ref(Math.floor(Date.now() / 1000))
 let countdownTimer: ReturnType<typeof setInterval> | null = null
@@ -104,13 +103,9 @@ const appleDownloadUrl = computed(() => {
     ? channel.appStoreUrl
     : channel.testFlightUrl || channel.appStoreUrl
 })
-const harmonyDownloadUrl = computed(() => {
-  const channel = mobileRelease.value.channels.harmony
-  return channel.url
-})
 const appleReleaseLabel = computed(() => {
   const channel = mobileRelease.value.channels.apple
-  if (channel.testFlightUrl && channel.appStoreUrl) return 'TestFlight · App Store'
+  if (appleUsesOfficialRelease.value && channel.appStoreUrl) return 'App Store'
   if (channel.testFlightUrl) return 'TestFlight'
   if (channel.appStoreUrl) return 'App Store'
   return t('connections.app.iosPending')
@@ -428,12 +423,11 @@ async function generateDownloadQrCode(channel: DownloadQrChannel, requestedUrl: 
 function downloadUrlFor(channel: DownloadQrChannel): string {
   if (channel === 'androidApk') return androidDownloadUrl.value
   if (channel === 'googlePlay') return googlePlayDownloadUrl.value
-  if (channel === 'apple') return appleDownloadUrl.value
-  return harmonyDownloadUrl.value
+  return appleDownloadUrl.value
 }
 
 function generateDownloadQrCodes(): void {
-  const channels: DownloadQrChannel[] = ['androidApk', 'googlePlay', 'apple', 'harmony']
+  const channels: DownloadQrChannel[] = ['androidApk', 'googlePlay', 'apple']
   for (const channel of channels) void generateDownloadQrCode(channel, downloadUrlFor(channel))
 }
 
@@ -482,7 +476,7 @@ watch(connectionTab, (type) => {
 })
 
 watch(
-  [androidDownloadUrl, googlePlayDownloadUrl, appleDownloadUrl, harmonyDownloadUrl],
+  [androidDownloadUrl, googlePlayDownloadUrl, appleDownloadUrl],
   generateDownloadQrCodes,
 )
 
@@ -626,7 +620,7 @@ onUnmounted(() => {
             <p>{{ t('connections.app.downloadDescription') }}</p>
             <div class="app-download-meta">
               <span>{{ mobileVersionLabel }}</span>
-              <span>Android · iOS · HarmonyOS</span>
+              <span>Android · iOS</span>
             </div>
           </div>
 
@@ -780,41 +774,6 @@ onUnmounted(() => {
             <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
           </article>
 
-          <article
-            class="app-platform-card"
-            :class="harmonyDownloadUrl ? 'app-platform-card--available' : 'app-platform-card--pending'"
-          >
-            <div class="app-platform-card-header">
-              <div class="app-platform-icon" aria-hidden="true">
-                <svg data-platform-icon="harmony" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55">
-                  <circle cx="12" cy="12" r="8.5" />
-                  <path d="M7.5 14.5c1.4-3.8 7.6-3.8 9 0M9.2 9.5h.01M14.8 9.5h.01" />
-                </svg>
-              </div>
-              <NTag v-if="harmonyDownloadUrl && !mobileRelease.channels.harmony.online" class="download-test-status" size="small" type="warning" :bordered="false">
-                {{ t('connections.app.testVersion') }}
-              </NTag>
-              <div v-if="harmonyDownloadUrl" class="download-tag-qr">
-                <img v-if="downloadQrCodeDataUrls.harmony" :src="downloadQrCodeDataUrls.harmony" :alt="t('connections.app.downloadScan')">
-                <NSpin v-else size="small" />
-              </div>
-              <NTag v-else size="small" :bordered="false">{{ t('connections.app.notReleased') }}</NTag>
-            </div>
-            <div class="app-platform-copy">
-              <h4>HarmonyOS</h4>
-              <p>{{ mobileRelease.channels.harmony.online ? 'HarmonyOS' : t('connections.app.harmonyPending') }}</p>
-            </div>
-            <NButton
-              v-if="harmonyDownloadUrl"
-              class="app-platform-action"
-              tag="a"
-              type="primary"
-              :href="mobileRelease.channels.harmony.url"
-              target="_blank"
-              rel="noopener noreferrer"
-            >HarmonyOS</NButton>
-            <NButton v-else class="app-platform-action" disabled>{{ t('connections.app.notReleased') }}</NButton>
-          </article>
         </div>
       </div>
     </div>
@@ -1260,7 +1219,7 @@ onUnmounted(() => {
 
 .app-platform-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
