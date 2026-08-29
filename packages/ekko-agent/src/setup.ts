@@ -1,4 +1,5 @@
 import { EkkoDatabaseManager } from './database'
+import { dirname } from 'node:path'
 import {
   EkkoDirectoryManager,
   type EkkoDirectoryInitializationOptions,
@@ -6,7 +7,7 @@ import {
   type EkkoSkillImportResult,
 } from './directories'
 import { MemoryService } from './memory/service'
-import { resolveEkkoDatabasePath } from './memory/paths'
+import { resolveEkkoDataDirectory } from './memory/paths'
 import { SqliteMemoryStore } from './memory/store'
 import { EkkoToolApprovalService } from './tools/approval'
 import {
@@ -112,17 +113,15 @@ export class EkkoAgentSetup {
   private closed = false
 
   constructor(options: SetupEkkoAgentOptions = {}) {
-    this.directories = new EkkoDirectoryManager(options.baseDirectory)
-    this.layout = {
-      ...this.directories.initialize({
-        hermesRootDirectory: options.hermesRootDirectory,
-      }),
-      databasePath: resolveEkkoDatabasePath({
-        baseDirectory: options.baseDirectory,
-        env: options.env,
-        packageRoot: options.packageRoot,
-      }),
-    }
+    const dataDirectory = resolveEkkoDataDirectory({
+      baseDirectory: options.baseDirectory,
+      env: options.env,
+      packageRoot: options.packageRoot,
+    })
+    this.directories = new EkkoDirectoryManager(dirname(dataDirectory))
+    this.layout = this.directories.initialize({
+      hermesRootDirectory: options.hermesRootDirectory,
+    })
     this.skillImport = this.directories.lastSkillImport
     this.config = new EkkoConfigStore({ configPath: this.layout.configPath })
     const config = options.config

@@ -204,8 +204,9 @@ Call `new EkkoAgent()` (or the compatible `setupEkkoAgent()`) once during host
 startup, before accepting agent work.
 The setup entry owns `EkkoDirectoryManager`, creates
 `<base>/.ekko/config/config.json`, the skills, logs, and workspace directories,
-and opens and migrates the SQLite database. Development uses the package-local
-`sql-data/ekko-agent.db`; production uses `<base>/.ekko/ekko.db`. It returns
+and opens and migrates the SQLite database. Development keeps the complete
+layout under the package-local `.ekko` directory, including `.ekko/ekko.db`;
+production uses `<base>/.ekko/ekko.db`. It returns
 the shared database-backed memory and conversation stores and closes that
 process-level resource through `setup.close()`. The global JSON file drives
 runtime limits, model defaults and providers, tools, approvals, profile-scoped

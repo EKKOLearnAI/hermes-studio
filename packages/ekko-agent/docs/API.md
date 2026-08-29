@@ -65,7 +65,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `config` | `EkkoConfigPatch?` | 在创建 Profile Agent 和 runtime 服务前合并并持久化的安装级配置；支持下表全部配置段的局部字段。 |
 | `hermesRootDirectory` | `string?` | 首次初始化时导入 Hermes 的 default 与命名 Profile skills。 |
 | `env` | `Record<string, string \| undefined>?` | 路径和开发/生产数据库策略使用的环境变量。 |
-| `packageRoot` | `string?` | 开发模式下 `sql-data` 的包根目录。 |
+| `packageRoot` | `string?` | 开发模式下包内 `.ekko` 数据目录所在的包根目录。 |
 | `authorizationRefresher` | `EkkoModelAuthorizationRefresher?` | Provider-aware OAuth 刷新回调。 |
 | `authorizationFetch` | `FetchLike?` | 标准 OAuth refresh-token 请求使用的 fetch。 |
 | `authorizationNow` | `() => number?` | OAuth 到期判断使用的时钟，主要用于测试。 |

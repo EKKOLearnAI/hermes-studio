@@ -6,5 +6,5 @@ coverage/
 .env
 .env.local
 
-sql-data/*
-!sql-data/.gitkeep
+.ekko/
+sql-data/
