@@ -125,6 +125,8 @@ describe('packaged desktop Web UI', () => {
     const config = readFileSync(resolve('packages/desktop/electron-builder.yml'), 'utf8')
 
     expect(config).toContain('afterPack: "./scripts/verify-packaged-webui.mjs"')
+    expect(config).toContain('- "!scripts/**"')
+    expect(config).not.toContain('!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}')
     expect(config).toContain('from: "../../node_modules"')
     expect(config).toContain('to: "webui/node_modules"')
     const buildExclusion = config.indexOf('!node-pty/build/**')
